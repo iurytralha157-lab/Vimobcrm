@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
@@ -44,9 +45,7 @@ func NewRepository(db *dbpkg.Postgres, storageConfig StorageConfig) Repository {
 
 func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, filter ListFilter) (ListResponse, error) {
 	args, where := basePropertyWhere(tenantContext)
-	if filter.Scope == "own" {
-		args, where = addScopedPropertyVisibility(args, where, tenantContext, "p")
-	}
+	args, where = addScopedPropertyVisibility(args, where, tenantContext, "p", filter.Scope)
 
 	addFilter := func(clause string, value any) {
 		args = append(args, value)
@@ -137,28 +136,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	if filter.TotalAreaMax > 0 {
 		addFilter("p.area_total <= $%d::numeric", filter.TotalAreaMax)
 	}
-	if filter.PriceMin > 0 {
-		if dealType == "locacao" || dealType == "temporada" {
-			addFilter("p.valor_locacao >= $%d::numeric", filter.PriceMin)
-		} else if dealType == "venda" {
-			addFilter("p.preco >= $%d::numeric", filter.PriceMin)
-		} else {
-			args = append(args, filter.PriceMin)
-			index := len(args)
-			where = append(where, fmt.Sprintf("(p.preco >= $%d::numeric or p.valor_locacao >= $%d::numeric)", index, index))
-		}
-	}
-	if filter.PriceMax > 0 {
-		if dealType == "locacao" || dealType == "temporada" {
-			addFilter("p.valor_locacao <= $%d::numeric", filter.PriceMax)
-		} else if dealType == "venda" {
-			addFilter("p.preco <= $%d::numeric", filter.PriceMax)
-		} else {
-			args = append(args, filter.PriceMax)
-			index := len(args)
-			where = append(where, fmt.Sprintf("(p.preco <= $%d::numeric or p.valor_locacao <= $%d::numeric)", index, index))
-		}
-	}
+	args, where = addPropertyPriceRangeFilter(args, where, dealType, filter.PriceMin, filter.PriceMax)
 
 	args = append(args, filter.Limit, filter.Offset)
 	limitIndex := len(args) - 1
@@ -249,9 +227,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 
 func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, filter ListFilter) (StatsResponse, error) {
 	args, where := basePropertyWhere(tenantContext)
-	if filter.Scope == "own" {
-		args, where = addScopedPropertyVisibility(args, where, tenantContext, "p")
-	}
+	args, where = addScopedPropertyVisibility(args, where, tenantContext, "p", filter.Scope)
 
 	addFilter := func(clause string, value any) {
 		args = append(args, value)
@@ -342,28 +318,7 @@ func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, 
 	if filter.TotalAreaMax > 0 {
 		addFilter("p.area_total <= $%d::numeric", filter.TotalAreaMax)
 	}
-	if filter.PriceMin > 0 {
-		if dealType == "locacao" || dealType == "temporada" {
-			addFilter("p.valor_locacao >= $%d::numeric", filter.PriceMin)
-		} else if dealType == "venda" {
-			addFilter("p.preco >= $%d::numeric", filter.PriceMin)
-		} else {
-			args = append(args, filter.PriceMin)
-			index := len(args)
-			where = append(where, fmt.Sprintf("(p.preco >= $%d::numeric or p.valor_locacao >= $%d::numeric)", index, index))
-		}
-	}
-	if filter.PriceMax > 0 {
-		if dealType == "locacao" || dealType == "temporada" {
-			addFilter("p.valor_locacao <= $%d::numeric", filter.PriceMax)
-		} else if dealType == "venda" {
-			addFilter("p.preco <= $%d::numeric", filter.PriceMax)
-		} else {
-			args = append(args, filter.PriceMax)
-			index := len(args)
-			where = append(where, fmt.Sprintf("(p.preco <= $%d::numeric or p.valor_locacao <= $%d::numeric)", index, index))
-		}
-	}
+	args, where = addPropertyPriceRangeFilter(args, where, dealType, filter.PriceMin, filter.PriceMax)
 
 	saleAliasIndex := len(args) + 1
 	rentalAliasIndex := len(args) + 2
@@ -559,6 +514,44 @@ func dealTypeFilterClause() string {
 	)`
 }
 
+func addPropertyPriceRangeFilter(args []any, where []string, dealType string, minPrice float64, maxPrice float64) ([]any, []string) {
+	if minPrice <= 0 && maxPrice <= 0 {
+		return args, where
+	}
+
+	minPlaceholder := 0
+	maxPlaceholder := 0
+	if minPrice > 0 {
+		args = append(args, minPrice)
+		minPlaceholder = len(args)
+	}
+	if maxPrice > 0 {
+		args = append(args, maxPrice)
+		maxPlaceholder = len(args)
+	}
+
+	columnRange := func(column string) string {
+		clauses := make([]string, 0, 2)
+		if minPlaceholder > 0 {
+			clauses = append(clauses, fmt.Sprintf("%s >= $%d::numeric", column, minPlaceholder))
+		}
+		if maxPlaceholder > 0 {
+			clauses = append(clauses, fmt.Sprintf("%s <= $%d::numeric", column, maxPlaceholder))
+		}
+		return "(" + strings.Join(clauses, " and ") + ")"
+	}
+
+	switch dealType {
+	case "venda":
+		where = append(where, columnRange("p.preco"))
+	case "locacao", "temporada":
+		where = append(where, columnRange("p.valor_locacao"))
+	default:
+		where = append(where, "("+columnRange("p.preco")+" or "+columnRange("p.valor_locacao")+")")
+	}
+
+	return args, where
+}
 func dealTypeAliases(dealType string) []string {
 	switch dealType {
 	case "venda":
@@ -617,18 +610,32 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, pr
 		return nil, ErrPropertyNotFound
 	}
 
+	args := []any{tenantContext.OrganizationID, propertyID}
+	where := []string{
+		"p.organization_id = $1::uuid",
+		"p.id = $2::uuid",
+	}
+	args, where = addScopedPropertyVisibility(args, where, tenantContext, "p", "")
+
 	property, err := scanProperty(repo.db.Pool().QueryRow(ctx, `
 		select to_jsonb(p)::text
 		from public.properties p
-		where p.organization_id = $1::uuid
-		  and p.id = $2::uuid
+		where `+strings.Join(where, " and ")+`
 		limit 1
-	`,
-		tenantContext.OrganizationID,
-		propertyID,
-	))
+	`, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrPropertyNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	canViewContacts, err := repo.canViewPropertyOwnerContacts(ctx, tenantContext)
+	if err != nil {
+		return nil, err
+	}
+	if !canViewContacts {
+		redactPropertyOwnerContacts(property)
 	}
 	return property, err
 }
@@ -656,6 +663,9 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	}
 	if input["cadastrado_por"] == nil {
 		input["cadastrado_por"] = input["responsible_user_id"]
+	}
+	if err := repo.validatePropertyReferences(ctx, tx, tenantContext.OrganizationID, input); err != nil {
+		return nil, err
 	}
 
 	propertyType, _ := input["tipo"].(string)
@@ -726,6 +736,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		delete(input, "responsible_user_id")
 		delete(input, "cadastrado_por")
 	}
+	if err := repo.validatePropertyReferences(ctx, tx, tenantContext.OrganizationID, input); err != nil {
+		return nil, err
+	}
 
 	if nextType, ok := input["tipo"].(string); ok && strings.TrimSpace(nextType) != "" && normalizeASCII(nextType) != normalizeASCII(current.PropertyType) {
 		return nil, fmt.Errorf("%w: tipo_de_imovel cannot be changed after creation", ErrInvalidInput)
@@ -780,6 +793,9 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 		  and id = $2::uuid
 	`, tenantContext.OrganizationID, propertyID)
 	if err != nil {
+		if isPropertyHasLinkedLeadsForeignKeyViolation(err) {
+			return ErrPropertyHasLinkedLeads
+		}
 		return err
 	}
 	if tag.RowsAffected() == 0 {
@@ -789,32 +805,34 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 	return nil
 }
 
+func isPropertyHasLinkedLeadsForeignKeyViolation(err error) bool {
+	var databaseError *pgconn.PgError
+	return errors.As(err, &databaseError) &&
+		databaseError.Code == "23503" &&
+		databaseError.ConstraintName == "leads_property_id_fkey"
+}
+
 func (repo Repository) ListHistory(ctx context.Context, tenantContext tenant.Context, propertyID string) ([]HistoryEvent, error) {
 	propertyID, ok := normalizeUUID(propertyID)
 	if !ok {
 		return nil, ErrPropertyNotFound
 	}
 
-	var exists bool
-	if err := repo.db.Pool().QueryRow(ctx, `
-		select exists (
-			select 1
-			from public.properties p
-			where p.organization_id = $1::uuid
-			  and p.id = $2::uuid
-		)
-	`,
-		tenantContext.OrganizationID,
-		propertyID,
-	).Scan(&exists); err != nil {
-		return nil, err
+	visibilityArgs := []any{tenantContext.OrganizationID, propertyID}
+	visibilityWhere := []string{
+		"p.organization_id = $1::uuid",
+		"p.id = $2::uuid",
 	}
-	if !exists {
-		return nil, ErrPropertyNotFound
-	}
+	visibilityArgs, visibilityWhere = addScopedPropertyVisibility(visibilityArgs, visibilityWhere, tenantContext, "p", "")
 
 	rows, err := repo.db.Pool().Query(ctx, `
-		with property_events as (
+		with visible_property as materialized (
+			select p.*
+			from public.properties p
+			where `+strings.Join(visibilityWhere, " and ")+`
+			limit 1
+		),
+		property_events as (
 			select
 				e.id::text as id,
 				e.event_type,
@@ -822,9 +840,10 @@ func (repo Repository) ListHistory(ctx context.Context, tenantContext tenant.Con
 				e.created_at,
 				coalesce(e.payload->>'message', e.event_type) as title
 			from public.events e
-			where e.organization_id = $1::uuid
-			  and e.entity_type = 'property'
-			  and e.entity_id = $2::uuid
+			join visible_property p
+			  on p.organization_id = e.organization_id
+			 and p.id = e.entity_id
+			where e.entity_type = 'property'
 		),
 		property_created_row as (
 			select
@@ -841,15 +860,13 @@ func (repo Repository) ListHistory(ctx context.Context, tenantContext tenant.Con
 				) as payload,
 				p.created_at,
 				'Imovel criado' as title
-			from public.properties p
-			where p.organization_id = $1::uuid
-			  and p.id = $2::uuid
-			  and not exists (
+			from visible_property p
+			where not exists (
 				select 1
 				from public.events e
-				where e.organization_id = $1::uuid
+				where e.organization_id = p.organization_id
 				  and e.entity_type = 'property'
-				  and e.entity_id = $2::uuid
+				  and e.entity_id = p.id
 				  and e.event_type = 'property_created'
 			  )
 		),
@@ -861,21 +878,18 @@ func (repo Repository) ListHistory(ctx context.Context, tenantContext tenant.Con
 					else 'property_schedule'
 				end as event_type,
 				jsonb_build_object(
-					'title', se.title,
-					'description', se.description,
 					'event_type', se.event_type,
 					'status', se.status,
 					'start_time', se.start_time,
 					'end_time', se.end_time,
-					'user_id', se.user_id,
-					'lead_id', se.lead_id,
 					'message', 'Agendamento vinculado ao imovel'
 				) as payload,
 				se.created_at,
-				se.title
+				'Agendamento vinculado ao imovel' as title
 			from public.schedule_events se
-			where se.organization_id = $1::uuid
-			  and se.property_id = $2::uuid
+			join visible_property p
+			  on p.organization_id = se.organization_id
+			 and p.id = se.property_id
 		)
 		select id, event_type, title, payload::text, created_at::text
 		from (
@@ -887,7 +901,7 @@ func (repo Repository) ListHistory(ctx context.Context, tenantContext tenant.Con
 		) history
 		order by created_at desc
 		limit 100
-	`, tenantContext.OrganizationID, propertyID)
+	`, visibilityArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -904,7 +918,13 @@ func (repo Repository) ListHistory(ctx context.Context, tenantContext tenant.Con
 		_ = json.Unmarshal([]byte(payload), &event.Metadata)
 		events = append(events, event)
 	}
-	return events, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(events) == 0 {
+		return nil, ErrPropertyNotFound
+	}
+	return events, nil
 }
 
 func (repo Repository) getSnapshotForUpdate(ctx context.Context, tx pgx.Tx, organizationID string, propertyID string) (propertySnapshot, error) {
@@ -1525,11 +1545,15 @@ func normalizePropertyOutput(property Property) Property {
 		property["arquivos"] = documents
 	}
 
-	responsibleID := anyString(property["responsible_user_id"])
-	if responsibleID == "" {
-		responsibleID = anyString(property["created_by"])
-	}
-	property["cadastrado_por"] = responsibleID
+	// cadastrado_por is a legacy text column. Older rows may contain a user UUID,
+	// an empty string, or an arbitrary label. Keep the compatibility alias typed:
+	// prefer canonical UUID columns, accept only UUID-shaped legacy values, and
+	// emit null when no trustworthy user reference exists.
+	property["cadastrado_por"] = normalizedPropertyResponsibleReference(
+		property["responsible_user_id"],
+		property["created_by"],
+		property["cadastrado_por"],
+	)
 
 	imageURLs := anyStringSlice(property["image_urls"])
 	if len(imageURLs) == 0 {
@@ -1553,6 +1577,15 @@ func normalizePropertyOutput(property Property) Property {
 	}
 
 	return property
+}
+
+func normalizedPropertyResponsibleReference(values ...any) any {
+	for _, value := range values {
+		if normalized, ok := normalizeUUID(anyString(value)); ok {
+			return normalized
+		}
+	}
+	return nil
 }
 
 func anyString(value any) string {
@@ -1685,8 +1718,14 @@ func basePropertyWhere(tenantContext tenant.Context) ([]any, []string) {
 	return []any{tenantContext.OrganizationID}, []string{"p.organization_id = $1::uuid"}
 }
 
-func addScopedPropertyVisibility(args []any, where []string, tenantContext tenant.Context, alias string) ([]any, []string) {
-	args = append(args, canViewAllProperties(tenantContext), tenantContext.UserID, canViewTeamProperties(tenantContext))
+func addScopedPropertyVisibility(args []any, where []string, tenantContext tenant.Context, alias string, requestedScope string) ([]any, []string) {
+	forceOwn := requestedScope == "own"
+	args = append(
+		args,
+		canViewAllProperties(tenantContext) && !forceOwn,
+		tenantContext.UserID,
+		canViewTeamProperties(tenantContext) && !forceOwn,
+	)
 	canViewAllIndex := len(args) - 2
 	userIDIndex := len(args) - 1
 	canViewTeamIndex := len(args)
@@ -1724,11 +1763,11 @@ func propertyVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder strin
 }
 
 func canViewAllProperties(tenantContext tenant.Context) bool {
-	return canManageProperties(tenantContext) || tenantContext.HasPermission("property_view_all")
+	return canManageProperties(tenantContext)
 }
 
 func canViewTeamProperties(tenantContext tenant.Context) bool {
-	return tenantContext.IsTeamLeader || tenantContext.HasPermission("lead_view_team") || tenantContext.HasPermission("property_view_team")
+	return tenantContext.IsTeamLeader || tenantContext.HasPermission("lead_view_team")
 }
 
 func canManageProperties(tenantContext tenant.Context) bool {

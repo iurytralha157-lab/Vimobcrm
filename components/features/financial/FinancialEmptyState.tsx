@@ -19,13 +19,13 @@ export function FinancialEmptyState({
   icon: Icon = FileQuestion
 }: FinancialEmptyStateProps) {
   return (
-    <Card className="app-card border-dashed border-white/[0.08]">
+    <Card className="app-card border-dashed border-[var(--app-border)]">
       <CardContent className="flex flex-col items-center justify-center gap-4 py-12 text-center">
-        <div className="rounded-full bg-white/[0.055] p-4">
+        <div className="rounded-full bg-[var(--app-surface-soft)] p-4">
           <Icon className="h-8 w-8 text-muted-foreground" />
         </div>
         <div className="space-y-1">
-          <h3 className="text-lg font-semibold">{title}</h3>
+          <h3 className="text-sm font-normal">{title}</h3>
           <p className="max-w-[300px] text-sm text-muted-foreground">
             {description}
           </p>

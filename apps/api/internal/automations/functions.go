@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/supabasehttp"
 )
 
 type FunctionsConfig struct {
@@ -50,8 +52,7 @@ func (client functionsClient) invoke(ctx context.Context, functionName string, b
 	if err != nil {
 		return err
 	}
-	request.Header.Set("apikey", client.apiKey)
-	request.Header.Set("Authorization", "Bearer "+client.apiKey)
+	supabasehttp.SetServiceAuth(request, client.apiKey)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 

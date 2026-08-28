@@ -40,7 +40,7 @@ export function TeamLeadersStats() {
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <Crown className="h-5 w-5 text-amber-500" />
-        <h3 className="font-semibold">Estatísticas por Líder</h3>
+        <h3 className="text-[14px] font-normal">Estatísticas por Líder</h3>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -65,12 +65,12 @@ export function TeamLeadersStats() {
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
-                <div className="text-center p-2 rounded-lg bg-white/[0.045]">
-                  <p className="text-2xl font-bold">{leader.totalLeads}</p>
+                <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-2 text-center">
+                  <p className="text-[20px] font-normal">{leader.totalLeads}</p>
                   <p className="text-xs text-muted-foreground">Leads totais</p>
                 </div>
-                <div className="text-center p-2 rounded-lg bg-white/[0.045]">
-                  <p className="text-2xl font-bold text-orange-600">{leader.convertedLeads}</p>
+                <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-2 text-center">
+                  <p className="text-[20px] font-normal text-primary">{leader.convertedLeads}</p>
                   <p className="text-xs text-muted-foreground">Convertidos</p>
                 </div>
               </div>

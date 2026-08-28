@@ -5,10 +5,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import { useAuth } from '@/contexts/AuthContext';
+import { getFriendlyErrorMessage } from '@/lib/error-handler';
 import { gamificationAPI, type GamificationActionType, type GamificationMissionInput } from '@/lib/api/gamification';
 
 function getErrorMessage(error: unknown) {
-  return error instanceof Error && error.message ? error.message : 'Tente novamente em alguns instantes.';
+  return getFriendlyErrorMessage(error);
 }
 
 function showMutationError(action: string, error: unknown) {
@@ -66,7 +67,7 @@ export function useGamificationAdmin(enabled = true) {
       gamificationAPI.setParticipant(input.userId, input.participates, organizationId),
     onSuccess: async () => {
       await invalidate();
-      toast.success('Participacao atualizada.');
+      toast.success('Participação atualizada.');
     },
     onError: (error) => showMutationError('Não foi possível atualizar a participação.', error),
   });
@@ -104,7 +105,7 @@ export function useGamificationAdmin(enabled = true) {
       gamificationAPI.createManualEntry(input, organizationId),
     onSuccess: async () => {
       await invalidate();
-      toast.success('Solicitacao enviada para aprovacao.');
+      toast.success('Solicitação enviada para aprovação.');
     },
     onError: (error) => showMutationError('Não foi possível enviar a solicitação.', error),
   });
@@ -114,7 +115,7 @@ export function useGamificationAdmin(enabled = true) {
       gamificationAPI.decideManualEntry(input.id, { status: input.status, reason: input.reason }, organizationId),
     onSuccess: async () => {
       await invalidate();
-      toast.success('Solicitacao atualizada.');
+      toast.success('Solicitação atualizada.');
     },
     onError: (error) => showMutationError('Não foi possível atualizar a solicitação.', error),
   });

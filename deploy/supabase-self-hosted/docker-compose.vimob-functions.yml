@@ -1,0 +1,10 @@
+services:
+  functions:
+    env_file:
+      - ./.env.functions
+    environment:
+      VERIFY_JWT: "false"
+    volumes:
+      - ./volumes/functions:/home/deno/functions
+      - ./functions-main/index.ts:/home/deno/functions/main/index.ts:ro
+

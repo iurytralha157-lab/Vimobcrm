@@ -18,9 +18,10 @@ type Envelope<T> = {
 }
 
 export const leadAttachmentsAPI = {
-  async list(leadId: string) {
+  async list(leadId: string, organizationId?: string | null) {
     const id = parseDomainInput(entityIdSchema, leadId, 'lead-attachments.list.id')
     const response = await vimobAPIRequest<Envelope<LeadAttachment[]>>('/v1/lead-attachments', {
+      organizationId,
       query: { leadId: id },
     })
     validateDomainResponse(apiLeadAttachmentListResponseSchema, response, 'lead-attachments.list')
@@ -34,23 +35,25 @@ export const leadAttachmentsAPI = {
     file_type?: string
     file_size?: number
     message_id?: string
-  }) {
+  }, organizationId?: string | null) {
     const body = parseDomainInput(leadAttachmentCreateInputSchema, attachment, 'lead-attachments.create')
     const response = await vimobAPIRequest<Envelope<LeadAttachment>>('/v1/lead-attachments', {
       method: 'POST',
+      organizationId,
       body,
     })
     validateDomainResponse(apiLeadAttachmentResponseSchema, response, 'lead-attachments.create')
     return response.data
   },
 
-  async upload(leadId: string, file: File) {
+  async upload(leadId: string, file: File, organizationId?: string | null) {
     const id = parseDomainInput(entityIdSchema, leadId, 'lead-attachments.upload.id')
     const body = new FormData()
     body.append('file', file)
 
     const response = await vimobAPIRequest<Envelope<LeadAttachment>>(`/v1/leads/${id}/attachments`, {
       method: 'POST',
+      organizationId,
       body,
     })
     validateDomainResponse(apiLeadAttachmentResponseSchema, response, 'lead-attachments.upload')

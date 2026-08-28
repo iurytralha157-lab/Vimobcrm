@@ -97,8 +97,12 @@ export type Database = {
       admin_subscription_plans: {
         Row: {
           billing_cycle: string | null
+          billing_periods: number[]
           created_at: string | null
           description: string | null
+          discount_percentage: number
+          display_features: string[]
+          display_order: number
           id: string
           is_active: boolean | null
           is_public: boolean
@@ -108,6 +112,7 @@ export type Database = {
           modules: string[] | null
           name: string
           price: number
+          reference_price: number | null
           slug: string
           trial_days: number | null
           trial_enabled: boolean | null
@@ -115,8 +120,12 @@ export type Database = {
         }
         Insert: {
           billing_cycle?: string | null
+          billing_periods?: number[]
           created_at?: string | null
           description?: string | null
+          discount_percentage?: number
+          display_features?: string[]
+          display_order?: number
           id?: string
           is_active?: boolean | null
           is_public?: boolean
@@ -126,6 +135,7 @@ export type Database = {
           modules?: string[] | null
           name: string
           price?: number
+          reference_price?: number | null
           slug: string
           trial_days?: number | null
           trial_enabled?: boolean | null
@@ -133,8 +143,12 @@ export type Database = {
         }
         Update: {
           billing_cycle?: string | null
+          billing_periods?: number[]
           created_at?: string | null
           description?: string | null
+          discount_percentage?: number
+          display_features?: string[]
+          display_order?: number
           id?: string
           is_active?: boolean | null
           is_public?: boolean
@@ -144,6 +158,7 @@ export type Database = {
           modules?: string[] | null
           name?: string
           price?: number
+          reference_price?: number | null
           slug?: string
           trial_days?: number | null
           trial_enabled?: boolean | null
@@ -2303,16 +2318,20 @@ export type Database = {
           day_offset: number
           delay_days: number
           description: string | null
+          due_minutes: number
           id: string
+          is_required: boolean
           message_template: string | null
           metadata: Json
           observation: string | null
           organization_id: string | null
+          outcome_required: boolean
           position: number | null
           recommended_message: string | null
           title: string
           type: string | null
           updated_at: string
+          warning_minutes: number
         }
         Insert: {
           cadence_template_id: string
@@ -2320,16 +2339,20 @@ export type Database = {
           day_offset?: number
           delay_days?: number
           description?: string | null
+          due_minutes?: number
           id?: string
+          is_required?: boolean
           message_template?: string | null
           metadata?: Json
           observation?: string | null
           organization_id?: string | null
+          outcome_required?: boolean
           position?: number | null
           recommended_message?: string | null
           title: string
           type?: string | null
           updated_at?: string
+          warning_minutes?: number
         }
         Update: {
           cadence_template_id?: string
@@ -2337,16 +2360,20 @@ export type Database = {
           day_offset?: number
           delay_days?: number
           description?: string | null
+          due_minutes?: number
           id?: string
+          is_required?: boolean
           message_template?: string | null
           metadata?: Json
           observation?: string | null
           organization_id?: string | null
+          outcome_required?: boolean
           position?: number | null
           recommended_message?: string | null
           title?: string
           type?: string | null
           updated_at?: string
+          warning_minutes?: number
         }
         Relationships: [
           {
@@ -6480,6 +6507,8 @@ export type Database = {
       lead_tasks: {
         Row: {
           assigned_user_id: string | null
+          cadence_enrollment_id: string | null
+          cadence_template_task_id: string | null
           completed_at: string | null
           created_at: string
           created_by: string | null
@@ -6496,12 +6525,16 @@ export type Database = {
           organization_id: string | null
           outcome: string | null
           outcome_notes: string | null
+          sequence: number | null
+          status: string
           title: string
           type: string | null
           updated_at: string
         }
         Insert: {
           assigned_user_id?: string | null
+          cadence_enrollment_id?: string | null
+          cadence_template_task_id?: string | null
           completed_at?: string | null
           created_at?: string
           created_by?: string | null
@@ -6518,12 +6551,16 @@ export type Database = {
           organization_id?: string | null
           outcome?: string | null
           outcome_notes?: string | null
+          sequence?: number | null
+          status?: string
           title: string
           type?: string | null
           updated_at?: string
         }
         Update: {
           assigned_user_id?: string | null
+          cadence_enrollment_id?: string | null
+          cadence_template_task_id?: string | null
           completed_at?: string | null
           created_at?: string
           created_by?: string | null
@@ -6540,6 +6577,8 @@ export type Database = {
           organization_id?: string | null
           outcome?: string | null
           outcome_notes?: string | null
+          sequence?: number | null
+          status?: string
           title?: string
           type?: string | null
           updated_at?: string
@@ -7506,7 +7545,17 @@ export type Database = {
           ad_account_id: string | null
           assigned_user_id: string | null
           campaign_property_mapping: Json | null
+          conversion_feedback_activated_at: string | null
+          conversion_feedback_enabled: boolean
+          conversion_feedback_last_error: string | null
+          conversion_feedback_last_sent_at: string | null
+          conversion_feedback_last_validated_at: string | null
+          conversion_feedback_status: string
           created_at: string
+          crm_dataset_access_token: string | null
+          crm_dataset_access_token_secret_ref: string | null
+          crm_dataset_id: string | null
+          crm_dataset_name: string | null
           default_status: string | null
           facebook_user_id: string | null
           facebook_user_name: string | null
@@ -7540,7 +7589,17 @@ export type Database = {
           ad_account_id?: string | null
           assigned_user_id?: string | null
           campaign_property_mapping?: Json | null
+          conversion_feedback_activated_at?: string | null
+          conversion_feedback_enabled?: boolean
+          conversion_feedback_last_error?: string | null
+          conversion_feedback_last_sent_at?: string | null
+          conversion_feedback_last_validated_at?: string | null
+          conversion_feedback_status?: string
           created_at?: string
+          crm_dataset_access_token?: string | null
+          crm_dataset_access_token_secret_ref?: string | null
+          crm_dataset_id?: string | null
+          crm_dataset_name?: string | null
           default_status?: string | null
           facebook_user_id?: string | null
           facebook_user_name?: string | null
@@ -7574,7 +7633,17 @@ export type Database = {
           ad_account_id?: string | null
           assigned_user_id?: string | null
           campaign_property_mapping?: Json | null
+          conversion_feedback_activated_at?: string | null
+          conversion_feedback_enabled?: boolean
+          conversion_feedback_last_error?: string | null
+          conversion_feedback_last_sent_at?: string | null
+          conversion_feedback_last_validated_at?: string | null
+          conversion_feedback_status?: string
           created_at?: string
+          crm_dataset_access_token?: string | null
+          crm_dataset_access_token_secret_ref?: string | null
+          crm_dataset_id?: string | null
+          crm_dataset_name?: string | null
           default_status?: string | null
           facebook_user_id?: string | null
           facebook_user_name?: string | null
@@ -8999,6 +9068,7 @@ export type Database = {
           razao_social: string | null
           segment: string | null
           slug: string | null
+          subscription_billing_period_months: number
           subscription_status: string
           subscription_type: string | null
           subscription_value: number | null
@@ -9049,6 +9119,7 @@ export type Database = {
           razao_social?: string | null
           segment?: string | null
           slug?: string | null
+          subscription_billing_period_months?: number
           subscription_status?: string
           subscription_type?: string | null
           subscription_value?: number | null
@@ -9099,6 +9170,7 @@ export type Database = {
           razao_social?: string | null
           segment?: string | null
           slug?: string | null
+          subscription_billing_period_months?: number
           subscription_status?: string
           subscription_type?: string | null
           subscription_value?: number | null
@@ -11637,57 +11709,87 @@ export type Database = {
       stage_operational_configs: {
         Row: {
           approval_flow: Json | null
+          attention_mode: string
           automatic_notifications: Json | null
           automatic_operational_requests: Json | null
           automatic_tasks: Json | null
+          business_hours_only: boolean
+          cadence_enabled: boolean
           checklist_template: Json | null
           config: Json
           created_at: string | null
           dashboard_destination: string | null
+          escalation_minutes: number | null
+          first_effective_contact_minutes: number | null
+          first_outreach_minutes: number | null
           id: string
           operation_context: string
           organization_id: string
           responsible_sector: string | null
+          revision: number
           sla_hours: number | null
+          stage_inactivity_minutes: number | null
           stage_id: string
+          stage_max_age_minutes: number | null
           updated_at: string | null
           visibility_rules: Json | null
+          warning_minutes: number
         }
         Insert: {
           approval_flow?: Json | null
+          attention_mode?: string
           automatic_notifications?: Json | null
           automatic_operational_requests?: Json | null
           automatic_tasks?: Json | null
+          business_hours_only?: boolean
+          cadence_enabled?: boolean
           checklist_template?: Json | null
           config?: Json
           created_at?: string | null
           dashboard_destination?: string | null
+          escalation_minutes?: number | null
+          first_effective_contact_minutes?: number | null
+          first_outreach_minutes?: number | null
           id?: string
           operation_context: string
           organization_id: string
           responsible_sector?: string | null
+          revision?: number
           sla_hours?: number | null
+          stage_inactivity_minutes?: number | null
           stage_id: string
+          stage_max_age_minutes?: number | null
           updated_at?: string | null
           visibility_rules?: Json | null
+          warning_minutes?: number
         }
         Update: {
           approval_flow?: Json | null
+          attention_mode?: string
           automatic_notifications?: Json | null
           automatic_operational_requests?: Json | null
           automatic_tasks?: Json | null
+          business_hours_only?: boolean
+          cadence_enabled?: boolean
           checklist_template?: Json | null
           config?: Json
           created_at?: string | null
           dashboard_destination?: string | null
+          escalation_minutes?: number | null
+          first_effective_contact_minutes?: number | null
+          first_outreach_minutes?: number | null
           id?: string
           operation_context?: string
           organization_id?: string
           responsible_sector?: string | null
+          revision?: number
           sla_hours?: number | null
+          stage_inactivity_minutes?: number | null
           stage_id?: string
+          stage_max_age_minutes?: number | null
           updated_at?: string | null
           visibility_rules?: Json | null
+          warning_minutes?: number
         }
         Relationships: [
           {
@@ -11712,6 +11814,7 @@ export type Database = {
           created_at: string
           id: string
           is_active: boolean
+          is_qualified: boolean
           is_lost: boolean
           is_won: boolean
           name: string
@@ -11727,6 +11830,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_active?: boolean
+          is_qualified?: boolean
           is_lost?: boolean
           is_won?: boolean
           name: string
@@ -11742,6 +11846,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_active?: boolean
+          is_qualified?: boolean
           is_lost?: boolean
           is_won?: boolean
           name?: string
@@ -11799,6 +11904,7 @@ export type Database = {
       }
       subscriptions: {
         Row: {
+          billing_period_months: number
           cancel_at: string | null
           canceled_at: string | null
           created_at: string
@@ -11816,6 +11922,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          billing_period_months?: number
           cancel_at?: string | null
           canceled_at?: string | null
           created_at?: string
@@ -11833,6 +11940,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          billing_period_months?: number
           cancel_at?: string | null
           canceled_at?: string | null
           created_at?: string
@@ -14125,7 +14233,14 @@ export type Database = {
       meta_integrations_public: {
         Row: {
           ad_account_id: string | null
+          conversion_feedback_enabled: boolean | null
+          conversion_feedback_last_error: string | null
+          conversion_feedback_last_sent_at: string | null
+          conversion_feedback_last_validated_at: string | null
+          conversion_feedback_status: string | null
           created_at: string | null
+          crm_dataset_id: string | null
+          crm_dataset_name: string | null
           default_status: string | null
           facebook_user_id: string | null
           facebook_user_name: string | null
@@ -14154,7 +14269,14 @@ export type Database = {
         }
         Insert: {
           ad_account_id?: string | null
+          conversion_feedback_enabled?: boolean | null
+          conversion_feedback_last_error?: string | null
+          conversion_feedback_last_sent_at?: string | null
+          conversion_feedback_last_validated_at?: string | null
+          conversion_feedback_status?: string | null
           created_at?: string | null
+          crm_dataset_id?: string | null
+          crm_dataset_name?: string | null
           default_status?: string | null
           facebook_user_id?: string | null
           facebook_user_name?: string | null
@@ -14183,7 +14305,14 @@ export type Database = {
         }
         Update: {
           ad_account_id?: string | null
+          conversion_feedback_enabled?: boolean | null
+          conversion_feedback_last_error?: string | null
+          conversion_feedback_last_sent_at?: string | null
+          conversion_feedback_last_validated_at?: string | null
+          conversion_feedback_status?: string | null
           created_at?: string | null
+          crm_dataset_id?: string | null
+          crm_dataset_name?: string | null
           default_status?: string | null
           facebook_user_id?: string | null
           facebook_user_name?: string | null

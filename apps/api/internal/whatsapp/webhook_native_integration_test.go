@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
@@ -193,8 +194,8 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 			http.NotFound(w, request)
 			return
 		}
-		if request.Header.Get("Authorization") != "Bearer service-key" {
-			t.Errorf("storage upload is missing service authorization")
+		if request.Header.Get("apikey") != "sb_secret_whatsapp_test" || request.Header.Get("Authorization") != "" {
+			t.Errorf("storage upload has invalid opaque service-key authorization")
 		}
 		if strings.Contains(request.URL.Path, "provider-inbound-image-download-1") {
 			var placeholderRows int
@@ -213,7 +214,7 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer storageServer.Close()
-	storageRepo := NewRepository(postgres, nil, StorageConfig{ProjectURL: storageServer.URL, APIKey: "service-key"})
+	storageRepo := NewRepository(postgres, nil, StorageConfig{ProjectURL: storageServer.URL, APIKey: "sb_secret_whatsapp_test"})
 	if handled, err := storageRepo.processEvolutionWebhookNative(ctx, item("messages.upsert", "message_media.json")); err != nil || !handled {
 		t.Fatalf("native media placeholder replay = handled:%v error:%v", handled, err)
 	}
@@ -717,12 +718,15 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		t.Fatalf("verified Meta state = leads:%d conversationLead:%s messageLead:%s", verifiedLeadCount, campaignConversationLeadID, campaignMessageLeadID)
 	}
 	var campaignAssignedUserID, campaignPropertyID, campaignInterestPropertyID string
+	var distributionOutcome, distributionSource string
+	var distributionMarkerPresent bool
 	var roundRobinPosition int
-	var roundRobinLogs, leadMetaRows, leadEntryRows, activityRows, inboundLogRows int
+	var roundRobinLogs, distributionEvents, leadMetaRows, leadEntryRows, activityRows, inboundLogRows int
 	if err := postgres.Pool().QueryRow(ctx, `
-		select coalesce(assigned_user_id::text, ''), coalesce(property_id::text, ''), coalesce(interest_property_id::text, '')
+		select coalesce(assigned_user_id::text, ''), coalesce(property_id::text, ''),
+		       coalesce(interest_property_id::text, ''), metadata ? 'distribution_deferred'
 		from public.leads where id = $1::uuid
-	`, campaignConversationLeadID).Scan(&campaignAssignedUserID, &campaignPropertyID, &campaignInterestPropertyID); err != nil {
+	`, campaignConversationLeadID).Scan(&campaignAssignedUserID, &campaignPropertyID, &campaignInterestPropertyID, &distributionMarkerPresent); err != nil {
 		t.Fatal(err)
 	}
 	if err := postgres.Pool().QueryRow(ctx, `select current_position from public.round_robins where id = $1::uuid`, roundRobinID).Scan(&roundRobinPosition); err != nil {
@@ -732,6 +736,17 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		select count(*)::integer from public.round_robin_logs
 		where organization_id = $1::uuid and round_robin_id = $2::uuid and lead_id = $3::uuid
 	`, organizationID, roundRobinID, campaignConversationLeadID).Scan(&roundRobinLogs); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		select count(*)::integer, coalesce(max(outcome), ''), coalesce(max(source), '')
+		from private.lead_distribution_events
+		where organization_id = $1::uuid
+		  and lead_id = $2::uuid
+		  and idempotency_key = $3
+	`, organizationID, campaignConversationLeadID,
+		distribution.StableKey("whatsapp-native", sessionID, "provider-meta-verified-1"),
+	).Scan(&distributionEvents, &distributionOutcome, &distributionSource); err != nil {
 		t.Fatal(err)
 	}
 	if err := postgres.Pool().QueryRow(ctx, `select count(*)::integer from public.lead_meta where organization_id = $1::uuid and lead_id = $2::uuid`, organizationID, campaignConversationLeadID).Scan(&leadMetaRows); err != nil {
@@ -758,9 +773,12 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if campaignAssignedUserID != roundRobinUserID || campaignPropertyID != localPropertyID || campaignInterestPropertyID != localPropertyID || roundRobinPosition != 1 || roundRobinLogs != 1 ||
+		distributionEvents != 1 || distributionOutcome != "assigned" || distributionSource != "whatsapp" || distributionMarkerPresent ||
 		leadMetaRows != 1 || leadEntryRows != 1 || activityRows != 1 || inboundLogRows != 1 {
-		t.Fatalf("business parity = assignee:%s property:%s interest:%s rrPos:%d rrLogs:%d leadMeta:%d entries:%d activities:%d inbound:%d",
-			campaignAssignedUserID, campaignPropertyID, campaignInterestPropertyID, roundRobinPosition, roundRobinLogs, leadMetaRows, leadEntryRows, activityRows, inboundLogRows)
+		t.Fatalf("business parity = assignee:%s property:%s interest:%s rrPos:%d rrLogs:%d dist:%d/%s/%s marker:%v leadMeta:%d entries:%d activities:%d inbound:%d",
+			campaignAssignedUserID, campaignPropertyID, campaignInterestPropertyID, roundRobinPosition, roundRobinLogs,
+			distributionEvents, distributionOutcome, distributionSource, distributionMarkerPresent,
+			leadMetaRows, leadEntryRows, activityRows, inboundLogRows)
 	}
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.properties (organization_id, code, title) values

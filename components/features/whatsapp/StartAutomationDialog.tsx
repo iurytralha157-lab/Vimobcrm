@@ -7,7 +7,8 @@ import { toast } from "sonner";
 import { Clock, GitBranch, Loader2, MessageSquare, Play, Tag, UserPlus, Zap } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { useHasPermission } from "@/hooks/use-organization-roles";
+import { useOrganizationModules } from "@/hooks/use-organization-modules";
+import { useUserPermissions } from "@/hooks/use-user-permissions";
 
 interface StartAutomationDialogProps {
   open: boolean;
@@ -52,23 +53,27 @@ export function StartAutomationDialog({
   conversationId,
   contactName,
 }: StartAutomationDialogProps) {
-  const { data: canStartAutomations = false, isLoading: permissionLoading } = useHasPermission("automations_manage");
+  const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
+  const { hasModule, isLoading: modulesLoading } = useOrganizationModules();
+  const canStartAutomations = hasModule("automations") && hasPermission("automations_manage");
+  const permissionLoading = permissionsLoading || modulesLoading;
   const { data: automations, isLoading, error, refetch } = useAutomations(open && canStartAutomations);
-  const { profile } = useAuth();
+  const { organization, profile } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
   const queryClient = useQueryClient();
   const [starting, setStarting] = useState<string | null>(null);
 
   const activeAutomations = automations?.filter((automation) => automation.is_active) || [];
 
   const handleStart = async (automationId: string, automationName: string) => {
-    if (!profile?.organization_id || !canStartAutomations) return;
+    if (!organizationId || !canStartAutomations) return;
     setStarting(automationId);
 
     try {
       const result = await automationsAPI.startAutomation(
         automationId,
         { leadId, conversationId },
-        profile.organization_id,
+        organizationId,
       );
 
       await queryClient.invalidateQueries({ queryKey: ["automation-executions"] });
@@ -80,7 +85,7 @@ export function StartAutomationDialog({
       } else if (result.status === 'cancelled' || result.status === 'canceled') {
         toast.warning(`A execução de "${automationName}" foi cancelada.`);
       } else if (result.status === 'queued' && result.dispatchPending) {
-        toast.warning("Automação enfileirada para processamento. Ela será retomada automaticamente.");
+        toast.info("Automação recebida e adicionada à fila segura de processamento.");
       } else if (result.status === 'queued') {
         toast.info(`Automação "${automationName}" foi enfileirada.`);
       } else {
@@ -97,7 +102,7 @@ export function StartAutomationDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Zap className="h-5 w-5 text-primary" />
@@ -120,7 +125,7 @@ export function StartAutomationDialog({
               <p className="text-sm font-medium">Você não possui permissão para iniciar automações.</p>
             </div>
           ) : isLoading ? (
-            <div className="flex items-center justify-center py-8">
+            <div className="flex items-center justify-center py-8" role="status" aria-live="polite">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           ) : error ? (
@@ -148,10 +153,10 @@ export function StartAutomationDialog({
                   type="button"
                   onClick={() => handleStart(automation.id, automation.name)}
                   disabled={!!starting}
-                  className="w-full flex items-center gap-3 p-3 rounded-xl border border-white/[0.055] hover:bg-white/[0.055] transition-colors text-left disabled:opacity-50"
+                className="flex w-full items-center gap-3 rounded-[8px] border border-[var(--app-border)] p-3 text-left transition-colors hover:bg-[var(--app-surface-hover)] disabled:opacity-50"
                 >
-                  <div className="p-2.5 rounded-xl bg-primary/20 shrink-0">
-                    <Icon className="h-5 w-5 text-primary drop-shadow-sm" />
+                  <div className="shrink-0 rounded-[6px] bg-primary/15 p-2.5">
+                    <Icon className="h-5 w-5 text-primary" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate">{automation.name}</p>

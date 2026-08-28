@@ -586,7 +586,11 @@ function downloadCSV(contacts: Contact[], filename: string, columns: ExportColum
 
 function escapeCSVCell(value: string | number | boolean | null | undefined) {
   const text = value == null ? '' : String(value);
-  return `"${text.replace(/"/g, '""')}"`;
+  const safeText =
+    typeof value === 'string' && /^\s*[=+\-@]/.test(text)
+      ? `'${text}`
+      : text;
+  return `"${safeText.replace(/"/g, '""')}"`;
 }
 
 function styleHeader(worksheet: ExcelJS.Worksheet) {

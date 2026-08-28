@@ -25,71 +25,91 @@ export interface MetaConversation {
 export interface MetaMessage {
   id: string;
   conversation_id: string;
-  external_id: string;
+  external_id: string | null;
   content: string | null;
   message_type: string;
   from_me: boolean;
   status: string | null;
   media_url: string | null;
   media_mime_type: string | null;
-  sent_at: string;
+  sent_at: string | null;
   created_at: string;
+  client_request_id?: string | null;
+  provider_attempted_at?: string | null;
+  completed_at?: string | null;
+  delivery_error_code?: string | null;
+  idempotent_replay?: boolean;
 }
 
 export function useMetaConversations(pageId?: string, options: { enabled?: boolean } = {}) {
-  const { profile } = useAuth();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id ?? profile?.organization_id ?? null;
 
   return useQuery({
-    queryKey: ["meta-conversations", pageId],
+    queryKey: ["meta-conversations", organizationId, pageId],
     queryFn: async () => {
-      if (!profile?.organization_id) return [];
+      if (!organizationId) return [];
 
-      return integrationsAPI.listMetaConversations<MetaConversation>(pageId, profile.organization_id);
+      return integrationsAPI.listMetaConversations<MetaConversation>(pageId, organizationId);
     },
-    enabled: options.enabled !== false && !!profile?.organization_id,
+    enabled: options.enabled !== false && !!organizationId,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
 }
 
 export function useMetaMessages(conversationId: string | null, options: { enabled?: boolean } = {}) {
-  const { profile } = useAuth();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id ?? profile?.organization_id ?? null;
 
   return useQuery({
-    queryKey: ["meta-messages", conversationId],
+    queryKey: ["meta-messages", organizationId, conversationId],
     queryFn: async () => {
-      if (!conversationId) return [];
+      if (!conversationId || !organizationId) return [];
 
-      return integrationsAPI.listMetaMessages<MetaMessage>(conversationId, profile?.organization_id);
+      return integrationsAPI.listMetaMessages<MetaMessage>(conversationId, organizationId);
     },
-    enabled: options.enabled !== false && !!conversationId,
+    enabled: options.enabled !== false && !!conversationId && !!organizationId,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
 }
 
 export function useSendMetaMessage() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id ?? profile?.organization_id ?? null;
 
   return useMutation({
     mutationFn: async ({
       conversationId,
       text,
       platform,
-      recipientExternalId
+      recipientExternalId,
+      idempotencyKey,
     }: {
       conversationId: string;
       text: string;
       platform: 'instagram' | 'messenger';
       recipientExternalId: string;
+      idempotencyKey: string;
     }) => {
-      return integrationsAPI.invokeFunction("meta-messenger-proxy", {
-        action: "sendMessage",
-        platform,
-        recipientId: recipientExternalId,
-        text,
-        conversationId
-      }, profile?.organization_id);
+      if (!organizationId) throw new Error("Organização ativa não encontrada");
+      // Platform and recipient are intentionally resolved again by the Go API
+      // from the tenant-scoped conversation. They are retained in this hook's
+      // input only for compatibility with the existing UI contract.
+      void platform;
+      void recipientExternalId;
+      return integrationsAPI.sendMetaMessage<MetaMessage>(
+        conversationId,
+        { text, idempotencyKey },
+        organizationId,
+      );
     },
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["meta-messages", variables.conversationId] });
-    }
+      queryClient.invalidateQueries({ queryKey: ["meta-messages", organizationId, variables.conversationId] });
+      queryClient.invalidateQueries({ queryKey: ["meta-conversations", organizationId] });
+    },
+    retry: 2,
   });
 }

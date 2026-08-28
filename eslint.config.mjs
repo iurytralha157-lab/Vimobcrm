@@ -10,13 +10,18 @@ const eslintConfig = defineConfig([
     // Default ignores of eslint-config-next:
     ".next/**",
     ".next-e2e/**",
+    ".next*/**",
     ".codex/**",
+    ".codex-logs/**",
+    ".codex-tmp/**",
+    ".codex-worktrees/**",
     ".tmp/**",
     ".validation-tests/**",
     "node_modules/**",
     "out/**",
     "build/**",
     "dist/**",
+    "supabase/.temp/**",
     "next-env.d.ts",
     // Generated Supabase types are not hand-edited.
     "**/supabase/types.ts",

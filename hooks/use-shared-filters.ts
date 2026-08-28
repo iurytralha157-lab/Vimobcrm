@@ -126,7 +126,7 @@ export function useSharedFilters(options?: {
   const contactsQuery = useQuery({
     queryKey: ['shared-filter-contacts', organizationId, dateFromStr, dateToStr, teamId, userId, source, campaignId, adSetId, adId, dealStatus, searchQuery],
     enabled: shouldLoadDynamicOptions && !!organizationId,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       contactsAPI.list({
         teamId: optionalFilter(teamId),
         assigneeId: optionalFilter(userId),
@@ -140,7 +140,8 @@ export function useSharedFilters(options?: {
         createdTo: dateRange.to.toISOString(),
         page: 1,
         limit: 500,
-      }, organizationId),
+        mode: 'compact',
+      }, organizationId, { signal }),
     staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,

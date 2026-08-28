@@ -1,5 +1,4 @@
 import { useCallback, useState, memo, type CSSProperties } from 'react';
-import { useTheme } from 'next-themes';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Phone, Mail, MessageCircle, Clock, User, Zap, Trophy, XCircle, Loader2 } from 'lucide-react';
@@ -7,13 +6,15 @@ import { cn } from '@/lib/utils';
 import { Draggable } from '@hello-pangea/dnd';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useFloatingChat } from '@/contexts/FloatingChatContext';
-import { formatPhoneForDisplay } from '@/lib/phone-utils';
+import { formatPhoneForDisplay, normalizePhoneToE164 } from '@/lib/phone-utils';
 import { SlaBadge } from './SlaBadge';
 import { useRecordFirstResponseOnAction } from '@/hooks/use-first-response';
 import { useCreateActivity } from '@/hooks/use-activities';
 import { TaskOutcomeDialog, TaskOutcome } from '@/components/features/leads/TaskOutcomeDialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { ReentryBadge } from '@/components/features/leads/ReentryBadge';
+import { BRAND_COLORS } from '@/config/brand-colors';
+import { getTagColorStyle } from '@/lib/tag-color';
 
 // Deal status labels and colors
 const dealStatusConfig = {
@@ -112,7 +113,6 @@ export const LeadCard = memo(function LeadCard({
   tourTarget,
 }: LeadCardProps) {
   const { openNewChat } = useFloatingChat();
-  const { resolvedTheme } = useTheme();
   const { profile } = useAuth();
   const { recordFirstResponse } = useRecordFirstResponseOnAction();
   const createActivity = useCreateActivity();
@@ -162,7 +162,9 @@ export const LeadCard = memo(function LeadCard({
   const handlePhoneClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (lead.phone) {
-      window.open(`tel:${lead.phone.replace(/\D/g, '')}`, '_blank');
+      const phoneHref = normalizePhoneToE164(lead.phone);
+      if (!phoneHref) return;
+      window.open(`tel:${phoneHref}`, '_blank');
       setOutcomeType('call');
       setOutcomeDialogOpen(true);
     }
@@ -201,25 +203,6 @@ export const LeadCard = memo(function LeadCard({
   };
   const isLost = lead.deal_status === 'lost';
   const isWon = lead.deal_status === 'won';
-  const leadToneVars = (
-    resolvedTheme === 'light'
-      ? {
-          '--lead-value-bg': '#bbf7d0',
-          '--lead-value-fg': '#047857',
-          '--lead-status-won-bg': '#bbf7d0',
-          '--lead-status-won-fg': '#047857',
-          '--lead-status-lost-bg': '#fee2e2',
-          '--lead-status-lost-fg': '#b91c1c',
-        }
-      : {
-          '--lead-value-bg': '#063f2b',
-          '--lead-value-fg': '#34d399',
-          '--lead-status-won-bg': '#063f2b',
-          '--lead-status-won-fg': '#34d399',
-          '--lead-status-lost-bg': '#4a1111',
-          '--lead-status-lost-fg': '#f87171',
-        }
-  ) as CSSProperties;
   const hasLeadLabels = Boolean(
     (lead.deal_status && lead.deal_status !== 'open')
     || (lead.tags && lead.tags.length > 0)
@@ -229,6 +212,13 @@ export const LeadCard = memo(function LeadCard({
   const handleCardClick = useCallback(() => {
     onClick(lead);
   }, [lead, onClick]);
+
+  const handleCardKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Enter' || (isDragDisabled && event.key === ' ')) {
+      event.preventDefault();
+      handleCardClick();
+    }
+  }, [handleCardClick, isDragDisabled]);
 
   const isRecentlyCreated = lead.created_at &&
     !lead.assigned_user_id &&
@@ -244,9 +234,8 @@ export const LeadCard = memo(function LeadCard({
         const isDropAnimating = Boolean(snapshot.isDropAnimating);
         const cardStyle = {
           ...providedStyle,
-          ...leadToneVars,
           transition: isDropAnimating
-            ? 'transform 90ms cubic-bezier(0.2, 0, 0, 1)'
+            ? 'transform 1ms linear'
             : isDragging
               ? 'none'
               : providedStyle?.transition,
@@ -254,7 +243,34 @@ export const LeadCard = memo(function LeadCard({
         };
 
         return (
-        <div data-tour={tourTarget} ref={provided.innerRef} {...draggableProps} {...provided.dragHandleProps} style={cardStyle} className={cn("bg-[var(--app-lead-card)] rounded-lg p-3 group hover:bg-[var(--app-lead-card-hover)] hover:-translate-y-0.5 relative", isDragging || isDropAnimating ? "transition-none" : "transition-[background-color,box-shadow,transform] duration-150", isDragDisabled ? "cursor-default" : "cursor-pointer", isDragging && "rotate-1 scale-[1.02] ring-1 ring-primary/45", isLost && "bg-destructive/5 hover:bg-destructive/10", isWon && "bg-emerald-500/5")} onClick={handleCardClick}>
+        <article
+          data-tour={tourTarget}
+          ref={provided.innerRef}
+          {...draggableProps}
+          style={cardStyle}
+          className={cn(
+            "group relative rounded-[8px] bg-[var(--app-lead-card)] p-3 hover:-translate-y-0.5 hover:bg-[var(--app-lead-card-hover)]",
+            isDragging || isDropAnimating
+              ? "transition-none"
+              : "transition-[background-color,box-shadow,transform] duration-150",
+            isDragging && "rotate-1 scale-[1.02] ring-1 ring-primary/45",
+            isLost && "bg-[var(--lead-status-lost-card)] hover:bg-[var(--lead-status-lost-card-hover)]",
+            isWon && "bg-[var(--lead-status-won-card)] hover:bg-[var(--lead-status-won-card-hover)]",
+          )}
+        >
+          <div
+            {...(provided.dragHandleProps ?? {})}
+            role="button"
+            tabIndex={0}
+            aria-label={isDragDisabled
+              ? `Abrir detalhes do lead ${leadName}`
+              : `${leadName}: pressione Enter para abrir os detalhes ou Espaço para mover o card`}
+            onClick={handleCardClick}
+            onKeyDown={handleCardKeyDown}
+            className="absolute inset-0 z-20 cursor-pointer rounded-[8px] outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/50"
+          />
+
+          <div className="pointer-events-none relative">
           {/* Deal Status Badge + Tags */}
           {hasLeadLabels && (
             <div className="mb-2 flex flex-wrap items-center gap-1">
@@ -270,11 +286,10 @@ export const LeadCard = memo(function LeadCard({
               {/* Tags - primeira tag em destaque */}
               {lead.tags && lead.tags.length > 0 ? (
                   <>
-                    <span className="inline-flex h-[18px] items-center justify-center rounded-[4px] border-0 px-1.5 text-[9px] font-normal leading-none" style={{
-                      backgroundColor: lead.tags[0].color || '#6b7280',
-                      color: '#FFFFFF',
-                      borderColor: lead.tags[0].color || '#6b7280'
-                    }}>
+                    <span
+                      className="inline-flex h-[18px] items-center justify-center rounded-[4px] border-0 px-1.5 text-[9px] font-normal leading-none"
+                      style={getTagColorStyle(lead.tags[0].color)}
+                    >
                       {lead.tags[0].name}
                     </span>
                     {lead.tags.length > 1 && <span className="inline-flex h-[18px] items-center text-[10px] leading-none text-muted-foreground">+{lead.tags.length - 1}</span>}
@@ -295,20 +310,24 @@ export const LeadCard = memo(function LeadCard({
                   </AvatarFallback>
                 </Avatar>
                 {/* Indicador de mensagens não lidas */}
-                {unreadCount > 0 && <span className="absolute -top-1 -right-1 h-4 min-w-4 flex items-center justify-center px-1 text-[9px] font-bold bg-primary text-primary-foreground rounded-full">
+                {unreadCount > 0 && <span className="absolute -top-1 -right-1 h-4 min-w-4 flex items-center justify-center px-1 text-[9px] font-normal bg-primary text-primary-foreground rounded-full">
                     {unreadCount > 9 ? '9+' : unreadCount}
                   </span>}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5 min-w-0">
-                  <h4 className="font-semibold text-sm truncate text-foreground">{leadName}</h4>
-                  <ReentryBadge count={lead.reentry_count} lastEntryAt={lead.last_entry_at} />
+                  <h4 className="truncate text-[13px] font-normal text-foreground">{leadName}</h4>
+                  <ReentryBadge
+                    count={lead.reentry_count}
+                    lastEntryAt={lead.last_entry_at}
+                    className="pointer-events-auto relative z-30"
+                  />
                 </div>
                 {lead.phone && <p className="text-[11px] text-muted-foreground truncate">{formatPhoneForDisplay(lead.phone)}</p>}
               </div>
             </div>
 
-            {/* Arraste agora habilitado no card inteiro via dragHandleProps acima */}
+            {/* A superfície transparente acima mantém clique e arraste no card inteiro. */}
           </div>
 
           {/* Source indicator: Meta campaign, Google campaign, or Website property */}
@@ -324,7 +343,7 @@ export const LeadCard = memo(function LeadCard({
               if (!campaignName) return null;
               return (
                 <div className="flex items-center gap-1.5 -mt-1 mb-1 min-w-0">
-                  <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="#1877F2">
+                  <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill={BRAND_COLORS.meta}>
                     <path d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047V9.41c0-3.018 1.793-4.684 4.533-4.684 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.93-1.956 1.886v2.273h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z"/>
                   </svg>
                   <span className="text-[10px] text-muted-foreground/80 truncate leading-none">{campaignName}</span>
@@ -338,10 +357,10 @@ export const LeadCard = memo(function LeadCard({
               return (
                 <div className="flex items-center gap-1.5 -mt-1 mb-1 min-w-0">
                   <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24">
-                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
-                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18A10.96 10.96 0 001 12c0 1.77.42 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
-                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill={BRAND_COLORS.google.blue}/>
+                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill={BRAND_COLORS.google.green}/>
+                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18A10.96 10.96 0 001 12c0 1.77.42 3.45 1.18 4.93l3.66-2.84z" fill={BRAND_COLORS.google.yellow}/>
+                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill={BRAND_COLORS.google.red}/>
                   </svg>
                   <span className="text-[10px] text-muted-foreground/80 truncate leading-none">{campaignName}</span>
                 </div>
@@ -381,15 +400,20 @@ export const LeadCard = memo(function LeadCard({
 
           {/* Separador */}
           <div className="my-2 -mx-3 border-t border-[var(--app-lead-card-divider)]" />
+          </div>
 
           {/* Linha de ações rápidas e infos */}
           <TooltipProvider delayDuration={100}>
-            <div className="flex items-center gap-1.5 flex-wrap">
+            <div className="pointer-events-none relative z-30 flex flex-wrap items-center gap-1.5">
               {/* Avatar do responsável ou badge "Sem responsável" / "Atribuindo..." */}
               {lead.assignee ? <Tooltip>
                   <TooltipTrigger asChild>
-                    <Avatar className="h-6 w-6 shrink-0">
-                      <AvatarImage src={lead.assignee.avatar_url || undefined} />
+                    <Avatar
+                      tabIndex={0}
+                      aria-label={`Responsável: ${lead.assignee.name || 'não informado'}`}
+                      className="pointer-events-auto h-6 w-6 shrink-0"
+                    >
+                      <AvatarImage src={lead.assignee.avatar_url || undefined} alt="" />
                       <AvatarFallback className="text-[10px] bg-primary text-primary-foreground">
                         {lead.assignee.name?.[0] || ''}
                       </AvatarFallback>
@@ -401,27 +425,34 @@ export const LeadCard = memo(function LeadCard({
                 </Tooltip> : isAssigneeHydrating ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Badge variant="secondary" className="text-[9px] px-1.5 py-0.5 bg-[var(--app-surface-soft)] text-muted-foreground">
-                        ResponsÃ¡vel
+                      <Badge
+                        tabIndex={0}
+                        aria-label="Carregando responsável"
+                        variant="secondary"
+                        className="pointer-events-auto bg-[var(--app-surface-soft)] px-1.5 py-0.5 text-[9px] font-normal text-muted-foreground"
+                      >
+                        Responsável
                       </Badge>
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="text-xs">
-                      Carregando responsÃ¡vel
+                      Carregando responsável
                     </TooltipContent>
                   </Tooltip>
                 ) : isRecentlyCreated ? (
-                  <Badge variant="secondary" className="text-[9px] px-1.5 py-0.5 animate-pulse">
+                  <Badge variant="secondary" className="animate-pulse px-1.5 py-0.5 text-[9px] font-normal">
                     <Loader2 className="h-2 w-2 mr-1 animate-spin" />
                     Atribuindo...
                   </Badge>
                 ) : <Tooltip>
                   <TooltipTrigger asChild>
-                    <Badge variant="destructive" className="text-[9px] px-1.5 py-0.5 cursor-pointer hover:bg-destructive/90 transition-colors" onClick={e => {
-                e.stopPropagation();
-                onAssignNow?.(lead.id);
-              }}>
+                    <button
+                      type="button"
+                      aria-label={`Atribuir ${leadName} via round-robin`}
+                      className="pointer-events-auto inline-flex h-6 cursor-pointer items-center rounded-[6px] bg-destructive px-1.5 text-[9px] font-normal text-destructive-foreground outline-none transition-colors hover:bg-destructive/90 focus-visible:ring-1 focus-visible:ring-destructive/50"
+                      onClick={() => onAssignNow(lead.id)}
+                    >
                       Sem responsável
-                    </Badge>
+                    </button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="text-xs">
                     Clique para atribuir via round-robin
@@ -431,8 +462,8 @@ export const LeadCard = memo(function LeadCard({
               {/* Ícones de ação */}
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button onMouseDown={e => e.stopPropagation()} onClick={handlePhoneClick} disabled={!hasPhone} className={cn("h-6 w-6 rounded-full flex items-center justify-center transition-colors", hasPhone ? iconColors.phone : "bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] opacity-60 cursor-not-allowed")}>
-                    <Phone className="h-3 w-3" />
+                  <button type="button" aria-label={hasPhone ? `Ligar para ${leadName}` : `${leadName} está sem telefone`} onMouseDown={e => e.stopPropagation()} onClick={handlePhoneClick} disabled={!hasPhone} className={cn("pointer-events-auto flex h-6 w-6 items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-1 focus-visible:ring-primary/50", hasPhone ? iconColors.phone : "cursor-not-allowed bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] opacity-60")}>
+                    <Phone aria-hidden="true" className="h-3 w-3" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" className="text-xs">
@@ -442,8 +473,8 @@ export const LeadCard = memo(function LeadCard({
 
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button onMouseDown={e => e.stopPropagation()} onClick={handleWhatsAppClick} disabled={!hasPhone} className={cn("h-6 w-6 rounded-full flex items-center justify-center transition-colors", hasPhone ? iconColors.whatsapp : "bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] opacity-60 cursor-not-allowed")}>
-                    <MessageCircle className="h-3 w-3" />
+                  <button type="button" aria-label={hasPhone ? `${lead.has_whatsapp_messages ? 'Ver mensagens de' : 'Enviar WhatsApp para'} ${leadName}` : `${leadName} está sem telefone`} onMouseDown={e => e.stopPropagation()} onClick={handleWhatsAppClick} disabled={!hasPhone} className={cn("pointer-events-auto flex h-6 w-6 items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-1 focus-visible:ring-primary/50", hasPhone ? iconColors.whatsapp : "cursor-not-allowed bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] opacity-60")}>
+                    <MessageCircle aria-hidden="true" className="h-3 w-3" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" className="text-xs">
@@ -453,8 +484,8 @@ export const LeadCard = memo(function LeadCard({
 
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button onMouseDown={e => e.stopPropagation()} onClick={handleEmailClick} disabled={!hasEmail} className={cn("h-6 w-6 rounded-full flex items-center justify-center transition-colors", hasEmail ? iconColors.email : "bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] opacity-60 cursor-not-allowed")}>
-                    <Mail className="h-3 w-3" />
+                  <button type="button" aria-label={hasEmail ? `Enviar e-mail para ${leadName}` : `${leadName} está sem e-mail`} onMouseDown={e => e.stopPropagation()} onClick={handleEmailClick} disabled={!hasEmail} className={cn("pointer-events-auto flex h-6 w-6 items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-1 focus-visible:ring-primary/50", hasEmail ? iconColors.email : "cursor-not-allowed bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] opacity-60")}>
+                    <Mail aria-hidden="true" className="h-3 w-3" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" className="text-xs">
@@ -466,7 +497,7 @@ export const LeadCard = memo(function LeadCard({
               {valorInteresse > 0 && <Tooltip>
                   <TooltipTrigger asChild>
                     <div className={cn(
-                      "text-[10px] font-semibold px-1.5 py-0.5 rounded",
+                      "pointer-events-auto rounded-[6px] px-1.5 py-0.5 text-[10px] font-normal",
                       "bg-[var(--lead-value-bg)] text-[var(--lead-value-fg)]"
                     )}>
                       {formatCurrency(valorInteresse)}
@@ -486,14 +517,14 @@ export const LeadCard = memo(function LeadCard({
 
               {/* SLA Badge - shows warning/overdue status */}
               {lead.assigned_user_id && !lead.first_response_seconds && (
-                <SlaBadge slaStatus={lead.sla_status ?? null} slaSecondsElapsed={lead.sla_seconds_elapsed ?? null} firstResponseAt={lead.first_response_at ?? null} />
+                <SlaBadge className="pointer-events-auto" slaStatus={lead.sla_status ?? null} slaSecondsElapsed={lead.sla_seconds_elapsed ?? null} firstResponseAt={lead.first_response_at ?? null} />
               )}
 
 
               {/* Tempo no estágio */}
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="flex items-center gap-1 text-[10px] text-muted-foreground ml-auto">
+                  <div tabIndex={0} aria-label={`Tempo neste estágio: ${stageTime}`} className="pointer-events-auto ml-auto flex items-center gap-1 text-[10px] font-light text-muted-foreground">
                     <Clock className="h-3 w-3" />
                     {stageTime}
                   </div>
@@ -504,7 +535,7 @@ export const LeadCard = memo(function LeadCard({
               </Tooltip>
             </div>
           </TooltipProvider>
-    </div>
+    </article>
         );
       }}
     </Draggable>

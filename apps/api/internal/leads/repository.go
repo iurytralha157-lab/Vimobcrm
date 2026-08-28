@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/authorization"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -316,13 +318,52 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		return Lead{}, ErrLeadNotFound
 	}
 
-	tx, err := repo.db.Pool().Begin(ctx)
+	pool := repo.db.Pool()
+	updateStartedAt := time.Now()
+	poolBefore := pool.Stat()
+	var (
+		beginDuration       time.Duration
+		snapshotDuration    time.Duration
+		updateDuration      time.Duration
+		sideEffectsDuration time.Duration
+		finalReadDuration   time.Duration
+		commitDuration      time.Duration
+	)
+	defer func() {
+		totalDuration := time.Since(updateStartedAt)
+		if totalDuration < 250*time.Millisecond {
+			return
+		}
+
+		poolAfter := pool.Stat()
+		slog.Warn(
+			"slow lead update",
+			"duration_ms", totalDuration.Milliseconds(),
+			"db_begin_ms", beginDuration.Milliseconds(),
+			"lead_snapshot_ms", snapshotDuration.Milliseconds(),
+			"lead_update_ms", updateDuration.Milliseconds(),
+			"side_effects_ms", sideEffectsDuration.Milliseconds(),
+			"final_read_ms", finalReadDuration.Milliseconds(),
+			"commit_ms", commitDuration.Milliseconds(),
+			"pool_total_conns", poolAfter.TotalConns(),
+			"pool_acquired_conns", poolAfter.AcquiredConns(),
+			"pool_idle_conns", poolAfter.IdleConns(),
+			"pool_empty_acquire_delta", poolAfter.EmptyAcquireCount()-poolBefore.EmptyAcquireCount(),
+			"pool_acquire_wait_ms_delta", (poolAfter.AcquireDuration() - poolBefore.AcquireDuration()).Milliseconds(),
+		)
+	}()
+
+	beginStartedAt := time.Now()
+	tx, err := pool.Begin(ctx)
+	beginDuration = time.Since(beginStartedAt)
 	if err != nil {
 		return Lead{}, err
 	}
 	defer tx.Rollback(ctx)
 
+	snapshotStartedAt := time.Now()
 	current, err := repo.getLeadSnapshotForUpdate(ctx, tx, tenantContext.OrganizationID, leadID)
+	snapshotDuration = time.Since(snapshotStartedAt)
 	if err != nil {
 		return Lead{}, err
 	}
@@ -418,8 +459,10 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 			nextAssignedUserID = *input.AssignedUserID.Value
 		}
 	}
-	if err := repo.validateRoundRobinAssigneeTeam(ctx, tx, tenantContext.OrganizationID, nextTeamID, optionalString(nextAssignedUserID, 36)); err != nil {
-		return Lead{}, err
+	if updateChangesLeadTeamAssignment(input) {
+		if err := repo.validateRoundRobinAssigneeTeam(ctx, tx, tenantContext.OrganizationID, nextTeamID, optionalString(nextAssignedUserID, 36)); err != nil {
+			return Lead{}, err
+		}
 	}
 
 	if err := repo.applyDestinationAssignments(ctx, tenantContext.OrganizationID, current, input, addUUIDAssignment, addRawAssignment); err != nil {
@@ -498,6 +541,17 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		return Lead{}, ErrNoLeadChanges
 	}
 
+	wonPropertyReservation, err := repo.lockWonLeadPropertyForUpdate(
+		ctx,
+		tx,
+		tenantContext.OrganizationID,
+		current,
+		input,
+	)
+	if err != nil {
+		return Lead{}, err
+	}
+
 	addRawAssignment("updated_at = now()")
 
 	query := `
@@ -509,7 +563,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	`
 
 	var updatedID string
+	updateQueryStartedAt := time.Now()
 	if err := tx.QueryRow(ctx, query, args...).Scan(&updatedID); err != nil {
+		updateDuration = time.Since(updateQueryStartedAt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Lead{}, ErrLeadNotFound
 		}
@@ -518,7 +574,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		}
 		return Lead{}, err
 	}
+	updateDuration = time.Since(updateQueryStartedAt)
 
+	sideEffectsStartedAt := time.Now()
 	oldAuditData, newAuditData := changedLeadAuditData(current.Data, input.auditData())
 	if len(newAuditData) > 0 {
 		_, err = tx.Exec(ctx, `
@@ -546,7 +604,14 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		}
 	}
 
-	if err := repo.reserveWonLeadProperty(ctx, tx, tenantContext, current, input); err != nil {
+	if _, err := repo.reserveWonLeadProperty(
+		ctx,
+		tx,
+		tenantContext,
+		current,
+		input,
+		wonPropertyReservation,
+	); err != nil {
 		return Lead{}, err
 	}
 	if err := repo.releaseReopenedLeadProperty(ctx, tx, tenantContext, current, input); err != nil {
@@ -560,15 +625,21 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if err := repo.insertLeadUpdateActivities(ctx, tx, tenantContext, current, input); err != nil {
 		return Lead{}, err
 	}
+	sideEffectsDuration = time.Since(sideEffectsStartedAt)
 
+	finalReadStartedAt := time.Now()
 	updatedLead, err := repo.getLeadForMutation(ctx, tx, tenantContext.OrganizationID, updatedID)
+	finalReadDuration = time.Since(finalReadStartedAt)
 	if err != nil {
 		return Lead{}, err
 	}
 
+	commitStartedAt := time.Now()
 	if err := tx.Commit(ctx); err != nil {
+		commitDuration = time.Since(commitStartedAt)
 		return Lead{}, err
 	}
+	commitDuration = time.Since(commitStartedAt)
 
 	repo.dispatchDealStatusSideEffects(tenantContext, current, input)
 
@@ -1083,6 +1154,12 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 		}
 	}
 
+	leadMetadata := make(LeadMetadata, len(input.Metadata)+1)
+	for key, value := range input.Metadata {
+		leadMetadata[key] = value
+	}
+	leadMetadata["distribution_deferred"] = true
+
 	var leadID string
 	err = tx.QueryRow(ctx, `
 		with inserted as (
@@ -1217,7 +1294,7 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 		nullable(input.FaixaValorImovel),
 		tenantContext.UserID,
 		nullable(input.Feedback),
-		jsonb(input.Metadata),
+		jsonb(leadMetadata),
 	).Scan(&leadID)
 	if err != nil {
 		return CreateResult{}, err
@@ -1243,6 +1320,18 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 		initialFeedback = input.Message
 	}
 	if err := repo.insertInitialFeedbackActivity(ctx, tx, tenantContext.OrganizationID, leadID, tenantContext.UserID, initialFeedback, "lead_create"); err != nil {
+		return CreateResult{}, err
+	}
+
+	distributionSource := input.Source
+	if _, err := distribution.Distribute(ctx, tx, distribution.Request{
+		OrganizationID:   tenantContext.OrganizationID,
+		LeadID:           leadID,
+		IdempotencyKey:   "manual:" + leadID,
+		PreserveAssignee: true,
+		Source:           &distributionSource,
+		OccurredAt:       time.Now().UTC(),
+	}); err != nil {
 		return CreateResult{}, err
 	}
 
@@ -1610,6 +1699,8 @@ func (repo Repository) validateLeadTeam(ctx context.Context, tenantContext tenan
 
 func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, organizationID string, pipelineID string, requiredTeamID string) (roundRobinSelection, string, error) {
 	var roundRobinID string
+	// Keep the selected queue locked until the caller commits its assignment,
+	// log and position update. The next request then recalculates from fresh logs.
 	err := tx.QueryRow(ctx, `
 		select id::text
 		from public.round_robins
@@ -1618,6 +1709,7 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 		  and (pipeline_id is null or pipeline_id = $2::uuid)
 		order by pipeline_id is null, created_at asc
 		limit 1
+		for update
 	`, organizationID, nullableString(pipelineID)).Scan(&roundRobinID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return roundRobinSelection{}, "no_queue", nil
@@ -1670,12 +1762,17 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 				tm.id as team_member_id,
 				tm.created_at as team_member_created_at
 			from entries
+			left join public.teams direct_team
+			  on direct_team.id = entries.team_id
+			 and direct_team.organization_id = entries.organization_id
+			 and coalesce(direct_team.is_active, true) = true
 			left join public.team_members tm
 			  on tm.organization_id = entries.organization_id
 			 and tm.team_id = entries.team_id
 			 and tm.user_id = entries.user_id
 			 and coalesce(tm.is_active, true) = true
 			where entries.user_id is not null
+			  and (entries.team_id is null or (direct_team.id is not null and tm.id is not null))
 
 			union all
 
@@ -1728,34 +1825,7 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 		        and coalesce(required_member.is_active, true) = true
 		    )
 		  )
-		  and (
-		    candidates.team_member_id is null
-		    or not exists (
-		      select 1
-		      from public.member_availability ma_any
-		      where ma_any.organization_id = candidates.organization_id
-		        and ma_any.team_member_id = candidates.team_member_id
-		    )
-		    or exists (
-		      select 1
-		      from public.member_availability ma
-		      where ma.organization_id = candidates.organization_id
-		        and ma.team_member_id = candidates.team_member_id
-		        and ma.day_of_week = extract(dow from now() at time zone 'America/Sao_Paulo')::int
-		        and coalesce(ma.is_active, true) = true
-		        and (
-		          coalesce(ma.is_all_day, false) = true
-		          or (
-		            ma.start_time is not null
-		            and ma.end_time is not null
-		            and (
-		              (ma.start_time <= ma.end_time and (now() at time zone 'America/Sao_Paulo')::time >= ma.start_time and (now() at time zone 'America/Sao_Paulo')::time <= ma.end_time)
-		              or (ma.start_time > ma.end_time and ((now() at time zone 'America/Sao_Paulo')::time >= ma.start_time or (now() at time zone 'America/Sao_Paulo')::time <= ma.end_time))
-		            )
-		          )
-		        )
-		    )
-		  )
+		  and `+distribution.RoundRobinAvailabilityPredicateSQL+`
 		order by candidates.entry_total asc, candidates.position asc, candidates.created_at asc, coalesce(user_logs.total, 0) asc, candidates.team_member_created_at asc nulls last, candidates.user_id asc
 		limit 1
 	`, organizationID, roundRobinID, requiredTeamID).Scan(&selection.MemberID, &selection.UserID)
@@ -1859,6 +1929,10 @@ func (repo Repository) validateRoundRobinAssigneeTeam(ctx context.Context, query
 	}
 
 	return nil
+}
+
+func updateChangesLeadTeamAssignment(input updateInput) bool {
+	return input.TeamID.Set || input.AssignedUserID.Set
 }
 
 func (repo Repository) insertTransferNotification(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, assignedUserID *string, reason string) error {
@@ -1978,7 +2052,7 @@ func (repo Repository) getLeadSnapshotForUpdate(ctx context.Context, tx pgx.Tx, 
 		where l.organization_id = $1::uuid
 		  and l.id = $2::uuid
 		limit 1
-		for update of l
+		for no key update of l
 	`, organizationID, leadID).Scan(&snapshot.ID, &teamID, &snapshot.Name, &phone, &assignedUserID, &pipelineID, &stageID, &stageName, &snapshot.DealStatus, &lostReason, &interestValue, &propertyID, &interestPropertyID, &propertyCode, &rawData)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return leadSnapshot{}, ErrLeadNotFound
@@ -2468,6 +2542,16 @@ type propertyReservationSnapshot struct {
 	OldAnnounce        *bool
 }
 
+type wonLeadPropertyReservation struct {
+	PropertyID         string
+	Title              string
+	Code               string
+	OldStatus          string
+	OldPublishedOnSite bool
+	OldAnnounce        bool
+	AlreadyReserved    bool
+}
+
 func (repo Repository) latestPropertyReservation(ctx context.Context, tx pgx.Tx, organizationID string, propertyID string) (propertyReservationSnapshot, bool, error) {
 	var hasEventsTable bool
 	if err := tx.QueryRow(ctx, `select to_regclass('public.events') is not null`).Scan(&hasEventsTable); err != nil {
@@ -2521,9 +2605,9 @@ func (repo Repository) latestPropertyReservation(ctx context.Context, tx pgx.Tx,
 	return snapshot, true, nil
 }
 
-func (repo Repository) reserveWonLeadProperty(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, input updateInput) error {
+func wonLeadReservationPropertyID(current leadSnapshot, input updateInput) (string, bool) {
 	if !input.DealStatus.Set || input.DealStatus.Value == nil || *input.DealStatus.Value != "won" || current.DealStatus == "won" {
-		return nil
+		return "", false
 	}
 
 	propertyID := current.InterestPropertyID
@@ -2536,116 +2620,229 @@ func (repo Repository) reserveWonLeadProperty(ctx context.Context, tx pgx.Tx, te
 	if input.InterestPropertyID.Set && input.InterestPropertyID.Value != nil {
 		propertyID = *input.InterestPropertyID.Value
 	}
+	return propertyID, true
+}
+
+func (repo Repository) lockWonLeadPropertyForUpdate(
+	ctx context.Context,
+	tx pgx.Tx,
+	organizationID string,
+	current leadSnapshot,
+	input updateInput,
+) (*wonLeadPropertyReservation, error) {
+	propertyID, movingToWon := wonLeadReservationPropertyID(current, input)
+	if !movingToWon || propertyID == "" {
+		return nil, nil
+	}
+
+	retryDelay := propertyReservationRetryDelay(current.ID)
+	for {
+		reservation := wonLeadPropertyReservation{PropertyID: propertyID}
+		err := tx.QueryRow(ctx, `
+			with candidate as materialized (
+				select
+					property.id,
+					coalesce(property.title, 'Imovel') as title,
+					coalesce(property.code, '') as code,
+					coalesce(property.status, 'active') as old_status,
+					coalesce(property.published_on_site, false) as old_published_on_site,
+					coalesce(property.anunciar, false) as old_anunciar
+				from public.properties property
+				where property.organization_id = $1::uuid
+				  and property.id = $2::uuid
+				  and lower(btrim(coalesce(property.status, 'active'))) not in (
+				    'reserved', 'reservado',
+				    'sold', 'vendido',
+				    'rented', 'alugado', 'locado',
+				    'draft', 'rascunho',
+				    'inactive', 'inativo',
+				    'archived', 'arquivado'
+				  )
+				for update of property skip locked
+				limit 1
+			),
+			reserved as (
+				update public.properties property
+				set status = 'reserved',
+				    published_on_site = false,
+				    anunciar = false,
+				    updated_at = now()
+				from candidate
+				where property.organization_id = $1::uuid
+				  and property.id = candidate.id
+				returning
+					candidate.id::text,
+					candidate.title,
+					candidate.code,
+					candidate.old_status,
+					candidate.old_published_on_site,
+					candidate.old_anunciar
+			)
+			select
+				id,
+				title,
+				code,
+				old_status,
+				old_published_on_site,
+				old_anunciar
+			from reserved
+		`, organizationID, propertyID).Scan(
+			&reservation.PropertyID,
+			&reservation.Title,
+			&reservation.Code,
+			&reservation.OldStatus,
+			&reservation.OldPublishedOnSite,
+			&reservation.OldAnnounce,
+		)
+		if err == nil {
+			return &reservation, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+
+		var propertyStatus string
+		err = tx.QueryRow(ctx, `
+			select coalesce(status, 'active')
+			from public.properties
+			where organization_id = $1::uuid
+			  and id = $2::uuid
+		`, organizationID, propertyID).Scan(&propertyStatus)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("%w: propertyId is invalid", ErrInvalidReference)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if isReservedLeadPropertyStatus(propertyStatus) {
+			latest, found, reservationErr := repo.latestPropertyReservation(ctx, tx, organizationID, propertyID)
+			if reservationErr != nil {
+				return nil, reservationErr
+			}
+			if found && latest.LeadID == current.ID {
+				return &wonLeadPropertyReservation{
+					PropertyID:      propertyID,
+					AlreadyReserved: true,
+				}, nil
+			}
+		}
+		if message := wonPropertyUnavailableMessage(propertyStatus); message != "" {
+			return nil, fmt.Errorf("%w: %s", ErrLeadPropertyUnavailable, message)
+		}
+
+		timer := time.NewTimer(retryDelay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+		if retryDelay < 40*time.Millisecond {
+			retryDelay *= 2
+			if retryDelay > 40*time.Millisecond {
+				retryDelay = 40 * time.Millisecond
+			}
+		}
+	}
+}
+
+func propertyReservationRetryDelay(leadID string) time.Duration {
+	const (
+		baseDelay  = 5 * time.Millisecond
+		jitterStep = time.Millisecond
+	)
+	if leadID == "" {
+		return baseDelay
+	}
+
+	var checksum byte
+	for index := range leadID {
+		checksum += leadID[index]
+	}
+	return baseDelay + time.Duration(checksum%5)*jitterStep
+}
+
+func (repo Repository) reserveWonLeadProperty(
+	ctx context.Context,
+	tx pgx.Tx,
+	tenantContext tenant.Context,
+	current leadSnapshot,
+	input updateInput,
+	reservation *wonLeadPropertyReservation,
+) (string, error) {
+	propertyID, movingToWon := wonLeadReservationPropertyID(current, input)
+	if !movingToWon {
+		return "", nil
+	}
 	if propertyID == "" {
-		return nil
+		return "", nil
 	}
 
-	var title, code, oldStatus string
-	var oldPublishedOnSite, oldAnnounce bool
-	err := tx.QueryRow(ctx, `
-		select coalesce(title, 'Imovel') as title,
-		       coalesce(code, '') as code,
-		       coalesce(status, 'active') as old_status,
-		       coalesce(published_on_site, false),
-		       coalesce(anunciar, false)
-		from public.properties
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-		for update
-	`, tenantContext.OrganizationID, propertyID).Scan(&title, &code, &oldStatus, &oldPublishedOnSite, &oldAnnounce)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("%w: propertyId is invalid", ErrInvalidReference)
-	}
-	if err != nil {
-		return err
-	}
-
-	if isReservedLeadPropertyStatus(oldStatus) {
-		reservation, found, reservationErr := repo.latestPropertyReservation(ctx, tx, tenantContext.OrganizationID, propertyID)
-		if reservationErr != nil {
-			return reservationErr
-		}
-		if found && reservation.LeadID == current.ID {
-			return nil
+	if reservation == nil {
+		var err error
+		reservation, err = repo.lockWonLeadPropertyForUpdate(
+			ctx,
+			tx,
+			tenantContext.OrganizationID,
+			current,
+			input,
+		)
+		if err != nil {
+			return "", err
 		}
 	}
-
-	if message := wonPropertyUnavailableMessage(oldStatus); message != "" {
-		return fmt.Errorf("%w: %s", ErrLeadPropertyUnavailable, message)
-	}
-
-	tag, err := tx.Exec(ctx, `
-		update public.properties
-		set status = 'reserved',
-		    published_on_site = false,
-		    anunciar = false,
-		    updated_at = now()
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-	`, tenantContext.OrganizationID, propertyID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("%w: propertyId is invalid", ErrInvalidReference)
+	if reservation == nil || reservation.AlreadyReserved {
+		return "", nil
 	}
 
 	actorName := tenantContext.UserID
 	if value, err := repo.getUserDisplayName(ctx, tx, tenantContext.UserID); err == nil && strings.TrimSpace(value) != "" {
 		actorName = value
 	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return err
+		return "", err
 	}
 
-	if err := repo.notifyInterestedLeadsForReservedProperty(ctx, tx, tenantContext, current, propertyID, title, code, oldStatus); err != nil {
-		return err
+	jobID, eventsAvailable, err := repo.enqueuePropertyReservationNotificationJob(ctx, tx, propertyReservationNotificationJob{
+		OrganizationID:     tenantContext.OrganizationID,
+		PropertyID:         reservation.PropertyID,
+		PropertyTitle:      reservation.Title,
+		PropertyCode:       reservation.Code,
+		ReservedByUserID:   tenantContext.UserID,
+		ReservedByUserName: actorName,
+		ReservedByLeadID:   current.ID,
+		ReservedByLeadName: current.Name,
+		OldStatus:          reservation.OldStatus,
+		OldPublishedOnSite: reservation.OldPublishedOnSite,
+		OldAnnounce:        reservation.OldAnnounce,
+	})
+	if err != nil {
+		return "", err
+	}
+	if eventsAvailable {
+		return jobID, nil
 	}
 
-	var hasEventsTable bool
-	if err := tx.QueryRow(ctx, `select to_regclass('public.events') is not null`).Scan(&hasEventsTable); err != nil {
-		return err
+	// Compatibility fallback for installations that have not created
+	// public.events yet. The durable path above is used everywhere else.
+	if _, err := repo.notifyInterestedLeadsForReservedProperty(
+		ctx,
+		tx,
+		tenantContext,
+		current,
+		reservation.PropertyID,
+		reservation.Title,
+		reservation.Code,
+		reservation.OldStatus,
+		"",
+	); err != nil {
+		return "", err
 	}
-	if !hasEventsTable {
-		return nil
-	}
-
-	_, err = tx.Exec(ctx, `
-		insert into public.events (
-			organization_id,
-			event_type,
-			entity_type,
-			entity_id,
-			payload,
-			status
-		)
-		values (
-			$1::uuid,
-			'property_reserved_by_won_lead',
-			'property',
-			$2::uuid,
-			$3::jsonb,
-			'processed'
-		)
-	`, tenantContext.OrganizationID, propertyID, jsonb(map[string]any{
-		"user_id":               tenantContext.UserID,
-		"user_name":             actorName,
-		"reserved_by_user_id":   tenantContext.UserID,
-		"reserved_by_user_name": actorName,
-		"reserved_by_lead_id":   current.ID,
-		"reserved_by_lead_name": current.Name,
-		"lead_id":               current.ID,
-		"lead_name":             current.Name,
-		"property_id":           propertyID,
-		"property_code":         code,
-		"title":                 title,
-		"old_status":            oldStatus,
-		"old_published_on_site": oldPublishedOnSite,
-		"old_anunciar":          oldAnnounce,
-		"new_status":            "reserved",
-		"organization_id":       tenantContext.OrganizationID,
-		"message":               fmt.Sprintf(`Imovel "%s" reservado por "%s" ao marcar o lead "%s" como ganho`, title, actorName, current.Name),
-	}))
-	return err
+	return "", nil
 }
 
 func (repo Repository) releaseReopenedLeadProperty(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, input updateInput) error {
@@ -2808,28 +3005,17 @@ func normalizeLeadPropertyStatus(value string) string {
 	return replacer.Replace(value)
 }
 
-func (repo Repository) notifyInterestedLeadsForReservedProperty(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, propertyID string, propertyTitle string, propertyCode string, oldStatus string) error {
-	rows, err := tx.Query(ctx, `
-		select distinct on (l.id)
-			l.id::text,
-			l.name,
-			l.assigned_user_id::text
-		from public.leads l
-		where l.organization_id = $1::uuid
-		  and l.id <> $2::uuid
-		  and l.assigned_user_id is not null
-		  and coalesce(l.deal_status, 'open') not in ('won', 'lost')
-		  and (
-		    l.interest_property_id = $3::uuid
-		    or l.property_id = $3::uuid
-		  )
-		order by l.id, l.created_at desc
-	`, tenantContext.OrganizationID, current.ID, propertyID)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
+func (repo Repository) notifyInterestedLeadsForReservedProperty(
+	ctx context.Context,
+	tx pgx.Tx,
+	tenantContext tenant.Context,
+	current leadSnapshot,
+	propertyID string,
+	propertyTitle string,
+	propertyCode string,
+	oldStatus string,
+	targetSnapshot string,
+) (int64, error) {
 	propertyLabel := propertyTitle
 	if strings.TrimSpace(propertyLabel) == "" {
 		propertyLabel = "Imovel"
@@ -2838,38 +3024,158 @@ func (repo Repository) notifyInterestedLeadsForReservedProperty(ctx context.Cont
 		propertyLabel = fmt.Sprintf("%s (%s)", propertyLabel, propertyCode)
 	}
 
-	for rows.Next() {
-		var leadID, leadName, assignedUserID string
-		if err := rows.Scan(&leadID, &leadName, &assignedUserID); err != nil {
-			return err
-		}
-
-		content := fmt.Sprintf(`O imovel de interesse "%s" foi reservado pelo lead "%s". Revise este atendimento.`, propertyLabel, current.Name)
-		metadata := map[string]any{
-			"property_id":           propertyID,
-			"property_title":        propertyTitle,
-			"property_code":         propertyCode,
-			"old_status":            oldStatus,
-			"new_status":            "reserved",
-			"reserved_by_lead_id":   current.ID,
-			"reserved_by_lead_name": current.Name,
-			"affected_lead_id":      leadID,
-			"affected_lead_name":    leadName,
-			"event_key":             "interest_property_reserved",
-			"notification_reason":   "same_interest_property_reserved",
-			"source":                "deal_won_property_reservation",
-			"dedupe_key":            notificationDedupeKey("interest_property_reserved", current.ID, leadID, assignedUserID),
-		}
-
-		if err := repo.insertActivity(ctx, tx, tenantContext.OrganizationID, leadID, tenantContext.UserID, "property_interest_reserved", content, metadata); err != nil {
-			return err
-		}
-		if err := repo.insertNotificationWithType(ctx, tx, tenantContext.OrganizationID, assignedUserID, leadID, "Imovel de interesse reservado", content, "interest_property_reserved", "warning", metadata); err != nil {
-			return err
-		}
+	targetSource := `
+			select
+				lead.id,
+				lead.name,
+				lead.assigned_user_id
+			from public.leads lead
+			where lead.organization_id = $1::uuid
+			  and lead.id <> $2::uuid
+			  and lead.assigned_user_id is not null
+			  and coalesce(lead.deal_status, 'open') not in ('won', 'lost')
+			  and (
+			    lead.interest_property_id = $4::uuid
+			    or lead.property_id = $4::uuid
+			  )
+			  and exists (
+			    select 1
+			    from public.properties property
+			    join public.leads reserved_lead
+			      on reserved_lead.organization_id = property.organization_id
+			     and reserved_lead.id = $2::uuid
+			    where property.organization_id = $1::uuid
+			      and property.id = $4::uuid
+			      and lower(coalesce(property.status, '')) in ('reserved', 'reservado')
+			      and coalesce(reserved_lead.deal_status, 'open') = 'won'
+			      and (
+			        reserved_lead.interest_property_id = property.id
+			        or reserved_lead.property_id = property.id
+			      )
+			  )
+	`
+	queryArgs := []any{
+		tenantContext.OrganizationID,
+		current.ID,
+		tenantContext.UserID,
+		propertyID,
+		propertyTitle,
+		propertyCode,
+		current.Name,
+		propertyLabel,
+		oldStatus,
+	}
+	if strings.TrimSpace(targetSnapshot) != "" {
+		targetSource = `
+			select
+				snapshot.lead_id as id,
+				coalesce(nullif(snapshot.lead_name, ''), existing_lead.name) as name,
+				snapshot.user_id as assigned_user_id
+			from jsonb_to_recordset($10::jsonb)
+			  as snapshot(lead_id uuid, lead_name text, user_id uuid)
+			join public.leads existing_lead
+			  on existing_lead.organization_id = $1::uuid
+			 and existing_lead.id = snapshot.lead_id
+			join public.users existing_user
+			  on existing_user.id = snapshot.user_id
+		`
+		queryArgs = append(queryArgs, targetSnapshot)
 	}
 
-	return rows.Err()
+	tag, err := tx.Exec(ctx, `
+		with targets as materialized (
+		`+targetSource+`
+		),
+		activity_actor as materialized (
+			select id
+			from public.users
+			where id = nullif($3::text, '')::uuid
+			limit 1
+		),
+		payloads as materialized (
+			select
+				target.id as lead_id,
+				target.assigned_user_id,
+				format(
+					'O imovel de interesse "%s" foi reservado pelo lead "%s". Revise este atendimento.',
+					$8::text,
+					$7::text
+				) as content,
+				jsonb_build_object(
+					'property_id', $4::text,
+					'property_title', nullif($5::text, ''),
+					'property_code', nullif($6::text, ''),
+					'old_status', $9::text,
+					'new_status', 'reserved',
+					'reserved_by_lead_id', $2::text,
+					'reserved_by_lead_name', $7::text,
+					'affected_lead_id', target.id::text,
+					'affected_lead_name', target.name,
+					'event_key', 'interest_property_reserved',
+					'notification_reason', 'same_interest_property_reserved',
+					'source', 'deal_won_property_reservation',
+					'dedupe_key',
+						'interest_property_reserved:' || $2::text || ':' ||
+						target.id::text || ':' || target.assigned_user_id::text
+				) as metadata
+			from targets target
+		),
+		inserted_activities as (
+			insert into public.activities (
+				organization_id,
+				lead_id,
+				user_id,
+				type,
+				content,
+				metadata
+			)
+			select
+				$1::uuid,
+				payload.lead_id,
+				(select id from activity_actor),
+				'property_interest_reserved',
+				payload.content,
+				payload.metadata
+			from payloads payload
+			returning id
+		)
+		insert into public.notifications (
+			organization_id,
+			user_id,
+			title,
+			content,
+			body,
+			type,
+			channel,
+			lead_id,
+			target_url,
+			metadata
+		)
+		select
+			$1::uuid,
+			payload.assigned_user_id,
+			'Imovel de interesse reservado',
+			payload.content,
+			payload.content,
+			'warning',
+			'in_app',
+			payload.lead_id,
+			'/crm/pipelines?lead=' || payload.lead_id::text,
+			payload.metadata || jsonb_build_object(
+				'dispatch', jsonb_build_object(
+					'push', jsonb_build_object(
+						'status', 'pending',
+						'required', true
+					)
+				)
+			)
+		from payloads payload
+		on conflict do nothing
+	`, queryArgs...)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 func (repo Repository) dispatchDealWonNotification(ctx context.Context, tenantContext tenant.Context, current leadSnapshot, input updateInput) {

@@ -1,163 +1,190 @@
-import Image from "next/image";
-import Link from "next/link";
-import type { ReactNode } from "react";
-import { ArrowRight } from "lucide-react";
+import Image from 'next/image'
+import Link from 'next/link'
+import type { ReactNode } from 'react'
+import { ArrowRight, type LucideIcon } from 'lucide-react'
 
-import { cn } from "@/lib/utils";
+import { BRAND_HEADER_LAYOUT } from '@/config/constants'
+import { cn } from '@/lib/utils'
 
-export function VimobPublicLogo({ className }: Readonly<{ className?: string }>) {
+const publicNavigation = [
+  { href: '/help', label: 'Ajuda' },
+  { href: '/politica-de-privacidade', label: 'Privacidade' },
+  { href: '/termos-de-uso', label: 'Termos' },
+  { href: '/exclusao-de-dados', label: 'Excluir dados' },
+] as const
+
+export function VimobPublicLogo({
+  className,
+  preload = false,
+  width = BRAND_HEADER_LAYOUT.logoWidth,
+}: Readonly<{
+  className?: string
+  preload?: boolean
+  width?: number
+}>) {
   return (
-    <span className={cn("inline-flex items-center", className)}>
+    <span className={cn('inline-flex items-center', className)} style={{ width }}>
       <Image
         src="/images/logo-black.png"
         alt="Vimob"
-        width={170}
-        height={60}
-        priority
-        className="h-10 w-auto"
+        width={1228}
+        height={429}
+        sizes={`${width}px`}
+        preload={preload}
+        className="h-auto w-full"
       />
     </span>
-  );
+  )
 }
 
 export function PublicPageShell({
   children,
-  legalDocument = false,
-  plainBackground = false,
 }: Readonly<{
-  children: ReactNode;
-  legalDocument?: boolean;
-  plainBackground?: boolean;
+  children: ReactNode
 }>) {
   return (
-    <div
-      className={cn(
-        "public-light min-h-dvh font-sans",
-        plainBackground && "public-light-plain"
-      )}
-    >
-      <header className="sticky top-0 z-30 bg-white/86 backdrop-blur-xl">
-        <div className="mx-auto flex h-20 w-full max-w-6xl items-center justify-between px-5 sm:px-8">
-          <Link href="/help" aria-label="Vimob" className="shrink-0">
-            <VimobPublicLogo />
+    <div className="public-light min-h-dvh font-sans">
+      <header className="sticky top-0 z-30 bg-[var(--public-background)]">
+        <div
+          className="mx-auto flex h-[72px] w-full items-center justify-between gap-4 px-4 sm:px-6 lg:px-8"
+          style={{ maxWidth: BRAND_HEADER_LAYOUT.maxWidth }}
+        >
+          <Link
+            href="/help"
+            aria-label="Vimob"
+            className="inline-flex min-h-11 shrink-0 items-center"
+          >
+            <VimobPublicLogo preload />
           </Link>
 
-          <Link
-            href="/login"
-            className={cn(
-              "inline-flex h-10 items-center gap-2 bg-[var(--public-accent)] px-4 text-sm font-medium text-white transition hover:bg-[#e63b23]",
-              legalDocument ? "rounded-[10px]" : "rounded-full"
-            )}
-          >
-            Entrar
-            <ArrowRight className="h-4 w-4" />
-          </Link>
+          <div className="flex items-center gap-2">
+            <nav
+              aria-label="Navegação institucional"
+              className="hidden items-center gap-1 rounded-[8px] bg-[var(--public-surface)] p-1 sm:flex"
+            >
+              {publicNavigation.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className="inline-flex h-9 items-center rounded-[6px] px-3 text-xs font-light text-[var(--public-muted)] transition-colors hover:bg-[var(--public-soft)] hover:text-[var(--public-foreground)]"
+                >
+                  {item.label}
+                </Link>
+              ))}
+            </nav>
+
+            <Link
+              href="/login"
+              className="inline-flex h-10 items-center gap-2 rounded-[6px] bg-[var(--public-accent)] px-4 text-[12px] font-light text-primary-foreground transition-opacity hover:opacity-90"
+            >
+              Entrar
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          </div>
         </div>
       </header>
 
-      <main>{children}</main>
+      <main className="min-h-[calc(100dvh-72px)]">{children}</main>
 
-      <footer className="bg-white">
+      <footer className="bg-[var(--public-background)] px-4 pb-4 pt-8 sm:px-6 sm:pb-6 lg:px-8">
         <div
-          className={cn(
-            "mx-auto flex w-full max-w-6xl flex-col px-5 text-sm text-[var(--public-muted)] sm:px-8",
-            legalDocument
-              ? "items-center justify-center gap-3 py-7 text-center"
-              : "gap-5 py-8 md:flex-row md:items-center md:justify-between"
-          )}
+          className="mx-auto flex w-full flex-col gap-5 rounded-[8px] bg-[var(--public-surface)] px-5 py-6 text-[12px] font-light text-[var(--public-muted)] sm:px-6 sm:text-[13px] md:flex-row md:items-center md:justify-between"
+          style={{ maxWidth: BRAND_HEADER_LAYOUT.maxWidth }}
         >
-          <VimobPublicLogo className="[&_img]:h-8" />
-          <p>© 2026 Vimob. Todos os direitos reservados.</p>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <Link
+              href="/help"
+              aria-label="Vimob"
+              className="inline-flex min-h-11 items-center"
+            >
+              <VimobPublicLogo width={80} />
+            </Link>
+            <p>© 2026 Vimob. Todos os direitos reservados.</p>
+          </div>
+          <nav
+            aria-label="Links institucionais do rodapé"
+            className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[12px] font-light"
+          >
+            {publicNavigation.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="inline-flex min-h-11 items-center transition-colors hover:text-[var(--public-accent)]"
+              >
+                {item.label}
+              </Link>
+            ))}
+          </nav>
         </div>
       </footer>
     </div>
-  );
+  )
 }
 
 export function PublicHero({
-  backgroundImage,
   children,
   compact = false,
   description,
   eyebrow,
+  headingLevel = 'h1',
+  icon: Icon,
   meta,
   title,
 }: Readonly<{
-  backgroundImage?: string;
-  children?: ReactNode;
-  compact?: boolean;
-  description?: string;
-  eyebrow: string;
-  meta?: string;
-  title: string;
+  children?: ReactNode
+  compact?: boolean
+  description?: string
+  eyebrow: string
+  headingLevel?: 'h1' | 'h2' | 'p'
+  icon?: LucideIcon
+  meta?: string
+  title: string
 }>) {
+  const Heading = headingLevel
+
   return (
-    <section
-      className={cn(
-        "overflow-hidden",
-        backgroundImage ? "bg-cover bg-center" : "border-b border-[var(--public-border)]"
-      )}
-      style={
-        backgroundImage
-          ? {
-              backgroundImage: `linear-gradient(180deg, rgba(0,0,0,0.18) 0%, rgba(0,0,0,0.12) 48%, rgba(0,0,0,0.34) 100%), url(${backgroundImage})`,
-            }
-          : undefined
-      }
-    >
+    <section className="overflow-hidden">
       <div
         className={cn(
-          "mx-auto flex w-full max-w-6xl flex-col items-center px-5 text-center sm:px-8",
-          compact ? "py-9 sm:py-10 lg:py-12" : "py-16 lg:py-20",
-          backgroundImage && (
-            compact
-              ? "min-h-[190px] justify-center sm:min-h-[210px]"
-              : "min-h-[230px] justify-center"
-          )
+          'mx-auto flex w-full max-w-4xl flex-col items-center px-5 text-center sm:px-8',
+          compact ? 'py-10 sm:py-12' : 'py-14 sm:py-16',
         )}
       >
-        <p
-          className={cn(
-            "text-xs font-semibold uppercase tracking-[0.22em]",
-            backgroundImage ? "text-white/75" : "text-[var(--public-accent)]"
-          )}
-        >
+        {Icon ? (
+          <span className="mb-4 flex h-11 w-11 items-center justify-center rounded-[8px] bg-[var(--public-surface)] text-[var(--public-tertiary)]">
+            <Icon className="h-5 w-5" strokeWidth={1.45} />
+          </span>
+        ) : null}
+        <p className="text-[12px] font-light text-[var(--public-accent)]">
           {eyebrow}
         </p>
-        <h1
+        <Heading
           className={cn(
-            "max-w-4xl font-semibold tracking-normal",
-            backgroundImage ? "text-white" : "text-[var(--public-foreground)]",
+            'max-w-3xl text-balance font-medium text-[var(--public-foreground)]',
             compact
-              ? "mt-3 text-[34px] leading-[1.08] sm:text-5xl"
-              : "mt-5 text-4xl sm:text-5xl lg:text-6xl"
+              ? 'mt-3 text-[24px] leading-[1.22] sm:text-[30px]'
+              : 'mt-4 text-[28px] leading-[1.18] sm:text-[34px]',
           )}
         >
           {title}
-        </h1>
+        </Heading>
         {description ? (
-          <p
-            className={cn(
-              "mt-5 max-w-2xl text-base leading-7 sm:text-lg",
-              backgroundImage ? "text-white/80" : "text-[var(--public-muted)]"
-            )}
-          >
+          <p className="mt-3 max-w-2xl text-[13px] leading-5 text-[var(--public-muted)] sm:text-sm sm:leading-6">
             {description}
           </p>
         ) : null}
         {meta ? (
           <p
             className={cn(
-              "text-xs font-medium uppercase tracking-[0.18em]",
-              compact ? "mt-3" : "mt-4",
-              backgroundImage ? "text-white/75" : "text-[var(--public-muted)]"
+              'text-[12px] font-light text-[var(--public-tertiary)]',
+              compact ? 'mt-3' : 'mt-4',
             )}
           >
             {meta}
           </p>
         ) : null}
-        {children ? <div className="mt-8 w-full max-w-2xl">{children}</div> : null}
+        {children ? <div className="mt-6 w-full max-w-3xl">{children}</div> : null}
       </div>
     </section>
-  );
+  )
 }

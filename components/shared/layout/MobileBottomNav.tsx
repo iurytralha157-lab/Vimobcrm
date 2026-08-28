@@ -13,7 +13,7 @@ import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useLocationHash } from '@/hooks/use-location-hash';
 import { MobileSidebar } from './MobileSidebar';
-import { isBillingBlockedStatus } from '@/lib/billing-access';
+import { isBillingAccessBlocked } from '@/lib/billing-access';
 import { canUseFinancialModule } from '@/lib/financial-access';
 import { canManageOrganization } from '@/lib/access/organization';
 import {
@@ -44,7 +44,7 @@ export function MobileBottomNav() {
   const { t } = useLanguage();
   const { hasModule, isLoading: modulesLoading } = useOrganizationModules();
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
-  const isBillingBlocked = !isSuperAdmin && isBillingBlockedStatus(organization?.subscription_status);
+  const isBillingBlocked = !isSuperAdmin && isBillingAccessBlocked(organization);
   const canAccessFinancialModule = canUseFinancialModule(organization);
   const activeOrganizationId = organization?.id || profile?.organization_id;
   const activeMembership = userOrganizations.find((org) => org.organization_id === activeOrganizationId);
@@ -154,7 +154,7 @@ export function MobileBottomNav() {
                     <button
                       type="button"
                       onClick={handleFabClick}
-                      className="flex h-12 w-12 touch-manipulation items-center justify-center rounded-[6px] bg-[#FF4529] text-white shadow-none transition-transform duration-150 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF4529]/40 focus-visible:ring-offset-2"
+                      className="flex h-12 w-12 touch-manipulation items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground shadow-none transition-colors hover:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2"
                       aria-label={fabLabel}
                     >
                       <Plus className="h-6 w-6" />
@@ -180,19 +180,19 @@ export function MobileBottomNav() {
                 key={tab.path}
                 href={tab.path}
                 className={cn(
-                  "relative flex min-h-12 min-w-[56px] touch-manipulation flex-col items-center justify-center gap-0.5 px-1 py-2 transition-colors duration-150 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF4529]/30",
-                  active ? "text-[#FF4529]" : "text-[var(--app-text-tertiary)] hover:text-[var(--app-text-secondary)]"
+                  "relative flex min-h-12 min-w-[56px] touch-manipulation flex-col items-center justify-center gap-0.5 px-1 py-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+                  active ? "text-primary" : "text-[var(--app-text-tertiary)] hover:text-[var(--app-text-secondary)]"
                 )}
                 aria-current={active ? 'page' : undefined}
                 aria-label={getLabel(tab.labelKey)}
               >
                 {active && (
-                  <span className="absolute top-0 h-0.5 w-8 rounded-full bg-[#FF4529]" />
+                  <span className="absolute top-0 h-0.5 w-8 rounded-full bg-primary/50" />
                 )}
 
                 <Icon className="h-5 w-5 mb-0.5" />
 
-                <span className="text-[10px] font-extralight tracking-wide leading-tight truncate max-w-[56px]">
+                <span className="max-w-[56px] truncate text-[10px] font-light leading-tight">
                   {getLabel(tab.labelKey)}
                 </span>
               </Link>
@@ -223,11 +223,11 @@ function MobileSidebarTab({ label }: { label: string; }) {
       <button
         type="button"
         onClick={handleOpen}
-        className="flex min-h-12 min-w-[56px] touch-manipulation flex-col items-center justify-center gap-0.5 px-1 py-2 text-[var(--app-text-tertiary)] transition-colors duration-150 hover:text-[var(--app-text-secondary)] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF4529]/30"
+        className="flex min-h-12 min-w-[56px] touch-manipulation flex-col items-center justify-center gap-0.5 px-1 py-2 text-[var(--app-text-tertiary)] transition-colors hover:text-[var(--app-text-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
         aria-label={label}
       >
         <MoreHorizontal className="h-5 w-5 mb-0.5" />
-        <span className="text-[10px] font-extralight tracking-wide leading-tight">{label}</span>
+        <span className="text-[10px] font-light leading-tight">{label}</span>
       </button>
       {hasOpened && <MobileSidebarSheet open={open} onOpenChange={setOpen} />}
     </>

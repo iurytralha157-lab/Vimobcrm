@@ -1,4 +1,4 @@
-import type { MouseEvent } from 'react';
+import { useState, type MouseEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
@@ -23,7 +23,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import {
   Automation,
@@ -99,13 +98,27 @@ export function AutomationList({
 }: AutomationListProps) {
   const isMobile = useIsMobile();
   const { data: automations, isLoading, error, refetch } = useAutomations();
-  const { data: executionSummaries, error: summariesError, refetch: refetchSummaries } = useAutomationExecutionSummaries();
+  const {
+    data: executionSummaries,
+    error: summariesError,
+    isFetching: summariesFetching,
+    refetch: refetchSummaries,
+  } = useAutomationExecutionSummaries();
   const deleteAutomation = useDeleteAutomation();
   const toggleAutomation = useToggleAutomation();
   const duplicateAutomation = useDuplicateAutomation();
   const cancelExecutions = useCancelAutomationExecutions();
   const canOpenEditor = canManage && allowEditing && !isMobile;
   const showCreateAction = canCreate && canOpenEditor && onCreate;
+  const [stopTarget, setStopTarget] = useState<{
+    id: string;
+    name: string;
+    running: number;
+  } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
 
   const getExecutionStats = (automationId: string) => {
     const summary = executionSummaries?.find((item) => item.automationId === automationId);
@@ -123,13 +136,32 @@ export function AutomationList({
     duplicateAutomation.mutate(automation.id);
   };
 
-  const handleStop = (automationId: string, event: MouseEvent) => {
+  const handleStop = (automation: Automation, event: MouseEvent) => {
     event.stopPropagation();
-    if (!canManage) return;
-    const stats = getExecutionStats(automationId);
+    if (!canManage || cancelExecutions.isPending) return;
+    const stats = getExecutionStats(automation.id);
     if (stats.running === 0) return;
-    if (!window.confirm(`Interromper todas as ${stats.running} execução(ões) ativa(s) desta automação? Um envio já em andamento ainda pode ser concluído.`)) return;
-    cancelExecutions.mutate(automationId);
+    setStopTarget({ id: automation.id, name: automation.name, running: stats.running });
+  };
+
+  const confirmStop = async () => {
+    if (!canManage || !stopTarget || cancelExecutions.isPending) return;
+    try {
+      await cancelExecutions.mutateAsync(stopTarget.id);
+      setStopTarget(null);
+    } catch {
+      // The mutation reports the error. Keep the dialog open for retry/cancel.
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!canOpenEditor || !deleteTarget || deleteAutomation.isPending) return;
+    try {
+      await deleteAutomation.mutateAsync(deleteTarget.id);
+      setDeleteTarget(null);
+    } catch {
+      // The mutation reports the error. Keep the dialog open for retry/cancel.
+    }
   };
 
   const handleOpenCard = (automationId: string) => {
@@ -143,8 +175,9 @@ export function AutomationList({
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      <div className="flex min-h-[320px] items-center justify-center gap-2 text-[12px] font-light text-[var(--app-text-tertiary)]" role="status" aria-live="polite">
+        <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />
+        Carregando automações...
       </div>
     );
   }
@@ -156,7 +189,7 @@ export function AutomationList({
     return (
       <div className="flex min-h-[360px] flex-col items-center justify-center rounded-[8px] border border-[var(--app-border)] bg-[var(--app-surface)] px-6 text-center" role="alert">
         <AlertCircle className="mb-3 h-9 w-9 text-destructive" aria-hidden="true" />
-        <h3 className="text-base font-semibold">
+        <h3 className="text-[14px] font-normal">
           {moduleUnavailable ? 'Módulo de automações indisponível' : 'Não foi possível carregar as automações'}
         </h3>
         <p className="mt-2 max-w-md text-sm text-muted-foreground">
@@ -179,7 +212,7 @@ export function AutomationList({
         <div className="mb-4 rounded-[8px] bg-primary/15 p-4">
           <Zap className="h-10 w-10 text-primary" />
         </div>
-        <h3 className="mb-2 text-base font-semibold">Nenhuma automação criada</h3>
+        <h3 className="mb-2 text-[14px] font-normal">Nenhuma automação criada</h3>
         <p className="max-w-sm text-sm text-muted-foreground">
           Crie um fluxo de follow-up para testar mensagens, esperas, condições e ações automáticas.
         </p>
@@ -198,7 +231,10 @@ export function AutomationList({
       {summariesError && (
         <div className="flex flex-col gap-2 rounded-[8px] border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between" role="alert">
           <span>As automações foram carregadas, mas as métricas de execução estão indisponíveis.</span>
-          <Button type="button" variant="outline" size="sm" onClick={() => void refetchSummaries()}>Tentar novamente</Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => void refetchSummaries()} disabled={summariesFetching}>
+            {summariesFetching && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
+            Tentar novamente
+          </Button>
         </div>
       )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
@@ -236,7 +272,7 @@ export function AutomationList({
                     <span className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${automation.is_active ? 'bg-green-500' : 'bg-muted-foreground'}`} />
                     {automation.is_active ? 'Ativa' : 'Inativa'}
                   </Badge>
-                  <h3 className="truncate text-sm font-semibold text-foreground">{automation.name}</h3>
+                  <h3 className="truncate text-[14px] font-normal text-foreground">{automation.name}</h3>
                   <span className="mt-1 block truncate text-xs text-muted-foreground">
                     {TRIGGER_TYPE_LABELS[automation.trigger_type as TriggerType] || automation.trigger_type}
                   </span>
@@ -274,7 +310,8 @@ export function AutomationList({
                 <Switch
                   checked={automation.is_active}
                   onCheckedChange={(checked) => toggleAutomation.mutate({ id: automation.id, is_active: checked })}
-                        className="scale-75 data-[state=checked]:bg-green-500"
+                  disabled={toggleAutomation.isPending}
+                  className="scale-75 data-[state=checked]:bg-green-500"
                   onClick={(event) => event.stopPropagation()}
                   title={automation.is_active ? 'Desativar' : 'Ativar'}
                   aria-label={`${automation.is_active ? 'Desativar' : 'Ativar'} automação ${automation.name}`}
@@ -284,7 +321,7 @@ export function AutomationList({
                           variant="ghost"
                           size="icon"
                           className="h-7 w-7 text-muted-foreground hover:bg-primary/10 hover:text-primary"
-                          onClick={(event) => handleStop(automation.id, event)}
+                          onClick={(event) => handleStop(automation, event)}
                           disabled={cancelExecutions.isPending}
                           title="Interromper"
                           aria-label={`Interromper execucoes de ${automation.name}`}
@@ -316,38 +353,25 @@ export function AutomationList({
                   onClick={(event) => handleDuplicate(automation, event)}
                   title="Duplicar"
                   aria-label={`Duplicar automação ${automation.name}`}
+                  disabled={duplicateAutomation.isPending}
                 >
                             <Copy className="h-3.5 w-3.5" />
                 </Button>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 text-muted-foreground hover:bg-red-500/10 hover:text-red-500"
-                                aria-label={`Excluir automação ${automation.name}`}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Excluir automação?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        Esta ação não pode ser desfeita. A automação &quot;{automation.name}&quot; será excluída permanentemente.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={() => deleteAutomation.mutate(automation.id)}
-                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                      >
-                        Excluir
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-muted-foreground hover:bg-red-500/10 hover:text-red-500"
+                  aria-label={`Excluir automação ${automation.name}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (!deleteAutomation.isPending) {
+                      setDeleteTarget({ id: automation.id, name: automation.name });
+                    }
+                  }}
+                  disabled={deleteAutomation.isPending}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
                         </>
                       )}
                     </div>
@@ -359,6 +383,78 @@ export function AutomationList({
         );
       })}
       </div>
+
+      <AlertDialog
+        open={stopTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !cancelExecutions.isPending) setStopTarget(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-[440px] rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-5 shadow-none">
+          <AlertDialogHeader className="space-y-1.5 text-left">
+            <AlertDialogTitle className="text-[14px] font-medium text-[var(--app-text-primary)]">
+              Interromper execuções?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-[12px] font-light leading-5 text-[var(--app-text-tertiary)]">
+              {stopTarget
+                ? `${stopTarget.running} execução(ões) ativa(s) de “${stopTarget.name}” serão interrompidas. Um envio que já começou ainda pode ser concluído.`
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="mt-4 gap-2 sm:gap-2">
+            <AlertDialogCancel disabled={cancelExecutions.isPending} className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]">
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={cancelExecutions.isPending}
+              className="h-9 rounded-[6px] bg-destructive px-3 text-[12px] font-light text-destructive-foreground shadow-none hover:bg-destructive/90"
+              onClick={(event) => {
+                event.preventDefault();
+                void confirmStop();
+              }}
+            >
+              {cancelExecutions.isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+              {cancelExecutions.isPending ? 'Interrompendo...' : 'Interromper execuções'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !deleteAutomation.isPending) setDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-[440px] rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-5 shadow-none">
+          <AlertDialogHeader className="space-y-1.5 text-left">
+            <AlertDialogTitle className="text-[14px] font-medium text-[var(--app-text-primary)]">
+              Excluir automação?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-[12px] font-light leading-5 text-[var(--app-text-tertiary)]">
+              {deleteTarget
+                ? `A automação “${deleteTarget.name}” será excluída permanentemente. Esta ação não pode ser desfeita.`
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="mt-4 gap-2 sm:gap-2">
+            <AlertDialogCancel disabled={deleteAutomation.isPending} className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]">
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteAutomation.isPending}
+              className="h-9 rounded-[6px] bg-destructive px-3 text-[12px] font-light text-destructive-foreground shadow-none hover:bg-destructive/90"
+              onClick={(event) => {
+                event.preventDefault();
+                void confirmDelete();
+              }}
+            >
+              {deleteAutomation.isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+              {deleteAutomation.isPending ? 'Excluindo...' : 'Excluir automação'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

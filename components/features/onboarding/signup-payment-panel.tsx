@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Image from "next/image";
-import { CheckCircle2, Copy, CreditCard, QrCode, ShieldCheck } from "lucide-react";
-import { VimobLoader } from "@/components/shared/loading";
-import { toast } from "sonner";
-import { paymentsAPI } from "@/lib/api/payments";
+import { useState } from "react";
+import { CheckCircle2, CreditCard, QrCode, ReceiptText, ShieldCheck } from "lucide-react";
+
+import {
+  buildCheckoutPaymentPath,
+  type CheckoutPaymentMethod,
+} from "@/lib/billing/checkout-ui-state";
 
 type SignupPaymentPlan = {
   id?: string;
@@ -23,54 +24,7 @@ type SignupPaymentPlan = {
   features?: string[];
 };
 
-type PaymentMethod = "PIX" | "CREDIT_CARD";
-
-type BillingData = {
-  email: string;
-  cpfCnpj: string;
-  phone: string;
-  holderName: string;
-  cardNumber: string;
-  expiry: string;
-  ccv: string;
-  postalCode: string;
-  addressNumber: string;
-};
-
-type PixResult = {
-  success: true;
-  type: "PIX";
-  payment_id: string;
-  invoice_url: string;
-  qr_code: string;
-  qr_payload: string;
-  value: number;
-};
-
-type CardResult = {
-  success: true;
-  type: "CREDIT_CARD";
-  subscription_id: string;
-  status: string;
-  next_due_date: string;
-  value: number;
-};
-
-type ChargeResult =
-  | PixResult
-  | CardResult
-  | { success?: false; error?: string };
-
-type CancelPaymentResult = {
-  success?: boolean;
-  error?: string;
-};
-
-type PaymentStatusResponse = {
-  payment?: {
-    status?: string;
-  };
-};
+type PaymentMethod = CheckoutPaymentMethod;
 
 type SignupPaymentPanelProps = {
   step: number;
@@ -87,86 +41,11 @@ type SignupPaymentPanelProps = {
   onRequestPlanChange: () => void;
 };
 
-const fieldClass =
-  "h-11 min-w-0 w-full rounded-[6px] bg-[#121212]/40 px-3 text-sm font-extralight tracking-wide text-white placeholder:text-white/30 outline-none transition-colors focus:bg-[#121212]/50";
-
-const labelClass = "text-xs font-extralight tracking-wide text-white/58";
-
-type FunctionErrorPayload = {
-  error?: string;
-  message?: string;
-  errors?: Array<{ description?: string }>;
+const paymentMethodCopy: Record<PaymentMethod, { label: string; action: string }> = {
+  PIX: { label: "Pix", action: "Continuar com Pix" },
+  BOLETO: { label: "Boleto", action: "Continuar com boleto" },
+  CREDIT_CARD: { label: "Cartão", action: "Continuar com cartão" },
 };
-
-function isResponse(value: unknown): value is Response {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "clone" in value &&
-    "json" in value
-  );
-}
-
-async function getErrorMessage(error: unknown) {
-  if (error instanceof Error && "context" in error && isResponse(error.context)) {
-    try {
-      const payload = (await error.context.clone().json()) as FunctionErrorPayload;
-      const message =
-        payload.error || payload.message || payload.errors?.[0]?.description;
-
-      if (message) return message;
-    } catch {
-      return error.message;
-    }
-  }
-
-  if (error instanceof Error) return error.message;
-  return String(error || "Não foi possível processar o pagamento.");
-}
-
-function onlyDigits(value: string) {
-  return value.replace(/\D/g, "");
-}
-
-function normalizePaymentPhone(value: string) {
-  const digits = onlyDigits(value);
-
-  if (digits.startsWith("55") && digits.length > 11) {
-    return digits.slice(2);
-  }
-
-  return digits;
-}
-
-function formatExpiry(value: string) {
-  const digits = onlyDigits(value).slice(0, 4);
-
-  if (digits.length <= 2) {
-    return digits;
-  }
-
-  return `${digits.slice(0, 2)}/${digits.slice(2)}`;
-}
-
-function getExpiryParts(value: string) {
-  const digits = onlyDigits(value);
-  const month = digits.slice(0, 2);
-  const year = digits.slice(2, 4);
-
-  if (month.length !== 2 || year.length !== 2) return null;
-
-  const monthNumber = Number(month);
-  if (monthNumber < 1 || monthNumber > 12) return null;
-
-  return {
-    month,
-    year: `20${year}`,
-  };
-}
-
-function isPaidStatus(status?: string) {
-  return status === "CONFIRMED" || status === "RECEIVED" || status === "RECEIVED_IN_CASH";
-}
 
 function formatLimit(value?: number | null) {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "--";
@@ -179,25 +58,7 @@ function getTrialDays(plan: SignupPaymentPlan) {
 }
 
 function getPlanFeatures(plan: SignupPaymentPlan) {
-  if (plan.features?.length) return plan.features;
-
-  const slug = String(plan.slug || plan.name || "").toLowerCase();
-  const modules = new Set((plan.modules || []).map((moduleName) => moduleName.toLowerCase()));
-  const features = ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integração Meta", "Imóveis"];
-
-  if (modules.has("site") || slug.includes("pro") || slug.includes("intermediario") || slug.includes("master")) {
-    features.push("Site");
-  }
-
-  if (modules.has("automations") || slug.includes("master")) {
-    features.push("Automações");
-  }
-
-  if (modules.has("portals") || slug.includes("master")) {
-    features.push("Portais");
-  }
-
-  return features;
+  return plan.features || [];
 }
 
 function getPlanBadge(plan: SignupPaymentPlan, trialDays: number | null) {
@@ -210,11 +71,11 @@ function getPlanBadge(plan: SignupPaymentPlan, trialDays: number | null) {
   return null;
 }
 
-function AsaasDisclosure() {
+function SecureCheckoutDisclosure() {
   return (
     <p className="text-center text-[10px] font-extralight leading-[1.15] text-white/36">
-      <span className="block">O cartao sera enviado diretamente ao Asaas.</span>
-      <span className="block">O Vimob CRM guarda apenas os identificadores da assinatura.</span>
+      <span className="block">O pagamento será concluído no checkout seguro da Vimob.</span>
+      <span className="block">Os dados sensíveis do cartão não ficam armazenados no CRM.</span>
     </p>
   );
 }
@@ -225,15 +86,15 @@ function PlanSummary({ plan }: { plan: SignupPaymentPlan }) {
   const badge = getPlanBadge(plan, trialDays);
 
   return (
-    <div className="rounded-[8px] border border-[#FF4529]/26 bg-[#151515]/56 px-4 py-4 shadow-[0_18px_52px_rgba(0,0,0,0.18)]">
+    <div className="rounded-[8px] border border-primary/25 bg-[var(--auth-hero-panel-strong)] px-4 py-4 shadow-none">
       <div className="text-center">
         {badge ? (
-          <p className="mx-auto mb-2 inline-flex h-6 items-center rounded-full bg-[#FF4529]/14 px-3 text-[10px] font-light uppercase tracking-[0.12em] text-[#FF8A76]">
+          <p className="mx-auto mb-2 inline-flex h-6 items-center rounded-[6px] bg-primary/15 px-3 text-[10px] font-light text-primary">
             {badge}
           </p>
         ) : null}
-        <p className="text-base font-light tracking-wide text-white">{plan.name}</p>
-        <p className="mt-1 text-[18px] font-light tracking-wide text-white">
+        <p className="text-base font-light text-white">{plan.name}</p>
+        <p className="mt-1 text-[18px] font-light text-white">
           {plan.price}
         </p>
         <p className="mx-auto mt-1 max-w-[360px] text-[11px] font-extralight leading-4 text-white/46">
@@ -244,16 +105,16 @@ function PlanSummary({ plan }: { plan: SignupPaymentPlan }) {
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2 border-y border-white/8 py-3">
-        <div className="rounded-[6px] bg-[#121212]/50 px-3 py-2 text-center">
-          <p className="text-[10px] font-extralight uppercase tracking-[0.12em] text-white/34">
+        <div className="rounded-[6px] bg-[var(--auth-hero-panel-hover)] px-3 py-2 text-center">
+          <p className="text-[10px] font-light text-white/34">
             Usuarios
           </p>
           <p className="mt-0.5 text-sm font-light text-white">
             Ate {formatLimit(plan.maxUsers)}
           </p>
         </div>
-        <div className="rounded-[6px] bg-[#121212]/50 px-3 py-2 text-center">
-          <p className="text-[10px] font-extralight uppercase tracking-[0.12em] text-white/34">
+        <div className="rounded-[6px] bg-[var(--auth-hero-panel-hover)] px-3 py-2 text-center">
+          <p className="text-[10px] font-light text-white/34">
             WhatsApp
           </p>
           <p className="mt-0.5 text-sm font-light text-white">
@@ -264,7 +125,7 @@ function PlanSummary({ plan }: { plan: SignupPaymentPlan }) {
 
       {features.length > 0 ? (
         <div className="mt-3">
-          <p className="mb-2 text-[10px] font-extralight uppercase tracking-[0.12em] text-white/36">
+          <p className="mb-2 text-[10px] font-light text-white/36">
             Acesso incluso
           </p>
           <div className="grid gap-1.5">
@@ -273,7 +134,7 @@ function PlanSummary({ plan }: { plan: SignupPaymentPlan }) {
                 key={feature}
                 className="flex min-w-0 items-start gap-2 text-[11.5px] font-extralight leading-4 text-white/62"
               >
-                <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-[#FF4529]" />
+                <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-primary" />
                 <span>{feature}</span>
               </span>
             ))}
@@ -289,186 +150,44 @@ export function SignupPaymentPanel({
   selectedPlan,
   checkoutToken,
   companyName,
-  adminName,
-  email,
-  documentNumber,
-  phoneCountryCode,
-  phone,
-  onAccessPlatform,
   isPlanChangeMode,
   onRequestPlanChange,
 }: SignupPaymentPanelProps) {
   const [method, setMethod] = useState<PaymentMethod>("PIX");
-  const [billingData, setBillingData] = useState<BillingData>({
-    email: "",
-    cpfCnpj: "",
-    phone: "",
-    holderName: "",
-    cardNumber: "",
-    expiry: "",
-    ccv: "",
-    postalCode: "",
-    addressNumber: "",
-  });
-  const [submitting, setSubmitting] = useState(false);
-  const [pixResult, setPixResult] = useState<PixResult | null>(null);
-  const [cardResult, setCardResult] = useState<CardResult | null>(null);
-  const [paid, setPaid] = useState(false);
+  const [navigating, setNavigating] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
-  const [isCanceling, setIsCanceling] = useState(false);
 
   const isPaidPlan = selectedPlan?.signupPath === "paid";
-  const fullPhone = `${phoneCountryCode} ${phone}`.trim();
 
-  const effectiveBillingData = {
-    ...billingData,
-    email: billingData.email || email,
-    cpfCnpj: billingData.cpfCnpj || documentNumber,
-    phone: billingData.phone || fullPhone,
-    holderName: billingData.holderName || adminName,
-  };
-
-  useEffect(() => {
-    if (!pixResult?.payment_id || !checkoutToken || paid) return;
-
-    const interval = window.setInterval(async () => {
-      const data = await paymentsAPI.paymentStatus<PaymentStatusResponse>(
-        pixResult.payment_id,
-        checkoutToken,
-      );
-
-      if (isPaidStatus(data?.payment?.status)) {
-        setPaid(true);
-        window.clearInterval(interval);
-        toast.success("Pagamento confirmado. Acesso liberado.");
-      }
-    }, 5000);
-
-    return () => window.clearInterval(interval);
-  }, [checkoutToken, paid, pixResult?.payment_id]);
-
-  useEffect(() => {
-    if (!paid) return;
-
-    const timeout = window.setTimeout(() => {
-      void onAccessPlatform();
-    }, 1200);
-
-    return () => window.clearTimeout(timeout);
-  }, [onAccessPlatform, paid]);
-
-  function updateBillingField(field: keyof BillingData, value: string) {
-    setBillingData((current) => ({ ...current, [field]: value }));
-  }
-
-  async function handlePayment() {
-    if (!checkoutToken || !selectedPlan || isPlanChangeMode) return;
-    const expiry = getExpiryParts(billingData.expiry);
-
-    setSubmitting(true);
-    setPaymentError(null);
-
-    try {
-      const body: Record<string, string> = {
-        checkout_token: checkoutToken,
-        billing_type: method,
-        holder_email: effectiveBillingData.email.trim(),
-        holder_cpf_cnpj: effectiveBillingData.cpfCnpj.trim(),
-        holder_phone: normalizePaymentPhone(effectiveBillingData.phone),
-      };
-
-      if (method === "CREDIT_CARD") {
-        if (!expiry) {
-          throw new Error("Informe a validade do cartao no formato MM/AA.");
-        }
-
-        Object.assign(body, {
-          holder_name: effectiveBillingData.holderName.trim(),
-          card_number: onlyDigits(billingData.cardNumber),
-          expiry_month: expiry.month,
-          expiry_year: expiry.year,
-          ccv: billingData.ccv.trim(),
-          holder_postal_code: onlyDigits(billingData.postalCode),
-          holder_address_number: billingData.addressNumber.trim(),
-        });
-      }
-
-      const data = await paymentsAPI.createCharge<ChargeResult>(body);
-      if (!data?.success) throw new Error(data?.error || "Falha ao processar pagamento.");
-
-      if (data.type === "PIX") {
-        setPixResult(data);
-        setCardResult(null);
-        toast.success("QR Code Pix gerado.");
-        return;
-      }
-
-      setCardResult(data);
-      setPixResult(null);
-      setPaid(true);
-      toast.success("Assinatura ativada. Acesso liberado.");
-    } catch (error) {
-      setPaymentError(await getErrorMessage(error));
-    } finally {
-      setSubmitting(false);
+  function handlePayment() {
+    if (!selectedPlan || isPlanChangeMode) return;
+    if (!checkoutToken) {
+      setPaymentError("O checkout seguro da Vimob ainda não está disponível. Aguarde a conclusão do cadastro e tente novamente.");
+      return;
     }
-  }
 
-  async function cancelPixAttempt(nextAction: PaymentMethod | "PLAN") {
-    if (!checkoutToken || !pixResult?.payment_id) return;
-
-    setIsCanceling(true);
-    setPaymentError(null);
-
-    try {
-      const data = await paymentsAPI.cancelPayment<CancelPaymentResult>({
-        payment_id: pixResult.payment_id,
-        checkout_token: checkoutToken,
-      });
-      if (!data?.success) {
-        throw new Error(data?.error || "Não foi possível cancelar a cobrança.");
-      }
-
-      setPixResult(null);
-
-      if (nextAction === "PLAN") {
-        onRequestPlanChange();
-        toast.success("Cobranca cancelada. Escolha outro plano.");
-        return;
-      }
-
-      setMethod(nextAction);
-      toast.success("Cobranca cancelada.");
-    } catch (error) {
-      setPaymentError(await getErrorMessage(error));
-    } finally {
-      setIsCanceling(false);
+    const checkoutPath = buildCheckoutPaymentPath(checkoutToken, method);
+    if (!checkoutPath) {
+      setPaymentError("O link do checkout é inválido. Gere um novo cadastro para continuar.");
+      return;
     }
+
+    setPaymentError(null);
+    setNavigating(true);
+    window.location.assign(checkoutPath);
   }
 
-  const canSubmitPix =
-    !!checkoutToken &&
-    !!effectiveBillingData.email.trim() &&
-    !!effectiveBillingData.cpfCnpj.trim() &&
-    !submitting &&
-    !isCanceling &&
-    !isPlanChangeMode;
-  const canSubmitCard =
-    canSubmitPix &&
-    !!effectiveBillingData.holderName.trim() &&
-    !!billingData.cardNumber.trim() &&
-    !!getExpiryParts(billingData.expiry) &&
-    !!billingData.ccv.trim() &&
-    !!billingData.postalCode.trim() &&
-    !!billingData.addressNumber.trim();
+  const canContinue = Boolean(
+    checkoutToken && selectedPlan && !navigating && !isPlanChangeMode,
+  );
 
   return (
-    <aside className="w-full rounded-[8px] bg-[#121212]/40 p-4 shadow-[0_24px_80px_rgba(0,0,0,0.28)] backdrop-blur-md sm:p-5">
-      <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-[6px] bg-[#151515]/50 px-3 py-2.5">
-        <p className="text-[10px] font-extralight uppercase tracking-[0.18em] text-white/42">
+    <aside className="w-full rounded-[8px] bg-[var(--auth-hero-panel)] p-4 shadow-none sm:p-5">
+      <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-[6px] bg-[var(--auth-hero-panel-strong)] px-3 py-2.5">
+        <p className="text-[10px] font-light text-white/42">
           Organização
         </p>
-        <p className="text-sm font-light tracking-wide text-white/72">
+        <p className="text-sm font-light text-white/72">
           {companyName || "Organização em criação"}
         </p>
       </div>
@@ -481,8 +200,8 @@ export function SignupPaymentPanel({
       ) : selectedPlan && !isPaidPlan ? (
         <div className="space-y-2">
           <PlanSummary plan={selectedPlan} />
-          <div className="flex items-center gap-2 rounded-[6px] bg-[#FF4529]/10 px-3 py-2">
-            <ShieldCheck className="h-4 w-4 shrink-0 text-[#FF4529]" />
+          <div className="flex items-center gap-2 rounded-[6px] bg-primary/10 px-3 py-2">
+            <ShieldCheck className="h-4 w-4 shrink-0 text-primary" />
             <p className="text-[11px] font-extralight leading-4 text-white/54">
               Acesso de teste liberado apos criar a organizacao.
             </p>
@@ -491,118 +210,22 @@ export function SignupPaymentPanel({
       ) : selectedPlan && !checkoutToken ? (
         <div className="space-y-2">
           <PlanSummary plan={selectedPlan} />
-          <AsaasDisclosure />
-        </div>
-      ) : paid || cardResult ? (
-        <div className="space-y-5 text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-[8px] border border-[#FF4529] text-[#FF4529]">
-            <CheckCircle2 className="h-7 w-7" />
-          </div>
-          <div className="space-y-2">
-            <h3 className="text-base font-light tracking-wide text-white">
-              Acesso liberado
-            </h3>
-            <p className="text-sm font-extralight leading-6 text-white/54">
-              Sua assinatura foi confirmada e a organizacao ja pode acessar o CRM.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onAccessPlatform}
-            className="auth-primary-action h-12 w-full rounded-[6px] text-[12px] font-extralight uppercase tracking-[0.08em] outline-none transition-colors"
-          >
-            Acessar plataforma
-          </button>
-        </div>
-      ) : pixResult ? (
-        <div className="space-y-4">
-          <div className="rounded-[8px] bg-white p-3">
-            {pixResult.qr_code ? (
-              <Image
-                src={`data:image/png;base64,${pixResult.qr_code}`}
-                alt="QR Code Pix"
-                width={224}
-                height={224}
-                className="mx-auto h-56 w-56"
-                unoptimized
-              />
-            ) : (
-              <div className="flex h-56 items-center justify-center text-sm text-black/60">
-                QR Code indisponível
-              </div>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <input
-              value={pixResult.qr_payload}
-              readOnly
-              className={`${fieldClass} min-w-0 flex-1 text-xs`}
-            />
-            <button
-              type="button"
-              onClick={() => {
-                navigator.clipboard.writeText(pixResult.qr_payload);
-                toast.success("Codigo Pix copiado.");
-              }}
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[6px] bg-[#121212]/40 text-white/70 transition-colors hover:bg-[#121212]/50 hover:text-[#FF4529]"
-              aria-label="Copiar Pix"
-            >
-              <Copy className="h-4 w-4" />
-            </button>
-          </div>
-          <p className="flex items-center justify-center gap-2 text-xs font-extralight text-white/45">
-            <VimobLoader size="xs" label="Aguardando confirmacao do ASAAS" />
-            Aguardando confirmacao do ASAAS
-          </p>
-          <p className="text-center text-xs font-extralight leading-5 text-white/38">
-            Para trocar plano ou forma de pagamento, cancele esta cobranca primeiro.
-          </p>
-          {paymentError ? (
-            <p className="text-center text-xs font-light leading-5 text-[#FF4529]">
-              {paymentError}
-            </p>
-          ) : null}
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <button
-              type="button"
-              onClick={() => void cancelPixAttempt("PIX")}
-              disabled={isCanceling}
-              className="min-h-10 rounded-[6px] bg-[#121212]/40 px-3 py-2 text-[11px] font-extralight uppercase leading-4 tracking-[0.08em] text-white/62 transition-colors hover:bg-[#121212]/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              {isCanceling ? "Cancelando" : "Novo Pix"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void cancelPixAttempt("CREDIT_CARD")}
-              disabled={isCanceling}
-              className="min-h-10 rounded-[6px] bg-[#FF4529]/15 px-3 py-2 text-[11px] font-extralight uppercase leading-4 tracking-[0.08em] text-white transition-colors hover:bg-[#FF4529]/20 disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              Cartao
-            </button>
-            <button
-              type="button"
-              onClick={() => void cancelPixAttempt("PLAN")}
-              disabled={isCanceling}
-              className="min-h-10 rounded-[6px] bg-[#121212]/40 px-3 py-2 text-[11px] font-extralight uppercase leading-4 tracking-[0.08em] text-white/62 transition-colors hover:bg-[#121212]/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              Trocar plano
-            </button>
-          </div>
+          <SecureCheckoutDisclosure />
         </div>
       ) : (
         <div className="space-y-4">
           {checkoutToken ? (
-            <div className="rounded-[6px] bg-[#151515]/50 p-3">
+            <div className="rounded-[6px] bg-[var(--auth-hero-panel-strong)] p-3">
               <p className="text-xs font-extralight leading-5 text-white/45">
                 {isPlanChangeMode
                   ? "Escolha o novo plano no formulário. O pagamento fica pausado até você concluir a troca."
-                  : "Se precisar escolher outro plano, troque antes de gerar Pix ou tentar o cartao."}
+                  : "Escolha como deseja pagar. Os dados e a cobrança serão gerados somente no checkout da Vimob."}
               </p>
               {!isPlanChangeMode ? (
                 <button
                   type="button"
                   onClick={onRequestPlanChange}
-                  className="mt-3 h-9 w-full rounded-[6px] bg-[#FF4529]/15 text-[11px] font-extralight uppercase tracking-[0.08em] text-white transition-colors hover:bg-[#FF4529]/20"
+                  className="mt-3 h-9 w-full rounded-[6px] bg-primary/15 text-[11px] font-light text-white transition-colors hover:bg-primary/20"
                 >
                   Trocar plano
                 </button>
@@ -610,15 +233,17 @@ export function SignupPaymentPanel({
             </div>
           ) : null}
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Forma de pagamento">
             <button
               type="button"
+              role="radio"
+              aria-checked={method === "PIX"}
               onClick={() => setMethod("PIX")}
               disabled={isPlanChangeMode}
-              className={`flex h-11 items-center justify-center gap-2 rounded-[6px] text-sm font-extralight transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+              className={`flex h-11 min-w-0 items-center justify-center gap-1.5 rounded-[6px] px-2 text-[12px] font-extralight transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
                 method === "PIX"
-                  ? "bg-[#FF4529]/15 text-white"
-                  : "bg-[#121212]/40 text-white/52 hover:bg-[#121212]/50"
+                  ? "bg-primary/15 text-white"
+                  : "bg-[var(--auth-hero-panel)] text-white/52 hover:bg-[var(--auth-hero-panel-hover)]"
               }`}
             >
               <QrCode className="h-4 w-4" />
@@ -626,112 +251,51 @@ export function SignupPaymentPanel({
             </button>
             <button
               type="button"
+              role="radio"
+              aria-checked={method === "BOLETO"}
+              onClick={() => setMethod("BOLETO")}
+              disabled={isPlanChangeMode}
+              className={`flex h-11 min-w-0 items-center justify-center gap-1.5 rounded-[6px] px-2 text-[12px] font-extralight transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+                method === "BOLETO"
+                  ? "bg-primary/15 text-white"
+                  : "bg-[var(--auth-hero-panel)] text-white/52 hover:bg-[var(--auth-hero-panel-hover)]"
+              }`}
+            >
+              <ReceiptText className="h-4 w-4 shrink-0" />
+              Boleto
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={method === "CREDIT_CARD"}
               onClick={() => setMethod("CREDIT_CARD")}
               disabled={isPlanChangeMode}
-              className={`flex h-11 items-center justify-center gap-2 rounded-[6px] text-sm font-extralight transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+              className={`flex h-11 min-w-0 items-center justify-center gap-1.5 rounded-[6px] px-2 text-[12px] font-extralight transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
                 method === "CREDIT_CARD"
-                  ? "bg-[#FF4529]/15 text-white"
-                  : "bg-[#121212]/40 text-white/52 hover:bg-[#121212]/50"
+                  ? "bg-primary/15 text-white"
+                  : "bg-[var(--auth-hero-panel)] text-white/52 hover:bg-[var(--auth-hero-panel-hover)]"
               }`}
             >
               <CreditCard className="h-4 w-4" />
-              Cartao
+              Cartão
             </button>
           </div>
 
-          <div className="grid gap-3">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label className="min-w-0 space-y-1.5">
-                <span className={labelClass}>CPF/CNPJ</span>
-                <input
-                  value={effectiveBillingData.cpfCnpj}
-                  onChange={(event) => updateBillingField("cpfCnpj", event.target.value)}
-                  className={fieldClass}
-                />
-              </label>
-              <label className="min-w-0 space-y-1.5">
-                <span className={labelClass}>WhatsApp</span>
-                <input
-                  value={effectiveBillingData.phone}
-                  onChange={(event) => updateBillingField("phone", event.target.value)}
-                  className={fieldClass}
-                />
-              </label>
+          <div className="rounded-[6px] border border-primary/20 bg-primary/10 p-3">
+            <div className="flex items-start gap-2.5">
+              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+              <p className="text-[11px] font-extralight leading-5 text-white/52">
+                {method === "CREDIT_CARD"
+                  ? "Informe o cartão e autorize a recorrência no checkout seguro da Vimob."
+                  : method === "BOLETO"
+                    ? "Revise os dados de faturamento e gere o boleto no checkout seguro da Vimob."
+                    : "Revise os dados de faturamento e gere o QR Code Pix no checkout seguro da Vimob."}
+              </p>
             </div>
-
-            {method === "CREDIT_CARD" ? (
-              <>
-                <label className="min-w-0 space-y-1.5">
-                  <span className={labelClass}>Nome no cartao</span>
-                  <input
-                    value={effectiveBillingData.holderName}
-                    onChange={(event) => updateBillingField("holderName", event.target.value)}
-                    className={fieldClass}
-                  />
-                </label>
-                <label className="min-w-0 space-y-1.5">
-                  <span className={labelClass}>Número do cartão</span>
-                  <input
-                    value={billingData.cardNumber}
-                    onChange={(event) => updateBillingField("cardNumber", event.target.value)}
-                    inputMode="numeric"
-                    placeholder="0000 0000 0000 0000"
-                    className={fieldClass}
-                  />
-                </label>
-                <div className="grid grid-cols-[minmax(0,1fr)_minmax(88px,120px)] gap-3">
-                  <label className="min-w-0 space-y-1.5">
-                    <span className={labelClass}>Validade</span>
-                    <input
-                      value={billingData.expiry}
-                      onChange={(event) =>
-                        updateBillingField("expiry", formatExpiry(event.target.value))
-                      }
-                      inputMode="numeric"
-                      maxLength={5}
-                      placeholder="MM/AA"
-                      className={fieldClass}
-                    />
-                  </label>
-                  <label className="min-w-0 space-y-1.5">
-                    <span className={labelClass}>CVV</span>
-                    <input
-                      value={billingData.ccv}
-                      onChange={(event) => updateBillingField("ccv", event.target.value)}
-                      inputMode="numeric"
-                      maxLength={4}
-                      className={fieldClass}
-                    />
-                  </label>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <label className="min-w-0 space-y-1.5">
-                    <span className={labelClass}>CEP</span>
-                    <input
-                      value={billingData.postalCode}
-                      onChange={(event) => updateBillingField("postalCode", event.target.value)}
-                      inputMode="numeric"
-                      className={fieldClass}
-                    />
-                  </label>
-                  <label className="min-w-0 space-y-1.5">
-                    <span className={labelClass}>Número</span>
-                    <input
-                      value={billingData.addressNumber}
-                      onChange={(event) => updateBillingField("addressNumber", event.target.value)}
-                      className={fieldClass}
-                    />
-                  </label>
-                </div>
-                <p className="text-[10px] font-extralight leading-[1.25] text-white/36">
-                  O Vimob CRM nao armazena dados completos do cartao. A recorrencia fica tokenizada no Asaas.
-                </p>
-              </>
-            ) : null}
           </div>
 
           {paymentError ? (
-            <p className="text-center text-xs font-light leading-5 text-[#FF4529]">
+            <p className="text-center text-xs font-light leading-5 text-primary">
               {paymentError}
             </p>
           ) : null}
@@ -739,14 +303,13 @@ export function SignupPaymentPanel({
           <button
             type="button"
             onClick={handlePayment}
-            disabled={method === "PIX" ? !canSubmitPix : !canSubmitCard}
-            className="auth-primary-action h-12 w-full rounded-[6px] text-[12px] font-extralight uppercase tracking-[0.08em] outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-45"
+            disabled={!canContinue}
+            className="auth-primary-action h-12 w-full rounded-[6px] text-[12px] font-light outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-45"
           >
-            {submitting
-              ? "Processando"
-              : method === "PIX"
-                ? "Gerar QR Code Pix"
-                : "Ativar assinatura"}
+            <span className="inline-flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4" />
+              {navigating ? "Abrindo checkout" : paymentMethodCopy[method].action}
+            </span>
           </button>
         </div>
       )}

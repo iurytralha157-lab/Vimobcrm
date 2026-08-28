@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/phonenumber"
 )
 
 var (
@@ -222,46 +224,48 @@ func normalizeDigits(value string) string {
 	return builder.String()
 }
 
-func normalizePhone(value string) string {
-	digits := normalizeDigits(value)
-	if strings.HasPrefix(digits, "55") && len(digits) > 11 {
-		return digits[2:]
-	}
-
-	return digits
-}
-
 func formatPhoneForWhatsApp(value string) string {
-	digits := normalizeDigits(value)
-	if digits == "" {
+	canonical, err := phonenumber.Canonicalize(value)
+	if err != nil || canonical == "" {
 		return ""
 	}
-	if strings.HasPrefix(digits, "55") {
-		return digits
-	}
-	if len(digits) == 10 || len(digits) == 11 {
-		return "55" + digits
-	}
-
-	return digits
+	return strings.TrimPrefix(canonical, "+")
 }
 
 func phoneVariants(value string) []string {
-	cleaned := normalizeDigits(value)
-	normalized := normalizePhone(value)
-	candidates := []string{cleaned, normalized}
-	if normalized != "" {
-		candidates = append(candidates, "55"+normalized)
+	canonicalInput := value
+	if strings.Contains(value, "@") {
+		phone, ok := phoneFromIdentityValue(value)
+		if !ok {
+			return nil
+		}
+		// A phone extracted from a WhatsApp JID already includes its country
+		// calling code, even when its digit count is also a valid BR local size.
+		canonicalInput = "+" + phone
 	}
 
+	canonical, err := phonenumber.Canonicalize(canonicalInput)
+	if err != nil || canonical == "" {
+		return nil
+	}
+	canonicalDigits := strings.TrimPrefix(canonical, "+")
+	if !strings.HasPrefix(canonical, "+55") {
+		// Keep the explicit prefix until normalize_phone runs in SQL. Dropping
+		// it would make an 11-digit NANP number look like a Brazilian local one.
+		return []string{canonical}
+	}
+
+	local := strings.TrimPrefix(canonicalDigits, "55")
+	candidates := []string{canonicalDigits, local}
+
 	for _, candidate := range append([]string{}, candidates...) {
-		local := normalizePhone(candidate)
-		if len(local) == 11 && local[2] == '9' {
-			withoutNinth := local[:2] + local[3:]
+		localCandidate := strings.TrimPrefix(candidate, "55")
+		if len(localCandidate) == 11 && localCandidate[2] == '9' {
+			withoutNinth := localCandidate[:2] + localCandidate[3:]
 			candidates = append(candidates, withoutNinth, "55"+withoutNinth)
 		}
-		if len(local) == 10 {
-			withNinth := local[:2] + "9" + local[2:]
+		if len(localCandidate) == 10 {
+			withNinth := localCandidate[:2] + "9" + localCandidate[2:]
 			candidates = append(candidates, withNinth, "55"+withNinth)
 		}
 	}
@@ -283,8 +287,8 @@ func phoneVariants(value string) []string {
 }
 
 func isValidWhatsAppPhone(value string) bool {
-	digits := normalizeDigits(value)
-	return len(digits) >= 10
+	canonical, err := phonenumber.Canonicalize(value)
+	return err == nil && canonical != ""
 }
 
 func outgoingLastMessage(messageType string, text string, senderName string, isGroup bool) string {

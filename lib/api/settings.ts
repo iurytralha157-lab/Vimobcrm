@@ -5,6 +5,7 @@ import {
   apiCreateApiKeyResponseSchema,
   apiOrganizationApiKeyListResponseSchema,
   apiOrganizationModuleListResponseSchema,
+  apiPaymentHistoryItemResponseSchema,
   apiPublicPushConfigResponseSchema,
   apiRecordEnvelopeSchema,
   apiRecordListEnvelopeSchema,
@@ -26,6 +27,7 @@ import {
   settingsRoleInputSchema,
   setupGuideProgressInputSchema,
   subscriptionBillingInputSchema,
+  subscriptionChargeInputSchema,
   updateOrganizationInputSchema,
   updateProfileInputSchema,
   uuidSchema,
@@ -146,13 +148,23 @@ export type SubscriptionOrganization = UpdateOrganizationInput & {
   id: string;
   name: string;
   plan_id: string | null;
+  pending_plan_id: string | null;
   plan_name?: string | null;
+  pending_plan_name?: string | null;
   subscription_status: string;
   subscription_type: string | null;
   subscription_value: number | null;
+  subscription_billing_period_months: 1 | 6 | 12;
+  subscription_renewal_value: number | null;
   next_billing_date: string | null;
   max_users: number;
   max_whatsapp_sessions_override: number | null;
+  trial_ends_at: string | null;
+  billing_grace_until: string | null;
+  billing_last_reconciled_at: string | null;
+  has_automatic_billing: boolean;
+  subscription_reference: string;
+  created_at: string;
 };
 
 export type SubscriptionPlan = {
@@ -172,24 +184,44 @@ export type SubscriptionPlan = {
 
 export type PaymentHistoryItem = {
   id: string;
-  organization_id: string;
   asaas_payment_id: string;
   asaas_subscription_id: string | null;
-  asaas_customer_id: string | null;
+  billing_intent_id: string | null;
+  plan_id: string | null;
+  plan_name: string | null;
   billing_type: string | null;
   status: string | null;
   value: number | null;
-  net_value: number | null;
   due_date: string | null;
   payment_date: string | null;
-  invoice_url: string | null;
+  bank_slip_registration_cancelled: boolean;
+  checkout_url: string | null;
+  receipt_path: string | null;
+  sync_state: 'cached' | 'current' | 'provider_unavailable';
+  created_at: string;
+  updated_at: string;
+};
+
+export type BillingPlanChange = {
+  id: string;
+  from_plan_id: string;
+  target_plan_id: string;
+  status: 'provider_updating' | 'scheduled';
+  billing_period_months: 1 | 6 | 12;
+  amount: number;
+  effective_on: string | null;
+  requested_at: string;
+  provider_updated_at: string | null;
 };
 
 export type SubscriptionOverview = {
   org: SubscriptionOrganization | null;
   plan: SubscriptionPlan | null;
+  pendingPlan: SubscriptionPlan | null;
+  planChange: BillingPlanChange | null;
   availablePlans: SubscriptionPlan[];
   history: PaymentHistoryItem[];
+  billingCheckoutReady: boolean;
 };
 
 export type UpdateSubscriptionBillingInput = {
@@ -207,6 +239,22 @@ export type UpdateSubscriptionBillingInput = {
 };
 
 export type SettingsJSON = Record<string, unknown>;
+
+const legacySubscriptionPlanNames = new Set(['trial', 'basico', 'básico']);
+
+function normalizeSubscriptionOverview(overview: SubscriptionOverview): SubscriptionOverview {
+  return {
+    ...overview,
+    pendingPlan: overview.pendingPlan ?? null,
+    planChange: overview.planChange ?? null,
+    billingCheckoutReady: overview.billingCheckoutReady === true,
+    availablePlans: (overview.availablePlans || []).filter((plan) => (
+      plan.is_active !== false
+      && Number(plan.price) > 0
+      && !legacySubscriptionPlanNames.has(plan.name.trim().toLocaleLowerCase('pt-BR'))
+    )),
+  };
+}
 
 export const settingsAPI = {
   async getPushConfig() {
@@ -352,10 +400,11 @@ export const settingsAPI = {
     return response.data;
   },
 
-  async deactivatePushToken(endpoint?: string | null) {
+  async deactivatePushToken(endpoint?: string | null, organizationId?: string | null) {
     const body = parseDomainInput(deactivatePushTokenInputSchema, { endpoint }, 'settings.push-token.deactivate');
     const response = await vimobAPIRequest<{ ok: boolean }>('/v1/settings/push-tokens/deactivate', {
       method: 'POST',
+      organizationId,
       body,
     });
     validateDomainResponse(okResponseSchema, response, 'settings.push-token.deactivate');
@@ -385,6 +434,23 @@ export const settingsAPI = {
       organizationId,
     });
     validateDomainResponse(apiSubscriptionOverviewResponseSchema, response, 'settings.subscription.get');
+    return normalizeSubscriptionOverview(response.data);
+  },
+
+  async refreshSubscriptionPayment(id: string, organizationId?: string | null) {
+    const paymentId = parseDomainInput(uuidSchema, id, 'settings.subscription.payment.refresh.id');
+    const response = await vimobAPIRequest<Envelope<PaymentHistoryItem>>(
+      `/v1/settings/subscription/payments/${paymentId}/refresh`,
+      {
+        method: 'POST',
+        organizationId,
+      },
+    );
+    validateDomainResponse(
+      apiPaymentHistoryItemResponseSchema,
+      response,
+      'settings.subscription.payment.refresh',
+    );
     return response.data;
   },
 
@@ -396,7 +462,7 @@ export const settingsAPI = {
       body,
     });
     validateDomainResponse(apiSubscriptionOverviewResponseSchema, response, 'settings.subscription.billing');
-    return response.data;
+    return normalizeSubscriptionOverview(response.data);
   },
 
   async selectSubscriptionPlan(input: { plan_id: string }, organizationId?: string | null) {
@@ -407,7 +473,17 @@ export const settingsAPI = {
       body,
     });
     validateDomainResponse(apiSubscriptionOverviewResponseSchema, response, 'settings.subscription.plan');
-    return response.data;
+    return normalizeSubscriptionOverview(response.data);
+  },
+
+  async createSubscriptionCharge<T>(input: Record<string, unknown>, organizationId?: string | null) {
+    const body = parseDomainInput(subscriptionChargeInputSchema, input, 'settings.subscription.charge');
+    return vimobAPIRequest<T>('/v1/settings/subscription/charge', {
+      method: 'POST',
+      organizationId,
+      body,
+      timeoutMs: 105_000,
+    });
   },
 
   async listRoles<T = SettingsJSON>(organizationId?: string | null) {

@@ -3,7 +3,9 @@ package realtime
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,7 +13,11 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
-const heartbeatInterval = 25 * time.Second
+const (
+	heartbeatInterval       = 25 * time.Second
+	minimumStreamDuration   = 4 * time.Minute
+	streamDurationJitterSec = 120
+)
 
 type Handler struct {
 	hub *Hub
@@ -46,14 +52,65 @@ func (handler Handler) Events(w http.ResponseWriter, r *http.Request) {
 	events, unsubscribe := handler.hub.Subscribe(r.Context(), tenantContext.OrganizationID, tenantContext.UserID)
 	defer unsubscribe()
 
+	lastSentID := uint64(0)
+	replayedEvents := 0
+	resyncRequired := false
+	if replayCursor, ok := lastEventCursor(r.Header.Get("Last-Event-ID")); ok {
+		replay, err := handler.hub.Replay(
+			r.Context(),
+			tenantContext.OrganizationID,
+			tenantContext.UserID,
+			replayCursor,
+			defaultReplayLimit,
+		)
+		if err != nil {
+			reset := newResetEvent(
+				tenantContext.OrganizationID,
+				replayCursor,
+				"replay_unavailable",
+				0,
+			)
+			if err := writeSSE(w, flusher, *reset); err != nil {
+				return
+			}
+			lastSentID = replayCursor
+			resyncRequired = true
+		} else if replay.Reset != nil {
+			if err := writeSSE(w, flusher, *replay.Reset); err != nil {
+				return
+			}
+			lastSentID = replay.Cursor
+			resyncRequired = true
+		} else {
+			for _, event := range replay.Events {
+				if err := writeSSE(w, flusher, event); err != nil {
+					return
+				}
+				if eventID := parseCursor(event.ID); eventID > lastSentID {
+					lastSentID = eventID
+				}
+				replayedEvents++
+			}
+			if replay.Cursor > lastSentID {
+				lastSentID = replay.Cursor
+			}
+		}
+	}
+
+	connectedID := "connected"
+	if lastSentID > 0 {
+		connectedID = strconv.FormatUint(lastSentID, 10)
+	}
 	if err := writeSSE(w, flusher, Event{
-		ID:             "0",
+		ID:             connectedID,
 		Type:           EventConnected,
 		OrganizationID: tenantContext.OrganizationID,
 		UserID:         tenantContext.UserID,
 		CreatedAt:      time.Now().UTC(),
 		Data: map[string]any{
-			"memberRole": tenantContext.MemberRole,
+			"memberRole":     tenantContext.MemberRole,
+			"replayedEvents": replayedEvents,
+			"resyncRequired": resyncRequired,
 		},
 	}); err != nil {
 		return
@@ -61,6 +118,11 @@ func (handler Handler) Events(w http.ResponseWriter, r *http.Request) {
 
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
+	streamTimer := time.NewTimer(
+		minimumStreamDuration +
+			time.Duration(rand.IntN(streamDurationJitterSec))*time.Second,
+	)
+	defer streamTimer.Stop()
 
 	for {
 		select {
@@ -68,23 +130,44 @@ func (handler Handler) Events(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
+			if eventID := parseCursor(event.ID); eventID > 0 {
+				if eventID <= lastSentID {
+					continue
+				}
+				lastSentID = eventID
+			}
 			if err := writeSSE(w, flusher, event); err != nil {
 				return
 			}
 		case <-ticker.C:
-			if err := writeSSE(w, flusher, Event{
-				ID:             fmt.Sprintf("ping-%d", time.Now().Unix()),
-				Type:           EventPing,
-				OrganizationID: tenantContext.OrganizationID,
-				UserID:         tenantContext.UserID,
-				CreatedAt:      time.Now().UTC(),
-			}); err != nil {
+			if err := writeSSEComment(w, flusher, "ping"); err != nil {
 				return
 			}
+		case <-streamTimer.C:
+			// Force a fresh JWT/tenant resolution periodically. The jitter avoids
+			// reconnecting every browser at once after a deploy.
+			return
 		case <-r.Context().Done():
 			return
 		}
 	}
+}
+
+func writeSSEComment(w http.ResponseWriter, flusher http.Flusher, value string) error {
+	if _, err := fmt.Fprintf(w, ": %s\n\n", sanitizeSSELine(value)); err != nil {
+		return err
+	}
+	flusher.Flush()
+	return nil
+}
+
+func lastEventCursor(value string) (uint64, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	cursor, err := strconv.ParseUint(value, 10, 64)
+	return cursor, err == nil && cursor > 0
 }
 
 func writeSSE(w http.ResponseWriter, flusher http.Flusher, event Event) error {

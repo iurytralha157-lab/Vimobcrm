@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
@@ -19,6 +20,11 @@ type dashboardLeadWhereOptions struct {
 	DateColumn      string
 	DateExpression  string
 	ForceDealStatus string
+}
+
+type dashboardQueryer interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
 type dashboardAggregate struct {
@@ -90,39 +96,40 @@ func (repo Repository) GetDashboardStats(ctx context.Context, tenantContext tena
 	var previousWonCount int64
 	var previousLostCount int64
 
-	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(3)
-	group.Go(func() error {
-		var err error
-		currentAggregate, err = repo.dashboardAggregate(groupCtx, tenantContext, currentFilter, dashboardLeadWhereOptions{DateColumn: "created_at"})
-		return err
+	tx, err := repo.db.Pool().BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
 	})
-	group.Go(func() error {
-		var err error
-		previousAggregate, err = repo.dashboardAggregate(groupCtx, tenantContext, previousFilter, dashboardLeadWhereOptions{DateColumn: "created_at"})
-		return err
-	})
-	group.Go(func() error {
-		var err error
-		wonDeals, err = repo.dashboardWonDeals(groupCtx, tenantContext, currentFilter)
-		return err
-	})
-	group.Go(func() error {
-		var err error
-		lostDeals, err = repo.dashboardLostDeals(groupCtx, tenantContext, currentFilter)
-		return err
-	})
-	group.Go(func() error {
-		var err error
-		previousWonCount, err = repo.dashboardWonCount(groupCtx, tenantContext, previousFilter)
-		return err
-	})
-	group.Go(func() error {
-		var err error
-		previousLostCount, err = repo.dashboardLostCount(groupCtx, tenantContext, previousFilter)
-		return err
-	})
-	if err := group.Wait(); err != nil {
+	if err != nil {
+		return DashboardStats{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	currentAggregate, err = repo.dashboardAggregate(ctx, tx, tenantContext, currentFilter, dashboardLeadWhereOptions{DateColumn: "created_at"})
+	if err != nil {
+		return DashboardStats{}, err
+	}
+	previousAggregate, err = repo.dashboardAggregate(ctx, tx, tenantContext, previousFilter, dashboardLeadWhereOptions{DateColumn: "created_at"})
+	if err != nil {
+		return DashboardStats{}, err
+	}
+	wonDeals, err = repo.dashboardWonDeals(ctx, tx, tenantContext, currentFilter)
+	if err != nil {
+		return DashboardStats{}, err
+	}
+	lostDeals, err = repo.dashboardLostDeals(ctx, tx, tenantContext, currentFilter)
+	if err != nil {
+		return DashboardStats{}, err
+	}
+	previousWonCount, err = repo.dashboardWonCount(ctx, tx, tenantContext, previousFilter)
+	if err != nil {
+		return DashboardStats{}, err
+	}
+	previousLostCount, err = repo.dashboardLostCount(ctx, tx, tenantContext, previousFilter)
+	if err != nil {
+		return DashboardStats{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return DashboardStats{}, err
 	}
 
@@ -339,8 +346,30 @@ func (repo Repository) GetDashboardUpcomingTasks(ctx context.Context, tenantCont
 		join public.leads l on l.id = lt.lead_id and l.organization_id = lt.organization_id
 		where lt.organization_id = $1::uuid
 		  and lt.is_done = false
+		  and coalesce(
+		    lt.status,
+		    case when coalesce(lt.is_done, false) then 'completed' else 'pending' end
+		  ) = 'pending'
 		  and lt.due_date is not null
 		  and l.organization_id = $1::uuid
+		  and l.deal_status = 'open'
+		  and (
+		    lt.cadence_enrollment_id is null
+		    or exists (
+		      select 1
+		      from public.cadence_enrollments enrollment
+		      join public.lead_stage_cycles cycle
+		        on cycle.organization_id = enrollment.organization_id
+		       and cycle.id = enrollment.stage_cycle_id
+		       and cycle.exited_at is null
+		      where enrollment.organization_id = lt.organization_id
+		        and enrollment.id = lt.cadence_enrollment_id
+		        and enrollment.status = 'active'
+		        and cycle.lead_id = l.id
+		        and cycle.pipeline_id = l.pipeline_id
+		        and cycle.stage_id = l.stage_id
+		    )
+		  )
 		  and `+leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn))+`
 		order by lt.due_date asc, lt.created_at asc
 		limit $5
@@ -655,7 +684,7 @@ func (repo Repository) buildDashboardScheduledVisitsWhere(tenantContext tenant.C
 	return where, args, nil
 }
 
-func (repo Repository) dashboardAggregate(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter, options dashboardLeadWhereOptions) (dashboardAggregate, error) {
+func (repo Repository) dashboardAggregate(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter, options dashboardLeadWhereOptions) (dashboardAggregate, error) {
 	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, options)
 	if err != nil {
 		return dashboardAggregate{}, err
@@ -663,7 +692,7 @@ func (repo Repository) dashboardAggregate(ctx context.Context, tenantContext ten
 
 	var aggregate dashboardAggregate
 	var average pgtype.Float8
-	err = repo.db.Pool().QueryRow(ctx, `
+	err = queryer.QueryRow(ctx, `
 		select
 			count(*)::bigint,
 			count(*) filter (where coalesce(l.deal_status, 'open') not in ('won', 'lost'))::bigint,
@@ -684,7 +713,7 @@ func (repo Repository) dashboardAggregate(ctx context.Context, tenantContext ten
 	return aggregate, nil
 }
 
-func (repo Repository) dashboardWonCount(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) (int64, error) {
+func (repo Repository) dashboardWonCount(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) (int64, error) {
 	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{
 		DateColumn:      "won_at",
 		ForceDealStatus: "won",
@@ -694,7 +723,7 @@ func (repo Repository) dashboardWonCount(ctx context.Context, tenantContext tena
 	}
 
 	var count int64
-	err = repo.db.Pool().QueryRow(ctx, `
+	err = queryer.QueryRow(ctx, `
 		select count(*)::bigint
 		from public.leads l
 		where `+strings.Join(where, " and "),
@@ -704,7 +733,7 @@ func (repo Repository) dashboardWonCount(ctx context.Context, tenantContext tena
 	return count, err
 }
 
-func (repo Repository) dashboardLostCount(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) (int64, error) {
+func (repo Repository) dashboardLostCount(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) (int64, error) {
 	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{
 		DateExpression:  "coalesce(l.lost_at, l.created_at)",
 		ForceDealStatus: "lost",
@@ -714,7 +743,7 @@ func (repo Repository) dashboardLostCount(ctx context.Context, tenantContext ten
 	}
 
 	var count int64
-	err = repo.db.Pool().QueryRow(ctx, `
+	err = queryer.QueryRow(ctx, `
 		select count(*)::bigint
 		from public.leads l
 		where `+strings.Join(where, " and "),
@@ -724,7 +753,7 @@ func (repo Repository) dashboardLostCount(ctx context.Context, tenantContext ten
 	return count, err
 }
 
-func (repo Repository) dashboardWonDeals(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) ([]WonDealDetail, error) {
+func (repo Repository) dashboardWonDeals(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) ([]WonDealDetail, error) {
 	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{
 		DateColumn:      "won_at",
 		ForceDealStatus: "won",
@@ -733,7 +762,7 @@ func (repo Repository) dashboardWonDeals(ctx context.Context, tenantContext tena
 		return nil, err
 	}
 
-	rows, err := repo.db.Pool().Query(ctx, `
+	rows, err := queryer.Query(ctx, `
 		select
 			l.id::text,
 			l.name,
@@ -795,7 +824,7 @@ func (repo Repository) dashboardWonDeals(ctx context.Context, tenantContext tena
 	return deals, rows.Err()
 }
 
-func (repo Repository) dashboardLostDeals(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) ([]LostDealDetail, error) {
+func (repo Repository) dashboardLostDeals(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) ([]LostDealDetail, error) {
 	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{
 		DateExpression:  "coalesce(l.lost_at, l.created_at)",
 		ForceDealStatus: "lost",
@@ -804,7 +833,7 @@ func (repo Repository) dashboardLostDeals(ctx context.Context, tenantContext ten
 		return nil, err
 	}
 
-	rows, err := repo.db.Pool().Query(ctx, `
+	rows, err := queryer.Query(ctx, `
 		select
 			l.id::text,
 			l.name,

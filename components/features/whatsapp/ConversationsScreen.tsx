@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent } from "@/components/ui/dropdown-menu";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Search, MessageSquare, MessageCircle, User, Loader2, MoreVertical, Archive, Trash2, Users, Paperclip, Tag, UserPlus, ArrowLeft, Zap, Plus, SlidersHorizontal, Square } from "lucide-react";
 import { StartAutomationDialog } from "@/components/features/whatsapp/StartAutomationDialog";
 import { MessageBubble } from "@/components/features/whatsapp/MessageBubble";
@@ -23,28 +24,34 @@ import { ConversationLeadPanel, ConversationUnregisteredPanel } from "@/componen
 import { cn } from "@/lib/utils";
 import { normalizeSearchText } from "@/lib/search-text";
 import { format, isToday, isYesterday } from "date-fns";
-import { useWhatsAppConversations, useSendWhatsAppMessage, useReactToWhatsAppMessage, useMarkConversationAsRead, useWhatsAppRealtimeConversations, useArchiveConversation, useDeleteConversation, type WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
+import { useWhatsAppConversation, useWhatsAppConversationForLead, useWhatsAppConversations, useSendWhatsAppMessage, useReactToWhatsAppMessage, useMarkConversationAsRead, useWhatsAppLeadRealtime, useArchiveConversation, useDeleteConversation, type WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
 import { useWhatsAppMessagesPaginated } from "@/hooks/use-whatsapp-messages-paginated";
 import { useAccessibleSessions } from "@/hooks/use-accessible-sessions";
 import { resolveWhatsAppConversationSessionFilter } from "@/lib/whatsapp-query-cache";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "@/hooks/use-toast";
-import { formatPhoneForDisplay } from "@/lib/phone-utils";
+import {
+  formatWhatsAppContactLabel,
+  normalizeWhatsAppContactPhoneToE164,
+} from "@/lib/phone-utils";
 import { useTags, Tag as TagType } from "@/hooks/use-tags";
 import { useAddLeadTag, useRemoveLeadTag } from "@/hooks/use-leads";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { AudioRecorderButton } from "@/components/features/whatsapp/AudioRecorderButton";
 import { useMetaConversations, useMetaMessages, useSendMetaMessage, type MetaConversation } from "@/hooks/use-meta-conversations";
+import { createUUID } from "@/lib/client-id";
 import { useMetaIntegrations } from "@/hooks/use-meta-integration";
 import { useMentionNames } from "@/hooks/use-mention-names";
 import { whatsappAPI } from "@/lib/api/whatsapp";
 import { getWhatsAppMessageInputState } from "@/lib/whatsapp-message-input";
 import { groupLatestWhatsAppReactions } from "@/lib/whatsapp-reactions";
+import { getTagColorStyle } from "@/lib/tag-color";
 import { useAuth } from "@/contexts/AuthContext";
-import { useHasPermission } from "@/hooks/use-organization-roles";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
+import { useOrganizationModules } from "@/hooks/use-organization-modules";
 import { useCancelLeadExecutions } from "@/hooks/use-automations";
+import { MAX_OUTBOUND_MESSAGE_MEDIA_BYTES } from "@/components/features/whatsapp/message-media";
 
 const MAX_IMAGE_DIMENSION = 1600;
 const IMAGE_QUALITY = 0.82;
@@ -195,20 +202,27 @@ async function compressImageFile(file: File): Promise<File> {
   }
 }
 
-export default function Conversations() {
+type ConversationsProps = {
+  initialConversationId?: string;
+  initialLeadId?: string;
+};
+
+export default function Conversations({ initialConversationId, initialLeadId }: ConversationsProps) {
   const { user, profile, organization } = useAuth();
-  const { data: canStartAutomations = false } = useHasPermission("automations_manage");
   const cancelLeadExecutions = useCancelLeadExecutions();
   const { hasPermission } = useUserPermissions();
+  const { hasModule } = useOrganizationModules();
   const canOperateWhatsApp = hasPermission("whatsapp_operate");
   const canManageWhatsApp = hasPermission("whatsapp_manage");
-  const canManageMeta = hasPermission("settings_integrations");
+  const canViewMeta = hasModule("whatsapp") && hasModule("campaigns") && hasPermission("whatsapp_view");
   const canCreateLeads = hasPermission("lead_create");
+  const canOperateLeads = hasPermission("lead_operate");
+  const canStartAutomations = hasModule("automations") && hasPermission("automations_manage");
   const isMobile = useIsMobile();
   const router = useRouter();
   const currentUserId = profile?.id || user?.id || null;
   const activeTenantKey = `${currentUserId || "anonymous"}:${organization?.id || profile?.organization_id || "none"}`;
-  const [activePlatform, setActivePlatform] = useState<'whatsapp' | 'instagram' | 'facebook'>('whatsapp');
+  const [activePlatform, setActivePlatform] = useState<'whatsapp' | 'instagram' | 'facebook' | 'meta'>('whatsapp');
   const [selectedSessionId, setSelectedSessionId] = useState<string>("all");
   const [selectedPageId, setSelectedPageId] = useState<string>("all");
   const [selectedConversationState, setSelectedConversationState] = useState<{
@@ -224,6 +238,7 @@ export default function Conversations() {
       : null);
   }, [activeTenantKey]);
   const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [messageText, setMessageText] = useState("");
   const [hideGroups, setHideGroups] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -241,6 +256,7 @@ export default function Conversations() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastVisibleMessageIdRef = useRef<string | null>(null);
   const isUserScrollingRef = useRef<boolean>(false);
+  const resolvedDeepLinkRef = useRef<string | null>(null);
 
   useEffect(() => {
     let isActive = true;
@@ -258,6 +274,53 @@ export default function Conversations() {
       isActive = false;
     };
   }, [user?.id, organization?.id, profile?.organization_id, setSelectedConversation]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearchTerm(searchTerm.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  const directConversationQuery = useWhatsAppConversation(initialConversationId || null);
+  const leadConversationQuery = useWhatsAppConversationForLead(
+    initialConversationId ? null : initialLeadId,
+  );
+  const deepLinkQuery = initialConversationId ? directConversationQuery : leadConversationQuery;
+  const deepLinkKey = `${activeTenantKey}:${initialConversationId || ""}:${initialLeadId || ""}`;
+
+  useEffect(() => {
+    if ((!initialConversationId && !initialLeadId) || resolvedDeepLinkRef.current === deepLinkKey) return;
+    if (!currentUserId || !(organization?.id || profile?.organization_id) || !deepLinkQuery.isFetched) return;
+
+    resolvedDeepLinkRef.current = deepLinkKey;
+    if (deepLinkQuery.data) {
+      const conversation = deepLinkQuery.data;
+      queueMicrotask(() => {
+        if (resolvedDeepLinkRef.current === deepLinkKey) {
+          setSelectedConversation(conversation);
+        }
+      });
+      return;
+    }
+
+    toast({
+      title: "Conversa não encontrada",
+      description: deepLinkQuery.isError
+        ? "Não foi possível abrir esta conversa agora. Tente novamente."
+        : "Esta conversa não existe ou não está disponível para o seu acesso.",
+      variant: "destructive",
+    });
+  }, [
+    currentUserId,
+    deepLinkKey,
+    deepLinkQuery.data,
+    deepLinkQuery.isError,
+    deepLinkQuery.isFetched,
+    initialConversationId,
+    initialLeadId,
+    organization?.id,
+    profile?.organization_id,
+    setSelectedConversation,
+  ]);
   const {
     data: sessions,
     isLoading: loadingSessions,
@@ -270,9 +333,12 @@ export default function Conversations() {
     () => ({
       hideGroups,
       showArchived,
-      search: activePlatform === 'whatsapp' ? trimmedSearchTerm : '',
+      onlyLeads,
+      withoutLead: withoutLeadOnly,
+      pendingReply: pendingReplyOnly,
+      search: activePlatform === 'whatsapp' ? debouncedSearchTerm : '',
     }),
-    [activePlatform, hideGroups, showArchived, trimmedSearchTerm],
+    [activePlatform, debouncedSearchTerm, hideGroups, onlyLeads, pendingReplyOnly, showArchived, withoutLeadOnly],
   );
   const conversationSessionFilter = useMemo(
     () => resolveWhatsAppConversationSessionFilter(
@@ -286,6 +352,10 @@ export default function Conversations() {
     data: conversations,
     isLoading: loadingConversations,
     isError: conversationsFailed,
+    refetch: refetchConversations,
+    hasMoreConversations,
+    loadMoreConversations,
+    isLoadingMoreConversations,
   } = useWhatsAppConversations(
     conversationSessionFilter.sessionId,
     conversationFilters,
@@ -295,27 +365,28 @@ export default function Conversations() {
   const {
     data: metaConversations,
     isLoading: loadingMetaConversations
-  } = useMetaConversations(selectedPageId, { enabled: canManageMeta });
+  } = useMetaConversations(selectedPageId, { enabled: canViewMeta && activePlatform !== 'whatsapp' });
 
   const {
     data: metaIntegrations
-  } = useMetaIntegrations({ enabled: canManageMeta });
+  } = useMetaIntegrations({ enabled: canViewMeta && activePlatform !== 'whatsapp' });
 
   const selectedLeadId = activePlatform === "whatsapp"
     ? selectedConversation?.lead_id || selectedConversation?.lead?.id || null
     : selectedConversation?.lead?.id || null;
   const selectedRealtimeLeadIds = useMemo(
     () => {
-      if (activePlatform !== "whatsapp" || !selectedLeadId || !currentUserId) return [];
-      return selectedConversation?.lead?.assignee?.id === currentUserId ? [selectedLeadId] : [];
+      if (activePlatform !== "whatsapp" || !selectedLeadId) return [];
+      return [selectedLeadId];
     },
-    [activePlatform, currentUserId, selectedConversation?.lead?.assignee?.id, selectedLeadId],
+    [activePlatform, selectedLeadId],
   );
 
   const {
     messages: whatsappMessages,
     isLoading: loadingWhatsAppMessages,
     isFetching: fetchingWhatsAppMessages,
+    isError: whatsappMessagesFailed,
     refetch: refetchWhatsAppMessages,
     hasOlderMessages,
     loadOlderMessages,
@@ -327,15 +398,19 @@ export default function Conversations() {
 
   const {
     data: metaMessages,
-    isLoading: loadingMetaMessages
+    isLoading: loadingMetaMessages,
+    isError: metaMessagesFailed,
+    refetch: refetchMetaMessages,
   } = useMetaMessages(
     activePlatform !== 'whatsapp' ? selectedConversation?.id || null : null,
-    { enabled: canManageMeta },
+    { enabled: canViewMeta },
   );
 
   const messages = activePlatform === 'whatsapp' ? whatsappMessages : metaMessages;
   const loadingMessages = activePlatform === 'whatsapp' ? loadingWhatsAppMessages : loadingMetaMessages;
   const fetchingMessages = activePlatform === 'whatsapp' ? fetchingWhatsAppMessages : false;
+  const messagesFailed = activePlatform === 'whatsapp' ? whatsappMessagesFailed : metaMessagesFailed;
+  const refetchMessages = activePlatform === 'whatsapp' ? refetchWhatsAppMessages : refetchMetaMessages;
   const reactionMessages = useMemo<DisplayMessage[]>(() => {
     if (activePlatform !== "whatsapp") return [];
     return ((messages || []) as DisplayMessage[]).filter((message) => message.message_type === "reaction");
@@ -366,16 +441,20 @@ export default function Conversations() {
     conversationId?: string;
   }>({});
   const [showLeadPanel, setShowLeadPanel] = useState(true);
-  useWhatsAppRealtimeConversations(
+  const [pendingDeleteConversation, setPendingDeleteConversation] = useState<WhatsAppConversation | null>(null);
+  useWhatsAppLeadRealtime(
     true,
-    loadingSessions ? undefined : accessibleSessionIds,
     selectedRealtimeLeadIds,
   );
 
   const handleChannelChange = (value: string) => {
     if (value === 'meta-all') {
+      if (!canViewMeta) return;
+      setActivePlatform('meta');
       setSelectedPageId('all');
     } else if (value.startsWith('meta-')) {
+      if (!canViewMeta) return;
+      setActivePlatform('meta');
       setSelectedPageId(value.replace('meta-', ''));
     } else if (value === 'whatsapp-all') {
       setActivePlatform('whatsapp');
@@ -445,7 +524,7 @@ export default function Conversations() {
     const selectedConversationRemoteJid = selectedConversation?.remote_jid;
     const selectedConversationIsGroup = selectedConversation?.is_group ?? false;
 
-    if (selectedConversationId && selectedConversationSessionId && selectedConversationRemoteJid && selectedConversationUnreadCount > 0) {
+    if (canOperateWhatsApp && selectedConversationId && selectedConversationSessionId && selectedConversationRemoteJid && selectedConversationUnreadCount > 0) {
       markConversationAsRead({
         id: selectedConversationId,
         session_id: selectedConversationSessionId,
@@ -453,7 +532,7 @@ export default function Conversations() {
         is_group: selectedConversationIsGroup
       });
     }
-  }, [markConversationAsRead, selectedConversation]);
+  }, [canOperateWhatsApp, markConversationAsRead, selectedConversation]);
   const filteredConversations = useMemo(() => {
     let source: ScreenConversation[] = [];
     if (activePlatform === 'whatsapp') {
@@ -469,7 +548,11 @@ export default function Conversations() {
       }
     } else {
       source = (metaConversations || [])
-        .filter((conv) => activePlatform === 'instagram' ? conv.platform === 'instagram' : conv.platform === 'messenger')
+        .filter((conv) => activePlatform === 'instagram'
+          ? conv.platform === 'instagram'
+          : activePlatform === 'facebook'
+            ? conv.platform === 'messenger'
+            : true)
         .map(toScreenConversation);
     }
 
@@ -501,21 +584,27 @@ export default function Conversations() {
     }
 
     const textToSend = messageText.trim();
+    const metaIdempotencyKey = activePlatform === 'whatsapp' ? null : createUUID();
     setMessageText("");
 
-    if (activePlatform === 'whatsapp') {
-      await sendMessage.mutateAsync({
-        conversation: selectedConversation,
-        text: textToSend,
-        sendSessionId: whatsappMessageInputState.sendSessionId,
-      });
-    } else {
-      await sendMetaMessage.mutateAsync({
-        conversationId: selectedConversation.id,
-        text: textToSend,
-        platform: selectedConversation.platform || 'instagram',
-        recipientExternalId: selectedConversation.external_id || selectedConversation.remote_jid
-      });
+    try {
+      if (activePlatform === 'whatsapp') {
+        await sendMessage.mutateAsync({
+          conversation: selectedConversation,
+          text: textToSend,
+          sendSessionId: whatsappMessageInputState.sendSessionId,
+        });
+      } else {
+        await sendMetaMessage.mutateAsync({
+          conversationId: selectedConversation.id,
+          text: textToSend,
+          platform: selectedConversation.platform || 'instagram',
+          recipientExternalId: selectedConversation.external_id || selectedConversation.remote_jid,
+          idempotencyKey: metaIdempotencyKey!,
+        });
+      }
+    } catch {
+      setMessageText((current) => current || textToSend);
     }
   };
   const handleKeyPress = (e: React.KeyboardEvent<Element>) => {
@@ -526,7 +615,7 @@ export default function Conversations() {
   };
 
   const handleSendAudio = async (base64: string, mimetype: string) => {
-    if (!selectedConversation) return;
+    if (!canOperateWhatsApp || activePlatform !== "whatsapp" || !selectedConversation) return;
     if (whatsappMessageInputState.disabled) {
       toast({
         title: "Audio nao enviado",
@@ -556,6 +645,15 @@ export default function Conversations() {
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !selectedConversation) return;
+    if (file.size > MAX_OUTBOUND_MESSAGE_MEDIA_BYTES) {
+      toast({
+        title: "Arquivo muito grande",
+        description: "Envie um arquivo de até 5 MB.",
+        variant: "destructive",
+      });
+      e.target.value = "";
+      return;
+    }
     if (whatsappMessageInputState.disabled) {
       toast({
         title: "Arquivo nao enviado",
@@ -569,6 +667,15 @@ export default function Conversations() {
     }
     try {
       const processedFile = await compressImageFile(file);
+      if (processedFile.size > MAX_OUTBOUND_MESSAGE_MEDIA_BYTES) {
+        toast({
+          title: "Arquivo muito grande",
+          description: "O arquivo processado ultrapassou o limite de 5 MB.",
+          variant: "destructive",
+        });
+        e.target.value = "";
+        return;
+      }
       const base64Content = await fileToBase64(processedFile);
 
       // Determine media type
@@ -608,16 +715,30 @@ export default function Conversations() {
     archiveConversation.mutate({
       conversationId: conv.id,
       archive: !conv.archived_at
+    }, {
+      onSuccess: () => {
+        if (selectedConversation?.id === conv.id) {
+          setSelectedConversation(null);
+        }
+      },
     });
-    if (selectedConversation?.id === conv.id) {
-      setSelectedConversation(null);
-    }
   };
   const handleDelete = (conv: WhatsAppConversation) => {
     if (!canOperateWhatsApp) return;
-    deleteConversation.mutate(conv.id);
-    if (selectedConversation?.id === conv.id) {
-      setSelectedConversation(null);
+    setPendingDeleteConversation(conv);
+  };
+  const confirmDeleteConversation = async () => {
+    const conversation = pendingDeleteConversation;
+    if (!conversation) return;
+
+    try {
+      await deleteConversation.mutateAsync(conversation.id);
+      if (selectedConversation?.id === conversation.id) {
+        setSelectedConversation(null);
+      }
+      setPendingDeleteConversation(null);
+    } catch {
+      // The mutation owns the user-facing error. Keep the dialog open for retry.
     }
   };
   const formatConversationTime = (date: string | null) => {
@@ -630,7 +751,7 @@ export default function Conversations() {
   };
   const retryMediaDownload = async (messageId: string) => {
     try {
-      await whatsappAPI.retryMediaDownload(messageId, selectedConversation?.session?.organization_id);
+      await whatsappAPI.retryMediaDownload(messageId, organization?.id || profile?.organization_id);
       await refetchWhatsAppMessages();
       toast({
         title: "Tentando novamente",
@@ -648,6 +769,45 @@ export default function Conversations() {
     setSelectedConversation(null);
   };
 
+  const pendingDeleteName = pendingDeleteConversation?.lead?.name
+    || formatWhatsAppContactLabel(
+      pendingDeleteConversation?.contact_name,
+      pendingDeleteConversation?.contact_phone,
+      pendingDeleteConversation?.remote_jid,
+    )
+    || "esta conversa";
+  const deleteConversationDialog = (
+    <AlertDialog
+      open={!!pendingDeleteConversation}
+      onOpenChange={(open) => {
+        if (!open && !deleteConversation.isPending) setPendingDeleteConversation(null);
+      }}
+    >
+      <AlertDialogContent className="w-[calc(100vw-2rem)] max-w-md rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-5 shadow-none">
+        <AlertDialogHeader>
+          <AlertDialogTitle>Remover conversa?</AlertDialogTitle>
+          <AlertDialogDescription>
+            {`A conversa com ${pendingDeleteName} sairá da caixa de entrada. O histórico já vinculado ao lead será preservado.`}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={deleteConversation.isPending}>Cancelar</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            disabled={deleteConversation.isPending}
+            onClick={(event) => {
+              event.preventDefault();
+              void confirmDeleteConversation();
+            }}
+          >
+            {deleteConversation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}
+            Remover conversa
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+
   // Mobile: Show either conversation list OR chat (not both)
   if (isMobile) {
     return <AppLayout title="Conversas" disableMainScroll>
@@ -656,34 +816,38 @@ export default function Conversations() {
         // Mobile Chat View
         <div className="flex flex-col h-full overflow-hidden">
               {/* Mobile Chat Header */}
-              <header className="flex h-14 shrink-0 items-center justify-between border-b border-white/[0.045] bg-[var(--app-surface)] px-3">
+              <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--app-border)] bg-[var(--app-surface)] px-3">
                 <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={handleBackToList}>
-                    <ArrowLeft className="w-5 h-5" />
+                  <Button aria-label="Voltar para a lista de conversas" variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={handleBackToList}>
+                    <ArrowLeft className="w-5 h-5" aria-hidden="true" />
                   </Button>
                   <Avatar className="h-9 w-9 shrink-0">
                     <AvatarImage src={getConversationAvatarUrl(selectedConversation)} />
-                    <AvatarFallback className="text-sm bg-white/[0.06] text-muted-foreground">
+                    <AvatarFallback className="bg-[var(--app-surface-soft)] text-[12px] font-light text-muted-foreground">
                       {selectedConversation.is_group ? <Users className="w-4 h-4" /> : (selectedConversation.contact_name || selectedConversation.contact_phone)?.[0] || "?"}
                     </AvatarFallback>
                   </Avatar>
                   <div className="min-w-0 flex-1">
                     <p className="font-medium text-sm truncate text-foreground">
-                      {selectedConversation.lead?.name || (selectedConversation.contact_name && selectedConversation.contact_name !== selectedConversation.contact_phone ? selectedConversation.contact_name : formatPhoneForDisplay(selectedConversation.contact_phone || ""))}
+                      {selectedConversation.lead?.name || formatWhatsAppContactLabel(
+                        selectedConversation.contact_name,
+                        selectedConversation.contact_phone,
+                        selectedConversation.remote_jid,
+                      )}
                     </p>
                     {selectedConversation.contact_presence === 'composing' ? <p className="text-xs text-primary animate-pulse">digitando...</p> : selectedConversation.contact_presence === 'recording' ? <p className="text-xs text-primary animate-pulse">gravando...</p> : null}
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   {selectedLeadId && <Button variant="ghost" size="sm" className="h-8 text-xs px-2" asChild>
-                      <Link href={`/crm/pipelines?lead=${selectedLeadId}`}>
-                        <User className="w-3.5 h-3.5" />
+                      <Link href={`/crm/pipelines?lead=${selectedLeadId}`} aria-label="Abrir lead no pipeline">
+                        <User className="w-3.5 h-3.5" aria-hidden="true" />
                       </Link>
                     </Button>}
-                  <DropdownMenu>
+                  {canOperateWhatsApp && <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <MoreVertical className="w-4 h-4" />
+                      <Button aria-label="Mais ações da conversa" variant="ghost" size="icon" className="h-8 w-8">
+                        <MoreVertical className="w-4 h-4" aria-hidden="true" />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="bg-popover">
@@ -697,7 +861,7 @@ export default function Conversations() {
                         Remover
                       </DropdownMenuItem>
                     </DropdownMenuContent>
-                  </DropdownMenu>
+                  </DropdownMenu>}
                 </div>
               </header>
 
@@ -719,9 +883,16 @@ export default function Conversations() {
                         </Button>
                       </div>
                     )}
-                    {(loadingMessages || (fetchingMessages && visibleMessages.length === 0)) ? <div className="flex flex-col items-center justify-center gap-2 py-12">
+                    {(loadingMessages || (fetchingMessages && visibleMessages.length === 0)) ? <div className="flex flex-col items-center justify-center gap-2 py-12" role="status" aria-live="polite">
                         <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
                         <span className="text-xs text-muted-foreground">Carregando mensagens...</span>
+                      </div> : messagesFailed ? <div className="flex flex-col items-center justify-center gap-3 py-12 text-center" role="alert">
+                        <MessageSquare className="h-8 w-8 text-muted-foreground" aria-hidden="true" />
+                        <div>
+                          <p className="text-sm font-medium">Não foi possível carregar as mensagens</p>
+                          <p className="mt-1 text-xs text-muted-foreground">Tente novamente sem sair da conversa.</p>
+                        </div>
+                        <Button size="sm" variant="secondary" onClick={() => void refetchMessages()}>Tentar novamente</Button>
                       </div> : visibleMessages.length === 0 ? <div className="flex flex-col items-center justify-center py-12 text-center">
                         <MessageSquare className="w-8 h-8 text-muted-foreground mb-2" />
                         <p className="text-sm text-muted-foreground">Nenhuma mensagem</p>
@@ -745,7 +916,7 @@ export default function Conversations() {
                               isGroup={selectedConversation.is_group}
                               onRetryMedia={canOperateWhatsApp ? () => retryMediaDownload(msg.id) : undefined}
                               messageId={msg.id}
-                              leadId={selectedLeadId || ""}
+                              leadId={canOperateLeads ? selectedLeadId || "" : ""}
                               leadName={selectedConversation.lead?.name || selectedConversation.contact_name || "Contato"}
                               contactAvatarUrl={getConversationAvatarUrl(selectedConversation)}
                               conversationRemoteJid={selectedConversation.remote_jid}
@@ -782,11 +953,11 @@ export default function Conversations() {
                   multiline
                   leftActions={
                     <>
-                      <button type="button" onClick={() => fileInputRef.current?.click()} disabled={messageInputDisabled}>
+                      <button aria-label="Anexar arquivo" type="button" onClick={() => fileInputRef.current?.click()} disabled={messageInputDisabled}>
                         <Paperclip className="w-5 h-5" />
                       </button>
                       {selectedLeadId && canStartAutomations && (
-                        <button type="button" onClick={() => setShowAutomationDialog(true)} title="Iniciar Automação">
+                        <button aria-label="Iniciar automação" type="button" onClick={() => setShowAutomationDialog(true)} title="Iniciar Automação">
                           <Zap className="w-5 h-5" />
                         </button>
                       )}
@@ -795,6 +966,7 @@ export default function Conversations() {
                           type="button"
                           onClick={() => cancelLeadExecutions.mutate(selectedLeadId)}
                           disabled={cancelLeadExecutions.isPending}
+                          aria-label="Parar automação"
                           title="Parar automação"
                         >
                           {cancelLeadExecutions.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Square className="w-5 h-5" />}
@@ -808,9 +980,9 @@ export default function Conversations() {
         // Mobile Conversation List
         <div className="flex flex-col h-full">
               {/* Mobile Header with Filters */}
-              <div className="shrink-0 space-y-2 border-b border-white/[0.045] bg-[var(--app-surface)] p-2.5">
+              <div className="shrink-0 space-y-2 border-b border-[var(--app-border)] bg-[var(--app-surface)] p-2.5">
                 <div className="flex items-center gap-2">
-                  <div data-tour="conversations-channel" className="flex min-w-0 flex-1 gap-1 rounded-[7px] bg-[var(--app-surface-soft)] p-0.5">
+                  <div data-tour="conversations-channel" className="flex min-w-0 flex-1 gap-1 rounded-[6px] bg-[var(--app-surface-soft)] p-0.5">
                     <Button
                       variant={activePlatform === 'whatsapp' ? 'secondary' : 'ghost'}
                       size="sm"
@@ -829,7 +1001,7 @@ export default function Conversations() {
                         data-tour="conversations-filters"
                         variant="ghost"
                         className={cn(
-                          "h-8 shrink-0 gap-1.5 rounded-[7px] border-0 bg-[var(--app-surface-soft)] px-2 text-[11px] font-semibold uppercase tracking-normal text-foreground shadow-none hover:bg-[var(--app-surface-hover)]",
+                          "h-8 shrink-0 gap-1.5 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2 text-[12px] font-light text-foreground shadow-none hover:bg-[var(--app-surface-hover)]",
                           activeConversationFilterCount > 0 && "bg-[var(--app-surface-hover)] text-primary"
                         )}
                       >
@@ -924,6 +1096,7 @@ export default function Conversations() {
                 <div data-tour="conversations-search" className="relative">
                   <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                   <Input
+                    aria-label="Buscar conversas"
                     placeholder={activePlatform === 'whatsapp' ? "Buscar conversas..." : "Buscar no Instagram/Meta..."}
                     value={searchTerm}
                     onChange={e => setSearchTerm(e.target.value)}
@@ -941,7 +1114,7 @@ export default function Conversations() {
                       <MessageSquare className="w-8 h-8 text-muted-foreground mb-2" />
                       <p className="text-sm font-medium mb-1">Não foi possível carregar as conversas</p>
                       <p className="text-xs text-muted-foreground mb-4">Verifique a conexão do WhatsApp e tente novamente.</p>
-                      <Button size="sm" variant="secondary" onClick={() => window.location.reload()}>
+                      <Button size="sm" variant="secondary" onClick={() => void refetchConversations()}>
                         Tentar novamente
                       </Button>
                     </div>
@@ -976,6 +1149,7 @@ export default function Conversations() {
                         onArchive={() => handleArchive(conv)}
                         onDelete={() => handleDelete(conv)}
                         canOperate={canOperateWhatsApp}
+                        canCreateLead={canCreateLeads}
                         availableTags={availableTags || []}
                         onAddTag={tagId => conv.lead && addLeadTag.mutate({
                           leadId: conv.lead.id,
@@ -987,7 +1161,10 @@ export default function Conversations() {
                         })}
                         onCreateLead={() => {
                           setCreateLeadContact({
-                            phone: conv.contact_phone || undefined,
+                            phone: normalizeWhatsAppContactPhoneToE164(
+                              conv.contact_phone,
+                              conv.remote_jid,
+                            ) || undefined,
                             name: conv.contact_name || undefined,
                             conversationId: conv.id,
                           });
@@ -996,12 +1173,25 @@ export default function Conversations() {
                       />
                     ))
                   )}
+                  {activePlatform === 'whatsapp' && !loadingConversations && !conversationsFailed && hasMoreConversations && (
+                    <div className="flex justify-center p-3">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={isLoadingMoreConversations}
+                        onClick={() => void loadMoreConversations()}
+                      >
+                        {isLoadingMoreConversations && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
+                        Carregar mais conversas
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </ScrollArea>
             </div>}
         </div>
 
-        <CreateLeadDialog open={createLeadOpen} onOpenChange={setCreateLeadOpen} contactPhone={createLeadContact.phone} contactName={createLeadContact.name} conversationId={createLeadContact.conversationId} />
+        {canCreateLeads && <CreateLeadDialog open={createLeadOpen} onOpenChange={setCreateLeadOpen} contactPhone={createLeadContact.phone} contactName={createLeadContact.name} conversationId={createLeadContact.conversationId} />}
         {selectedLeadId && selectedConversation && (
           <StartAutomationDialog
             open={showAutomationDialog}
@@ -1011,18 +1201,19 @@ export default function Conversations() {
             contactName={selectedConversation.lead?.name || selectedConversation.contact_name || "Contato"}
           />
         )}
+        {deleteConversationDialog}
       </AppLayout>;
   }
 
   // Desktop Layout
   return <AppLayout title="Conversas" disableMainScroll>
-      <div className="flex h-full min-h-0 gap-3 overflow-hidden">
+      <div className="relative flex h-full min-h-0 gap-3 overflow-hidden">
         {/* Sidebar */}
         <aside data-tour="conversations-overview" className="app-card flex w-[365px] min-w-[365px] max-w-[365px] flex-col overflow-hidden">
           {/* Header com filtros */}
-          <div className="space-y-2 border-b border-white/[0.045] bg-[var(--app-surface)] p-2.5">
+          <div className="space-y-2 border-b border-[var(--app-border)] bg-[var(--app-surface)] p-2.5">
             <div className="flex items-center gap-2">
-              <div data-tour="conversations-channel" className="flex min-w-0 flex-1 gap-1 rounded-[7px] bg-[var(--app-surface-soft)] p-0.5">
+              <div data-tour="conversations-channel" className="flex min-w-0 flex-1 gap-1 rounded-[6px] bg-[var(--app-surface-soft)] p-0.5">
                 <Button
                   variant={activePlatform === 'whatsapp' ? 'secondary' : 'ghost'}
                   size="sm"
@@ -1041,7 +1232,7 @@ export default function Conversations() {
                     data-tour="conversations-filters"
                     variant="ghost"
                     className={cn(
-                      "h-8 shrink-0 gap-1.5 rounded-[7px] border-0 bg-[var(--app-surface-soft)] px-2 text-[11px] font-semibold uppercase tracking-normal text-foreground shadow-none hover:bg-[var(--app-surface-hover)]",
+                      "h-8 shrink-0 gap-1.5 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2 text-[12px] font-light text-foreground shadow-none hover:bg-[var(--app-surface-hover)]",
                       activeConversationFilterCount > 0 && "bg-[var(--app-surface-hover)] text-primary"
                     )}
                   >
@@ -1134,7 +1325,7 @@ export default function Conversations() {
 
               {false && activePlatform === 'whatsapp' && (sessions?.length ?? 0) > 1 && (
                 <Select value={currentChannelValue} onValueChange={handleChannelChange}>
-                  <SelectTrigger className="h-8 border-0 bg-white/[0.045] text-xs focus:ring-0">
+                  <SelectTrigger className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light focus:ring-0">
                     <SelectValue placeholder="Selecione a conta WhatsApp" />
                   </SelectTrigger>
                   <SelectContent className="bg-popover z-50">
@@ -1152,7 +1343,7 @@ export default function Conversations() {
 
               {false && activePlatform !== 'whatsapp' && (metaIntegrations?.length ?? 0) > 1 && (
                 <Select value={currentChannelValue} onValueChange={handleChannelChange}>
-                  <SelectTrigger className="h-8 border-0 bg-white/[0.045] text-xs focus:ring-0">
+                  <SelectTrigger className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light focus:ring-0">
                     <SelectValue placeholder="Selecione a página" />
                   </SelectTrigger>
                   <SelectContent className="bg-popover z-50">
@@ -1172,6 +1363,7 @@ export default function Conversations() {
             <div data-tour="conversations-search" className="relative">
               <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
+                aria-label="Buscar conversas"
                 placeholder={activePlatform === 'whatsapp' ? "Buscar conversas..." : "Buscar no Instagram/Meta..."}
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
@@ -1201,7 +1393,7 @@ export default function Conversations() {
                     <MessageSquare className="w-8 h-8 text-muted-foreground mb-2" />
                     <p className="text-sm font-medium mb-1">Não foi possível carregar as conversas</p>
                     <p className="text-xs text-muted-foreground mb-4">Verifique a conexão do WhatsApp e tente novamente.</p>
-                    <Button size="sm" variant="secondary" onClick={() => window.location.reload()}>
+                    <Button size="sm" variant="secondary" onClick={() => void refetchConversations()}>
                       Tentar novamente
                     </Button>
                   </div>
@@ -1226,6 +1418,7 @@ export default function Conversations() {
                       onArchive={() => handleArchive(conv)}
                       onDelete={() => handleDelete(conv)}
                       canOperate={canOperateWhatsApp}
+                      canCreateLead={canCreateLeads}
                       availableTags={availableTags || []}
                       onAddTag={tagId => conv.lead && addLeadTag.mutate({
                         leadId: conv.lead.id,
@@ -1237,7 +1430,10 @@ export default function Conversations() {
                       })}
                       onCreateLead={() => {
                         setCreateLeadContact({
-                          phone: conv.contact_phone || undefined,
+                          phone: normalizeWhatsAppContactPhoneToE164(
+                            conv.contact_phone,
+                            conv.remote_jid,
+                          ) || undefined,
                           name: conv.contact_name || undefined,
                           conversationId: conv.id,
                         });
@@ -1274,11 +1470,25 @@ export default function Conversations() {
                         onAddTag={() => {}}
                         onRemoveTag={() => {}}
                         onCreateLead={() => {}}
-                        canOperate={canOperateWhatsApp}
+                        canOperate={false}
+                        canCreateLead={false}
                       />
                     );
                   })
-                )
+                  )
+              )}
+              {activePlatform === 'whatsapp' && !loadingConversations && !conversationsFailed && hasMoreConversations && (
+                <div className="flex justify-center p-3">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={isLoadingMoreConversations}
+                    onClick={() => void loadMoreConversations()}
+                  >
+                    {isLoadingMoreConversations && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
+                    Carregar mais conversas
+                  </Button>
+                </div>
               )}
             </div>
           </ScrollArea>
@@ -1310,7 +1520,10 @@ export default function Conversations() {
                 canOperate={canOperateWhatsApp}
                 onCreateLead={canCreateLeads ? () => {
                   setCreateLeadContact({
-                    phone: selectedConversation.contact_phone || undefined,
+                    phone: normalizeWhatsAppContactPhoneToE164(
+                      selectedConversation.contact_phone,
+                      selectedConversation.remote_jid,
+                    ) || undefined,
                     name: selectedConversation.contact_name || undefined,
                     conversationId: selectedConversation.id,
                   });
@@ -1329,7 +1542,7 @@ export default function Conversations() {
                     isUserScrollingRef.current = !isAtBottom;
                   }
                 }}>
-                  <div className="space-y-2 bg-white/[0.025] p-4">
+                  <div className="space-y-2 bg-[var(--app-surface-soft)] p-4">
                     {activePlatform === 'whatsapp' && hasOlderMessages && (
                       <div className="flex justify-center py-2">
                         <Button
@@ -1344,9 +1557,16 @@ export default function Conversations() {
                         </Button>
                       </div>
                     )}
-                    {(loadingMessages || (fetchingMessages && visibleMessages.length === 0)) ? <div className="flex flex-col items-center justify-center gap-2 py-12">
+                    {(loadingMessages || (fetchingMessages && visibleMessages.length === 0)) ? <div className="flex flex-col items-center justify-center gap-2 py-12" role="status" aria-live="polite">
                         <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
                         <span className="text-xs text-muted-foreground">Carregando mensagens...</span>
+                      </div> : messagesFailed ? <div className="flex flex-col items-center justify-center gap-3 py-12 text-center" role="alert">
+                        <MessageSquare className="h-8 w-8 text-muted-foreground" aria-hidden="true" />
+                        <div>
+                          <p className="text-sm font-medium">Não foi possível carregar as mensagens</p>
+                          <p className="mt-1 text-xs text-muted-foreground">Tente novamente sem sair da conversa.</p>
+                        </div>
+                        <Button size="sm" variant="secondary" onClick={() => void refetchMessages()}>Tentar novamente</Button>
                       </div> : visibleMessages.length === 0 ? <div className="flex flex-col items-center justify-center py-12">
                         <MessageSquare className="w-8 h-8 text-muted-foreground mb-2" />
                         <p className="text-sm text-muted-foreground">Nenhuma mensagem</p>
@@ -1370,7 +1590,7 @@ export default function Conversations() {
                               isGroup={selectedConversation.is_group}
                               onRetryMedia={canOperateWhatsApp ? () => retryMediaDownload(msg.id) : undefined}
                               messageId={msg.id}
-                              leadId={selectedLeadId || ""}
+                              leadId={canOperateLeads ? selectedLeadId || "" : ""}
                               leadName={selectedConversation.lead?.name || selectedConversation.contact_name || "Contato"}
                               contactAvatarUrl={getConversationAvatarUrl(selectedConversation)}
                               conversationRemoteJid={selectedConversation.remote_jid}
@@ -1408,11 +1628,11 @@ export default function Conversations() {
                   showRightActionsWhenEmpty
                   leftActions={
                     <>
-                      <button type="button" onClick={() => fileInputRef.current?.click()} disabled={messageInputDisabled}>
+                      <button aria-label="Anexar arquivo" type="button" onClick={() => fileInputRef.current?.click()} disabled={messageInputDisabled}>
                         <Paperclip className="w-5 h-5" />
                       </button>
                       {selectedLeadId && canStartAutomations && (
-                        <button type="button" onClick={() => setShowAutomationDialog(true)} title="Iniciar Automação">
+                        <button aria-label="Iniciar automação" type="button" onClick={() => setShowAutomationDialog(true)} title="Iniciar Automação">
                           <Zap className="w-5 h-5" />
                         </button>
                       )}
@@ -1421,6 +1641,7 @@ export default function Conversations() {
                           type="button"
                           onClick={() => cancelLeadExecutions.mutate(selectedLeadId)}
                           disabled={cancelLeadExecutions.isPending}
+                          aria-label="Parar automação"
                           title="Parar automação"
                         >
                           {cancelLeadExecutions.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Square className="w-5 h-5" />}
@@ -1437,12 +1658,12 @@ export default function Conversations() {
                 />
               </footer>
             </> : (
-              <div className="flex flex-1 flex-col items-center justify-center bg-white/[0.025] p-6 text-center text-muted-foreground">
+              <div className="flex flex-1 flex-col items-center justify-center bg-[var(--app-surface-soft)] p-6 text-center text-muted-foreground">
                 <MessageCircle className="mb-4 h-24 w-24 opacity-30" />
                 {!loadingSessions && sessions?.length === 0 ? (
                   <>
-                    <p className="font-semibold text-lg text-foreground mb-2">WhatsApp ainda não conectado</p>
-                    <p className="text-sm max-w-sm mb-4">
+                    <p className="mb-2 text-[14px] font-normal text-foreground">WhatsApp ainda não conectado</p>
+                    <p className="mb-4 max-w-sm text-[12px] font-light">
                       Para começar a receber e enviar mensagens, conecte sua conta do WhatsApp escaneando o QR Code.
                     </p>
                     <ol className="text-xs text-left max-w-sm mb-6 space-y-1.5 list-decimal list-inside text-muted-foreground">
@@ -1479,22 +1700,29 @@ export default function Conversations() {
               leadId={selectedLeadId}
               onClose={() => setShowLeadPanel(false)}
               contactPicture={getConversationAvatarUrl(selectedConversation)}
-              className="w-[330px] min-w-[330px] max-w-[330px] shrink-0 animate-in slide-in-from-right-5 duration-300"
+              className="absolute inset-y-0 right-0 z-30 w-[330px] min-w-[330px] max-w-[330px] shrink-0 animate-in slide-in-from-right-5 duration-300 xl:static xl:z-auto"
             />
-          ) : !selectedConversation.is_group ? (
+          ) : !selectedConversation.is_group && canCreateLeads ? (
             <ConversationUnregisteredPanel
               contactName={selectedConversation.contact_name}
-              contactPhone={selectedConversation.contact_phone}
+              contactPhone={normalizeWhatsAppContactPhoneToE164(
+                selectedConversation.contact_phone,
+                selectedConversation.remote_jid,
+              )}
               contactPicture={getConversationAvatarUrl(selectedConversation)}
+              onClose={() => setShowLeadPanel(false)}
               onCreateLead={() => {
                 setCreateLeadContact({
-                  phone: selectedConversation.contact_phone || undefined,
+                  phone: normalizeWhatsAppContactPhoneToE164(
+                    selectedConversation.contact_phone,
+                    selectedConversation.remote_jid,
+                  ) || undefined,
                   name: selectedConversation.contact_name || undefined,
                   conversationId: selectedConversation.id,
                 });
                 setCreateLeadOpen(true);
               }}
-              className="w-[330px] min-w-[330px] max-w-[330px] shrink-0 animate-in slide-in-from-right-5 duration-300"
+              className="absolute inset-y-0 right-0 z-30 w-[330px] min-w-[330px] max-w-[330px] shrink-0 animate-in slide-in-from-right-5 duration-300 xl:static xl:z-auto"
             />
           ) : null
         )}
@@ -1510,6 +1738,7 @@ export default function Conversations() {
           contactName={selectedConversation.lead?.name || selectedConversation.contact_name || "Contato"}
         />
       )}
+      {deleteConversationDialog}
     </AppLayout>;
 }
 const ConversationChip = forwardRef<HTMLSpanElement, React.HTMLAttributes<HTMLSpanElement>>(
@@ -1543,6 +1772,7 @@ function ConversationItem({
   onRemoveTag,
   onCreateLead,
   canOperate,
+  canCreateLead,
 }: {
   conversation: WhatsAppConversation;
   isSelected: boolean;
@@ -1556,12 +1786,17 @@ function ConversationItem({
   onRemoveTag: (tagId: string) => void;
   onCreateLead: () => void;
   canOperate: boolean;
+  canCreateLead: boolean;
 }) {
   const hasLead = Boolean(conversation.lead_id || conversation.lead?.id);
   const leadTags = conversation.lead?.tags || [];
   const leadTagIds = leadTags.map(lt => lt.tag.id);
   const unassignedTags = availableTags.filter(t => !leadTagIds.includes(t.id));
-  const displayName = conversation.lead?.name || (conversation.contact_name && conversation.contact_name !== conversation.contact_phone ? conversation.contact_name : formatPhoneForDisplay(conversation.contact_phone || ""));
+  const displayName = conversation.lead?.name || formatWhatsAppContactLabel(
+    conversation.contact_name,
+    conversation.contact_phone,
+    conversation.remote_jid,
+  );
   const otherAssignee = currentUserId && conversation.lead?.assignee?.id && conversation.lead.assignee.id !== currentUserId
     ? conversation.lead.assignee
     : null;
@@ -1589,18 +1824,18 @@ function ConversationItem({
     previewMessage,
   );
 
-  return <div data-tour="conversations-item" className={cn("grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1.5 overflow-hidden p-2 text-left transition-colors hover:bg-white/[0.045] group", isSelected && "bg-white/[0.07]")}>
-      <button type="button" onClick={onClick} className="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden">
+  return <div data-tour="conversations-item" className={cn("group grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1.5 overflow-hidden p-2 text-left transition-colors hover:bg-[var(--app-surface-hover)]", isSelected && "bg-[var(--app-surface-soft)]")}>
+      <button type="button" onClick={onClick} aria-current={isSelected ? "true" : undefined} className="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden">
         <Avatar className="h-9 w-9 shrink-0 relative">
           <AvatarImage src={getConversationAvatarUrl(conversation)} />
-          <AvatarFallback className="text-xs bg-white/[0.06] text-muted-foreground">
+          <AvatarFallback className="bg-[var(--app-surface-soft)] text-[12px] font-light text-muted-foreground">
             {conversation.is_group ? <Users className="w-4 h-4" /> : displayName?.[0]?.toUpperCase() || "?"}
           </AvatarFallback>
         </Avatar>
 
         <div className="w-0 min-w-0 flex-1">
           <div className="flex min-w-0 items-center">
-            <span className="block min-w-0 truncate text-left font-sans text-[12px] font-semibold leading-[17px] text-foreground" title={displayName}>
+            <span className="block min-w-0 truncate text-left font-sans text-[12px] font-normal leading-[17px] text-foreground" title={displayName}>
               {displayName}
             </span>
           </div>
@@ -1622,7 +1857,7 @@ function ConversationItem({
       <div className="flex max-w-[176px] shrink-0 flex-col items-end justify-center gap-1 overflow-hidden">
         <div className="flex max-w-full items-center justify-end gap-1 overflow-hidden">
           {hasLead && (
-            <ConversationChip className="bg-emerald-500 text-white" title="Lead">
+            <ConversationChip className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" title="Lead">
               Lead
             </ConversationChip>
           )}
@@ -1654,12 +1889,9 @@ function ConversationItem({
           {leadTags.slice(0, 1).map(lt => (
             <ConversationChip
               key={lt.tag.id}
-              className="max-w-[62px] text-white"
+              className="max-w-[62px]"
               title={lt.tag.name}
-              style={{
-                backgroundColor: lt.tag.color,
-                color: '#FFFFFF',
-              }}
+              style={getTagColorStyle(lt.tag.color)}
             >
               <span className="truncate">{lt.tag.name}</span>
             </ConversationChip>
@@ -1669,7 +1901,7 @@ function ConversationItem({
               +{leadTags.length - 1}
             </span>
           )}
-          {conversation.unread_count > 0 && <span className="inline-flex h-[19px] min-w-[22px] items-center justify-center rounded-[6px] bg-[#FF4529] px-1.5 text-[10px] font-semibold leading-none text-white">
+          {conversation.unread_count > 0 && <span className="inline-flex h-[19px] min-w-[22px] items-center justify-center rounded-[6px] bg-primary/50 px-1.5 text-[10px] font-normal leading-none text-primary-foreground">
               {conversation.unread_count}
             </span>}
         </div>
@@ -1680,8 +1912,8 @@ function ConversationItem({
 
       {canOperate && <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-            <MoreVertical className="w-3.5 h-3.5" />
+          <Button aria-label={`Mais ações de ${displayName || "conversa"}`} variant="ghost" size="icon" className="h-7 w-7 shrink-0 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100">
+            <MoreVertical className="w-3.5 h-3.5" aria-hidden="true" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="bg-popover">
@@ -1717,7 +1949,7 @@ function ConversationItem({
               </DropdownMenuSubContent>
             </DropdownMenuSub>}
           {/* Create Lead option - only show if no lead associated */}
-          {!hasLead && <DropdownMenuItem onClick={onCreateLead}>
+          {!hasLead && canCreateLead && <DropdownMenuItem onClick={onCreateLead}>
               <UserPlus className="w-4 h-4 mr-2" />
               Criar Lead
             </DropdownMenuItem>}

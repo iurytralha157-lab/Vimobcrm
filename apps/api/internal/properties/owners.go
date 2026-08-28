@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -25,55 +26,121 @@ type OwnerInput struct {
 }
 
 func (repo Repository) ListOwners(ctx context.Context, tenantContext tenant.Context) ([]Owner, error) {
-	args := []any{tenantContext.OrganizationID}
-	propertyScope := ""
+	page, err := repo.ListOwnersPage(ctx, tenantContext, OwnerListFilter{})
+	if err != nil {
+		return nil, err
+	}
+	return page.Items, nil
+}
+
+func (repo Repository) ListOwnersPage(ctx context.Context, tenantContext tenant.Context, filter OwnerListFilter) (OwnerPage, error) {
+	if tenantContext.UserID == "" {
+		return OwnerPage{Items: []Owner{}}, nil
+	}
+	if filter.Paginated && (filter.Limit < 1 || filter.Limit > ownerPageMaxLimit) {
+		return OwnerPage{}, fmt.Errorf("%w: owner page limit must be between 1 and %d", ErrInvalidInput, ownerPageMaxLimit)
+	}
+
+	args := []any{
+		tenantContext.OrganizationID,
+		canViewAllProperties(tenantContext),
+		tenantContext.UserID,
+		canViewTeamProperties(tenantContext),
+	}
+	propertyScope := " and " + propertyVisibilitySQL("$2", "$3", "$4", "p")
 	ownerScope := ""
 	if !canManageProperties(tenantContext) {
-		if tenantContext.UserID == "" {
-			return []Owner{}, nil
-		}
-		args = append(args, tenantContext.UserID)
-		userIndex := len(args)
-		propertyScope = fmt.Sprintf(" and (p.responsible_user_id = $%d::uuid or p.created_by = $%d::uuid)", userIndex, userIndex)
-		ownerScope = fmt.Sprintf(`
+		ownerScope = `
 		  and exists (
 			select 1
 			from public.properties p_scope
 			where p_scope.organization_id = po.organization_id
-			  and (
-				p_scope.owner_id = po.id
-				or (
-					p_scope.owner_id is null
-					and nullif(trim(p_scope.owner_name), '') is not null
-					and lower(trim(p_scope.owner_name)) = lower(trim(po.name))
-				)
-			  )
-			  and (p_scope.responsible_user_id = $%d::uuid or p_scope.created_by = $%d::uuid)
+			  and ` + ownerPropertyAssociationSQL("p_scope", "po") + `
+			  and ` + propertyVisibilitySQL("$2", "$3", "$4", "p_scope") + `
 		  )
-		`, userIndex, userIndex)
+		`
+	}
+	canViewContacts, err := repo.canViewPropertyOwnerContacts(ctx, tenantContext)
+	if err != nil {
+		return OwnerPage{}, err
 	}
 
+	hasCursor := filter.Cursor != nil
+	cursor := ownerCursor{
+		CreatedAt: time.Unix(0, 0).UTC(),
+		ID:        "00000000-0000-0000-0000-000000000000",
+	}
+	if filter.Cursor != nil {
+		cursor = *filter.Cursor
+	}
+	queryLimit := 1
+	limitClause := ""
+	if filter.Paginated {
+		queryLimit = filter.Limit + 1
+		limitClause = "limit $12"
+	}
+	args = append(
+		args,
+		canViewContacts,
+		canManageProperties(tenantContext),
+		filter.Search,
+		hasCursor,
+		cursor.NameKey,
+		cursor.CreatedAt,
+		cursor.ID,
+		queryLimit,
+	)
+
 	rows, err := repo.db.Pool().Query(ctx, fmt.Sprintf(`
+		with filtered_owners as (
+			select
+				po.*,
+				lower(po.name) as owner_sort_name,
+				count(*) over()::int as owner_total_count
+			from public.property_owners po
+			where po.organization_id = $1::uuid
+			  and coalesce(po.is_active, true) = true
+			  and (
+				$7::text = ''
+				or strpos(lower(po.name), lower($7::text)) > 0
+				or (
+					$5::boolean
+					and strpos(
+						lower(concat_ws(' ', po.phone_residential, po.phone_commercial, po.cellphone, po.email, po.media_source)),
+						lower($7::text)
+					) > 0
+				)
+			  )
+			  %s
+		), page_owners as materialized (
+			select *
+			from filtered_owners po
+			where (
+				not $8::boolean
+				or po.owner_sort_name > $9::text
+				or (po.owner_sort_name = $9::text and po.created_at < $10::timestamptz)
+				or (po.owner_sort_name = $9::text and po.created_at = $10::timestamptz and po.id < $11::uuid)
+			)
+			order by po.owner_sort_name, po.created_at desc, po.id desc
+			%s
+		)
 		select (
-			to_jsonb(po)
+			`+workspaceOwnerProjection("po", "$5::boolean", "$6::boolean")+`
 			|| jsonb_build_object(
 				'property_count', coalesce(property_totals.property_count, 0),
 				'properties', coalesce(property_preview.properties, '[]'::jsonb)
 			)
-		)::text
-		from public.property_owners po
+		)::text,
+		po.owner_sort_name,
+		po.created_at,
+		po.id::text,
+		po.owner_total_count
+		from page_owners po
 		left join lateral (
 			select count(*)::int as property_count
 			from public.properties p
 			where p.organization_id = po.organization_id
-				  and (
-					p.owner_id = po.id
-					or (
-						p.owner_id is null
-						and nullif(trim(p.owner_name), '') is not null
-						and lower(trim(p.owner_name)) = lower(trim(po.name))
-					)
-				  )
+				  and %s
 				  %s
 		) property_totals on true
 		left join lateral (
@@ -99,38 +166,59 @@ func (repo Repository) ListOwners(ctx context.Context, tenantContext tenant.Cont
 					p.created_at
 				from public.properties p
 				where p.organization_id = po.organization_id
-				  and (
-					p.owner_id = po.id
-					or (
-						p.owner_id is null
-						and nullif(trim(p.owner_name), '') is not null
-						and lower(trim(p.owner_name)) = lower(trim(po.name))
-					)
-				  )
+				  and %s
 				  %s
 				order by p.created_at desc, p.id desc
 				limit 3
 			) property_rows
 		) property_preview on true
-		where po.organization_id = $1::uuid
-		  and coalesce(po.is_active, true) = true
-		  %s
-		order by lower(po.name), po.created_at desc
-	`, propertyScope, propertyScope, ownerScope), args...)
+		order by po.owner_sort_name, po.created_at desc, po.id desc
+	`, ownerScope, limitClause, ownerPropertyAssociationSQL("p", "po"), propertyScope,
+		ownerPropertyAssociationSQL("p", "po"), propertyScope), args...)
 	if err != nil {
-		return nil, err
+		return OwnerPage{}, err
 	}
 	defer rows.Close()
 
 	items := []Owner{}
+	cursors := []ownerCursor{}
+	totalCount := 0
 	for rows.Next() {
-		item, err := scanOwner(rows)
-		if err != nil {
-			return nil, err
+		var item Owner
+		var sortName string
+		var createdAt time.Time
+		var id string
+		var rowTotalCount int
+		if err := rows.Scan((*jsonTextOwner)(&item), &sortName, &createdAt, &id, &rowTotalCount); err != nil {
+			return OwnerPage{}, err
+		}
+		if !canViewContacts {
+			redactOwnerContacts(item)
 		}
 		items = append(items, item)
+		cursors = append(cursors, ownerCursor{NameKey: sortName, CreatedAt: createdAt.UTC(), ID: id})
+		if totalCount == 0 {
+			totalCount = rowTotalCount
+		}
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return OwnerPage{}, err
+	}
+
+	var nextCursor *string
+	if filter.Paginated && len(items) > filter.Limit {
+		encoded, err := encodeOwnerCursor(cursors[filter.Limit-1])
+		if err != nil {
+			return OwnerPage{}, err
+		}
+		nextCursor = &encoded
+		items = items[:filter.Limit]
+	}
+	if !filter.Paginated {
+		totalCount = len(items)
+	}
+
+	return OwnerPage{Items: items, NextCursor: nextCursor, TotalCount: totalCount}, nil
 }
 
 func (repo Repository) CreateOwner(ctx context.Context, tenantContext tenant.Context, input OwnerInput) (Owner, error) {
@@ -161,7 +249,7 @@ func (repo Repository) CreateOwner(ctx context.Context, tenantContext tenant.Con
 	}
 
 	owner, err := scanOwner(tx.QueryRow(ctx, `
-		select to_jsonb(po)::text
+		select `+workspaceOwnerProjection("po", "true", "true")+`::text
 		from public.property_owners po
 		where po.organization_id = $1::uuid
 		  and lower(po.name) = lower($2)
@@ -201,7 +289,7 @@ func (repo Repository) CreateOwner(ctx context.Context, tenantContext tenant.Con
 			nullif($9, ''),
 			nullif($10, '')::uuid
 		)
-		returning to_jsonb(property_owners)::text
+		returning `+workspaceOwnerProjection("property_owners", "true", "true")+`::text
 	`, tenantContext.OrganizationID, input.Name, input.PhoneResidential, input.PhoneCommercial, input.Cellphone, input.Email, input.MediaSource, input.NotifyEmail, input.Notes, tenantContext.UserID))
 	if err != nil {
 		return nil, err
@@ -232,6 +320,9 @@ func (repo Repository) UpdateOwner(ctx context.Context, tenantContext tenant.Con
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	if err := lockWorkspaceOwner(ctx, tx, tenantContext.OrganizationID, ownerID); err != nil {
+		return nil, err
+	}
 
 	allowed, err := repo.canEditOwner(ctx, tx, tenantContext, ownerID)
 	if err != nil {
@@ -257,7 +348,7 @@ func (repo Repository) UpdateOwner(ctx context.Context, tenantContext tenant.Con
 		where organization_id = $1::uuid
 		  and id = $2::uuid
 		  and coalesce(is_active, true) = true
-		returning to_jsonb(property_owners)::text
+		returning `+workspaceOwnerProjection("property_owners", "true", "true")+`::text
 	`, tenantContext.OrganizationID, ownerID, input.Name, input.PhoneResidential, input.PhoneCommercial, input.Cellphone, input.Email, input.MediaSource, input.NotifyEmail, input.Notes).Scan((*jsonTextOwner)(&owner))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrPropertyNotFound
@@ -286,6 +377,26 @@ func (repo Repository) UpdateOwner(ctx context.Context, tenantContext tenant.Con
 	return owner, tx.Commit(ctx)
 }
 
+func ownerPropertyAssociationSQL(propertyAlias string, ownerAlias string) string {
+	return `(
+		` + propertyAlias + `.owner_id = ` + ownerAlias + `.id
+		or exists (
+			select 1
+			from public.property_ownerships as normalized_ownership
+			where normalized_ownership.organization_id = ` + propertyAlias + `.organization_id
+			  and normalized_ownership.property_id = ` + propertyAlias + `.id
+			  and normalized_ownership.owner_id = ` + ownerAlias + `.id
+			  and normalized_ownership.valid_from <= current_date
+			  and (normalized_ownership.valid_to is null or current_date < normalized_ownership.valid_to)
+		)
+		or (
+			` + propertyAlias + `.owner_id is null
+			and nullif(trim(` + propertyAlias + `.owner_name), '') is not null
+			and lower(trim(` + propertyAlias + `.owner_name)) = lower(trim(` + ownerAlias + `.name))
+		)
+	)`
+}
+
 func (repo Repository) canEditOwner(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, ownerID string) (bool, error) {
 	if canManageProperties(tenantContext) {
 		return true, nil
@@ -301,20 +412,14 @@ func (repo Repository) canEditOwner(ctx context.Context, tx pgx.Tx, tenantContex
 			from public.property_owners po
 			join public.properties p
 			  on p.organization_id = po.organization_id
-			 and (
-				p.owner_id = po.id
-				or (
-					p.owner_id is null
-					and nullif(trim(p.owner_name), '') is not null
-					and lower(trim(p.owner_name)) = lower(trim(po.name))
-				)
-			 )
+			 and `+ownerPropertyAssociationSQL("p", "po")+`
 			where po.organization_id = $1::uuid
 			  and po.id = $2::uuid
 			  and coalesce(po.is_active, true) = true
-			  and (p.responsible_user_id = $3::uuid or p.created_by = $3::uuid)
+			  and `+propertyVisibilitySQL("$4", "$3", "$5", "p")+`
 		)
-	`, tenantContext.OrganizationID, ownerID, tenantContext.UserID).Scan(&exists)
+	`, tenantContext.OrganizationID, ownerID, tenantContext.UserID,
+		canViewAllProperties(tenantContext), canViewTeamProperties(tenantContext)).Scan(&exists)
 	return exists, err
 }
 

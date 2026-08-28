@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import NextImage from "next/image";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useMemo, useState, type ReactNode } from "react";
 import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Loader2,
   LogOut,
   Menu,
   Moon,
@@ -17,6 +18,7 @@ import {
   UserRound,
 } from "lucide-react";
 import { useTheme } from "next-themes";
+import { toast } from "sonner";
 
 import {
   ADMIN_MAIN_NAV_ITEMS,
@@ -24,7 +26,6 @@ import {
   ADMIN_SETTINGS_NAV_ITEMS,
   type AdminNavItem,
 } from "@/components/features/admin/admin-navigation";
-import { AnnouncementBanner } from "@/components/features/announcements/AnnouncementBanner";
 import { VimobLoader } from "@/components/shared/loading";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -45,6 +46,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { SidebarProvider, useSidebar } from "@/contexts/SidebarContext";
 import { useSystemSettings } from "@/hooks/use-system-settings";
 import { cn } from "@/lib/utils";
+import { DEFAULT_AUTHENTICATED_ROUTE } from "@/config/constants";
 
 const DEFAULT_BRAND_LOGO_DARK = "/images/logo-white.png";
 const DEFAULT_BRAND_LOGO_LIGHT = "/images/logo-black.png";
@@ -142,9 +144,9 @@ function SuperAdminSidebar({
           <DropdownMenuTrigger asChild>
             <button
               className={cn(
-                "flex w-full items-center gap-3 rounded-[6px] px-3 py-2.5 text-sm font-extralight tracking-wide transition-colors",
+                "flex w-full items-center gap-3 rounded-[6px] px-3 py-2.5 text-sm font-light transition-colors",
                 "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]",
-                isActive && "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal",
+                isActive && "bg-[var(--app-surface-soft)] text-primary font-normal",
                 isCollapsed && "justify-center",
               )}
               aria-label={label}
@@ -162,7 +164,7 @@ function SuperAdminSidebar({
             side="right"
             align="start"
             sideOffset={8}
-            className="w-60 rounded-[6px] border-0 bg-[var(--app-sidebar)] p-1.5 text-[var(--app-text-primary)] shadow-2xl backdrop-blur-md"
+            className="app-sidebar-popover w-60 rounded-[8px] border-0 p-1 text-[var(--app-text-primary)] shadow-none"
           >
             {item.children.map((child) => {
               const ChildIcon = child.icon;
@@ -174,12 +176,17 @@ function SuperAdminSidebar({
                   asChild
                   className={cn(
                     "cursor-pointer rounded-[6px] p-0 text-[var(--app-text-secondary)] outline-none focus:bg-[var(--app-surface-hover)] focus:text-[var(--app-text-primary)]",
-                    childActive && "bg-[var(--app-surface-soft)] text-[#FF4529]",
+                    childActive && "bg-[var(--app-surface-soft)] text-primary",
                   )}
                 >
-                  <Link href={child.href} onClick={onNavigate} className="flex w-full items-center gap-3 px-3 py-2.5">
+                  <Link
+                    href={child.href}
+                    onClick={onNavigate}
+                    aria-current={childActive ? "page" : undefined}
+                    className="flex w-full items-center gap-3 px-3 py-2.5"
+                  >
                     <ChildIcon className="h-4 w-4 flex-shrink-0" strokeWidth={SIDEBAR_ICON_STROKE} />
-                    <span className="text-sm font-extralight tracking-wide">{child.shortTitle || child.title}</span>
+                    <span className="text-sm font-light">{child.shortTitle || child.title}</span>
                   </Link>
                 </DropdownMenuItem>
               );
@@ -193,10 +200,11 @@ function SuperAdminSidebar({
       <Link
         href={item.href}
         onClick={onNavigate}
+        aria-current={pathname === item.href ? "page" : undefined}
         className={cn(
-          "flex items-center gap-3 rounded-[6px] px-3 py-2.5 text-sm font-extralight tracking-wide transition-colors",
+          "flex items-center gap-3 rounded-[6px] px-3 py-2.5 text-sm font-light transition-colors",
           "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]",
-          isActive && "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal",
+          isActive && "bg-[var(--app-surface-soft)] text-primary font-normal",
           isCollapsed && "justify-center",
         )}
       >
@@ -209,7 +217,7 @@ function SuperAdminSidebar({
   return (
     <aside
       className={cn(
-        "h-[calc(100%-16px)] rounded-[6px] relative flex flex-col transition-all duration-300 my-2 ml-2 mr-0 flex-shrink-0",
+        "relative my-2 ml-2 mr-0 flex h-[calc(100%-16px)] flex-shrink-0 flex-col rounded-[6px] transition-[width] duration-200",
         isCollapsed ? "w-16" : "w-56",
       )}
       style={{ backgroundColor: SIDEBAR_BACKGROUND }}
@@ -217,14 +225,14 @@ function SuperAdminSidebar({
       <div className={cn("flex items-center px-3 pt-4 pb-4", isCollapsed ? "justify-center" : "justify-between")}>
         {isCollapsed ? (
           <div className="flex h-8 w-8 items-center justify-center">
-            <NextImage src={faviconUrl} alt="Icon" width={32} height={32} className="object-contain opacity-90" priority unoptimized />
+            <NextImage src={faviconUrl} alt="Vimob" width={32} height={32} className="object-contain opacity-90" priority unoptimized />
           </div>
         ) : (
           <>
             <div className="flex items-center">
               <NextImage
                 src={displayLogoUrl}
-                alt="Logo"
+                alt="Vimob"
                 width={logoWidth}
                 height={logoHeight}
                 style={{ maxWidth: logoWidth, maxHeight: logoHeight }}
@@ -312,12 +320,13 @@ function SuperAdminMobileSidebar({
         href={item.href}
         onClick={onNavigate}
         className={cn(
-          "flex w-full items-center gap-3 rounded-[6px] px-3 text-sm font-extralight tracking-wide transition-colors",
+          "flex w-full items-center gap-3 rounded-[6px] px-3 text-sm font-light transition-colors",
           compact ? "py-2.5 text-[13px]" : "py-3",
           active
-            ? "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal"
+            ? "bg-[var(--app-surface-soft)] text-primary font-normal"
             : "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]",
         )}
+        aria-current={pathname === item.href ? "page" : undefined}
       >
         <Icon className={cn("shrink-0", compact ? "h-4 w-4" : "h-5 w-5")} strokeWidth={SIDEBAR_ICON_STROKE} />
         <span className="truncate">{item.shortTitle || item.title}</span>
@@ -331,7 +340,7 @@ function SuperAdminMobileSidebar({
         <div className="relative h-8" style={{ width: logoWidth, maxWidth: 148 }}>
           <NextImage
             src={displayLogoUrl}
-            alt="Logo"
+            alt="Vimob"
             width={logoWidth}
             height={logoHeight}
             style={{ maxWidth: Math.min(logoWidth, 148), maxHeight: logoHeight }}
@@ -356,11 +365,13 @@ function SuperAdminMobileSidebar({
             type="button"
             onClick={() => setSettingsOpen((open) => !open)}
             className={cn(
-              "flex w-full items-center justify-between rounded-[6px] px-3 py-3 text-sm font-extralight tracking-wide transition-colors",
+              "flex w-full items-center justify-between rounded-[6px] px-3 py-3 text-sm font-light transition-colors",
               settingsActive
-                ? "bg-[var(--app-surface-soft)] text-[#FF4529] font-normal"
+                ? "bg-[var(--app-surface-soft)] text-primary font-normal"
                 : "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]",
             )}
+            aria-expanded={settingsOpen}
+            aria-controls="superadmin-mobile-settings-nav"
           >
             <span className="flex min-w-0 items-center gap-3">
               <Settings className="h-5 w-5 shrink-0" strokeWidth={SIDEBAR_ICON_STROKE} />
@@ -374,7 +385,7 @@ function SuperAdminMobileSidebar({
           </button>
 
           {settingsOpen && (
-            <ul className="mt-1 space-y-1 pl-4">
+            <ul id="superadmin-mobile-settings-nav" className="mt-1 space-y-1 pl-4">
               {ADMIN_SETTINGS_NAV_ITEMS.map((item) => (
                 <li key={item.href}>{renderMobileLink(item, true)}</li>
               ))}
@@ -388,10 +399,10 @@ function SuperAdminMobileSidebar({
 
 export function SuperAdminLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname() || "";
-  const router = useRouter();
   const { loading, isSuperAdmin, profile, signOut } = useAuth();
   const { resolvedTheme, setTheme } = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
 
   const accountLabel = profile?.name?.trim() || "Nome não informado";
   const accountEmail = profile?.email?.trim() || "E-mail não informado";
@@ -399,9 +410,25 @@ export function SuperAdminLayout({ children }: { children: ReactNode }) {
 
   const pageTitle = useMemo(() => getPageTitle(pathname), [pathname]);
 
+  const handleSignOut = async () => {
+    if (isSigningOut) return;
+    setIsSigningOut(true);
+    try {
+      await signOut();
+    } catch (error) {
+      console.error("Erro ao sair do painel superadmin:", error);
+      toast.error("Não foi possível encerrar a sessão. Tente novamente.");
+      setIsSigningOut(false);
+    }
+  };
+
   if (loading) {
     return (
-      <div className="flex h-[100dvh] items-center justify-center bg-background">
+      <div
+        className="flex h-[100dvh] items-center justify-center bg-[var(--app-background)]"
+        role="status"
+        aria-live="polite"
+      >
         <VimobLoader size="lg" label="Carregando painel super admin..." />
       </div>
     );
@@ -409,15 +436,15 @@ export function SuperAdminLayout({ children }: { children: ReactNode }) {
 
   if (!isSuperAdmin) {
     return (
-      <div className="flex min-h-[100dvh] items-center justify-center bg-background p-6">
-        <section className="app-card max-w-xl p-6 text-center">
-          <ShieldCheck className="mx-auto mb-4 h-10 w-10 text-[#FF4529]" />
-          <h1 className="text-xl font-semibold">Painel exclusivo para superadmin</h1>
+      <div className="app-shell flex min-h-[100dvh] items-center justify-center bg-[var(--app-background)] p-6">
+        <section className="app-card max-w-xl p-6 text-center" aria-labelledby="superadmin-access-title">
+          <ShieldCheck className="mx-auto mb-4 h-10 w-10 text-primary" />
+          <h1 id="superadmin-access-title" className="app-page-title">Painel exclusivo para superadmin</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Esta área centraliza dados de plataforma e não fica disponível para usuários comuns ou admins de organização.
           </p>
-          <Button asChild className="mt-5 bg-[#FF4529] hover:bg-[#FF4529]/90">
-            <Link href="/dashboard">Sair desta área</Link>
+          <Button asChild className="mt-5 bg-primary text-primary-foreground shadow-none hover:bg-primary/90">
+            <Link href={DEFAULT_AUTHENTICATED_ROUTE}>Sair desta área</Link>
           </Button>
         </section>
       </div>
@@ -427,7 +454,6 @@ export function SuperAdminLayout({ children }: { children: ReactNode }) {
   return (
     <SidebarProvider>
       <div className="app-shell flex h-[100dvh] w-full flex-col overflow-hidden pt-[env(safe-area-inset-top)]">
-        <AnnouncementBanner />
         <div className="flex flex-1 overflow-hidden">
         <div className="hidden flex-shrink-0 lg:block">
           <SuperAdminSidebar pathname={pathname} />
@@ -435,6 +461,7 @@ export function SuperAdminLayout({ children }: { children: ReactNode }) {
 
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetContent
+            id="superadmin-mobile-navigation"
             side="left"
             className="flex h-[100dvh] max-h-[100dvh] w-[292px] max-w-[86vw] flex-col overflow-hidden border-0 border-r-0 bg-[var(--app-sidebar)] p-0 text-[var(--app-text-primary)] data-[state=closed]:duration-150 data-[state=open]:duration-200"
           >
@@ -445,18 +472,20 @@ export function SuperAdminLayout({ children }: { children: ReactNode }) {
         </Sheet>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <header className="sticky top-0 z-40 flex h-16 shrink-0 items-center bg-background/80 px-4 backdrop-blur-md relative after:absolute after:bottom-0 after:left-4 after:right-4 after:h-px after:bg-white/[0.045] md:px-6 md:after:left-6 md:after:right-6">
+          <header className="relative sticky top-0 z-40 flex h-16 shrink-0 items-center bg-[var(--app-background)] px-4 after:absolute after:bottom-0 after:left-4 after:right-4 after:h-px after:bg-[var(--app-border)] md:px-6 md:after:left-6 md:after:right-6">
             <Button
               variant="ghost"
               size="icon"
               className="mr-3 rounded-[6px] lg:hidden"
               onClick={() => setMobileOpen(true)}
               aria-label="Abrir menu superadmin"
+              aria-expanded={mobileOpen}
+              aria-controls="superadmin-mobile-navigation"
             >
               <Menu className="h-5 w-5" strokeWidth={SIDEBAR_CHEVRON_STROKE} />
             </Button>
 
-            <h1 className="max-w-[180px] truncate text-base font-bold tracking-tight text-foreground sm:max-w-none sm:text-xl">
+            <h1 className="app-page-title max-w-[180px] truncate sm:max-w-none">
               {pageTitle}
             </h1>
 
@@ -475,23 +504,28 @@ export function SuperAdminLayout({ children }: { children: ReactNode }) {
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="ghost"
-                    className="h-12 gap-3 rounded-full bg-[var(--app-surface-soft)] pl-1.5 pr-2 transition-all duration-300 group"
+                    className="group h-11 gap-3 rounded-[6px] bg-[var(--app-surface-soft)] pl-1.5 pr-2 shadow-none transition-colors hover:bg-[var(--app-surface-hover)]"
+                    aria-label={`Abrir menu da conta de ${accountLabel}`}
                   >
-                    <Avatar className="h-9 w-9 border border-white/[0.055] ring-2 ring-primary/10 group-hover:ring-primary/20 transition-all">
-                      {profile?.avatar_url ? <AvatarImage src={profile.avatar_url} className="object-cover" /> : <AvatarImage src={undefined} />}
-                      <AvatarFallback className="bg-primary text-primary-foreground text-xs font-bold">
+                    <Avatar className="h-8 w-8 border border-[var(--app-border)]">
+                      {profile?.avatar_url ? (
+                        <AvatarImage src={profile.avatar_url} alt="" className="object-cover" />
+                      ) : (
+                        <AvatarImage src={undefined} alt="" />
+                      )}
+                      <AvatarFallback className="bg-primary text-xs font-normal text-primary-foreground">
                         {getInitials(profile?.name)}
                       </AvatarFallback>
                     </Avatar>
                     <div className="hidden flex-col items-start gap-0.5 pr-1 text-left sm:flex">
-                      <span className="max-w-[130px] truncate text-xs font-bold leading-none tracking-tight text-foreground">
+                      <span className="max-w-[130px] truncate text-xs font-normal leading-none text-foreground">
                         {accountLabel}
                       </span>
                       <span className="max-w-[130px] truncate text-[10px] leading-none text-muted-foreground/80">
                         {accountEmail}
                       </span>
                     </div>
-                    <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-white/[0.07] transition-all duration-300 group-hover:bg-primary group-hover:text-primary-foreground">
+                    <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-hover)] transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
                       <ChevronDown className="h-3 w-3" />
                     </div>
                   </Button>
@@ -500,30 +534,32 @@ export function SuperAdminLayout({ children }: { children: ReactNode }) {
                   align="end"
                   sideOffset={12}
                   collisionPadding={16}
-                  className="w-56 rounded-2xl border-white/[0.055] bg-popover/95 p-1 backdrop-blur-md"
+                  className="app-header-popover w-56 rounded-[8px] border-0 p-1 shadow-none"
                 >
-                  <div className="border-b border-white/[0.055] px-3 py-3">
-                    <p className="truncate text-sm font-bold">{accountLabel}</p>
+                  <div className="border-b border-[var(--app-border)] px-3 py-3">
+                    <p className="truncate text-sm font-normal">{accountLabel}</p>
                     <p className="truncate text-[10px] text-muted-foreground">{accountEmail}</p>
                   </div>
                   <div className="mt-1">
-                    <DropdownMenuItem
-                      onClick={() => router.push("/admin/settings")}
-                      className="m-1 cursor-pointer rounded-xl px-3 py-2 text-sm gap-2"
-                    >
-                      <UserRound className="h-4 w-4 text-muted-foreground" />
-                      Conta
+                    <DropdownMenuItem asChild className="m-1 cursor-pointer rounded-[4px] p-0 text-sm">
+                      <Link href="/admin/settings" className="flex w-full items-center gap-2 px-3 py-2">
+                        <UserRound className="h-4 w-4 text-muted-foreground" />
+                        Conta
+                      </Link>
                     </DropdownMenuItem>
                   </div>
-                  <DropdownMenuSeparator className="my-1 bg-white/[0.055]" />
+                  <DropdownMenuSeparator className="my-1 bg-[var(--app-border)]" />
                   <DropdownMenuItem
-                    onClick={async () => {
-                      await signOut();
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      void handleSignOut();
                     }}
-                    className="m-1 cursor-pointer rounded-xl bg-destructive px-3 py-2 text-sm gap-2 text-destructive-foreground transition-colors hover:bg-destructive/90 focus:bg-destructive/90"
+                    disabled={isSigningOut}
+                    aria-busy={isSigningOut}
+                    className="m-1 cursor-pointer gap-2 rounded-[4px] bg-destructive px-3 py-2 text-sm text-destructive-foreground transition-colors hover:bg-destructive/90 focus:bg-destructive/90"
                   >
-                    <LogOut className="h-4 w-4" />
-                    Sair
+                    {isSigningOut ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
+                    {isSigningOut ? "Saindo..." : "Sair"}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

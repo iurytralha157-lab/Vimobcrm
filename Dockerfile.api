@@ -3,6 +3,8 @@
 FROM golang:1.25-alpine AS builder
 WORKDIR /src
 
+ARG VIMOB_RELEASE_SHA=unversioned
+
 COPY go.work ./
 COPY apps/api/go.mod apps/api/go.sum ./apps/api/
 COPY packages/auth/go.mod packages/auth/go.sum ./packages/auth/
@@ -13,8 +15,23 @@ COPY apps/api ./apps/api
 COPY packages/auth ./packages/auth
 COPY packages/db ./packages/db
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-  go build -trimpath -ldflags="-s -w" -o /out/vimob-api ./apps/api/cmd/api
+RUN release_sha="${VIMOB_RELEASE_SHA:-unversioned}"; \
+  if [ "$release_sha" != "unversioned" ]; then \
+    if [ "${#release_sha}" -ne 40 ]; then \
+      echo "VIMOB_RELEASE_SHA must be a 40-character hexadecimal commit SHA" >&2; \
+      exit 1; \
+    fi; \
+    case "$release_sha" in \
+      *[!0-9a-fA-F]*) \
+        echo "VIMOB_RELEASE_SHA must be a 40-character hexadecimal commit SHA" >&2; \
+        exit 1 \
+        ;; \
+    esac; \
+  fi; \
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -trimpath \
+    -ldflags="-s -w -X github.com/vimob-crm/vimob-crm/apps/api/internal/health.releaseSHA=$release_sha" \
+    -o /out/vimob-api ./apps/api/cmd/api
 
 FROM alpine:3.22
 WORKDIR /app

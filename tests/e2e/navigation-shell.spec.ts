@@ -29,6 +29,22 @@ test.describe('navegacao principal', () => {
     await expect(sidebar).toHaveCSS('width', '64px');
   });
 
+  test('desktop conclui a transicao de Pipeline para Agenda', async ({ page }) => {
+    await signInAs(page, 'admin');
+    await page.goto('/crm/pipelines');
+
+    const pipelineHeading = page.getByRole('heading', { name: 'Pipeline', exact: true });
+    await expect(pipelineHeading).toBeVisible();
+
+    const agendaLink = page.locator('aside.app-sidebar a[href="/agenda"]');
+    await expect(agendaLink).toBeVisible();
+    await agendaLink.click();
+
+    await expect(page).toHaveURL(/\/agenda$/);
+    await expect(page.getByRole('heading', { name: 'Agenda', exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(pipelineHeading).toBeHidden();
+  });
+
   test('mobile fecha o menu Mais ao trocar de pagina', async ({ page }) => {
     await signInAs(page, 'user');
     await page.setViewportSize({ width: 390, height: 844 });
@@ -36,7 +52,7 @@ test.describe('navegacao principal', () => {
 
     const bottomNav = page.locator('nav.app-mobile-bottom-nav');
     await expect(bottomNav).toBeVisible();
-    await expect(bottomNav.getByRole('link', { name: 'Dashboard' })).toBeVisible();
+    await expect(bottomNav.getByRole('link', { name: 'Pipelines' })).toBeVisible();
     await expect(bottomNav.getByRole('button', { name: 'Novo lead' })).toBeVisible();
 
     await bottomNav.getByRole('button', { name: 'Mais' }).click();

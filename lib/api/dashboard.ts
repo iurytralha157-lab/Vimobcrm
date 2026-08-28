@@ -1,19 +1,30 @@
 import {
+  apiDashboardDealsEvolutionSchema,
   apiDashboardDealsEvolutionResponseSchema,
+  apiDashboardExtraCountsSchema,
   apiDashboardExtraCountsResponseSchema,
+  apiDashboardFunnelSchema,
   apiDashboardFunnelResponseSchema,
+  apiDashboardRecentActivitiesSchema,
   apiDashboardRecentActivitiesResponseSchema,
+  apiDashboardSourceSchema,
   apiDashboardSourceResponseSchema,
+  apiDashboardStatsSchema,
   apiDashboardStatsResponseSchema,
   apiDashboardTeamLeadIdsSchema,
+  apiDashboardTopBrokersSchema,
   apiDashboardTopBrokersResponseSchema,
+  apiDashboardUpcomingTasksSchema,
   apiDashboardUpcomingTasksResponseSchema,
+  dashboardDateRangeSchema,
   dashboardFiltersSchema,
   dashboardLimitSchema,
   dashboardOptionalIdSchema,
   parseDomainInput,
+  uuidSchema,
   validateDomainResponse,
 } from '@/lib/validation'
+import type { z } from 'zod'
 import { vimobAPIRequest } from './vimob-client'
 
 export type DashboardAPIFilters = {
@@ -30,271 +41,177 @@ export type DashboardAPIFilters = {
   searchQuery?: string | null
 }
 
-export type DashboardStatsResponse = {
-  totalLeads: number
-  leadsInProgress: number
-  leadsClosed: number
-  leadsLost: number
-  openLeads: number
-  lostLeads: number
-  conversionRate: number
-  closedLeads: number
-  wonAverageConversionDays: number | null
-  wonConversionBuckets: Array<{
-    key: string
-    label: string
-    count: number
-    percentage: number
-    value: number
-    color: string
-  }>
-  wonDeals: Array<{
-    id: string
-    name: string
-    phone: string | null
-    source: string | null
-    value: number
-    createdAt: string | null
-    wonAt: string | null
-    conversionDays: number | null
-    assignedUserName: string
-  }>
-  lostReasonBuckets: Array<{
-    key: string
-    label: string
-    count: number
-    percentage: number
-    color: string
-  }>
-  lostDeals: Array<{
-    id: string
-    name: string
-    phone: string | null
-    source: string | null
-    lostReason: string
-    lostReasonGroup: string
-    createdAt: string | null
-    lostAt: string | null
-    assignedUserName: string
-  }>
-  avgResponseTime: string
-  totalSalesValue: number
-  pendingCommissions: number
-  leadsTrend: number
-  openTrend: number
-  lostTrend: number
-  conversionTrend: number
-  closedTrend: number
-  totalReceivables: number
-  totalPayables: number
-  overdueReceivables: number
-  overduePayables: number
-  paidCommissions: number
-}
+export type DashboardStatsResponse = z.infer<typeof apiDashboardStatsSchema>
+export type DashboardFunnelPoint = z.infer<typeof apiDashboardFunnelSchema>[number]
+export type DashboardSourcePoint = z.infer<typeof apiDashboardSourceSchema>[number]
+export type DashboardTopBrokersResponse = z.infer<typeof apiDashboardTopBrokersSchema>
+export type DashboardUpcomingTask = z.infer<typeof apiDashboardUpcomingTasksSchema>[number]
+export type DashboardExtraCounts = z.infer<typeof apiDashboardExtraCountsSchema>
+export type DashboardRecentActivity = z.infer<typeof apiDashboardRecentActivitiesSchema>[number]
+export type DashboardDealsEvolutionPoint = z.infer<typeof apiDashboardDealsEvolutionSchema>[number]
 
-export type DashboardFunnelPoint = {
-  name: string
-  value: number
-  percentage: number
-  stage_key: string
-}
-
-export type DashboardSourcePoint = {
-  name: string
-  value: number
-  rawSource: string
-}
-
-export type DashboardTopBrokersResponse = {
-  brokers: Array<{
-    id: string
-    name: string
-    avatar_url: string | null
-    closedLeads: number
-    salesValue: number
-    totalCommissions: number
-  }>
-  isFallbackMode: boolean
-}
-
-export type DashboardUpcomingTask = {
-  id: string
-  title: string
-  type: 'call' | 'email' | 'meeting' | 'message' | 'task'
-  due_date: string
-  lead_name: string
-  lead_id: string
-}
-
-export type DashboardExtraCounts = {
-  propertyCount: number
-  siteVisits: number
-  scheduledVisits: number
-}
-
-export type DashboardRecentActivity = {
-  id: string
-  type: string
-  content: string | null
-  created_at: string
-  lead_name: string
-  user_name?: string | null
-}
-
-export type DashboardDealsEvolutionPoint = {
-  date: string
-  ganhos: number
-  perdas: number
-  abertos: number
-}
-
-type Envelope<T> = {
-  data: T
-}
-
-export async function getDashboardStats(params: {
+type DashboardRequestContext = {
   organizationId?: string | null
+  signal?: AbortSignal
+}
+
+export async function getDashboardStats(params: DashboardRequestContext & {
   filters?: DashboardAPIFilters
 }) {
+  const organizationId = parseDashboardOrganizationId(params.organizationId, 'dashboard.stats')
   const filters = parseDomainInput(dashboardFiltersSchema, normalizeDashboardFilters(params.filters), 'dashboard.stats')
-  const response = await vimobAPIRequest<Envelope<DashboardStatsResponse>>('/v1/dashboard/stats', {
-    organizationId: params.organizationId,
+  const response = await vimobAPIRequest<unknown>('/v1/dashboard/stats', {
+    organizationId,
     query: buildDashboardQuery(filters),
+    signal: params.signal,
   })
-  validateDomainResponse(apiDashboardStatsResponseSchema, response, 'dashboard.stats')
+  const validated = validateDomainResponse(apiDashboardStatsResponseSchema, response, 'dashboard.stats')
 
-  return response.data
+  return validated.data
 }
 
-export async function getDashboardFunnel(params: {
-  organizationId?: string | null
+export async function getDashboardFunnel(params: DashboardRequestContext & {
   filters?: DashboardAPIFilters
   pipelineId?: string | null
 }) {
+  const organizationId = parseDashboardOrganizationId(params.organizationId, 'dashboard.funnel')
   const filters = parseDomainInput(dashboardFiltersSchema, normalizeDashboardFilters(params.filters), 'dashboard.funnel')
   const pipelineId = parseDomainInput(dashboardOptionalIdSchema, normalizeDashboardFilterValue(params.pipelineId), 'dashboard.funnel.pipeline-id')
-  const response = await vimobAPIRequest<Envelope<DashboardFunnelPoint[]>>('/v1/dashboard/funnel', {
-    organizationId: params.organizationId,
+  const response = await vimobAPIRequest<unknown>('/v1/dashboard/funnel', {
+    organizationId,
     query: {
       ...buildDashboardQuery(filters),
       pipelineId,
     },
+    signal: params.signal,
   })
-  validateDomainResponse(apiDashboardFunnelResponseSchema, response, 'dashboard.funnel')
+  const validated = validateDomainResponse(apiDashboardFunnelResponseSchema, response, 'dashboard.funnel')
 
-  return response.data
+  return validated.data
 }
 
-export async function getDashboardSources(params: {
-  organizationId?: string | null
+export async function getDashboardSources(params: DashboardRequestContext & {
   filters?: DashboardAPIFilters
   pipelineId?: string | null
 }) {
+  const organizationId = parseDashboardOrganizationId(params.organizationId, 'dashboard.sources')
   const filters = parseDomainInput(dashboardFiltersSchema, normalizeDashboardFilters(params.filters), 'dashboard.sources')
   const pipelineId = parseDomainInput(dashboardOptionalIdSchema, normalizeDashboardFilterValue(params.pipelineId), 'dashboard.sources.pipeline-id')
-  const response = await vimobAPIRequest<Envelope<DashboardSourcePoint[]>>('/v1/dashboard/sources', {
-    organizationId: params.organizationId,
+  const response = await vimobAPIRequest<unknown>('/v1/dashboard/sources', {
+    organizationId,
     query: {
       ...buildDashboardQuery(filters),
       pipelineId,
     },
+    signal: params.signal,
   })
-  validateDomainResponse(apiDashboardSourceResponseSchema, response, 'dashboard.sources')
+  const validated = validateDomainResponse(apiDashboardSourceResponseSchema, response, 'dashboard.sources')
 
-  return response.data
+  return validated.data
 }
 
-export async function getDashboardTopBrokers(params: {
-  organizationId?: string | null
+export async function getDashboardTopBrokers(params: DashboardRequestContext & {
   filters?: DashboardAPIFilters
 }) {
+  const organizationId = parseDashboardOrganizationId(params.organizationId, 'dashboard.top-brokers')
   const filters = parseDomainInput(dashboardFiltersSchema, normalizeDashboardFilters(params.filters), 'dashboard.top-brokers')
-  const response = await vimobAPIRequest<Envelope<DashboardTopBrokersResponse>>('/v1/dashboard/top-brokers', {
-    organizationId: params.organizationId,
+  const response = await vimobAPIRequest<unknown>('/v1/dashboard/top-brokers', {
+    organizationId,
     query: buildDashboardQuery(filters),
+    signal: params.signal,
   })
-  validateDomainResponse(apiDashboardTopBrokersResponseSchema, response, 'dashboard.top-brokers')
+  const validated = validateDomainResponse(apiDashboardTopBrokersResponseSchema, response, 'dashboard.top-brokers')
 
-  return response.data
+  return validated.data
 }
 
-export async function getDashboardUpcomingTasks(params: {
-  organizationId?: string | null
+export async function getDashboardUpcomingTasks(params: DashboardRequestContext & {
   limit?: number
 }) {
+  const organizationId = parseDashboardOrganizationId(params.organizationId, 'dashboard.upcoming-tasks')
   const limit = parseDomainInput(dashboardLimitSchema, params.limit, 'dashboard.upcoming-tasks.limit')
-  const response = await vimobAPIRequest<Envelope<DashboardUpcomingTask[]>>('/v1/dashboard/upcoming-tasks', {
-    organizationId: params.organizationId,
+  const response = await vimobAPIRequest<unknown>('/v1/dashboard/upcoming-tasks', {
+    organizationId,
     query: {
       limit,
     },
+    signal: params.signal,
   })
-  validateDomainResponse(apiDashboardUpcomingTasksResponseSchema, response, 'dashboard.upcoming-tasks')
+  const validated = validateDomainResponse(apiDashboardUpcomingTasksResponseSchema, response, 'dashboard.upcoming-tasks')
 
-  return response.data
+  return validated.data
 }
 
-export async function getDashboardDealsEvolution(params: {
-  organizationId?: string | null
+export async function getDashboardDealsEvolution(params: DashboardRequestContext & {
   filters?: DashboardAPIFilters
 }) {
+  const organizationId = parseDashboardOrganizationId(params.organizationId, 'dashboard.deals-evolution')
   const filters = parseDomainInput(dashboardFiltersSchema, normalizeDashboardFilters(params.filters), 'dashboard.deals-evolution')
-  const response = await vimobAPIRequest<Envelope<DashboardDealsEvolutionPoint[]>>('/v1/dashboard/deals-evolution', {
-    organizationId: params.organizationId,
+  const response = await vimobAPIRequest<unknown>('/v1/dashboard/deals-evolution', {
+    organizationId,
     query: buildDashboardQuery(filters),
+    signal: params.signal,
   })
-  validateDomainResponse(apiDashboardDealsEvolutionResponseSchema, response, 'dashboard.deals-evolution')
+  const validated = validateDomainResponse(apiDashboardDealsEvolutionResponseSchema, response, 'dashboard.deals-evolution')
 
-  return response.data
+  return validated.data
 }
 
-export async function getDashboardExtraCounts(params: {
-  organizationId?: string | null
+export async function getDashboardExtraCounts(params: DashboardRequestContext & {
   filters?: DashboardAPIFilters
 }) {
+  const organizationId = parseDashboardOrganizationId(params.organizationId, 'dashboard.extra-counts')
   const filters = parseDomainInput(dashboardFiltersSchema, normalizeDashboardFilters(params.filters), 'dashboard.extra-counts')
-  const response = await vimobAPIRequest<Envelope<DashboardExtraCounts>>('/v1/dashboard/extra-counts', {
-    organizationId: params.organizationId,
+  const response = await vimobAPIRequest<unknown>('/v1/dashboard/extra-counts', {
+    organizationId,
     query: buildDashboardQuery(filters),
+    signal: params.signal,
   })
-  validateDomainResponse(apiDashboardExtraCountsResponseSchema, response, 'dashboard.extra-counts')
+  const validated = validateDomainResponse(apiDashboardExtraCountsResponseSchema, response, 'dashboard.extra-counts')
 
-  return response.data
+  return validated.data
 }
 
-export async function getDashboardRecentActivities(params: {
-  organizationId?: string | null
+export async function getDashboardRecentActivities(params: DashboardRequestContext & {
   limit?: number
 }) {
+  const organizationId = parseDashboardOrganizationId(params.organizationId, 'dashboard.recent-activities')
   const limit = parseDomainInput(dashboardLimitSchema, params.limit, 'dashboard.recent-activities.limit')
-  const response = await vimobAPIRequest<Envelope<DashboardRecentActivity[]>>('/v1/dashboard/recent-activities', {
-    organizationId: params.organizationId,
+  const response = await vimobAPIRequest<unknown>('/v1/dashboard/recent-activities', {
+    organizationId,
     query: {
       limit,
     },
+    signal: params.signal,
   })
-  validateDomainResponse(apiDashboardRecentActivitiesResponseSchema, response, 'dashboard.recent-activities')
+  const validated = validateDomainResponse(apiDashboardRecentActivitiesResponseSchema, response, 'dashboard.recent-activities')
 
-  return response.data
+  return validated.data
 }
 
-export async function getDashboardTeamLeadIds(params: {
-  organizationId?: string | null
+export async function getDashboardTeamLeadIds(params: DashboardRequestContext & {
   teamId?: string | null
   dateRange?: { from: Date; to: Date } | null
 }) {
-  const teamId = parseDomainInput(dashboardOptionalIdSchema, normalizeDashboardFilterValue(params.teamId), 'dashboard.team-lead-ids.team-id')
-  const response = await vimobAPIRequest<{ leadIds: string[] }>('/v1/dashboard/team-lead-ids', {
-    organizationId: params.organizationId,
+  const organizationId = parseDashboardOrganizationId(params.organizationId, 'dashboard.team-lead-ids')
+  const teamId = parseDomainInput(uuidSchema, normalizeDashboardFilterValue(params.teamId), 'dashboard.team-lead-ids.team-id')
+  const dateRange = parseDomainInput(
+    dashboardDateRangeSchema.nullable().optional(),
+    params.dateRange,
+    'dashboard.team-lead-ids.date-range',
+  )
+  const response = await vimobAPIRequest<unknown>('/v1/dashboard/team-lead-ids', {
+    organizationId,
     query: {
       teamId,
-      dateFrom: params.dateRange?.from.toISOString(),
-      dateTo: params.dateRange?.to.toISOString(),
+      dateFrom: dateRange?.from.toISOString(),
+      dateTo: dateRange?.to.toISOString(),
     },
+    signal: params.signal,
   })
-  validateDomainResponse(apiDashboardTeamLeadIdsSchema, response, 'dashboard.team-lead-ids')
+  const validated = validateDomainResponse(apiDashboardTeamLeadIdsSchema, response, 'dashboard.team-lead-ids')
 
-  return response.leadIds
+  return validated.leadIds
 }
 
 function normalizeDashboardFilters(filters?: DashboardAPIFilters): DashboardAPIFilters {
@@ -312,16 +229,49 @@ function normalizeDashboardFilters(filters?: DashboardAPIFilters): DashboardAPIF
   }
 }
 
+export function getDashboardFiltersQueryKey(filters?: DashboardAPIFilters) {
+  const normalized = normalizeDashboardFilters(filters)
+  return {
+    dateFrom: dashboardDateQueryKey(normalized.dateRange?.from),
+    dateTo: dashboardDateQueryKey(normalized.dateRange?.to),
+    granularity: normalized.granularity ?? null,
+    teamId: normalized.teamId ?? null,
+    userId: normalized.userId ?? null,
+    source: normalized.source ?? null,
+    campaignId: normalized.campaignId ?? null,
+    adSetId: normalized.adSetId ?? null,
+    adId: normalized.adId ?? null,
+    tagId: normalized.tagId ?? null,
+    dealStatus: normalized.dealStatus ?? null,
+    searchQuery: normalized.searchQuery ?? null,
+  }
+}
+
+export function getDashboardOptionalIdQueryKey(value?: string | null) {
+  return normalizeDashboardFilterValue(value)
+}
+
 function normalizeDashboardFilterValue(value?: string | null) {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
-  return trimmed && trimmed !== 'all' ? trimmed : null
+  return trimmed && trimmed.toLowerCase() !== 'all' ? trimmed : null
 }
 
 function normalizeDashboardSearch(value?: string | null) {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
   return trimmed || null
+}
+
+function dashboardDateQueryKey(value?: Date) {
+  if (!value) return null
+  if (!(value instanceof Date)) return 'invalid-date'
+  const timestamp = value.getTime()
+  return Number.isFinite(timestamp) ? value.toISOString() : 'invalid-date'
+}
+
+function parseDashboardOrganizationId(value: string | null | undefined, context: string) {
+  return parseDomainInput(uuidSchema, value, `${context}.organization-id`)
 }
 
 function buildDashboardQuery(filters?: DashboardAPIFilters) {

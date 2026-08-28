@@ -24,8 +24,14 @@ export interface Notification {
   type: string
   is_read: boolean
   lead_id: string | null
+  target_url?: string | null
   metadata?: Record<string, unknown> | null
   created_at: string
+}
+
+export interface NotificationPage {
+  notifications: Notification[]
+  nextCursor: string | null
 }
 
 export interface DispatchNotificationInput {
@@ -66,15 +72,19 @@ export interface DispatchChannelResult {
 }
 
 export const notificationsAPI = {
-  async list(params: { userId?: string; limit?: number } = {}) {
-    const response = await vimobAPIRequest<Envelope<Notification[]>>('/v1/notifications', {
+  async list(params: { userId?: string; limit?: number; cursor?: string | null } = {}): Promise<NotificationPage> {
+    const response = await vimobAPIRequest<Envelope<Notification[]> & { next_cursor?: string | null }>('/v1/notifications', {
       query: {
         userId: params.userId,
         limit: params.limit,
+        cursor: params.cursor || undefined,
       },
     })
     validateDomainResponse(apiNotificationListResponseSchema, response, 'notifications.list')
-    return response.data
+    return {
+      notifications: response.data,
+      nextCursor: response.next_cursor || null,
+    }
   },
 
   async unreadCount(userId?: string) {

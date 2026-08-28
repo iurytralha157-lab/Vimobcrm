@@ -1,4 +1,11 @@
 import { supabase } from '@/integrations/supabase/client'
+import {
+  VimobAPIError,
+  getTechnicalErrorMessage,
+} from '@/lib/api/vimob-error'
+import { isPasswordRecoveryAccessToken } from '@/lib/auth/password-recovery'
+
+export { VimobAPIError } from '@/lib/api/vimob-error'
 
 const DEFAULT_API_URL = 'http://localhost:8081'
 const LOCAL_DEV_FALLBACK_API_URL = 'http://localhost:8081'
@@ -7,8 +14,24 @@ const API_ACCESS_TOKEN_CACHE_TTL_MS = 60_000
 const READ_RETRY_DELAYS_MS = [500, 1500]
 const RETRYABLE_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504, 520, 522, 524])
 
-let accessTokenCache: { token: string; expiresAt: number } | null = null
-let accessTokenPromise: Promise<string> | null = null
+type APIAccessTokenIdentity = {
+  token: string
+  userId: string
+}
+
+type APIAccessTokenCache = APIAccessTokenIdentity & {
+  expiresAt: number
+}
+
+type APIAccessTokenResolution = {
+  generation: number
+  promise: Promise<string>
+}
+
+let activeAccessTokenIdentity: APIAccessTokenIdentity | null = null
+let accessTokenCache: APIAccessTokenCache | null = null
+let accessTokenPromise: APIAccessTokenResolution | null = null
+let accessTokenGeneration = 0
 
 type RequestOptions = {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
@@ -17,58 +40,61 @@ type RequestOptions = {
   organizationId?: string | null
   signal?: AbortSignal
   timeoutMs?: number
+  retry?: boolean
   skipTelemetry?: boolean
   keepalive?: boolean
+  headers?: HeadersInit
+  cache?: RequestCache
 }
 
 type APIErrorEnvelope = {
-  error?: {
+  error?: string | {
     code?: string
     message?: string
     requestId?: string
   }
 }
 
-export class VimobAPIError extends Error {
-  code: string
-  status: number
-  requestId?: string
+export function setVimobAPIAccessToken(
+  accessToken?: string | null,
+  userId?: string | null,
+) {
+  const token = accessToken?.trim() || ''
+  const normalizedUserId = userId?.trim() || ''
 
-  constructor(message: string, options: { code: string; status: number; requestId?: string }) {
-    super(message)
-    this.name = 'VimobAPIError'
-    this.code = options.code
-    this.status = options.status
-    this.requestId = options.requestId
-  }
-}
-
-export function setVimobAPIAccessToken(accessToken?: string | null) {
-  if (accessToken) {
-    cacheAccessToken(accessToken)
-    return
-  }
-
-  clearAccessTokenCache()
+  replaceAccessTokenSession(
+    token && normalizedUserId ? { token, userId: normalizedUserId } : null,
+  )
 }
 
 export async function vimobAPIRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const accessToken = await getAccessTokenForAPI()
+  throwIfAborted(options.signal)
+
+  const accessToken = await resolveWithAbortSignal(getAccessTokenForAPI(), options.signal)
+  assertAccessTokenAllowedForRequest(path, options.method, accessToken)
+  throwIfAborted(options.signal)
+
   let headers = createAuthenticatedHeaders(accessToken, options)
   let result = await makeRequestWithLocalFallback(path, options, headers)
 
   if (result.response.status === 401) {
+    throwIfAborted(options.signal)
     clearAccessTokenCache()
-    const refreshedAccessToken = await refreshAccessTokenForAPI()
+    const refreshedAccessToken = await resolveWithAbortSignal(refreshAccessTokenForAPI(), options.signal)
     if (refreshedAccessToken) {
+      assertAccessTokenAllowedForRequest(path, options.method, refreshedAccessToken)
       headers = createAuthenticatedHeaders(refreshedAccessToken, options)
       result = await makeRequestWithLocalFallback(path, options, headers)
     }
   }
 
+  throwIfAborted(options.signal)
+
   if (!result.response.ok) {
     const envelope = result.payload as APIErrorEnvelope | null
-    const apiError = envelope?.error
+    const apiError = typeof envelope?.error === 'string'
+      ? { message: envelope.error }
+      : envelope?.error
     const fallbackMessage = getFallbackErrorMessage(result, result.baseURL)
     const error = new VimobAPIError(apiError?.message || fallbackMessage, {
       code: apiError?.code || 'api_error',
@@ -86,31 +112,63 @@ export async function vimobAPIRequest<T>(path: string, options: RequestOptions =
   return result.payload as T
 }
 
-async function getAccessTokenForAPI() {
-  if (accessTokenCache && accessTokenCache.expiresAt > Date.now()) {
-    return accessTokenCache.token
+function assertAccessTokenAllowedForRequest(
+  path: string,
+  method: RequestOptions['method'],
+  accessToken: string,
+) {
+  if (
+    (path !== '/v1/settings/password' || method !== 'POST')
+    && isPasswordRecoveryAccessToken(accessToken)
+  ) {
+    throw new VimobAPIError(
+      'Esta sessão serve apenas para redefinir a senha. Entre novamente para acessar o CRM.',
+      {
+        code: 'recovery_session_restricted',
+        status: 403,
+      },
+    )
   }
-
-  if (accessTokenPromise) {
-    return accessTokenPromise
-  }
-
-  accessTokenPromise = resolveAccessTokenForAPI().finally(() => {
-    accessTokenPromise = null
-  })
-
-  return accessTokenPromise
 }
 
-async function resolveAccessTokenForAPI() {
+async function getAccessTokenForAPI() {
+  const cachedToken = getCachedAccessToken()
+  if (cachedToken) {
+    return cachedToken
+  }
+
+  const generation = accessTokenGeneration
+  if (accessTokenPromise?.generation === generation) {
+    return accessTokenPromise.promise
+  }
+
+  const promise = resolveAccessTokenForAPI(generation).finally(() => {
+    if (accessTokenPromise?.generation === generation) {
+      accessTokenPromise = null
+    }
+  })
+  accessTokenPromise = { generation, promise }
+
+  return promise
+}
+
+async function resolveAccessTokenForAPI(generation: number): Promise<string> {
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
 
+  if (!isCurrentAccessTokenGeneration(generation)) {
+    return getAccessTokenForAPI()
+  }
+
   if (!sessionError && sessionData.session?.access_token) {
-    cacheAccessToken(sessionData.session.access_token)
+    cacheResolvedAccessToken(
+      sessionData.session.access_token,
+      sessionData.session.user.id,
+      generation,
+    )
     return sessionData.session.access_token
   }
 
-  const refreshedAccessToken = await refreshAccessTokenForAPI()
+  const refreshedAccessToken = await refreshAccessTokenForAPI(generation)
   if (refreshedAccessToken) return refreshedAccessToken
 
   throw new VimobAPIError('Sessao expirada. Faca login novamente.', {
@@ -119,37 +177,93 @@ async function resolveAccessTokenForAPI() {
   })
 }
 
-async function refreshAccessTokenForAPI() {
+async function refreshAccessTokenForAPI(
+  generation = accessTokenGeneration,
+): Promise<string | null> {
   try {
     const { data, error } = await supabase.auth.refreshSession()
+
+    if (!isCurrentAccessTokenGeneration(generation)) {
+      return getAccessTokenForAPI()
+    }
+
     if (error || !data.session?.access_token) {
-      clearAccessTokenCache()
+      replaceAccessTokenSession(null)
       return null
     }
-    cacheAccessToken(data.session.access_token)
+
+    cacheResolvedAccessToken(
+      data.session.access_token,
+      data.session.user.id,
+      generation,
+    )
     return data.session.access_token
   } catch {
-    clearAccessTokenCache()
+    if (!isCurrentAccessTokenGeneration(generation)) {
+      return getAccessTokenForAPI()
+    }
+
+    replaceAccessTokenSession(null)
     return null
   }
 }
 
-function cacheAccessToken(token: string) {
+function getCachedAccessToken() {
+  if (!accessTokenCache || accessTokenCache.expiresAt <= Date.now()) {
+    accessTokenCache = null
+    return null
+  }
+
+  if (
+    !activeAccessTokenIdentity
+    || activeAccessTokenIdentity.userId !== accessTokenCache.userId
+    || activeAccessTokenIdentity.token !== accessTokenCache.token
+  ) {
+    accessTokenCache = null
+    return null
+  }
+
+  return accessTokenCache.token
+}
+
+function cacheResolvedAccessToken(token: string, userId: string, generation: number) {
+  if (!isCurrentAccessTokenGeneration(generation)) return false
+
+  const identity = { token, userId }
+  activeAccessTokenIdentity = identity
   accessTokenCache = {
-    token,
+    ...identity,
     expiresAt: Date.now() + API_ACCESS_TOKEN_CACHE_TTL_MS,
   }
+  return true
+}
+
+function replaceAccessTokenSession(identity: APIAccessTokenIdentity | null) {
+  accessTokenGeneration += 1
+  accessTokenPromise = null
+  activeAccessTokenIdentity = identity
+  accessTokenCache = identity
+    ? {
+        ...identity,
+        expiresAt: Date.now() + API_ACCESS_TOKEN_CACHE_TTL_MS,
+      }
+    : null
 }
 
 function clearAccessTokenCache() {
+  accessTokenGeneration += 1
+  accessTokenPromise = null
   accessTokenCache = null
 }
 
+function isCurrentAccessTokenGeneration(generation: number) {
+  return generation === accessTokenGeneration
+}
+
 function createAuthenticatedHeaders(accessToken: string, options: RequestOptions) {
-  const headers = new Headers({
-    Authorization: `Bearer ${accessToken}`,
-    Accept: 'application/json',
-  })
+  const headers = new Headers(options.headers)
+  headers.set('Authorization', `Bearer ${accessToken}`)
+  headers.set('Accept', 'application/json')
 
   if (options.body !== undefined && !isFormDataBody(options.body)) {
     headers.set('Content-Type', 'application/json')
@@ -163,9 +277,8 @@ function createAuthenticatedHeaders(accessToken: string, options: RequestOptions
 }
 
 export async function vimobPublicAPIRequest<T>(path: string, options: Omit<RequestOptions, 'organizationId'> = {}): Promise<T> {
-  const headers = new Headers({
-    Accept: 'application/json',
-  })
+  const headers = new Headers(options.headers)
+  headers.set('Accept', 'application/json')
 
   if (options.body !== undefined && !isFormDataBody(options.body)) {
     headers.set('Content-Type', 'application/json')
@@ -175,7 +288,9 @@ export async function vimobPublicAPIRequest<T>(path: string, options: Omit<Reque
 
   if (!result.response.ok) {
     const envelope = result.payload as APIErrorEnvelope | null
-    const apiError = envelope?.error
+    const apiError = typeof envelope?.error === 'string'
+      ? { message: envelope.error }
+      : envelope?.error
     throw new VimobAPIError(apiError?.message || getFallbackErrorMessage(result, result.baseURL), {
       code: apiError?.code || 'api_error',
       status: result.response.status,
@@ -187,15 +302,16 @@ export async function vimobPublicAPIRequest<T>(path: string, options: Omit<Reque
 }
 
 async function makeRequest(path: string, options: RequestOptions, headers: Headers, baseURL: string) {
-  const { signal, cleanup } = createRequestSignal(options.signal, options.timeoutMs)
+  const requestSignal = createRequestSignal(options.signal, options.timeoutMs)
 
   try {
     const response = await fetch(buildAPIURL(path, options.query, baseURL), {
       method: options.method || 'GET',
       headers,
       body: serializeRequestBody(options.body),
-      signal,
+      signal: requestSignal.signal,
       keepalive: options.keepalive,
+      cache: options.cache,
     })
     const text = await response.text()
 
@@ -205,8 +321,18 @@ async function makeRequest(path: string, options: RequestOptions, headers: Heade
       text,
       payload: text ? safeJSONParse(text) : null,
     }
+  } catch (error) {
+    if (requestSignal.abortSource() === 'external') {
+      throw getAbortReason(options.signal)
+    }
+
+    if (requestSignal.abortSource() === 'timeout') {
+      throw createTimeoutError(baseURL)
+    }
+
+    throw error
   } finally {
-    cleanup()
+    requestSignal.cleanup()
   }
 }
 
@@ -214,11 +340,16 @@ async function makeRequestOrThrow(path: string, options: RequestOptions, headers
   try {
     return await makeRequest(path, options, headers, baseURL)
   } catch (error) {
+    if (options.signal?.aborted) {
+      throw getAbortReason(options.signal)
+    }
+
+    if (error instanceof VimobAPIError) {
+      throw error
+    }
+
     if (isAbortError(error)) {
-      throw new VimobAPIError(`A Vimob API demorou para responder em ${baseURL}. Tente novamente em instantes.`, {
-        code: 'api_timeout',
-        status: 0,
-      })
+      throw createTimeoutError(baseURL)
     }
 
     throw new VimobAPIError(`A Vimob API não está acessível em ${baseURL}. Inicie apps/api ou ajuste NEXT_PUBLIC_VIMOB_API_URL.`, {
@@ -229,13 +360,19 @@ async function makeRequestOrThrow(path: string, options: RequestOptions, headers
 }
 
 async function makeRequestWithLocalFallback(path: string, options: RequestOptions, headers: Headers) {
+  throwIfAborted(options.signal)
+
   const candidates = getAPIBaseURLCandidates()
   let lastError: VimobAPIError | null = null
 
   for (const baseURL of candidates) {
+    throwIfAborted(options.signal)
+
     const retryDelays = getRetryDelays(options)
 
     for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
+      throwIfAborted(options.signal)
+
       try {
         const result = await makeRequestOrThrow(path, options, headers, baseURL)
 
@@ -244,15 +381,19 @@ async function makeRequestWithLocalFallback(path: string, options: RequestOption
         }
 
         if (shouldRetryTransientHTTPResult(result, options) && attempt < retryDelays.length) {
-          await wait(retryDelays[attempt])
+          await wait(retryDelays[attempt], options.signal)
           continue
         }
 
         return result
       } catch (error) {
+        if (options.signal?.aborted) {
+          throw getAbortReason(options.signal)
+        }
+
         if (isRetryableTransientAPIError(error, options) && attempt < retryDelays.length) {
           lastError = error as VimobAPIError
-          await wait(retryDelays[attempt])
+          await wait(retryDelays[attempt], options.signal)
           continue
         }
 
@@ -275,12 +416,31 @@ async function makeRequestWithLocalFallback(path: string, options: RequestOption
 function getRetryDelays(options: RequestOptions) {
   const method = options.method || 'GET'
   if (method !== 'GET') return []
+  if (options.retry === false) return []
   if (options.signal?.aborted) return []
   return READ_RETRY_DELAYS_MS
 }
 
-function wait(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+function wait(ms: number, signal?: AbortSignal) {
+  if (!signal) {
+    return new Promise<void>((resolve) => setTimeout(resolve, ms))
+  }
+
+  throwIfAborted(signal)
+
+  return new Promise<void>((resolve, reject) => {
+    const abortWait = () => {
+      clearTimeout(timeoutId)
+      signal.removeEventListener('abort', abortWait)
+      reject(getAbortReason(signal))
+    }
+    const timeoutId = setTimeout(() => {
+      signal.removeEventListener('abort', abortWait)
+      resolve()
+    }, ms)
+
+    signal.addEventListener('abort', abortWait, { once: true })
+  })
 }
 
 function shouldRetryTransientHTTPResult(
@@ -299,33 +459,87 @@ function isRetryableTransientAPIError(error: unknown, options: RequestOptions) {
 
 function createRequestSignal(externalSignal?: AbortSignal, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
   const controller = new AbortController()
+  let source: 'external' | 'timeout' | null = null
   let timeoutId: ReturnType<typeof setTimeout> | null = null
 
-  const abortRequest = () => controller.abort()
+  const abortRequest = (nextSource: 'external' | 'timeout') => {
+    if (controller.signal.aborted) return
+
+    source = nextSource
+    controller.abort(nextSource === 'external' ? getAbortReason(externalSignal) : undefined)
+  }
+  const abortFromExternal = () => abortRequest('external')
 
   if (externalSignal?.aborted) {
-    controller.abort()
+    abortFromExternal()
   } else if (externalSignal) {
-    externalSignal.addEventListener('abort', abortRequest, { once: true })
+    externalSignal.addEventListener('abort', abortFromExternal, { once: true })
   }
 
   if (timeoutMs > 0) {
-    timeoutId = setTimeout(abortRequest, timeoutMs)
+    timeoutId = setTimeout(() => abortRequest('timeout'), timeoutMs)
   }
 
   return {
     signal: controller.signal,
+    abortSource: () => source,
     cleanup: () => {
       if (timeoutId) {
         clearTimeout(timeoutId)
       }
-      externalSignal?.removeEventListener('abort', abortRequest)
+      externalSignal?.removeEventListener('abort', abortFromExternal)
     },
   }
 }
 
 function isAbortError(error: unknown) {
   return error instanceof DOMException && error.name === 'AbortError'
+    || error instanceof Error && error.name === 'AbortError'
+}
+
+function createTimeoutError(baseURL: string) {
+  return new VimobAPIError(`A Vimob API demorou para responder em ${baseURL}. Tente novamente em instantes.`, {
+    code: 'api_timeout',
+    status: 0,
+  })
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw getAbortReason(signal)
+  }
+}
+
+function getAbortReason(signal?: AbortSignal): Error {
+  if (signal?.reason instanceof Error) {
+    return signal.reason
+  }
+
+  return new DOMException('The operation was aborted.', 'AbortError')
+}
+
+function resolveWithAbortSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise
+
+  throwIfAborted(signal)
+
+  return new Promise<T>((resolve, reject) => {
+    let settled = false
+    const settle = (callback: () => void) => {
+      if (settled) return
+
+      settled = true
+      signal.removeEventListener('abort', abortResolution)
+      callback()
+    }
+    const abortResolution = () => settle(() => reject(getAbortReason(signal)))
+
+    signal.addEventListener('abort', abortResolution, { once: true })
+    promise.then(
+      (value) => settle(() => resolve(value)),
+      (error) => settle(() => reject(error)),
+    )
+  })
 }
 
 export function buildAPIURL(path: string, query?: RequestOptions['query'], baseURL = getAPIBaseURL()) {
@@ -403,7 +617,7 @@ function isRetryableLocalAPIError(error: unknown, baseURL: string) {
   if (!isLocalDevelopmentAPI(baseURL)) return false
   if (!(error instanceof VimobAPIError)) return false
 
-  return error.code === 'api_unavailable' || error.code === 'api_timeout'
+  return error.code === 'api_unavailable'
 }
 
 function shouldRetryLocalDevAPI(
@@ -456,7 +670,7 @@ async function reportAPIError(
         source: 'api',
         severity: result.response.status >= 500 ? 'error' : 'warning',
         category: 'api_request',
-        message: error.message,
+        message: getTechnicalErrorMessage(error),
         errorCode: error.code,
         httpStatus: result.response.status,
         method,

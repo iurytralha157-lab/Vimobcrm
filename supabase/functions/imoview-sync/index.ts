@@ -254,7 +254,7 @@ async function testConnection(apiKey: string) {
     return { success: false, error: `API returned ${response.status}` };
   }
   await response.text();
-  return { success: true, message: "Conexão válida" };
+  return { success: true, message: "ConexÃ£o vÃ¡lida" };
 }
 
 async function loadIntegration(
@@ -381,7 +381,7 @@ async function syncProperties(
         const propertyData = {
           organization_id: organizationId,
           imoview_codigo: code,
-          title: asText(firstValue(item, ["titulo", "tituloSite", "tipoImovel"])) || `Imóvel ${code}`,
+          title: asText(firstValue(item, ["titulo", "tituloSite", "tipoImovel"])) || `ImÃ³vel ${code}`,
           tipo_de_imovel: asText(firstValue(item, ["tipoImovel", "tipo"])) || "Outro",
           tipo_de_negocio: businessType,
           status: "ativo",

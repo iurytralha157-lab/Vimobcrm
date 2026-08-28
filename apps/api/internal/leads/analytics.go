@@ -440,23 +440,27 @@ func (repo Repository) LeadHistoryRaw(ctx context.Context, tenantContext tenant.
 
 	auditLogs, err := queueHistoryJSONArray(batch, `
 		select coalesce(jsonb_agg(
-			jsonb_strip_nulls(jsonb_build_object(
-				'id', al.id::text,
-				'organization_id', al.organization_id::text,
-				'user_id', al.user_id::text,
-				'action', al.action,
-				'entity_type', al.entity_type,
-				'entity_id', al.entity_id::text,
-				'old_data', (coalesce(al.old_data, '{}'::jsonb) #- '{metadata,profile,cpf}') #- '{metadata,profile,rg}',
-				'new_data', (coalesce(al.new_data, '{}'::jsonb) #- '{metadata,profile,cpf}') #- '{metadata,profile,rg}',
-				'created_at', al.created_at,
-				'actor',
-					case when u.id is null then null else jsonb_build_object(
-						'id', u.id::text,
-						'name', u.name,
-						'avatar_url', u.avatar_url
-					) end
-			))
+			(
+				jsonb_strip_nulls(jsonb_build_object(
+					'id', al.id::text,
+					'organization_id', al.organization_id::text,
+					'user_id', al.user_id::text,
+					'action', al.action,
+					'entity_type', al.entity_type,
+					'entity_id', al.entity_id::text,
+					'created_at', al.created_at,
+					'actor',
+						case when u.id is null then null else jsonb_build_object(
+							'id', u.id::text,
+							'name', u.name,
+							'avatar_url', u.avatar_url
+						) end
+				))
+				|| jsonb_build_object(
+					'old_data', (coalesce(al.old_data, '{}'::jsonb) #- '{metadata,profile,cpf}') #- '{metadata,profile,rg}',
+					'new_data', (coalesce(al.new_data, '{}'::jsonb) #- '{metadata,profile,cpf}') #- '{metadata,profile,rg}'
+				)
+			)
 			order by al.created_at asc, al.id asc
 		), '[]'::jsonb)
 		from public.audit_logs al
@@ -651,10 +655,10 @@ func (repo Repository) FirstResponseRanking(ctx context.Context, tenantContext t
 }
 
 func (repo Repository) RecordFirstResponse(ctx context.Context, tenantContext tenant.Context, input recordFirstResponseInput) (map[string]any, error) {
-	if err := repo.ensureLeadEditable(ctx, tenantContext, input.LeadID); err != nil {
-		return nil, err
-	}
 	if input.IsAutomation {
+		if err := repo.ensureLeadEditable(ctx, tenantContext, input.LeadID); err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"recorded": false,
 			"skipped":  true,
@@ -662,31 +666,23 @@ func (repo Repository) RecordFirstResponse(ctx context.Context, tenantContext te
 		}, nil
 	}
 
-	var responseBaselineAt time.Time
-	var firstResponseAt pgtype.Timestamptz
-	err := repo.db.Pool().QueryRow(ctx, `
-		select
-			coalesce(
-				(
-					select lac.assigned_at
-					from public.lead_assignment_cycles lac
-					where lac.lead_id = l.id and lac.ended_at is null
-					order by lac.cycle_number desc
-					limit 1
-				),
-				l.assigned_at,
-				l.created_at
-			),
-			l.first_response_at
-		from public.leads l
-		where l.organization_id = $1::uuid
-		  and l.id = $2::uuid
-	`, tenantContext.OrganizationID, input.LeadID).Scan(&responseBaselineAt, &firstResponseAt)
-	if err == pgx.ErrNoRows {
-		return nil, ErrLeadNotFound
-	}
+	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	current, responseBaselineAt, firstResponseAt, err := repo.getFirstResponseLeadForUpdate(
+		ctx,
+		tx,
+		tenantContext.OrganizationID,
+		input.LeadID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if !canOperateLeadSnapshot(tenantContext, current) {
+		return nil, tenant.ErrOrganizationAccessDenied
 	}
 
 	if firstResponseAt.Valid {
@@ -706,7 +702,8 @@ func (repo Repository) RecordFirstResponse(ctx context.Context, tenantContext te
 		actorUserID = tenantContext.UserID
 	}
 
-	_, err = repo.db.Pool().Exec(ctx, `
+	var recordedAt time.Time
+	err = tx.QueryRow(ctx, `
 		update public.leads
 		set first_response_at = now(),
 		    first_response_seconds = $3,
@@ -717,12 +714,19 @@ func (repo Repository) RecordFirstResponse(ctx context.Context, tenantContext te
 		where organization_id = $1::uuid
 		  and id = $2::uuid
 		  and first_response_at is null
-	`, tenantContext.OrganizationID, input.LeadID, responseSeconds, input.Channel, input.IsAutomation, actorUserID)
+		returning first_response_at
+	`, tenantContext.OrganizationID, input.LeadID, responseSeconds, input.Channel, input.IsAutomation, actorUserID).Scan(&recordedAt)
+	if err == pgx.ErrNoRows {
+		return map[string]any{
+			"recorded": false,
+			"skipped":  true,
+		}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
 
-	_, _ = repo.db.Pool().Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 		insert into public.lead_timeline_events (
 			organization_id,
 			lead_id,
@@ -747,8 +751,15 @@ func (repo Repository) RecordFirstResponse(ctx context.Context, tenantContext te
 		"channel":          input.Channel,
 		"response_seconds": responseSeconds,
 		"is_automation":    input.IsAutomation,
-	}))
+	})); err != nil {
+		return nil, err
+	}
 
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	recordedAtUTC := recordedAt.UTC().Format(time.RFC3339Nano)
 	return map[string]any{
 		"recorded":              true,
 		"lead_id":               input.LeadID,
@@ -756,9 +767,53 @@ func (repo Repository) RecordFirstResponse(ctx context.Context, tenantContext te
 		"actor_user_id":         actorUserID,
 		"is_automation":         input.IsAutomation,
 		"response_seconds":      responseSeconds,
-		"first_response_at":     time.Now().UTC().Format(time.RFC3339Nano),
-		"first_response_at_utc": time.Now().UTC().Format(time.RFC3339Nano),
+		"first_response_at":     recordedAtUTC,
+		"first_response_at_utc": recordedAtUTC,
 	}, nil
+}
+
+func (repo Repository) getFirstResponseLeadForUpdate(
+	ctx context.Context,
+	tx pgx.Tx,
+	organizationID string,
+	leadID string,
+) (leadSnapshot, time.Time, pgtype.Timestamptz, error) {
+	var current leadSnapshot
+	var assignedUserID, teamID pgtype.Text
+	var responseBaselineAt time.Time
+	var firstResponseAt pgtype.Timestamptz
+	err := tx.QueryRow(ctx, `
+		select
+			l.assigned_user_id::text,
+			nullif(to_jsonb(l)->>'team_id', ''),
+			coalesce(
+				(
+					select lac.assigned_at
+					from public.lead_assignment_cycles lac
+					where lac.lead_id = l.id and lac.ended_at is null
+					order by lac.cycle_number desc
+					limit 1
+				),
+				l.assigned_at,
+				l.created_at
+			),
+			l.first_response_at
+		from public.leads l
+		where l.organization_id = $1::uuid
+		  and l.id = $2::uuid
+		for no key update of l
+	`, organizationID, leadID).Scan(&assignedUserID, &teamID, &responseBaselineAt, &firstResponseAt)
+	if err == pgx.ErrNoRows {
+		return leadSnapshot{}, time.Time{}, pgtype.Timestamptz{}, ErrLeadNotFound
+	}
+	if err != nil {
+		return leadSnapshot{}, time.Time{}, pgtype.Timestamptz{}, err
+	}
+
+	current.ID = leadID
+	current.AssignedUserID = textValue(assignedUserID)
+	current.TeamID = textValue(teamID)
+	return current, responseBaselineAt, firstResponseAt, nil
 }
 
 func buildFirstResponseWhere(tenantContext tenant.Context, filter FirstResponseFilter) ([]string, []any) {

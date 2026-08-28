@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -19,10 +20,20 @@ const (
 	webhookEventStoreTimeout = 5 * time.Second
 	webhookEventLease        = 5 * time.Minute
 	webhookProcessTimeout    = 2 * time.Minute
+	metaWebhookMaxBodyBytes  = int64(1 << 20)
 )
 
+type webhookRepository interface {
+	InsertWebhookEvent(context.Context, webhookEventContext, map[string]any, bool) (string, error)
+	FinishWebhookEvent(context.Context, string, string, string, string) error
+	MarkWebhookEventProcessing(context.Context, string, time.Duration) error
+	ClaimPendingWebhookEvents(context.Context, int, time.Duration) ([]webhookEventJob, error)
+	ProcessWebhookPayload(context.Context, string, map[string]any) (WebhookResponse, error)
+}
+
 type Handler struct {
-	repo      Repository
+	repo      webhookRepository
+	config    Config
 	publisher realtime.Publisher
 }
 
@@ -31,7 +42,7 @@ func NewHandler(repo Repository, publishers ...realtime.Publisher) Handler {
 	if len(publishers) > 0 && publishers[0] != nil {
 		publisher = publishers[0]
 	}
-	return Handler{repo: repo, publisher: publisher}
+	return Handler{repo: repo, config: repo.config, publisher: publisher}
 }
 
 func (handler Handler) Webhook(w http.ResponseWriter, r *http.Request) {
@@ -46,13 +57,13 @@ func (handler Handler) Webhook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) verifyWebhook(w http.ResponseWriter, r *http.Request) {
-	if strings.TrimSpace(handler.repo.config.WebhookVerifyToken) == "" {
+	if strings.TrimSpace(handler.config.WebhookVerifyToken) == "" {
 		httpserver.WriteError(w, r, http.StatusInternalServerError, "meta_verify_token_missing", "Meta webhook verify token is not configured.")
 		return
 	}
 
 	query := r.URL.Query()
-	if query.Get("hub.mode") != "subscribe" || query.Get("hub.verify_token") != handler.repo.config.WebhookVerifyToken {
+	if query.Get("hub.mode") != "subscribe" || query.Get("hub.verify_token") != handler.config.WebhookVerifyToken {
 		httpserver.WriteError(w, r, http.StatusForbidden, "meta_webhook_verification_failed", "Meta webhook verification failed.")
 		return
 	}
@@ -65,9 +76,25 @@ func (handler Handler) verifyWebhook(w http.ResponseWriter, r *http.Request) {
 func (handler Handler) receiveWebhook(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
-	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 2<<20))
+	appSecret := strings.TrimSpace(handler.config.AppSecret)
+	if appSecret == "" {
+		httpserver.WriteError(w, r, http.StatusInternalServerError, "meta_app_secret_missing", "Meta app secret is not configured.")
+		return
+	}
+
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, metaWebhookMaxBodyBytes))
 	if err != nil {
-		httpserver.WriteError(w, r, http.StatusRequestEntityTooLarge, "meta_webhook_body_too_large", "Webhook body is too large.")
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			httpserver.WriteError(w, r, http.StatusRequestEntityTooLarge, "meta_webhook_body_too_large", "Webhook body is too large.")
+			return
+		}
+		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_meta_webhook_body", "Webhook body could not be read.")
+		return
+	}
+
+	if !verifySignature(raw, r.Header.Get("X-Hub-Signature-256"), appSecret) {
+		httpserver.WriteError(w, r, http.StatusUnauthorized, "invalid_meta_webhook_signature", "Meta webhook signature is invalid.")
 		return
 	}
 
@@ -80,31 +107,12 @@ func (handler Handler) receiveWebhook(w http.ResponseWriter, r *http.Request) {
 		payload = map[string]any{}
 	}
 
-	context := extractWebhookEventContext(payload)
-	signatureValid := verifySignature(raw, r.Header.Get("X-Hub-Signature-256"), handler.repo.config.AppSecret)
+	eventContext := extractWebhookEventContext(payload)
 	storeCtx, cancelStore := contextWithTimeout(r.Context(), webhookEventStoreTimeout)
-	eventID, eventErr := handler.repo.InsertWebhookEvent(storeCtx, context, payload, signatureValid)
+	eventID, eventErr := handler.repo.InsertWebhookEvent(storeCtx, eventContext, payload, true)
 	cancelStore()
 	if eventErr != nil {
 		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "meta_webhook_event_failed", "Unable to register Meta webhook event.")
-		return
-	}
-
-	if strings.TrimSpace(handler.repo.config.AppSecret) == "" {
-		_ = handler.repo.FinishWebhookEvent(r.Context(), eventID, context.OrganizationID(), "failed", "META_APP_SECRET is not configured")
-		httpserver.WriteError(w, r, http.StatusInternalServerError, "meta_app_secret_missing", "Meta app secret is not configured.")
-		return
-	}
-
-	if !signatureValid {
-		_ = handler.repo.FinishWebhookEvent(r.Context(), eventID, context.OrganizationID(), "failed", "Invalid X-Hub-Signature-256 signature")
-		httpserver.WriteJSON(w, http.StatusOK, WebhookResponse{
-			OK:      true,
-			EventID: eventID,
-			Warnings: []string{
-				"invalid_signature",
-			},
-		})
 		return
 	}
 
@@ -148,6 +156,18 @@ func (handler Handler) publishWebhookResults(response WebhookResponse) {
 			"formId":    result.FormID,
 			"pageId":    result.PageID,
 			"reentry":   result.Reentry,
+		}))
+	}
+	for _, result := range response.MessagingResults {
+		if result.Status != "processed" || result.OrganizationID == "" || result.MessageID == "" {
+			continue
+		}
+		handler.publisher.Publish(realtime.NewEvent("meta.message.received", result.OrganizationID, "", map[string]any{
+			"conversationId":    result.ConversationID,
+			"messageId":         result.MessageID,
+			"externalMessageId": result.ExternalMessageID,
+			"pageId":            result.PageID,
+			"platform":          result.Platform,
 		}))
 	}
 }

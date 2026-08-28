@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/phonenumber"
 )
 
 const (
@@ -403,7 +404,6 @@ func (request CreateRequest) Validate() (createInput, error) {
 	input := createInput{
 		Name:             trimMax(request.Name, 180),
 		Email:            optionalString(request.Email, 254),
-		Phone:            optionalString(request.Phone, 40),
 		Source:           trimMax(request.Source, 80),
 		Message:          optionalString(request.Message, 2_000),
 		Feedback:         optionalString(request.Feedback, 2_000),
@@ -447,6 +447,13 @@ func (request CreateRequest) Validate() (createInput, error) {
 		if _, err := mail.ParseAddress(*input.Email); err != nil {
 			return createInput{}, fmt.Errorf("%w: email is invalid", ErrInvalidInput)
 		}
+	}
+	phone, err := phonenumber.Canonicalize(trimMax(request.Phone, 40))
+	if err != nil {
+		return createInput{}, fmt.Errorf("%w: phone is invalid", ErrInvalidInput)
+	}
+	if phone != "" {
+		input.Phone = &phone
 	}
 
 	if request.PropertyID != "" {
@@ -652,6 +659,13 @@ func (request UpdateRequest) Validate() (updateInput, error) {
 		if _, err := mail.ParseAddress(*input.Email.Value); err != nil {
 			return updateInput{}, fmt.Errorf("%w: email is invalid", ErrInvalidInput)
 		}
+	}
+	if input.Phone.Set && input.Phone.Value != nil {
+		phone, err := phonenumber.Canonicalize(*input.Phone.Value)
+		if err != nil {
+			return updateInput{}, fmt.Errorf("%w: phone is invalid", ErrInvalidInput)
+		}
+		input.Phone.Value = &phone
 	}
 
 	if input.UF.Set && input.UF.Value != nil {

@@ -5,7 +5,7 @@ import { PermissionBoundary } from '@/components/shared/access/PermissionBoundar
 
 export default function FinanceiroLayout({ children }: { children: ReactNode }) {
   return (
-    <PermissionBoundary title="Financeiro" anyOf={["financial_view", "financial_manage"]}>
+    <PermissionBoundary module="financial" title="Financeiro" anyOf={["financial_view", "financial_manage"]}>
       <FinancialAccessGate>{children}</FinancialAccessGate>
     </PermissionBoundary>
   );

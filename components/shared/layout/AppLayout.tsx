@@ -1,17 +1,15 @@
 import { ReactNode, useEffect, useState } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { AppSidebar } from './AppSidebar';
 import { AppHeader } from './AppHeader';
 import { MobileBottomNav } from './MobileBottomNav';
-import { AnnouncementBanner } from '@/components/features/announcements/AnnouncementBanner';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { FloatingChatProvider } from '@/contexts/FloatingChatContext';
 import { FloatingChat } from '@/components/features/chat/FloatingChat';
 import { FloatingChatButton } from '@/components/features/chat/FloatingChatButton';
 import { WhatsAppRealtimeBus } from '@/contexts/WhatsAppRealtimeBus';
 import { LeadRealtimeBus } from '@/contexts/LeadRealtimeBus';
-import { InstallPrompt } from '@/components/features/pwa/InstallPrompt';
 import { WebPushPrompt } from '@/components/features/pwa/WebPushPrompt';
 import { SetupGuideDialog, SetupGuideTour } from '@/components/features/setup-guide';
 import { usePushNotifications } from '@/hooks/use-push-notifications';
@@ -26,6 +24,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { VimobLoader } from '@/components/shared/loading';
 import { Wrench } from 'lucide-react';
 import { canManageOrganization } from '@/lib/access/organization';
+import { DEFAULT_AUTHENTICATED_ROUTE } from '@/config/constants';
 
 const INITIAL_SIDEBAR_BOOT_FALLBACK_MS = 1400;
 let hasCompletedInitialAppShellBoot = false;
@@ -33,6 +32,7 @@ let hasCompletedInitialAppShellBoot = false;
 interface AppLayoutProps {
   children: ReactNode;
   title?: string;
+  belowHeader?: ReactNode;
   disableMainScroll?: boolean;
   borderless?: boolean;
 }
@@ -53,14 +53,14 @@ function MaintenanceBanner() {
   const message = settings.maintenance_message || 'O sistema está em manutenção. Por favor, aguarde.';
 
   return (
-    <div className="w-full bg-amber-500 text-white py-2.5 px-4 flex items-center justify-center gap-3 shadow-md flex-shrink-0">
+    <div className="flex w-full flex-shrink-0 items-center justify-center gap-3 bg-amber-500 px-4 py-2.5 text-white shadow-none">
       <Wrench className="h-4 w-4 shrink-0" />
       <span className="text-sm font-medium text-center">{message}</span>
     </div>
   );
 }
 
-function AppLayoutContent({ children, title, disableMainScroll = false, borderless = false }: AppLayoutProps) {
+function AppLayoutContent({ children, title, belowHeader, disableMainScroll = false, borderless = false }: AppLayoutProps) {
   const isMobile = useIsMobile();
 
   // Initialize native push notifications (only in Capacitor)
@@ -76,7 +76,6 @@ function AppLayoutContent({ children, title, disableMainScroll = false, borderle
     <div className={cn("app-shell h-screen flex flex-col w-full overflow-hidden pt-[env(safe-area-inset-top)]", borderless && "app-layout-borderless")}>
       {/* Maintenance Banner — non-dismissible, shown before header */}
       <MaintenanceBanner />
-      <AnnouncementBanner />
 
       {/* Body: sidebar + content */}
       <div className="flex flex-1 overflow-hidden">
@@ -91,6 +90,8 @@ function AppLayoutContent({ children, title, disableMainScroll = false, borderle
         <div className="flex-1 flex flex-col overflow-hidden min-h-0">
           {/* Header com título e ações */}
           <AppHeader title={title} />
+
+          {belowHeader}
 
           {/* Conteúdo da página */}
           <main className={cn(
@@ -112,7 +113,6 @@ function AppLayoutContent({ children, title, disableMainScroll = false, borderle
       <FloatingChatButton />
       <FloatingChat />
 
-      <InstallPrompt />
       <WebPushPrompt />
       <SetupGuideDialog />
       <SetupGuideTour />
@@ -120,7 +120,7 @@ function AppLayoutContent({ children, title, disableMainScroll = false, borderle
   );
 }
 
-export function AppLayout({ children, title, disableMainScroll = false, borderless = false }: AppLayoutProps) {
+export function AppLayout({ children, title, belowHeader, disableMainScroll = false, borderless = false }: AppLayoutProps) {
   const {
     organization,
     user,
@@ -133,15 +133,28 @@ export function AppLayout({ children, title, disableMainScroll = false, borderle
     profile,
     tenantContext,
     userOrganizations,
+    switchOrganization,
   } = useAuth();
   const { isLoading: modulesLoading } = useOrganizationModules();
   const { isLoading: permissionsLoading } = useUserPermissions();
   const [initialShellReady, setInitialShellReady] = useState(hasCompletedInitialAppShellBoot);
   const router = useRouter();
   const pathname = usePathname();
-  const allowDashboardShell = Boolean(user && authInitialized && !loading && pathname?.startsWith('/dashboard'));
-  const allowRender = !!organization || isSuperAdmin || !!impersonating || allowDashboardShell;
+  const searchParams = useSearchParams();
+  const linkedOrganizationId = searchParams.get('organization');
   const activeOrganizationId = organization?.id || profile?.organization_id;
+  const isResolvingLinkedOrganization = Boolean(
+    linkedOrganizationId
+      && organizationsLoaded
+      && activeOrganizationId !== linkedOrganizationId,
+  );
+  const allowInitialShell = Boolean(
+    user &&
+      authInitialized &&
+      !loading &&
+      (pathname?.startsWith('/dashboard') || pathname === DEFAULT_AUTHENTICATED_ROUTE),
+  );
+  const allowRender = !!organization || isSuperAdmin || !!impersonating || allowInitialShell;
   const hasSidebarTenantContext = Boolean(
     isSuperAdmin ||
       impersonating ||
@@ -154,12 +167,50 @@ export function AppLayout({ children, title, disableMainScroll = false, borderle
     !permissionsLoading;
 
   useEffect(() => {
+    if (
+      !linkedOrganizationId
+      || !organizationsLoaded
+      || loading
+      || isInitializingOrg
+      || activeOrganizationId === linkedOrganizationId
+    ) {
+      return;
+    }
+
+    const canOpenLinkedOrganization = userOrganizations.some((item) => (
+      item.organization_id === linkedOrganizationId && item.is_active
+    ));
+    if (!canOpenLinkedOrganization) {
+      router.replace(DEFAULT_AUTHENTICATED_ROUTE);
+      return;
+    }
+
+    let cancelled = false;
+    void switchOrganization(linkedOrganizationId).catch(() => {
+      if (!cancelled) router.replace(DEFAULT_AUTHENTICATED_ROUTE);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeOrganizationId,
+    isInitializingOrg,
+    linkedOrganizationId,
+    loading,
+    organizationsLoaded,
+    router,
+    switchOrganization,
+    userOrganizations,
+  ]);
+
+  useEffect(() => {
     if (allowRender || loading || !authInitialized || !organizationsLoaded || isInitializingOrg) return;
 
     const hasSelectableOrganization = userOrganizations.some((org) => org.is_active);
     if (!hasSelectableOrganization) return;
 
-    const redirectTo = pathname || '/dashboard';
+    const redirectTo = pathname || DEFAULT_AUTHENTICATED_ROUTE;
     const params = new URLSearchParams({ redirectTo });
     router.replace(`/select-organization?${params.toString()}`);
   }, [
@@ -192,7 +243,7 @@ export function AppLayout({ children, title, disableMainScroll = false, borderle
     return () => window.clearTimeout(fallbackTimer);
   }, [allowRender, initialShellReady, sidebarBootReady]);
 
-  if (!allowRender) {
+  if (!allowRender || isResolvingLinkedOrganization) {
     return (
       <div className="h-screen flex items-center justify-center bg-background">
         <VimobLoader size="lg" label="Carregando ambiente..." />
@@ -210,7 +261,7 @@ export function AppLayout({ children, title, disableMainScroll = false, borderle
 
   return (
     <FloatingChatProvider>
-      <AppLayoutContent title={title} disableMainScroll={disableMainScroll} borderless={borderless}>
+      <AppLayoutContent title={title} belowHeader={belowHeader} disableMainScroll={disableMainScroll} borderless={borderless}>
         {children}
       </AppLayoutContent>
     </FloatingChatProvider>

@@ -203,7 +203,7 @@ export function AccountTab() {
       whatsapp: organization.whatsapp || "",
       email: organization.email || "",
       website: organization.website || "",
-      default_commission_percentage: String(organization.default_commission_percentage || 5),
+      default_commission_percentage: String(organization.default_commission_percentage ?? 5),
     };
     let cancelled = false;
 
@@ -220,7 +220,7 @@ export function AccountTab() {
     if (!profile?.id) return;
     setUploadingAvatar(true);
     try {
-      await settingsAPI.uploadProfileAvatar(blob, profile.organization_id);
+      await settingsAPI.uploadProfileAvatar(blob, activeOrganizationId);
       await refreshProfile();
       toast.success(t.settings.profile.saveSuccess);
     } catch (error) {
@@ -255,7 +255,7 @@ export function AccountTab() {
         whatsapp: profileForm.whatsapp || null,
         cpf: profileForm.cpf || null,
         theme_mode: profileForm.theme_mode,
-      }, profile.organization_id);
+      }, activeOrganizationId);
       setTheme(profileForm.theme_mode);
       await refreshProfile();
       toast.success(t.settings.profile.saveSuccess);
@@ -290,7 +290,9 @@ export function AccountTab() {
         whatsapp: orgForm.whatsapp || null,
         email: orgForm.email || null,
         website: orgForm.website || null,
-        default_commission_percentage: parseFloat(orgForm.default_commission_percentage) || 5,
+        default_commission_percentage: Number.isFinite(Number.parseFloat(orgForm.default_commission_percentage))
+          ? Number.parseFloat(orgForm.default_commission_percentage)
+          : 5,
       }, organization.id);
       await refreshProfile();
       toast.success(t.settings.organization.saveSuccess);
@@ -347,7 +349,7 @@ export function AccountTab() {
       const data = await settingsAPI.changePassword({
         password: passwordData.newPassword,
         source: "settings",
-      });
+      }, activeOrganizationId);
       if (data?.allowed === false) {
         toast.error(data.message || "Não foi possível alterar a senha agora.");
         await passwordStatus.refetch();
@@ -378,7 +380,7 @@ export function AccountTab() {
     if (!profile?.id) return;
 
     try {
-      await settingsAPI.updateProfile({ theme_mode: themeMode }, profile.organization_id);
+      await settingsAPI.updateProfile({ theme_mode: themeMode }, activeOrganizationId);
     } catch {
       toast.error(t.settings.profile.saveError);
       return;
@@ -434,7 +436,7 @@ export function AccountTab() {
       whatsapp: organization?.whatsapp || "",
       email: organization?.email || "",
       website: organization?.website || "",
-      default_commission_percentage: String(organization?.default_commission_percentage || 5),
+      default_commission_percentage: String(organization?.default_commission_percentage ?? 5),
     });
     setEditingOrg(false);
   };
@@ -458,7 +460,7 @@ export function AccountTab() {
           <CardHeader className="px-4 md:px-5 pt-5 pb-2">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <CardTitle className="text-xl font-semibold text-foreground">Meu perfil</CardTitle>
+                <CardTitle className="text-[14px] font-normal text-foreground">Meu perfil</CardTitle>
                 <CardDescription className="mt-0.5 text-sm text-muted-foreground">Dados pessoais e informações de contato.</CardDescription>
               </div>
               <Button
@@ -541,7 +543,7 @@ export function AccountTab() {
             </div>
 
             {/* Preferences */}
-            <div data-tour="account-preferences" className="grid grid-cols-2 gap-3 border-t border-white/[0.045] pt-4">
+            <div data-tour="account-preferences" className="grid grid-cols-2 gap-3 border-t border-[var(--app-border)] pt-4">
               <div className="flex min-w-0 items-center gap-2">
                 <Globe className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 <Label className="sr-only">{t.settings.profile.language}</Label>
@@ -572,7 +574,7 @@ export function AccountTab() {
             </div>
 
             {/* Personal Info */}
-            {editingProfile && <div className="space-y-4 pt-4 border-t border-white/[0.045]">
+            {editingProfile && <div className="space-y-4 border-t border-[var(--app-border)] pt-4">
               <h4 className="font-medium text-sm">{t.settings.profile.personalInfo}</h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
@@ -624,7 +626,7 @@ export function AccountTab() {
             </div>}
 
             {/* Contact Info */}
-            {editingProfile && <div className="space-y-4 pt-4 border-t border-white/[0.045]">
+            {editingProfile && <div className="space-y-4 border-t border-[var(--app-border)] pt-4">
               <h4 className="font-medium text-sm">{t.settings.profile.contactInfo}</h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
@@ -647,7 +649,7 @@ export function AccountTab() {
             </div>}
 
             {/* Save Button */}
-            {editingProfile && <div className="flex justify-end pt-4 border-t border-white/[0.045]">
+            {editingProfile && <div className="flex justify-end border-t border-[var(--app-border)] pt-4">
               <Button onClick={handleSaveProfile} disabled={savingProfile}>
                 {savingProfile && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 {t.common.save}
@@ -661,7 +663,7 @@ export function AccountTab() {
           <div className="space-y-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="space-y-1">
-                <h4 className="text-xl font-semibold text-foreground flex items-center gap-2">
+                <h4 className="flex items-center gap-2 text-[14px] font-normal text-foreground">
                   <KeyRound className="h-4 w-4" />
                   Senha
                 </h4>
@@ -788,7 +790,7 @@ export function AccountTab() {
           <CardHeader className="px-4 md:px-5 pt-5 pb-2">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <CardTitle className="text-xl font-semibold text-foreground">Dados da empresa</CardTitle>
+                <CardTitle className="text-[14px] font-normal text-foreground">Dados da empresa</CardTitle>
                 <CardDescription className="mt-0.5 text-sm text-muted-foreground">Informações fiscais, endereço e contato da organização.</CardDescription>
               </div>
               {isAdmin && (
@@ -810,7 +812,7 @@ export function AccountTab() {
             <div className="space-y-4">
               <div className="flex items-center gap-4">
                 <div className="relative shrink-0">
-                  <div className="relative h-20 w-20 rounded-full border border-white/[0.045] flex items-center justify-center bg-white/[0.035] overflow-hidden">
+                  <div className="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border border-[var(--app-border)] bg-[var(--app-surface-soft)]">
                     {organization?.logo_url ? (
                       <NextImage src={organization.logo_url} alt="Logo da organização" fill sizes="80px" className="object-cover" unoptimized />
                     ) : (
@@ -878,7 +880,7 @@ export function AccountTab() {
             </div>}
 
             {/* Fiscal Data */}
-            {editingOrg && <div className="space-y-4 pt-4 border-t border-white/[0.045]">
+            {editingOrg && <div className="space-y-4 border-t border-[var(--app-border)] pt-4">
               <h4 className="font-medium text-sm">{t.settings.organization.fiscalData}</h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
@@ -927,9 +929,9 @@ export function AccountTab() {
             </div>}
 
             {/* Address */}
-            {editingOrg && <div className="space-y-4 pt-4 border-t border-white/[0.045]">
+            {editingOrg && <div className="space-y-4 border-t border-[var(--app-border)] pt-4">
               <h4 className="font-medium text-sm">{t.settings.organization.address}</h4>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div className="space-y-1.5">
                   <Label className="text-xs">{t.settings.profile.cep}</Label>
                   <Input
@@ -992,7 +994,7 @@ export function AccountTab() {
             </div>}
 
             {/* Contact */}
-            {editingOrg && <div className="space-y-4 pt-4 border-t border-white/[0.045]">
+            {editingOrg && <div className="space-y-4 border-t border-[var(--app-border)] pt-4">
               <h4 className="font-medium text-sm">{t.settings.organization.contact}</h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
@@ -1035,9 +1037,9 @@ export function AccountTab() {
             </div>}
 
             {/* Financial Settings */}
-            {isAdmin && <div data-tour="account-financial-settings" className="pt-4 border-t border-white/[0.045]">
+            {isAdmin && <div data-tour="account-financial-settings" className="border-t border-[var(--app-border)] pt-4">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <h4 className="text-sm font-semibold leading-tight text-foreground flex items-center gap-2 min-w-0">
+                <h4 className="flex min-w-0 items-center gap-2 text-[14px] font-normal leading-tight text-foreground">
                   Configurações Financeiras
                   <TooltipProvider>
                     <Tooltip>
@@ -1081,7 +1083,7 @@ export function AccountTab() {
 
             {/* Save Button */}
             {isAdmin && editingOrg && (
-              <div className="flex justify-end pt-4 border-t border-white/[0.045]">
+              <div className="flex justify-end border-t border-[var(--app-border)] pt-4">
                 <Button onClick={handleSaveOrganization} disabled={savingOrg || !orgForm.name.trim()}>
                   {savingOrg && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                   {t.common.save}
@@ -1090,7 +1092,7 @@ export function AccountTab() {
             )}
 
             {!isAdmin && (
-              <p className="text-xs text-muted-foreground pt-4 border-t border-white/[0.045]">
+              <p className="border-t border-[var(--app-border)] pt-4 text-xs text-muted-foreground">
                 Apenas administradores podem editar os dados da empresa.
               </p>
             )}

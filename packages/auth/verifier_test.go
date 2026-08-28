@@ -29,6 +29,81 @@ func TestVerifierAcceptsValidSupabaseToken(t *testing.T) {
 	}
 }
 
+func TestVerifierParsesSignedAuthenticationMethods(t *testing.T) {
+	verifier := newTestVerifier(t)
+	token := signTestToken(t, Claims{
+		AuthenticationMethods: []AuthenticationMethod{
+			{Method: "password", Timestamp: time.Now().Add(-time.Minute).Unix()},
+			{Method: "recovery", Timestamp: time.Now().Unix()},
+			{Method: "token_refresh", Timestamp: time.Now().Add(time.Minute).Unix()},
+		},
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   "10000000-0000-0000-0000-000000000001",
+			Issuer:    "https://example.supabase.co/auth/v1",
+			Audience:  jwt.ClaimStrings{"authenticated"},
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+	})
+
+	user, err := verifier.Verify(context.Background(), token)
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if !user.IsPasswordRecovery() {
+		t.Fatal("signed recovery AMR was not preserved")
+	}
+	if got, want := len(user.AuthenticationMethods), 3; got != want {
+		t.Fatalf("authentication methods = %d, want %d", got, want)
+	}
+}
+
+func TestUserIsPasswordRecovery(t *testing.T) {
+	tests := []struct {
+		name    string
+		methods []AuthenticationMethod
+		want    bool
+	}{
+		{name: "missing AMR", want: false},
+		{name: "password session", methods: []AuthenticationMethod{{Method: "password"}}, want: false},
+		{name: "refresh only", methods: []AuthenticationMethod{{Method: "token_refresh"}}, want: false},
+		{name: "recovery", methods: []AuthenticationMethod{{Method: "recovery"}}, want: true},
+		{name: "recovery survives refresh", methods: []AuthenticationMethod{{Method: "recovery"}, {Method: "token_refresh"}}, want: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			user := User{AuthenticationMethods: test.methods}
+			if got := user.IsPasswordRecovery(); got != test.want {
+				t.Fatalf("IsPasswordRecovery() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestVerifierTrimsLegacyJWTSecret(t *testing.T) {
+	verifier, err := NewVerifier(context.Background(), Config{
+		ProjectURL: "https://example.supabase.co",
+		Issuer:     "https://example.supabase.co/auth/v1",
+		Audience:   "authenticated",
+		JWTSecret:  " \t" + testJWTSecret + "\r\n",
+	})
+	if err != nil {
+		t.Fatalf("NewVerifier() error = %v", err)
+	}
+	t.Cleanup(verifier.Close)
+
+	token := signTestToken(t, jwt.RegisteredClaims{
+		Subject:   "10000000-0000-0000-0000-000000000001",
+		Issuer:    "https://example.supabase.co/auth/v1",
+		Audience:  jwt.ClaimStrings{"authenticated"},
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	})
+
+	if _, err := verifier.Verify(context.Background(), token); err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+}
+
 func TestVerifierRejectsInvalidClaims(t *testing.T) {
 	verifier := newTestVerifier(t)
 	tests := []struct {
@@ -73,7 +148,7 @@ func newTestVerifier(t *testing.T) *Verifier {
 	return verifier
 }
 
-func signTestToken(t *testing.T, claims jwt.RegisteredClaims) string {
+func signTestToken(t *testing.T, claims jwt.Claims) string {
 	t.Helper()
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signed, err := token.SignedString([]byte(testJWTSecret))

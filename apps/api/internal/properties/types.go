@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/numericinput"
 )
 
 const (
@@ -17,9 +18,10 @@ const (
 )
 
 var (
-	ErrInvalidInput     = errors.New("invalid property input")
-	ErrPropertyNotFound = errors.New("property not found")
-	ErrNoChanges        = errors.New("no property changes provided")
+	ErrInvalidInput           = errors.New("invalid property input")
+	ErrPropertyNotFound       = errors.New("property not found")
+	ErrPropertyHasLinkedLeads = errors.New("property has linked leads")
+	ErrNoChanges              = errors.New("no property changes provided")
 )
 
 type Property map[string]any
@@ -328,6 +330,9 @@ func (request propertyRequest) ValidateCreate() (propertyRequest, error) {
 	if strings.TrimSpace(title) == "" {
 		return nil, fmt.Errorf("%w: title is required", ErrInvalidInput)
 	}
+	if err := validatePropertyBusinessRules(input); err != nil {
+		return nil, err
+	}
 
 	return input, nil
 }
@@ -340,11 +345,23 @@ func (request propertyRequest) ValidateUpdate() (propertyRequest, error) {
 	if len(input) == 0 {
 		return nil, ErrNoChanges
 	}
+	if err := validatePropertyBusinessRules(input); err != nil {
+		return nil, err
+	}
 
 	return input, nil
 }
 
 func sanitizePayload(request propertyRequest) (propertyRequest, error) {
+	for _, publicationField := range []string{"anunciar", "published_on_site"} {
+		if _, exists := request[publicationField]; exists {
+			return nil, fmt.Errorf(
+				"%w: %s is managed by the Property Publication Center",
+				ErrInvalidInput,
+				publicationField,
+			)
+		}
+	}
 	out := propertyRequest{}
 	var mainImage any
 
@@ -656,8 +673,8 @@ func parseOptionalPositiveInt(raw string) int {
 }
 
 func parseOptionalPositiveFloat(raw string) float64 {
-	value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
-	if err != nil || value <= 0 {
+	value, ok := numericinput.ParseNonNegativeDecimal(raw)
+	if !ok || value <= 0 {
 		return 0
 	}
 	return value

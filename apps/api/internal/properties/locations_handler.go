@@ -2,6 +2,8 @@ package properties
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
@@ -58,11 +60,8 @@ func (handler Handler) CreateCity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	defer r.Body.Close()
 	var request cityRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
+	if err := decodeLocationJSON(w, r, &request); err != nil {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
 		return
 	}
@@ -114,11 +113,8 @@ func (handler Handler) CreateNeighborhood(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	defer r.Body.Close()
 	var request neighborhoodRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
+	if err := decodeLocationJSON(w, r, &request); err != nil {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
 		return
 	}
@@ -170,11 +166,8 @@ func (handler Handler) CreateCondominium(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	defer r.Body.Close()
 	var request condominiumRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
+	if err := decodeLocationJSON(w, r, &request); err != nil {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
 		return
 	}
@@ -216,4 +209,20 @@ func (handler Handler) DeleteCondominium(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func decodeLocationJSON(w http.ResponseWriter, r *http.Request, destination any) error {
+	defer r.Body.Close()
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("request body must contain one JSON value")
+		}
+		return err
+	}
+	return nil
 }

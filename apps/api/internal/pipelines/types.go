@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -19,6 +20,8 @@ var (
 	ErrHasLeads         = errors.New("pipeline or stage has leads")
 	ErrNoChanges        = errors.New("no pipeline changes provided")
 )
+
+var stageHexColorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
 type Pipeline struct {
 	ID                  string    `json:"id"`
@@ -42,6 +45,7 @@ type Stage struct {
 	Position       int       `json:"position"`
 	IsWon          bool      `json:"isWon"`
 	IsLost         bool      `json:"isLost"`
+	IsQualified    bool      `json:"isQualified"`
 	IsActive       bool      `json:"isActive"`
 	SLAHours       int       `json:"slaHours,omitempty"`
 	CreatedAt      time.Time `json:"createdAt"`
@@ -68,6 +72,39 @@ type patchBool struct {
 	Value *bool
 }
 
+func (field patchBool) IsTrue() bool {
+	return field.Set && field.Value != nil && *field.Value
+}
+
+func (field patchBool) IsFalse() bool {
+	return field.Set && (field.Value == nil || !*field.Value)
+}
+
+func (field patchBool) Resolve(current bool) bool {
+	if !field.Set {
+		return current
+	}
+	return field.Value != nil && *field.Value
+}
+
+func newPatchBool(value bool) patchBool {
+	return patchBool{Set: true, Value: &value}
+}
+
+func qualifiedPatchForStageUpdate(input updateStageInput) (patchBool, error) {
+	terminalOrInactive := input.IsWon.IsTrue() || input.IsLost.IsTrue() || input.IsActive.IsFalse()
+	if input.IsQualified.IsTrue() && terminalOrInactive {
+		return patchBool{}, fmt.Errorf(
+			"%w: a qualified stage must be active and non-terminal",
+			ErrInvalidInput,
+		)
+	}
+	if terminalOrInactive {
+		return newPatchBool(false), nil
+	}
+	return input.IsQualified, nil
+}
+
 type UpdatePipelineRequest struct {
 	Name      patchString `json:"name,omitempty"`
 	IsDefault patchBool   `json:"isDefault,omitempty"`
@@ -86,12 +123,13 @@ type createStageInput struct {
 }
 
 type UpdateStageRequest struct {
-	Name     patchString `json:"name,omitempty"`
-	Color    patchString `json:"color,omitempty"`
-	StageKey patchString `json:"stageKey,omitempty"`
-	IsWon    patchBool   `json:"isWon,omitempty"`
-	IsLost   patchBool   `json:"isLost,omitempty"`
-	IsActive patchBool   `json:"isActive,omitempty"`
+	Name        patchString `json:"name,omitempty"`
+	Color       patchString `json:"color,omitempty"`
+	StageKey    patchString `json:"stageKey,omitempty"`
+	IsWon       patchBool   `json:"isWon,omitempty"`
+	IsLost      patchBool   `json:"isLost,omitempty"`
+	IsQualified patchBool   `json:"isQualified,omitempty"`
+	IsActive    patchBool   `json:"isActive,omitempty"`
 }
 
 type updateStageInput UpdateStageRequest
@@ -187,9 +225,15 @@ func (request CreateStageRequest) Validate() (createStageInput, error) {
 		return createStageInput{}, fmt.Errorf("%w: name must have at least 2 characters", ErrInvalidInput)
 	}
 
-	color := trimMax(request.Color, 20)
+	color := strings.TrimSpace(request.Color)
 	if color == "" {
 		color = "#6b7280"
+	} else {
+		var err error
+		color, err = validateStageColor(color)
+		if err != nil {
+			return createStageInput{}, err
+		}
 	}
 
 	return createStageInput{Name: name, Color: color}, nil
@@ -197,18 +241,29 @@ func (request CreateStageRequest) Validate() (createStageInput, error) {
 
 func (request UpdateStageRequest) Validate() (updateStageInput, error) {
 	input := updateStageInput{
-		Name:     validatePatchString(request.Name, 120),
-		Color:    validatePatchString(request.Color, 20),
-		StageKey: validatePatchString(request.StageKey, 80),
-		IsWon:    request.IsWon,
-		IsLost:   request.IsLost,
-		IsActive: request.IsActive,
+		Name:        validatePatchString(request.Name, 120),
+		Color:       request.Color,
+		StageKey:    validatePatchString(request.StageKey, 80),
+		IsWon:       request.IsWon,
+		IsLost:      request.IsLost,
+		IsQualified: request.IsQualified,
+		IsActive:    request.IsActive,
 	}
-	if !input.Name.Set && !input.Color.Set && !input.StageKey.Set && !input.IsWon.Set && !input.IsLost.Set && !input.IsActive.Set {
+	if !input.Name.Set && !input.Color.Set && !input.StageKey.Set && !input.IsWon.Set && !input.IsLost.Set && !input.IsQualified.Set && !input.IsActive.Set {
 		return updateStageInput{}, ErrNoChanges
 	}
 	if input.Name.Set && (input.Name.Value == nil || len([]rune(*input.Name.Value)) < 2) {
 		return updateStageInput{}, fmt.Errorf("%w: name must have at least 2 characters", ErrInvalidInput)
+	}
+	if input.Color.Set && input.Color.Value != nil {
+		color, err := validateStageColor(*input.Color.Value)
+		if err != nil {
+			return updateStageInput{}, err
+		}
+		input.Color.Value = &color
+	}
+	if _, err := qualifiedPatchForStageUpdate(input); err != nil {
+		return updateStageInput{}, err
 	}
 
 	return input, nil
@@ -238,9 +293,15 @@ func (request ReorderStagesRequest) Validate() (reorderStagesInput, error) {
 		if len([]rune(name)) < 2 {
 			return reorderStagesInput{}, fmt.Errorf("%w: stage name must have at least 2 characters", ErrInvalidInput)
 		}
-		color := trimMax(item.Color, 20)
+		color := strings.TrimSpace(item.Color)
 		if color == "" {
 			color = "#6b7280"
+		} else {
+			var err error
+			color, err = validateStageColor(color)
+			if err != nil {
+				return reorderStagesInput{}, err
+			}
 		}
 		stageKey := trimMax(item.StageKey, 80)
 		if stageKey == "" {
@@ -280,6 +341,17 @@ func validatePatchString(field patchString, maxLength int) patchString {
 	value := trimMax(*field.Value, maxLength)
 	field.Value = &value
 	return field
+}
+
+func validateStageColor(value string) (string, error) {
+	color := strings.TrimSpace(value)
+	if !stageHexColorPattern.MatchString(color) {
+		return "", fmt.Errorf(
+			"%w: color must use hexadecimal format #RRGGBB",
+			ErrInvalidInput,
+		)
+	}
+	return color, nil
 }
 
 func trimMax(value string, maxLength int) string {

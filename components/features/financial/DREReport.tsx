@@ -56,12 +56,12 @@ export function DREReport({ data, showPrevious, regime }: DREReportProps) {
   const getRowStyles = (line: DRELine) => {
     if (line.isTotal) {
       if (line.id.includes('net_result') || line.id.includes('net_revenue')) {
-        return 'bg-primary/10 font-bold';
+        return 'bg-primary/10 font-normal';
       }
       if (line.id.includes('total') || line.id.includes('ebitda')) {
-        return 'bg-white/[0.055] font-semibold';
+        return 'bg-[var(--app-surface-soft)] font-normal';
       }
-      return 'font-semibold bg-white/[0.035]';
+      return 'bg-[var(--app-surface-soft)] font-normal';
     }
     return '';
   };
@@ -112,7 +112,7 @@ export function DREReport({ data, showPrevious, regime }: DREReportProps) {
               {data.lines.map((line) => (
                 <TableRow
                   key={line.id}
-                  className={cn(getRowStyles(line), 'hover:bg-white/[0.035]')}
+                  className={cn(getRowStyles(line), 'hover:bg-[var(--app-surface-hover)]')}
                 >
                   <TableCell
                     className={cn(

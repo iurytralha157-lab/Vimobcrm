@@ -52,9 +52,11 @@ func (handler Handler) Create(w http.ResponseWriter, r *http.Request) {
 		writeWebhookError(w, r, err)
 		return
 	}
-	handler.publishWebhookEvent(tenantContext, "webhook.created", map[string]any{
-		"webhook": item,
-	})
+	handler.publishWebhookEvent(
+		tenantContext,
+		"webhook.created",
+		webhookEventData(webhookIDFromItem(item)),
+	)
 	httpserver.WriteJSON(w, http.StatusCreated, Envelope[map[string]any]{Data: item})
 }
 
@@ -73,10 +75,11 @@ func (handler Handler) Update(w http.ResponseWriter, r *http.Request) {
 		writeWebhookError(w, r, err)
 		return
 	}
-	handler.publishWebhookEvent(tenantContext, "webhook.updated", map[string]any{
-		"webhookId": r.PathValue("id"),
-		"webhook":   item,
-	})
+	handler.publishWebhookEvent(
+		tenantContext,
+		"webhook.updated",
+		webhookEventData(r.PathValue("id")),
+	)
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[map[string]any]{Data: item})
 }
 
@@ -89,9 +92,11 @@ func (handler Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeWebhookError(w, r, err)
 		return
 	}
-	handler.publishWebhookEvent(tenantContext, "webhook.deleted", map[string]any{
-		"webhookId": r.PathValue("id"),
-	})
+	handler.publishWebhookEvent(
+		tenantContext,
+		"webhook.deleted",
+		webhookEventData(r.PathValue("id")),
+	)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -105,10 +110,11 @@ func (handler Handler) RegenerateToken(w http.ResponseWriter, r *http.Request) {
 		writeWebhookError(w, r, err)
 		return
 	}
-	handler.publishWebhookEvent(tenantContext, "webhook.token_regenerated", map[string]any{
-		"webhookId": r.PathValue("id"),
-		"webhook":   item,
-	})
+	handler.publishWebhookEvent(
+		tenantContext,
+		"webhook.token_regenerated",
+		webhookEventData(r.PathValue("id")),
+	)
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[map[string]any]{Data: item})
 }
 
@@ -140,6 +146,15 @@ func (handler Handler) ReceiveLead(w http.ResponseWriter, r *http.Request) {
 
 func (handler Handler) publishWebhookEvent(tenantContext tenant.Context, eventType string, data map[string]any) {
 	handler.publisher.Publish(realtime.NewEvent(eventType, tenantContext.OrganizationID, tenantContext.UserID, data))
+}
+
+func webhookEventData(webhookID string) map[string]any {
+	return map[string]any{"webhookId": strings.TrimSpace(webhookID)}
+}
+
+func webhookIDFromItem(item map[string]any) string {
+	id, _ := item["id"].(string)
+	return id
 }
 
 func organizationContext(w http.ResponseWriter, r *http.Request) (tenant.Context, bool) {

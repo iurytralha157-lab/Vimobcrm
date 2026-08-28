@@ -248,7 +248,7 @@ export function ProductUpdatesDialog({ open, onOpenChange }: ProductUpdatesDialo
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="grid h-[min(640px,calc(100dvh-32px))] w-[min(840px,calc(100vw-32px))] max-w-none grid-rows-[minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:rounded-[14px] [&>button]:top-4">
+      <DialogContent className="grid h-[min(640px,calc(100dvh-32px))] w-[min(840px,calc(100vw-32px))] max-w-none grid-rows-[minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:rounded-[8px] [&>button]:top-4">
         <DialogTitle className="sr-only">Novidades</DialogTitle>
         <DialogDescription className="sr-only">
           Atualizações recentes, documentos legais e melhorias do Vimob CRM.
@@ -259,7 +259,7 @@ export function ProductUpdatesDialog({ open, onOpenChange }: ProductUpdatesDialo
             <TabsList className="h-auto rounded-[8px] bg-[var(--app-surface)] p-1">
               <TabsTrigger
                 value="news"
-                className="h-9 rounded-[7px] px-3 text-sm font-light text-muted-foreground shadow-none data-[state=active]:bg-[var(--app-background)] data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+                className="h-9 rounded-[6px] px-3 text-[12px] font-light text-muted-foreground shadow-none data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-foreground data-[state=active]:shadow-none"
               >
                 Novidades
                 <span className="ml-2 rounded-full bg-[var(--app-surface-soft)] px-2 py-0.5 text-[11px] font-extralight text-[var(--app-text-secondary)]">
@@ -268,7 +268,7 @@ export function ProductUpdatesDialog({ open, onOpenChange }: ProductUpdatesDialo
               </TabsTrigger>
               <TabsTrigger
                 value="archived"
-                className="h-9 rounded-[7px] px-3 text-sm font-light text-muted-foreground shadow-none data-[state=active]:bg-[var(--app-background)] data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+                className="h-9 rounded-[6px] px-3 text-[12px] font-light text-muted-foreground shadow-none data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-foreground data-[state=active]:shadow-none"
               >
                 Arquivado
                 <span className="ml-2 rounded-full bg-[var(--app-surface-soft)] px-2 py-0.5 text-[11px] font-extralight text-[var(--app-text-secondary)]">
@@ -350,7 +350,7 @@ function UpdateListItem({ item, onSelect, selected }: { item: ProductUpdate; onS
       className={cn(
         "flex w-full rounded-[8px] border border-transparent p-3 text-left transition-colors",
         selected
-          ? "border-[#FF4529]/35 bg-[var(--app-surface-solid)]"
+          ? "border-primary/35 bg-[var(--app-surface-solid)]"
           : "hover:bg-[var(--app-surface-hover)]",
       )}
     >
@@ -407,7 +407,7 @@ function UpdateDetail({ archived, item, onArchive }: { archived: boolean; item: 
       </div>
 
       {item.href ? (
-        <Button asChild className="h-10 rounded-[8px] bg-[#FF4529] font-light text-white hover:bg-[#FF4529]/90">
+        <Button asChild className="h-10 rounded-[6px] bg-primary/50 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary">
           <a href={item.href} target="_blank" rel="noreferrer">
             <FileText className="h-4 w-4" />
             Ver documento

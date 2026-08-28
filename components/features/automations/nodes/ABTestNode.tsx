@@ -7,18 +7,18 @@ export const ABTestNode = memo(({ data, selected }: NodeProps) => {
   const splitB = 100 - splitA;
 
   return (
-    <div className={`automation-node px-4 py-3 rounded-xl min-w-[220px] max-w-[280px] ${
+    <div className={`automation-node min-w-[220px] max-w-[280px] rounded-[8px] px-4 py-3 ${
       selected ? 'automation-node-selected' : ''
-    }`} style={{ '--node-accent': '#ec4899' } as React.CSSProperties}>
+    }`} style={{ '--node-accent': 'var(--chart-5)' } as React.CSSProperties}>
       <Handle type="target" position={Position.Left} className="!bg-pink-400 !w-3 !h-3 !border-2 !border-pink-500/50" />
       <div className="flex items-start gap-3">
         <div className="p-2 rounded-lg bg-pink-500 shrink-0">
-          <FlipHorizontal className="h-5 w-5 text-white" />
+          <FlipHorizontal className="h-5 w-5 text-primary-foreground" />
         </div>
         <div className="flex-1 min-w-0">
-          <span className="text-[10px] font-bold text-pink-600 dark:text-pink-400 uppercase tracking-wider">A/B Test</span>
+          <span className="text-[12px] font-normal text-pink-600 dark:text-pink-400">Teste A/B</span>
           <div className="flex items-center gap-2 mt-1">
-            <div className="flex-1 h-2 bg-white/[0.06] rounded-full overflow-hidden">
+            <div className="h-2 flex-1 overflow-hidden rounded-full bg-[var(--app-surface-soft)]">
               <div className="h-full bg-blue-400 rounded-full" style={{ width: `${splitA}%` }} />
             </div>
             <span className="text-[10px] text-muted-foreground">{splitA}/{splitB}</span>

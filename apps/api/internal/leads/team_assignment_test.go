@@ -75,3 +75,41 @@ func TestValidateRoundRobinAssigneeTeamRejectsNonMember(t *testing.T) {
 		t.Fatalf("error = %v, want ErrInvalidReference", err)
 	}
 }
+
+func TestUpdateChangesLeadTeamAssignment(t *testing.T) {
+	value := "22222222-2222-4222-8222-222222222222"
+	tests := []struct {
+		name  string
+		input updateInput
+		want  bool
+	}{
+		{
+			name:  "outcome only",
+			input: updateInput{DealStatus: patchString{Set: true, Value: &value}},
+			want:  false,
+		},
+		{
+			name:  "feedback only",
+			input: updateInput{Feedback: patchString{Set: true, Value: &value}},
+			want:  false,
+		},
+		{
+			name:  "team changed",
+			input: updateInput{TeamID: patchString{Set: true, Value: &value}},
+			want:  true,
+		},
+		{
+			name:  "assignee changed",
+			input: updateInput{AssignedUserID: patchString{Set: true, Value: &value}},
+			want:  true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := updateChangesLeadTeamAssignment(test.input); got != test.want {
+				t.Fatalf("updateChangesLeadTeamAssignment() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}

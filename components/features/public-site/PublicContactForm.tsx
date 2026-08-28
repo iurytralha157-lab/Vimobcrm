@@ -36,6 +36,7 @@ export function PublicContactForm({
   privacyHref,
   propertyCode,
   propertyId,
+  onSuccess,
   siteTitle = "imobiliária",
 }: Readonly<{
   className?: string;
@@ -45,16 +46,17 @@ export function PublicContactForm({
   privacyHref?: string;
   propertyCode?: string;
   propertyId?: string;
+  onSuccess?: () => void;
   siteTitle?: string;
 }>) {
   const [formData, setFormData] = useState(() => buildInitialState(defaultMessage));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submissionId, setSubmissionId] = useState(() => createPublicSubmissionId());
   const [website, setWebsite] = useState("");
-  const fieldClass = "w-full rounded-[10px] border-0 px-3 text-sm font-normal outline-none transition placeholder:text-current placeholder:opacity-55 focus:brightness-95";
+  const fieldClass = "w-full rounded-[6px] border border-transparent px-3 text-[12px] font-light outline-none placeholder:text-current placeholder:opacity-55 focus:border-[var(--site-primary)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--site-primary)_18%,transparent)]";
   const fieldStyle = {
-    backgroundColor: "color-mix(in srgb, var(--site-fg) 8%, var(--site-card))",
-    color: "var(--site-fg)",
+    backgroundColor: "color-mix(in srgb, var(--site-card-fg) 8%, var(--site-card))",
+    color: "var(--site-card-fg)",
   };
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -90,6 +92,7 @@ export function PublicContactForm({
       toast.success("Interesse enviado. Em breve entraremos em contato.");
       setFormData(buildInitialState(defaultMessage));
       setSubmissionId(createPublicSubmissionId());
+      onSuccess?.();
     } catch (error) {
       const message = error instanceof z.ZodError
         ? error.issues[0]?.message
@@ -101,15 +104,18 @@ export function PublicContactForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className={cn("space-y-4", className)}>
+    <form onSubmit={handleSubmit} className={cn("space-y-4", className)} aria-busy={isSubmitting}>
       <label className="absolute -left-[10000px] h-px w-px overflow-hidden" aria-hidden="true">
         Website
-        <input tabIndex={-1} autoComplete="off" value={website} onChange={(event) => setWebsite(event.target.value)} />
+        <input name="website" tabIndex={-1} autoComplete="off" value={website} onChange={(event) => setWebsite(event.target.value)} />
       </label>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block">
           <span className="sr-only">Nome</span>
           <input
+            autoComplete="name"
+            maxLength={120}
+            name="name"
             required
             value={formData.name}
             onChange={(event) => setFormData((current) => ({ ...current, name: event.target.value }))}
@@ -122,7 +128,12 @@ export function PublicContactForm({
         <label className="block">
           <span className="sr-only">Telefone</span>
           <input
+            autoComplete="tel"
+            inputMode="tel"
+            maxLength={30}
+            name="phone"
             required
+            type="tel"
             value={formData.phone}
             onChange={(event) => setFormData((current) => ({ ...current, phone: event.target.value }))}
             className={`${fieldClass} h-11`}
@@ -135,6 +146,9 @@ export function PublicContactForm({
       <label className="block">
         <span className="sr-only">E-mail</span>
         <input
+          autoComplete="email"
+          maxLength={254}
+          name="email"
           type="email"
           value={formData.email}
           onChange={(event) => setFormData((current) => ({ ...current, email: event.target.value }))}
@@ -147,6 +161,7 @@ export function PublicContactForm({
       <label className="block">
         <span className="sr-only">Melhor horário para ligar</span>
         <select
+          name="best_time"
           value={formData.bestTime}
           onChange={(event) => setFormData((current) => ({ ...current, bestTime: event.target.value }))}
           className={`${fieldClass} h-11 appearance-none`}
@@ -169,6 +184,8 @@ export function PublicContactForm({
       <label className="block">
         <span className="sr-only">Mensagem</span>
         <textarea
+          maxLength={1000}
+          name="message"
           required
           minLength={2}
           value={formData.message}
@@ -179,17 +196,18 @@ export function PublicContactForm({
         />
       </label>
 
-      <label className="flex items-start gap-3 text-xs leading-5 opacity-80">
+      <label className="flex items-start gap-3 text-[12px] font-light leading-5 opacity-80">
         <input
           required
           type="checkbox"
+          name="privacy_accepted"
           checked={formData.privacyAccepted}
           onChange={(event) => setFormData((current) => ({ ...current, privacyAccepted: event.target.checked }))}
           className="mt-1 h-4 w-4 rounded border-zinc-300 accent-[var(--site-primary)]"
         />
         <span>
           Li e concordo com a{" "}
-          <a href={privacyHref || "/politica-de-privacidade"} className="font-medium underline underline-offset-4" style={{ color: primaryColor }} target="_blank" rel="noreferrer">
+          <a href={privacyHref || "/politica-de-privacidade"} className="font-normal underline underline-offset-4" style={{ color: primaryColor }} target="_blank" rel="noopener noreferrer">
             Política de Privacidade
           </a>{" "}
           da {siteTitle}.
@@ -199,7 +217,7 @@ export function PublicContactForm({
       <button
         type="submit"
         disabled={isSubmitting}
-        className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-[10px] px-5 text-sm font-normal text-white transition disabled:cursor-not-allowed disabled:opacity-70"
+        className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-[6px] px-5 text-[12px] font-light text-[var(--site-primary-fg)] outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[var(--site-primary)] disabled:cursor-not-allowed disabled:opacity-70"
         style={{ backgroundColor: primaryColor }}
       >
         <Send className="h-4 w-4" />

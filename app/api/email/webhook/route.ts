@@ -2,16 +2,27 @@ import {
   hasResendWebhookSecret,
   verifyResendWebhook,
 } from '@/integrations/email/webhooks'
+import { createAdminClient } from '@/lib/supabase/admin'
+import {
+  buildRecordResendEmailEventArgs,
+  persistResendEmailEvent,
+} from '@/lib/email/resend-webhook-event'
 import { emailWebhookEventSchema } from '@/lib/validation/email'
+import {
+  readRequestTextWithLimit,
+  RequestBodyTooLargeError,
+} from '@/lib/security/limited-request-body'
 
 export const runtime = 'nodejs'
 
+const RESEND_WEBHOOK_MAX_BODY_BYTES = 256 * 1024
+
 export async function POST(request: Request) {
-  if (process.env.NODE_ENV === 'production' && !hasResendWebhookSecret()) {
+  if (!hasResendWebhookSecret()) {
     return Response.json(
       {
         ok: false,
-        message: 'RESEND_WEBHOOK_SECRET is required in production.',
+        message: 'Webhook verification is unavailable.',
       },
       { status: 503 }
     )
@@ -20,8 +31,17 @@ export async function POST(request: Request) {
   let payload: string
 
   try {
-    payload = await request.text()
-  } catch {
+    payload = await readRequestTextWithLimit(request, RESEND_WEBHOOK_MAX_BODY_BYTES)
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return Response.json(
+        {
+          ok: false,
+          message: 'Webhook payload is too large.',
+        },
+        { status: 413 },
+      )
+    }
     return Response.json(
       {
         ok: false,
@@ -32,14 +52,12 @@ export async function POST(request: Request) {
   }
 
   let body: unknown
-  let isVerified = false
   let svixId = request.headers.get('svix-id')
 
   try {
     const verifiedWebhook = verifyResendWebhook(payload, request.headers)
 
     body = verifiedWebhook.event
-    isVerified = verifiedWebhook.verified
     svixId = verifiedWebhook.svixId ?? svixId
   } catch {
     return Response.json(
@@ -64,11 +82,54 @@ export async function POST(request: Request) {
     )
   }
 
-  // TODO: persist Resend webhook events in email_events.
+  if (!svixId) {
+    return Response.json(
+      {
+        ok: false,
+        message: 'Missing Resend webhook event identifier.',
+      },
+      { status: 400 },
+    )
+  }
+
+  let rpcArgs: ReturnType<typeof buildRecordResendEmailEventArgs>
+  try {
+    rpcArgs = buildRecordResendEmailEventArgs(parsed.data, svixId)
+  } catch {
+    return Response.json(
+      {
+        ok: false,
+        message: 'Invalid Resend email event.',
+      },
+      { status: 400 },
+    )
+  }
+
+  const persistence = await persistResendEmailEvent(rpcArgs, (args) =>
+    createAdminClient().rpc('record_resend_email_event', args),
+  )
+
+  if (!persistence.ok) {
+    console.error('[email/webhook] Could not persist verified Resend event.', {
+      error: persistence.error,
+      eventType: parsed.data.type,
+      providerMessageId: parsed.data.data.email_id,
+    })
+
+    return Response.json(
+      {
+        ok: false,
+        message: 'Could not persist Resend webhook event.',
+      },
+      { status: 500 },
+    )
+  }
+
   return Response.json({
     ok: true,
     event_type: parsed.data.type,
-    verified: isVerified,
-    svix_id: svixId ?? null,
+    verified: true,
+    duplicate: persistence.duplicate,
+    svix_id: svixId,
   })
 }

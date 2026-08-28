@@ -58,13 +58,13 @@ function GuideStep({
   return (
     <section className="app-card-soft p-5 md:p-6">
       <div className="flex items-start gap-4">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/50 text-[12px] font-light text-primary-foreground">
           {number}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <Icon className="h-4 w-4 text-primary" />
-            <h2 className="text-sm font-semibold">{title}</h2>
+            <h2 className="text-[14px] font-normal">{title}</h2>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">{description}</p>
           {children && <div className="mt-4">{children}</div>}
@@ -109,7 +109,7 @@ export function DomainConnectionGuide({
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
-            <h1 className="text-xl font-semibold">Conecte seu domínio à Vimob</h1>
+            <h1 className="text-[14px] font-normal">Conecte seu domínio à Vimob</h1>
             <p className="mt-1 text-sm text-muted-foreground">
               O Cloudflare mantém SSL, cache e disponibilidade enquanto a Vimob entrega o site.
             </p>
@@ -132,7 +132,7 @@ export function DomainConnectionGuide({
         <div className="flex items-start gap-3">
           <Globe2 className="mt-0.5 h-5 w-5 text-primary" />
           <div className="min-w-0 flex-1">
-            <Label htmlFor="custom-domain-guide" className="text-sm font-semibold">Seu domínio</Label>
+            <Label htmlFor="custom-domain-guide" className="text-[12px] font-light">Seu domínio</Label>
             <p className="mt-1 text-xs text-muted-foreground">
               Informe somente o domínio, sem https:// ou caminhos.
             </p>
@@ -203,7 +203,7 @@ export function DomainConnectionGuide({
       >
         {domainSaved ? (
           <>
-            <div className="max-h-[360px] overflow-auto rounded-[8px] bg-[#0d0d0d] p-4 text-xs leading-6 text-zinc-300">
+            <div className="max-h-[360px] overflow-auto rounded-[8px] bg-[var(--app-surface-soft)] p-4 text-[12px] font-light leading-6 text-[var(--app-text-secondary)]">
               <pre><code>{workerCode}</code></pre>
             </div>
             <Button

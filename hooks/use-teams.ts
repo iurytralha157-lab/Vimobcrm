@@ -20,6 +20,18 @@ export function useTeams(options?: { includeInactive?: boolean; enabled?: boolea
   })
 }
 
+export function useTeam(teamId?: string | null, options?: { enabled?: boolean }) {
+  const { organization, profile } = useAuth()
+  const organizationId = organization?.id || profile?.organization_id || null
+
+  return useQuery({
+    queryKey: ['team', organizationId, teamId],
+    queryFn: () => teamsAPI.getTeam(teamId as string, organizationId),
+    enabled: Boolean(organizationId && teamId) && (options?.enabled ?? true),
+    staleTime: 1000 * 60 * 5,
+  })
+}
+
 export function useCreateTeam() {
   const queryClient = useQueryClient()
   const { organization, profile } = useAuth()
@@ -76,6 +88,7 @@ export function useUpdateTeam() {
       }
 
       queryClient.invalidateQueries({ queryKey: ['teams'] })
+      queryClient.invalidateQueries({ queryKey: ['team', organizationId, variables.id] })
       queryClient.invalidateQueries({ queryKey: ['lead-visibility'] })
       queryClient.invalidateQueries({ queryKey: ['stages-with-leads'] })
       queryClient.invalidateQueries({ queryKey: ['round-robins'] })

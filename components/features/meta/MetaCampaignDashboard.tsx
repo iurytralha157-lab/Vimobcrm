@@ -200,8 +200,8 @@ function MetricBlock({
         <Icon className="h-5 w-5" />
       </div>
       <div className="min-w-0">
-        <p className="truncate text-[11px] font-medium uppercase text-muted-foreground">{label}</p>
-        <p className="truncate text-lg font-semibold">{value}</p>
+        <p className="truncate text-[11px] font-light text-muted-foreground">{label}</p>
+        <p className="truncate text-lg font-normal">{value}</p>
         {subValue && <p className="truncate text-xs text-muted-foreground">{subValue}</p>}
       </div>
     </div>
@@ -210,7 +210,7 @@ function MetricBlock({
 
 function EmptyState({ message }: { message: string }) {
   return (
-    <div className="flex min-h-[180px] items-center justify-center rounded-md border border-dashed border-white/[0.08] bg-white/[0.018] px-4 text-center text-sm text-muted-foreground">
+    <div className="flex min-h-[180px] items-center justify-center rounded-[8px] border border-dashed border-[var(--app-border)] bg-[var(--app-surface-soft)] px-4 text-center text-[12px] font-light text-muted-foreground">
       {message}
     </div>
   );
@@ -255,7 +255,7 @@ function CreativeRow({ creative, maxLeads }: { creative: MetaCreativeAsset; maxL
         <span className="ml-auto h-8 w-8" />
       )}
       <div className="col-span-7 pl-8 pr-2">
-        <Progress value={leadShare} className="h-1.5 bg-white/[0.045]" />
+        <Progress value={leadShare} className="h-1.5 bg-[var(--app-surface-hover)]" />
       </div>
     </div>
   );
@@ -295,7 +295,7 @@ function CampaignAccordion({ campaign }: { campaign: MetaCampaignPerformance }) 
         <div className="grid w-full grid-cols-[minmax(260px,1fr)_90px_90px_90px_90px_90px_82px] items-center gap-3 text-left text-sm">
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
-              <span className="truncate font-semibold">{campaign.name}</span>
+              <span className="truncate font-normal">{campaign.name}</span>
               <CampaignStatusBadge status={campaign.status} />
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -311,7 +311,7 @@ function CampaignAccordion({ campaign }: { campaign: MetaCampaignPerformance }) 
           <span className="text-right">{formatCurrency(campaign.cpl)}</span>
           <span className="text-right">{formatPercent(campaign.ctr)}</span>
           <span className="text-right">{formatPercent(campaign.hookRate)}</span>
-          <span className="text-right font-semibold text-emerald-500">{formatNumber(campaign.sales)}</span>
+          <span className="text-right font-normal text-emerald-500">{formatNumber(campaign.sales)}</span>
         </div>
       </AccordionTrigger>
       <AccordionContent className="pb-0">
@@ -404,7 +404,7 @@ export function MetaCampaignDashboard({ filters }: MetaCampaignDashboardProps) {
         <div className="app-card-soft p-4">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
-              <h3 className="text-sm font-semibold">Evolução do período</h3>
+              <h3 className="text-[14px] font-normal">Evolução do período</h3>
               <p className="text-xs text-muted-foreground">Leads e CPL diário</p>
             </div>
           </div>
@@ -444,14 +444,14 @@ export function MetaCampaignDashboard({ filters }: MetaCampaignDashboardProps) {
 
         <div className="app-card-soft p-4">
           <div className="mb-3">
-            <h3 className="text-sm font-semibold">Top criativos</h3>
+            <h3 className="text-[14px] font-normal">Top criativos</h3>
             <p className="text-xs text-muted-foreground">Score por lead, venda e CPL</p>
           </div>
           {creatives.length > 0 ? (
             <div className="space-y-3">
             {creatives.slice(0, 4).map((creative, index) => (
               <div key={creative.id} className="flex items-center gap-3">
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-white/[0.055] text-xs font-semibold">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] text-[12px] font-light">
                   {index + 1}
                 </div>
                 <MetaCreativePreview creative={creative} showAction={false} size="sm" />
@@ -475,8 +475,8 @@ export function MetaCampaignDashboard({ filters }: MetaCampaignDashboardProps) {
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-md border border-white/[0.055] bg-white/[0.025]">
-        <div className="grid min-w-[860px] grid-cols-[minmax(260px,1fr)_90px_90px_90px_90px_90px_82px] gap-3 bg-white/[0.035] px-3 py-2 text-xs font-medium text-muted-foreground">
+      <div className="overflow-x-auto rounded-[8px] border border-[var(--app-border)] bg-[var(--app-surface-solid)]">
+        <div className="grid min-w-[860px] grid-cols-[minmax(260px,1fr)_90px_90px_90px_90px_90px_82px] gap-3 bg-[var(--app-surface-soft)] px-3 py-2 text-[12px] font-light text-muted-foreground">
           <span>Campanha / conjunto / criativo</span>
           <span className="text-right">Gasto</span>
           <span className="text-right">Leads</span>

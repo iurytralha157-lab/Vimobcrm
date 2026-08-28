@@ -15,6 +15,7 @@ import {
   updateTeamBodySchema,
   validateDomainResponse,
 } from '@/lib/validation'
+import { chunkUniqueTeamMemberIDs } from '@/lib/teams/member-availability-batches'
 import { vimobAPIRequest } from './vimob-client'
 
 type Envelope<T> = {
@@ -79,6 +80,15 @@ export interface MemberAvailability {
 export interface TeamMemberInput {
   userId: string
   isLeader?: boolean
+  availability?: TeamMemberAvailabilityInput[]
+}
+
+export type TeamMemberAvailabilityInput = {
+  day_of_week: number
+  start_time?: string | null
+  end_time?: string | null
+  is_all_day?: boolean
+  is_active?: boolean
 }
 
 export type CreateTeamInput = {
@@ -117,6 +127,14 @@ export const teamsAPI = {
       },
     })
     validateDomainResponse(apiTeamListResponseSchema, response, 'teams.list')
+    return response.data
+  },
+
+  async getTeam(id: string, organizationId?: string | null) {
+    const response = await vimobAPIRequest<Envelope<Team>>(`/v1/teams/${id}`, {
+      organizationId,
+    })
+    validateDomainResponse(apiTeamResponseSchema, response, 'teams.get')
     return response.data
   },
 
@@ -215,15 +233,24 @@ export const teamsAPI = {
   async listMemberAvailability(
     options?: { teamMemberId?: string | null; teamMemberIds?: string[]; organizationId?: string | null },
   ) {
-    const response = await vimobAPIRequest<Envelope<MemberAvailability[]>>('/v1/member-availability', {
-      organizationId: options?.organizationId,
-      query: {
-        teamMemberId: options?.teamMemberId,
-        teamMemberIds: options?.teamMemberIds?.join(','),
-      },
-    })
-    validateDomainResponse(apiAvailabilityListResponseSchema, response, 'teams.availability.list')
-    return response.data
+    const batches = chunkUniqueTeamMemberIDs(options?.teamMemberIds)
+    const responses = await Promise.all(
+      batches.map((teamMemberIds) =>
+        vimobAPIRequest<Envelope<MemberAvailability[]>>('/v1/member-availability', {
+          organizationId: options?.organizationId,
+          query: {
+            teamMemberId: options?.teamMemberId,
+            teamMemberIds: teamMemberIds?.join(','),
+          },
+        }),
+      ),
+    )
+    const items = new Map<string, MemberAvailability>()
+    for (const response of responses) {
+      validateDomainResponse(apiAvailabilityListResponseSchema, response, 'teams.availability.list')
+      for (const availability of response.data) items.set(availability.id, availability)
+    }
+    return [...items.values()]
   },
 
   async updateMemberAvailability(input: AvailabilityInput, organizationId?: string | null) {

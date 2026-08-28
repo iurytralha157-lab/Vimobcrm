@@ -5,6 +5,7 @@ import {
   timestampSchema,
   uuidSchema,
 } from './common'
+import { normalizePhoneToE164 } from '../phone-utils'
 
 const optionalText = (max: number) => z.string().trim().max(max).nullish()
 const optionalUUID = uuidSchema.nullish()
@@ -13,6 +14,21 @@ const optionalEmailSchema = z.union([
   z.literal(''),
   z.null(),
 ]).optional().transform((value) => value || undefined)
+const leadPhoneSchema = z.string().trim().max(40).transform((value, ctx) => {
+  if (!value) return value
+
+  const normalized = normalizePhoneToE164(value)
+  if (!normalized) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Telefone invalido. Use DDI e numero, por exemplo +5511999999999',
+    })
+    return z.NEVER
+  }
+
+  return normalized
+})
+const optionalLeadPhoneSchema = leadPhoneSchema.nullish()
 const decimalStringSchema = z.string().trim().max(40).refine(
   (value) => value === '' || Number.isFinite(Number(value)),
   'Valor decimal invalido',
@@ -36,7 +52,7 @@ const leadProfileSchema = z.object({
 export const leadCreateInputSchema = z.object({
   name: z.string().trim().min(2).max(180),
   email: optionalEmailSchema,
-  phone: optionalText(40),
+  phone: optionalLeadPhoneSchema,
   source: optionalText(80),
   message: optionalText(2_000),
   feedback: optionalText(2_000),
@@ -79,7 +95,7 @@ export const leadCreateInputSchema = z.object({
 export const leadUpdateInputSchema = z.object({
   name: z.string().trim().min(2).max(180).optional(),
   email: z.string().trim().email().max(254).nullable().optional(),
-  phone: optionalText(40),
+  phone: optionalLeadPhoneSchema,
   source: optionalText(80),
   message: optionalText(2_000),
   propertyCode: optionalText(80),

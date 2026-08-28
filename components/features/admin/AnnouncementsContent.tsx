@@ -1,7 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { CalendarClock, CheckCircle2, Loader2, Megaphone, Send, Users, X } from "lucide-react";
+import { useMemo, useState, type MouseEvent } from "react";
+import {
+  AlertCircle,
+  CalendarClock,
+  CheckCircle2,
+  Loader2,
+  Megaphone,
+  RefreshCw,
+  Send,
+  Users,
+  X,
+} from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +27,21 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { useAnnouncements, type Announcement, type AnnouncementTargetType } from "@/hooks/use-announcements";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  useAnnouncements,
+  type Announcement,
+  type AnnouncementTargetType,
+} from "@/hooks/use-announcements";
 import { adminAPI } from "@/lib/api/admin";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -66,18 +90,31 @@ const TARGET_LABELS: Record<string, string> = {
 
 function toIsoFromLocalInput(value: string) {
   if (!value) return null;
-  return new Date(value).toISOString();
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
 function formatDateTime(value?: string | null) {
   if (!value) return "--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--";
   return new Intl.DateTimeFormat("pt-BR", {
     day: "2-digit",
     month: "2-digit",
     year: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  }).format(date);
+}
+
+function isSafeAnnouncementURL(value: string) {
+  if (value.startsWith("/") && !value.startsWith("//")) return true;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function getUserLabel(user?: UserOption) {
@@ -87,8 +124,17 @@ function getUserLabel(user?: UserOption) {
 
 function getAnnouncementState(announcement: Announcement) {
   const now = new Date();
-  const startsAt = announcement.starts_at ? new Date(announcement.starts_at) : null;
+  const startsAt = announcement.starts_at
+    ? new Date(announcement.starts_at)
+    : null;
   const endsAt = announcement.ends_at ? new Date(announcement.ends_at) : null;
+
+  if (
+    (startsAt && Number.isNaN(startsAt.getTime())) ||
+    (endsAt && Number.isNaN(endsAt.getTime()))
+  ) {
+    return { label: "Data inválida", tone: "warning" };
+  }
 
   if (!announcement.is_active) return { label: "Inativo", tone: "muted" };
   if (startsAt && startsAt > now) return { label: "Agendado", tone: "warning" };
@@ -103,10 +149,11 @@ function StateBadge({ announcement }: { announcement: Announcement }) {
     <Badge
       variant="outline"
       className={cn(
-        "border-0 px-2.5 py-1 font-medium",
-        state.tone === "active" && "bg-[#FF4529] text-white",
-        state.tone === "warning" && "bg-amber-500 text-white",
-        state.tone === "muted" && "bg-[var(--app-surface-soft)] text-muted-foreground",
+        "rounded-[4px] border-0 px-2.5 py-1 text-[11px] font-light",
+        state.tone === "active" && "bg-primary/50 text-primary-foreground",
+        state.tone === "warning" && "bg-amber-500/15 text-amber-600 dark:text-amber-300",
+        state.tone === "muted" &&
+          "bg-[var(--app-surface-soft)] text-muted-foreground",
       )}
     >
       {state.label}
@@ -121,8 +168,18 @@ function DurationLabel({ seconds }: { seconds: number | null }) {
 }
 
 export function AnnouncementsContent() {
-  const { allAnnouncements = [], publish, deactivate, isLoading } = useAnnouncements();
+  const {
+    allAnnouncements = [],
+    publish,
+    deactivate,
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+  } = useAnnouncements();
   const [form, setForm] = useState<AnnouncementForm>(EMPTY_FORM);
+  const [announcementToDeactivate, setAnnouncementToDeactivate] =
+    useState<Announcement | null>(null);
 
   const usersQuery = useQuery({
     queryKey: ["admin-announcement-users"],
@@ -130,7 +187,9 @@ export function AnnouncementsContent() {
       const users = await adminAPI.listUsers();
       return users
         .filter((user) => user.is_active === true)
-        .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""))) as UserOption[];
+        .sort((a, b) =>
+          String(a.name || "").localeCompare(String(b.name || "")),
+        ) as UserOption[];
     },
     staleTime: 60_000,
   });
@@ -141,7 +200,10 @@ export function AnnouncementsContent() {
     return map;
   }, [usersQuery.data]);
 
-  const updateForm = <K extends keyof AnnouncementForm>(key: K, value: AnnouncementForm[K]) => {
+  const updateForm = <K extends keyof AnnouncementForm>(
+    key: K,
+    value: AnnouncementForm[K],
+  ) => {
     setForm((current) => ({ ...current, [key]: value }));
   };
 
@@ -151,8 +213,18 @@ export function AnnouncementsContent() {
     const endsAt = toIsoFromLocalInput(form.endsAt);
     const displayDurationSeconds = Number(form.displayDurationSeconds || 0);
 
+    if (startsAt === undefined || endsAt === undefined) {
+      toast.error("Informe datas e horários válidos.");
+      return;
+    }
+
     if (!message) {
       toast.error("Escreva o comunicado antes de publicar.");
+      return;
+    }
+
+    if (message.length > 500) {
+      toast.error("O comunicado pode ter no máximo 500 caracteres.");
       return;
     }
 
@@ -161,36 +233,75 @@ export function AnnouncementsContent() {
       return;
     }
 
+    const buttonText = form.buttonText.trim();
+    const buttonUrl = form.buttonUrl.trim();
+    if (Boolean(buttonText) !== Boolean(buttonUrl)) {
+      toast.error("Preencha o texto e a URL do botão, ou deixe os dois vazios.");
+      return;
+    }
+    if (buttonUrl && !isSafeAnnouncementURL(buttonUrl)) {
+      toast.error("Use uma URL HTTP(S) válida ou um caminho interno iniciado por /.");
+      return;
+    }
+
     if (startsAt && endsAt && new Date(endsAt) <= new Date(startsAt)) {
       toast.error("O término precisa ser depois do início.");
       return;
     }
 
-    await publish.mutateAsync({
-      message,
-      buttonText: form.buttonText.trim() || undefined,
-      buttonUrl: form.buttonUrl.trim() || undefined,
-      showBanner: form.showBanner,
-      sendNotification: form.sendNotification,
-      targetType: form.targetType,
-      targetUserIds: form.targetType === "specific" ? [form.targetUserId] : [],
-      startsAt,
-      endsAt,
-      displayDurationSeconds: displayDurationSeconds > 0 ? displayDurationSeconds : null,
-    });
+    if (startsAt && form.sendNotification) {
+      toast.error(
+        "Para enviar também como notificação, publique o comunicado imediatamente.",
+      );
+      return;
+    }
 
-    setForm(EMPTY_FORM);
+    try {
+      await publish.mutateAsync({
+        message,
+        buttonText: buttonText || undefined,
+        buttonUrl: buttonUrl || undefined,
+        showBanner: form.showBanner,
+        sendNotification: form.sendNotification,
+        targetType: form.targetType,
+        targetUserIds: form.targetType === "specific" ? [form.targetUserId] : [],
+        startsAt,
+        endsAt,
+        displayDurationSeconds:
+          displayDurationSeconds > 0 ? displayDurationSeconds : null,
+      });
+
+      setForm(EMPTY_FORM);
+    } catch {
+      // The mutation owns the toast. Keep the draft so publishing can be retried.
+    }
+  };
+
+  const handleDeactivate = async (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    if (!announcementToDeactivate) return;
+
+    try {
+      await deactivate.mutateAsync(announcementToDeactivate.id);
+      setAnnouncementToDeactivate(null);
+    } catch {
+      // The mutation owns the toast. Keep confirmation open so it can be retried.
+    }
   };
 
   return (
     <div className="space-y-4">
       <section className="app-card overflow-hidden">
-        <div className="bg-[#FF4529] px-4 py-3 text-white">
+        <div className="bg-primary/50 px-4 py-3 text-primary-foreground">
           <div className="flex items-center gap-3">
             <Megaphone className="h-5 w-5 shrink-0" strokeWidth={1.8} />
             <div className="min-w-0">
-              <h2 className="text-base font-semibold">Faixa superior rotativa</h2>
-              <p className="truncate text-sm text-white/80">Comunicados exibidos apenas para usuários logados.</p>
+              <h2 className="text-[14px] font-normal">
+                Faixa superior rotativa
+              </h2>
+              <p className="truncate text-[12px] font-light text-primary-foreground/80">
+                Comunicados exibidos apenas para usuários logados.
+              </p>
             </div>
           </div>
         </div>
@@ -202,6 +313,7 @@ export function AnnouncementsContent() {
               <Textarea
                 value={form.message}
                 onChange={(event) => updateForm("message", event.target.value)}
+                maxLength={500}
                 placeholder="Ex: Hoje teremos manutenção programada às 22h."
                 className="min-h-24 border-0 bg-[var(--app-surface-soft)]"
               />
@@ -212,14 +324,15 @@ export function AnnouncementsContent() {
                 <Label>Destino</Label>
                 <Select
                   value={form.targetType}
-                  onValueChange={(value) => updateForm("targetType", value as AnnouncementTargetType)}
+                  onValueChange={(value) =>
+                    updateForm("targetType", value as AnnouncementTargetType)
+                  }
                 >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Todos</SelectItem>
-                    <SelectItem value="brokers">Corretores</SelectItem>
                     <SelectItem value="specific">Usuário específico</SelectItem>
                   </SelectContent>
                 </Select>
@@ -227,7 +340,12 @@ export function AnnouncementsContent() {
 
               <label className="app-card-soft flex items-center justify-between gap-3 px-3 py-2">
                 <span className="text-sm">Faixa no topo</span>
-                <Switch checked={form.showBanner} onCheckedChange={(checked) => updateForm("showBanner", checked)} />
+                <Switch
+                  checked={form.showBanner}
+                  onCheckedChange={(checked) =>
+                    updateForm("showBanner", checked)
+                  }
+                />
               </label>
             </div>
 
@@ -236,8 +354,10 @@ export function AnnouncementsContent() {
                 <Label>Usuário</Label>
                 <Select
                   value={form.targetUserId || "none"}
-                  onValueChange={(value) => updateForm("targetUserId", value === "none" ? "" : value)}
-                  disabled={usersQuery.isLoading}
+                  onValueChange={(value) =>
+                    updateForm("targetUserId", value === "none" ? "" : value)
+                  }
+                  disabled={usersQuery.isLoading || usersQuery.isError}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Escolha um usuário" />
@@ -251,6 +371,20 @@ export function AnnouncementsContent() {
                     ))}
                   </SelectContent>
                 </Select>
+                {usersQuery.isError && (
+                  <div className="flex items-center justify-between gap-2 rounded-[6px] bg-destructive/10 px-3 py-2 text-[12px] font-light text-destructive">
+                    <span>Não foi possível carregar os usuários.</span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-7 shrink-0 rounded-[6px] px-2 text-[12px] font-light"
+                      disabled={usersQuery.isFetching}
+                      onClick={() => void usersQuery.refetch()}
+                    >
+                      Tentar novamente
+                    </Button>
+                  </div>
+                )}
               </div>
             ) : null}
 
@@ -260,7 +394,9 @@ export function AnnouncementsContent() {
                 <Input
                   type="datetime-local"
                   value={form.startsAt}
-                  onChange={(event) => updateForm("startsAt", event.target.value)}
+                  onChange={(event) =>
+                    updateForm("startsAt", event.target.value)
+                  }
                   className="border-0 bg-[var(--app-surface-soft)]"
                 />
               </div>
@@ -277,7 +413,9 @@ export function AnnouncementsContent() {
                 <Label>Tempo na tela</Label>
                 <Select
                   value={form.displayDurationSeconds}
-                  onValueChange={(value) => updateForm("displayDurationSeconds", value)}
+                  onValueChange={(value) =>
+                    updateForm("displayDurationSeconds", value)
+                  }
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -299,7 +437,10 @@ export function AnnouncementsContent() {
                 <Label>Texto do botão</Label>
                 <Input
                   value={form.buttonText}
-                  onChange={(event) => updateForm("buttonText", event.target.value)}
+                  onChange={(event) =>
+                    updateForm("buttonText", event.target.value)
+                  }
+                  maxLength={48}
                   placeholder="Ver detalhes"
                   className="border-0 bg-[var(--app-surface-soft)]"
                 />
@@ -308,39 +449,51 @@ export function AnnouncementsContent() {
                 <Label>URL do botão</Label>
                 <Input
                   value={form.buttonUrl}
-                  onChange={(event) => updateForm("buttonUrl", event.target.value)}
+                  onChange={(event) =>
+                    updateForm("buttonUrl", event.target.value)
+                  }
+                  maxLength={2048}
                   placeholder="https://..."
                   className="border-0 bg-[var(--app-surface-soft)]"
                 />
               </div>
             </div>
 
-            <div className="flex flex-col gap-3 border-t border-white/[0.045] pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 border-t border-[var(--app-border)] pt-4 sm:flex-row sm:items-center sm:justify-between">
               <label className="flex items-center gap-3 text-sm text-muted-foreground">
                 <Switch
                   checked={form.sendNotification}
-                  onCheckedChange={(checked) => updateForm("sendNotification", checked)}
+                  onCheckedChange={(checked) =>
+                    updateForm("sendNotification", checked)
+                  }
                 />
                 Enviar também como notificação
               </label>
               <Button
-                className="bg-[#FF4529] text-white hover:bg-[#FF4529]/90"
+                className="h-9 rounded-[6px] bg-primary/50 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
                 onClick={handlePublish}
                 disabled={publish.isPending}
               >
-                {publish.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                {publish.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
                 Publicar comunicado
               </Button>
             </div>
           </div>
 
           <aside className="rounded-[6px] bg-[var(--app-surface-soft)] p-4">
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Prévia</p>
-            <div className="mt-3 overflow-hidden rounded-[6px] bg-[#FF4529] text-white shadow-sm">
+            <p className="text-[12px] font-light text-muted-foreground">
+              Prévia
+            </p>
+            <div className="mt-3 overflow-hidden rounded-[6px] bg-primary/50 text-primary-foreground shadow-none">
               <div className="flex min-h-10 items-center gap-2 px-3 py-2 text-sm">
                 <Megaphone className="h-4 w-4 shrink-0" strokeWidth={1.8} />
-                <p className="min-w-0 flex-1 truncate font-medium">
-                  {form.message.trim() || "Seu comunicado aparece aqui em uma linha rotativa."}
+                <p className="min-w-0 flex-1 truncate font-light">
+                  {form.message.trim() ||
+                    "Seu comunicado aparece aqui em uma linha rotativa."}
                 </p>
                 <X className="h-4 w-4 shrink-0" strokeWidth={1.8} />
               </div>
@@ -357,7 +510,9 @@ export function AnnouncementsContent() {
               </div>
               <div className="flex items-center gap-2 text-muted-foreground">
                 <CheckCircle2 className="h-4 w-4" strokeWidth={1.7} />
-                <DurationLabel seconds={Number(form.displayDurationSeconds) || null} />
+                <DurationLabel
+                  seconds={Number(form.displayDurationSeconds) || null}
+                />
               </div>
             </div>
           </aside>
@@ -365,10 +520,12 @@ export function AnnouncementsContent() {
       </section>
 
       <section className="app-card overflow-hidden">
-        <div className="flex items-center justify-between gap-3 border-b border-white/[0.045] px-4 py-3">
+        <div className="flex items-center justify-between gap-3 border-b border-[var(--app-border)] px-4 py-3">
           <div>
-            <h2 className="text-base font-semibold">Comunicados programados</h2>
-            <p className="text-sm text-muted-foreground">{allAnnouncements.length} registros exibidos</p>
+            <h2 className="text-[14px] font-normal">Comunicados programados</h2>
+            <p className="text-[12px] font-light text-muted-foreground">
+              {allAnnouncements.length} registros exibidos
+            </p>
           </div>
         </div>
 
@@ -376,25 +533,52 @@ export function AnnouncementsContent() {
           <div className="flex items-center justify-center p-8 text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin" />
           </div>
+        ) : isError && allAnnouncements.length === 0 ? (
+          <div className="flex flex-col items-center justify-center p-8 text-center">
+            <span className="grid h-9 w-9 place-items-center rounded-[6px] bg-destructive/10 text-destructive">
+              <AlertCircle className="h-4 w-4" aria-hidden="true" />
+            </span>
+            <p className="mt-3 text-[14px] font-normal">Não foi possível carregar os comunicados</p>
+            <Button
+              type="button"
+              className="mt-3 h-8 rounded-[6px] bg-primary/50 px-2.5 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
+              disabled={isFetching}
+              onClick={() => void refetch()}
+            >
+              <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", isFetching && "animate-spin")} aria-hidden="true" />
+              Tentar novamente
+            </Button>
+          </div>
         ) : allAnnouncements.length === 0 ? (
-          <div className="p-6 text-sm text-muted-foreground">Nenhum comunicado criado ainda.</div>
+          <div className="p-6 text-sm text-muted-foreground">
+            Nenhum comunicado criado ainda.
+          </div>
         ) : (
-          <div className="divide-y divide-white/[0.045]">
+          <div className="divide-y divide-[var(--app-border)]">
             {allAnnouncements.map((announcement) => {
               const targetUsers = (announcement.target_user_ids || [])
                 .map((id) => usersById.get(id))
                 .filter((user): user is UserOption => Boolean(user));
 
               return (
-                <div key={announcement.id} className="grid gap-3 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_180px_220px_auto] lg:items-center">
+                <div
+                  key={announcement.id}
+                  className="grid gap-3 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_180px_220px_auto] lg:items-center"
+                >
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <StateBadge announcement={announcement} />
-                      <Badge variant="outline" className="border-0 bg-[var(--app-surface-soft)] text-muted-foreground">
-                        {TARGET_LABELS[announcement.target_type] || announcement.target_type}
+                      <Badge
+                        variant="outline"
+                        className="border-0 bg-[var(--app-surface-soft)] text-muted-foreground"
+                      >
+                        {TARGET_LABELS[announcement.target_type] ||
+                          announcement.target_type}
                       </Badge>
                     </div>
-                    <p className="mt-2 truncate text-sm font-medium">{announcement.message}</p>
+                    <p className="mt-2 truncate text-[14px] font-normal">
+                      {announcement.message}
+                    </p>
                     {targetUsers.length > 0 ? (
                       <p className="mt-1 truncate text-xs text-muted-foreground">
                         {targetUsers.map(getUserLabel).join(", ")}
@@ -403,18 +587,28 @@ export function AnnouncementsContent() {
                   </div>
 
                   <div className="text-sm text-muted-foreground">
-                    <p>{formatDateTime(announcement.starts_at) === "--" ? "Imediato" : formatDateTime(announcement.starts_at)}</p>
-                    <p>{formatDateTime(announcement.ends_at) === "--" ? "Sem término" : formatDateTime(announcement.ends_at)}</p>
+                    <p>
+                      {formatDateTime(announcement.starts_at) === "--"
+                        ? "Imediato"
+                        : formatDateTime(announcement.starts_at)}
+                    </p>
+                    <p>
+                      {formatDateTime(announcement.ends_at) === "--"
+                        ? "Sem término"
+                        : formatDateTime(announcement.ends_at)}
+                    </p>
                   </div>
 
                   <div className="text-sm text-muted-foreground">
-                    <DurationLabel seconds={announcement.display_duration_seconds} />
+                    <DurationLabel
+                      seconds={announcement.display_duration_seconds}
+                    />
                   </div>
 
                   <Button
                     variant="outline"
                     className="border-0 bg-[var(--app-surface-soft)]"
-                    onClick={() => deactivate.mutate(announcement.id)}
+                    onClick={() => setAnnouncementToDeactivate(announcement)}
                     disabled={!announcement.is_active || deactivate.isPending}
                   >
                     Desativar
@@ -425,6 +619,42 @@ export function AnnouncementsContent() {
           </div>
         )}
       </section>
+
+      <AlertDialog
+        open={Boolean(announcementToDeactivate)}
+        onOpenChange={(open) => {
+          if (!open && !deactivate.isPending) setAnnouncementToDeactivate(null);
+        }}
+      >
+        <AlertDialogContent className="w-[calc(100vw-24px)] rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none sm:max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-[14px] font-normal">
+              Desativar comunicado?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-[12px] font-light leading-[18px]">
+              O comunicado deixa de aparecer imediatamente, mas permanece no histórico.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              className="h-9 rounded-[6px] text-[12px] font-light"
+              disabled={deactivate.isPending}
+            >
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="h-9 rounded-[6px] bg-destructive text-[12px] font-light text-destructive-foreground hover:bg-destructive/90"
+              disabled={deactivate.isPending}
+              onClick={(event) => void handleDeactivate(event)}
+            >
+              {deactivate.isPending && (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              )}
+              Desativar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

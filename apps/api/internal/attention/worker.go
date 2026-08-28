@@ -27,6 +27,7 @@ type candidateInstance struct {
 	PolicyVersion     int             `json:"policyVersion"`
 	PolicyType        string          `json:"policyType"`
 	PolicyStatus      string          `json:"policyStatus"`
+	PolicyUpdatedAt   time.Time       `json:"policyUpdatedAt"`
 	CycleKey          string          `json:"cycleKey"`
 	AssignmentCycleID *string         `json:"assignmentCycleId"`
 	StageCycleID      *string         `json:"stageCycleId"`
@@ -35,6 +36,8 @@ type candidateInstance struct {
 	StageID           *string         `json:"stageId"`
 	BaselineAt        time.Time       `json:"baselineAt"`
 	LastActionAt      *time.Time      `json:"lastActionAt"`
+	DueAtOverride     *time.Time      `json:"dueAtOverride"`
+	WarningAtOverride *time.Time      `json:"warningAtOverride"`
 	ThresholdMinutes  int             `json:"thresholdMinutes"`
 	WarningMinutes    int             `json:"warningMinutes"`
 	BusinessOnly      bool            `json:"businessOnly"`
@@ -177,6 +180,7 @@ func (repo Repository) reconcileInstances(ctx context.Context, tx pgx.Tx) error 
 		      coalesce(os.engine_mode, 'shadow') <> 'enabled'
 		      or p.status <> 'enabled'
 		      or coalesce((i.metadata->>'historical_backfill')::boolean, false)
+		      or coalesce((i.metadata->>'grandfathered_shadow')::boolean, false)
 		    ),
 		    metadata = coalesce(i.metadata, '{}'::jsonb) || jsonb_build_object(
 		      'engine_mode_snapshot', coalesce(os.engine_mode, 'shadow'),
@@ -191,6 +195,7 @@ func (repo Repository) reconcileInstances(ctx context.Context, tx pgx.Tx) error 
 		    coalesce(os.engine_mode, 'shadow') <> 'enabled'
 		    or p.status <> 'enabled'
 		    or coalesce((i.metadata->>'historical_backfill')::boolean, false)
+		    or coalesce((i.metadata->>'grandfathered_shadow')::boolean, false)
 		  )
 	`); err != nil {
 		return err
@@ -222,12 +227,16 @@ func (repo Repository) reconcileInstances(ctx context.Context, tx pgx.Tx) error 
 		), candidates as (
 			select
 				p.organization_id, l.id as lead_id, p.id as policy_id, p.policy_key, p.version,
-				p.policy_type, p.status as policy_status,
+				p.policy_type, p.status as policy_status, p.updated_at as policy_updated_at,
+				case when p.stage_id is not null then 3 when p.pipeline_id is not null then 2 else 1 end as policy_scope_rank,
+				'unassigned:' || coalesce(last_cycle.id::text, l.attention_enrolled_at::text) as precedence_key,
 				'unassigned:' || coalesce(last_cycle.id::text, l.attention_enrolled_at::text) as cycle_key,
 				null::uuid as assignment_cycle_id, null::uuid as stage_cycle_id,
 				null::uuid as assigned_user_id, l.pipeline_id, l.stage_id,
 				coalesce(last_cycle.ended_at, l.attention_enrolled_at) as baseline_at,
 				null::timestamptz as last_action_at,
+				null::timestamptz as due_at_override,
+				null::timestamptz as warning_at_override,
 				p.threshold_minutes, p.warning_minutes, p.business_hours_only,
 				p.engine_mode, p.timezone, p.business_hours,
 				'{}'::jsonb as metadata
@@ -241,40 +250,133 @@ func (repo Repository) reconcileInstances(ctx context.Context, tx pgx.Tx) error 
 				limit 1
 			) last_cycle on true
 			where p.policy_type = 'unassigned'
-			  and l.attention_eligible = true and l.attention_enrolled_at is not null
+			  and (
+			    (l.attention_eligible = true and l.attention_enrolled_at is not null)
+			    or coalesce(p.config->>'source', '') = 'stage_operational_rules'
+			  )
 			  and l.deal_status = 'open' and l.assigned_user_id is null
 			  and (p.pipeline_id is null or p.pipeline_id = l.pipeline_id)
 			  and (p.stage_id is null or p.stage_id = l.stage_id)
+			  and (
+			    coalesce(p.config->>'source', '') <> 'stage_operational_rules'
+			    or coalesce(last_cycle.ended_at, l.attention_enrolled_at) >=
+			      coalesce(nullif(p.config->>'effective_from', '')::timestamptz, p.created_at)
+			  )
 			union all
 			select
 				p.organization_id, l.id, p.id, p.policy_key, p.version,
-				p.policy_type, p.status,
+				p.policy_type, p.status, p.updated_at,
+				case when p.stage_id is not null then 3 when p.pipeline_id is not null then 2 else 1 end,
 				'assignment:' || ac.id::text,
-				ac.id, null::uuid, ac.assigned_user_id, l.pipeline_id, l.stage_id,
-				ac.assigned_at, null::timestamptz,
+				'assignment:' || ac.id::text ||
+				  case
+				    when p.stage_id is not null then ':stage:' || current_stage.id::text
+				    else ''
+				  end,
+				ac.id,
+				case when p.stage_id is not null then current_stage.id else null::uuid end,
+				ac.assigned_user_id, l.pipeline_id, l.stage_id,
+				case
+				  when p.stage_id is not null then greatest(ac.assigned_at, current_stage.entered_at)
+				  else ac.assigned_at
+				end,
+				null::timestamptz,
+				null::timestamptz,
+				null::timestamptz,
 				p.threshold_minutes, p.warning_minutes, p.business_hours_only,
 				p.engine_mode, p.timezone, p.business_hours,
-				'{}'::jsonb
+				jsonb_build_object(
+				  'historical_backfill',
+				  (
+				    coalesce(
+				      case lower(nullif(ac.metadata->>'historical_backfill', ''))
+				        when 'true' then true
+				        when 'false' then false
+				        else null
+				      end,
+				      false
+				    )
+				    or (
+				      p.stage_id is not null
+				      and coalesce(
+				        case lower(nullif(current_stage.metadata->>'historical_backfill', ''))
+				          when 'true' then true
+				          when 'false' then false
+				          else null
+				        end,
+				        false
+				      )
+				    )
+				  )
+				)
 			from current_policies p
 			join public.leads l on l.organization_id = p.organization_id
 			join public.lead_assignment_cycles ac
 			  on ac.organization_id = l.organization_id and ac.lead_id = l.id and ac.ended_at is null
-			where p.policy_type = 'first_contact'
-			  and l.attention_eligible = true and l.attention_enrolled_at is not null
-			  and l.deal_status = 'open' and ac.first_human_outreach_at is null
+			left join lateral (
+				select sc.id, sc.entered_at, sc.metadata
+				from public.lead_stage_cycles sc
+				where sc.organization_id = l.organization_id
+				  and sc.lead_id = l.id
+				  and sc.pipeline_id = l.pipeline_id
+				  and sc.stage_id = l.stage_id
+				  and sc.exited_at is null
+				order by sc.entered_at desc, sc.id desc
+				limit 1
+			) current_stage on p.stage_id is not null
+			where p.policy_type in ('first_contact', 'first_effective_contact')
+			  and (
+			    (l.attention_eligible = true and l.attention_enrolled_at is not null)
+			    or coalesce(p.config->>'source', '') = 'stage_operational_rules'
+			  )
+			  and l.deal_status = 'open'
+			  and (
+			    (p.policy_type = 'first_contact' and ac.first_human_outreach_at is null)
+			    or (
+			      p.policy_type = 'first_effective_contact'
+			      and ac.first_effective_contact_at is null
+			    )
+			  )
 			  and (p.pipeline_id is null or p.pipeline_id = l.pipeline_id)
 			  and (p.stage_id is null or p.stage_id = l.stage_id)
+			  and (p.stage_id is null or current_stage.id is not null)
+			  and (
+			    coalesce(p.config->>'source', '') <> 'stage_operational_rules'
+			    or (
+			      case
+			        when p.stage_id is not null then greatest(ac.assigned_at, current_stage.entered_at)
+			        else ac.assigned_at
+			      end
+			    ) >= coalesce(
+			      nullif(p.config->>'effective_from', '')::timestamptz,
+			      p.created_at
+			    )
+			  )
 			union all
 			select
 				p.organization_id, l.id, p.id, p.policy_key, p.version,
-				p.policy_type, p.status,
+				p.policy_type, p.status, p.updated_at,
+				case when p.stage_id is not null then 3 when p.pipeline_id is not null then 2 else 1 end,
+				'stage:' || sc.id::text || ':' || p.policy_type,
 				'stage:' || sc.id::text || ':' || p.policy_type,
 				null::uuid, sc.id, l.assigned_user_id, sc.pipeline_id, sc.stage_id,
 				case when p.policy_type = 'stage_inactivity' then coalesce(last_action.occurred_at, sc.entered_at) else sc.entered_at end,
 				case when p.policy_type = 'stage_inactivity' then last_action.occurred_at else null end,
+				null::timestamptz,
+				null::timestamptz,
 				p.threshold_minutes, p.warning_minutes, p.business_hours_only,
 				p.engine_mode, p.timezone, p.business_hours,
-				'{}'::jsonb
+				jsonb_build_object(
+				  'historical_backfill',
+				  coalesce(
+				    case lower(nullif(sc.metadata->>'historical_backfill', ''))
+				      when 'true' then true
+				      when 'false' then false
+				      else null
+				    end,
+				    false
+				  )
+				)
 			from current_policies p
 			join public.leads l on l.organization_id = p.organization_id
 			join public.lead_stage_cycles sc
@@ -286,20 +388,52 @@ func (repo Repository) reconcileInstances(ctx context.Context, tx pgx.Tx) error 
 				order by f.occurred_at desc, f.id desc limit 1
 			) last_action on true
 			where p.policy_type in ('stage_inactivity', 'stage_age')
-			  and l.attention_eligible = true and l.attention_enrolled_at is not null
+			  and (
+			    (l.attention_eligible = true and l.attention_enrolled_at is not null)
+			    or coalesce(p.config->>'source', '') = 'stage_operational_rules'
+			  )
 			  and l.deal_status = 'open'
 			  and (p.pipeline_id is null or p.pipeline_id = sc.pipeline_id)
 			  and (p.stage_id is null or p.stage_id = sc.stage_id)
+			  and (
+			    coalesce(p.config->>'source', '') <> 'stage_operational_rules'
+			    or sc.entered_at >= coalesce(
+			      nullif(p.config->>'effective_from', '')::timestamptz,
+			      p.created_at
+			    )
+			  )
 			union all
 			select
 				p.organization_id, l.id, p.id, p.policy_key, p.version,
-				p.policy_type, p.status,
+				p.policy_type, p.status, p.updated_at,
+				case when p.stage_id is not null then 3 when p.pipeline_id is not null then 2 else 1 end,
+				'cadence_task:' || lt.id::text,
 				'cadence_task:' || lt.id::text,
 				null::uuid, ce.stage_cycle_id,
 				coalesce(lt.assigned_user_id, l.assigned_user_id), l.pipeline_id, l.stage_id,
-				lt.due_at - make_interval(mins => p.threshold_minutes),
+				lt.created_at,
 				null::timestamptz,
-				p.threshold_minutes, p.warning_minutes, p.business_hours_only,
+				lt.due_at,
+				lt.due_at - make_interval(
+				  mins => coalesce(
+				    case
+				      when nullif(lt.metadata->>'warning_minutes', '') ~ '^[0-9]+$'
+				        then (lt.metadata->>'warning_minutes')::integer
+				      else null
+				    end,
+				    p.warning_minutes
+				  )
+				),
+				p.threshold_minutes,
+				coalesce(
+				  case
+				    when nullif(lt.metadata->>'warning_minutes', '') ~ '^[0-9]+$'
+				      then (lt.metadata->>'warning_minutes')::integer
+				    else null
+				  end,
+				  p.warning_minutes
+				),
+				p.business_hours_only,
 				p.engine_mode, p.timezone, p.business_hours,
 				jsonb_build_object(
 				  'lead_task_id', lt.id,
@@ -308,7 +442,14 @@ func (repo Repository) reconcileInstances(ctx context.Context, tx pgx.Tx) error 
 				  'task_title', lt.title,
 				  'task_type', lt.type,
 				  'task_due_at', lt.due_at,
-				  'historical_backfill', coalesce((ce.metadata->>'historical_backfill')::boolean, false)
+				  'historical_backfill', coalesce(
+				    case lower(nullif(ce.metadata->>'historical_backfill', ''))
+				      when 'true' then true
+				      when 'false' then false
+				      else null
+				    end,
+				    false
+				  )
 				)
 			from current_policies p
 			join public.lead_tasks lt
@@ -319,14 +460,58 @@ func (repo Repository) reconcileInstances(ctx context.Context, tx pgx.Tx) error 
 			join public.leads l
 			  on l.id = lt.lead_id and l.organization_id = lt.organization_id
 			where p.policy_type = 'cadence_task'
-			  and l.attention_eligible = true and l.attention_enrolled_at is not null
+			  and (
+			    (l.attention_eligible = true and l.attention_enrolled_at is not null)
+			    or coalesce(p.config->>'source', '') = 'stage_operational_rules'
+			  )
 			  and l.deal_status = 'open'
 			  and (p.pipeline_id is null or p.pipeline_id = l.pipeline_id)
 			  and (p.stage_id is null or p.stage_id = l.stage_id)
+			  and (
+			    coalesce(p.config->>'source', '') <> 'stage_operational_rules'
+			    or lt.created_at >= coalesce(
+			      nullif(p.config->>'effective_from', '')::timestamptz,
+			      p.created_at
+			    )
+			  )
+		), preferred_candidates as (
+			select ranked.*
+			from (
+				select
+					c.*,
+					row_number() over (
+					  partition by c.organization_id, c.lead_id, c.policy_type, c.precedence_key
+					  order by c.policy_scope_rank desc, c.policy_id
+					) as precedence_rank
+				from candidates c
+			) ranked
+			where ranked.precedence_rank = 1
 		), eligible_candidates as (
 			select c.*
-			from candidates c
+			from preferred_candidates c
 			where c.baseline_at is not null
+			  and not exists (
+				select 1
+				from public.lead_attention_policies higher
+				where higher.organization_id = c.organization_id
+				  and higher.policy_type = c.policy_type
+				  and (
+				    higher.status in ('shadow', 'enabled')
+				    or (
+				      higher.status = 'paused'
+				      and coalesce(lower(higher.config->>'disabled_override') = 'true', false)
+				    )
+				  )
+				  and (higher.pipeline_id is null or higher.pipeline_id = c.pipeline_id)
+				  and (higher.stage_id is null or higher.stage_id = c.stage_id)
+				  and (
+				    case
+				      when higher.stage_id is not null then 3
+				      when higher.pipeline_id is not null then 2
+				      else 1
+				    end
+				  ) > c.policy_scope_rank
+			  )
 			  and not exists (
 				select 1
 				from public.lead_attention_instances i
@@ -347,10 +532,12 @@ func (repo Repository) reconcileInstances(ctx context.Context, tx pgx.Tx) error 
 			'organizationId', c.organization_id, 'leadId', c.lead_id,
 			'policyId', c.policy_id, 'policyKey', c.policy_key,
 			'policyVersion', c.version, 'policyType', c.policy_type, 'policyStatus', c.policy_status,
+			'policyUpdatedAt', c.policy_updated_at,
 			'cycleKey', c.cycle_key, 'assignmentCycleId', c.assignment_cycle_id,
 			'stageCycleId', c.stage_cycle_id, 'assignedUserId', c.assigned_user_id,
 			'pipelineId', c.pipeline_id, 'stageId', c.stage_id,
 			'baselineAt', c.baseline_at, 'lastActionAt', c.last_action_at,
+			'dueAtOverride', c.due_at_override, 'warningAtOverride', c.warning_at_override,
 			'thresholdMinutes', c.threshold_minutes, 'warningMinutes', c.warning_minutes,
 			'businessOnly', c.business_hours_only, 'engineMode', c.engine_mode,
 			'timezone', c.timezone, 'businessHours', c.business_hours,
@@ -385,12 +572,19 @@ func (repo Repository) reconcileInstances(ctx context.Context, tx pgx.Tx) error 
 
 	var inserts pgx.Batch
 	for _, candidate := range candidates {
-		dueAt, err := AddPolicyMinutes(candidate.BaselineAt, candidate.ThresholdMinutes, candidate.BusinessOnly, candidate.Timezone, candidate.BusinessHours)
-		if err != nil {
-			return fmt.Errorf("calculate attention due_at: %w", err)
+		var dueAt time.Time
+		if candidate.DueAtOverride != nil {
+			dueAt = candidate.DueAtOverride.UTC()
+		} else {
+			dueAt, err = AddPolicyMinutes(candidate.BaselineAt, candidate.ThresholdMinutes, candidate.BusinessOnly, candidate.Timezone, candidate.BusinessHours)
+			if err != nil {
+				return fmt.Errorf("calculate attention due_at: %w", err)
+			}
 		}
 		warningAt := dueAt
-		if candidate.WarningMinutes > 0 {
+		if candidate.WarningAtOverride != nil {
+			warningAt = candidate.WarningAtOverride.UTC()
+		} else if candidate.WarningMinutes > 0 {
 			warningAt, err = AddPolicyMinutes(candidate.BaselineAt, candidate.ThresholdMinutes-candidate.WarningMinutes, candidate.BusinessOnly, candidate.Timezone, candidate.BusinessHours)
 			if err != nil {
 				return fmt.Errorf("calculate attention warning_at: %w", err)
@@ -417,17 +611,23 @@ func (repo Repository) reconcileInstances(ctx context.Context, tx pgx.Tx) error 
 				assignment_cycle_id, stage_cycle_id, assigned_user_id, pipeline_id, stage_id,
 				baseline_at, last_qualifying_action_at, warning_at, due_at, next_evaluation_at,
 				status, shadow, metadata
-			) values (
+			)
+			select
 				$1::uuid, $2::uuid, $3::uuid, $4, $5,
 				$6::uuid, $7::uuid, $8::uuid, $9::uuid, $10::uuid,
 				$11, $12, $13, $14, $15,
 				'monitoring', $16, $17::jsonb
-			)
+			from public.lead_attention_policies current_policy
+			where current_policy.organization_id = $1::uuid
+			  and current_policy.id = $3::uuid
+			  and current_policy.version = $4
+			  and current_policy.updated_at = $18::timestamptz
+			  and current_policy.status in ('shadow', 'enabled')
 			on conflict (policy_id, lead_id, cycle_key) do nothing
 		`, candidate.OrganizationID, candidate.LeadID, candidate.PolicyID, candidate.PolicyVersion, candidate.CycleKey,
 			nullableString(candidate.AssignmentCycleID), nullableString(candidate.StageCycleID), nullableString(candidate.AssignedUserID), nullableString(candidate.PipelineID), nullableString(candidate.StageID),
 			candidate.BaselineAt, nullableTime(candidate.LastActionAt), warningAt, dueAt, nextAt,
-			shadow, jsonValue(metadata),
+			shadow, jsonValue(metadata), candidate.PolicyUpdatedAt,
 		)
 	}
 	if len(candidates) == 0 {
@@ -447,16 +647,34 @@ func (repo Repository) resolveSatisfiedInstances(ctx context.Context, tx pgx.Tx)
 	_, err := tx.Exec(ctx, `
 		with resolved as (
 			update public.lead_attention_instances i
-			set status = case when not l.attention_eligible then 'cancelled' else 'resolved' end,
+			set status = case
+			      when not (
+			        (l.attention_eligible = true and l.attention_enrolled_at is not null)
+			        or coalesce(p.config->>'source', '') = 'stage_operational_rules'
+			      ) then 'cancelled'
+			      when p.status not in ('shadow', 'enabled') then 'cancelled'
+			      else 'resolved'
+			    end,
 			    resolved_at = now(),
 			    resolved_reason = case
-			      when not l.attention_eligible then 'ineligible'
+			      when not (
+			        (l.attention_eligible = true and l.attention_enrolled_at is not null)
+			        or coalesce(p.config->>'source', '') = 'stage_operational_rules'
+			      ) then 'ineligible'
+			      when p.status not in ('shadow', 'enabled') then 'policy_inactive'
 			      when l.deal_status in ('won', 'lost') then l.deal_status
+			      when (p.pipeline_id is not null and p.pipeline_id is distinct from l.pipeline_id)
+			        or (p.stage_id is not null and p.stage_id is distinct from l.stage_id)
+			        then 'policy_scope_changed'
 			      when p.policy_type = 'unassigned' and l.assigned_user_id is not null then 'assigned'
 			      when p.policy_type = 'first_contact' and exists (
 			        select 1 from public.lead_assignment_cycles ac
 			        where ac.id = i.assignment_cycle_id and ac.first_human_outreach_at is not null
 			      ) then 'first_contact_completed'
+			      when p.policy_type = 'first_effective_contact' and exists (
+			        select 1 from public.lead_assignment_cycles ac
+			        where ac.id = i.assignment_cycle_id and ac.first_effective_contact_at is not null
+			      ) then 'first_effective_contact_completed'
 			      when p.policy_type = 'cadence_task' and not exists (
 			        select 1 from public.lead_tasks lt
 			        where lt.id = (i.metadata->>'lead_task_id')::uuid
@@ -482,12 +700,22 @@ func (repo Repository) resolveSatisfiedInstances(ctx context.Context, tx pgx.Tx)
 			  and p.id = i.policy_id and p.organization_id = i.organization_id
 			  and i.status not in ('resolved', 'redistributed', 'cancelled')
 			  and (
-				not l.attention_eligible
+				not (
+				  (l.attention_eligible = true and l.attention_enrolled_at is not null)
+				  or coalesce(p.config->>'source', '') = 'stage_operational_rules'
+				)
+				or p.status not in ('shadow', 'enabled')
 				or l.deal_status in ('won', 'lost')
+				or (p.pipeline_id is not null and p.pipeline_id is distinct from l.pipeline_id)
+				or (p.stage_id is not null and p.stage_id is distinct from l.stage_id)
 				or (p.policy_type = 'unassigned' and l.assigned_user_id is not null)
 				or (p.policy_type = 'first_contact' and exists (
 				  select 1 from public.lead_assignment_cycles ac
 				  where ac.id = i.assignment_cycle_id and ac.first_human_outreach_at is not null
+				))
+				or (p.policy_type = 'first_effective_contact' and exists (
+				  select 1 from public.lead_assignment_cycles ac
+				  where ac.id = i.assignment_cycle_id and ac.first_effective_contact_at is not null
 				))
 				or (p.policy_type = 'cadence_task' and not exists (
 				  select 1 from public.lead_tasks lt
@@ -544,12 +772,45 @@ func (repo Repository) claimDueInstances(ctx context.Context, tx pgx.Tx) ([]work
 			join public.leads l
 			  on l.organization_id = i.organization_id and l.id = i.lead_id
 			left join public.organization_attention_settings os on os.organization_id = i.organization_id
-			where l.attention_eligible = true and l.attention_enrolled_at is not null
+			where (
+			    (l.attention_eligible = true and l.attention_enrolled_at is not null)
+			    or coalesce(p.config->>'source', '') = 'stage_operational_rules'
+			  )
 			  and i.status in ('monitoring', 'warning', 'breached', 'escalated', 'acknowledged', 'exception')
 			  and i.next_evaluation_at <= now()
 			  and (i.snoozed_until is null or i.snoozed_until <= now())
 			  and coalesce(os.engine_mode, 'shadow') <> 'disabled'
 			  and p.status <> 'paused'
+			  and (p.pipeline_id is null or p.pipeline_id = l.pipeline_id)
+			  and (p.stage_id is null or p.stage_id = l.stage_id)
+			  and not exists (
+			    select 1
+			    from public.lead_attention_policies higher
+			    where higher.organization_id = p.organization_id
+			      and higher.policy_type = p.policy_type
+			      and (
+			        higher.status in ('shadow', 'enabled')
+			        or (
+			          higher.status = 'paused'
+			          and coalesce(lower(higher.config->>'disabled_override') = 'true', false)
+			        )
+			      )
+			      and (higher.pipeline_id is null or higher.pipeline_id = l.pipeline_id)
+			      and (higher.stage_id is null or higher.stage_id = l.stage_id)
+			      and (
+			        case
+			          when higher.stage_id is not null then 3
+			          when higher.pipeline_id is not null then 2
+			          else 1
+			        end
+			      ) > (
+			        case
+			          when p.stage_id is not null then 3
+			          when p.pipeline_id is not null then 2
+			          else 1
+			        end
+			      )
+			  )
 		)
 		select jsonb_build_object(
 			'id', i.id, 'organizationId', i.organization_id,
@@ -602,12 +863,45 @@ func (repo Repository) claimDueInstances(ctx context.Context, tx pgx.Tx) ([]work
 			where f.stage_cycle_id = i.stage_cycle_id and f.qualifies_stage_inactivity = true
 			order by f.occurred_at desc, f.id desc limit 1
 		) latest_action on true
-		where l.attention_eligible = true and l.attention_enrolled_at is not null
+		where (
+		    (l.attention_eligible = true and l.attention_enrolled_at is not null)
+		    or coalesce(p.config->>'source', '') = 'stage_operational_rules'
+		  )
 		  and i.status in ('monitoring', 'warning', 'breached', 'escalated', 'acknowledged', 'exception')
 		  and i.next_evaluation_at <= now()
 		  and (i.snoozed_until is null or i.snoozed_until <= now())
 		  and coalesce(os.engine_mode, 'shadow') <> 'disabled'
 		  and p.status <> 'paused'
+		  and (p.pipeline_id is null or p.pipeline_id = l.pipeline_id)
+		  and (p.stage_id is null or p.stage_id = l.stage_id)
+		  and not exists (
+		    select 1
+		    from public.lead_attention_policies higher
+		    where higher.organization_id = p.organization_id
+		      and higher.policy_type = p.policy_type
+		      and (
+		        higher.status in ('shadow', 'enabled')
+		        or (
+		          higher.status = 'paused'
+		          and coalesce(lower(higher.config->>'disabled_override') = 'true', false)
+		        )
+		      )
+		      and (higher.pipeline_id is null or higher.pipeline_id = l.pipeline_id)
+		      and (higher.stage_id is null or higher.stage_id = l.stage_id)
+		      and (
+		        case
+		          when higher.stage_id is not null then 3
+		          when higher.pipeline_id is not null then 2
+		          else 1
+		        end
+		      ) > (
+		        case
+		          when p.stage_id is not null then 3
+		          when p.pipeline_id is not null then 2
+		          else 1
+		        end
+		      )
+		  )
 		order by due.delivery_rank, due.group_rank, i.next_evaluation_at, i.id
 		for update of i skip locked
 		limit $1
@@ -679,8 +973,7 @@ func (repo Repository) processInstance(ctx context.Context, tx pgx.Tx, instance 
 		evaluation.Reminder = false
 	}
 
-	notify := evaluation.Notify && instance.EngineMode == "enabled" && !instance.Shadow &&
-		instance.NotificationsEnabled && instance.PolicyStatus != "shadow" && instance.PolicyStatus != "paused"
+	notify := shouldEmitAttentionNotification(instance, evaluation)
 	if evaluation.Reminder && instance.MaxReminders > 0 && instance.ReminderCount >= instance.MaxReminders {
 		notify = false
 	}
@@ -741,6 +1034,14 @@ func (repo Repository) processInstance(ctx context.Context, tx pgx.Tx, instance 
 		return err
 	}
 	return nil
+}
+
+func shouldEmitAttentionNotification(instance workerInstance, evaluation Evaluation) bool {
+	if strings.EqualFold(strings.TrimSpace(instance.PolicyType), "cadence_task") {
+		return false
+	}
+	return evaluation.Notify && instance.EngineMode == "enabled" && !instance.Shadow &&
+		instance.NotificationsEnabled && instance.PolicyStatus != "shadow" && instance.PolicyStatus != "paused"
 }
 
 func (repo Repository) resetInactivityBaseline(ctx context.Context, tx pgx.Tx, instance *workerInstance) error {

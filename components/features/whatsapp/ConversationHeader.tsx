@@ -3,6 +3,8 @@ import {
   Archive,
   ArrowRight,
   MoreVertical,
+  PanelRightClose,
+  PanelRightOpen,
   Phone,
   Trash2,
   User,
@@ -19,7 +21,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { formatPhoneForDisplay } from "@/lib/phone-utils";
+import {
+  formatWhatsAppContactLabel,
+  formatWhatsAppContactPhoneForDisplay,
+  normalizeWhatsAppContactPhoneToE164,
+} from "@/lib/phone-utils";
+import { getPipelineStageColorStyle } from "@/config/pipeline-stage-colors";
 import { cn } from "@/lib/utils";
 
 interface LeadTag {
@@ -67,17 +74,21 @@ export function ConversationHeader({
   pipelineName,
   stageName,
   stageColor,
+  remoteJid,
   onArchive,
   onDelete,
   onCreateLead,
+  onToggleLeadPanel,
+  showLeadPanel = false,
   canOperate = false,
   className,
 }: ConversationHeaderProps) {
-  const displayName =
-    contactName && contactName !== contactPhone
-      ? contactName
-      : formatPhoneForDisplay(contactPhone || "");
+  const formattedPhone = formatWhatsAppContactPhoneForDisplay(contactPhone, remoteJid);
+  const displayName = formatWhatsAppContactLabel(contactName, contactPhone, remoteJid);
+  const hasDistinctContactName = Boolean(contactName?.trim() && displayName !== formattedPhone);
   const hasLeadContext = Boolean(leadId);
+  const phoneHref = normalizeWhatsAppContactPhoneToE164(contactPhone, remoteJid) || "";
+  const stageColorStyle = getPipelineStageColorStyle(stageColor);
 
   const presenceIndicator = (() => {
     switch (contactPresence) {
@@ -100,9 +111,9 @@ export function ConversationHeader({
           </span>
         );
       default:
-        return contactName && contactName !== contactPhone ? (
+        return hasDistinctContactName && formattedPhone ? (
           <span className="truncate text-xs text-muted-foreground">
-            {formatPhoneForDisplay(contactPhone || "")}
+            {formattedPhone}
           </span>
         ) : null;
     }
@@ -125,7 +136,7 @@ export function ConversationHeader({
                 <Badge
                   variant="outline"
                   className="h-5 max-w-[130px] rounded-[5px] border-0 bg-[var(--app-surface-soft)] px-1.5 text-[10px] font-medium"
-                  style={stageColor ? { color: stageColor } : undefined}
+                  style={stageColorStyle}
                 >
                   <span className="truncate">{stageName}</span>
                 </Badge>
@@ -137,7 +148,7 @@ export function ConversationHeader({
         <div className="flex min-w-0 items-center gap-3">
           <div className="relative">
             <Avatar className="h-10 w-10 ring-2 ring-background">
-              <AvatarImage src={contactPicture || undefined} />
+              <AvatarImage src={contactPicture || undefined} alt={displayName || "Contato"} />
               <AvatarFallback className="bg-primary text-primary-foreground">
                 {isGroup ? <Users className="h-5 w-5" /> : displayName?.[0]?.toUpperCase() || "?"}
               </AvatarFallback>
@@ -149,7 +160,7 @@ export function ConversationHeader({
 
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <h2 className="truncate text-sm font-semibold">{displayName}</h2>
+              <h2 className="truncate text-sm font-normal">{displayName}</h2>
               {isGroup && (
                 <Badge variant="secondary" className="h-4 shrink-0 px-1.5 text-[10px]">
                   Grupo
@@ -183,14 +194,18 @@ export function ConversationHeader({
               </Button>
             )}
 
-            {canOperate && <Button variant="ghost" size="icon" className="h-8 w-8">
-              <Phone className="h-4 w-4" />
-            </Button>}
+            {canOperate && !isGroup && phoneHref && (
+              <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
+                <a href={`tel:${phoneHref}`} aria-label={`Ligar para ${displayName || "contato"}`}>
+                  <Phone className="h-4 w-4" aria-hidden="true" />
+                </a>
+              </Button>
+            )}
 
             {canOperate && <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8">
-                  <MoreVertical className="h-4 w-4" />
+                <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Mais ações da conversa">
+                  <MoreVertical className="h-4 w-4" aria-hidden="true" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48 bg-popover">
@@ -206,6 +221,23 @@ export function ConversationHeader({
               </DropdownMenuContent>
             </DropdownMenu>}
           </>
+        )}
+        {onToggleLeadPanel && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={onToggleLeadPanel}
+            aria-label={showLeadPanel ? "Ocultar painel do contato" : "Mostrar painel do contato"}
+            aria-pressed={showLeadPanel}
+          >
+            {showLeadPanel ? (
+              <PanelRightClose className="h-4 w-4" aria-hidden="true" />
+            ) : (
+              <PanelRightOpen className="h-4 w-4" aria-hidden="true" />
+            )}
+          </Button>
         )}
       </div>
     </header>

@@ -1,6 +1,7 @@
 package analytics
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
@@ -100,6 +101,10 @@ func (handler Handler) writeRows(w http.ResponseWriter, r *http.Request, items [
 
 func (handler Handler) writeObject(w http.ResponseWriter, r *http.Request, item map[string]any, err error) {
 	if err != nil {
+		if errors.Is(err, ErrInvalidInput) {
+			httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_analytics_filters", "Analytics filters are invalid.")
+			return
+		}
 		httpserver.WriteError(w, r, http.StatusInternalServerError, "analytics_failed", "Unable to load analytics.")
 		return
 	}

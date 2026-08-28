@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto'
+import { isIP } from 'node:net'
+
 type RateLimitRule = {
   limit: number
   windowMs: number
@@ -37,16 +40,58 @@ function cleanupExpiredBuckets(now: number) {
   lastCleanupAt = now
 }
 
+function parseForwardedAddresses(value: string | null) {
+  if (!value) return []
+
+  return value
+    .split(',')
+    .map((candidate) => candidate.trim())
+    .filter((candidate) => isIP(candidate) !== 0)
+}
+
+/**
+ * Preserve the whole proxy chain for the authoritative Go resolver. The
+ * backend walks this list from right to left and only honors it when the
+ * direct peer belongs to API_TRUSTED_PROXY_CIDRS.
+ */
+export function getForwardedForHeader(request: Request) {
+  const addresses = parseForwardedAddresses(request.headers.get('x-forwarded-for'))
+  return addresses.length > 0 ? addresses.join(', ') : null
+}
+
+/**
+ * Best-effort identity for the process-local secondary limiter. Choosing the
+ * rightmost valid hop prevents an attacker-controlled X-Forwarded-For prefix
+ * from assigning requests to another user's bucket. The Go limiter remains
+ * authoritative because a Web Request does not expose the transport peer.
+ */
 export function getRequestIp(request: Request) {
-  const forwardedFor = request.headers.get('x-forwarded-for')
-  const forwardedIp = forwardedFor?.split(',')[0]?.trim()
+  const forwarded = parseForwardedAddresses(request.headers.get('x-forwarded-for'))
+  const forwardedIp = forwarded[forwarded.length - 1]
+
+  const connectingIp = [
+    request.headers.get('cf-connecting-ip'),
+    request.headers.get('x-real-ip'),
+  ]
+    .map((candidate) => candidate?.trim() || '')
+    .find((candidate) => isIP(candidate) !== 0)
 
   return (
     forwardedIp ||
-    request.headers.get('cf-connecting-ip') ||
-    request.headers.get('x-real-ip') ||
+    connectingIp ||
     'unknown'
   )
+}
+
+/**
+ * Stable, bounded key for the process-local defense. Hashing the complete
+ * normalized chain keeps different clients behind the same upstream proxy in
+ * different buckets. Prefix injection can only bypass this secondary layer;
+ * it cannot target another client's bucket or bypass the backend limiter.
+ */
+export function getRequestRateLimitIdentity(request: Request) {
+  const identity = getForwardedForHeader(request) || getRequestIp(request)
+  return createHash('sha256').update(identity).digest('hex')
 }
 
 export function enforceServerRateLimit(actionKey: string, rules: readonly RateLimitRule[]) {

@@ -1,6 +1,6 @@
-import { Check, Users } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
+import { Check, Users } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import {
   Command,
   CommandEmpty,
@@ -8,15 +8,15 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-} from '@/components/ui/command';
+} from "@/components/ui/command";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from '@/components/ui/popover';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { useState } from 'react';
-import { commandSearchFilter } from '@/lib/search-text';
+} from "@/components/ui/popover";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useState } from "react";
+import { commandSearchFilter } from "@/lib/search-text";
 
 interface User {
   id: string;
@@ -31,7 +31,12 @@ interface UserFilterProps {
   showAllOption?: boolean;
 }
 
-export function UserFilter({ users, selectedUserId, onUserSelect, showAllOption = true }: UserFilterProps) {
+export function UserFilter({
+  users,
+  selectedUserId,
+  onUserSelect,
+  showAllOption = true,
+}: UserFilterProps) {
   const [open, setOpen] = useState(false);
 
   const selectedUser = users.find((u) => u.id === selectedUserId);
@@ -43,14 +48,18 @@ export function UserFilter({ users, selectedUserId, onUserSelect, showAllOption 
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className="w-full justify-between h-10 rounded-2xl bg-white/[0.035] border-white/[0.055] hover:bg-white/[0.055] hover:text-accent-foreground transition-all px-3"
+          className="h-8 w-full justify-between rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light text-[var(--app-text-secondary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
         >
           {selectedUser ? (
             <div className="flex items-center gap-2">
               <Avatar className="h-5 w-5">
                 <AvatarImage src={selectedUser.avatar_url || undefined} />
-                <AvatarFallback className="text-[10px]">
-                  {selectedUser.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
+                <AvatarFallback className="bg-primary/50 text-[10px] font-light text-white">
+                  {selectedUser.name
+                    .split(" ")
+                    .map((n) => n[0])
+                    .join("")
+                    .slice(0, 2)}
                 </AvatarFallback>
               </Avatar>
               <span className="truncate">{selectedUser.name}</span>
@@ -63,9 +72,15 @@ export function UserFilter({ users, selectedUserId, onUserSelect, showAllOption 
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="z-50 w-[200px] border-0 bg-[var(--app-surface-solid)] p-0 shadow-none">
-        <Command className="bg-[var(--app-surface-solid)] [&_[cmdk-input-wrapper]]:border-b-0" filter={commandSearchFilter}>
-          <CommandInput placeholder="Buscar usuário..." />
+      <PopoverContent className="app-header-popover z-50 w-[220px] rounded-[8px] border-0 p-1">
+        <Command
+          className="bg-transparent [&_[cmdk-input-wrapper]]:border-b-0"
+          filter={commandSearchFilter}
+        >
+          <CommandInput
+            placeholder="Buscar usuário..."
+            className="h-8 text-[12px] font-light"
+          />
           <CommandList>
             <CommandEmpty>Nenhum usuário encontrado.</CommandEmpty>
             <CommandGroup>
@@ -76,13 +91,14 @@ export function UserFilter({ users, selectedUserId, onUserSelect, showAllOption 
                     onUserSelect(null);
                     setOpen(false);
                   }}
+                  className="rounded-[6px] text-[12px] font-light"
                 >
                   <Users className="h-4 w-4 mr-2" />
                   Todos os usuários
                   <Check
                     className={cn(
                       "ml-auto h-4 w-4",
-                      !selectedUserId ? "opacity-100" : "opacity-0"
+                      !selectedUserId ? "opacity-100" : "opacity-0",
                     )}
                   />
                 </CommandItem>
@@ -95,18 +111,23 @@ export function UserFilter({ users, selectedUserId, onUserSelect, showAllOption 
                     onUserSelect(user.id);
                     setOpen(false);
                   }}
+                  className="rounded-[6px] text-[12px] font-light"
                 >
                   <Avatar className="h-5 w-5 mr-2">
                     <AvatarImage src={user.avatar_url || undefined} />
-                    <AvatarFallback className="text-[10px]">
-                      {user.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
+                    <AvatarFallback className="bg-primary/50 text-[10px] font-light text-white">
+                      {user.name
+                        .split(" ")
+                        .map((n) => n[0])
+                        .join("")
+                        .slice(0, 2)}
                     </AvatarFallback>
                   </Avatar>
                   <span className="truncate">{user.name}</span>
                   <Check
                     className={cn(
                       "ml-auto h-4 w-4",
-                      selectedUserId === user.id ? "opacity-100" : "opacity-0"
+                      selectedUserId === user.id ? "opacity-100" : "opacity-0",
                     )}
                   />
                 </CommandItem>

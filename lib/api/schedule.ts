@@ -131,6 +131,7 @@ export type UpdateScheduleEventInput = Partial<
     'user_id'
   > & {
     user_id: string
+    assignee_ids: string[]
   }
 >
 

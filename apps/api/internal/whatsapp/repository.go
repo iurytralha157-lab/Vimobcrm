@@ -159,8 +159,20 @@ func (repo Repository) RevokeSessionAccess(ctx context.Context, tenantContext te
 }
 
 func (repo Repository) ListConversations(ctx context.Context, tenantContext tenant.Context, filter ConversationListFilter) ([]Conversation, error) {
+	conversations, _, err := repo.listConversationsPage(ctx, tenantContext, filter)
+	return conversations, err
+}
+
+func (repo Repository) listConversationsPage(ctx context.Context, tenantContext tenant.Context, filter ConversationListFilter) ([]Conversation, *string, error) {
+	// Keep repository callers safe even when they bypass the HTTP parser.
+	if filter.Limit <= 0 {
+		filter.Limit = 80
+	} else if filter.Limit > 120 {
+		filter.Limit = 120
+	}
+
 	if filter.AccessibleProvided && len(filter.SessionIDs) == 0 {
-		return []Conversation{}, nil
+		return []Conversation{}, nil, nil
 	}
 
 	args := baseConversationArgs(tenantContext)
@@ -178,7 +190,7 @@ func (repo Repository) ListConversations(ctx context.Context, tenantContext tena
 	if strings.TrimSpace(filter.SessionID) != "" {
 		sessionID, ok := normalizeUUID(filter.SessionID)
 		if !ok {
-			return nil, fmt.Errorf("%w: sessionId is invalid", ErrInvalidInput)
+			return nil, nil, fmt.Errorf("%w: sessionId is invalid", ErrInvalidInput)
 		}
 		addFilter("wc.session_id = $%d::uuid", sessionID)
 	}
@@ -191,7 +203,7 @@ func (repo Repository) ListConversations(ctx context.Context, tenantContext tena
 				if strings.TrimSpace(sessionID) == "" {
 					continue
 				}
-				return nil, fmt.Errorf("%w: sessionIds contains invalid uuid", ErrInvalidInput)
+				return nil, nil, fmt.Errorf("%w: sessionIds contains invalid uuid", ErrInvalidInput)
 			}
 			if seenSessionIDs[normalized] {
 				continue
@@ -201,12 +213,21 @@ func (repo Repository) ListConversations(ctx context.Context, tenantContext tena
 			placeholders = append(placeholders, fmt.Sprintf("$%d::uuid", len(args)))
 		}
 		if len(placeholders) == 0 {
-			return []Conversation{}, nil
+			return []Conversation{}, nil, nil
 		}
 		where = append(where, "wc.session_id in ("+strings.Join(placeholders, ", ")+")")
 	}
 	if filter.HideGroups {
 		where = append(where, "wc.is_group = false")
+	}
+	if filter.OnlyLeads {
+		where = append(where, "wc.lead_id is not null")
+	}
+	if filter.WithoutLead {
+		where = append(where, "wc.lead_id is null")
+	}
+	if filter.PendingReply {
+		where = append(where, "coalesce(wc.unread_count, 0) > 0")
 	}
 	search := strings.TrimSpace(filter.Search)
 	if search == "" && filter.ShowArchived {
@@ -228,7 +249,36 @@ func (repo Repository) ListConversations(ctx context.Context, tenantContext tena
 		}
 		where = append(where, "("+strings.Join(searchClauses, " or ")+")")
 	}
-	args = append(args, filter.Limit)
+	if filter.CursorSet {
+		args = append(args, filter.CursorCreatedAt, filter.CursorID)
+		createdAtArg := len(args) - 1
+		cursorIDArg := len(args)
+		if filter.CursorLastMessageAt == nil {
+			where = append(where, fmt.Sprintf(
+				"wc.last_message_at is null and (wc.created_at, wc.id) < ($%d::timestamptz, $%d::uuid)",
+				createdAtArg,
+				cursorIDArg,
+			))
+		} else {
+			args = append(args, *filter.CursorLastMessageAt)
+			lastMessageAtArg := len(args)
+			where = append(where, fmt.Sprintf(
+				`(
+					wc.last_message_at is null
+					or wc.last_message_at < $%d::timestamptz
+					or (
+						wc.last_message_at = $%d::timestamptz
+						and (wc.created_at, wc.id) < ($%d::timestamptz, $%d::uuid)
+					)
+				)`,
+				lastMessageAtArg,
+				lastMessageAtArg,
+				createdAtArg,
+				cursorIDArg,
+			))
+		}
+	}
+	args = append(args, filter.Limit+1)
 	limitArg := len(args)
 
 	rows, err := repo.db.Pool().Query(ctx, `
@@ -243,7 +293,7 @@ func (repo Repository) ListConversations(ctx context.Context, tenantContext tena
 		limit $`+fmt.Sprint(limitArg)+`::integer
 	`, args...)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 
@@ -251,15 +301,35 @@ func (repo Repository) ListConversations(ctx context.Context, tenantContext tena
 	for rows.Next() {
 		conversation, err := scanConversation(rows)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		conversations = append(conversations, conversation)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return conversations, nil
+	var nextCursor *string
+	if len(conversations) > filter.Limit {
+		conversations = conversations[:filter.Limit]
+		cursor := encodeConversationCursor(conversations[len(conversations)-1])
+		nextCursor = &cursor
+	}
+
+	return conversations, nextCursor, nil
+}
+
+func encodeConversationCursor(conversation Conversation) string {
+	lastMessageAt := "-"
+	if conversation.LastMessageAt != nil {
+		lastMessageAt = conversation.LastMessageAt.UTC().Format(time.RFC3339Nano)
+	}
+	return strings.Join([]string{
+		"v1",
+		lastMessageAt,
+		conversation.CreatedAt.UTC().Format(time.RFC3339Nano),
+		conversation.ID,
+	}, "|")
 }
 
 func onlyDigits(value string) string {

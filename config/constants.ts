@@ -9,16 +9,25 @@ export const FEATURES = {
 } as const
 
 // Routes
+export const DEFAULT_AUTHENTICATED_ROUTE = '/inicio' as const
+
 export const ROUTES = {
   HOME: '/',
   LOGIN: '/login',
   SIGNUP: '/cadastro',
   DASHBOARD: '/dashboard',
   DASHBOARD_CAMPAIGNS: '/dashboard/campaigns',
+  MARKETING: '/marketing',
   RESET_PASSWORD: '/reset-password',
 } as const
 
 const DEFAULT_PUBLIC_APP_ORIGIN = 'https://app.vimobcrm.com.br'
+export const VIMOB_MARKETING_SITE_URL = 'https://vimobcrm.com.br' as const
+
+export const BRAND_HEADER_LAYOUT = {
+  maxWidth: 1180,
+  logoWidth: 104,
+} as const
 
 export function getPublicAppUrl(path: string) {
   const configuredOrigin = process.env.NEXT_PUBLIC_SITE_URL?.trim().replace(/\/+$/, '')
@@ -44,6 +53,21 @@ export const API_CONFIG = {
   TIMEOUT_MS: 30000,
   RETRY_ATTEMPTS: 3,
   RETRY_DELAY_MS: 1000,
+} as const
+
+export const CONTRACT_DOCUMENT_CONFIG = {
+  maxBytes: 25 * 1024 * 1024,
+  acceptedTypes: {
+    '.pdf': 'application/pdf',
+    '.doc': 'application/msword',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp',
+    '.xls': 'application/vnd.ms-excel',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  },
 } as const
 
 // Cache
@@ -96,7 +120,6 @@ export type SystemModuleKey = (typeof SYSTEM_MODULES)[number]['key']
 
 export const DEFAULT_ENABLED_MODULE_KEYS: SystemModuleKey[] = [
   'crm',
-  'properties',
   'whatsapp',
   'agenda',
   'cadences',

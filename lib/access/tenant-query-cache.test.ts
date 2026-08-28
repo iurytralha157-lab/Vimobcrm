@@ -14,6 +14,8 @@ const baseContext = {
   ledUserIds: ['user-b', 'user-a'],
   ledPipelineIds: ['pipeline-b', 'pipeline-a'],
   isSuperAdmin: false,
+  propertyEditPolicy: 'responsible_or_admin',
+  propertyOwnerContactVisibility: 'hidden',
 }
 
 test('assinatura nao depende da ordem de listas de acesso', () => {
@@ -36,4 +38,6 @@ test('assinatura muda ao trocar organizacao, permissao ou escopo liderado', () =
   assert.notEqual(signature, createTenantQueryAccessSignature({ ...baseContext, organizationId: 'organization-b' }))
   assert.notEqual(signature, createTenantQueryAccessSignature({ ...baseContext, permissions: ['lead_view_own'] }))
   assert.notEqual(signature, createTenantQueryAccessSignature({ ...baseContext, ledTeamIds: ['team-a'] }))
+  assert.notEqual(signature, createTenantQueryAccessSignature({ ...baseContext, propertyEditPolicy: 'everyone' }))
+  assert.notEqual(signature, createTenantQueryAccessSignature({ ...baseContext, propertyOwnerContactVisibility: 'visible' }))
 })

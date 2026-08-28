@@ -21,6 +21,8 @@ function organizationPayload(
   editPolicy: PropertyEditPolicy,
   ownerVisibility: OwnerVisibility,
 ): UpdateOrganizationInput {
+  // The current backend contract treats this endpoint as a full organization update:
+  // omitting nullable fields clears them, so preserve the loaded organization snapshot.
   return {
     name: organization.name,
     cnpj: organization.cnpj || null,

@@ -17,7 +17,10 @@ func (repo Repository) ListItems(ctx context.Context, tenantContext tenant.Conte
 	if err != nil {
 		return ItemPage{}, err
 	}
-	where += " and l.attention_eligible = true"
+	where += ` and (
+		(l.attention_eligible = true and l.attention_enrolled_at is not null)
+		or coalesce(p.config->>'source', '') = 'stage_operational_rules'
+	)` + currentPolicyScopeSQL
 
 	if len(filter.Status) > 0 {
 		for _, status := range filter.Status {
@@ -82,7 +85,10 @@ func (repo Repository) Summary(ctx context.Context, tenantContext tenant.Context
 	if err != nil {
 		return Summary{}, err
 	}
-	where += " and l.attention_eligible = true and i.status not in ('resolved', 'redistributed', 'cancelled')"
+	where += ` and (
+		(l.attention_eligible = true and l.attention_enrolled_at is not null)
+		or coalesce(p.config->>'source', '') = 'stage_operational_rules'
+	)` + currentPolicyScopeSQL + ` and i.status not in ('resolved', 'redistributed', 'cancelled')`
 
 	var summary Summary
 	err = repo.db.Pool().QueryRow(ctx, `
@@ -100,6 +106,7 @@ func (repo Repository) Summary(ctx context.Context, tenantContext tenant.Context
 			count(*) filter (where i.due_at <= now())::int,
 			count(*) filter (where p.policy_type = 'unassigned')::int,
 			count(*) filter (where p.policy_type = 'first_contact')::int,
+			count(*) filter (where p.policy_type = 'first_effective_contact')::int,
 			count(*) filter (where p.policy_type = 'stage_inactivity')::int,
 			count(*) filter (where p.policy_type = 'stage_age')::int,
 			count(*) filter (where p.policy_type = 'cadence_task')::int
@@ -115,8 +122,8 @@ func (repo Repository) Summary(ctx context.Context, tenantContext tenant.Context
 	).Scan(
 		&summary.Total, &summary.Monitoring, &summary.Warning, &summary.Breached,
 		&summary.Escalated, &summary.Acknowledged, &summary.DueToday, &summary.Overdue,
-		&summary.Unassigned, &summary.FirstContact, &summary.StageInactivity, &summary.StageAge,
-		&summary.CadenceTasks,
+		&summary.Unassigned, &summary.FirstContact, &summary.FirstEffectiveContact,
+		&summary.StageInactivity, &summary.StageAge, &summary.CadenceTasks,
 	)
 	return summary, err
 }
@@ -125,6 +132,9 @@ func (repo Repository) AcknowledgeItem(ctx context.Context, tenantContext tenant
 	return repo.mutateItem(ctx, tenantContext, itemID, func(ctx context.Context, tx pgx.Tx, current Item) error {
 		if terminalStatus(current.Status) {
 			return fmt.Errorf("%w: terminal items cannot be acknowledged", ErrInvalidInput)
+		}
+		if current.Shadow {
+			return fmt.Errorf("%w: shadow items are read-only", ErrInvalidInput)
 		}
 		metadata := cloneMap(current.Metadata)
 		metadata["acknowledged_from_status"] = acknowledgedSeverity(current)
@@ -153,6 +163,9 @@ func (repo Repository) SnoozeItem(ctx context.Context, tenantContext tenant.Cont
 		if terminalStatus(current.Status) {
 			return fmt.Errorf("%w: terminal items cannot be snoozed", ErrInvalidInput)
 		}
+		if current.Shadow {
+			return fmt.Errorf("%w: shadow items are read-only", ErrInvalidInput)
+		}
 		until := time.Now().UTC().Add(time.Duration(request.Minutes) * time.Minute)
 		metadata := cloneMap(current.Metadata)
 		if note := cleanOptionalString(request.Note); note != nil {
@@ -176,18 +189,19 @@ func (repo Repository) SnoozeItem(ctx context.Context, tenantContext tenant.Cont
 }
 
 func (repo Repository) ResolveItem(ctx context.Context, tenantContext tenant.Context, itemID string, request ResolveRequest) (Item, error) {
-	request.Reason = strings.TrimSpace(request.Reason)
-	if request.Reason == "" || len(request.Reason) > 160 {
-		return Item{}, fmt.Errorf("%w: reason is required and must have at most 160 characters", ErrInvalidInput)
+	normalizedRequest, err := normalizeAdministrativeOverride(tenantContext, request)
+	if err != nil {
+		return Item{}, err
 	}
+	request = normalizedRequest
 	return repo.mutateItem(ctx, tenantContext, itemID, func(ctx context.Context, tx pgx.Tx, current Item) error {
 		if terminalStatus(current.Status) {
 			return fmt.Errorf("%w: item is already terminal", ErrInvalidInput)
 		}
 		metadata := cloneMap(current.Metadata)
-		if note := cleanOptionalString(request.Note); note != nil {
-			metadata["resolution_note"] = *note
-		}
+		metadata["resolution_note"] = *request.Note
+		metadata["administrative_override"] = true
+		metadata["administrative_override_by"] = tenantContext.UserID
 		_, err := tx.Exec(ctx, `
 			update public.lead_attention_instances
 			set status = 'resolved', resolved_at = now(), resolved_by = $3::uuid,
@@ -198,11 +212,30 @@ func (repo Repository) ResolveItem(ctx context.Context, tenantContext tenant.Con
 		if err != nil {
 			return err
 		}
-		return insertAttentionEvent(ctx, tx, current.OrganizationID, current.ID, current.LeadID, "resolved", tenantContext.UserID, map[string]any{
-			"reason": request.Reason,
-			"note":   request.Note,
+		return insertAttentionEvent(ctx, tx, current.OrganizationID, current.ID, current.LeadID, "administrative_override", tenantContext.UserID, map[string]any{
+			"reason":                 request.Reason,
+			"note":                   request.Note,
+			"administrativeOverride": true,
 		})
 	})
+}
+
+func normalizeAdministrativeOverride(tenantContext tenant.Context, request ResolveRequest) (ResolveRequest, error) {
+	if !request.AdministrativeOverride || !canAdministrativelyOverrideItem(tenantContext) {
+		return ResolveRequest{}, ErrForbidden
+	}
+
+	request.Reason = strings.TrimSpace(request.Reason)
+	if len(request.Reason) < 3 || len(request.Reason) > 160 {
+		return ResolveRequest{}, fmt.Errorf("%w: reason must have between 3 and 160 characters", ErrInvalidInput)
+	}
+
+	note := cleanOptionalString(request.Note)
+	if note == nil || len(*note) < 10 || len(*note) > 1000 {
+		return ResolveRequest{}, fmt.Errorf("%w: an administrative justification between 10 and 1000 characters is required", ErrInvalidInput)
+	}
+	request.Note = note
+	return request, nil
 }
 
 func (repo Repository) mutateItem(ctx context.Context, tenantContext tenant.Context, itemID string, mutation func(context.Context, pgx.Tx, Item) error) (Item, error) {
@@ -246,7 +279,10 @@ func (repo Repository) showItemTx(ctx context.Context, tx pgx.Tx, organizationID
 	}
 	item, err := scanItem(tx.QueryRow(ctx, itemSelectSQL()+`
 		where i.organization_id = $1::uuid and i.id = $2::uuid
-		  and l.attention_eligible = true`+lockClause,
+		  and (
+		    (l.attention_eligible = true and l.attention_enrolled_at is not null)
+		    or coalesce(p.config->>'source', '') = 'stage_operational_rules'
+		  )`+currentPolicyScopeSQL+lockClause,
 		organizationID, itemID,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -254,6 +290,38 @@ func (repo Repository) showItemTx(ctx context.Context, tx pgx.Tx, organizationID
 	}
 	return item, err
 }
+
+const currentPolicyScopeSQL = `
+	and (p.pipeline_id is null or p.pipeline_id = l.pipeline_id)
+	and (p.stage_id is null or p.stage_id = l.stage_id)
+	and not exists (
+		select 1
+		from public.lead_attention_policies higher
+		where higher.organization_id = p.organization_id
+		  and higher.policy_type = p.policy_type
+		  and (
+		    higher.status in ('shadow', 'enabled')
+		    or (
+		      higher.status = 'paused'
+		      and coalesce(lower(higher.config->>'disabled_override') = 'true', false)
+		    )
+		  )
+		  and (higher.pipeline_id is null or higher.pipeline_id = l.pipeline_id)
+		  and (higher.stage_id is null or higher.stage_id = l.stage_id)
+		  and (
+		    case
+		      when higher.stage_id is not null then 3
+		      when higher.pipeline_id is not null then 2
+		      else 1
+		    end
+		  ) > (
+		    case
+		      when p.stage_id is not null then 3
+		      when p.pipeline_id is not null then 2
+		      else 1
+		    end
+		  )
+	)`
 
 func itemVisibilitySQL(context tenant.Context, requestedScope string) (string, []any, error) {
 	scope := strings.ToLower(strings.TrimSpace(requestedScope))

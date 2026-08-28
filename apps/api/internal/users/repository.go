@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/mail"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -13,6 +15,8 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
+
+const authUserCompensationTimeout = 10 * time.Second
 
 type Repository struct {
 	db        *dbpkg.Postgres
@@ -37,7 +41,7 @@ func (repo Repository) ListOrganizationUsers(ctx context.Context, tenantContext 
 			om.organization_id,
 			u.name,
 			u.email,
-			case when om.role in ('owner', 'admin') then 'admin' else 'user' end,
+			coalesce(nullif(lower(btrim(om.role)), ''), 'user'),
 			u.avatar_url,
 			(coalesce(u.is_active, false) and coalesce(om.is_active, false)),
 			u.whatsapp,
@@ -120,57 +124,11 @@ func (repo Repository) CreateOrganizationUser(ctx context.Context, tenantContext
 		return CreateUserResult{}, tenant.ErrOrganizationAccessDenied
 	}
 
-	input.Role = normalizeRole(input.Role)
-	existing, err := repo.findUserByEmail(ctx, input.Email)
-	if err == nil {
-		user, linkErr := repo.linkExistingUser(ctx, tenantContext, existing, input)
-		if linkErr != nil {
-			return CreateUserResult{}, linkErr
-		}
-
-		wasMultiOrg, wasOrphan := false, existing.OrganizationID == nil
-		if existing.OrganizationID != nil && *existing.OrganizationID != tenantContext.OrganizationID {
-			wasMultiOrg = true
-		}
-
-		return CreateUserResult{
-			Success:     true,
-			User:        user,
-			WasMultiOrg: wasMultiOrg,
-			WasOrphan:   wasOrphan,
-			Message:     "Usuario vinculado a organizacao.",
-		}, nil
-	}
-	if !errors.Is(err, ErrUserNotFound) {
-		return CreateUserResult{}, err
-	}
-
-	password, err := generateTemporaryPassword()
-	if err != nil {
-		return CreateUserResult{}, err
-	}
-
-	authUserID, err := repo.authAdmin.createUser(ctx, authAdminCreateUserInput{
-		Email:    input.Email,
-		Password: password,
-		Name:     input.Name,
-	})
-	if err != nil {
-		return CreateUserResult{}, err
-	}
-
-	user, err := repo.insertNewUser(ctx, tenantContext, authUserID, input)
-	if err != nil {
-		return CreateUserResult{}, err
-	}
-
-	return CreateUserResult{
-		Success:           true,
-		User:              user,
-		GeneratedPassword: &password,
-		WhatsappSent:      false,
-		Message:           "Usuario criado. Envie a senha temporaria ao usuario.",
-	}, nil
+	// Internal identities must be created through /v1/invitations so the
+	// recipient proves control of the e-mail address and chooses their own
+	// password. Keeping this compatibility endpoint closed also prevents an
+	// administrator from receiving or forwarding a plaintext temporary secret.
+	return CreateUserResult{}, ErrInvitationRequired
 }
 
 func (repo Repository) UpdateOrganizationUser(ctx context.Context, tenantContext tenant.Context, userID string, input UpdateUserInput) (User, error) {
@@ -187,14 +145,18 @@ func (repo Repository) UpdateOrganizationUser(ctx context.Context, tenantContext
 	if err != nil {
 		return User{}, err
 	}
+	currentMemberRole, err := repo.organizationMemberRole(ctx, tenantContext.OrganizationID, userID)
+	if err != nil {
+		return User{}, err
+	}
 	if existing.Role == "super_admin" {
+		return User{}, tenant.ErrOrganizationAccessDenied
+	}
+	if !canManageOrganizationMemberRole(tenantContext, currentMemberRole, currentMemberRole) {
 		return User{}, tenant.ErrOrganizationAccessDenied
 	}
 	if userID == tenantContext.UserID {
 		if input.IsActive != nil && !*input.IsActive {
-			return User{}, ErrInvalidInput
-		}
-		if input.Role != nil && normalizeRole(*input.Role) != existing.Role {
 			return User{}, ErrInvalidInput
 		}
 	}
@@ -207,11 +169,21 @@ func (repo Repository) UpdateOrganizationUser(ctx context.Context, tenantContext
 		}
 	}
 
-	role := existing.Role
+	memberRole := currentMemberRole
 	if input.Role != nil {
-		role = normalizeRole(*input.Role)
+		role := normalizeRole(*input.Role)
 		if role == "" {
 			return User{}, ErrInvalidInput
+		}
+		desiredMemberRole := memberRoleFromUserRole(role)
+		if desiredMemberRole != currentMemberRole {
+			if userID == tenantContext.UserID {
+				return User{}, ErrInvalidInput
+			}
+			if !canManageOrganizationMemberRole(tenantContext, currentMemberRole, desiredMemberRole) {
+				return User{}, tenant.ErrOrganizationAccessDenied
+			}
+			memberRole = desiredMemberRole
 		}
 	}
 
@@ -246,7 +218,7 @@ func (repo Repository) UpdateOrganizationUser(ctx context.Context, tenantContext
 		    where om.user_id = public.users.id
 		      and om.organization_id = $2::uuid
 		  )
-	`, userID, tenantContext.OrganizationID, name, input.AvatarURL, input.Whatsapp, memberRoleFromUserRole(role))
+	`, userID, tenantContext.OrganizationID, name, input.AvatarURL, input.Whatsapp, memberRole)
 	if err != nil {
 		return User{}, err
 	}
@@ -254,7 +226,6 @@ func (repo Repository) UpdateOrganizationUser(ctx context.Context, tenantContext
 		return User{}, ErrUserNotFound
 	}
 
-	memberRole := memberRoleFromUserRole(role)
 	if _, err = tx.Exec(ctx, `
 		update public.organization_members
 		set role = $3,
@@ -312,6 +283,13 @@ func (repo Repository) DeleteOrganizationUser(ctx context.Context, tenantContext
 		return DeleteUserResult{}, err
 	}
 	if existing.Role == "super_admin" {
+		return DeleteUserResult{}, tenant.ErrOrganizationAccessDenied
+	}
+	currentMemberRole, err := repo.organizationMemberRole(ctx, tenantContext.OrganizationID, userID)
+	if err != nil {
+		return DeleteUserResult{}, err
+	}
+	if !canManageOrganizationMemberRole(tenantContext, currentMemberRole, currentMemberRole) {
 		return DeleteUserResult{}, tenant.ErrOrganizationAccessDenied
 	}
 
@@ -526,18 +504,20 @@ func (repo Repository) ListSummaries(ctx context.Context, tenantContext tenant.C
 func (repo Repository) findUserByEmail(ctx context.Context, email string) (User, error) {
 	user, err := scanUser(repo.db.Pool().QueryRow(ctx, `
 		select
-			id::text,
-			organization_id,
-			name,
-			email,
-			role,
-			avatar_url,
-			coalesce(is_active, false),
-			whatsapp,
-			created_at::text,
-			updated_at::text
-		from public.users
-		where lower(email) = lower($1)
+			app_user.id::text,
+			app_user.organization_id,
+			app_user.name,
+			auth_user.email,
+			app_user.role,
+			app_user.avatar_url,
+			coalesce(app_user.is_active, false),
+			app_user.whatsapp,
+			app_user.created_at::text,
+			app_user.updated_at::text
+		from auth.users auth_user
+		join public.users app_user on app_user.id = auth_user.id
+		where lower(auth_user.email) = lower($1)
+		  and auth_user.deleted_at is null
 		limit 1
 	`, email))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -557,7 +537,7 @@ func (repo Repository) getOrganizationUser(ctx context.Context, organizationID s
 			om.organization_id,
 			u.name,
 			u.email,
-			case when om.role in ('owner', 'admin') then 'admin' else 'user' end,
+			coalesce(nullif(lower(btrim(om.role)), ''), 'user'),
 			u.avatar_url,
 			(coalesce(u.is_active, false) and coalesce(om.is_active, false)),
 			u.whatsapp,
@@ -578,6 +558,21 @@ func (repo Repository) getOrganizationUser(ctx context.Context, organizationID s
 	}
 
 	return user, nil
+}
+
+func (repo Repository) organizationMemberRole(ctx context.Context, organizationID string, userID string) (string, error) {
+	var role string
+	err := repo.db.Pool().QueryRow(ctx, `
+		select coalesce(nullif(lower(btrim(role)), ''), 'user')
+		from public.organization_members
+		where organization_id = $1::uuid
+		  and user_id = $2::uuid
+		limit 1
+	`, organizationID, userID).Scan(&role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrUserNotFound
+	}
+	return role, err
 }
 
 func (repo Repository) linkExistingUser(ctx context.Context, tenantContext tenant.Context, existing User, input CreateUserInput) (User, error) {
@@ -622,10 +617,10 @@ func (repo Repository) linkExistingUser(ctx context.Context, tenantContext tenan
 	return repo.getOrganizationUser(ctx, tenantContext.OrganizationID, existing.ID)
 }
 
-func (repo Repository) insertNewUser(ctx context.Context, tenantContext tenant.Context, authUserID string, input CreateUserInput) (User, error) {
+func (repo Repository) insertNewUser(ctx context.Context, tenantContext tenant.Context, authUserID string, input CreateUserInput) error {
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
-		return User{}, err
+		return err
 	}
 	defer tx.Rollback(ctx)
 
@@ -650,7 +645,7 @@ func (repo Repository) insertNewUser(ctx context.Context, tenantContext tenant.C
 			is_active = true,
 			updated_at = now()
 	`, authUserID, tenantContext.OrganizationID, input.Name, input.Email, firstNonNilString(input.Whatsapp, input.Phone)); err != nil {
-		return User{}, err
+		return err
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -667,14 +662,40 @@ func (repo Repository) insertNewUser(ctx context.Context, tenantContext tenant.C
 			is_active = true,
 			updated_at = now()
 	`, tenantContext.OrganizationID, authUserID, memberRoleFromUserRole(input.Role)); err != nil {
-		return User{}, err
+		return err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return User{}, err
+		return err
 	}
 
-	return repo.getOrganizationUser(ctx, tenantContext.OrganizationID, authUserID)
+	return nil
+}
+
+func persistCreatedAuthUser(
+	ctx context.Context,
+	authUserID string,
+	persist func(context.Context) error,
+	deleteAuthUser func(context.Context, string) error,
+) error {
+	persistErr := persist(ctx)
+	if persistErr == nil {
+		return nil
+	}
+
+	cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), authUserCompensationTimeout)
+	defer cancel()
+
+	if cleanupErr := deleteAuthUser(cleanupContext, authUserID); cleanupErr != nil {
+		slog.Error(
+			"failed to compensate auth user after database persistence failure",
+			"auth_user_id", authUserID,
+			"cleanup_error", cleanupErr,
+			"persistence_error", persistErr,
+		)
+	}
+
+	return persistErr
 }
 
 type userScanner interface {
@@ -779,17 +800,22 @@ func normalizeRole(value string) string {
 		return "user"
 	case "admin":
 		return "admin"
+	case "manager":
+		return "manager"
 	default:
 		return ""
 	}
 }
 
 func memberRoleFromUserRole(value string) string {
-	if normalizeRole(value) == "admin" {
+	switch normalizeRole(value) {
+	case "admin":
 		return "admin"
+	case "manager":
+		return "manager"
+	default:
+		return "user"
 	}
-
-	return "user"
 }
 
 func cleanStringPointer(value *string) *string {
@@ -817,6 +843,41 @@ func firstNonNilString(values ...*string) *string {
 
 func canManageUsers(tenantContext tenant.Context) bool {
 	return tenantContext.HasPermission(permissions.UsersManage)
+}
+
+func canManageOrganizationMemberRole(tenantContext tenant.Context, currentRole string, desiredRole string) bool {
+	if tenantContext.IsSuperAdmin {
+		return true
+	}
+
+	actorRank := organizationMemberRoleRank(tenantContext.MemberRole)
+	currentRank := organizationMemberRoleRank(currentRole)
+	desiredRank := organizationMemberRoleRank(desiredRole)
+	if actorRank < 0 || currentRank < 0 || desiredRank < 0 || currentRank > actorRank || desiredRank > actorRank {
+		return false
+	}
+
+	if currentRank >= organizationMemberRoleRank("manager") || desiredRank >= organizationMemberRoleRank("manager") {
+		return tenantContext.HasRole("owner", "admin") &&
+			tenantContext.HasPermission(permissions.PermissionsManage)
+	}
+
+	return true
+}
+
+func organizationMemberRoleRank(role string) int {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "owner":
+		return 3
+	case "admin":
+		return 2
+	case "manager":
+		return 1
+	case "user":
+		return 0
+	default:
+		return -1
+	}
 }
 
 func normalizeUserIDs(values []string) []string {

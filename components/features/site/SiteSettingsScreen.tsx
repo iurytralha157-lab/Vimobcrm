@@ -13,6 +13,16 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { AlertCircle, Globe, Palette, Phone, Share2, Search, ExternalLink, Loader2, Menu, Info, RefreshCw, Save } from "lucide-react";
 import { AnimatedIcon } from "@/components/shared/icons/AnimatedIcon";
@@ -26,7 +36,7 @@ import {
   type SiteGeneralValues,
 } from "@/components/features/site";
 import { Slider } from "@/components/ui/slider";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ImageUpload } from "@/components/ui/image-upload";
@@ -35,6 +45,11 @@ import { canManageOrganization } from "@/lib/access/organization";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { getCloudflareWorkerCode } from "@/lib/site/cloudflare-worker";
 import { getSitePublicUrl } from "@/lib/site/site-publication";
+import {
+  SITE_THEME_COLOR_DEFAULTS,
+  SITE_THEME_COLOR_PRESETS,
+  SITE_THEME_PREVIEW_TEXT,
+} from "@/config/site-theme";
 
 type AboutStat = {
   value: string;
@@ -200,13 +215,13 @@ export default function SiteSettings() {
     custom_domain: '',
     site_title: '',
     site_description: '',
-    primary_color: '#F97316',
-    secondary_color: '#1E293B',
-    accent_color: '#3B82F6',
+    primary_color: SITE_THEME_COLOR_DEFAULTS.primary,
+    secondary_color: SITE_THEME_COLOR_DEFAULTS.secondary,
+    accent_color: SITE_THEME_COLOR_DEFAULTS.accent,
     site_theme: 'dark',
-    background_color: '#0D0D0D',
-    text_color: '#FFFFFF',
-    card_color: '#FFFFFF',
+    background_color: SITE_THEME_COLOR_DEFAULTS.background,
+    text_color: SITE_THEME_COLOR_DEFAULTS.text,
+    card_color: SITE_THEME_COLOR_DEFAULTS.card,
     whatsapp: '',
     phone: '',
     email: '',
@@ -249,6 +264,8 @@ export default function SiteSettings() {
   });
 
   const [isSaving, setIsSaving] = useState(false);
+  const [unpublishDialogOpen, setUnpublishDialogOpen] = useState(false);
+  const hydratedSiteRef = useRef<string | null>(null);
   const siteActiveTab = normalizeSiteTab(searchParams.get('tab'));
   const generalView = normalizeGeneralView(searchParams.get('view'));
   const setSiteActiveTab = (value: string) => {
@@ -269,6 +286,9 @@ export default function SiteSettings() {
 
   useEffect(() => {
     if (!site) return;
+    const hydrationKey = `${activeOrganizationId || site.organization_id}:${site.id}`;
+    if (hydratedSiteRef.current === hydrationKey) return;
+    hydratedSiteRef.current = hydrationKey;
 
     let isActive = true;
     queueMicrotask(() => {
@@ -281,13 +301,13 @@ export default function SiteSettings() {
         custom_domain: site.custom_domain || '',
         site_title: site.site_title || '',
         site_description: site.site_description || '',
-        primary_color: site.primary_color || '#F97316',
-        secondary_color: site.secondary_color || '#1E293B',
-        accent_color: site.accent_color || '#3B82F6',
+        primary_color: site.primary_color || SITE_THEME_COLOR_DEFAULTS.primary,
+        secondary_color: site.secondary_color || SITE_THEME_COLOR_DEFAULTS.secondary,
+        accent_color: site.accent_color || SITE_THEME_COLOR_DEFAULTS.accent,
         site_theme: site.site_theme || 'dark',
-        background_color: site.background_color || '#0D0D0D',
-        text_color: site.text_color || '#FFFFFF',
-        card_color: site.card_color || '#FFFFFF',
+        background_color: site.background_color || SITE_THEME_COLOR_DEFAULTS.background,
+        text_color: site.text_color || SITE_THEME_COLOR_DEFAULTS.text,
+        card_color: site.card_color || SITE_THEME_COLOR_DEFAULTS.card,
         whatsapp: site.whatsapp || '',
         phone: site.phone || '',
         email: site.email || '',
@@ -332,9 +352,9 @@ export default function SiteSettings() {
     return () => {
       isActive = false;
     };
-  }, [site]);
+  }, [activeOrganizationId, site]);
 
-  const handleSave = async () => {
+  const saveSite = async (): Promise<boolean> => {
     setIsSaving(true);
     try {
       // Convert empty strings to null for unique-constrained fields
@@ -354,6 +374,7 @@ export default function SiteSettings() {
       } else {
         await createSite.mutateAsync(dataToSave);
       }
+      return true;
     } catch (error: unknown) {
       // If error is about unknown columns, retry without those fields (migration not yet applied)
       const errMsg = getErrorMessage(error);
@@ -378,15 +399,30 @@ export default function SiteSettings() {
             await createSite.mutateAsync(safeSave);
           }
           toast.info('Scripts personalizados serão salvos após atualização do banco de dados.');
+          return true;
         } catch (retryError) {
           console.error('Error saving site (retry):', retryError);
+          return false;
         }
       } else {
         console.error('Error saving site:', error);
+        return false;
       }
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleSave = async () => {
+    if (site?.is_active && !formData.is_active) {
+      setUnpublishDialogOpen(true);
+      return;
+    }
+    await saveSite();
+  };
+
+  const handleConfirmUnpublish = async () => {
+    if (await saveSite()) setUnpublishDialogOpen(false);
   };
 
 
@@ -411,8 +447,8 @@ export default function SiteSettings() {
                 <Globe className="h-5 w-5" />
               </div>
               <div>
-                <h2 className="text-base font-semibold">Acesso restrito</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
+                <h2 className="text-[14px] font-normal">Acesso restrito</h2>
+                <p className="mt-1 text-[12px] font-light text-muted-foreground">
                   As configurações do site estão disponíveis apenas para administradores.
                 </p>
               </div>
@@ -428,14 +464,14 @@ export default function SiteSettings() {
       <AppLayout title="Configurações do Site">
         <Card className="app-card">
           <CardContent className="flex flex-col items-center px-6 py-12 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+            <div className="flex h-10 w-10 items-center justify-center rounded-[6px] bg-destructive/10 text-destructive">
               <AlertCircle className="h-6 w-6" />
             </div>
-            <h2 className="mt-4 text-lg font-semibold">Não foi possível carregar seu site</h2>
-            <p className="mt-2 max-w-md text-sm text-muted-foreground">
+            <h2 className="mt-4 text-[14px] font-normal">Não foi possível carregar seu site</h2>
+            <p className="mt-2 max-w-md text-[12px] font-light text-muted-foreground">
               Seu site não foi removido. Tivemos um problema ao consultar as configurações agora.
             </p>
-            <Button className="mt-5" variant="outline" onClick={() => void refetchSite()}>
+            <Button className="mt-5 h-9 rounded-[6px] text-[12px] font-light" variant="outline" onClick={() => void refetchSite()}>
               <RefreshCw className="mr-2 h-4 w-4" />
               Tentar novamente
             </Button>
@@ -452,11 +488,17 @@ export default function SiteSettings() {
           <Card data-tour="site-create-card" className="app-card mb-6">
             <CardContent className="p-6 text-center">
               <AnimatedIcon icon={GLOBE_JSON} size={48} trigger="loop" className="mx-auto mb-4" />
-              <h2 className="text-xl font-semibold mb-2">Crie seu site imobiliário</h2>
-              <p className="text-muted-foreground mb-4">
+              <h2 className="mb-2 text-[14px] font-normal">Crie seu site imobiliário</h2>
+              <p className="mb-4 text-[12px] font-light text-muted-foreground">
                 Configure seu site público para exibir seus imóveis e captar leads automaticamente.
               </p>
-              <Button data-tour="site-create-button" onClick={() => createSite.mutateAsync({ is_active: false })}>
+              <Button
+                data-tour="site-create-button"
+                onClick={() => void createSite.mutateAsync({ is_active: false }).catch(() => undefined)}
+                disabled={createSite.isPending}
+                className="h-9 rounded-[6px] bg-primary/50 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
+              >
+                {createSite.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Começar Configuração
               </Button>
             </CardContent>
@@ -488,7 +530,7 @@ export default function SiteSettings() {
                       >
                         <span className={cn(
                           "flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px]",
-                          isActive ? "bg-white/15" : "bg-[var(--app-surface-soft)]"
+                          isActive ? "bg-primary-foreground/15" : "bg-[var(--app-surface-soft)]"
                         )}>
                           <Icon className="h-4 w-4" />
                         </span>
@@ -496,7 +538,7 @@ export default function SiteSettings() {
                           <span className="block text-sm font-medium">{section.label}</span>
                           <span className={cn(
                             "mt-0.5 line-clamp-2 block text-xs leading-snug",
-                            isActive ? "text-white/75" : "text-muted-foreground"
+                            isActive ? "text-primary-foreground/75" : "text-muted-foreground"
                           )}>
                             {section.description}
                           </span>
@@ -510,16 +552,16 @@ export default function SiteSettings() {
 
               <div className="flex shrink-0 items-center gap-2">
                 {previewUrl ? (
-                  <a data-tour="site-preview" href={previewUrl} target="_blank" rel="noopener noreferrer">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="h-11 min-w-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-4 text-foreground hover:bg-[var(--app-surface-hover)]"
-                    >
+                  <Button
+                    asChild
+                    variant="ghost"
+                    className="h-11 min-w-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-4 text-foreground hover:bg-[var(--app-surface-hover)]"
+                  >
+                    <a data-tour="site-preview" href={previewUrl} target="_blank" rel="noopener noreferrer">
                       <ExternalLink className="mr-2 h-4 w-4" />
                       Preview
-                    </Button>
-                  </a>
+                    </a>
+                  </Button>
                 ) : (
                   <Button
                     data-tour="site-preview"
@@ -663,8 +705,8 @@ export default function SiteSettings() {
                                   setFormData({
                                     ...formData,
                                     site_theme: 'dark',
-                                    background_color: '#0D0D0D',
-                                    text_color: '#FFFFFF',
+                                    background_color: SITE_THEME_COLOR_PRESETS.dark.background,
+                                    text_color: SITE_THEME_COLOR_PRESETS.dark.text,
                                   });
                                 }}
                                 disabled={!isAdmin}
@@ -679,8 +721,8 @@ export default function SiteSettings() {
                                   setFormData({
                                     ...formData,
                                     site_theme: 'light',
-                                    background_color: '#FFFFFF',
-                                    text_color: '#1A1A1A',
+                                    background_color: SITE_THEME_COLOR_PRESETS.light.background,
+                                    text_color: SITE_THEME_COLOR_PRESETS.light.text,
                                   });
                                 }}
                                 disabled={!isAdmin}
@@ -726,11 +768,11 @@ export default function SiteSettings() {
                           className="flex min-h-[220px] flex-col rounded-[6px] p-4"
                           style={{ backgroundColor: formData.background_color, color: formData.text_color }}
                         >
-                          <p className="text-base font-semibold">Texto do site</p>
+                          <p className="text-[14px] font-normal">Texto do site</p>
                           <p className="mt-1 text-sm opacity-70">Subtítulo do conteúdo</p>
                           <div className="mt-4 rounded-[6px] p-3" style={{ backgroundColor: formData.card_color }}>
-                            <p className="text-sm font-semibold" style={{ color: '#1A1A1A' }}>Card do imóvel</p>
-                            <p className="mt-1 text-xs" style={{ color: '#6B7280' }}>Resumo visual</p>
+                            <p className="text-[12px] font-normal" style={{ color: SITE_THEME_PREVIEW_TEXT.primary }}>Card do imóvel</p>
+                            <p className="mt-1 text-[12px] font-light" style={{ color: SITE_THEME_PREVIEW_TEXT.secondary }}>Resumo visual</p>
                           </div>
                           <div className="mt-auto flex flex-wrap gap-2 pt-4">
                             <span className="rounded-[6px] px-3 py-1.5 text-xs font-medium text-white" style={{ backgroundColor: formData.primary_color }}>Principal</span>
@@ -1203,6 +1245,36 @@ export default function SiteSettings() {
           </Tabs>
         )}
       </div>
+      <AlertDialog
+        open={unpublishDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && isSaving) return;
+          setUnpublishDialogOpen(open);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Retirar o site do ar?</AlertDialogTitle>
+            <AlertDialogDescription>
+              O site deixará de ficar público assim que as alterações forem salvas. Você poderá publicá-lo novamente depois.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isSaving}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={isSaving}
+              onClick={(event) => {
+                event.preventDefault();
+                void handleConfirmUnpublish();
+              }}
+            >
+              {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Retirar do ar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppLayout>
   );
 }

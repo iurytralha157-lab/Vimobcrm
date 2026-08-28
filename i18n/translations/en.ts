@@ -29,17 +29,20 @@ export const en = {
 
   // Navigation
   nav: {
+    home: 'Home',
     dashboard: 'Dashboard',
     dashboardGeneral: 'Main dashboard',
     dashboardSite: 'Site dashboard',
-    dashboardCampaigns: 'Campaign dashboard',
+    dashboardCampaigns: 'Marketing',
+    marketing: 'Marketing',
     pipelines: 'Pipelines',
-    attentionCenter: 'Attention Center',
+    attentionCenter: 'Priorities and attention',
     contacts: 'Contacts',
     schedule: 'Schedule',
     conversations: 'Conversations',
     properties: 'Properties',
     propertiesAll: 'All Properties',
+    propertiesDevelopments: 'Developments',
     propertiesRentals: 'Rentals',
     propertiesCondos: 'Condos',
     propertiesLocations: 'Locations',
@@ -61,7 +64,7 @@ export const en = {
     settingsAccount: 'Account',
     settingsNotifications: 'Notifications',
     settingsUsers: 'Users',
-    settingsBilling: 'Payments',
+    settingsBilling: 'Subscription',
     settingsProperties: 'Properties',
     settingsIntegrations: 'Integrations',
     settingsAI: 'AI',
@@ -149,6 +152,7 @@ export const en = {
 
     // Users tab
     users: {
+      manager: 'Manager',
       title: 'Users',
       description: 'Manage your team members',
       newUser: 'New User',

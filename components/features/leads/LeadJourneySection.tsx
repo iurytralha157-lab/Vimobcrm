@@ -131,16 +131,16 @@ export function LeadJourneySection({ leadId }: LeadJourneySectionProps) {
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-2 mb-3">
-        <div className="rounded-lg bg-white/[0.045] p-2 text-center">
-          <p className="text-lg font-bold">{totalVisits}</p>
+        <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-2 text-center">
+          <p className="text-[20px] font-normal">{totalVisits}</p>
           <p className="text-[10px] text-muted-foreground">Pageviews</p>
         </div>
-        <div className="rounded-lg bg-white/[0.045] p-2 text-center">
-          <p className="text-lg font-bold">{uniquePages}</p>
+        <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-2 text-center">
+          <p className="text-[20px] font-normal">{uniquePages}</p>
           <p className="text-[10px] text-muted-foreground">Páginas</p>
         </div>
-        <div className="rounded-lg bg-white/[0.045] p-2 text-center">
-          <p className="text-lg font-bold">{propertiesViewed}</p>
+        <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-2 text-center">
+          <p className="text-[20px] font-normal">{propertiesViewed}</p>
           <p className="text-[10px] text-muted-foreground">Imóveis</p>
         </div>
       </div>

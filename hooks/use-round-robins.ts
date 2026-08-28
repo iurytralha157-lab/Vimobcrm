@@ -1,7 +1,22 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
 import { roundRobinsAPI } from '@/lib/api/round-robins';
 import type { Json } from '@/integrations/supabase/types';
+
+function useActiveOrganizationId() {
+  const { organization, profile } = useAuth();
+  return organization?.id || profile?.organization_id || null;
+}
+
+function requireOrganizationId(organizationId: string | null) {
+  if (!organizationId) throw new Error('Organização não selecionada.');
+  return organizationId;
+}
+
+function roundRobinsQueryKey(organizationId: string | null) {
+  return ['round-robins', organizationId] as const;
+}
 
 export interface RoundRobinRule {
   id: string;
@@ -56,17 +71,21 @@ export interface RoundRobin {
   members: RoundRobinMember[];
 }
 
-export function useRoundRobins() {
+export function useRoundRobins(options: { enabled?: boolean } = {}) {
+  const organizationId = useActiveOrganizationId();
+
   return useQuery({
-    queryKey: ['round-robins'],
+    queryKey: roundRobinsQueryKey(organizationId),
     queryFn: async () => {
-      return roundRobinsAPI.getRoundRobins() as Promise<RoundRobin[]>;
+      return roundRobinsAPI.getRoundRobins(requireOrganizationId(organizationId)) as Promise<RoundRobin[]>;
     },
+    enabled: Boolean(organizationId) && options.enabled !== false,
   });
 }
 
 export function useUpdateRoundRobin() {
   const queryClient = useQueryClient();
+  const organizationId = useActiveOrganizationId();
 
   return useMutation({
     mutationFn: async ({ id, ...updates }: Partial<RoundRobin> & { id: string }) => {
@@ -78,10 +97,10 @@ export function useUpdateRoundRobin() {
         target_stage_id: updates.target_stage_id,
         settings: updates.settings as Json | null | undefined,
         reentry_behavior: updates.reentry_behavior,
-      });
+      }, requireOrganizationId(organizationId));
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['round-robins'] });
+      queryClient.invalidateQueries({ queryKey: roundRobinsQueryKey(organizationId) });
     },
     onError: (error) => {
       toast.error('Erro ao atualizar roleta: ' + error.message);
@@ -91,11 +110,12 @@ export function useUpdateRoundRobin() {
 
 export function useDeleteRoundRobin() {
   const queryClient = useQueryClient();
+  const organizationId = useActiveOrganizationId();
 
   return useMutation({
-    mutationFn: (id: string) => roundRobinsAPI.deleteRoundRobin(id),
+    mutationFn: (id: string) => roundRobinsAPI.deleteRoundRobin(id, requireOrganizationId(organizationId)),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['round-robins'] });
+      queryClient.invalidateQueries({ queryKey: roundRobinsQueryKey(organizationId) });
       toast.success('Roleta excluida!');
     },
     onError: (error) => {
@@ -111,18 +131,20 @@ interface UpdateMemberWeight {
 
 export function useUpdateRoundRobinMembers() {
   const queryClient = useQueryClient();
+  const organizationId = useActiveOrganizationId();
 
   return useMutation({
     mutationFn: async ({ members }: { roundRobinId: string; members: UpdateMemberWeight[] }) => {
+      const activeOrganizationId = requireOrganizationId(organizationId);
       await Promise.all(
         members.map((member) =>
-          roundRobinsAPI.updateMember(member.memberId, { weight: member.weight })
+          roundRobinsAPI.updateMember(member.memberId, { weight: member.weight }, activeOrganizationId)
         )
       );
       return true;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['round-robins'] });
+      queryClient.invalidateQueries({ queryKey: roundRobinsQueryKey(organizationId) });
       toast.success('Distribuicao atualizada!');
     },
     onError: (error) => {
@@ -139,14 +161,18 @@ interface AddMemberInput {
 
 export function useAddRoundRobinMember() {
   const queryClient = useQueryClient();
+  const organizationId = useActiveOrganizationId();
 
   return useMutation({
     mutationFn: async ({ roundRobinId, userId, weight = 10 }: AddMemberInput) => {
-      const members = await roundRobinsAPI.addMember({ roundRobinId, userId, weight });
+      const members = await roundRobinsAPI.addMember(
+        { roundRobinId, userId, weight },
+        requireOrganizationId(organizationId),
+      );
       return members[0];
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['round-robins'] });
+      queryClient.invalidateQueries({ queryKey: roundRobinsQueryKey(organizationId) });
       toast.success('Membro adicionado!');
     },
     onError: (error) => {
@@ -157,11 +183,15 @@ export function useAddRoundRobinMember() {
 
 export function useRemoveRoundRobinMember() {
   const queryClient = useQueryClient();
+  const organizationId = useActiveOrganizationId();
 
   return useMutation({
-    mutationFn: (memberId: string) => roundRobinsAPI.deleteMember(memberId),
+    mutationFn: (memberId: string) => roundRobinsAPI.deleteMember(
+      memberId,
+      requireOrganizationId(organizationId),
+    ),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['round-robins'] });
+      queryClient.invalidateQueries({ queryKey: roundRobinsQueryKey(organizationId) });
       toast.success('Membro removido!');
     },
     onError: (error) => {

@@ -3,9 +3,12 @@ package cadences
 import "errors"
 
 var (
-	ErrInvalidInput     = errors.New("invalid cadence input")
-	ErrCadenceNotFound  = errors.New("cadence not found")
-	ErrCadenceForbidden = errors.New("cadence access denied")
+	ErrInvalidInput               = errors.New("invalid cadence input")
+	ErrCadenceNotFound            = errors.New("cadence not found")
+	ErrCadenceForbidden           = errors.New("cadence access denied")
+	ErrAttentionPolicyConflict    = errors.New("stage attention policy conflict")
+	ErrOperationalRulesConflict   = errors.New("stage operational rules changed")
+	ErrOperationalTemplateManaged = errors.New("cadence template is managed by stage operational rules")
 )
 
 type Envelope[T any] struct {

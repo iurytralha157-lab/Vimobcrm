@@ -105,6 +105,7 @@ func TestCreateRequestRejectsInvalidValues(t *testing.T) {
 	tests := []CreateRequest{
 		{Name: "A"},
 		{Name: "Ana", Email: "not-email"},
+		{Name: "Ana", Phone: "+1 415 CALL-NOW"},
 		{Name: "Ana", PipelineID: "not-a-uuid"},
 		{Name: "Ana", TeamID: "not-a-uuid"},
 		{Name: "Ana", InterestValue: &invalidInterestValue},
@@ -122,6 +123,77 @@ func TestCreateRequestRejectsInvalidValues(t *testing.T) {
 		if _, err := request.Validate(); err == nil {
 			t.Fatalf("Validate(%#v) expected error", request)
 		}
+	}
+}
+
+func TestLeadRequestsCanonicalizeInternationalPhones(t *testing.T) {
+	created, err := (CreateRequest{Name: "Ana", Phone: "+1 (415) 555-2671"}).Validate()
+	if err != nil {
+		t.Fatalf("CreateRequest.Validate() returned error: %v", err)
+	}
+	if created.Phone == nil || *created.Phone != "+14155552671" {
+		t.Fatalf("CreateRequest.Validate() phone = %#v, want E.164", created.Phone)
+	}
+	imported, err := (CreateRequest{Name: "Jean", Phone: "+33 1 42 68 53 00", ImportMode: true}).Validate()
+	if err != nil {
+		t.Fatalf("import CreateRequest.Validate() returned error: %v", err)
+	}
+	if imported.Phone == nil || *imported.Phone != "+33142685300" {
+		t.Fatalf("import CreateRequest.Validate() phone = %#v, want E.164", imported.Phone)
+	}
+
+	var update UpdateRequest
+	if err := json.Unmarshal([]byte(`{"phone":"00 351 912 345 678"}`), &update); err != nil {
+		t.Fatalf("json.Unmarshal() returned error: %v", err)
+	}
+	updated, err := update.Validate()
+	if err != nil {
+		t.Fatalf("UpdateRequest.Validate() returned error: %v", err)
+	}
+	if updated.Phone.Value == nil || *updated.Phone.Value != "+351912345678" {
+		t.Fatalf("UpdateRequest.Validate() phone = %#v, want E.164", updated.Phone)
+	}
+}
+
+func TestLeadRequestsKeepBrazilianDefaultForLocalPhones(t *testing.T) {
+	created, err := (CreateRequest{Name: "Ana", Phone: "(11) 99999-9999"}).Validate()
+	if err != nil {
+		t.Fatalf("CreateRequest.Validate() returned error: %v", err)
+	}
+	if created.Phone == nil || *created.Phone != "+5511999999999" {
+		t.Fatalf("CreateRequest.Validate() phone = %#v, want Brazilian E.164", created.Phone)
+	}
+}
+
+func TestLeadUpdateCanClearPhone(t *testing.T) {
+	for _, payload := range []string{`{"phone":null}`, `{"phone":""}`} {
+		var request UpdateRequest
+		if err := json.Unmarshal([]byte(payload), &request); err != nil {
+			t.Fatalf("json.Unmarshal(%s) returned error: %v", payload, err)
+		}
+
+		input, err := request.Validate()
+		if err != nil {
+			t.Fatalf("UpdateRequest.Validate(%s) returned error: %v", payload, err)
+		}
+		if !input.Phone.Set {
+			t.Fatalf("UpdateRequest.Validate(%s) did not preserve the phone patch", payload)
+		}
+		if got := nullablePatchString(input.Phone); got != nil {
+			t.Fatalf("nullablePatchString(%s) = %#v, want nil", payload, got)
+		}
+	}
+
+	var omitted UpdateRequest
+	if err := json.Unmarshal([]byte(`{"name":"Ana Atualizada"}`), &omitted); err != nil {
+		t.Fatalf("json.Unmarshal(omitted phone) returned error: %v", err)
+	}
+	input, err := omitted.Validate()
+	if err != nil {
+		t.Fatalf("UpdateRequest.Validate(omitted phone) returned error: %v", err)
+	}
+	if input.Phone.Set {
+		t.Fatal("UpdateRequest.Validate(omitted phone) unexpectedly produced a phone patch")
 	}
 }
 

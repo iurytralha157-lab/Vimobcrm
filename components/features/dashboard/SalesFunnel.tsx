@@ -16,28 +16,26 @@ interface FunnelDataPoint {
   stage_key: string;
 }
 
-// Gradientes modernos para cada etapa do funil
-const funnelGradients = [
-  'from-primary to-primary/80',
-  'from-violet-500 to-violet-600',
-  'from-blue-500 to-blue-600',
-  'from-emerald-500 to-emerald-600',
-  'from-amber-500 to-amber-600',
-  'from-rose-500 to-rose-600',
-  'from-cyan-500 to-cyan-600',
-  'from-fuchsia-500 to-fuchsia-600',
+const funnelSurfaces = [
+  'bg-primary',
+  'bg-primary/90',
+  'bg-primary/80',
+  'bg-primary/75',
+  'bg-primary/70',
+  'bg-primary/65',
+  'bg-primary/60',
+  'bg-primary/50',
 ];
 
-// Cores de borda/glow
 const funnelBorderColors = [
-  'border-primary/30 shadow-primary/20',
-  'border-violet-500/30 shadow-violet-500/20',
-  'border-blue-500/30 shadow-blue-500/20',
-  'border-emerald-500/30 shadow-emerald-500/20',
-  'border-amber-500/30 shadow-amber-500/20',
-  'border-rose-500/30 shadow-rose-500/20',
-  'border-cyan-500/30 shadow-cyan-500/20',
-  'border-fuchsia-500/30 shadow-fuchsia-500/20',
+  'border-primary/30',
+  'border-primary/30',
+  'border-primary/30',
+  'border-primary/30',
+  'border-primary/30',
+  'border-primary/30',
+  'border-primary/30',
+  'border-primary/30',
 ];
 
 interface SalesFunnelProps {
@@ -67,7 +65,7 @@ export function SalesFunnel({ data, isLoading }: SalesFunnelProps) {
     return (
       <Card className="app-card overflow-hidden">
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <CardTitle className="flex items-center gap-2 text-[14px] font-normal">
             <TrendingDown className="h-4 w-4 text-primary" />
             Funil de Vendas
           </CardTitle>
@@ -83,13 +81,13 @@ export function SalesFunnel({ data, isLoading }: SalesFunnelProps) {
     return (
       <Card className="app-card overflow-hidden">
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <CardTitle className="flex items-center gap-2 text-[14px] font-normal">
             <TrendingDown className="h-4 w-4 text-primary" />
             Funil de Vendas
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="h-[180px] flex items-center justify-center text-muted-foreground text-sm">
+          <div className="flex h-[180px] items-center justify-center text-[12px] font-light text-muted-foreground">
             Nenhum dado disponível
           </div>
         </CardContent>
@@ -103,7 +101,7 @@ export function SalesFunnel({ data, isLoading }: SalesFunnelProps) {
     <Card className="app-card overflow-hidden">
       <CardHeader className="pb-3">
         <div className="flex items-center">
-          <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <CardTitle className="flex items-center gap-2 text-[14px] font-normal">
             <TrendingDown className="h-4 w-4 text-primary" />
             Funil de Vendas
           </CardTitle>
@@ -123,33 +121,31 @@ export function SalesFunnel({ data, isLoading }: SalesFunnelProps) {
                   <TooltipTrigger asChild>
                     <div
                       className={cn(
-                        "relative group cursor-default transition-all duration-300",
-                        "hover:scale-[1.02] hover:z-10"
+                        "group relative cursor-default"
                       )}
                       style={{ width: `${width}%` }}
                     >
                       {/* Barra principal com gradiente */}
                       <div
                         className={cn(
-                          "w-full rounded flex items-center justify-between px-3 py-1.5",
-                          "bg-gradient-to-r text-white text-sm",
-                          "border shadow-sm transition-all duration-200",
-                          "group-hover:shadow-md",
-                          funnelGradients[index % funnelGradients.length],
+                          "flex w-full items-center justify-between rounded-[6px] px-3 py-1.5",
+                          "border text-[12px] font-light text-primary-foreground transition-colors",
+                          "group-hover:bg-primary",
+                          funnelSurfaces[index % funnelSurfaces.length],
                           funnelBorderColors[index % funnelBorderColors.length]
                         )}
                       >
                         {/* Nome do estágio */}
-                        <span className="text-xs font-medium truncate max-w-[50%] drop-shadow-sm">
+                        <span className="max-w-[50%] truncate text-[12px] font-light">
                           {item.name}
                         </span>
 
                         {/* Valor e percentual */}
                         <div className="flex items-center gap-1.5">
-                          <span className="text-sm font-bold drop-shadow-sm">
+                          <span className="text-[12px] font-normal">
                             {item.value}
                           </span>
-                          <span className="min-w-[26px] rounded-[6px] bg-white/20 px-1.5 py-0.5 text-center text-[9px] font-medium tabular-nums opacity-80">
+                          <span className="min-w-[26px] rounded-[4px] bg-primary-foreground/20 px-1.5 py-0.5 text-center text-[10px] font-light tabular-nums">
                             {item.percentage}%
                           </span>
                         </div>
@@ -160,7 +156,7 @@ export function SalesFunnel({ data, isLoading }: SalesFunnelProps) {
                         <div className="absolute -bottom-0.5 left-1/2 transform -translate-x-1/2 w-0 h-0
                           border-l-[5px] border-l-transparent
                           border-r-[5px] border-r-transparent
-                          border-t-[4px] border-t-white/20
+                          border-t-[4px] border-t-primary/30
                           z-10"
                         />
                       )}
@@ -168,18 +164,18 @@ export function SalesFunnel({ data, isLoading }: SalesFunnelProps) {
                   </TooltipTrigger>
                   <TooltipContent
                     side="right"
-                    className="min-w-[160px] rounded-lg border-0 bg-[var(--app-surface-solid)] p-3 text-[var(--app-text-primary)] shadow-[0_8px_20px_rgba(0,0,0,0.22)] animate-in fade-in zoom-in duration-200"
+                    className="min-w-[160px] rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-3 text-[var(--app-text-primary)] shadow-none"
                   >
                     <div className="space-y-2">
-                      <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{item.name}</p>
+                      <p className="text-[12px] font-normal text-muted-foreground">{item.name}</p>
                       <div className="space-y-1.5 pt-2">
                         <div className="flex justify-between items-center gap-4">
-                          <span className="text-xs text-muted-foreground font-medium">Leads:</span>
-                          <span className="text-xs font-bold text-foreground tabular-nums">{item.value}</span>
+                          <span className="text-[12px] font-light text-muted-foreground">Leads:</span>
+                          <span className="text-[12px] font-normal tabular-nums text-foreground">{item.value}</span>
                         </div>
                         <div className="flex justify-between items-center gap-4">
-                          <span className="text-xs text-muted-foreground font-medium">Percentual:</span>
-                          <span className="text-xs font-bold text-foreground tabular-nums">{item.percentage}%</span>
+                          <span className="text-[12px] font-light text-muted-foreground">Percentual:</span>
+                          <span className="text-[12px] font-normal tabular-nums text-foreground">{item.percentage}%</span>
                         </div>
                       </div>
                     </div>
@@ -197,8 +193,8 @@ export function SalesFunnel({ data, isLoading }: SalesFunnelProps) {
               <div key={`${item.stage_key || item.name}-${index}`} className="flex items-center gap-1">
                 <div
                   className={cn(
-                    "w-2 h-2 rounded-full bg-gradient-to-r",
-                    funnelGradients[index % funnelGradients.length]
+                    "h-2 w-2 rounded-full",
+                    funnelSurfaces[index % funnelSurfaces.length]
                   )}
                 />
                 <span className="text-[9px] text-muted-foreground">{item.name}</span>

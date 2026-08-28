@@ -73,9 +73,9 @@ export function MyRequestsList() {
               </p>
 
               {request.admin_response && (
-                <div className="bg-white/[0.045] rounded-md p-3 mt-2">
-                  <p className="text-xs font-medium text-foreground mb-1">Resposta:</p>
-                  <p className="text-sm text-muted-foreground">{request.admin_response}</p>
+                <div className="mt-2 rounded-[6px] bg-[var(--app-surface-soft)] p-3">
+                  <p className="mb-1 text-[12px] font-normal text-foreground">Resposta:</p>
+                  <p className="text-[12px] font-light text-muted-foreground">{request.admin_response}</p>
                 </div>
               )}
             </div>

@@ -17,20 +17,20 @@ export const ConditionNode = memo(({ data, selected }: NodeProps) => {
   const isResponseSentiment = conditionType === 'response_sentiment';
 
   return (
-    <div className={`automation-node px-4 py-3 rounded-xl min-w-[220px] max-w-[280px] ${
+    <div className={`automation-node min-w-[220px] max-w-[280px] rounded-[8px] px-4 py-3 ${
       selected ? 'automation-node-selected' : ''
-    }`} style={{ '--node-accent': '#eab308' } as React.CSSProperties}>
+    }`} style={{ '--node-accent': 'var(--warning)' } as React.CSSProperties}>
       <Handle type="target" position={Position.Left} className="!bg-yellow-400 !w-3 !h-3 !border-2 !border-yellow-500/50" />
       <div className="flex items-start gap-3">
         <div className={`p-2 rounded-lg ${isResponseSentiment ? 'bg-emerald-500' : 'bg-yellow-500'} shrink-0`}>
           {isResponseSentiment ? (
-            <MessageCircle className="h-5 w-5 text-white" />
+            <MessageCircle className="h-5 w-5 text-primary-foreground" />
           ) : (
-            <GitBranch className="h-5 w-5 text-white" />
+            <GitBranch className="h-5 w-5 text-primary-foreground" />
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <span className={`text-[10px] font-bold ${isResponseSentiment ? 'text-emerald-600 dark:text-emerald-400' : 'text-yellow-600 dark:text-yellow-400'} uppercase tracking-wider`}>
+          <span className={`text-[12px] font-normal ${isResponseSentiment ? 'text-emerald-600 dark:text-emerald-400' : 'text-yellow-600 dark:text-yellow-400'}`}>
             {isResponseSentiment ? 'Resposta do Lead' : 'Condição'}
           </span>
           {isResponseSentiment ? (

@@ -11,22 +11,61 @@ import (
 	"net/url"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
-const organizationStorageDeleteBatchSize = 1000
+const (
+	organizationStorageDeleteBatchSize       = 1000
+	maxOrganizationAsaasCleanupResourceCount = 10002 // 10k payments + subscription + customer.
+)
 
 type organizationUserCleanup struct {
-	ID        string
-	AvatarURL string
+	ID string
 }
 
 type organizationStorageObject struct {
 	Bucket string
 	Name   string
+}
+
+type organizationAsaasCleanupClaim struct {
+	Outcome           string `json:"outcome"`
+	ClaimToken        string `json:"claim_token"`
+	OrganizationID    string `json:"organization_id"`
+	ResourceCount     int    `json:"resource_count"`
+	RemainingCount    int    `json:"remaining_count"`
+	BusyReason        string `json:"busy_reason"`
+	Reason            string `json:"reason"`
+	RetryAfterSeconds int    `json:"retry_after_seconds"`
+}
+
+type organizationAsaasCleanupResourceClaim struct {
+	Outcome           string `json:"outcome"`
+	ResourceKind      string `json:"resource_kind"`
+	ResourceID        string `json:"resource_id"`
+	AttemptToken      string `json:"attempt_token"`
+	BusyReason        string `json:"busy_reason"`
+	Reason            string `json:"reason"`
+	RetryAfterSeconds int    `json:"retry_after_seconds"`
+}
+
+type organizationAsaasCleanupResourceAck struct {
+	Outcome string `json:"outcome"`
+	Reason  string `json:"reason"`
+}
+
+type organizationAsaasProviderDeleteResult struct {
+	HTTPStatus      int
+	ProviderPayload map[string]any
+	Deleted         bool
+	ID              string
+}
+
+type organizationAsaasCleanupFinalization struct {
+	Outcome        string `json:"outcome"`
+	OrganizationID string `json:"organization_id"`
 }
 
 type googleCalendarChannelCleanup struct {
@@ -35,10 +74,9 @@ type googleCalendarChannelCleanup struct {
 }
 
 type googleCalendarConnectionCleanup struct {
-	ID           string
-	AccessToken  string
-	RefreshToken string
-	Channels     []googleCalendarChannelCleanup
+	ID          string
+	AccessToken string
+	Channels    []googleCalendarChannelCleanup
 }
 
 type whatsappSessionCleanup struct {
@@ -64,8 +102,10 @@ func (table organizationScopedTable) key() string {
 }
 
 // DeleteOrganization performs a fail-closed tenant purge. The organization is
-// disabled first, external connections and files are removed next, and the
-// relational data is only deleted after those cleanup steps succeed.
+// disabled first, external connections and tenant-owned files are removed
+// next, and the relational data is only deleted after those cleanup steps
+// succeed. User identities and user-scoped assets are deliberately preserved:
+// deleting an organization is not the same operation as deleting a person.
 func (repo Repository) DeleteOrganization(
 	ctx context.Context,
 	tenantContext tenant.Context,
@@ -85,11 +125,6 @@ func (repo Repository) DeleteOrganization(
 		return OrganizationDeleteResult{}, err
 	}
 
-	exclusiveUsers, err := repo.listExclusiveOrganizationUsers(ctx, organizationID, tenantContext.UserID)
-	if err != nil {
-		return OrganizationDeleteResult{}, err
-	}
-
 	if err := repo.cancelOrganizationAsaasBilling(ctx, organizationID); err != nil {
 		return OrganizationDeleteResult{}, fmt.Errorf("%w: %v", ErrOrganizationExternalCleanup, err)
 	}
@@ -99,118 +134,479 @@ func (repo Repository) DeleteOrganization(
 	if err := repo.deleteOrganizationEvolutionInstances(ctx, organizationID); err != nil {
 		return OrganizationDeleteResult{}, fmt.Errorf("%w: %v", ErrOrganizationExternalCleanup, err)
 	}
-	if err := repo.deleteOrganizationStorage(ctx, organizationID, exclusiveUsers); err != nil {
+	if err := repo.deleteOrganizationStorage(ctx, organizationID); err != nil {
 		return OrganizationDeleteResult{}, fmt.Errorf("%w: %v", ErrOrganizationExternalCleanup, err)
 	}
 
-	if err := repo.purgeOrganizationDatabase(ctx, organizationID, exclusiveUsers); err != nil {
+	if err := repo.purgeOrganizationDatabase(ctx, organizationID); err != nil {
 		return OrganizationDeleteResult{}, err
-	}
-
-	warnings := make([]string, 0)
-	for _, user := range exclusiveUsers {
-		if err := repo.deleteOrganizationAuthUser(ctx, user.ID); err != nil {
-			warnings = append(warnings, "Uma conta de acesso residual não pôde ser removida automaticamente.")
-		}
 	}
 
 	return OrganizationDeleteResult{
 		OK:              true,
-		DeletedUsers:    len(exclusiveUsers),
-		CleanupWarnings: warnings,
+		DeletedUsers:    0,
+		CleanupWarnings: []string{},
 	}, nil
 }
 
 func (repo Repository) cancelOrganizationAsaasBilling(ctx context.Context, organizationID string) error {
-	var customerID string
-	var subscriptionID string
-	err := repo.db.Pool().QueryRow(ctx, `
-		select
-			coalesce(asaas_customer_id, ''),
-			coalesce(asaas_subscription_id, '')
-		from public.organizations
-		where id = $1::uuid
-	`, organizationID).Scan(&customerID, &subscriptionID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
+	leaseID, err := randomUUIDString()
+	if err != nil {
+		return fmt.Errorf("create Asaas cleanup lease: %w", err)
 	}
+	leaseOwner := "go-admin:" + leaseID
+
+	claim, err := repo.claimOrganizationAsaasCleanup(
+		ctx,
+		organizationID,
+		leaseOwner,
+	)
 	if err != nil {
 		return err
 	}
 
-	paymentRows, err := repo.db.Pool().Query(ctx, `
-		select asaas_payment_id
-		from public.asaas_payments
-		where organization_id = $1::uuid
-		  and nullif(btrim(asaas_payment_id), '') is not null
-		  and upper(coalesce(status, '')) in ('PENDING', 'OVERDUE', 'AWAITING_RISK_ANALYSIS')
-		order by created_at, asaas_payment_id
-	`, organizationID)
-	if err != nil {
-		return err
-	}
-	defer paymentRows.Close()
-
-	paymentIDs := make([]string, 0)
-	for paymentRows.Next() {
-		var paymentID string
-		if err := paymentRows.Scan(&paymentID); err != nil {
-			return err
+	switch claim.Outcome {
+	case "already_completed":
+		if claim.OrganizationID != organizationID {
+			return fmt.Errorf("Asaas cleanup claim organization mismatch")
 		}
-		paymentIDs = append(paymentIDs, strings.TrimSpace(paymentID))
-	}
-	if err := paymentRows.Err(); err != nil {
-		return err
+		return nil
+	case "organization_not_found":
+		return ErrNotFound
+	case "organization_active":
+		return fmt.Errorf("Asaas cleanup requires a disabled organization")
+	case "busy":
+		return fmt.Errorf(
+			"Asaas cleanup is busy (%s); retry after %d seconds",
+			firstNonEmpty(strings.TrimSpace(claim.BusyReason), "provider_operation"),
+			claim.RetryAfterSeconds,
+		)
+	case "manual_review":
+		return fmt.Errorf(
+			"Asaas cleanup requires manual review (%s)",
+			firstNonEmpty(strings.TrimSpace(claim.Reason), "provider_outcome_ambiguous"),
+		)
+	case "state_changed":
+		return fmt.Errorf("Asaas cleanup state changed while acquiring the claim")
+	case "invalid_request":
+		return fmt.Errorf("Asaas cleanup claim was rejected")
+	case "proceed", "recover_only":
+		// Continue below with the immutable provider snapshot returned by the
+		// database claim. Never re-read mutable billing identifiers here.
+	default:
+		return fmt.Errorf("unexpected Asaas cleanup claim outcome %q", claim.Outcome)
 	}
 
-	customerID = strings.TrimSpace(customerID)
-	subscriptionID = strings.TrimSpace(subscriptionID)
-	if customerID == "" && subscriptionID == "" && len(paymentIDs) == 0 {
-		return nil
+	claimToken, ok := normalizeUUID(claim.ClaimToken)
+	if !ok || claim.OrganizationID != organizationID {
+		return fmt.Errorf("invalid Asaas cleanup claim binding")
 	}
-	if repo.asaasURL == "" || repo.asaasAPIKey == "" {
+	if claim.ResourceCount < 0 ||
+		claim.ResourceCount > maxOrganizationAsaasCleanupResourceCount ||
+		claim.RemainingCount < 0 || claim.RemainingCount > claim.ResourceCount {
+		return fmt.Errorf("invalid Asaas cleanup resource counts")
+	}
+	if claim.ResourceCount > 0 && (repo.asaasURL == "" || repo.asaasAPIKey == "") {
 		return fmt.Errorf("Asaas cleanup is not configured")
 	}
 
-	if subscriptionID != "" {
-		if err := repo.deleteAsaasResource(ctx, "subscriptions", subscriptionID); err != nil {
+	seenResources := make(map[string]struct{}, claim.ResourceCount)
+	lastResourceRank := -1
+	for step := 0; step <= claim.ResourceCount; step++ {
+		resourceClaim, err := repo.claimOrganizationAsaasCleanupResource(
+			ctx,
+			organizationID,
+			claimToken,
+			leaseOwner,
+		)
+		if err != nil {
 			return err
 		}
-	}
-	for _, paymentID := range paymentIDs {
-		if err := repo.deleteAsaasResource(ctx, "payments", paymentID); err != nil {
-			return err
+
+		switch resourceClaim.Outcome {
+		case "complete":
+			return repo.finalizeOrganizationAsaasCleanup(ctx, organizationID, claimToken)
+		case "busy":
+			return fmt.Errorf(
+				"Asaas cleanup resource is busy (%s); retry after %d seconds",
+				firstNonEmpty(strings.TrimSpace(resourceClaim.BusyReason), "provider_delete"),
+				resourceClaim.RetryAfterSeconds,
+			)
+		case "manual_review":
+			return fmt.Errorf(
+				"Asaas cleanup resource requires manual review (%s)",
+				firstNonEmpty(strings.TrimSpace(resourceClaim.Reason), "provider_outcome_ambiguous"),
+			)
+		case "claim_not_found", "lost_claim":
+			return fmt.Errorf("Asaas cleanup resource claim was lost")
+		case "invalid_request":
+			return fmt.Errorf("Asaas cleanup resource claim was rejected")
+		case "proceed":
+			// Continue below. The resource marker is durable before any provider
+			// DELETE, so a crash can never be mistaken for a confirmed removal.
+		default:
+			return fmt.Errorf(
+				"unexpected Asaas cleanup resource outcome %q",
+				resourceClaim.Outcome,
+			)
+		}
+
+		resourceKind := strings.TrimSpace(resourceClaim.ResourceKind)
+		resourceID, err := normalizeAsaasCleanupResourceID(resourceClaim.ResourceID)
+		if err != nil || resourceID == "" {
+			return fmt.Errorf("invalid Asaas cleanup resource identifier")
+		}
+		attemptToken, ok := normalizeUUID(resourceClaim.AttemptToken)
+		if !ok {
+			return fmt.Errorf("invalid Asaas cleanup resource attempt binding")
+		}
+		resourceRank, ok := asaasCleanupResourceRank(resourceKind)
+		if !ok || resourceRank < lastResourceRank {
+			return fmt.Errorf("invalid Asaas cleanup resource ordering")
+		}
+		resourceKey := resourceKind + ":" + resourceID
+		if _, exists := seenResources[resourceKey]; exists {
+			return fmt.Errorf("duplicate Asaas cleanup resource claim")
+		}
+		seenResources[resourceKey] = struct{}{}
+		lastResourceRank = resourceRank
+
+		providerResult, providerErr := repo.deleteAsaasResource(
+			ctx,
+			resourceKind,
+			resourceID,
+		)
+		ack, ackErr := repo.ackOrganizationAsaasCleanupResource(
+			ctx,
+			organizationID,
+			claimToken,
+			resourceKind,
+			resourceID,
+			attemptToken,
+			providerResult.HTTPStatus,
+			providerResult.ProviderPayload,
+		)
+		if ackErr != nil {
+			return ackErr
+		}
+		if providerErr != nil {
+			return providerErr
+		}
+		if ack.Outcome != "succeeded" ||
+			providerResult.HTTPStatus != http.StatusOK ||
+			!providerResult.Deleted || providerResult.ID != resourceID {
+			return fmt.Errorf(
+				"Asaas cleanup resource was not authoritatively deleted (%s)",
+				firstNonEmpty(strings.TrimSpace(ack.Reason), ack.Outcome),
+			)
 		}
 	}
-	if customerID != "" {
-		if err := repo.deleteAsaasResource(ctx, "customers", customerID); err != nil {
-			return err
-		}
-	}
-	return nil
+
+	return fmt.Errorf("Asaas cleanup resource claim exceeded its frozen bound")
 }
 
-func (repo Repository) deleteAsaasResource(ctx context.Context, resource string, resourceID string) error {
-	endpoint := repo.asaasURL + "/" + url.PathEscape(resource) + "/" + url.PathEscape(resourceID)
-	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
+func (repo Repository) claimOrganizationAsaasCleanup(
+	ctx context.Context,
+	organizationID string,
+	leaseOwner string,
+) (organizationAsaasCleanupClaim, error) {
+	var claim organizationAsaasCleanupClaim
+	err := repo.callOrganizationAsaasCleanupRPC(
+		ctx,
+		"claim_billing_organization_asaas_cleanup",
+		map[string]any{
+			"p_organization_id": organizationID,
+			"p_lease_owner":     leaseOwner,
+			"p_lease_seconds":   600,
+		},
+		&claim,
+	)
+	if err != nil {
+		return organizationAsaasCleanupClaim{}, fmt.Errorf("claim Asaas cleanup: %w", err)
+	}
+	claim.Outcome = strings.TrimSpace(claim.Outcome)
+	claim.OrganizationID = strings.TrimSpace(claim.OrganizationID)
+	claim.ClaimToken = strings.TrimSpace(claim.ClaimToken)
+	return claim, nil
+}
+
+func (repo Repository) claimOrganizationAsaasCleanupResource(
+	ctx context.Context,
+	organizationID string,
+	claimToken string,
+	leaseOwner string,
+) (organizationAsaasCleanupResourceClaim, error) {
+	var claim organizationAsaasCleanupResourceClaim
+	err := repo.callOrganizationAsaasCleanupRPC(
+		ctx,
+		"claim_billing_organization_asaas_cleanup_resource",
+		map[string]any{
+			"p_organization_id": organizationID,
+			"p_claim_token":     claimToken,
+			"p_lease_owner":     leaseOwner,
+			"p_lease_seconds":   600,
+		},
+		&claim,
+	)
+	if err != nil {
+		return organizationAsaasCleanupResourceClaim{}, fmt.Errorf(
+			"claim Asaas cleanup resource: %w",
+			err,
+		)
+	}
+	claim.Outcome = strings.TrimSpace(claim.Outcome)
+	claim.ResourceKind = strings.TrimSpace(claim.ResourceKind)
+	claim.ResourceID = strings.TrimSpace(claim.ResourceID)
+	claim.AttemptToken = strings.TrimSpace(claim.AttemptToken)
+	return claim, nil
+}
+
+func (repo Repository) ackOrganizationAsaasCleanupResource(
+	ctx context.Context,
+	organizationID string,
+	claimToken string,
+	resourceKind string,
+	resourceID string,
+	attemptToken string,
+	httpStatus int,
+	providerResponse map[string]any,
+) (organizationAsaasCleanupResourceAck, error) {
+	if providerResponse == nil {
+		providerResponse = map[string]any{}
+	}
+	var result organizationAsaasCleanupResourceAck
+	err := repo.callOrganizationAsaasCleanupRPC(
+		ctx,
+		"ack_billing_organization_asaas_cleanup_resource",
+		map[string]any{
+			"p_organization_id":   organizationID,
+			"p_claim_token":       claimToken,
+			"p_resource_kind":     resourceKind,
+			"p_resource_id":       resourceID,
+			"p_attempt_token":     attemptToken,
+			"p_http_status":       httpStatus,
+			"p_provider_response": providerResponse,
+		},
+		&result,
+	)
+	if err != nil {
+		return organizationAsaasCleanupResourceAck{}, fmt.Errorf(
+			"acknowledge Asaas cleanup resource: %w",
+			err,
+		)
+	}
+	result.Outcome = strings.TrimSpace(result.Outcome)
+	result.Reason = strings.TrimSpace(result.Reason)
+	return result, nil
+}
+
+func (repo Repository) finalizeOrganizationAsaasCleanup(
+	ctx context.Context,
+	organizationID string,
+	claimToken string,
+) error {
+	var result organizationAsaasCleanupFinalization
+	if err := repo.callOrganizationAsaasCleanupRPC(
+		ctx,
+		"finalize_billing_organization_asaas_cleanup",
+		map[string]any{
+			"p_organization_id": organizationID,
+			"p_claim_token":     claimToken,
+		},
+		&result,
+	); err != nil {
+		return fmt.Errorf("finalize Asaas cleanup: %w", err)
+	}
+
+	result.Outcome = strings.TrimSpace(result.Outcome)
+	switch result.Outcome {
+	case "completed":
+		if strings.TrimSpace(result.OrganizationID) != organizationID {
+			return fmt.Errorf("Asaas cleanup finalization organization mismatch")
+		}
+		return nil
+	case "already_completed":
+		return nil
+	case "claim_not_found":
+		return fmt.Errorf("Asaas cleanup claim was not found during finalization")
+	case "resources_pending":
+		return fmt.Errorf("Asaas cleanup resources are still pending")
+	case "manual_review":
+		return fmt.Errorf("Asaas cleanup requires manual review before finalization")
+	case "invalid_request":
+		return fmt.Errorf("Asaas cleanup finalization was rejected")
+	default:
+		return fmt.Errorf("unexpected Asaas cleanup finalization outcome %q", result.Outcome)
+	}
+}
+
+func (repo Repository) callOrganizationAsaasCleanupRPC(
+	ctx context.Context,
+	functionName string,
+	payload any,
+	target any,
+) error {
+	if repo.projectURL == "" || repo.apiKey == "" {
+		return fmt.Errorf("Supabase service API is not configured")
+	}
+
+	encodedPayload, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	endpoint := repo.projectURL + "/rest/v1/rpc/" + url.PathEscape(functionName)
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		endpoint,
+		bytes.NewReader(encodedPayload),
+	)
 	if err != nil {
 		return err
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Content-Type", "application/json")
+	setSupabaseServiceAPIAuth(request, repo.apiKey)
+
+	response, err := repo.httpClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+
+	const maxRPCResponseBytes = 64 * 1024
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxRPCResponseBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(responseBody) > maxRPCResponseBytes {
+		return fmt.Errorf("Supabase cleanup RPC response is too large")
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("Supabase cleanup RPC returned HTTP %d", response.StatusCode)
+	}
+	if err := json.Unmarshal(responseBody, target); err != nil {
+		return fmt.Errorf("decode Supabase cleanup RPC response: %w", err)
+	}
+	return nil
+}
+
+func setSupabaseServiceAPIAuth(request *http.Request, apiKey string) {
+	request.Header.Set("apikey", apiKey)
+	request.Header.Del("Authorization")
+	segments := strings.Split(apiKey, ".")
+	if len(segments) == 3 && segments[0] != "" && segments[1] != "" && segments[2] != "" {
+		request.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+}
+
+func normalizeAsaasCleanupResourceID(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", nil
+	}
+	if len(value) > 255 {
+		return "", fmt.Errorf("identifier is too long")
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') ||
+			character == '_' || character == '-' {
+			continue
+		}
+		return "", fmt.Errorf("identifier contains unsupported characters")
+	}
+	return value, nil
+}
+
+func asaasCleanupResourceRank(resourceKind string) (int, bool) {
+	switch resourceKind {
+	case "payment":
+		return 0, true
+	case "subscription":
+		return 1, true
+	case "customer":
+		return 2, true
+	default:
+		return 0, false
+	}
+}
+
+func (repo Repository) deleteAsaasResource(
+	ctx context.Context,
+	resourceKind string,
+	resourceID string,
+) (organizationAsaasProviderDeleteResult, error) {
+	resourcePath := ""
+	switch resourceKind {
+	case "payment":
+		resourcePath = "payments"
+	case "subscription":
+		resourcePath = "subscriptions"
+	case "customer":
+		resourcePath = "customers"
+	default:
+		return organizationAsaasProviderDeleteResult{}, fmt.Errorf(
+			"unsupported Asaas cleanup resource kind",
+		)
+	}
+	endpoint := repo.asaasURL + "/" + resourcePath + "/" + url.PathEscape(resourceID)
+	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
+	if err != nil {
+		return organizationAsaasProviderDeleteResult{}, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("User-Agent", "VimobCRM/1.0 (Go API)")
 	request.Header.Set("access_token", repo.asaasAPIKey)
 	response, err := repo.httpClient.Do(request)
 	if err != nil {
-		return fmt.Errorf("Asaas %s cleanup failed: %w", resource, err)
+		return organizationAsaasProviderDeleteResult{}, fmt.Errorf(
+			"Asaas %s cleanup failed: %w",
+			resourceKind,
+			err,
+		)
 	}
 	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-	if (response.StatusCode >= 200 && response.StatusCode < 300) ||
-		response.StatusCode == http.StatusNotFound ||
-		response.StatusCode == http.StatusGone {
-		return nil
+
+	const maxAsaasDeleteResponseBytes = 16 * 1024
+	responseBody, readErr := io.ReadAll(io.LimitReader(
+		response.Body,
+		maxAsaasDeleteResponseBytes+1,
+	))
+	result := organizationAsaasProviderDeleteResult{
+		HTTPStatus:      response.StatusCode,
+		ProviderPayload: map[string]any{},
 	}
-	return fmt.Errorf("Asaas %s cleanup returned HTTP %d", resource, response.StatusCode)
+	if readErr != nil {
+		return result, fmt.Errorf("read Asaas %s cleanup response: %w", resourceKind, readErr)
+	}
+	if len(responseBody) > maxAsaasDeleteResponseBytes {
+		return result, fmt.Errorf("Asaas %s cleanup response is too large", resourceKind)
+	}
+
+	var providerResponse struct {
+		Deleted bool   `json:"deleted"`
+		ID      string `json:"id"`
+	}
+	if err := json.Unmarshal(responseBody, &providerResponse); err == nil {
+		result.Deleted = providerResponse.Deleted
+		result.ID = providerResponse.ID
+		result.ProviderPayload = map[string]any{
+			"deleted": providerResponse.Deleted,
+			"id":      result.ID,
+		}
+	}
+	if response.StatusCode != http.StatusOK ||
+		!result.Deleted || result.ID != resourceID {
+		return result, fmt.Errorf(
+			"Asaas %s cleanup returned an unverified response (HTTP %d)",
+			resourceKind,
+			response.StatusCode,
+		)
+	}
+	return result, nil
 }
 
 func (repo Repository) lockAndDisableOrganization(ctx context.Context, organizationID string, confirmationName string) error {
@@ -280,54 +676,6 @@ func (repo Repository) lockAndDisableOrganization(ctx context.Context, organizat
 	return tx.Commit(ctx)
 }
 
-func (repo Repository) listExclusiveOrganizationUsers(
-	ctx context.Context,
-	organizationID string,
-	currentSuperAdminID string,
-) ([]organizationUserCleanup, error) {
-	rows, err := repo.db.Pool().Query(ctx, `
-		select u.id::text, coalesce(u.avatar_url, '')
-		from public.users u
-		where coalesce(u.role, '') <> 'super_admin'
-		  and ($2 = '' or u.id <> $2::uuid)
-		  and (
-			u.organization_id = $1::uuid
-			or exists (
-				select 1
-				from public.organization_members target_membership
-				where target_membership.user_id = u.id
-				  and target_membership.organization_id = $1::uuid
-			)
-		  )
-		  and (u.organization_id is null or u.organization_id = $1::uuid)
-		  and not exists (
-			select 1
-			from public.organization_members other_membership
-			join public.organizations other_organization
-			  on other_organization.id = other_membership.organization_id
-			 and other_organization.is_active = true
-			where other_membership.user_id = u.id
-			  and other_membership.organization_id <> $1::uuid
-			  and other_membership.is_active = true
-		  )
-		order by u.id
-	`, organizationID, strings.TrimSpace(currentSuperAdminID))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	users := make([]organizationUserCleanup, 0)
-	for rows.Next() {
-		var user organizationUserCleanup
-		if err := rows.Scan(&user.ID, &user.AvatarURL); err != nil {
-			return nil, err
-		}
-		users = append(users, user)
-	}
-	return users, rows.Err()
-}
-
 func (repo Repository) disconnectOrganizationGoogleCalendars(ctx context.Context, organizationID string) error {
 	connections, err := repo.listGoogleCalendarConnectionsForDeletion(ctx, organizationID)
 	if err != nil {
@@ -344,13 +692,10 @@ func (repo Repository) disconnectOrganizationGoogleCalendars(ctx context.Context
 			}
 		}
 
-		tokenToRevoke := firstNonEmpty(connection.RefreshToken, connection.AccessToken)
-		if tokenToRevoke != "" {
-			if err := repo.revokeGoogleToken(ctx, tokenToRevoke); err != nil {
-				return err
-			}
-		}
-
+		// OAuth grants belong to the Google account, not to a single Vimob
+		// organization. Revoking one here could disconnect another tenant that
+		// legitimately uses the same grant. Only target channels and the local
+		// organization-scoped connection are removed by this flow.
 		if _, err := repo.db.Pool().Exec(ctx, `select public.google_calendar_disconnect_connection($1::uuid)`, connection.ID); err != nil {
 			return err
 		}
@@ -387,7 +732,6 @@ func (repo Repository) listGoogleCalendarConnectionsForDeletion(
 			var parsed map[string]any
 			if json.Unmarshal([]byte(*secret), &parsed) == nil {
 				connection.AccessToken = deletionStringFromAny(parsed["access_token"])
-				connection.RefreshToken = deletionStringFromAny(parsed["refresh_token"])
 			}
 		}
 		connectionIndex[connection.ID] = len(connections)
@@ -449,43 +793,7 @@ func (repo Repository) stopGoogleCalendarChannel(
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
 		return nil
 	}
-	// Expired/revoked credentials and already-stopped channels do not leave a
-	// usable Vimob connection behind. Rate limiting and server errors are
-	// retriable, so those keep the tenant purge blocked.
-	if response.StatusCode >= 400 && response.StatusCode < 500 && response.StatusCode != http.StatusTooManyRequests {
-		return nil
-	}
 	return fmt.Errorf("Google Agenda channel stop returned HTTP %d", response.StatusCode)
-}
-
-func (repo Repository) revokeGoogleToken(ctx context.Context, token string) error {
-	form := url.Values{}
-	form.Set("token", token)
-	request, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		"https://oauth2.googleapis.com/revoke",
-		strings.NewReader(form.Encode()),
-	)
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	response, err := repo.httpClient.Do(request)
-	if err != nil {
-		return fmt.Errorf("Google Agenda token revoke failed: %w", err)
-	}
-	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-
-	if response.StatusCode >= 200 && response.StatusCode < 300 {
-		return nil
-	}
-	// Google returns 400 when a token is already invalid or revoked.
-	if response.StatusCode == http.StatusBadRequest {
-		return nil
-	}
-	return fmt.Errorf("Google Agenda token revoke returned HTTP %d", response.StatusCode)
 }
 
 func (repo Repository) deleteOrganizationEvolutionInstances(ctx context.Context, organizationID string) error {
@@ -493,39 +801,16 @@ func (repo Repository) deleteOrganizationEvolutionInstances(ctx context.Context,
 	if err != nil {
 		return err
 	}
-	for _, session := range sessions {
-		if strings.EqualFold(session.Status, "deleted") {
-			continue
-		}
-		instanceKey := evolutionInstanceKeyForDeletion(session)
-		if instanceKey == "" {
-			if strings.EqualFold(session.Status, "disconnected") || strings.EqualFold(session.Status, "disabled") {
-				continue
-			}
-			return fmt.Errorf("WhatsApp session %s has no provider instance identifier", session.ID)
-		}
-		if repo.evolutionGoURL == "" || repo.evolutionGoAPIKey == "" {
-			return fmt.Errorf("Evolution Go cleanup is not configured")
-		}
-
-		endpoint := repo.evolutionGoURL + "/instance/delete/" + url.PathEscape(instanceKey)
-		request, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
-		if err != nil {
-			return err
-		}
-		request.Header.Set("Accept", "application/json")
-		request.Header.Set("apikey", repo.evolutionGoAPIKey)
-		response, err := repo.httpClient.Do(request)
-		if err != nil {
-			return fmt.Errorf("Evolution Go instance cleanup failed: %w", err)
-		}
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		response.Body.Close()
-		if (response.StatusCode < 200 || response.StatusCode >= 300) &&
-			response.StatusCode != http.StatusNotFound &&
-			response.StatusCode != http.StatusGone {
-			return fmt.Errorf("Evolution Go instance cleanup returned HTTP %d", response.StatusCode)
-		}
+	if len(sessions) != 0 {
+		// Instance identifiers are not globally unique or durably tombstoned in
+		// the current schema. A tenant purge therefore cannot prove that a remote
+		// DELETE belongs only to this organization, and a 404 cannot prove exact
+		// absence. Fail closed until the sessions are removed by a dedicated,
+		// provider-reconciled workflow.
+		return fmt.Errorf(
+			"WhatsApp cleanup requires manual review: %d Evolution Go session(s) remain",
+			len(sessions),
+		)
 	}
 	return nil
 }
@@ -573,9 +858,8 @@ func evolutionInstanceKeyForDeletion(session whatsappSessionCleanup) string {
 func (repo Repository) deleteOrganizationStorage(
 	ctx context.Context,
 	organizationID string,
-	exclusiveUsers []organizationUserCleanup,
 ) error {
-	objects, err := repo.listOrganizationStorageObjects(ctx, organizationID, exclusiveUsers)
+	objects, err := repo.listOrganizationStorageObjects(ctx, organizationID)
 	if err != nil {
 		return err
 	}
@@ -601,33 +885,39 @@ func (repo Repository) deleteOrganizationStorage(
 		sort.Strings(paths)
 		for start := 0; start < len(paths); start += organizationStorageDeleteBatchSize {
 			end := min(start+organizationStorageDeleteBatchSize, len(paths))
-			if err := repo.deleteStorageObjectBatch(ctx, bucket, paths[start:end]); err != nil {
+			batch := paths[start:end]
+			if err := repo.deleteStorageObjectBatch(ctx, bucket, batch); err != nil {
+				return err
+			}
+			if err := repo.verifyStorageObjectBatchDeleted(ctx, bucket, batch); err != nil {
 				return err
 			}
 		}
 	}
+	remaining, err := repo.listOrganizationStorageObjects(ctx, organizationID)
+	if err != nil {
+		return err
+	}
+	if len(remaining) != 0 {
+		return fmt.Errorf("Supabase Storage cleanup left %d tenant-owned objects", len(remaining))
+	}
 	return nil
 }
 
-func (repo Repository) listOrganizationStorageObjects(
-	ctx context.Context,
-	organizationID string,
-	exclusiveUsers []organizationUserCleanup,
-) ([]organizationStorageObject, error) {
-	patterns := []string{
+func organizationStorageObjectPatterns(organizationID string) []string {
+	return []string{
 		organizationID + "/%",
 		"orgs/" + organizationID + "/%",
 		"organization/" + organizationID + "/%",
 		"organizations/" + organizationID + "/%",
 	}
-	for _, user := range exclusiveUsers {
-		patterns = append(patterns,
-			user.ID+"/%",
-			user.ID+"-%",
-			"avatars/"+user.ID+"%",
-		)
-	}
+}
 
+func (repo Repository) listOrganizationStorageObjects(
+	ctx context.Context,
+	organizationID string,
+) ([]organizationStorageObject, error) {
+	patterns := organizationStorageObjectPatterns(organizationID)
 	rows, err := repo.db.Pool().Query(ctx, `
 		select bucket_id, name
 		from storage.objects
@@ -655,128 +945,12 @@ func (repo Repository) listOrganizationStorageObjects(
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-
-	assetURLs, err := repo.listOrganizationAssetURLs(ctx, organizationID, exclusiveUsers)
-	if err != nil {
-		return nil, err
-	}
-	for _, assetURL := range assetURLs {
-		object, ok := storageObjectFromURL(repo.projectURL, assetURL)
-		if !ok {
-			continue
-		}
-		if !storageObjectHasTenantPrefix(object, organizationID, exclusiveUsers) {
-			referencedElsewhere, err := repo.assetURLReferencedByOtherOrganization(ctx, organizationID, assetURL)
-			if err != nil {
-				return nil, err
-			}
-			if referencedElsewhere {
-				continue
-			}
-		}
-		key := object.Bucket + "\x00" + object.Name
-		if !seen[key] {
-			seen[key] = true
-			objects = append(objects, object)
-		}
-	}
 	return objects, nil
-}
-
-func (repo Repository) listOrganizationAssetURLs(
-	ctx context.Context,
-	organizationID string,
-	exclusiveUsers []organizationUserCleanup,
-) ([]string, error) {
-	rows, err := repo.queryJSONRows(ctx, `
-		select to_jsonb(organization_row)
-		from public.organizations organization_row
-		where organization_row.id = $1::uuid
-		union all
-		select to_jsonb(site_row)
-		from public.organization_sites site_row
-		where site_row.organization_id = $1::uuid
-		union all
-		select to_jsonb(team_row)
-		from public.teams team_row
-		where team_row.organization_id = $1::uuid
-		union all
-		select to_jsonb(property_row)
-		from public.properties property_row
-		where property_row.organization_id = $1::uuid
-	`, organizationID)
-	if err != nil {
-		return nil, err
-	}
-
-	assetKeys := map[string]bool{
-		"about_image_url":    true,
-		"avatar_url":         true,
-		"banner_url":         true,
-		"document_url":       true,
-		"favicon_url":        true,
-		"hero_image_url":     true,
-		"image_url":          true,
-		"image_urls":         true,
-		"images":             true,
-		"logo_url":           true,
-		"page_banner_url":    true,
-		"photo_url":          true,
-		"photos":             true,
-		"watermark_logo_url": true,
-	}
-	values := make([]string, 0)
-	for _, row := range rows {
-		for key, value := range row {
-			if assetKeys[key] {
-				appendStringValues(&values, value)
-			}
-		}
-	}
-	for _, user := range exclusiveUsers {
-		if user.AvatarURL != "" {
-			values = append(values, user.AvatarURL)
-		}
-	}
-	return values, nil
-}
-
-func (repo Repository) assetURLReferencedByOtherOrganization(
-	ctx context.Context,
-	organizationID string,
-	assetURL string,
-) (bool, error) {
-	var referenced bool
-	err := repo.db.Pool().QueryRow(ctx, `
-		select exists (
-			select 1
-			from public.organizations other_organization
-			where other_organization.id <> $1::uuid
-			  and strpos(to_jsonb(other_organization)::text, to_jsonb($2::text)::text) > 0
-			union all
-			select 1
-			from public.organization_sites other_site
-			where other_site.organization_id <> $1::uuid
-			  and strpos(to_jsonb(other_site)::text, to_jsonb($2::text)::text) > 0
-			union all
-			select 1
-			from public.teams other_team
-			where other_team.organization_id <> $1::uuid
-			  and strpos(to_jsonb(other_team)::text, to_jsonb($2::text)::text) > 0
-			union all
-			select 1
-			from public.properties other_property
-			where other_property.organization_id <> $1::uuid
-			  and strpos(to_jsonb(other_property)::text, to_jsonb($2::text)::text) > 0
-		)
-	`, organizationID, strings.TrimSpace(assetURL)).Scan(&referenced)
-	return referenced, err
 }
 
 func storageObjectHasTenantPrefix(
 	object organizationStorageObject,
 	organizationID string,
-	exclusiveUsers []organizationUserCleanup,
 ) bool {
 	name := strings.TrimLeft(object.Name, "/")
 	prefixes := []string{
@@ -784,13 +958,6 @@ func storageObjectHasTenantPrefix(
 		"orgs/" + organizationID + "/",
 		"organization/" + organizationID + "/",
 		"organizations/" + organizationID + "/",
-	}
-	for _, user := range exclusiveUsers {
-		prefixes = append(prefixes,
-			user.ID+"/",
-			user.ID+"-",
-			"avatars/"+user.ID,
-		)
 	}
 	for _, prefix := range prefixes {
 		if strings.HasPrefix(name, prefix) {
@@ -800,57 +967,6 @@ func storageObjectHasTenantPrefix(
 	return false
 }
 
-func appendStringValues(target *[]string, value any) {
-	switch typed := value.(type) {
-	case string:
-		if strings.TrimSpace(typed) != "" {
-			*target = append(*target, strings.TrimSpace(typed))
-		}
-	case []any:
-		for _, item := range typed {
-			appendStringValues(target, item)
-		}
-	case map[string]any:
-		for _, item := range typed {
-			appendStringValues(target, item)
-		}
-	}
-}
-
-func storageObjectFromURL(projectURL string, rawValue string) (organizationStorageObject, bool) {
-	project, err := url.Parse(strings.TrimSpace(projectURL))
-	if err != nil || project.Host == "" {
-		return organizationStorageObject{}, false
-	}
-	asset, err := url.Parse(strings.TrimSpace(rawValue))
-	if err != nil || asset.Host == "" || !strings.EqualFold(project.Host, asset.Host) {
-		return organizationStorageObject{}, false
-	}
-
-	const marker = "/storage/v1/object/"
-	index := strings.Index(asset.EscapedPath(), marker)
-	if index < 0 {
-		return organizationStorageObject{}, false
-	}
-	remainder := strings.TrimPrefix(asset.EscapedPath()[index+len(marker):], "/")
-	for _, visibility := range []string{"public/", "authenticated/", "sign/"} {
-		remainder = strings.TrimPrefix(remainder, visibility)
-	}
-	parts := strings.SplitN(remainder, "/", 2)
-	if len(parts) != 2 {
-		return organizationStorageObject{}, false
-	}
-	bucket, err := url.PathUnescape(parts[0])
-	if err != nil {
-		return organizationStorageObject{}, false
-	}
-	name, err := url.PathUnescape(parts[1])
-	if err != nil || strings.TrimSpace(bucket) == "" || strings.TrimSpace(name) == "" {
-		return organizationStorageObject{}, false
-	}
-	return organizationStorageObject{Bucket: bucket, Name: strings.Trim(name, "/")}, true
-}
-
 func (repo Repository) deleteStorageObjectBatch(ctx context.Context, bucket string, objectPaths []string) error {
 	payload, _ := json.Marshal(map[string]any{"prefixes": objectPaths})
 	endpoint := repo.projectURL + "/storage/v1/object/" + url.PathEscape(bucket)
@@ -858,8 +974,7 @@ func (repo Repository) deleteStorageObjectBatch(ctx context.Context, bucket stri
 	if err != nil {
 		return err
 	}
-	request.Header.Set("apikey", repo.apiKey)
-	request.Header.Set("Authorization", "Bearer "+repo.apiKey)
+	setSupabaseServiceAPIAuth(request, repo.apiKey)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := repo.httpClient.Do(request)
 	if err != nil {
@@ -873,10 +988,44 @@ func (repo Repository) deleteStorageObjectBatch(ctx context.Context, bucket stri
 	return nil
 }
 
+func (repo Repository) verifyStorageObjectBatchDeleted(
+	ctx context.Context,
+	bucket string,
+	objectPaths []string,
+) error {
+	if len(objectPaths) == 0 {
+		return nil
+	}
+	var remaining int
+	if err := repo.db.Pool().QueryRow(ctx, `
+		select count(*)::int
+		from storage.objects
+		where bucket_id = $1
+		  and name = any($2::text[])
+	`, bucket, objectPaths).Scan(&remaining); err != nil {
+		return err
+	}
+	if remaining != 0 {
+		return fmt.Errorf("Supabase Storage cleanup did not remove %d requested objects", remaining)
+	}
+	return nil
+}
+
 func (repo Repository) purgeOrganizationDatabase(
 	ctx context.Context,
 	organizationID string,
-	exclusiveUsers []organizationUserCleanup,
+) error {
+	return repo.purgeOrganizationDatabaseWithExplicitUsers(ctx, organizationID, nil)
+}
+
+// purgeOrganizationDatabaseWithExplicitUsers is restricted to the
+// capability-bound cancellation of an unconfirmed public signup. Normal
+// organization deletion must always call purgeOrganizationDatabase so a
+// tenant snapshot can never authorize identity deletion.
+func (repo Repository) purgeOrganizationDatabaseWithExplicitUsers(
+	ctx context.Context,
+	organizationID string,
+	explicitUsers []organizationUserCleanup,
 ) error {
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
@@ -913,6 +1062,19 @@ func (repo Repository) purgeOrganizationDatabase(
 			order by other_membership.joined_at, other_membership.organization_id
 			limit 1
 		),
+		    is_active = case
+		      when coalesce(target_user.role, '') = 'super_admin' then true
+		      else exists (
+		        select 1
+		        from public.organization_members active_membership
+		        join public.organizations active_organization
+		          on active_organization.id = active_membership.organization_id
+		         and active_organization.is_active = true
+		        where active_membership.user_id = target_user.id
+		          and active_membership.organization_id <> $1::uuid
+		          and active_membership.is_active = true
+		      )
+		    end,
 		    updated_at = now()
 		where target_user.organization_id = $1::uuid
 	`, organizationID); err != nil {
@@ -941,6 +1103,24 @@ func (repo Repository) purgeOrganizationDatabase(
 		}
 	}
 
+	// Freeze Storage metadata for the final absence proof. Upload endpoints are
+	// already fenced by the disabled organization; this short table lock closes
+	// the remaining check-to-commit window against service-side writers.
+	if _, err := tx.Exec(ctx, `lock table storage.objects in share row exclusive mode`); err != nil {
+		return err
+	}
+	var remainingStorageObjects int
+	if err := tx.QueryRow(ctx, `
+		select count(*)::int
+		from storage.objects
+		where name like any($1::text[])
+	`, organizationStorageObjectPatterns(organizationID)).Scan(&remainingStorageObjects); err != nil {
+		return err
+	}
+	if remainingStorageObjects != 0 {
+		return ErrOrganizationPurgeUnsafe
+	}
+
 	tag, err := tx.Exec(ctx, `delete from public.organizations where id = $1::uuid`, organizationID)
 	if err != nil {
 		return err
@@ -949,17 +1129,35 @@ func (repo Repository) purgeOrganizationDatabase(
 		return ErrNotFound
 	}
 
-	userIDs := make([]string, 0, len(exclusiveUsers))
-	for _, user := range exclusiveUsers {
+	userIDs := make([]string, 0, len(explicitUsers))
+	for _, user := range explicitUsers {
 		userIDs = append(userIDs, user.ID)
 	}
 	if len(userIDs) > 0 {
-		if _, err := tx.Exec(ctx, `
-			delete from public.users
-			where id = any($1::uuid[])
-			  and coalesce(role, '') <> 'super_admin'
-		`, userIDs); err != nil {
+		var deletedUsers int
+		if err := tx.QueryRow(ctx, `
+			with deleted as (
+			  delete from public.users target_user
+			  where target_user.id = any($1::uuid[])
+			    and target_user.organization_id is null
+			    and coalesce(target_user.role, '') <> 'super_admin'
+			    and not exists (
+			      select 1
+			      from public.organization_members other_membership
+			      join public.organizations other_organization
+			        on other_organization.id = other_membership.organization_id
+			       and other_organization.is_active = true
+			      where other_membership.user_id = target_user.id
+			        and other_membership.is_active = true
+			    )
+			  returning target_user.id
+			)
+			select count(*)::int from deleted
+		`, userIDs).Scan(&deletedUsers); err != nil {
 			return err
+		}
+		if deletedUsers != len(userIDs) {
+			return ErrOrganizationPurgeUnsafe
 		}
 	}
 
@@ -1164,45 +1362,6 @@ func sortOrganizationScopedTables(
 		}
 	}
 	return ordered, len(ordered) == len(tables)
-}
-
-func (repo Repository) deleteOrganizationAuthUser(ctx context.Context, userID string) error {
-	if repo.projectURL == "" || repo.apiKey == "" {
-		return fmt.Errorf("Supabase Auth cleanup is not configured")
-	}
-	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
-		request, err := http.NewRequestWithContext(
-			ctx,
-			http.MethodDelete,
-			repo.projectURL+"/auth/v1/admin/users/"+url.PathEscape(strings.TrimSpace(userID)),
-			nil,
-		)
-		if err != nil {
-			return err
-		}
-		request.Header.Set("apikey", repo.apiKey)
-		request.Header.Set("Authorization", "Bearer "+repo.apiKey)
-		response, err := repo.httpClient.Do(request)
-		if err != nil {
-			lastErr = err
-		} else {
-			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-			response.Body.Close()
-			if (response.StatusCode >= 200 && response.StatusCode < 300) || response.StatusCode == http.StatusNotFound {
-				return nil
-			}
-			lastErr = fmt.Errorf("Supabase Auth cleanup returned HTTP %d", response.StatusCode)
-		}
-		if attempt == 0 {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(150 * time.Millisecond):
-			}
-		}
-	}
-	return lastErr
 }
 
 func deletionStringFromAny(value any) string {

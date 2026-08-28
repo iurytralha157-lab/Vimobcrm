@@ -33,7 +33,7 @@ export const tagsAPI = {
     return response.data
   },
 
-  async update(id: string, input: { name?: string; color?: string; description?: string }, organizationId?: string | null) {
+  async update(id: string, input: { name: string; color: string; description?: string }, organizationId?: string | null) {
     const body = parseDomainInput(updateTagInputSchema, input, 'tags.update')
     const response = await vimobAPIRequest<Envelope<Tag>>(`/v1/tags/${id}`, {
       method: 'PATCH',

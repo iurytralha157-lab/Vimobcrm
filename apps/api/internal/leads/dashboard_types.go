@@ -11,6 +11,8 @@ import (
 const (
 	defaultDashboardTaskLimit = 5
 	maxDashboardTaskLimit     = 50
+	maxDashboardDateRange     = 5 * 366 * 24 * time.Hour
+	maxDashboardSearchLength  = 180
 )
 
 type DashboardFilter struct {
@@ -171,6 +173,18 @@ func ParseDashboardFilter(values url.Values) (DashboardFilter, error) {
 	if err != nil {
 		return DashboardFilter{}, err
 	}
+	if (dateFrom == nil) != (dateTo == nil) {
+		return DashboardFilter{}, fmt.Errorf("%w: dateFrom and dateTo must be provided together", ErrInvalidInput)
+	}
+	if dateFrom != nil && dateTo != nil {
+		duration := dateTo.Sub(*dateFrom)
+		if duration <= 0 {
+			return DashboardFilter{}, fmt.Errorf("%w: dateTo must be after dateFrom", ErrInvalidInput)
+		}
+		if duration > maxDashboardDateRange {
+			return DashboardFilter{}, fmt.Errorf("%w: dashboard date range is too large", ErrInvalidInput)
+		}
+	}
 
 	limit := defaultDashboardTaskLimit
 	if rawLimit := strings.TrimSpace(values.Get("limit")); rawLimit != "" {
@@ -178,34 +192,108 @@ func ParseDashboardFilter(values url.Values) (DashboardFilter, error) {
 		if err != nil {
 			return DashboardFilter{}, fmt.Errorf("%w: invalid limit", ErrInvalidInput)
 		}
+		if parsed < 1 || parsed > maxDashboardTaskLimit {
+			return DashboardFilter{}, fmt.Errorf("%w: limit must be between 1 and %d", ErrInvalidInput, maxDashboardTaskLimit)
+		}
 		limit = parsed
-	}
-	if limit < 1 {
-		limit = 1
-	}
-	if limit > maxDashboardTaskLimit {
-		limit = maxDashboardTaskLimit
 	}
 
 	searchQuery := strings.TrimSpace(values.Get("searchQuery"))
 	if searchQuery == "" {
 		searchQuery = strings.TrimSpace(values.Get("search"))
 	}
+	if len(searchQuery) > maxDashboardSearchLength {
+		return DashboardFilter{}, fmt.Errorf("%w: searchQuery is too long", ErrInvalidInput)
+	}
+
+	granularity := strings.TrimSpace(values.Get("granularity"))
+	if granularity != "" && granularity != "hour" && granularity != "day" && granularity != "week" && granularity != "month" {
+		return DashboardFilter{}, fmt.Errorf("%w: invalid granularity", ErrInvalidInput)
+	}
+
+	teamID, err := normalizeDashboardUUIDFilter("teamId", values.Get("teamId"))
+	if err != nil {
+		return DashboardFilter{}, err
+	}
+	userID, err := normalizeDashboardUUIDFilter("userId", values.Get("userId"))
+	if err != nil {
+		return DashboardFilter{}, err
+	}
+	tagID, err := normalizeDashboardUUIDFilter("tagId", values.Get("tagId"))
+	if err != nil {
+		return DashboardFilter{}, err
+	}
+	pipelineID, err := normalizeDashboardUUIDFilter("pipelineId", values.Get("pipelineId"))
+	if err != nil {
+		return DashboardFilter{}, err
+	}
+
+	source, err := normalizeDashboardTextFilter("source", values.Get("source"), 180)
+	if err != nil {
+		return DashboardFilter{}, err
+	}
+	campaignID, err := normalizeDashboardTextFilter("campaignId", values.Get("campaignId"), 255)
+	if err != nil {
+		return DashboardFilter{}, err
+	}
+	adSetID, err := normalizeDashboardTextFilter("adSetId", values.Get("adSetId"), 255)
+	if err != nil {
+		return DashboardFilter{}, err
+	}
+	adID, err := normalizeDashboardTextFilter("adId", values.Get("adId"), 255)
+	if err != nil {
+		return DashboardFilter{}, err
+	}
+
+	dealStatus := strings.TrimSpace(values.Get("dealStatus"))
+	if strings.EqualFold(dealStatus, "all") {
+		dealStatus = "all"
+	}
+	if dealStatus != "" && dealStatus != "all" && dealStatus != "open" && dealStatus != "won" && dealStatus != "lost" {
+		return DashboardFilter{}, fmt.Errorf("%w: invalid dealStatus", ErrInvalidInput)
+	}
 
 	return DashboardFilter{
 		DateFrom:    dateFrom,
 		DateTo:      dateTo,
-		Granularity: strings.TrimSpace(values.Get("granularity")),
-		TeamID:      strings.TrimSpace(values.Get("teamId")),
-		UserID:      strings.TrimSpace(values.Get("userId")),
-		Source:      strings.TrimSpace(values.Get("source")),
-		CampaignID:  strings.TrimSpace(values.Get("campaignId")),
-		AdSetID:     strings.TrimSpace(values.Get("adSetId")),
-		AdID:        strings.TrimSpace(values.Get("adId")),
-		TagID:       strings.TrimSpace(values.Get("tagId")),
-		DealStatus:  strings.TrimSpace(values.Get("dealStatus")),
+		Granularity: granularity,
+		TeamID:      teamID,
+		UserID:      userID,
+		Source:      source,
+		CampaignID:  campaignID,
+		AdSetID:     adSetID,
+		AdID:        adID,
+		TagID:       tagID,
+		DealStatus:  dealStatus,
 		SearchQuery: searchQuery,
-		PipelineID:  strings.TrimSpace(values.Get("pipelineId")),
+		PipelineID:  pipelineID,
 		Limit:       limit,
 	}, nil
+}
+
+func normalizeDashboardUUIDFilter(name string, raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" || strings.EqualFold(value, "all") {
+		if value == "" {
+			return "", nil
+		}
+		return "all", nil
+	}
+
+	normalized, ok := normalizeUUID(value)
+	if !ok {
+		return "", fmt.Errorf("%w: invalid %s", ErrInvalidInput, name)
+	}
+	return normalized, nil
+}
+
+func normalizeDashboardTextFilter(name string, raw string, maxLength int) (string, error) {
+	value := strings.TrimSpace(raw)
+	if strings.EqualFold(value, "all") {
+		return "all", nil
+	}
+	if len(value) > maxLength {
+		return "", fmt.Errorf("%w: %s is too long", ErrInvalidInput, name)
+	}
+	return value, nil
 }

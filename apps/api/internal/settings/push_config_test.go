@@ -3,6 +3,8 @@ package settings
 import (
 	"context"
 	"errors"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/pushconfig"
@@ -24,6 +26,30 @@ func TestPublicPushConfigExposesOnlyPublicMaterial(t *testing.T) {
 	}
 	if config.Fingerprint != pushconfig.Fingerprint(publicKey) {
 		t.Fatalf("unexpected VAPID fingerprint: %q", config.Fingerprint)
+	}
+}
+
+func TestSavePushTokenTransfersEndpointOwnershipBeforeSync(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatalf("read repository.go: %v", err)
+	}
+	content := string(source)
+	transferCall := strings.Index(content, "repo.deactivatePushEndpointForOtherUsers(")
+	syncCheck := strings.Index(content, "if request.SyncOnly != nil && *request.SyncOnly")
+	if transferCall < 0 || syncCheck < 0 || transferCall > syncCheck {
+		t.Fatal("push endpoint ownership must transfer before sync/upsert")
+	}
+	for _, required := range []string{
+		"where user_id is distinct from $1::uuid",
+		"and endpoint = $2",
+		"set is_active = false",
+	} {
+		if !strings.Contains(content, required) {
+			t.Fatalf("missing endpoint ownership guard %q", required)
+		}
 	}
 }
 

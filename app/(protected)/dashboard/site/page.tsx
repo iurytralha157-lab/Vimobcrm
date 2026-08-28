@@ -3,7 +3,7 @@ import { PermissionBoundary } from '@/components/shared/access/PermissionBoundar
 
 export default function SiteDashboardPage() {
   return (
-    <PermissionBoundary title="Dashboard do Site" permission="dashboard_site_view">
+    <PermissionBoundary module="site" title="Dashboard do Site" permission="dashboard_site_view">
       <SiteDashboardScreen />
     </PermissionBoundary>
   );

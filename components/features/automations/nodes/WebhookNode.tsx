@@ -7,18 +7,18 @@ export const WebhookNode = memo(({ data, selected }: NodeProps) => {
   const method = data.method || 'POST';
 
   return (
-    <div className={`automation-node px-4 py-3 rounded-xl min-w-[220px] max-w-[280px] ${
+    <div className={`automation-node min-w-[220px] max-w-[280px] rounded-[8px] px-4 py-3 ${
       selected ? 'automation-node-selected' : ''
-    }`} style={{ '--node-accent': '#6366f1' } as React.CSSProperties}>
+    }`} style={{ '--node-accent': 'var(--chart-3)' } as React.CSSProperties}>
       <Handle type="target" position={Position.Left} className="!bg-indigo-400 !w-3 !h-3 !border-2 !border-indigo-500/50" />
       <div className="flex items-start gap-3">
         <div className="p-2 rounded-lg bg-indigo-500 shrink-0">
-          <Webhook className="h-5 w-5 text-white" />
+          <Webhook className="h-5 w-5 text-primary-foreground" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">Webhook</span>
-            <span className="text-[10px] bg-white/20 text-white px-1.5 py-0.5 rounded-md font-mono">
+            <span className="text-[12px] font-normal text-indigo-600 dark:text-indigo-400">Webhook</span>
+            <span className="rounded-[4px] bg-[var(--app-surface-soft)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--app-text-secondary)]">
               {method}
             </span>
           </div>

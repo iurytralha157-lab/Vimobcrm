@@ -443,8 +443,6 @@ func writeAutomationError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusConflict, "automation_execution_not_cancellable", "Automation execution is already finished.")
 	case errors.Is(err, ErrExecutionAlreadyActive):
 		httpserver.WriteError(w, r, http.StatusConflict, "automation_execution_already_active", "Automation already has an active execution for this lead.")
-	case errors.Is(err, ErrExecutionDispatchFailed):
-		httpserver.WriteError(w, r, http.StatusBadGateway, "automation_execution_dispatch_failed", "Automation execution failed during initial dispatch.")
 	case errors.Is(err, ErrFlowInUse):
 		httpserver.WriteError(w, r, http.StatusConflict, "automation_flow_in_use", "Automation has an active legacy execution and cannot be changed yet.")
 	case errors.Is(err, ErrAutomationMediaNotFound):

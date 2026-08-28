@@ -9,7 +9,16 @@ import { performFullCacheClear } from '@/lib/cache-utils';
 import { ROUTES, getPublicAppUrl } from '@/config/constants';
 import { meAPI, type TenantContext } from '@/lib/api/me';
 import { usersAPI } from '@/lib/api/users';
-import { VimobAPIError } from '@/lib/api/vimob-client';
+import {
+  VimobAPIError,
+  setVimobAPIAccessToken,
+} from '@/lib/api/vimob-client';
+import {
+  clearPasswordRecoveryEvidence,
+  isPasswordRecoveryAccessToken,
+} from '@/lib/auth/password-recovery';
+import { initializeSignedInUserContext } from '@/lib/auth/frontend-auth-reliability';
+import { deactivateCurrentPushEndpoint } from '@/lib/pwa/push-session';
 
 const isAuthDebugEnabled =
   process.env.NODE_ENV !== 'production' ||
@@ -70,6 +79,9 @@ interface Organization {
   accent_color?: string | null;
   is_active?: boolean;
   subscription_status?: string;
+  subscription_type?: string | null;
+  trial_ends_at?: string | null;
+  billing_grace_until?: string | null;
   segment?: 'imobiliario' | 'telecom' | 'servicos' | null;
   cnpj?: string | null;
   creci?: string | null;
@@ -112,7 +124,7 @@ interface ImpersonateSession {
   orgName: string;
 }
 
-const AUTH_SNAPSHOT_VERSION = 2;
+const AUTH_SNAPSHOT_VERSION = 3;
 const AUTH_SNAPSHOT_TTL_MS = 1000 * 60 * 60 * 8;
 
 interface CachedAuthSnapshot {
@@ -176,7 +188,6 @@ interface AuthContextType {
   isSuperAdmin: boolean;
   impersonating: ImpersonateSession | null;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signUp: (email: string, password: string, name: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ error: Error | null }>;
   refreshProfile: () => Promise<void>;
@@ -186,6 +197,7 @@ interface AuthContextType {
   switchOrganization: (orgId: string) => Promise<void>;
   authInitialized: boolean;
   organizationsLoaded: boolean;
+  organizationsError: string | null;
   isInitializingOrg: boolean;
   userOrganizations: UserOrganization[];
 }
@@ -196,6 +208,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const userRef = useRef<User | null>(null);
   const isLoggingOutRef = useRef(false);
+  const recoveryActionScheduledRef = useRef(false);
 
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -208,6 +221,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [authInitialized, setAuthInitialized] = useState(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [organizationsLoaded, setOrganizationsLoaded] = useState(false);
+  const [organizationsError, setOrganizationsError] = useState<string | null>(null);
   const [isInitializingOrg, setIsInitializingOrg] = useState(false);
   const [userOrganizations, setUserOrganizations] = useState<UserOrganization[]>([]);
   const authStateRef = useRef({
@@ -273,7 +287,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return false;
         }
 
-        const organizationData = response.organization as Organization | null;
+        const organizationData: Organization | null = response.organization
+          ? {
+              ...response.organization,
+              subscription_status:
+                response.context.subscriptionStatus
+                ?? response.organization.subscription_status,
+              subscription_type:
+                response.context.subscriptionType
+                ?? response.organization.subscription_type,
+              trial_ends_at:
+                response.context.trialEndsAt
+                ?? response.organization.trial_ends_at,
+              billing_grace_until:
+                response.context.billingGraceUntil
+                ?? response.organization.billing_grace_until,
+            }
+          : null;
         profileRef.current = profileData;
         organizationRef.current = organizationData;
         setProfile(profileData);
@@ -382,6 +412,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     options?: { forceSelectorForMultiOrg?: boolean }
   ) => {
     return performanceTracker.trackTimed('checkMultiOrg', async () => {
+      setOrganizationsError(null);
+
       try {
         authDebug('[AuthContext] checking organizations for userId:', userId);
 
@@ -440,6 +472,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       } catch (err) {
         console.error('[AuthContext] Error in checkMultiOrg:', err);
+        setOrganizationsError('Não foi possível carregar suas organizações. Tente novamente.');
       } finally {
         setOrganizationsLoaded(true);
       }
@@ -480,10 +513,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     let isMounted = true;
+    let apiTokenAuthEventGeneration = 0;
     authDebug('AuthProvider mounted');
 
     const clearAllStates = () => {
       authDebug('Cleaning auth states');
+      setVimobAPIAccessToken(null, null);
       const currentUserId = userRef.current?.id;
       if (currentUserId) {
         localStorage.removeItem(`vimob_active_organization_${currentUserId}`);
@@ -492,6 +527,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       setSession(null);
       setUser(null);
+      userRef.current = null;
       profileRef.current = null;
       organizationRef.current = null;
       setProfile(null);
@@ -501,8 +537,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setImpersonating(null);
       localStorage.removeItem('impersonating');
       setOrganizationsLoaded(false);
+      setOrganizationsError(null);
       setUserOrganizations([]);
       setIsInitializingOrg(false);
+    };
+
+    const isolatePasswordRecoverySession = (recoverySession: Session) => {
+      if (!isPasswordRecoveryAccessToken(recoverySession.access_token)) return false;
+
+      clearAllStates();
+      setLoading(false);
+      setAuthInitialized(true);
+      setOrganizationsLoaded(true);
+
+      if (window.location.pathname.startsWith(ROUTES.RESET_PASSWORD)) {
+        return true;
+      }
+
+      if (recoveryActionScheduledRef.current) return true;
+      recoveryActionScheduledRef.current = true;
+
+      const shouldCancelRecovery = ['/login', '/cadastro', '/onboarding'].some((route) =>
+        window.location.pathname.startsWith(route),
+      );
+
+      setTimeout(() => {
+        if (!isMounted) return;
+
+        if (!shouldCancelRecovery) {
+          window.location.replace(ROUTES.RESET_PASSWORD);
+          return;
+        }
+
+        const destination = window.location.pathname.startsWith('/cadastro')
+          ? ROUTES.SIGNUP
+          : ROUTES.LOGIN;
+
+        clearPasswordRecoveryEvidence(window.sessionStorage);
+        void supabase.auth.signOut({ scope: 'local' }).finally(() => {
+          setVimobAPIAccessToken(null, null);
+          window.location.replace(destination);
+        });
+      }, 0);
+
+      return true;
     };
 
     // Safety timeout: stop loading only if the auth flow is truly still stuck.
@@ -510,6 +588,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const state = authStateRef.current;
       if (isMounted && (!state.authInitialized || !state.organizationsLoaded)) {
         authDebugWarn('Auth safety timeout reached - forcing all loading states to complete');
+        if (userRef.current && !state.organizationsLoaded) {
+          setOrganizationsError('Não foi possível carregar suas organizações. Tente novamente.');
+        }
         setLoading(false);
         setAuthInitialized(true);
         setOrganizationsLoaded(true);
@@ -518,6 +599,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, 15000);
 
     authDebug('getSession started');
+    const initialAPITokenGeneration = apiTokenAuthEventGeneration;
     supabase.auth.getSession().then(async ({ data: { session }, error }) => {
       if (!isMounted) return;
       authDebug('getSession finished, session:', !!session, 'error:', error?.message);
@@ -531,6 +613,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
+      if (isolatePasswordRecoverySession(session)) {
+        authDebug('[AuthContext] recovery session isolated from application auth');
+        return;
+      }
+
+      if (initialAPITokenGeneration === apiTokenAuthEventGeneration) {
+        setVimobAPIAccessToken(session.access_token, session.user.id);
+      }
       setSession(session);
       setUser(session.user);
       userRef.current = session.user;
@@ -564,10 +654,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // CRITICAL: Never use async/await with Supabase calls inside this callback.
         // Doing so deadlocks getSession() and other queries. Only update local state
         // synchronously here, and defer any Supabase calls via setTimeout(..., 0).
+        apiTokenAuthEventGeneration += 1;
+        if (session && isolatePasswordRecoverySession(session)) {
+          authDebug('[AuthContext] recovery auth event isolated:', authEvent);
+          return;
+        }
+        setVimobAPIAccessToken(
+          session?.access_token ?? null,
+          session?.user.id ?? null,
+        );
 
-        // Initial session is handled by the getSession() block above
+        // Initial profile loading is handled by the getSession() block above. The
+        // API token still needs to be synchronized for this auth generation.
         if (authEvent === 'INITIAL_SESSION') {
-          authDebug('Ignoring INITIAL_SESSION event');
+          authDebug('INITIAL_SESSION API token synchronized');
           return;
         }
 
@@ -590,6 +690,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             '/reset-password',
             '/onboarding',
             '/checkout',
+            '/help',
             '/termos-de-uso',
             '/politica-de-privacidade'
           ].some(route => window.location.pathname.startsWith(route));
@@ -634,17 +735,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Defer Supabase calls to avoid deadlock with the auth listener
             setTimeout(() => {
               if (!isMounted) return;
-              Promise.all([
-                fetchProfileRef.current(session.user.id),
-                checkMultiOrgRef.current(session.user.id, {
+              void initializeSignedInUserContext(
+                () => fetchProfileRef.current(session.user.id),
+                () => checkMultiOrgRef.current(session.user.id, {
                   forceSelectorForMultiOrg: authEvent === 'SIGNED_IN',
                 }),
-              ]).finally(() => {
-                if (!isMounted) return;
-                setIsInitializingOrg(false);
-                setLoading(false);
-                setAuthInitialized(true);
-              });
+              )
+                .catch((error) => {
+                  console.error('[AuthContext] Error loading signed-in user context:', error);
+                })
+                .finally(() => {
+                  if (!isMounted) return;
+                  setIsInitializingOrg(false);
+                  setLoading(false);
+                  setAuthInitialized(true);
+                });
             }, 0);
           } else {
             setLoading(false);
@@ -673,9 +778,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     );
 
+    const handlePageShow = (event: PageTransitionEvent) => {
+      // A page restored from the back/forward cache also restores its old
+      // in-memory bearer token. Reload through the proxy so a completed or
+      // cancelled recovery cannot revive a frozen authenticated screen.
+      if (event.persisted) {
+        window.location.reload();
+        return;
+      }
+
+      if (window.location.pathname.startsWith(ROUTES.RESET_PASSWORD)) return;
+
+      void supabase.auth.getSession().then(({ data }) => {
+        if (isMounted && data.session) {
+          isolatePasswordRecoverySession(data.session);
+        }
+      });
+    };
+    window.addEventListener('pageshow', handlePageShow);
+
     return () => {
       isMounted = false;
       clearTimeout(safetyTimeout);
+      window.removeEventListener('pageshow', handlePageShow);
       subscription.unsubscribe();
     };
   }, []);
@@ -693,20 +818,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }, 0);
     }
 
-    return { error };
-  };
-
-  const signUp = async (email: string, password: string, name: string) => {
-    const redirectUrl = `${window.location.origin}/`;
-
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: redirectUrl,
-        data: { name }
-      }
-    });
     return { error };
   };
 
@@ -745,6 +856,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       logAuditAction('logout', 'session', currentUserId).catch(console.error);
     }
 
+    // Deactivate only this device while the API bearer token is still valid.
+    // Other devices belonging to the same user remain subscribed.
+    try {
+      await deactivateCurrentPushEndpoint(
+        organization?.id || profile?.organization_id,
+      );
+    } catch (error) {
+      authDebug('Falha ao desativar push deste dispositivo no logout:', error);
+    }
+
     // Tentar signOut global (invalida refresh token no servidor)
     try {
       await supabase.auth.signOut({ scope: 'global' });
@@ -770,6 +891,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!activeUser) return;
 
     setOrganizationsLoaded(false);
+    setOrganizationsError(null);
     await checkMultiOrg(activeUser.id);
   };
 
@@ -785,10 +907,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       impersonating,
       authInitialized,
       organizationsLoaded,
+      organizationsError,
       isInitializingOrg,
       userOrganizations,
       signIn,
-      signUp,
       signOut,
       resetPassword,
       refreshProfile,

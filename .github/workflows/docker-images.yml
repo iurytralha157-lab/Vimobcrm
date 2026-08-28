@@ -20,8 +20,8 @@ jobs:
     name: Build and push images
     runs-on: ubuntu-latest
     env:
-      WEB_NEXT_PUBLIC_SUPABASE_URL: ${{ vars.VIMOB_NEXT_PUBLIC_SUPABASE_URL || secrets.VIMOB_NEXT_PUBLIC_SUPABASE_URL || 'https://supabase.vimobcrm.com.br' }}
-      WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY || secrets.VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_Nukb4IWGRE1Gi8VaPmAQ9p_tGDdE4mz' }}
+      WEB_NEXT_PUBLIC_SUPABASE_URL: ${{ vars.VIMOB_NEXT_PUBLIC_SUPABASE_URL || secrets.VIMOB_NEXT_PUBLIC_SUPABASE_URL }}
+      WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY || secrets.VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
       WEB_NEXT_PUBLIC_VIMOB_API_URL: ${{ vars.VIMOB_NEXT_PUBLIC_API_URL || secrets.VIMOB_NEXT_PUBLIC_API_URL || 'https://api.vimobcrm.com.br' }}
       WEB_NEXT_PUBLIC_SITE_URL: ${{ vars.VIMOB_NEXT_PUBLIC_SITE_URL || secrets.VIMOB_NEXT_PUBLIC_SITE_URL || 'https://app.vimobcrm.com.br' }}
 
@@ -33,12 +33,12 @@ jobs:
         shell: bash
         run: |
           missing=0
-          if [ -z "$WEB_NEXT_PUBLIC_SUPABASE_URL" ]; then
-            echo "::error::Missing NEXT_PUBLIC_SUPABASE_URL in GitHub Actions variables or secrets."
+          if [ -z "${WEB_NEXT_PUBLIC_SUPABASE_URL//[[:space:]]/}" ]; then
+            echo "::error::Missing VIMOB_NEXT_PUBLIC_SUPABASE_URL in GitHub Actions variables or secrets."
             missing=1
           fi
-          if [ -z "$WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY" ]; then
-            echo "::error::Missing NEXT_PUBLIC_SUPABASE_ANON_KEY in GitHub Actions variables or secrets."
+          if [ -z "${WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY//[[:space:]]/}" ]; then
+            echo "::error::Missing VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY in GitHub Actions variables or secrets."
             missing=1
           fi
           if [ -z "$WEB_NEXT_PUBLIC_VIMOB_API_URL" ]; then
@@ -81,6 +81,8 @@ jobs:
           context: .
           file: Dockerfile.api
           push: true
+          build-args: |
+            VIMOB_RELEASE_SHA=${{ github.sha }}
           tags: ${{ steps.api-meta.outputs.tags }}
 
       - name: Build and push Web
@@ -90,6 +92,7 @@ jobs:
           file: Dockerfile.web
           push: true
           build-args: |
+            VIMOB_RELEASE_SHA=${{ github.sha }}
             NEXT_PUBLIC_SUPABASE_URL=${{ env.WEB_NEXT_PUBLIC_SUPABASE_URL }}
             NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ env.WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
             NEXT_PUBLIC_VIMOB_API_URL=${{ env.WEB_NEXT_PUBLIC_VIMOB_API_URL }}

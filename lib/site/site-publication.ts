@@ -19,3 +19,18 @@ export function getSitePublicUrl({
   const cleanSubdomain = subdomain?.trim()
   return cleanSubdomain ? getPublicAppUrl(`/sites/${cleanSubdomain}`) : null
 }
+
+export function getSitePublicPageUrl(baseUrl: string | null, pagePath: string) {
+  if (!baseUrl) return null
+
+  try {
+    const parsedBase = new URL(baseUrl)
+    if (parsedBase.protocol !== 'https:' && parsedBase.protocol !== 'http:') return null
+
+    const normalizedBase = parsedBase.toString().replace(/\/+$/, '')
+    const normalizedPath = `/${pagePath.trim().replace(/^\/+/, '')}`
+    return `${normalizedBase}${normalizedPath}`
+  } catch {
+    return null
+  }
+}

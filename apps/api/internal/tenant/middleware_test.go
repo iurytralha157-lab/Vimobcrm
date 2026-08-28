@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	authpkg "github.com/vimob-crm/vimob-crm/packages/auth"
@@ -122,6 +123,183 @@ func TestRequireOrganization(t *testing.T) {
 	RequireOrganization(next).ServeHTTP(allowedRecorder, allowedRequest)
 	if allowedRecorder.Code != http.StatusNoContent {
 		t.Fatalf("allowed organization status = %d, want %d", allowedRecorder.Code, http.StatusNoContent)
+	}
+}
+
+func TestRequireBillingAccess(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	future := time.Now().Add(time.Hour)
+
+	tests := []struct {
+		name           string
+		tenantContext  *Context
+		wantStatusCode int
+		wantErrorCode  string
+	}{
+		{
+			name:           "missing context fails closed",
+			wantStatusCode: http.StatusPaymentRequired,
+			wantErrorCode:  "billing_access_required",
+		},
+		{
+			name: "active paid organization is allowed",
+			tenantContext: &Context{
+				OrganizationID:     "20000000-0000-0000-0000-000000000001",
+				SubscriptionType:   "paid",
+				SubscriptionStatus: "active",
+			},
+			wantStatusCode: http.StatusNoContent,
+		},
+		{
+			name: "overdue organization inside grace is allowed",
+			tenantContext: &Context{
+				OrganizationID:     "20000000-0000-0000-0000-000000000001",
+				SubscriptionType:   "paid",
+				SubscriptionStatus: "overdue",
+				BillingGraceUntil:  &future,
+			},
+			wantStatusCode: http.StatusNoContent,
+		},
+		{
+			name: "blocked organization receives payment required",
+			tenantContext: &Context{
+				OrganizationID:     "20000000-0000-0000-0000-000000000001",
+				SubscriptionType:   "paid",
+				SubscriptionStatus: "suspended",
+			},
+			wantStatusCode: http.StatusPaymentRequired,
+			wantErrorCode:  "billing_access_required",
+		},
+		{
+			name: "super admin bypasses organization billing",
+			tenantContext: &Context{
+				IsSuperAdmin:       true,
+				SubscriptionType:   "paid",
+				SubscriptionStatus: "suspended",
+			},
+			wantStatusCode: http.StatusNoContent,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/v1/leads", nil)
+			if test.tenantContext != nil {
+				request = request.WithContext(ContextWithTenant(request.Context(), *test.tenantContext))
+			}
+			recorder := httptest.NewRecorder()
+
+			RequireBillingAccess(nil, next).ServeHTTP(recorder, request)
+
+			if recorder.Code != test.wantStatusCode {
+				t.Fatalf("status = %d, want %d", recorder.Code, test.wantStatusCode)
+			}
+			if test.wantErrorCode != "" && !strings.Contains(recorder.Body.String(), test.wantErrorCode) {
+				t.Fatalf("body = %q, want error code %q", recorder.Body.String(), test.wantErrorCode)
+			}
+		})
+	}
+}
+
+func TestRequireBillingAccessUsesExactRouteAllowlist(t *testing.T) {
+	allowlist := NewBillingAccessAllowlist(
+		" GET   /v1/me ",
+		"POST /v1/admin/error-events/{id}/resolve",
+		"GET /v1/settings/subscription",
+	)
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	middleware := RequireBillingAccess(allowlist, next)
+
+	tests := []struct {
+		name           string
+		pattern        string
+		method         string
+		path           string
+		wantStatusCode int
+	}{
+		{
+			name:           "exact me route is allowed",
+			pattern:        "GET /v1/me",
+			method:         http.MethodGet,
+			path:           "/v1/me",
+			wantStatusCode: http.StatusNoContent,
+		},
+		{
+			name:           "dynamic telemetry route is allowed by registered pattern",
+			pattern:        "POST /v1/admin/error-events/{id}/resolve",
+			method:         http.MethodPost,
+			path:           "/v1/admin/error-events/event-1/resolve",
+			wantStatusCode: http.StatusNoContent,
+		},
+		{
+			name:           "financial recovery route is allowed",
+			pattern:        "GET /v1/settings/subscription",
+			method:         http.MethodGet,
+			path:           "/v1/settings/subscription",
+			wantStatusCode: http.StatusNoContent,
+		},
+		{
+			name:           "different method is denied",
+			pattern:        "POST /v1/me",
+			method:         http.MethodPost,
+			path:           "/v1/me",
+			wantStatusCode: http.StatusPaymentRequired,
+		},
+		{
+			name:           "path prefix is not implicitly allowed",
+			pattern:        "GET /v1/me/private",
+			method:         http.MethodGet,
+			path:           "/v1/me/private",
+			wantStatusCode: http.StatusPaymentRequired,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.path, nil)
+			request.Pattern = test.pattern
+			recorder := httptest.NewRecorder()
+
+			middleware.ServeHTTP(recorder, request)
+
+			if recorder.Code != test.wantStatusCode {
+				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, test.wantStatusCode, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestBillingAccessAllowlistFallsBackToExactMethodAndPath(t *testing.T) {
+	allowlist := NewBillingAccessAllowlist("GET /v1/me")
+	request := httptest.NewRequest(http.MethodGet, "/v1/me?source=test", nil)
+
+	if !allowlist.Allows(request) {
+		t.Fatal("expected exact method and URL path fallback to be allowed")
+	}
+}
+
+func TestBillingAccessAllowlistUsesServeMuxRoutePattern(t *testing.T) {
+	const pattern = "POST /v1/admin/error-events/{id}/resolve"
+	allowlist := NewBillingAccessAllowlist(pattern)
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Pattern != pattern {
+			t.Fatalf("request pattern = %q, want %q", r.Pattern, pattern)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux := http.NewServeMux()
+	mux.Handle(pattern, RequireBillingAccess(allowlist, next))
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/admin/error-events/event-1/resolve", nil)
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusNoContent, recorder.Body.String())
 	}
 }
 

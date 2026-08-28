@@ -48,7 +48,7 @@ export function useUpdateTag() {
   const organizationId = organization?.id || profile?.organization_id || null;
 
   return useMutation({
-    mutationFn: ({ id, ...updates }: { id: string; name?: string; color?: string; description?: string }) =>
+    mutationFn: ({ id, ...updates }: { id: string; name: string; color: string; description?: string }) =>
       tagsAPI.update(id, updates, organizationId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tags'] });

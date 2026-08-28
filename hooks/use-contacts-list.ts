@@ -142,14 +142,16 @@ export function useContactsList(filters: ContactListFilters) {
 
   return useQuery({
     queryKey: ['contacts-list', organizationId, user?.id, filters],
-    queryFn: () => contactsAPI.list(filters, organizationId),
+    queryFn: ({ signal }) => contactsAPI.list(filters, organizationId, { signal }),
     enabled: !!user?.id && !!organizationId,
     placeholderData: keepPreviousData,
     staleTime: CONTACTS_STALE_TIME_MS,
     gcTime: CONTACTS_CACHE_TIME_MS,
     refetchOnMount: true,
     refetchOnWindowFocus: false,
-    retry: (failureCount) => failureCount < 1,
-    retryDelay: (attemptIndex) => Math.min(800 * 2 ** attemptIndex, 8000),
+    // vimobAPIRequest already retries transient GET failures. Avoid stacking a
+    // second retry loop here, which can otherwise keep this route pending for
+    // several timeout windows before the error state becomes actionable.
+    retry: false,
   });
 }

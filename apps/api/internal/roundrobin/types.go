@@ -539,12 +539,14 @@ func (request MemberRequest) Validate() (memberMutationInput, error) {
 	}
 
 	if input.Type == "" {
-		if request.TeamID != "" {
+		if request.UserID != "" {
+			input.Type = "user"
+			input.EntityID = request.UserID
+		} else if request.TeamID != "" {
 			input.Type = "team"
 			input.EntityID = request.TeamID
 		} else {
 			input.Type = "user"
-			input.EntityID = request.UserID
 		}
 	}
 	if input.EntityID == "" {
@@ -564,6 +566,13 @@ func (request MemberRequest) Validate() (memberMutationInput, error) {
 	switch input.Type {
 	case "user":
 		input.UserID = &entityID
+		if strings.TrimSpace(request.TeamID) != "" {
+			teamID, valid := normalizeUUID(request.TeamID)
+			if !valid {
+				return memberMutationInput{}, fmt.Errorf("%w: member team id is invalid", ErrInvalidInput)
+			}
+			input.TeamID = &teamID
+		}
 	case "team":
 		input.TeamID = &entityID
 	default:
@@ -699,12 +708,14 @@ func normalizeMemberInputs(members []MemberInput) ([]memberInput, error) {
 		memberType := strings.TrimSpace(member.Type)
 		entityID := strings.TrimSpace(member.EntityID)
 		if memberType == "" {
-			if member.TeamID != "" {
+			if member.UserID != "" {
+				memberType = "user"
+				entityID = member.UserID
+			} else if member.TeamID != "" {
 				memberType = "team"
 				entityID = member.TeamID
 			} else {
 				memberType = "user"
-				entityID = member.UserID
 			}
 		}
 		if entityID == "" {
@@ -728,6 +739,13 @@ func normalizeMemberInputs(members []MemberInput) ([]memberInput, error) {
 		switch memberType {
 		case "user":
 			item.UserID = &entityID
+			if strings.TrimSpace(member.TeamID) != "" {
+				teamID, valid := normalizeUUID(member.TeamID)
+				if !valid {
+					return nil, fmt.Errorf("%w: member team id is invalid", ErrInvalidInput)
+				}
+				item.TeamID = &teamID
+			}
 		case "team":
 			item.TeamID = &entityID
 		default:

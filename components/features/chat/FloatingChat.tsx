@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Archive, MessageCircle, X, Minus, ArrowLeft, Search, Loader2, Phone, Users, Paperclip, ExternalLink, ArrowRight, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, isToday, isYesterday } from "date-fns";
-import { useWhatsAppConversations, useSendWhatsAppMessage, useReactToWhatsAppMessage, useMarkConversationAsRead, useWhatsAppRealtimeConversations, WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
+import { useWhatsAppConversations, useSendWhatsAppMessage, useReactToWhatsAppMessage, useMarkConversationAsRead, useWhatsAppLeadRealtime, WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
 import { useWhatsAppMessagesPaginated } from "@/hooks/use-whatsapp-messages-paginated";
 import { useAccessibleSessions } from "@/hooks/use-accessible-sessions";
 import { WhatsAppSession } from "@/hooks/use-whatsapp-sessions";
@@ -25,7 +25,11 @@ import { MessageBubble } from "@/components/features/whatsapp/MessageBubble";
 import { MessageErrorBoundary } from "@/components/features/whatsapp/MessageErrorBoundary";
 import { StartAutomationDialog } from "@/components/features/whatsapp/StartAutomationDialog";
 import { usePathname, useRouter } from 'next/navigation';
-import { formatPhoneForDisplay, isValidWhatsAppPhone } from "@/lib/phone-utils";
+import {
+  formatWhatsAppContactLabel,
+  formatWhatsAppContactPhoneForDisplay,
+  normalizePhoneToE164,
+} from "@/lib/phone-utils";
 import {
   Tooltip,
   TooltipContent,
@@ -38,6 +42,7 @@ import { getWhatsAppMessageInputState } from "@/lib/whatsapp-message-input";
 import { groupLatestWhatsAppReactions } from "@/lib/whatsapp-reactions";
 import { normalizeSearchText } from "@/lib/search-text";
 import { useHasPermission } from "@/hooks/use-organization-roles";
+import { MAX_OUTBOUND_MESSAGE_MEDIA_BYTES } from "@/components/features/whatsapp/message-media";
 
 const MAX_IMAGE_DIMENSION = 1600;
 const IMAGE_QUALITY = 0.82;
@@ -151,7 +156,7 @@ function FloatingConversationFilters({
             placeholder="Buscar conversas..."
             value={searchTerm}
             onChange={e => onSearchChange(e.target.value)}
-            className="h-8 rounded-[7px] border-0 bg-black/[0.035] pl-7 pr-3 text-xs shadow-none focus-visible:ring-1 focus-visible:ring-primary/30 dark:bg-white/[0.035]"
+            className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] pl-7 pr-3 text-[12px] font-light shadow-none focus-visible:ring-1 focus-visible:ring-primary/30"
             autoComplete="off"
           />
         </div>
@@ -258,7 +263,6 @@ export function FloatingChat() {
   const activeConversationId = activeConversation?.id;
   const activeConversationLead = activeConversation?.lead;
   const activeConversationLeadId = activeConversation?.lead_id || activeConversationLead?.id || null;
-  const currentUserId = profile?.id || null;
   const activeConversationUnreadCount = activeConversation?.unread_count ?? 0;
   const activeConversationSessionId = activeConversation?.session_id;
   const activeConversationRemoteJid = activeConversation?.remote_jid;
@@ -322,12 +326,9 @@ export function FloatingChat() {
   const { data: hasWhatsAppAccess } = useHasWhatsAppAccess({ enabled: shouldLoadFloatingChatData });
   const router = useRouter();
 
-  useWhatsAppRealtimeConversations(
+  useWhatsAppLeadRealtime(
     shouldSyncFloatingChat,
-    loadingSessions ? undefined : sessions?.map((session) => session.id) || [],
-    activeConversationLeadId && activeConversationLead?.assignee?.id === currentUserId
-      ? [activeConversationLeadId]
-      : [],
+    activeConversationLeadId ? [activeConversationLeadId] : [],
   );
 
   const getLeadPipelineUrl = (leadId: string) => {
@@ -479,7 +480,8 @@ export function FloatingChat() {
   };
 
   const handleStartConversation = async (phone: string, leadName?: string, leadId?: string) => {
-    if (!isValidWhatsAppPhone(phone)) {
+    const canonicalPhone = normalizePhoneToE164(phone);
+    if (!canonicalPhone) {
       toast({
         title: "Lead sem WhatsApp",
         description: "Este lead não tem um WhatsApp válido cadastrado.",
@@ -498,13 +500,14 @@ export function FloatingChat() {
       });
       return;
     }
-    await handleStartConversationWithSession(phone, selectedSessionId || connectedSession?.id, leadName, leadId);
+    await handleStartConversationWithSession(canonicalPhone, selectedSessionId || connectedSession?.id, leadName, leadId);
   };
   void handleStartConversation;
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- Existing startup effect depends on this legacy async flow; wrapping it would broaden this lint-only pass.
   async function handleStartConversationWithSession(phone: string, sessionId?: string, leadName?: string, leadId?: string) {
-    if (!isValidWhatsAppPhone(phone)) {
+    const canonicalPhone = normalizePhoneToE164(phone);
+    if (!canonicalPhone) {
       toast({
         title: "Lead sem WhatsApp",
         description: "Este lead não tem um WhatsApp válido cadastrado.",
@@ -519,7 +522,7 @@ export function FloatingChat() {
     try {
       // 1) Se temos leadId, sempre tentar primeiro abrir conversa existente desse lead (qualquer sessao acessivel)
       if (leadId) {
-        const anyExisting = await findConversation.mutateAsync({ phone, leadId });
+        const anyExisting = await findConversation.mutateAsync({ phone: canonicalPhone, leadId });
         if (anyExisting) {
           openConversation(anyExisting);
           return;
@@ -528,7 +531,7 @@ export function FloatingChat() {
 
       // 2) Se temos sessionId, tentar conversa existente na sessao especifica
       if (sessionId) {
-        const existing = await findConversation.mutateAsync({ phone, leadId, sessionId });
+        const existing = await findConversation.mutateAsync({ phone: canonicalPhone, leadId, sessionId });
         if (existing) {
           if (leadId && existing.lead_id !== leadId) {
             await whatsappAPI.linkConversationToLead(existing.id, leadId, profile?.organization_id);
@@ -573,7 +576,7 @@ export function FloatingChat() {
       }
 
       const newConversation = await startConversation.mutateAsync({
-        phone,
+        phone: canonicalPhone,
         sessionId,
         leadId,
         leadName
@@ -671,6 +674,15 @@ export function FloatingChat() {
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !activeConversation) return;
+    if (file.size > MAX_OUTBOUND_MESSAGE_MEDIA_BYTES) {
+      toast({
+        title: "Arquivo muito grande",
+        description: "Envie um arquivo de até 5 MB.",
+        variant: "destructive",
+      });
+      e.target.value = "";
+      return;
+    }
     if (whatsappMessageInputState.disabled || isReadOnlyMode) {
       toast({
         title: "Arquivo nao enviado",
@@ -684,6 +696,15 @@ export function FloatingChat() {
     }
     try {
       const processedFile = await compressImageFile(file);
+      if (processedFile.size > MAX_OUTBOUND_MESSAGE_MEDIA_BYTES) {
+        toast({
+          title: "Arquivo muito grande",
+          description: "O arquivo processado ultrapassou o limite de 5 MB.",
+          variant: "destructive",
+        });
+        e.target.value = "";
+        return;
+      }
       const base64Content = await fileToBase64(processedFile);
 
       // Determine media type
@@ -773,7 +794,7 @@ export function FloatingChat() {
             <Button
               key={session.id}
               variant="outline"
-              className="w-full justify-start h-auto py-3 px-4 hover:bg-white/[0.055]"
+              className="h-auto w-full justify-start px-4 py-3 hover:bg-[var(--app-surface-hover)]"
               onClick={() => handleSessionSelect(session)}
             >
               <div className="flex items-center gap-3 w-full">
@@ -820,7 +841,7 @@ export function FloatingChat() {
           "flex items-center justify-between shrink-0",
           mobile
             ? "border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] px-4 py-3"
-            : "h-16 bg-primary text-primary-foreground px-5 shadow-sm"
+            : "h-16 bg-primary/50 px-5 text-primary-foreground shadow-none"
         )}>
           <div className="flex items-center gap-2">
             <MessageCircle className={cn("h-5 w-5", mobile && "text-primary")} />
@@ -847,7 +868,7 @@ export function FloatingChat() {
               size="icon"
               className={cn(
                 "h-8 w-8",
-                mobile ? "hover:bg-white/[0.055]" : "text-primary-foreground hover:bg-primary-foreground/20"
+                mobile ? "hover:bg-[var(--app-surface-hover)]" : "text-primary-foreground hover:bg-primary-foreground/20"
               )}
               onClick={closeChat}
             >
@@ -859,12 +880,16 @@ export function FloatingChat() {
     }
 
     // Header compacto e organizado para o FloatingChat
-    const displayName = activeConversation.lead?.name ||
-      (activeConversation.contact_name && activeConversation.contact_name !== activeConversation.contact_phone
-        ? activeConversation.contact_name
-        : formatPhoneForDisplay(activeConversation.contact_phone || ""));
+    const displayName = activeConversation.lead?.name || formatWhatsAppContactLabel(
+      activeConversation.contact_name,
+      activeConversation.contact_phone,
+      activeConversation.remote_jid,
+    );
 
-    const phone = formatPhoneForDisplay(activeConversation.contact_phone || "");
+    const phone = formatWhatsAppContactPhoneForDisplay(
+      activeConversation.contact_phone,
+      activeConversation.remote_jid,
+    );
     const leadId = activeConversation.lead?.id;
     const tags = activeConversation.lead?.tags || [];
     const pipelineName = activeConversation.lead?.pipeline?.name;
@@ -901,7 +926,7 @@ export function FloatingChat() {
             {/* Avatar */}
             <Avatar className="h-8 w-8 shrink-0 border border-primary/20">
               <AvatarImage src={getConversationAvatarUrl(activeConversation)} />
-              <AvatarFallback className="text-xs bg-primary text-primary-foreground font-bold">
+              <AvatarFallback className="bg-primary/50 text-[12px] font-light text-primary-foreground">
                 {activeConversation.is_group ? (
                   <Users className="h-4 w-4" />
                 ) : (
@@ -913,7 +938,7 @@ export function FloatingChat() {
             {/* Nome */}
             <div className="flex-1 min-w-0">
               <p className="font-medium text-sm truncate">{displayName}</p>
-              {activeConversation.lead?.name && activeConversation.contact_phone && (
+              {activeConversation.lead?.name && phone && (
                 <p className="text-xs text-muted-foreground truncate">{phone}</p>
               )}
             </div>
@@ -1178,18 +1203,27 @@ export function FloatingChat() {
               <MessageCircle className="h-10 w-10 text-muted-foreground mb-3" />
               <p className="text-muted-foreground text-sm">Nenhuma conversa</p>
             </div> : filteredConversations.map(conv => {
-              const conversationDisplayName = conv.lead?.name || (conv.contact_name && conv.contact_name !== conv.contact_phone ? conv.contact_name : formatPhoneForDisplay(conv.contact_phone || ""));
-              return <div key={conv.id} className="group relative grid w-full max-w-full cursor-pointer grid-cols-[32px_minmax(0,1fr)_48px] items-start gap-2 overflow-hidden border-b border-black/[0.035] px-2.5 py-2 transition-colors hover:bg-black/[0.025] active:bg-black/[0.04] dark:border-white/[0.035] dark:hover:bg-white/[0.04] dark:active:bg-white/[0.055]" onClick={() => openConversation(conv)}>
+              const conversationDisplayName = conv.lead?.name || formatWhatsAppContactLabel(
+                conv.contact_name,
+                conv.contact_phone,
+                conv.remote_jid,
+              );
+              return <div key={conv.id} role="button" tabIndex={0} aria-label={`Abrir conversa com ${conversationDisplayName}`} className="group relative grid w-full max-w-full cursor-pointer grid-cols-[32px_minmax(0,1fr)_48px] items-start gap-2 overflow-hidden border-b border-[var(--app-border)] px-2.5 py-2 transition-colors hover:bg-[var(--app-surface-hover)] active:bg-[var(--app-surface-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30" onClick={() => openConversation(conv)} onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  openConversation(conv);
+                }
+              }}>
                 <Avatar className="h-8 w-8 shrink-0">
                   <AvatarImage src={getConversationAvatarUrl(conv)} />
-                  <AvatarFallback className="text-xs bg-white/[0.06] text-muted-foreground">
+                  <AvatarFallback className="bg-[var(--app-surface-soft)] text-[12px] font-light text-muted-foreground">
                     {conv.is_group ? <Users className="w-4 h-4" /> : conversationDisplayName?.[0] || "?"}
                   </AvatarFallback>
                 </Avatar>
                 <div className="flex-1 min-w-0 overflow-hidden">
                   <div className="flex items-center gap-1.5 w-full overflow-hidden">
                     <div className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
-                    <p className="min-w-0 truncate font-sans text-xs font-semibold leading-4 text-foreground">
+                    <p className="min-w-0 truncate font-sans text-[12px] font-normal leading-4 text-foreground">
                         {conversationDisplayName}
                       </p>
                       {conv.is_group && <Badge className="h-4 shrink-0 border-0 bg-orange-500/15 px-1.5 text-[9px] font-medium text-orange-700 shadow-none dark:bg-orange-500/15 dark:text-orange-300">
@@ -1250,8 +1284,11 @@ export function FloatingChat() {
   const activeLeadId = activeConversation?.lead?.id || activeConversation?.lead_id;
   const activeContactName =
     activeConversation?.lead?.name ||
-    activeConversation?.contact_name ||
-    activeConversation?.contact_phone ||
+    formatWhatsAppContactLabel(
+      activeConversation?.contact_name,
+      activeConversation?.contact_phone,
+      activeConversation?.remote_jid,
+    ) ||
     undefined;
 
   // Mobile version - fullscreen fixed container (stable bottom input)
@@ -1315,9 +1352,9 @@ export function FloatingChat() {
         className={cn(
           "fixed z-50",
           "bg-[var(--app-surface-solid)]",
-          "rounded-2xl",
-          "shadow-[0_28px_70px_rgba(0,0,0,0.46)]",
-          "transition-all duration-300 ease-out",
+          "rounded-[8px]",
+          "shadow-none",
+          "transition-colors",
           "flex flex-col overflow-hidden",
           "animate-scale-in"
         )}

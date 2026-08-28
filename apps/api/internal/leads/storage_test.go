@@ -56,8 +56,8 @@ func TestDeleteStorageObject(t *testing.T) {
 		if r.URL.Path != "/storage/v1/object/whatsapp-media/orgs/org-1/leads/lead-1/file.txt" {
 			t.Fatalf("path = %s", r.URL.Path)
 		}
-		if r.Header.Get("Authorization") != "Bearer secret" {
-			t.Fatal("missing storage authorization")
+		if r.Header.Get("apikey") != "sb_secret_leads_test" || r.Header.Get("Authorization") != "" {
+			t.Fatal("invalid opaque storage authorization")
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -65,7 +65,7 @@ func TestDeleteStorageObject(t *testing.T) {
 
 	client := storageClient{
 		projectURL: server.URL,
-		apiKey:     "secret",
+		apiKey:     "sb_secret_leads_test",
 		httpClient: server.Client(),
 	}
 	if err := client.delete(context.Background(), "whatsapp-media", "orgs/org-1/leads/lead-1/file.txt"); err != nil {

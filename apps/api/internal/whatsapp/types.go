@@ -228,13 +228,24 @@ type SessionQuota struct {
 }
 
 type ConversationListFilter struct {
-	SessionID          string
-	SessionIDs         []string
-	HideGroups         bool
-	ShowArchived       bool
-	Search             string
-	AccessibleProvided bool
-	Limit              int
+	SessionID           string
+	SessionIDs          []string
+	HideGroups          bool
+	ShowArchived        bool
+	OnlyLeads           bool
+	WithoutLead         bool
+	PendingReply        bool
+	Search              string
+	AccessibleProvided  bool
+	Limit               int
+	CursorSet           bool
+	CursorLastMessageAt *time.Time
+	CursorCreatedAt     time.Time
+	CursorID            string
+}
+
+type ConversationListMeta struct {
+	NextCursor *string `json:"nextCursor"`
 }
 
 type MessageFilter struct {
@@ -454,8 +465,14 @@ func ParseConversationListFilter(values url.Values) (ConversationListFilter, err
 	filter := ConversationListFilter{
 		HideGroups:   parseBool(values.Get("hideGroups")),
 		ShowArchived: parseBool(values.Get("showArchived")),
+		OnlyLeads:    parseBool(values.Get("onlyLeads")),
+		WithoutLead:  parseBool(values.Get("withoutLead")),
+		PendingReply: parseBool(values.Get("pendingReply")),
 		Search:       strings.TrimSpace(values.Get("search")),
 		Limit:        80,
+	}
+	if filter.OnlyLeads && filter.WithoutLead {
+		return ConversationListFilter{}, fmt.Errorf("%w: lead filters are mutually exclusive", ErrInvalidInput)
 	}
 	if raw := strings.TrimSpace(values.Get("sessionId")); raw != "" {
 		value, ok := normalizeUUID(raw)
@@ -487,6 +504,30 @@ func ParseConversationListFilter(values url.Values) (ConversationListFilter, err
 	}
 	if filter.Limit > 120 {
 		filter.Limit = 120
+	}
+	if raw := strings.TrimSpace(values.Get("cursor")); raw != "" {
+		parts := strings.Split(raw, "|")
+		if len(parts) != 4 || parts[0] != "v1" {
+			return ConversationListFilter{}, fmt.Errorf("%w: cursor is invalid", ErrInvalidInput)
+		}
+		if parts[1] != "-" {
+			lastMessageAt, err := time.Parse(time.RFC3339Nano, parts[1])
+			if err != nil {
+				return ConversationListFilter{}, fmt.Errorf("%w: cursor is invalid", ErrInvalidInput)
+			}
+			filter.CursorLastMessageAt = &lastMessageAt
+		}
+		createdAt, err := time.Parse(time.RFC3339Nano, parts[2])
+		if err != nil {
+			return ConversationListFilter{}, fmt.Errorf("%w: cursor is invalid", ErrInvalidInput)
+		}
+		cursorID, ok := normalizeUUID(parts[3])
+		if !ok {
+			return ConversationListFilter{}, fmt.Errorf("%w: cursor is invalid", ErrInvalidInput)
+		}
+		filter.CursorSet = true
+		filter.CursorCreatedAt = createdAt
+		filter.CursorID = cursorID
 	}
 
 	return filter, nil

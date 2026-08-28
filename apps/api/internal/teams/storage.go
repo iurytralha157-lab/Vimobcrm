@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/supabasehttp"
 )
 
 type StorageConfig struct {
@@ -39,8 +41,7 @@ func (client storageClient) upload(ctx context.Context, bucket string, objectPat
 	if err != nil {
 		return err
 	}
-	request.Header.Set("apikey", client.apiKey)
-	request.Header.Set("Authorization", "Bearer "+client.apiKey)
+	supabasehttp.SetServiceAuth(request, client.apiKey)
 	request.Header.Set("Content-Type", contentType)
 	request.Header.Set("Cache-Control", "3600")
 	request.Header.Set("x-upsert", "false")

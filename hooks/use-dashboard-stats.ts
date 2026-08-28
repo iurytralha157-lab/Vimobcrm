@@ -2,26 +2,75 @@ import { useQuery } from "@tanstack/react-query";
 
 import {
   getDashboardDealsEvolution,
+  getDashboardFiltersQueryKey,
   getDashboardFunnel,
+  getDashboardOptionalIdQueryKey,
   getDashboardSources,
   getDashboardStats,
   getDashboardTopBrokers,
   getDashboardUpcomingTasks,
+  type DashboardDealsEvolutionPoint,
   type DashboardAPIFilters,
+  type DashboardFunnelPoint,
+  type DashboardStatsResponse,
+  type DashboardTopBrokersResponse,
+  type DashboardUpcomingTask,
 } from "@/lib/api/dashboard";
 import { performanceTracker } from "@/lib/performance";
 import { useAuth } from "@/contexts/AuthContext";
+import { isTenantContextForOrganization } from "@/lib/access/tenant-navigation";
+import { createTenantQueryAccessSignature } from "@/lib/access/tenant-query-cache";
 import { sourceLabels } from "./use-dashboard-filters";
 
 const DASHBOARD_STALE_TIME_MS = 1000 * 60 * 10;
 const DASHBOARD_SHORT_STALE_TIME_MS = 1000 * 60 * 5;
 
-export interface DealsEvolutionPoint {
-  date: string;
-  ganhos: number;
-  perdas: number;
-  abertos: number;
+export function useDashboardQueryScope() {
+  const {
+    user,
+    profile,
+    organization,
+    organizationsLoaded,
+    isInitializingOrg,
+    tenantContext,
+    isSuperAdmin,
+    impersonating,
+  } = useAuth();
+  const organizationId =
+    organization?.id ??
+    ((!organizationsLoaded || isInitializingOrg)
+      ? undefined
+      : profile?.organization_id || undefined);
+  const currentUserId = user?.id ?? profile?.id;
+  const hasCurrentTenantContext = isTenantContextForOrganization(
+    organizationId,
+    tenantContext,
+  );
+  const currentTenantContext = hasCurrentTenantContext ? tenantContext : null;
+
+  return {
+    organizationId,
+    currentUserId,
+    isReady: Boolean(
+      organizationId && currentUserId && hasCurrentTenantContext,
+    ),
+    accessSignature: createTenantQueryAccessSignature({
+      userId: currentUserId,
+      organizationId,
+      memberRole: currentTenantContext?.memberRole,
+      permissions: currentTenantContext?.permissions,
+      enabledModules: currentTenantContext?.enabledModules,
+      isTeamLeader: currentTenantContext?.isTeamLeader,
+      ledTeamIds: currentTenantContext?.ledTeamIds,
+      ledUserIds: currentTenantContext?.ledUserIds,
+      ledPipelineIds: currentTenantContext?.ledPipelineIds,
+      isSuperAdmin: currentTenantContext?.isSuperAdmin ?? isSuperAdmin,
+      impersonatedOrganizationId: impersonating?.orgId,
+    }),
+  };
 }
+
+export type DealsEvolutionPoint = DashboardDealsEvolutionPoint;
 
 export interface DashboardStats {
   totalLeads: number;
@@ -32,72 +81,11 @@ export interface DashboardStats {
   closedTrend: number;
 }
 
-export interface EnhancedDashboardStats {
-  totalLeads: number;
-  openLeads: number;
-  lostLeads: number;
-  conversionRate: number;
-  closedLeads: number;
-  wonAverageConversionDays: number | null;
-  wonConversionBuckets: WonConversionBucket[];
-  wonDeals: WonDealDetail[];
-  lostReasonBuckets: LostReasonBucket[];
-  lostDeals: LostDealDetail[];
-  avgResponseTime: string;
-  totalSalesValue: number;
-  pendingCommissions: number;
-  leadsTrend: number;
-  openTrend: number;
-  lostTrend: number;
-  conversionTrend: number;
-  closedTrend: number;
-  totalReceivables: number;
-  totalPayables: number;
-  overdueReceivables: number;
-  overduePayables: number;
-  paidCommissions: number;
-}
-
-export interface WonConversionBucket {
-  key: string;
-  label: string;
-  count: number;
-  percentage: number;
-  value: number;
-  color: string;
-}
-
-export interface WonDealDetail {
-  id: string;
-  name: string;
-  phone: string | null;
-  source: string | null;
-  value: number;
-  createdAt: string | null;
-  wonAt: string | null;
-  conversionDays: number | null;
-  assignedUserName: string;
-}
-
-export interface LostReasonBucket {
-  key: string;
-  label: string;
-  count: number;
-  percentage: number;
-  color: string;
-}
-
-export interface LostDealDetail {
-  id: string;
-  name: string;
-  phone: string | null;
-  source: string | null;
-  lostReason: string;
-  lostReasonGroup: string;
-  createdAt: string | null;
-  lostAt: string | null;
-  assignedUserName: string;
-}
+export type EnhancedDashboardStats = DashboardStatsResponse;
+export type WonConversionBucket = DashboardStatsResponse["wonConversionBuckets"][number];
+export type WonDealDetail = DashboardStatsResponse["wonDeals"][number];
+export type LostReasonBucket = DashboardStatsResponse["lostReasonBuckets"][number];
+export type LostDealDetail = DashboardStatsResponse["lostDeals"][number];
 
 export interface ChartDataPoint {
   name: string;
@@ -105,12 +93,7 @@ export interface ChartDataPoint {
   site: number;
 }
 
-export interface FunnelDataPoint {
-  name: string;
-  value: number;
-  percentage: number;
-  stage_key: string;
-}
+export type FunnelDataPoint = DashboardFunnelPoint;
 
 export interface SourceDataPoint {
   name: string;
@@ -118,38 +101,30 @@ export interface SourceDataPoint {
   rawSource?: string;
 }
 
-export interface TopBroker {
-  id: string;
-  name: string;
-  avatar_url: string | null;
-  closedLeads: number;
-  salesValue: number;
-  totalCommissions: number;
+function getDashboardSourceLabel(value: string) {
+  return Object.prototype.hasOwnProperty.call(sourceLabels, value)
+    ? sourceLabels[value]
+    : undefined;
 }
 
-export interface TopBrokersResult {
-  brokers: TopBroker[];
-  isFallbackMode: boolean;
-}
-
-export interface UpcomingTask {
-  id: string;
-  title: string;
-  type: "call" | "email" | "meeting" | "message" | "task";
-  due_date: string;
-  lead_name: string;
-  lead_id: string;
-}
+export type TopBroker = DashboardTopBrokersResponse["brokers"][number];
+export type TopBrokersResult = DashboardTopBrokersResponse;
+export type UpcomingTask = DashboardUpcomingTask;
 
 export function useDashboardStats() {
-  const { organization, profile, user } = useAuth();
-  const organizationId = organization?.id ?? profile?.organization_id;
+  const { organizationId, currentUserId, accessSignature, isReady } =
+    useDashboardQueryScope();
 
   return useQuery({
-    queryKey: ["dashboard-stats", organizationId, user?.id],
-    enabled: !!user?.id,
-    queryFn: async (): Promise<DashboardStats> => {
-      const stats = await getDashboardStats({ organizationId });
+    queryKey: [
+      "dashboard-stats",
+      organizationId,
+      currentUserId,
+      accessSignature,
+    ],
+    enabled: isReady,
+    queryFn: async ({ signal }): Promise<DashboardStats> => {
+      const stats = await getDashboardStats({ organizationId, signal });
       return {
         totalLeads: stats.totalLeads,
         leadsInProgress: stats.leadsInProgress ?? stats.openLeads,
@@ -164,43 +139,39 @@ export function useDashboardStats() {
 }
 
 export function useEnhancedDashboardStats(filters?: DashboardAPIFilters) {
-  const { user, organization, profile } = useAuth();
-  const currentUserId = user?.id;
-  const organizationId = organization?.id ?? profile?.organization_id;
+  const { organizationId, currentUserId, accessSignature, isReady } =
+    useDashboardQueryScope();
+  const filterKey = getDashboardFiltersQueryKey(filters);
 
   return useQuery({
     queryKey: [
       "enhanced-dashboard-stats",
-      currentUserId,
       organizationId,
-      filters?.dateRange?.from?.toISOString(),
-      filters?.dateRange?.to?.toISOString(),
-      filters?.teamId,
-      filters?.userId,
-      filters?.source,
-      filters?.campaignId,
-      filters?.adSetId,
-      filters?.adId,
-      filters?.tagId,
-      filters?.dealStatus,
-      filters?.searchQuery,
+      currentUserId,
+      accessSignature,
+      filterKey,
     ],
-    enabled: !!currentUserId && !!organizationId,
-    queryFn: () =>
+    enabled: isReady,
+    queryFn: ({ signal }) =>
       performanceTracker.trackTimed("useEnhancedDashboardStats", () =>
-        getDashboardStats({ organizationId, filters }) as Promise<EnhancedDashboardStats>,
+        getDashboardStats({ organizationId, filters, signal }),
       ),
     staleTime: DASHBOARD_STALE_TIME_MS,
   });
 }
 
 export function useLeadsChartData() {
-  const { user, organization, profile } = useAuth();
-  const organizationId = organization?.id ?? profile?.organization_id;
+  const { organizationId, currentUserId, accessSignature, isReady } =
+    useDashboardQueryScope();
 
   return useQuery({
-    queryKey: ["leads-chart-data", user?.id, organizationId],
-    enabled: !!user?.id && !!organizationId,
+    queryKey: [
+      "leads-chart-data",
+      organizationId,
+      currentUserId,
+      accessSignature,
+    ],
+    enabled: isReady,
     queryFn: async (): Promise<ChartDataPoint[]> => {
       return [];
     },
@@ -209,60 +180,56 @@ export function useLeadsChartData() {
 }
 
 export function useFunnelData(filters?: DashboardAPIFilters, pipelineId?: string | null) {
-  const { user, organization, profile } = useAuth();
-  const organizationId = organization?.id ?? profile?.organization_id;
+  const { organizationId, currentUserId, accessSignature, isReady } =
+    useDashboardQueryScope();
+  const filterKey = getDashboardFiltersQueryKey(filters);
+  const pipelineKey = getDashboardOptionalIdQueryKey(pipelineId);
 
   return useQuery({
     queryKey: [
       "funnel-data",
       organizationId,
-      filters?.dateRange?.from?.toISOString(),
-      filters?.dateRange?.to?.toISOString(),
-      filters?.teamId,
-      filters?.userId,
-      filters?.source,
-      filters?.campaignId,
-      filters?.adSetId,
-      filters?.adId,
-      filters?.tagId,
-      filters?.dealStatus,
-      filters?.searchQuery,
-      pipelineId,
-      user?.id,
+      currentUserId,
+      accessSignature,
+      filterKey,
+      pipelineKey,
     ],
-    enabled: !!user?.id && !!organizationId,
-    queryFn: () => getDashboardFunnel({ organizationId, filters, pipelineId }) as Promise<FunnelDataPoint[]>,
+    enabled: isReady,
+    queryFn: ({ signal }) =>
+      getDashboardFunnel({ organizationId, filters, pipelineId, signal }),
     staleTime: DASHBOARD_STALE_TIME_MS,
   });
 }
 
 export function useLeadSourcesData(filters?: DashboardAPIFilters, pipelineId?: string | null) {
-  const { user, organization, profile } = useAuth();
-  const organizationId = organization?.id ?? profile?.organization_id;
+  const { organizationId, currentUserId, accessSignature, isReady } =
+    useDashboardQueryScope();
+  const filterKey = getDashboardFiltersQueryKey(filters);
+  const pipelineKey = getDashboardOptionalIdQueryKey(pipelineId);
 
   return useQuery({
     queryKey: [
       "lead-sources-data",
       organizationId,
-      filters?.dateRange?.from?.toISOString(),
-      filters?.dateRange?.to?.toISOString(),
-      filters?.teamId,
-      filters?.userId,
-      filters?.source,
-      filters?.campaignId,
-      filters?.adSetId,
-      filters?.adId,
-      filters?.tagId,
-      filters?.dealStatus,
-      filters?.searchQuery,
-      pipelineId,
-      user?.id,
+      currentUserId,
+      accessSignature,
+      filterKey,
+      pipelineKey,
     ],
-    enabled: !!user?.id && !!organizationId,
-    queryFn: async (): Promise<SourceDataPoint[]> => {
-      const data = await getDashboardSources({ organizationId, filters, pipelineId });
+    enabled: isReady,
+    queryFn: async ({ signal }): Promise<SourceDataPoint[]> => {
+      const data = await getDashboardSources({
+        organizationId,
+        filters,
+        pipelineId,
+        signal,
+      });
       return data.map((item) => ({
-        name: sourceLabels[item.rawSource] || sourceLabels[item.name] || item.name || "Outros",
+        name:
+          getDashboardSourceLabel(item.rawSource) ||
+          getDashboardSourceLabel(item.name) ||
+          item.name ||
+          "Outros",
         value: item.value,
         rawSource: item.rawSource,
       }));
@@ -272,77 +239,68 @@ export function useLeadSourcesData(filters?: DashboardAPIFilters, pipelineId?: s
 }
 
 export function useTopBrokers(filters?: DashboardAPIFilters) {
-  const { user, organization, profile } = useAuth();
-  const currentUserId = user?.id;
-  const organizationId = organization?.id ?? profile?.organization_id;
+  const { organizationId, currentUserId, accessSignature, isReady } =
+    useDashboardQueryScope();
+  const filterKey = getDashboardFiltersQueryKey(filters);
 
   return useQuery({
     queryKey: [
       "top-brokers",
-      currentUserId,
       organizationId,
-      filters?.dateRange?.from?.toISOString(),
-      filters?.dateRange?.to?.toISOString(),
-      filters?.teamId,
-      filters?.userId,
-      filters?.source,
-      filters?.campaignId,
-      filters?.adSetId,
-      filters?.adId,
-      filters?.tagId,
-      filters?.dealStatus,
-      filters?.searchQuery,
+      currentUserId,
+      accessSignature,
+      filterKey,
     ],
-    enabled: !!currentUserId && !!organizationId,
-    queryFn: () => getDashboardTopBrokers({ organizationId, filters }) as Promise<TopBrokersResult>,
+    enabled: isReady,
+    queryFn: ({ signal }) =>
+      getDashboardTopBrokers({ organizationId, filters, signal }),
     staleTime: DASHBOARD_STALE_TIME_MS,
   });
 }
 
 export function useUpcomingTasks() {
-  const { user, organization, profile } = useAuth();
-  const currentUserId = user?.id;
-  const organizationId = organization?.id ?? profile?.organization_id;
+  const { organizationId, currentUserId, accessSignature, isReady } =
+    useDashboardQueryScope();
 
   return useQuery({
-    queryKey: ["upcoming-tasks", currentUserId, organizationId],
-    enabled: !!currentUserId && !!organizationId,
-    queryFn: () => getDashboardUpcomingTasks({ organizationId, limit: 5 }) as Promise<UpcomingTask[]>,
+    queryKey: [
+      "upcoming-tasks",
+      organizationId,
+      currentUserId,
+      accessSignature,
+    ],
+    enabled: isReady,
+    queryFn: ({ signal }) =>
+      getDashboardUpcomingTasks({ organizationId, limit: 5, signal }),
     staleTime: DASHBOARD_SHORT_STALE_TIME_MS,
   });
 }
 
 export function useDealsEvolutionData(filters?: DashboardAPIFilters) {
-  const { user, organization, profile } = useAuth();
-  const currentUserId = user?.id;
-  const organizationId = organization?.id ?? profile?.organization_id;
+  const { organizationId, currentUserId, accessSignature, isReady } =
+    useDashboardQueryScope();
   const dealsEvolutionFilters = {
     ...filters,
     granularity: isSingleDashboardDayRange(filters?.dateRange) ? ("hour" as const) : null,
   };
+  const filterKey = getDashboardFiltersQueryKey(dealsEvolutionFilters);
 
   return useQuery({
     queryKey: [
       "deals-evolution",
-      currentUserId,
       organizationId,
-      dealsEvolutionFilters.dateRange?.from?.toISOString(),
-      dealsEvolutionFilters.dateRange?.to?.toISOString(),
-      dealsEvolutionFilters.granularity,
-      filters?.teamId,
-      filters?.userId,
-      filters?.source,
-      filters?.campaignId,
-      filters?.adSetId,
-      filters?.adId,
-      filters?.tagId,
-      filters?.dealStatus,
-      filters?.searchQuery,
+      currentUserId,
+      accessSignature,
+      filterKey,
     ],
-    enabled: !!currentUserId && !!organizationId,
-    queryFn: () =>
+    enabled: isReady,
+    queryFn: ({ signal }) =>
       performanceTracker.trackTimed("useDealsEvolutionData", () =>
-        getDashboardDealsEvolution({ organizationId, filters: dealsEvolutionFilters }) as Promise<DealsEvolutionPoint[]>,
+        getDashboardDealsEvolution({
+          organizationId,
+          filters: dealsEvolutionFilters,
+          signal,
+        }),
       ),
     staleTime: DASHBOARD_STALE_TIME_MS,
   });
@@ -353,6 +311,6 @@ function isSingleDashboardDayRange(dateRange?: DashboardAPIFilters["dateRange"])
     return false;
   }
 
-  const durationMs = Math.abs(dateRange.to.getTime() - dateRange.from.getTime());
+  const durationMs = dateRange.to.getTime() - dateRange.from.getTime();
   return durationMs > 0 && durationMs <= 24 * 60 * 60 * 1000;
 }

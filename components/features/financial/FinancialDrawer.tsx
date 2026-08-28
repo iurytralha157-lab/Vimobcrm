@@ -16,6 +16,8 @@ interface FinancialDrawerProps {
   children: ReactNode;
   /** Wider drawer for forms with many columns/tabs (e.g. contracts) */
   size?: "default" | "lg";
+  /** Prevents losing in-flight form changes while a mutation is pending. */
+  pending?: boolean;
 }
 
 /**
@@ -33,27 +35,43 @@ export function FinancialDrawer({
   description,
   children,
   size = "default",
+  pending = false,
 }: FinancialDrawerProps) {
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (pending && !nextOpen) return;
+    onOpenChange(nextOpen);
+  };
+
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent
         side="right"
+        aria-busy={pending}
+        onEscapeKeyDown={(event) => {
+          if (pending) event.preventDefault();
+        }}
+        onPointerDownOutside={(event) => {
+          if (pending) event.preventDefault();
+        }}
         className={cn(
-          "flex w-full flex-col gap-0 border-l border-white/[0.055] bg-[var(--app-background)] p-0",
+          "flex w-full flex-col gap-0 border-l border-border/60 bg-[var(--app-background)] p-0",
           size === "lg"
             ? "sm:max-w-[640px]"
             : "sm:max-w-[480px]",
         )}
       >
-        <SheetHeader className="sticky top-0 z-10 border-b border-white/[0.055] bg-[var(--app-surface)] px-6 py-4 backdrop-blur">
-          <SheetTitle className="text-left text-base font-semibold text-foreground">
+        <SheetHeader className="sticky top-0 z-10 border-b border-border/60 bg-[var(--app-surface-solid)] px-6 py-4">
+          <SheetTitle className="text-left text-base font-medium text-foreground">
             {title}
           </SheetTitle>
-          {description && (
-            <SheetDescription className="text-left text-xs text-muted-foreground">
-              {description}
-            </SheetDescription>
-          )}
+          <SheetDescription
+            className={cn(
+              "text-left text-xs text-muted-foreground",
+              !description && "sr-only",
+            )}
+          >
+            {description || `Painel de ${title.toLocaleLowerCase("pt-BR")}`}
+          </SheetDescription>
         </SheetHeader>
         <div className="flex-1 overflow-y-auto px-6 py-5">{children}</div>
       </SheetContent>

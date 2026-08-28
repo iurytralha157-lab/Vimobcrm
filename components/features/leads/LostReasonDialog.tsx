@@ -48,7 +48,11 @@ export function LostReasonDialog({
 
   const handleConfirm = async () => {
     if (!reasonValidation.success) return;
-    await onConfirm(reasonValidation.data);
+    try {
+      await onConfirm(reasonValidation.data);
+    } catch {
+      // The owning mutation reports the error; keep the selected reason for retry.
+    }
   };
 
   const handleClose = () => {
@@ -58,10 +62,12 @@ export function LostReasonDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && handleClose()}>
       <DialogContent
-        className="w-[92vw] max-w-[92vw] max-h-[85vh] overflow-y-auto rounded-xl sm:max-w-xl p-5"
-        onEscapeKeyDown={(event) => event.preventDefault()}
+        className="max-h-[85vh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4 text-[var(--app-text-primary)] shadow-none sm:max-w-xl"
+        onEscapeKeyDown={(event) => {
+          if (loading) event.preventDefault();
+        }}
         onInteractOutside={(event) => {
           const target = event.target as HTMLElement | null;
           if (target?.closest('[data-radix-popper-content-wrapper], [role="listbox"]')) {
@@ -70,16 +76,16 @@ export function LostReasonDialog({
         }}
       >
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-base font-extralight">
-            <div className="h-7 w-7 rounded-full bg-destructive/10 flex items-center justify-center">
+          <DialogTitle className="flex items-center gap-2 text-base font-normal">
+            <div className="flex h-7 w-7 items-center justify-center rounded-[6px] bg-destructive/10">
               <XCircle className="h-3.5 w-3.5 text-destructive" />
             </div>
             <span>Marcar como perdido</span>
           </DialogTitle>
-          <DialogDescription className="text-xs font-extralight text-muted-foreground/80 mt-1">
+          <DialogDescription className="mt-1 text-xs font-light text-muted-foreground/80">
             {leadName ? (
               <>
-                Por que o lead <span className="font-medium text-foreground">{leadName}</span> foi descartado?
+                Por que o lead <span className="font-normal text-foreground">{leadName}</span> foi descartado?
               </>
             ) : (
               'Por que esse lead foi descartado?'
@@ -94,10 +100,11 @@ export function LostReasonDialog({
               <button
                 key={option.value}
                 type="button"
+                aria-pressed={selectedReason === option.value}
                 onClick={() => setSelectedReason(option.value)}
                 disabled={loading}
                 className={cn(
-                  "flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer text-left transition-all focus:outline-none focus:ring-1 focus:ring-destructive/30",
+                  "flex items-center gap-2.5 rounded-[6px] border p-2.5 text-left font-light transition-colors focus:outline-none focus:ring-1 focus:ring-destructive/30",
                   selectedReason === option.value
                     ? "border-transparent bg-destructive/10 dark:bg-destructive/20 text-destructive"
                     : "border-[var(--app-border)] bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)]"
@@ -107,12 +114,12 @@ export function LostReasonDialog({
                   className={cn(
                     "h-3.5 w-3.5 shrink-0 rounded-[4px] border flex items-center justify-center transition-colors",
                     selectedReason === option.value
-                      ? "border-destructive bg-destructive text-white"
+                      ? "border-destructive bg-destructive text-destructive-foreground"
                       : "border-muted-foreground/40"
                   )}
                 >
                   {selectedReason === option.value && (
-                    <div className="h-1.5 w-1.5 rounded-sm bg-white" />
+                    <div className="h-1.5 w-1.5 rounded-[2px] bg-destructive-foreground" />
                   )}
                 </div>
                 <span className="font-light text-xs leading-tight">{option.label}</span>
@@ -120,10 +127,11 @@ export function LostReasonDialog({
             ))}
             <button
               type="button"
+              aria-pressed={isOtherSelected}
               onClick={() => setSelectedReason(LOSS_REASON_OTHER_VALUE)}
               disabled={loading}
               className={cn(
-                "flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer text-left transition-all focus:outline-none focus:ring-1 focus:ring-destructive/30",
+                "flex items-center gap-2.5 rounded-[6px] border p-2.5 text-left font-light transition-colors focus:outline-none focus:ring-1 focus:ring-destructive/30",
                 isOtherSelected
                   ? "border-transparent bg-destructive/10 dark:bg-destructive/20 text-destructive"
                   : "border-[var(--app-border)] bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)]"
@@ -133,12 +141,12 @@ export function LostReasonDialog({
                 className={cn(
                   "h-3.5 w-3.5 shrink-0 rounded-[4px] border flex items-center justify-center transition-colors",
                   isOtherSelected
-                    ? "border-destructive bg-destructive text-white"
+                    ? "border-destructive bg-destructive text-destructive-foreground"
                     : "border-muted-foreground/40"
                 )}
               >
                 {isOtherSelected && (
-                  <div className="h-1.5 w-1.5 rounded-sm bg-white" />
+                  <div className="h-1.5 w-1.5 rounded-[2px] bg-destructive-foreground" />
                 )}
               </div>
               <span className="font-light text-xs leading-tight">Outros</span>
@@ -169,7 +177,7 @@ export function LostReasonDialog({
         <div className="flex gap-2 pt-0.5 mt-3">
           <Button
             variant="outline"
-            className="w-[40%] rounded-xl text-xs font-light"
+            className="h-8 w-[40%] rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-xs font-light shadow-none hover:bg-[var(--app-surface-hover)]"
             onClick={handleClose}
             disabled={loading}
           >
@@ -177,8 +185,8 @@ export function LostReasonDialog({
           </Button>
           <Button
             variant="destructive"
-            className="w-[60%] rounded-xl text-xs font-light"
-            onClick={handleConfirm}
+            className="h-8 w-[60%] rounded-[6px] text-xs font-light shadow-none"
+            onClick={() => void handleConfirm()}
             disabled={loading || !reasonValidation.success}
           >
             {loading ? (

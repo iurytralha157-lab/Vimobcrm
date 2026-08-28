@@ -13,17 +13,17 @@ export const WaitNode = memo(({ data, selected }: NodeProps) => {
   const stopOnReply = data.stop_on_reply === true;
 
   return (
-    <div className={`automation-node px-4 py-3 rounded-xl min-w-[180px] ${
+    <div className={`automation-node min-w-[180px] rounded-[8px] px-4 py-3 ${
       selected ? 'automation-node-selected' : ''
-    }`} style={{ '--node-accent': '#a855f7' } as React.CSSProperties}>
+    }`} style={{ '--node-accent': 'var(--chart-3)' } as React.CSSProperties}>
       <Handle type="target" position={Position.Left} className="!bg-purple-400 !w-3 !h-3 !border-2 !border-purple-500/50" />
       <div className="flex items-center gap-3">
         <div className="p-2 rounded-lg bg-purple-500 shrink-0">
-          <Timer className="h-5 w-5 text-white" />
+          <Timer className="h-5 w-5 text-primary-foreground" />
         </div>
         <div>
-          <div className="text-[10px] font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider">Aguardar</div>
-          <div className="text-sm font-semibold text-foreground">{getValue()}</div>
+          <div className="text-[12px] font-normal text-purple-600 dark:text-purple-400">Aguardar</div>
+          <div className="text-[12px] font-normal text-foreground">{getValue()}</div>
           {stopOnReply && (
             <div className="flex items-center gap-1 mt-0.5">
               <MessageSquareReply className="h-3 w-3 text-green-500" />

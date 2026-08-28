@@ -13,6 +13,7 @@ import {
   LifeBuoy,
   Mail,
   Megaphone,
+  PanelsTopLeft,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -31,6 +32,7 @@ export type AdminSection =
   | "email-templates"
   | "email-logs"
   | "announcements"
+  | "home-content"
   | "help"
   | "audit"
   | "error-logs"
@@ -115,6 +117,15 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     description: "Banners e avisos globais da plataforma.",
     href: "/admin/announcements",
     icon: Megaphone,
+    group: "main",
+  },
+  {
+    section: "home-content",
+    title: "Conteúdo da página inicial",
+    shortTitle: "Página inicial",
+    description: "Publicações, imagens, ordem e público da nova página inicial.",
+    href: "/admin/home-content",
+    icon: PanelsTopLeft,
     group: "main",
   },
   {

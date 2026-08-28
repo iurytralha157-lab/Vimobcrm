@@ -51,7 +51,11 @@ import {
 import { useScheduleUsers } from "@/hooks/use-schedule-users";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
@@ -68,16 +72,11 @@ import { toast } from "sonner";
 
 // --- helpers ----------------------------------------------------------------
 
-const EVENT_TYPE_CONFIG: Record<string, { label: string; color: string; bg: string; icon: React.ElementType }> = {
-  call: { label: "Ligação", color: "#6366f1", bg: "rgba(99,102,241,0.18)", icon: Phone },
-  email: { label: "E-mail", color: "#f59e0b", bg: "rgba(245,158,11,0.18)", icon: Mail },
-  meeting: { label: "Reunião", color: "#8b5cf6", bg: "rgba(139,92,246,0.18)", icon: Video },
-  task: { label: "Tarefa", color: "#f59e0b", bg: "rgba(245,158,11,0.18)", icon: ClipboardList },
-  message: { label: "Mensagem", color: "#22c55e", bg: "rgba(34,197,94,0.18)", icon: MessageSquare },
-  visit: { label: "Visita ao imóvel", color: "#ec4899", bg: "rgba(236,72,153,0.18)", icon: Home },
-};
-
-const EVENT_TYPE_FILTER_OPTIONS: Array<{ value: EventType; label: string; icon: React.ElementType }> = [
+const EVENT_TYPE_FILTER_OPTIONS: Array<{
+  value: EventType;
+  label: string;
+  icon: React.ElementType;
+}> = [
   { value: "call", label: "Ligação", icon: Phone },
   { value: "email", label: "E-mail", icon: Mail },
   { value: "meeting", label: "Reunião", icon: Video },
@@ -87,13 +86,12 @@ const EVENT_TYPE_FILTER_OPTIONS: Array<{ value: EventType; label: string; icon: 
 ];
 
 const AGENDA_VIEW_MODES = ["day", "week", "month", "year", "list"] as const;
-type AgendaViewMode = typeof AGENDA_VIEW_MODES[number];
+type AgendaViewMode = (typeof AGENDA_VIEW_MODES)[number];
 
 const isAgendaViewMode = (value: string | null): value is AgendaViewMode =>
   value !== null && AGENDA_VIEW_MODES.includes(value as AgendaViewMode);
 
 // --- Componente principal ----------------------------------------------------
-
 
 export default function Agenda() {
   const { profile } = useAuth();
@@ -111,7 +109,9 @@ export default function Agenda() {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [pivotDate, setPivotDate] = useState(new Date());
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
-  const [selectedEventType, setSelectedEventType] = useState<EventType | null>(null);
+  const [selectedEventType, setSelectedEventType] = useState<EventType | null>(
+    null,
+  );
   const [viewMode, setViewMode] = useState<AgendaViewMode>(() => {
     if (typeof window === "undefined") return "week";
     const saved = localStorage.getItem("agendaViewMode");
@@ -131,7 +131,10 @@ export default function Agenda() {
   const dateRange = useMemo(() => {
     switch (effectiveViewMode) {
       case "day":
-        return { startDate: startOfDay(pivotDate), endDate: endOfDay(pivotDate) };
+        return {
+          startDate: startOfDay(pivotDate),
+          endDate: endOfDay(pivotDate),
+        };
       case "week":
         return {
           startDate: startOfWeek(pivotDate, { weekStartsOn: 0 }),
@@ -143,13 +146,24 @@ export default function Agenda() {
           endDate: endOfWeek(endOfMonth(pivotDate), { weekStartsOn: 0 }),
         };
       case "year":
-        return { startDate: startOfYear(pivotDate), endDate: endOfYear(pivotDate) };
+        return {
+          startDate: startOfYear(pivotDate),
+          endDate: endOfYear(pivotDate),
+        };
       default:
-        return { startDate: startOfDay(new Date()), endDate: addDays(new Date(), 30) };
+        return {
+          startDate: startOfDay(new Date()),
+          endDate: addDays(new Date(), 30),
+        };
     }
   }, [pivotDate, effectiveViewMode]);
 
-  const { data: events = [], isLoading: eventsLoading, isError: eventsFailed, refetch: refetchEvents } = useScheduleEvents({
+  const {
+    data: events = [],
+    isLoading: eventsLoading,
+    isError: eventsFailed,
+    refetch: refetchEvents,
+  } = useScheduleEvents({
     userId: selectedUserId || undefined,
     startDate: dateRange.startDate,
     endDate: dateRange.endDate,
@@ -160,7 +174,10 @@ export default function Agenda() {
   });
 
   const filteredEvents = useMemo(
-    () => selectedEventType ? events.filter((event) => event.event_type === selectedEventType) : events,
+    () =>
+      selectedEventType
+        ? events.filter((event) => event.event_type === selectedEventType)
+        : events,
     [events, selectedEventType],
   );
 
@@ -188,7 +205,8 @@ export default function Agenda() {
   useEffect(() => {
     if (!focusedEventId) return;
 
-    const focusedEvent = events.find((event) => event.id === focusedEventId) || focusedEvents[0];
+    const focusedEvent =
+      events.find((event) => event.id === focusedEventId) || focusedEvents[0];
     if (!focusedEvent) return;
 
     const eventDate = new Date(focusedEvent.start_time);
@@ -217,7 +235,11 @@ export default function Agenda() {
   useEffect(() => {
     const handleMobileCreate = () => openCreateSheet();
     window.addEventListener("vimob:mobile-create-agenda", handleMobileCreate);
-    return () => window.removeEventListener("vimob:mobile-create-agenda", handleMobileCreate);
+    return () =>
+      window.removeEventListener(
+        "vimob:mobile-create-agenda",
+        handleMobileCreate,
+      );
   }, [openCreateSheet]);
 
   useEffect(() => {
@@ -230,7 +252,9 @@ export default function Agenda() {
     if (connected) {
       toast.success("Google Agenda conectada e sincronizada.");
     } else if (callbackError) {
-      toast.error(`Nao foi possivel conectar o Google Agenda: ${callbackError.slice(0, 300)}`);
+      toast.error(
+        `Não foi possível conectar o Google Agenda: ${callbackError.slice(0, 300)}`,
+      );
     }
 
     const cleanParams = new URLSearchParams(searchParamsString);
@@ -240,8 +264,9 @@ export default function Agenda() {
     router.replace(`/agenda${cleanSearch ? `?${cleanSearch}` : ""}`);
   }, [router, searchParams, searchParamsString]);
 
-
-  const canFilterUsers = Boolean(scheduleCapabilities?.isTeamLeader && canFilterScheduleUsers);
+  const canFilterUsers = Boolean(
+    scheduleCapabilities?.isTeamLeader && canFilterScheduleUsers,
+  );
 
   useEffect(() => {
     if (!selectedUserId) return;
@@ -256,25 +281,27 @@ export default function Agenda() {
     }
   }, [selectedUserId, users]);
 
-  const VIEW_MODES: Array<{ value: AgendaViewMode; label: string; icon: React.ElementType }> = [
+  const VIEW_MODES: Array<{
+    value: AgendaViewMode;
+    label: string;
+    icon: React.ElementType;
+  }> = [
     { value: "day", label: "Dia", icon: Clock },
     { value: "week", label: "Semana", icon: LayoutGrid },
     { value: "month", label: "Mês", icon: CalendarIcon },
     { value: "list", label: "Lista", icon: List },
   ];
 
-  const TYPE_LEGEND = [
-    { key: "call", label: "Ligação" },
-    { key: "email", label: "E-mail" },
-    { key: "meeting", label: "Reunião" },
-    { key: "task", label: "Tarefa" },
-    { key: "message", label: "Mensagem" },
-    { key: "visit", label: "Visita ao imóvel" },
-  ];
-
-  const activeFiltersCount = (selectedUserId ? 1 : 0) + (selectedEventType ? 1 : 0);
+  const activeFiltersCount =
+    (selectedUserId ? 1 : 0) + (selectedEventType ? 1 : 0);
   const navigationStep =
-    effectiveViewMode === "week" ? 7 : effectiveViewMode === "month" ? 30 : effectiveViewMode === "year" ? 365 : 1;
+    effectiveViewMode === "week"
+      ? 7
+      : effectiveViewMode === "month"
+        ? 30
+        : effectiveViewMode === "year"
+          ? 365
+          : 1;
   const periodLabel =
     effectiveViewMode === "day"
       ? format(pivotDate, "EEEE, d 'de' MMMM", { locale: ptBR })
@@ -297,16 +324,23 @@ export default function Agenda() {
         }}
       >
         {/* -- Área principal (calendário) -- */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" }}>
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            minWidth: 0,
+            overflow: "hidden",
+          }}
+        >
           {/* Header da agenda */}
           <div
             data-tour="agenda-period"
-            className="flex items-center gap-2 border-b border-[var(--app-border)] px-3 py-2 md:px-[18px] md:py-3"
-            style={{ borderBottomColor: "color-mix(in srgb, var(--app-border) 58%, transparent)" }}
+            className="flex items-center gap-2 px-3 py-2 md:px-[18px] md:py-3"
           >
             {!isMobile && (
               <button
-                className="h-8 rounded-[6px] border-0 bg-primary/10 px-3 text-xs font-medium text-primary transition-colors hover:bg-primary/15"
+                className="h-8 rounded-[6px] border-0 bg-primary/50 px-3 text-[12px] font-light text-white shadow-none transition-colors hover:bg-primary"
                 onClick={() => setPivotDate(new Date())}
               >
                 Hoje
@@ -316,7 +350,7 @@ export default function Agenda() {
               <button
                 className="flex h-8 w-8 items-center justify-center rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)]"
                 onClick={() => setPivotDate((d) => addDays(d, -navigationStep))}
-                aria-label="Periodo anterior"
+                aria-label="Período anterior"
               >
                 <ChevronLeft size={14} />
               </button>
@@ -328,7 +362,7 @@ export default function Agenda() {
                 <ChevronRight size={14} />
               </button>
             </div>
-            <span className="min-w-0 flex-1 truncate text-sm font-medium capitalize text-[var(--color-text-primary)]">
+            <span className="min-w-0 flex-1 truncate text-[14px] font-light capitalize text-[var(--color-text-primary)]">
               {periodLabel}
             </span>
 
@@ -338,8 +372,8 @@ export default function Agenda() {
                 variant="ghost"
                 size="sm"
                 className={cn(
-                  "h-9 gap-2 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[var(--color-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)]",
-                  isMobile && "w-9 px-0",
+                  "h-8 gap-2 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light text-[var(--color-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)]",
+                  isMobile && "w-8 px-0",
                 )}
                 onClick={() => setGoogleCalendarOpen(true)}
                 aria-label="Configurar Google Agenda"
@@ -356,48 +390,55 @@ export default function Agenda() {
                     variant="ghost"
                     size="sm"
                     className={cn(
-                      "h-9 gap-2 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[var(--color-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)]",
-                      isMobile && "w-9 px-0",
-                      activeFiltersCount > 0 && "bg-primary/10 text-primary hover:bg-primary/15"
+                      "h-8 gap-2 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light text-[var(--color-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)]",
+                      isMobile && "w-8 px-0",
+                      activeFiltersCount > 0 &&
+                        "bg-primary/50 text-white hover:bg-primary hover:text-white",
                     )}
                   >
                     <SlidersHorizontal size={14} />
                     {!isMobile && <span>Filtros</span>}
                     {activeFiltersCount > 0 && (
-                      <Badge variant="secondary" className="h-5 px-1.5 min-w-[20px] bg-[#ff4e1a] text-white hover:bg-[#ff4e1a]">
+                      <Badge
+                        variant="secondary"
+                        className="h-4 min-w-[18px] rounded-[4px] bg-primary/50 px-1 text-[10px] font-light text-white hover:bg-primary/50"
+                      >
                         {activeFiltersCount}
                       </Badge>
                     )}
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="z-50 max-h-[calc(100dvh-5rem)] w-80 overflow-y-auto rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 shadow-none" align="end">
-                  <div className="flex flex-col gap-4 p-4">
+                <PopoverContent
+                  className="app-header-popover z-50 max-h-[calc(100dvh-5rem)] w-[min(320px,calc(100vw-16px))] overflow-y-auto rounded-[8px] border-0 p-2.5"
+                  align="end"
+                >
+                  <div className="flex flex-col gap-3">
                     {/* Visualização */}
                     {!isMobile && (
-                    <div className="flex flex-col gap-3">
-                      <SideLabel>Visualização</SideLabel>
-                      <div className="grid grid-cols-2 gap-2">
-                        {VIEW_MODES.map((m) => {
-                          const active = viewMode === m.value;
-                          const Icon = m.icon;
-                          return (
-                            <button
-                              key={m.value}
-                              onClick={() => setViewMode(m.value)}
-                              className={cn(
-                                "flex items-center gap-2 rounded-[6px] border-0 px-3 py-2 text-xs font-medium transition-colors",
-                                active
-                                  ? "bg-primary/15 text-primary"
-                                  : "bg-[var(--app-surface-soft)] text-[var(--color-text-secondary)] hover:bg-[var(--app-surface-hover)]"
-                              )}
-                            >
-                              <Icon size={14} />
-                              {m.label}
-                            </button>
-                          );
-                        })}
+                      <div className="flex flex-col gap-3">
+                        <SideLabel>Visualização</SideLabel>
+                        <div className="grid grid-cols-2 gap-2">
+                          {VIEW_MODES.map((m) => {
+                            const active = viewMode === m.value;
+                            const Icon = m.icon;
+                            return (
+                              <button
+                                key={m.value}
+                                onClick={() => setViewMode(m.value)}
+                                className={cn(
+                                  "flex items-center gap-2 rounded-[6px] border-0 px-3 py-2 text-[12px] font-light transition-colors",
+                                  active
+                                    ? "bg-primary/50 text-white hover:bg-primary"
+                                    : "bg-[var(--app-surface-soft)] text-[var(--color-text-secondary)] hover:bg-[var(--app-surface-hover)]",
+                                )}
+                              >
+                                <Icon size={14} />
+                                {m.label}
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
                     )}
 
                     {/* Filtro por tipo de agendamento */}
@@ -408,9 +449,9 @@ export default function Agenda() {
                           type="button"
                           onClick={() => setSelectedEventType(null)}
                           className={cn(
-                            "col-span-2 flex items-center gap-2 rounded-[6px] border-0 px-3 py-2 text-xs font-medium transition-colors",
+                            "col-span-2 flex items-center gap-2 rounded-[6px] border-0 px-3 py-2 text-[12px] font-light transition-colors",
                             selectedEventType === null
-                              ? "bg-primary/15 text-primary"
+                              ? "bg-primary/50 text-white hover:bg-primary"
                               : "bg-[var(--app-surface-soft)] text-[var(--color-text-secondary)] hover:bg-[var(--app-surface-hover)]",
                           )}
                         >
@@ -427,9 +468,9 @@ export default function Agenda() {
                               type="button"
                               onClick={() => setSelectedEventType(option.value)}
                               className={cn(
-                                "flex min-w-0 items-center gap-2 rounded-[6px] border-0 px-3 py-2 text-left text-xs font-medium transition-colors",
+                                "flex min-w-0 items-center gap-2 rounded-[6px] border-0 px-3 py-2 text-left text-[12px] font-light transition-colors",
                                 active
-                                  ? "bg-primary/15 text-primary"
+                                  ? "bg-primary/50 text-white hover:bg-primary"
                                   : "bg-[var(--app-surface-soft)] text-[var(--color-text-secondary)] hover:bg-[var(--app-surface-hover)]",
                               )}
                             >
@@ -453,11 +494,11 @@ export default function Agenda() {
                       </div>
                     )}
 
-                    {(activeFiltersCount > 0) && (
+                    {activeFiltersCount > 0 && (
                       <div>
                         <Button
                           size="sm"
-                          className="w-full gap-2 bg-primary text-xs text-primary-foreground shadow-none hover:bg-primary/90 hover:text-primary-foreground"
+                          className="h-8 w-full gap-2 rounded-[6px] bg-primary/50 text-[12px] font-light text-white shadow-none hover:bg-primary hover:text-white"
                           onClick={() => {
                             setSelectedUserId(null);
                             setSelectedEventType(null);
@@ -476,7 +517,7 @@ export default function Agenda() {
                 <Button
                   data-tour="agenda-new"
                   onClick={openCreateSheet}
-                  className="h-9 gap-2 rounded-[6px] border-0 bg-primary px-3 text-xs font-medium text-primary-foreground shadow-none hover:bg-primary/90"
+                  className="h-8 gap-2 rounded-[6px] border-0 bg-primary/50 px-3 text-[12px] font-light text-white shadow-none hover:bg-primary"
                 >
                   <Plus size={15} /> Novo agendamento
                 </Button>
@@ -485,7 +526,10 @@ export default function Agenda() {
           </div>
 
           {/* Calendário / lista */}
-          <div data-tour="agenda-calendar" style={{ flex: 1, overflow: "hidden" }}>
+          <div
+            data-tour="agenda-calendar"
+            style={{ flex: 1, overflow: "hidden" }}
+          >
             {eventsLoading ? (
               <div className="flex h-full items-center justify-center">
                 <VimobLoader showLabel label="Carregando agenda..." />
@@ -493,8 +537,15 @@ export default function Agenda() {
             ) : eventsFailed ? (
               <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
                 <AlertCircle className="h-6 w-6 text-destructive" />
-                <p className="text-sm text-[var(--app-text-secondary)]">Não foi possível carregar a agenda.</p>
-                <Button variant="outline" size="sm" className="gap-2 rounded-[6px]" onClick={() => void refetchEvents()}>
+                <p className="text-sm text-[var(--app-text-secondary)]">
+                  Não foi possível carregar a agenda.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 rounded-[6px]"
+                  onClick={() => void refetchEvents()}
+                >
                   <RefreshCw className="h-3.5 w-3.5" /> Tentar novamente
                 </Button>
               </div>
@@ -508,62 +559,46 @@ export default function Agenda() {
                 viewMode={effectiveViewMode}
                 onEditEvent={openEventSheet}
                 onEventUpdate={(id, updates) =>
-                  canManageSchedule && updateEventMutation.mutate({
-                      id,
-                      ...updates,
-                    })
+                  canManageSchedule &&
+                  updateEventMutation.mutate({
+                    id,
+                    ...updates,
+                  })
                 }
                 canManageEvents={canManageSchedule}
-                onQuickCreate={canManageSchedule ? (date) => {
-                    setSelectedDate(date);
-                    openCreateSheet();
-                  } : undefined}
+                onQuickCreate={
+                  canManageSchedule
+                    ? (date) => {
+                        setSelectedDate(date);
+                        openCreateSheet();
+                      }
+                    : undefined
+                }
               />
             ) : (
               <div style={{ height: "100%", padding: 24, overflowY: "auto" }}>
-                <EventsList events={upcomingEvents} onEditEvent={openEventSheet} showUser={true} canManage={canManageSchedule} />
+                <EventsList
+                  events={upcomingEvents}
+                  onEditEvent={openEventSheet}
+                  showUser={true}
+                  canManage={canManageSchedule}
+                />
               </div>
             )}
           </div>
 
-          {/* Legenda de tipos no rodapé */}
-          <div
-            style={{
-              display: "none",
-              gap: 16,
-              justifyContent: "center",
-              padding: "8px 0",
-              borderTop: "1px solid var(--app-border)",
-            }}
-          >
-            {TYPE_LEGEND.map((t) => {
-              const conf = EVENT_TYPE_CONFIG[t.key];
-              return (
-                <div
-                  key={t.key}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 5,
-                    fontSize: 11,
-                    color: "var(--color-text-tertiary)",
-                  }}
-                >
-                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: conf.color }} />
-                  {t.label}
-                </div>
-              );
-            })}
-          </div>
         </div>
       </div>
 
       <Dialog open={googleCalendarOpen} onOpenChange={setGoogleCalendarOpen}>
-        <DialogContent className="w-[calc(100vw-24px)] max-w-xl rounded-[12px] p-5 sm:p-6">
-          <DialogHeader>
-            <DialogTitle>Google Agenda</DialogTitle>
-            <DialogDescription>
-              Conecte sua conta pessoal para enviar e receber compromissos automaticamente.
+        <DialogContent className="w-[calc(100vw-16px)] max-w-xl rounded-[8px] border-0 bg-[var(--app-background)] p-4 sm:p-5">
+          <DialogHeader className="gap-1.5">
+            <DialogTitle className="text-[14px] font-light text-[var(--app-text-primary)]">
+              Google Agenda
+            </DialogTitle>
+            <DialogDescription className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
+              Conecte sua conta pessoal para enviar e receber compromissos
+              automaticamente.
             </DialogDescription>
           </DialogHeader>
           <GoogleCalendarConnect />
@@ -592,12 +627,17 @@ function SideLabel({ children }: { children: React.ReactNode }) {
         gap: 6,
         fontSize: 10,
         fontWeight: 300,
-        color: "var(--color-text-tertiary)",
-        textTransform: "uppercase",
-        letterSpacing: "0.06em",
+        color: "var(--app-text-tertiary)",
       }}
     >
-      <div style={{ width: 4, height: 4, borderRadius: "50%", background: "#ff4e1a" }} />
+      <div
+        style={{
+          width: 4,
+          height: 4,
+          borderRadius: "50%",
+          background: "var(--primary)",
+        }}
+      />
       {children}
     </div>
   );

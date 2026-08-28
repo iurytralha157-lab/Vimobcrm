@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/supabasehttp"
 )
 
 var ErrAutomationStorageNotConfigured = errors.New("automation storage is not configured")
@@ -257,8 +259,7 @@ func (client storageClient) setJSONHeaders(request *http.Request) {
 }
 
 func (client storageClient) setAuthHeaders(request *http.Request) {
-	request.Header.Set("apikey", client.apiKey)
-	request.Header.Set("Authorization", "Bearer "+client.apiKey)
+	supabasehttp.SetServiceAuth(request, client.apiKey)
 }
 
 func storageStatusError(operation string, status string, payload []byte) error {

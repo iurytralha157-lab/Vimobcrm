@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { createClientId } from '@/lib/client-id';
 import { useDeleteStage, useReorderStages } from '@/hooks/use-stages';
+import { PIPELINE_STAGE_COLOR_FALLBACK } from '@/config/pipeline-stage-colors';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -55,7 +56,7 @@ export function StagesEditorDialog({
   const sortedInitialStages = [...initialStages].sort((a, b) => a.position - b.position);
   const initialStagesKey = open
     ? sortedInitialStages
-      .map((stage) => `${stage.id}:${stage.position}:${stage.name}:${stage.color}:${stage.lead_count ?? ''}:${stage.stage_key ?? ''}`)
+      .map((stage) => `${stage.id}:${stage.position}:${stage.name}:${stage.color}:${stage.stage_key ?? ''}`)
       .join('|')
     : 'closed';
   const [stageDraft, setStageDraft] = useState<StageDraft>({
@@ -73,10 +74,13 @@ export function StagesEditorDialog({
   const [deleteStage, setDeleteStage] = useState<Stage | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [newName, setNewName] = useState('');
-  const [newColor, setNewColor] = useState('#6b7280');
+  const [newColor, setNewColor] = useState<string>(PIPELINE_STAGE_COLOR_FALLBACK);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const saveInFlightRef = useRef(false);
+  const deleteInFlightRef = useRef(false);
   const reorderStages = useReorderStages();
   const deleteStageMutation = useDeleteStage();
+  const isMutating = isSaving || deleteStageMutation.isPending;
 
   useEffect(() => {
     if (open) return;
@@ -87,6 +91,9 @@ export function StagesEditorDialog({
       if (cancelled) return;
       setEditingId(null);
       setIsAdding(false);
+      setDeleteStage(null);
+      setNewName('');
+      setStageDraft({ sourceKey: '', stages: [], hasChanges: false });
     });
 
     return () => {
@@ -152,7 +159,13 @@ export function StagesEditorDialog({
     return String(error);
   };
 
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && isMutating) return;
+    onOpenChange(nextOpen);
+  };
+
   const handleDragEnd = (result: DropResult) => {
+    if (isMutating) return;
     if (!result.destination) return;
 
     const fromIndex = result.source.index;
@@ -174,16 +187,19 @@ export function StagesEditorDialog({
   };
 
   const handleSave = async () => {
+    if (isMutating || saveInFlightRef.current) return;
+
+    if (isAdding && pendingNewStageName.length < 2) {
+      toast.error('O nome da coluna deve ter pelo menos 2 caracteres.');
+      return;
+    }
+
     if (!canSave) {
-      onOpenChange(false);
+      handleOpenChange(false);
       return;
     }
 
-    if (isAdding && !pendingNewStageName) {
-      toast.error('Informe o nome da coluna antes de salvar.');
-      return;
-    }
-
+    saveInFlightRef.current = true;
     setIsSaving(true);
     try {
       const stagesForSave = hasPendingNewStage
@@ -221,6 +237,7 @@ export function StagesEditorDialog({
     } catch (error: unknown) {
       toast.error('Erro ao salvar: ' + getErrorMessage(error));
     } finally {
+      saveInFlightRef.current = false;
       setIsSaving(false);
     }
   };
@@ -232,11 +249,16 @@ export function StagesEditorDialog({
   };
 
   const handleSaveEdit = () => {
-    if (!editingId || !editingName.trim()) return;
+    if (!editingId) return;
+    const normalizedName = editingName.trim();
+    if (normalizedName.length < 2) {
+      toast.error('O nome da coluna deve ter pelo menos 2 caracteres.');
+      return;
+    }
 
     setDraftStages(stages.map(s =>
       s.id === editingId
-        ? { ...s, name: editingName.trim(), color: editingColor }
+        ? { ...s, name: normalizedName, color: editingColor }
         : s
     ));
     setEditingId(null);
@@ -249,23 +271,46 @@ export function StagesEditorDialog({
   };
 
   const handleDeleteStage = async () => {
-    if (!deleteStage) return;
+    const target = deleteStage;
+    if (!target || deleteStageMutation.isPending || deleteInFlightRef.current) return;
 
+    const isPersistedStage = sortedInitialStages.some((stage) => stage.id === target.id);
+    if (!isPersistedStage) {
+      setDraftStages(stages.filter((stage) => stage.id !== target.id));
+      setDeleteStage(null);
+      return;
+    }
+
+    deleteInFlightRef.current = true;
     try {
-      await deleteStageMutation.mutateAsync(deleteStage.id);
+      await deleteStageMutation.mutateAsync(target.id);
 
-      setDraftStages(stages.filter(s => s.id !== deleteStage.id), false);
+      setDraftStages(stages.filter(s => s.id !== target.id), false);
       toast.success('Coluna excluída!');
       onStagesUpdated();
+      setDeleteStage(null);
     } catch (error: unknown) {
       toast.error('Erro ao excluir: ' + getErrorMessage(error));
     } finally {
-      setDeleteStage(null);
+      deleteInFlightRef.current = false;
     }
   };
 
+  const requestDeleteStage = (stage: Stage) => {
+    const isPersistedStage = sortedInitialStages.some((candidate) => candidate.id === stage.id);
+    if (isPersistedStage && (canSave || Boolean(editingId) || isAdding)) {
+      toast.info('Salve ou descarte as alterações antes de excluir uma coluna existente.');
+      return;
+    }
+
+    setDeleteStage(stage);
+  };
+
   const handleAddStage = () => {
-    if (!newName.trim()) return;
+    if (newName.trim().length < 2) {
+      toast.error('O nome da coluna deve ter pelo menos 2 caracteres.');
+      return;
+    }
     const newStage = createDraftStage(stages, newName);
 
     setDraftStages([...stages, newStage]);
@@ -274,7 +319,7 @@ export function StagesEditorDialog({
 
     // Scroll to bottom after addition
     setTimeout(() => {
-      const scrollArea = document.querySelector('[data-radix-scroll-area-viewport]');
+      const scrollArea = scrollAreaRef.current?.querySelector('[data-radix-scroll-area-viewport]');
       if (scrollArea) {
         scrollArea.scrollTo({ top: scrollArea.scrollHeight, behavior: 'smooth' });
       }
@@ -283,7 +328,7 @@ export function StagesEditorDialog({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent className="sm:max-w-md w-[90%] sm:w-full p-4 sm:p-6 rounded-[8px] border-0 bg-[var(--app-surface-solid)] text-[var(--app-text-primary)] shadow-none">
           <DialogHeader>
             <div className="flex items-center justify-between gap-3 pr-8">
@@ -293,7 +338,7 @@ export function StagesEditorDialog({
                 size="sm"
                 className="h-8 gap-1.5 rounded-[6px] border-0 bg-primary/10 text-xs text-primary hover:bg-primary/15 disabled:opacity-50"
                 onClick={() => setIsAdding(true)}
-                disabled={isAdding}
+                disabled={isAdding || isMutating}
               >
                 <Plus className="h-3.5 w-3.5" />
                 Nova Coluna
@@ -314,12 +359,11 @@ export function StagesEditorDialog({
                     className="space-y-1.5 sm:space-y-2"
                   >
                     {stages.map((stage, index) => (
-                      <Draggable key={stage.id} draggableId={stage.id} index={index}>
+                      <Draggable key={stage.id} draggableId={stage.id} index={index} isDragDisabled={isMutating}>
                         {(provided, snapshot) => (
                           <div
                             ref={provided.innerRef}
                             {...provided.draggableProps}
-                            {...provided.dragHandleProps}
                             style={{
                               ...provided.draggableProps.style,
                               ...(snapshot.isDragging && {
@@ -332,9 +376,15 @@ export function StagesEditorDialog({
                               snapshot.isDragging && "bg-[var(--app-surface-hover)] ring-1 ring-primary/30"
                             )}
                           >
-                            <div className="cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground">
-                              <GripVertical className="h-4 w-4 sm:h-5 sm:w-5" />
-                            </div>
+                            <button
+                              type="button"
+                              {...provided.dragHandleProps}
+                              className="shrink-0 cursor-grab rounded-[4px] p-0.5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-primary/40 active:cursor-grabbing disabled:cursor-not-allowed"
+                              aria-label={`Reordenar coluna ${stage.name}`}
+                              disabled={isMutating}
+                            >
+                              <GripVertical className="h-4 w-4 sm:h-5 sm:w-5" aria-hidden="true" />
+                            </button>
 
                             {editingId === stage.id ? (
                               // Edit mode
@@ -343,6 +393,8 @@ export function StagesEditorDialog({
                                   type="color"
                                   value={editingColor}
                                   onChange={(e) => setEditingColor(e.target.value)}
+                                  aria-label={`Cor da coluna ${stage.name}`}
+                                  disabled={isMutating}
                                   className="w-7 h-7 sm:w-8 sm:h-8 rounded cursor-pointer border-0"
                                 />
                                 <Input
@@ -350,6 +402,7 @@ export function StagesEditorDialog({
                                   onChange={(e) => setEditingName(e.target.value)}
                                   className="h-7 sm:h-8 flex-1 text-sm"
                                   autoFocus
+                                  disabled={isMutating}
                                   onKeyDown={(e) => {
                                     if (e.key === 'Enter') handleSaveEdit();
                                     if (e.key === 'Escape') handleCancelEdit();
@@ -360,6 +413,8 @@ export function StagesEditorDialog({
                                   size="icon"
                                   className="h-6 w-6 sm:h-7 sm:w-7 shrink-0"
                                   onClick={handleSaveEdit}
+                                  disabled={isMutating}
+                                  aria-label={`Confirmar edição da coluna ${stage.name}`}
                                 >
                                   <Check className="h-3.5 w-3.5 text-primary" />
                                 </Button>
@@ -368,6 +423,8 @@ export function StagesEditorDialog({
                                   size="icon"
                                   className="h-6 w-6 sm:h-7 sm:w-7 shrink-0"
                                   onClick={handleCancelEdit}
+                                  disabled={isMutating}
+                                  aria-label={`Cancelar edição da coluna ${stage.name}`}
                                 >
                                   <X className="h-3.5 w-3.5" />
                                 </Button>
@@ -383,7 +440,7 @@ export function StagesEditorDialog({
                                   {stage.name}
                                 </span>
                                 {stage.lead_count !== undefined && stage.lead_count > 0 && (
-                                  <span className="text-xs text-muted-foreground px-1.5 py-0.5 sm:px-2 bg-white/[0.06] rounded-full shrink-0">
+                                  <span className="shrink-0 rounded-full bg-[var(--app-surface-soft)] px-1.5 py-0.5 text-xs text-muted-foreground sm:px-2">
                                     {stage.lead_count}
                                   </span>
                                 )}
@@ -392,6 +449,8 @@ export function StagesEditorDialog({
                                   size="icon"
                                   className="h-6 w-6 sm:h-7 sm:w-7 shrink-0"
                                   onClick={() => handleStartEdit(stage)}
+                                  disabled={isMutating}
+                                  aria-label={`Editar coluna ${stage.name}`}
                                 >
                                   <Pencil className="h-3.5 w-3.5" />
                                 </Button>
@@ -399,7 +458,9 @@ export function StagesEditorDialog({
                                   variant="ghost"
                                   size="icon"
                                   className="h-6 w-6 sm:h-7 sm:w-7 shrink-0 text-destructive hover:text-destructive"
-                                  onClick={() => setDeleteStage(stage)}
+                                  onClick={() => requestDeleteStage(stage)}
+                                  disabled={isMutating}
+                                  aria-label={`Excluir coluna ${stage.name}`}
                                 >
                                   <Trash2 className="h-3.5 w-3.5" />
                                 </Button>
@@ -417,6 +478,8 @@ export function StagesEditorDialog({
                           type="color"
                           value={newColor}
                           onChange={(e) => setNewColor(e.target.value)}
+                          aria-label="Cor da nova coluna"
+                          disabled={isMutating}
                           className="w-7 h-7 sm:w-8 sm:h-8 rounded cursor-pointer border-0"
                         />
                         <Input
@@ -425,6 +488,7 @@ export function StagesEditorDialog({
                           onChange={(e) => setNewName(e.target.value)}
                           className="h-7 sm:h-8 flex-1 text-sm"
                           autoFocus
+                          disabled={isMutating}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') handleAddStage();
                             if (e.key === 'Escape') setIsAdding(false);
@@ -435,6 +499,8 @@ export function StagesEditorDialog({
                           size="icon"
                           className="h-6 w-6 sm:h-7 sm:w-7 shrink-0"
                           onClick={handleAddStage}
+                          disabled={isMutating}
+                          aria-label="Adicionar nova coluna ao rascunho"
                         >
                           <Check className="h-3.5 w-3.5 text-primary" />
                         </Button>
@@ -443,6 +509,8 @@ export function StagesEditorDialog({
                           size="icon"
                           className="h-6 w-6 sm:h-7 sm:w-7 shrink-0"
                           onClick={() => setIsAdding(false)}
+                          disabled={isMutating}
+                          aria-label="Cancelar nova coluna"
                         >
                           <X className="h-3.5 w-3.5" />
                         </Button>
@@ -455,10 +523,10 @@ export function StagesEditorDialog({
           </ScrollArea>
 
           <div className="flex gap-2 pt-3 sm:pt-4">
-            <Button variant="outline" size="sm" className="w-[40%] rounded-[6px] border-0 bg-transparent hover:bg-[var(--app-surface-hover)]" onClick={() => onOpenChange(false)}>
+            <Button variant="outline" size="sm" className="w-[40%] rounded-[6px] border-0 bg-transparent hover:bg-[var(--app-surface-hover)]" onClick={() => handleOpenChange(false)} disabled={isMutating}>
               Cancelar
             </Button>
-            <Button size="sm" className="w-[60%] rounded-[6px]" onClick={handleSave} disabled={isSaving}>
+            <Button size="sm" className="w-[60%] rounded-[6px]" onClick={handleSave} disabled={isMutating}>
               {isSaving && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
               {hasPendingNewStage ? 'Criar e salvar' : hasChanges ? 'Salvar' : 'Fechar'}
             </Button>
@@ -467,8 +535,13 @@ export function StagesEditorDialog({
       </Dialog>
 
       {/* Delete Confirmation */}
-      <AlertDialog open={!!deleteStage} onOpenChange={(open) => !open && setDeleteStage(null)}>
-        <AlertDialogContent>
+      <AlertDialog
+        open={!!deleteStage}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && !deleteStageMutation.isPending) setDeleteStage(null);
+        }}
+      >
+        <AlertDialogContent className="w-[calc(100vw-32px)] max-w-md rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-5 shadow-none sm:w-full">
           <AlertDialogHeader>
             <AlertDialogTitle>Excluir coluna &quot;{deleteStage?.name}&quot;?</AlertDialogTitle>
             <AlertDialogDescription>
@@ -476,12 +549,17 @@ export function StagesEditorDialog({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleteStageMutation.isPending}>Cancelar</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleDeleteStage}
+              onClick={(event) => {
+                event.preventDefault();
+                void handleDeleteStage();
+              }}
+              disabled={deleteStageMutation.isPending}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              Excluir
+              {deleteStageMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+              {deleteStageMutation.isPending ? 'Excluindo...' : 'Excluir'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

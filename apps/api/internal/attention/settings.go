@@ -93,6 +93,23 @@ func (repo Repository) UpdateSettings(ctx context.Context, tenantContext tenant.
 		}
 	}
 
+	if (current.EngineMode != "enabled" && engineMode == "enabled") ||
+		(!current.NotificationsEnabled && notificationsEnabled) {
+		if _, err := tx.Exec(ctx, `
+			update public.lead_attention_instances
+			set shadow = true,
+			    metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
+			      'grandfathered_shadow', true,
+			      'global_attention_activated_at', now()
+			    ),
+			    updated_at = now()
+			where organization_id = $1::uuid
+			  and status not in ('resolved', 'redistributed', 'cancelled')
+		`, tenantContext.OrganizationID); err != nil {
+			return Settings{}, err
+		}
+	}
+
 	_, err = tx.Exec(ctx, `
 		update public.organization_attention_settings
 		set engine_mode = $2, notifications_enabled = $3,

@@ -123,7 +123,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context) (
 			rr.organization_id::text,
 			rr.name,
 			coalesce(rr.is_active, true),
-			coalesce(rr.current_position, 0),
+			coalesce(latest_log.current_position, rr.current_position, 0),
 			coalesce(rr.target_pipeline_id, rr.pipeline_id)::text,
 			(
 			  coalesce(rr.rules, '{}'::jsonb)
@@ -157,6 +157,22 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context) (
 		     then (rr.rules->>'target_stage_id')::uuid else null end)
 		left join public.users creator
 		  on creator.id = rr.created_by
+		left join lateral (
+			select
+			  case
+			    when coalesce(latest.metadata->>'candidate_position', '') ~ '^[0-9]+$' then
+			      case
+			        when (latest.metadata->>'candidate_position')::numeric <= 2147483647
+			          then (latest.metadata->>'candidate_position')::integer
+			      end
+			  end as current_position
+			from public.round_robin_logs latest
+			where latest.organization_id = rr.organization_id
+			  and latest.round_robin_id = rr.id
+			  and latest.reason = 'canonical_round_robin'
+			order by latest.created_at desc, latest.id desc
+			limit 1
+		) latest_log on true
 		left join lateral (
 			select count(*)::bigint as total
 			from public.round_robin_logs rrl
@@ -231,7 +247,7 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, ro
 			rr.organization_id::text,
 			rr.name,
 			coalesce(rr.is_active, true),
-			coalesce(rr.current_position, 0),
+			coalesce(latest_log.current_position, rr.current_position, 0),
 			coalesce(rr.target_pipeline_id, rr.pipeline_id)::text,
 			(
 			  coalesce(rr.rules, '{}'::jsonb)
@@ -265,6 +281,22 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, ro
 		     then (rr.rules->>'target_stage_id')::uuid else null end)
 		left join public.users creator
 		  on creator.id = rr.created_by
+		left join lateral (
+			select
+			  case
+			    when coalesce(latest.metadata->>'candidate_position', '') ~ '^[0-9]+$' then
+			      case
+			        when (latest.metadata->>'candidate_position')::numeric <= 2147483647
+			          then (latest.metadata->>'candidate_position')::integer
+			      end
+			  end as current_position
+			from public.round_robin_logs latest
+			where latest.organization_id = rr.organization_id
+			  and latest.round_robin_id = rr.id
+			  and latest.reason = 'canonical_round_robin'
+			order by latest.created_at desc, latest.id desc
+			limit 1
+		) latest_log on true
 		left join lateral (
 			select count(*)::bigint as total
 			from public.round_robin_logs rrl
@@ -361,7 +393,14 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	if err := repo.insertRules(ctx, tx, tenantContext.OrganizationID, roundRobinID, input.Rules); err != nil {
 		return RoundRobin{}, err
 	}
-	if _, err := repo.insertMembers(ctx, tx, tenantContext.OrganizationID, roundRobinID, input.Members); err != nil {
+	if _, err := repo.insertMembers(
+		ctx,
+		tx,
+		tenantContext,
+		roundRobinID,
+		input.Members,
+		boolFromObject(input.Settings, "ignore_availability"),
+	); err != nil {
 		return RoundRobin{}, err
 	}
 	if err := repo.validateWhatsAppMessageDistribution(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
@@ -532,7 +571,14 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		`, tenantContext.OrganizationID, roundRobinID); err != nil {
 			return RoundRobin{}, err
 		}
-		if _, err := repo.insertMembers(ctx, tx, tenantContext.OrganizationID, roundRobinID, input.Members); err != nil {
+		if _, err := repo.insertMembers(
+			ctx,
+			tx,
+			tenantContext,
+			roundRobinID,
+			input.Members,
+			boolFromObject(objectFromObject(metadata, "settings"), "ignore_availability"),
+		); err != nil {
 			return RoundRobin{}, err
 		}
 	}
@@ -889,7 +935,8 @@ func (repo Repository) AddMember(ctx context.Context, tenantContext tenant.Conte
 	if err := repo.ensureRoundRobinMutable(ctx, tx, tenantContext, roundRobinID); err != nil {
 		return nil, err
 	}
-	if _, err := repo.getStateForUpdate(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+	state, err := repo.getStateForUpdate(ctx, tx, tenantContext.OrganizationID, roundRobinID)
+	if err != nil {
 		return nil, err
 	}
 
@@ -903,7 +950,14 @@ func (repo Repository) AddMember(ctx context.Context, tenantContext tenant.Conte
 	if err := ensureRoundRobinInputInScope(tenantContext, nil, items, true, false); err != nil {
 		return nil, err
 	}
-	ids, err := repo.insertMembers(ctx, tx, tenantContext.OrganizationID, roundRobinID, items)
+	ids, err := repo.insertMembers(
+		ctx,
+		tx,
+		tenantContext,
+		roundRobinID,
+		items,
+		boolFromObject(objectFromObject(state.Metadata, "settings"), "ignore_availability"),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1097,8 +1151,14 @@ func (repo Repository) listMembers(ctx context.Context, organizationID string, r
 			where rrl.organization_id = rrm.organization_id
 			  and rrl.round_robin_id = rrm.round_robin_id
 			  and (
-			    (rrm.user_id is not null and rrl.assigned_user_id = rrm.user_id)
-			    or (rrm.user_id is null and rrl.metadata->>'member_id' = rrm.id::text)
+			    rrl.member_id = rrm.id
+			    or (
+			      rrl.member_id is null
+			      and (
+			        (rrm.user_id is not null and rrl.assigned_user_id = rrm.user_id)
+			        or (rrm.user_id is null and rrl.metadata->>'member_id' = rrm.id::text)
+			      )
+			    )
 			  )
 		) logs on true
 		where `+where+`
@@ -1167,8 +1227,14 @@ func (repo Repository) getMember(ctx context.Context, organizationID string, mem
 			where rrl.organization_id = rrm.organization_id
 			  and rrl.round_robin_id = rrm.round_robin_id
 			  and (
-			    (rrm.user_id is not null and rrl.assigned_user_id = rrm.user_id)
-			    or (rrm.user_id is null and rrl.metadata->>'member_id' = rrm.id::text)
+			    rrl.member_id = rrm.id
+			    or (
+			      rrl.member_id is null
+			      and (
+			        (rrm.user_id is not null and rrl.assigned_user_id = rrm.user_id)
+			        or (rrm.user_id is null and rrl.metadata->>'member_id' = rrm.id::text)
+			      )
+			    )
 			  )
 		) logs on true
 		where rrm.organization_id = $1::uuid
@@ -1333,6 +1399,7 @@ func (repo Repository) validateWhatsAppMessageDistribution(ctx context.Context, 
 				where member.organization_id = round_robin.organization_id
 				  and member.round_robin_id = round_robin.id
 				  and coalesce(member.is_active, true) = true
+				  and member.user_id is null
 				  and member.team_id is not null
 			),
 			(
@@ -1342,23 +1409,35 @@ func (repo Repository) validateWhatsAppMessageDistribution(ctx context.Context, 
 				  and member.round_robin_id = round_robin.id
 				  and coalesce(member.is_active, true) = true
 				  and member.user_id is not null
-				  and member.team_id is null
 			),
 			(
 				select count(*)::int
 				from public.round_robin_members member
 				join public.users user_account
 				  on user_account.id = member.user_id
+				 and user_account.organization_id = member.organization_id
 				 and coalesce(user_account.is_active, false) = true
 				join public.organization_members organization_member
 				  on organization_member.organization_id = member.organization_id
 				 and organization_member.user_id = member.user_id
 				 and coalesce(organization_member.is_active, false) = true
+				left join public.teams member_team
+				  on member_team.organization_id = member.organization_id
+				 and member_team.id = member.team_id
+				 and coalesce(member_team.is_active, false) = true
+				left join public.team_members team_member
+				  on team_member.organization_id = member.organization_id
+				 and team_member.team_id = member.team_id
+				 and team_member.user_id = member.user_id
+				 and coalesce(team_member.is_active, false) = true
 				where member.organization_id = round_robin.organization_id
 				  and member.round_robin_id = round_robin.id
 				  and coalesce(member.is_active, true) = true
 				  and member.user_id is not null
-				  and member.team_id is null
+				  and (
+					member.team_id is null
+					or (member_team.id is not null and team_member.user_id is not null)
+				  )
 			)
 		from public.round_robins round_robin
 		where round_robin.organization_id = $1::uuid
@@ -1648,13 +1727,30 @@ func (repo Repository) metaFormRuleValues(ctx context.Context, q queryer, organi
 	return formIDs, nil
 }
 
-func (repo Repository) insertMembers(ctx context.Context, tx pgx.Tx, organizationID string, roundRobinID string, members []memberInput) ([]string, error) {
+func (repo Repository) insertMembers(
+	ctx context.Context,
+	tx pgx.Tx,
+	tenantContext tenant.Context,
+	roundRobinID string,
+	members []memberInput,
+	ignoreAvailability bool,
+) ([]string, error) {
+	organizationID := tenantContext.OrganizationID
 	insertedIDs := []string{}
 	seen := map[string]struct{}{}
 
 	for _, member := range members {
-		memberKey, userID, teamID, err := repo.resolveMemberEntry(ctx, tx, organizationID, member)
+		memberKey, userID, teamID, err := repo.resolveMemberEntry(
+			ctx,
+			tx,
+			organizationID,
+			member,
+			ignoreAvailability,
+		)
 		if err != nil {
+			return nil, err
+		}
+		if err := ensureResolvedMemberInScope(tenantContext, userID, teamID); err != nil {
 			return nil, err
 		}
 		if _, exists := seen[memberKey]; exists {
@@ -1703,22 +1799,137 @@ func (repo Repository) insertMembers(ctx context.Context, tx pgx.Tx, organizatio
 	return insertedIDs, nil
 }
 
-func (repo Repository) resolveMemberEntry(ctx context.Context, tx pgx.Tx, organizationID string, member memberInput) (string, *string, *string, error) {
+func ensureResolvedMemberInScope(
+	tenantContext tenant.Context,
+	userID *string,
+	teamID *string,
+) error {
+	if canManageRoundRobins(tenantContext) {
+		return nil
+	}
+	if !tenantContext.IsTeamLeader {
+		return tenant.ErrOrganizationAccessDenied
+	}
+	if teamID != nil && !tenantContext.LeadsTeam(*teamID) {
+		return tenant.ErrOrganizationAccessDenied
+	}
+	if userID != nil && !tenantContext.LeadsUser(*userID) {
+		return tenant.ErrOrganizationAccessDenied
+	}
+	return nil
+}
+
+func (repo Repository) resolveMemberEntry(
+	ctx context.Context,
+	q queryer,
+	organizationID string,
+	member memberInput,
+	ignoreAvailability bool,
+) (string, *string, *string, error) {
 	if member.UserID != nil {
-		if err := repo.validateUser(ctx, tx, organizationID, *member.UserID); err != nil {
+		if err := repo.validateUser(ctx, q, organizationID, *member.UserID); err != nil {
 			return "", nil, nil, err
 		}
-		return "user:" + *member.UserID, member.UserID, nil, nil
+		activeTeamIDs, err := repo.activeUserTeamIDs(ctx, q, organizationID, *member.UserID)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		teamID, err := resolveDirectUserTeamID(activeTeamIDs, member.TeamID, ignoreAvailability)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		memberKey := "user:" + *member.UserID + ":team:none"
+		if teamID != nil {
+			memberKey = "user:" + *member.UserID + ":team:" + *teamID
+		}
+		return memberKey, member.UserID, teamID, nil
 	}
 
 	if member.TeamID == nil {
 		return "", nil, nil, ErrInvalidReference
 	}
 
-	if err := repo.validateTeam(ctx, tx, organizationID, *member.TeamID); err != nil {
+	if err := repo.validateTeam(ctx, q, organizationID, *member.TeamID); err != nil {
 		return "", nil, nil, err
 	}
 	return "team:" + *member.TeamID, nil, member.TeamID, nil
+}
+
+func resolveDirectUserTeamID(
+	activeTeamIDs []string,
+	requestedTeamID *string,
+	ignoreAvailability bool,
+) (*string, error) {
+	uniqueTeamIDs := make([]string, 0, len(activeTeamIDs))
+	seen := map[string]struct{}{}
+	for _, teamID := range activeTeamIDs {
+		teamID = strings.TrimSpace(teamID)
+		if teamID == "" {
+			continue
+		}
+		if _, exists := seen[teamID]; exists {
+			continue
+		}
+		seen[teamID] = struct{}{}
+		uniqueTeamIDs = append(uniqueTeamIDs, teamID)
+	}
+
+	if requestedTeamID != nil {
+		for _, teamID := range uniqueTeamIDs {
+			if teamID == *requestedTeamID {
+				value := teamID
+				return &value, nil
+			}
+		}
+		return nil, ErrInvalidReference
+	}
+
+	switch len(uniqueTeamIDs) {
+	case 1:
+		value := uniqueTeamIDs[0]
+		return &value, nil
+	case 0:
+		if ignoreAvailability {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("%w: direct user must belong to an active team while availability is enforced", ErrInvalidInput)
+	default:
+		return nil, fmt.Errorf("%w: teamId is required when a direct user belongs to multiple active teams", ErrInvalidInput)
+	}
+}
+
+func (repo Repository) activeUserTeamIDs(
+	ctx context.Context,
+	q queryer,
+	organizationID string,
+	userID string,
+) ([]string, error) {
+	rows, err := q.Query(ctx, `
+		select tm.team_id::text
+		from public.team_members tm
+		join public.teams t
+		  on t.id = tm.team_id
+		 and t.organization_id = tm.organization_id
+		 and coalesce(t.is_active, true) = true
+		where tm.organization_id = $1::uuid
+		  and tm.user_id = $2::uuid
+		  and coalesce(tm.is_active, true) = true
+		order by tm.created_at asc, tm.id asc
+	`, organizationID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	teamIDs := []string{}
+	for rows.Next() {
+		var teamID string
+		if err := rows.Scan(&teamID); err != nil {
+			return nil, err
+		}
+		teamIDs = append(teamIDs, teamID)
+	}
+	return teamIDs, rows.Err()
 }
 
 func (repo Repository) validateTeam(ctx context.Context, q queryer, organizationID string, teamID string) error {
@@ -2092,10 +2303,15 @@ func ensureRoundRobinInputInScope(tenantContext tenant.Context, pipelineID *stri
 	}
 	for _, member := range members {
 		if member.TeamID != nil {
-			if !tenantContext.LeadsTeam(*member.TeamID) {
+			if member.UserID == nil && !tenantContext.LeadsTeam(*member.TeamID) {
 				return tenant.ErrOrganizationAccessDenied
 			}
-			continue
+			if member.UserID != nil && !tenantContext.LeadsTeam(*member.TeamID) {
+				return tenant.ErrOrganizationAccessDenied
+			}
+			if member.UserID == nil {
+				continue
+			}
 		}
 		if member.UserID == nil || !tenantContext.LeadsUser(*member.UserID) {
 			return tenant.ErrOrganizationAccessDenied

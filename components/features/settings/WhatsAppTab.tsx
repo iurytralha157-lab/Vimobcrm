@@ -3,6 +3,16 @@ import NextImage from "next/image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -68,7 +78,7 @@ function wait(ms: number) {
 export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
   const { profile, tenantContext, isSuperAdmin } = useAuth();
   const queryClient = useQueryClient();
-  const { data: sessions, isLoading } = useWhatsAppSessions();
+  const { data: sessions, isLoading, isError: sessionsFailed, refetch: refetchSessions } = useWhatsAppSessions();
   const createSession = useCreateWhatsAppSession();
   const deleteSession = useDeleteWhatsAppSession();
   const getQRCode = useGetQRCode();
@@ -81,6 +91,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [instanceName, setInstanceName] = useState("");
   const [selectedSession, setSelectedSession] = useState<WhatsAppSession | null>(null);
+  const [sessionToDisconnect, setSessionToDisconnect] = useState<WhatsAppSession | null>(null);
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [isRefreshingQr, setIsRefreshingQr] = useState(false);
   const [verifyingSessionId, setVerifyingSessionId] = useState<string | null>(null);
@@ -360,9 +371,11 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
     }
   };
 
-  const handleLogout = async (session: WhatsAppSession) => {
+  const handleLogout = async () => {
+    if (!sessionToDisconnect) return;
     try {
-      await logoutSession.mutateAsync(session);
+      await logoutSession.mutateAsync(sessionToDisconnect);
+      setSessionToDisconnect(null);
     } catch {
       // The mutation already shows the toast; avoid bubbling into the Next.js overlay.
     }
@@ -438,6 +451,13 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
         <div className="flex items-center justify-center py-8">
             <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
           </div> :
+        sessionsFailed ?
+        <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
+            <p className="text-sm text-muted-foreground">Não foi possível carregar as conexões WhatsApp.</p>
+            <Button variant="outline" size="sm" onClick={() => void refetchSessions()}>
+              Tentar novamente
+            </Button>
+          </div> :
         sessions?.length === 0 ?
         <div className="flex flex-col items-center justify-center py-12">
             <Smartphone className="w-12 h-12 text-muted-foreground mb-4" />
@@ -478,7 +498,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
                   </div>
 
                   {/* Row 2: Responsavel + notificacao toggle */}
-                  <div className="flex items-center justify-between gap-2 py-1.5 border-y border-white/[0.055]">
+                  <div className="flex items-center justify-between gap-2 border-y border-[var(--app-border)] py-1.5">
                     <div className="flex items-center gap-1.5 min-w-0 flex-1">
                       {session.is_notification_session &&
                   <Badge variant="outline" className="text-orange-600 border-orange-300 bg-orange-50 text-[10px] px-1.5 py-0 shrink-0">
@@ -544,7 +564,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
                       </>
                     ) : canManageThisSession ? (
                       <>
-                        <Button data-tour={index === 0 ? "whatsapp-disconnect-button" : undefined} variant="destructive" size="sm" className="h-8 gap-1.5 px-3 text-xs" onClick={() => handleLogout(session)}>
+                        <Button data-tour={index === 0 ? "whatsapp-disconnect-button" : undefined} variant="destructive" size="sm" className="h-8 gap-1.5 px-3 text-xs" onClick={() => setSessionToDisconnect(session)}>
                           <LogOut className="w-3.5 h-3.5" />
                           Desconectar
                         </Button>
@@ -609,7 +629,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
             <div className="grid gap-4 py-6 md:grid-cols-[minmax(240px,280px)_1fr] md:items-center">
               <div className="flex justify-center">
                 {isRefreshingQr || getQRCode.isPending ?
-                <div className="flex h-64 w-64 items-center justify-center rounded-lg bg-white/[0.045]">
+                <div className="flex h-64 w-64 items-center justify-center rounded-lg bg-[var(--app-surface-soft)]">
                     <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
                   </div> :
                 qrCode ?
@@ -623,15 +643,15 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
                 /> :
 
 
-                <div className="flex h-64 w-64 items-center justify-center rounded-lg bg-white/[0.045]">
+                <div className="flex h-64 w-64 items-center justify-center rounded-lg bg-[var(--app-surface-soft)]">
                     <p className="text-muted-foreground text-center px-4">
                       Não foi possível gerar o QR Code
                     </p>
                   </div>
                 }
               </div>
-              <div className="w-full rounded-lg border border-white/[0.055] bg-white/[0.045] p-4 text-left">
-                <p className="mb-3 text-sm font-semibold text-foreground">Como conectar:</p>
+              <div className="w-full rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-soft)] p-4 text-left">
+                <p className="mb-3 text-sm font-normal text-foreground">Como conectar:</p>
                 <ol className="list-decimal space-y-1 pl-4 text-sm leading-relaxed text-muted-foreground">
                   <li>Abra o WhatsApp no seu celular</li>
                   <li>Toque em Menu ou Configurações</li>
@@ -661,30 +681,67 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
           </DialogContent>
         </Dialog>
 
-        <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-          <DialogContent className="w-[95%] max-w-[400px] rounded-lg">
-            <DialogHeader>
-              <DialogTitle>Apagar conexão</DialogTitle>
-              <DialogDescription>
+        <AlertDialog
+          open={deleteDialogOpen}
+          onOpenChange={(open) => {
+            if (!open && deleteSession.isPending) return;
+            setDeleteDialogOpen(open);
+            if (!open) setSelectedSession(null);
+          }}
+        >
+          <AlertDialogContent className="w-[95%] max-w-[400px] rounded-lg">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Apagar conexão</AlertDialogTitle>
+              <AlertDialogDescription>
                 Tem certeza que deseja apagar a conexão &quot;{selectedSession?.display_name || selectedSession?.instance_name}&quot;?
                 As conversas e mensagens salvas serão preservadas no histórico.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter className="flex flex-row justify-end gap-3 sm:gap-2 pt-2">
-              <Button variant="outline" onClick={() => setDeleteDialogOpen(false)} className="flex-1 sm:flex-none">
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter className="flex flex-row justify-end gap-3 pt-2 sm:gap-2">
+              <AlertDialogCancel disabled={deleteSession.isPending} className="flex-1 sm:flex-none">
                 Cancelar
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={handleDeleteSession}
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(event) => {
+                  event.preventDefault();
+                  void handleDeleteSession();
+                }}
                 disabled={deleteSession.isPending}
-                className="flex-1 sm:flex-none">
+                className="flex-1 bg-destructive text-destructive-foreground hover:bg-destructive/90 sm:flex-none">
                 {deleteSession.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                 Apagar
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog
+          open={!!sessionToDisconnect}
+          onOpenChange={(open) => !open && !logoutSession.isPending && setSessionToDisconnect(null)}
+        >
+          <AlertDialogContent className="w-[95%] max-w-[400px] rounded-lg">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Desconectar WhatsApp?</AlertDialogTitle>
+              <AlertDialogDescription>
+                A conexão &quot;{sessionToDisconnect?.display_name || sessionToDisconnect?.instance_name}&quot; deixará de enviar e receber mensagens até uma nova leitura do QR Code.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={logoutSession.isPending}>Cancelar</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(event) => {
+                  event.preventDefault();
+                  void handleLogout();
+                }}
+                disabled={logoutSession.isPending}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {logoutSession.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Desconectar
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
 
       </CardContent>

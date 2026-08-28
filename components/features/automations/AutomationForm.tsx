@@ -180,11 +180,11 @@ export function AutomationForm({ stageId, automation, onSuccess, onCancel }: Aut
 
       <div className="flex gap-2 pt-4">
         {onCancel && (
-          <Button type="button" variant="outline" className="w-[40%] rounded-xl" onClick={onCancel}>
+          <Button type="button" variant="outline" className="w-[40%] rounded-[6px]" onClick={onCancel}>
             Cancelar
           </Button>
         )}
-        <Button type="submit" disabled={isLoading} className={`rounded-xl ${onCancel ? 'w-[60%]' : 'w-full'}`}>
+        <Button type="submit" disabled={isLoading} className={`rounded-[6px] ${onCancel ? 'w-[60%]' : 'w-full'}`}>
           {isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
           {isEditing ? 'Salvar' : 'Criar Automação'}
         </Button>

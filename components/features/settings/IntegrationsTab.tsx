@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bot, Building2, Key, Lock, MessageCircle, Search, Settings2, Webhook } from "lucide-react";
 import NextImage from "next/image";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -10,29 +11,31 @@ import { WhatsAppTab } from "@/components/features/settings/WhatsAppTab";
 import { WebhooksTab } from "@/components/features/settings/WebhooksTab";
 import { APITab } from "@/components/features/settings/APITab";
 import { AIAssistantTab } from "@/components/features/settings/AIAssistantTab";
-import { MetaIntegrationSettings } from "@/components/features/integrations/MetaIntegrationSettings";
 import { GrupoOLXIntegrationSettings } from "@/components/features/integrations/GrupoOLXIntegrationSettings";
 import { GoogleCalendarConnect } from "@/components/features/schedule/GoogleCalendarConnect";
-import { VistaImportDialog } from "@/components/features/properties/VistaImportDialog";
-import { ImoviewImportDialog } from "@/components/features/properties/ImoviewImportDialog";
-import { useMetaIntegrations, type MetaPage } from "@/hooks/use-meta-integration";
+import {
+  useMetaIntegrations,
+  type MetaAdAccount,
+  type MetaPage,
+} from "@/hooks/use-meta-integration";
 import { useWhatsAppSessions } from "@/hooks/use-whatsapp-sessions";
-import { useVistaIntegration } from "@/hooks/use-vista-integration";
-import { useImoviewIntegration } from "@/hooks/use-imoview-integration";
 import { useGoogleCalendarStatus } from "@/hooks/use-google-calendar";
 import { useGrupoOLXIntegration } from "@/hooks/use-grupo-olx-integration";
 import { FEATURES } from "@/config/constants";
 import { normalizeSearchText } from "@/lib/search-text";
 
-type IntegrationKey = "whatsapp" | "ai" | "meta" | "grupo-olx" | "google-calendar" | "vista" | "imoview" | "webhooks" | "api";
-const ADMIN_ONLY_INTEGRATIONS = new Set<IntegrationKey>(["meta", "grupo-olx", "vista", "imoview"]);
+type IntegrationKey = "whatsapp" | "ai" | "meta" | "grupo-olx" | "google-calendar" | "webhooks" | "api";
+const ADMIN_ONLY_INTEGRATIONS = new Set<IntegrationKey>(["meta", "grupo-olx"]);
 const TEMPORARILY_DISABLED_INTEGRATIONS = new Set<IntegrationKey>(
   FEATURES.ENABLE_GOOGLE_CALENDAR_INTEGRATION ? [] : ["google-calendar"],
 );
 
 interface MetaOAuthPayload {
   pages?: MetaPage[];
-  user_token?: string;
+  ad_accounts?: MetaAdAccount[];
+  flow_id?: string;
+  adAccountId?: string;
+  ad_account_id?: string;
   facebook_user_id?: string;
   facebook_user_name?: string;
 }
@@ -55,6 +58,34 @@ interface MetaOAuthWindowMessage {
 
 const META_OAUTH_CHANNEL = "vimob-meta-oauth";
 const META_OAUTH_STORAGE_KEY = "vimob:meta-oauth";
+
+function sanitizeMetaOAuthPayload(payload?: MetaOAuthPayload | null): MetaOAuthPayload | null {
+  const flowId = payload?.flow_id?.trim();
+  if (!flowId) return null;
+  return {
+    flow_id: flowId,
+    pages: (payload?.pages || []).map((page) => ({
+      id: page.id,
+      name: page.name,
+      picture: page.picture,
+      facebook_user_id: page.facebook_user_id,
+      facebook_user_name: page.facebook_user_name,
+    })),
+    ad_accounts: (payload?.ad_accounts || [])
+      .filter((account) => Boolean(account.id?.trim()))
+      .map((account) => ({
+        id: account.id.trim(),
+        account_id: account.account_id,
+        name: account.name,
+        account_status: account.account_status,
+        currency: account.currency,
+        timezone_name: account.timezone_name,
+      })),
+    adAccountId: payload?.adAccountId || payload?.ad_account_id,
+    facebook_user_id: payload?.facebook_user_id,
+    facebook_user_name: payload?.facebook_user_name,
+  };
+}
 
 function publishMetaOAuthReturn(message: MetaOAuthWindowMessage) {
   const payload = { ...message, nonce: message.nonce ?? Date.now() };
@@ -91,6 +122,7 @@ interface IntegrationItem {
   icon: import("react").ReactNode;
   requiresAdmin?: boolean;
   locked?: boolean;
+  loadError?: boolean;
 }
 
 interface IntegrationsTabProps {
@@ -118,14 +150,18 @@ export function IntegrationsTab({
   canManageWhatsApp,
   canManageAI,
 }: IntegrationsTabProps) {
+  const router = useRouter();
   const canManageAdminIntegrations = canManageIntegrations;
   const defaultIntegrationKey = isIntegrationKey(defaultIntegration) ? defaultIntegration : null;
-  const { data: metaIntegrations = [], refetch: refetchMetaIntegrations } = useMetaIntegrations({ enabled: canManageIntegrations });
-  const { data: whatsappSessions = [] } = useWhatsAppSessions({ enabled: canManageWhatsApp });
-  const { data: vistaIntegration } = useVistaIntegration({ enabled: canManageIntegrations });
-  const { data: imoviewIntegration } = useImoviewIntegration({ enabled: canManageIntegrations });
-  const { data: googleCalendarStatus } = useGoogleCalendarStatus();
-  const { data: grupoOLXIntegration } = useGrupoOLXIntegration({ enabled: canManageIntegrations && hasPortalsModule });
+  const {
+    data: metaIntegrations = [],
+    isLoading: metaIntegrationsLoading,
+    isError: metaIntegrationsLoadFailed,
+    refetch: refetchMetaIntegrations,
+  } = useMetaIntegrations({ enabled: canManageIntegrations });
+  const { data: whatsappSessions = [], isError: whatsappSessionsLoadFailed } = useWhatsAppSessions({ enabled: canManageWhatsApp });
+  const { data: googleCalendarStatus, isError: googleCalendarLoadFailed } = useGoogleCalendarStatus();
+  const { data: grupoOLXIntegration, isError: grupoOLXLoadFailed } = useGrupoOLXIntegration({ enabled: canManageIntegrations && hasPortalsModule });
   const whatsappQuota = whatsappSessions.meta;
   const hasWhatsAppAccess = hasWhatsAppModule || whatsappQuota?.maxSessions !== undefined;
   const isIntegrationEnabled = useCallback((key: IntegrationKey) => {
@@ -146,8 +182,8 @@ export function IntegrationsTab({
     ADMIN_ONLY_INTEGRATIONS.has(defaultIntegrationKey) &&
     !canManageAdminIntegrations;
   const [search, setSearch] = useState("");
-  const [metaOAuthPayload, setMetaOAuthPayload] = useState<MetaOAuthPayload | null>(null);
-  const [metaOAuthStatus, setMetaOAuthStatus] = useState<MetaOAuthStatus | null>(null);
+  const [, setMetaOAuthPayload] = useState<MetaOAuthPayload | null>(null);
+  const [, setMetaOAuthStatus] = useState<MetaOAuthStatus | null>(null);
   const [activeIntegration, setActiveIntegration] = useState<IntegrationKey | null>(
     defaultIntegrationKey && !defaultIntegrationLocked && !defaultIntegrationUnavailable ? defaultIntegrationKey : null,
   );
@@ -185,7 +221,16 @@ export function IntegrationsTab({
     handledMetaOAuthEventRef.current = eventKey;
 
     if (message.type === "META_OAUTH_SUCCESS") {
-      setMetaOAuthPayload(message.data || null);
+      const payload = sanitizeMetaOAuthPayload(message.data);
+      if (!payload) {
+        setMetaOAuthStatus({
+          status: "error",
+          error: "O retorno antigo da Meta foi bloqueado por segurança. Inicie a conexão novamente.",
+          nonce: Date.now(),
+        });
+      } else {
+        setMetaOAuthPayload(payload);
+      }
       setActiveIntegration("meta");
       return;
     }
@@ -203,54 +248,35 @@ export function IntegrationsTab({
   }, [refetchMetaIntegrations]);
 
   useEffect(() => {
-    const parseOAuthPayload = (raw: string): MetaOAuthPayload => {
-      try {
-        return JSON.parse(raw) as MetaOAuthPayload;
-      } catch {
-        return JSON.parse(decodeURIComponent(raw)) as MetaOAuthPayload;
-      }
-    };
-
     const params = new URLSearchParams(window.location.search);
-    const raw = params.get("meta_oauth_data");
+    const hasLegacyPayload = params.has("meta_oauth_data");
     const status = params.get("meta_oauth_status");
     const flowId = params.get("meta_oauth_flow_id");
     const error = params.get("meta_oauth_error");
     const isOAuthPopupReturn = params.get("meta_oauth_popup") === "1";
-    if (!raw && !status && !flowId && !error) return;
+    if (!hasLegacyPayload && !status && !flowId && !error) return;
 
     try {
-      if (raw) {
-        const payload = parseOAuthPayload(raw);
+      const oauthStatus: MetaOAuthStatus = {
+        status: hasLegacyPayload && !flowId ? "error" : status || (flowId ? "success" : undefined),
+        flowId,
+        error: hasLegacyPayload && !flowId
+          ? "O retorno antigo da Meta foi bloqueado por segurança. Inicie a conexão novamente."
+          : error,
+        nonce: Date.now(),
+      };
 
-        if ((window.opener && !window.opener.closed) || isOAuthPopupReturn) {
-          publishMetaOAuthReturn({ type: "META_OAUTH_SUCCESS", data: payload });
-          window.close();
-          return;
-        }
-
-        /* eslint-disable react-hooks/set-state-in-effect -- Consome o retorno OAuth da URL apenas uma vez ao abrir a tela. */
-        setMetaOAuthPayload(payload);
-        setActiveIntegration("meta");
-        /* eslint-enable react-hooks/set-state-in-effect */
-      } else {
-        const oauthStatus: MetaOAuthStatus = {
-          status: status || undefined,
-          flowId,
-          error,
-          nonce: Date.now(),
-        };
-
-        if ((window.opener && !window.opener.closed) || isOAuthPopupReturn) {
-          publishMetaOAuthReturn({ type: "META_OAUTH_STATUS", ...oauthStatus });
-          window.close();
-          return;
-        }
-
-        setMetaOAuthStatus(oauthStatus);
-        setActiveIntegration("meta");
-        refetchMetaIntegrations();
+      if ((window.opener && !window.opener.closed) || isOAuthPopupReturn) {
+        publishMetaOAuthReturn({ type: "META_OAUTH_STATUS", ...oauthStatus });
+        window.close();
+        return;
       }
+
+      /* eslint-disable react-hooks/set-state-in-effect -- Consome o retorno OAuth da URL apenas uma vez ao abrir a tela. */
+      setMetaOAuthStatus(oauthStatus);
+      setActiveIntegration("meta");
+      /* eslint-enable react-hooks/set-state-in-effect */
+      refetchMetaIntegrations();
     } catch (error) {
       console.error("Invalid Meta OAuth payload", error);
     } finally {
@@ -312,7 +338,10 @@ export function IntegrationsTab({
         enabled: hasWhatsAppAccess,
         locked: !canManageWhatsApp,
         connected: whatsappConnected,
-        detail: `${whatsappSessions.length} ${whatsappSessions.length === 1 ? "conexão" : "conexões"}`,
+        loadError: whatsappSessionsLoadFailed,
+        detail: whatsappSessionsLoadFailed
+          ? "Falha ao carregar"
+          : `${whatsappSessions.length} ${whatsappSessions.length === 1 ? "conexão" : "conexões"}`,
         icon: <MessageCircle className="h-7 w-7 text-primary" />,
       },
       {
@@ -334,7 +363,12 @@ export function IntegrationsTab({
         enabled: canManageIntegrations,
         requiresAdmin: true,
         connected: metaConnected,
-        detail: `${metaIntegrations.length} página${metaIntegrations.length === 1 ? "" : "s"}`,
+        loadError: metaIntegrationsLoadFailed,
+        detail: metaIntegrationsLoadFailed
+          ? "Falha ao carregar"
+          : metaIntegrationsLoading
+            ? "Carregando..."
+            : `${metaIntegrations.length} página${metaIntegrations.length === 1 ? "" : "s"}`,
         icon: <LogoImage src="https://cdn.simpleicons.org/facebook/1877F2" alt="Facebook" />,
       },
       {
@@ -344,7 +378,10 @@ export function IntegrationsTab({
         enabled: canManageIntegrations && hasPortalsModule,
         requiresAdmin: true,
         connected: grupoOLXConnected,
-        detail: grupoOLXIntegration?.status === "pending_setup" ? "Aguardando Canal Pro" : "Portais imobiliários",
+        loadError: grupoOLXLoadFailed,
+        detail: grupoOLXLoadFailed
+          ? "Falha ao carregar"
+          : grupoOLXIntegration?.status === "pending_setup" ? "Aguardando Canal Pro" : "Portais imobiliários",
         icon: <Building2 className="h-7 w-7 text-primary" />,
       },
       {
@@ -353,28 +390,9 @@ export function IntegrationsTab({
         description: "Sincronize atividades e compromissos com sua agenda.",
         enabled: true,
         connected: googleCalendarConnected,
-        detail: googleCalendarStatus?.account_email || "Agenda",
+        loadError: googleCalendarLoadFailed,
+        detail: googleCalendarLoadFailed ? "Falha ao carregar" : googleCalendarStatus?.account_email || "Agenda",
         icon: <LogoImage src="https://cdn.simpleicons.org/googlecalendar/4285F4" alt="Google Agenda" />,
-      },
-      {
-        key: "vista" as const,
-        title: "Portal Vista",
-        description: "Conecte o Vista para importar e sincronizar sua carteira de imóveis.",
-        enabled: canManageIntegrations,
-        requiresAdmin: true,
-        connected: !!vistaIntegration,
-        detail: "Imóveis",
-        icon: <LogoImage src="https://www.google.com/s2/favicons?domain=vistahost.com.br&sz=64" alt="Portal Vista" />,
-      },
-      {
-        key: "imoview" as const,
-        title: "Imoview",
-        description: "Conecte o Imoview para trazer seus imóveis para o CRM.",
-        enabled: canManageIntegrations,
-        requiresAdmin: true,
-        connected: !!imoviewIntegration,
-        detail: "Imóveis",
-        icon: <LogoImage src="https://www.google.com/s2/favicons?domain=imoview.com.br&sz=64" alt="Imoview" />,
       },
       {
         key: "webhooks" as const,
@@ -388,14 +406,14 @@ export function IntegrationsTab({
       {
         key: "api" as const,
         title: "API",
-        description: "Gere chaves para integrações externas autenticadas.",
+        description: "Prepare credenciais para integrações liberadas explicitamente pelo Vimob.",
         enabled: canManageIntegrations && hasAPIModule,
         connected: false,
-        detail: "Chaves",
+        detail: "Escopo controlado",
         icon: <Key className="h-7 w-7 text-primary" />,
       },
     ].filter((item) => item.enabled);
-  }, [canManageAI, canManageIntegrations, canManageWhatsApp, googleCalendarStatus, grupoOLXIntegration, hasAIModule, hasAPIModule, hasPortalsModule, hasWebhooksModule, hasWhatsAppAccess, imoviewIntegration, metaIntegrations, vistaIntegration, whatsappSessions]);
+  }, [canManageAI, canManageIntegrations, canManageWhatsApp, googleCalendarLoadFailed, googleCalendarStatus, grupoOLXIntegration, grupoOLXLoadFailed, hasAIModule, hasAPIModule, hasPortalsModule, hasWebhooksModule, hasWhatsAppAccess, metaIntegrations, metaIntegrationsLoadFailed, metaIntegrationsLoading, whatsappSessions, whatsappSessionsLoadFailed]);
 
   const filteredIntegrations = integrations.filter((item) => {
     const query = normalizeSearchText(search);
@@ -405,7 +423,8 @@ export function IntegrationsTab({
 
   const effectiveActiveIntegration =
     activeIntegration &&
-    ((ADMIN_ONLY_INTEGRATIONS.has(activeIntegration) && !canManageAdminIntegrations) ||
+    (activeIntegration === "meta" ||
+      (ADMIN_ONLY_INTEGRATIONS.has(activeIntegration) && !canManageAdminIntegrations) ||
       disabledIntegrations.has(activeIntegration))
       ? null
       : activeIntegration;
@@ -415,7 +434,7 @@ export function IntegrationsTab({
     <div className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-xl font-semibold">Integrações</h2>
+          <h2 className="text-sm font-normal">Integrações</h2>
           <p className="text-sm text-muted-foreground">Conexões nativas e canais de entrada do sistema.</p>
         </div>
         <div className="relative w-full sm:w-80">
@@ -465,10 +484,10 @@ export function IntegrationsTab({
                     </div>
                   </div>
                   <Badge
-                    variant={isAccessLocked || !item.connected ? "outline" : "default"}
-                    className={isAccessLocked || !item.connected ? "!rounded-[6px] border-transparent bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-soft)]" : "!rounded-[6px]"}
+                    variant={isAccessLocked || item.loadError || !item.connected ? "outline" : "default"}
+                    className={isAccessLocked || item.loadError || !item.connected ? "!rounded-[6px] border-transparent bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-soft)]" : "!rounded-[6px]"}
                   >
-                    {isAccessLocked ? "Sem acesso" : isTemporarilyDisabled ? "Desativado" : item.connected ? "Integrado" : "Não integrado"}
+                    {isAccessLocked ? "Sem acesso" : isTemporarilyDisabled ? "Desativado" : item.loadError ? "Indisponível" : item.connected ? "Integrado" : "Não integrado"}
                   </Badge>
                 </div>
               </CardHeader>
@@ -487,11 +506,15 @@ export function IntegrationsTab({
                   disabled={isDisabled}
                   onClick={() => {
                     if (isDisabled) return;
+                    if (item.key === "meta") {
+                      router.push("/settings/integrations/meta");
+                      return;
+                    }
                     setActiveIntegration(item.key);
                   }}
                 >
                   {isAccessLocked ? <Lock className="h-4 w-4" /> : <Settings2 className="h-4 w-4" />}
-                  {isAccessLocked ? "Sem acesso" : isTemporarilyDisabled ? "Indisponível" : item.connected ? "Gerenciar" : "Conectar"}
+                  {isAccessLocked ? "Sem acesso" : isTemporarilyDisabled ? "Indisponível" : item.loadError ? "Ver detalhes" : item.connected ? "Gerenciar" : "Conectar"}
                 </Button>
               </CardContent>
             </Card>
@@ -500,7 +523,7 @@ export function IntegrationsTab({
       </div>
 
       <Dialog
-        open={!!effectiveActiveIntegration && effectiveActiveIntegration !== "vista" && effectiveActiveIntegration !== "imoview"}
+        open={!!effectiveActiveIntegration}
         onOpenChange={(open) => !open && closeIntegration()}
       >
         <DialogContent
@@ -519,27 +542,18 @@ export function IntegrationsTab({
           </DialogHeader>
           {effectiveActiveIntegration === "whatsapp" && <WhatsAppTab embedded />}
           {effectiveActiveIntegration === "ai" && <AIAssistantTab />}
-          {effectiveActiveIntegration === "meta" && (
-            <MetaIntegrationSettings
-              oauthPayload={metaOAuthPayload}
-              oauthStatus={metaOAuthStatus}
-              listenForOAuthMessages={false}
-            />
-          )}
           {effectiveActiveIntegration === "google-calendar" && <GoogleCalendarConnect />}
           {effectiveActiveIntegration === "grupo-olx" && <GrupoOLXIntegrationSettings />}
           {effectiveActiveIntegration === "webhooks" && <WebhooksTab />}
           {effectiveActiveIntegration === "api" && <APITab />}
         </DialogContent>
       </Dialog>
-      <VistaImportDialog open={effectiveActiveIntegration === "vista"} onOpenChange={(open) => !open && closeIntegration()} />
-      <ImoviewImportDialog open={effectiveActiveIntegration === "imoview"} onOpenChange={(open) => !open && closeIntegration()} />
     </div>
   );
 }
 
 function isIntegrationKey(value?: string): value is IntegrationKey {
-  return value === "whatsapp" || value === "ai" || value === "meta" || value === "grupo-olx" || value === "google-calendar" || value === "vista" || value === "imoview" || value === "webhooks" || value === "api";
+  return value === "whatsapp" || value === "ai" || value === "meta" || value === "grupo-olx" || value === "google-calendar" || value === "webhooks" || value === "api";
 }
 
 function LogoImage({ src, alt }: { src: string; alt: string }) {

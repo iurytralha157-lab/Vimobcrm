@@ -68,9 +68,13 @@ export type CreatePropertyCondominiumInput = {
   longitude?: number
 }
 
+function parseOrganizationId(organizationId: string, context: string) {
+  return parseDomainInput(organizationIdSchema, organizationId, `${context}.organization`)
+}
+
 export const propertyLocationsAPI = {
   async getCities(organizationId: string) {
-    const orgId = parseDomainInput(organizationIdSchema, organizationId, 'property-locations.cities.list.organization')
+    const orgId = parseOrganizationId(organizationId, 'property-locations.cities.list')
     const response = await vimobAPIRequest<ListResponse<PropertyCity>>('/v1/property-cities', {
       organizationId: orgId,
     })
@@ -79,7 +83,7 @@ export const propertyLocationsAPI = {
   },
 
   async createCity(organizationId: string, city: { name: string; uf?: string }) {
-    const orgId = parseDomainInput(organizationIdSchema, organizationId, 'property-locations.cities.create.organization')
+    const orgId = parseOrganizationId(organizationId, 'property-locations.cities.create')
     const body = parseDomainInput(propertyCityInputSchema, city, 'property-locations.cities.create')
     const response = await vimobAPIRequest<ItemResponse<PropertyCity>>('/v1/property-cities', {
       method: 'POST',
@@ -91,17 +95,19 @@ export const propertyLocationsAPI = {
   },
 
   async deleteCity(organizationId: string, id: string) {
+    const orgId = parseOrganizationId(organizationId, 'property-locations.cities.delete')
     const cityId = parseDomainInput(entityIdSchema, id, 'property-locations.cities.delete.id')
     await vimobAPIRequest<null>(`/v1/property-cities/${cityId}`, {
       method: 'DELETE',
-      organizationId,
+      organizationId: orgId,
     })
   },
 
   async getNeighborhoods(organizationId: string, cityId?: string) {
+    const orgId = parseOrganizationId(organizationId, 'property-locations.neighborhoods.list')
     const queryCityId = cityId ? parseDomainInput(entityIdSchema, cityId, 'property-locations.neighborhoods.list.city-id') : undefined
     const response = await vimobAPIRequest<ListResponse<PropertyNeighborhood>>('/v1/property-neighborhoods', {
-      organizationId,
+      organizationId: orgId,
       query: { cityId: queryCityId },
     })
     validateDomainResponse(apiPropertyNeighborhoodListResponseSchema, response, 'property-locations.neighborhoods.list')
@@ -109,10 +115,11 @@ export const propertyLocationsAPI = {
   },
 
   async createNeighborhood(organizationId: string, neighborhood: { name: string; city_id: string }) {
+    const orgId = parseOrganizationId(organizationId, 'property-locations.neighborhoods.create')
     const body = parseDomainInput(propertyNeighborhoodInputSchema, neighborhood, 'property-locations.neighborhoods.create')
     const response = await vimobAPIRequest<ItemResponse<PropertyNeighborhood>>('/v1/property-neighborhoods', {
       method: 'POST',
-      organizationId,
+      organizationId: orgId,
       body,
     })
     validateDomainResponse(apiPropertyNeighborhoodResponseSchema, response, 'property-locations.neighborhoods.create')
@@ -120,17 +127,19 @@ export const propertyLocationsAPI = {
   },
 
   async deleteNeighborhood(organizationId: string, id: string) {
+    const orgId = parseOrganizationId(organizationId, 'property-locations.neighborhoods.delete')
     const neighborhoodId = parseDomainInput(entityIdSchema, id, 'property-locations.neighborhoods.delete.id')
     await vimobAPIRequest<null>(`/v1/property-neighborhoods/${neighborhoodId}`, {
       method: 'DELETE',
-      organizationId,
+      organizationId: orgId,
     })
   },
 
   async getCondominiums(organizationId: string, neighborhoodId?: string) {
+    const orgId = parseOrganizationId(organizationId, 'property-locations.condominiums.list')
     const queryNeighborhoodId = neighborhoodId ? parseDomainInput(entityIdSchema, neighborhoodId, 'property-locations.condominiums.list.neighborhood-id') : undefined
     const response = await vimobAPIRequest<ListResponse<PropertyCondominium>>('/v1/property-condominiums', {
-      organizationId,
+      organizationId: orgId,
       query: { neighborhoodId: queryNeighborhoodId },
     })
     validateDomainResponse(apiPropertyCondominiumListResponseSchema, response, 'property-locations.condominiums.list')
@@ -141,10 +150,11 @@ export const propertyLocationsAPI = {
     organizationId: string,
     condominium: CreatePropertyCondominiumInput,
   ) {
+    const orgId = parseOrganizationId(organizationId, 'property-locations.condominiums.create')
     const body = parseDomainInput(propertyCondominiumInputSchema, condominium, 'property-locations.condominiums.create')
     const response = await vimobAPIRequest<ItemResponse<PropertyCondominium>>('/v1/property-condominiums', {
       method: 'POST',
-      organizationId,
+      organizationId: orgId,
       body,
     })
     validateDomainResponse(apiPropertyCondominiumResponseSchema, response, 'property-locations.condominiums.create')
@@ -152,10 +162,11 @@ export const propertyLocationsAPI = {
   },
 
   async deleteCondominium(organizationId: string, id: string) {
+    const orgId = parseOrganizationId(organizationId, 'property-locations.condominiums.delete')
     const condominiumId = parseDomainInput(entityIdSchema, id, 'property-locations.condominiums.delete.id')
     await vimobAPIRequest<null>(`/v1/property-condominiums/${condominiumId}`, {
       method: 'DELETE',
-      organizationId,
+      organizationId: orgId,
     })
   },
 }

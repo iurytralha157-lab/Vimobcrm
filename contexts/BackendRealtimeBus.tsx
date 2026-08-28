@@ -70,6 +70,11 @@ export function BackendRealtimeBus() {
           return;
         }
         if (event.type === "realtime.ping") return;
+        if (event.type === "realtime.reset") {
+          enqueueAccessRefresh();
+          void activeQueryClient.invalidateQueries({ refetchType: "active" });
+          return;
+        }
 
         if (event.type === "access.permissions.changed") {
           const targetUserId = getString(event.data, "targetUserId") || event.userId;
@@ -86,7 +91,6 @@ export function BackendRealtimeBus() {
 
         if (event.type.startsWith("lead.")) {
           handleLeadEvent(event);
-          invalidateNotificationQueries(activeQueryClient);
           return;
         }
 
@@ -111,6 +115,11 @@ export function BackendRealtimeBus() {
         }
 
         if (event.type.startsWith("notification.")) {
+          const targetUserId = getString(event.data, "targetUserId")
+            || getString(event.data, "userId")
+            || event.userId;
+          if (targetUserId && targetUserId !== profile.id) return;
+
           invalidateNotificationQueries(activeQueryClient);
           return;
         }

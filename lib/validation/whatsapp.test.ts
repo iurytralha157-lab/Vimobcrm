@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   createWhatsAppSessionInputSchema,
@@ -10,10 +11,73 @@ import {
   whatsAppMessagesResponseSchema,
   whatsAppSessionsResponseSchema,
 } from './whatsapp'
+import {
+  formatPhoneForDisplay,
+  formatWhatsAppContactLabel,
+  formatWhatsAppContactPhoneForDisplay,
+  normalizePhoneToE164,
+  normalizeWhatsAppContactPhoneToE164,
+} from '../phone-utils'
 
 const ID = '11111111-1111-4111-8111-111111111111'
 const ORG_ID = '22222222-2222-4222-8222-222222222222'
 const USER_ID = '33333333-3333-4333-8333-333333333333'
+const floatingChatContextSource = readFileSync('contexts/FloatingChatContext.tsx', 'utf8')
+const floatingChatSource = readFileSync('components/features/chat/FloatingChat.tsx', 'utf8')
+
+test('exibe telefone WhatsApp digits-only como country-inclusive', () => {
+  assert.equal(normalizeWhatsAppContactPhoneToE164('14155552671'), '+14155552671')
+  assert.equal(
+    formatWhatsAppContactPhoneForDisplay('14155552671'),
+    '🇺🇸 +1 4155552671',
+  )
+  assert.equal(
+    formatWhatsAppContactPhoneForDisplay('5511999999999'),
+    '🇧🇷 +55 (11) 99999-9999',
+  )
+  assert.equal(
+    formatWhatsAppContactPhoneForDisplay(null, '351912345678@s.whatsapp.net'),
+    '🇵🇹 +351 912345678',
+  )
+  assert.equal(formatPhoneForDisplay('11999998888'), '🇧🇷 +55 (11) 99999-8888')
+})
+
+test('usa JID individual como fallback sem exibir identidades opacas ou de grupo', () => {
+  assert.equal(
+    normalizeWhatsAppContactPhoneToE164(null, '14155552671:18@c.us'),
+    '+14155552671',
+  )
+  assert.equal(normalizeWhatsAppContactPhoneToE164(null, '123456789@lid'), null)
+  assert.equal(normalizeWhatsAppContactPhoneToE164(null, '120363123456789@g.us'), null)
+})
+
+test('troca nome tecnico igual ao telefone ou JID pelo telefone formatado', () => {
+  assert.equal(
+    formatWhatsAppContactLabel('14155552671', '14155552671', '14155552671@s.whatsapp.net'),
+    '🇺🇸 +1 4155552671',
+  )
+  assert.equal(
+    formatWhatsAppContactLabel(
+      '351912345678@s.whatsapp.net',
+      null,
+      '351912345678@s.whatsapp.net',
+    ),
+    '🇵🇹 +351 912345678',
+  )
+  assert.equal(
+    formatWhatsAppContactLabel('Maria', '14155552671', '14155552671@s.whatsapp.net'),
+    'Maria',
+  )
+})
+
+test('preserva E.164 no contexto e usa o telefone canonico ao iniciar conversa', () => {
+  assert.equal(normalizePhoneToE164('+1 (415) 555-2671'), '+14155552671')
+  assert.equal(normalizePhoneToE164('00351 912 345 678'), '+351912345678')
+  assert.match(floatingChatContextSource, /normalizePhoneToE164\(phone\)/)
+  assert.doesNotMatch(floatingChatContextSource, /phone\.replace\(\/\\D\/g/)
+  assert.match(floatingChatSource, /const canonicalPhone = normalizePhoneToE164\(phone\)/)
+  assert.equal((floatingChatSource.match(/phone: canonicalPhone/g) || []).length >= 3, true)
+})
 
 test('aceita sessao Evolution GO e rejeita provider legado', () => {
   assert.equal(createWhatsAppSessionInputSchema.safeParse({

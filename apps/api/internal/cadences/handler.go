@@ -30,6 +30,49 @@ func (handler Handler) ListTemplates(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]Template]{Data: templates})
 }
 
+func (handler Handler) GetOperationalRules(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+	rules, err := handler.repo.GetOperationalRules(r.Context(), tenantContext, r.PathValue("id"))
+	if err != nil {
+		writeCadenceError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[OperationalRules]{Data: rules})
+}
+
+func (handler Handler) UpsertOperationalRules(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+	var request OperationalRulesRequest
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	rules, err := handler.repo.UpsertOperationalRules(r.Context(), tenantContext, r.PathValue("id"), request)
+	if err != nil {
+		writeCadenceError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[OperationalRules]{Data: rules})
+}
+
+func (handler Handler) GetLeadCadenceState(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+	state, err := handler.repo.GetLeadCadenceState(r.Context(), tenantContext, r.PathValue("id"))
+	if err != nil {
+		writeCadenceError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[LeadCadenceState]{Data: state})
+}
+
 func (handler Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := organizationContext(w, r)
 	if !ok {
@@ -115,6 +158,30 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 
 func writeCadenceError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, ErrOperationalRulesConflict):
+		httpserver.WriteError(
+			w,
+			r,
+			http.StatusConflict,
+			"stage_operational_rules_changed",
+			"These stage rules were changed by another manager. Reload before saving again.",
+		)
+	case errors.Is(err, ErrAttentionPolicyConflict):
+		httpserver.WriteError(
+			w,
+			r,
+			http.StatusConflict,
+			"stage_attention_policy_conflict",
+			"This stage already has an attention policy managed in Attention Center. Review it there before enabling stage rules.",
+		)
+	case errors.Is(err, ErrOperationalTemplateManaged):
+		httpserver.WriteError(
+			w,
+			r,
+			http.StatusConflict,
+			"stage_operational_template_managed",
+			"This cadence is managed by the stage operational rules editor.",
+		)
 	case errors.Is(err, ErrInvalidInput):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_cadence_input", "Cadence input is invalid.")
 	case errors.Is(err, ErrCadenceNotFound):

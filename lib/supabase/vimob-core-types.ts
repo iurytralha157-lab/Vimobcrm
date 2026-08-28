@@ -23,7 +23,12 @@ export type VimobCoreDatabase = {
           name: string
           description: string | null
           price: number
+          reference_price: number | null
+          discount_percentage: number
           billing_cycle: string | null
+          billing_periods: number[]
+          display_features: string[]
+          display_order: number
           trial_enabled: boolean
           trial_days: number | null
           max_users: number | null
@@ -41,7 +46,12 @@ export type VimobCoreDatabase = {
           name: string
           description?: string | null
           price?: number
+          reference_price?: number | null
+          discount_percentage?: number
           billing_cycle?: string | null
+          billing_periods?: number[]
+          display_features?: string[]
+          display_order?: number
           trial_enabled?: boolean
           trial_days?: number | null
           max_users?: number | null
@@ -80,6 +90,7 @@ export type VimobCoreDatabase = {
           website: string | null
           default_commission_percentage: number | null
           plan_id: string | null
+          subscription_billing_period_months: number
           subscription_status: string
           subscription_type: string | null
           subscription_value: number | null
@@ -125,6 +136,7 @@ export type VimobCoreDatabase = {
           website?: string | null
           default_commission_percentage?: number | null
           plan_id?: string | null
+          subscription_billing_period_months?: number
           subscription_status?: string
           subscription_type?: string | null
           subscription_value?: number | null
@@ -226,6 +238,7 @@ export type VimobCoreDatabase = {
         {
           id: string
           organization_id: string
+          billing_period_months: number
           plan_id: string | null
           status: string
           provider: string | null
@@ -243,6 +256,7 @@ export type VimobCoreDatabase = {
         {
           id?: string
           organization_id: string
+          billing_period_months?: number
           plan_id?: string | null
           status?: string
           provider?: string | null
@@ -334,7 +348,24 @@ export type VimobCoreDatabase = {
       >
     }
     Views: Record<string, never>
-    Functions: Record<string, never>
+    Functions: {
+      record_resend_email_event: {
+        Args: {
+          p_provider_event_id: string
+          p_provider_message_id: string
+          p_event_type: string
+          p_occurred_at: string
+          p_payload?: Json
+        }
+        Returns: boolean
+      }
+      verify_billing_payment_receipt: {
+        Args: {
+          p_verification_token: string
+        }
+        Returns: Json
+      }
+    }
     Enums: Record<string, never>
     CompositeTypes: Record<string, never>
   }

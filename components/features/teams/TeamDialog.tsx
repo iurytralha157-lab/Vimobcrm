@@ -1,16 +1,21 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
-import { Camera, Clock, Crown, Loader2, UserPlus, X } from 'lucide-react';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Switch } from '@/components/ui/switch';
-import { useUsers } from '@/hooks/use-users';
-import { useCreateTeam, useUpdateTeam, Team } from '@/hooks/use-teams';
-import { teamsAPI } from '@/lib/api/teams';
-import { toast } from 'sonner';
-import { MemberAvailabilityDialog } from './MemberAvailabilityDialog';
+import { useState, useEffect, useMemo, useRef } from "react";
+import { Camera, Clock, Crown, Loader2, UserPlus, X } from "lucide-react";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Switch } from "@/components/ui/switch";
+import { useUsers } from "@/hooks/use-users";
+import { useCreateTeam, useUpdateTeam, Team } from "@/hooks/use-teams";
+import { teamsAPI } from "@/lib/api/teams";
+import { useAuth } from "@/contexts/AuthContext";
+import { toast } from "sonner";
+import { MemberAvailabilityDialog } from "./MemberAvailabilityDialog";
+import {
+  createDefaultAvailabilityWeek,
+  toAvailabilityInput,
+} from "./availability-week";
 
 interface TeamDialogProps {
   open: boolean;
@@ -24,8 +29,13 @@ interface MemberSelection {
   isLeader: boolean;
 }
 
-export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true }: TeamDialogProps) {
-  const [name, setName] = useState('');
+export function TeamDialog({
+  open,
+  onOpenChange,
+  team,
+  canEditLeadership = true,
+}: TeamDialogProps) {
+  const [name, setName] = useState("");
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
@@ -38,6 +48,8 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  const { organization, profile } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id || null;
   const { data: users = [] } = useUsers();
   const createTeam = useCreateTeam();
   const updateTeam = useUpdateTeam();
@@ -45,9 +57,12 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
 
   const activeUsers = useMemo(
     () => users.filter((user) => user.is_active !== false && Boolean(user.id)),
-    [users]
+    [users],
   );
-  const activeUserIds = useMemo(() => new Set(activeUsers.map((user) => user.id)), [activeUsers]);
+  const activeUserIds = useMemo(
+    () => new Set(activeUsers.map((user) => user.id)),
+    [activeUsers],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -62,10 +77,10 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
           team.members?.map((member) => ({
             userId: member.user_id,
             isLeader: member.is_leader || false,
-          })) || []
+          })) || [],
         );
       } else {
-        setName('');
+        setName("");
         setLogoUrl(null);
         setSelectedMembers([]);
       }
@@ -95,15 +110,18 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
 
   const getInitials = (value: string) =>
     value
-      .split(' ')
+      .split(" ")
       .map((part) => part[0])
-      .join('')
+      .join("")
       .toUpperCase()
       .slice(0, 2);
 
-  const isMemberSelected = (userId: string) => selectedMembers.some((member) => member.userId === userId);
-  const getMemberSelection = (userId: string) => selectedMembers.find((member) => member.userId === userId);
-  const getSavedTeamMember = (userId: string) => team?.members?.find((member) => member.user_id === userId);
+  const isMemberSelected = (userId: string) =>
+    selectedMembers.some((member) => member.userId === userId);
+  const getMemberSelection = (userId: string) =>
+    selectedMembers.find((member) => member.userId === userId);
+  const getSavedTeamMember = (userId: string) =>
+    team?.members?.find((member) => member.user_id === userId);
 
   const toggleMember = (userId: string) => {
     const savedMember = getSavedTeamMember(userId);
@@ -119,7 +137,11 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
   const toggleLeader = (userId: string) => {
     if (!canEditLeadership) return;
     setSelectedMembers((prev) =>
-      prev.map((member) => (member.userId === userId ? { ...member, isLeader: !member.isLeader } : member))
+      prev.map((member) =>
+        member.userId === userId
+          ? { ...member, isLeader: !member.isLeader }
+          : member,
+      ),
     );
   };
 
@@ -127,22 +149,32 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
     if (!canEditTeamIdentity || !logoFile) return logoUrl;
 
     const maxLogoSize = 5 * 1024 * 1024;
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml'];
+    const allowedTypes = [
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "image/gif",
+      "image/svg+xml",
+    ];
 
     if (!allowedTypes.includes(logoFile.type)) {
-      throw new Error('Tipo de imagem nao permitido. Use JPG, PNG, WEBP, GIF ou SVG.');
+      throw new Error(
+        "Tipo de imagem nao permitido. Use JPG, PNG, WEBP, GIF ou SVG.",
+      );
     }
 
     if (logoFile.size > maxLogoSize) {
-      throw new Error('Imagem muito grande. O limite para logo da equipe e 5MB.');
+      throw new Error(
+        "Imagem muito grande. O limite para logo da equipe e 5MB.",
+      );
     }
 
-    return teamsAPI.uploadLogo(logoFile);
+    return teamsAPI.uploadLogo(logoFile, organizationId);
   };
 
   const handleSubmit = async () => {
     if (!name.trim()) {
-      toast.error('Informe o nome da equipe');
+      toast.error("Informe o nome da equipe");
       return;
     }
 
@@ -151,7 +183,10 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
     try {
       const finalLogoUrl = await uploadLogo();
       const leadershipByUserId = new Map(
-        (team?.members || []).map((member) => [member.user_id, member.is_leader || false])
+        (team?.members || []).map((member) => [
+          member.user_id,
+          member.is_leader || false,
+        ]),
       );
       const membersToSave = canEditLeadership
         ? selectedMembers
@@ -160,10 +195,14 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
             isLeader: leadershipByUserId.get(member.userId) ?? false,
           }));
       const validMembersToSave =
-        activeUserIds.size > 0 ? membersToSave.filter((member) => activeUserIds.has(member.userId)) : membersToSave;
+        activeUserIds.size > 0
+          ? membersToSave.filter((member) => activeUserIds.has(member.userId))
+          : membersToSave;
 
       if (membersToSave.length !== validMembersToSave.length) {
-        toast.info('Removi membros pendentes ou inativos antes de salvar a equipe.');
+        toast.info(
+          "Removi membros pendentes ou inativos antes de salvar a equipe.",
+        );
       }
 
       if (team) {
@@ -184,14 +223,18 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
           name: name.trim(),
           logo_url: finalLogoUrl || null,
           is_active: true,
-          members: validMembersToSave,
+          members: validMembersToSave.map((member) => ({
+            ...member,
+            availability: toAvailabilityInput(createDefaultAvailabilityWeek()),
+          })),
         });
       }
 
       onOpenChange(false);
     } catch (error) {
-      console.error('Error saving team:', error);
-      const message = error instanceof Error ? error.message : 'Erro desconhecido';
+      console.error("Error saving team:", error);
+      const message =
+        error instanceof Error ? error.message : "Erro desconhecido";
       toast.error(`Erro ao salvar equipe: ${message}`);
     } finally {
       setIsSubmitting(false);
@@ -201,16 +244,24 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
   const displayLogo = logoPreview || logoUrl || undefined;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-tour="management-team-dialog" className="max-h-[88vh] w-[calc(100vw-16px)] max-w-[560px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none backdrop-blur-xl sm:rounded-[12px] [&_button.absolute]:hidden">
-        <div className="flex max-h-[88vh] flex-col p-4 sm:p-5">
+      <DialogContent
+        data-tour="management-team-dialog"
+        className="max-h-[calc(100dvh-24px)] w-[calc(100vw-24px)] max-w-[560px] overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 text-[12px] font-light text-[var(--app-text-primary)] shadow-none sm:max-h-[88dvh] [&_button.absolute]:hidden"
+      >
+        <div className="flex max-h-full flex-col p-4 sm:p-5">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <UserPlus className="h-4 w-4 text-primary" />
-              <DialogTitle className="text-base font-semibold">{team ? 'Editar equipe' : 'Nova equipe'}</DialogTitle>
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[6px] bg-primary/50 text-white">
+                <UserPlus className="h-4 w-4" />
+              </span>
+              <DialogTitle className="text-[14px] font-normal">
+                {team ? "Editar equipe" : "Nova equipe"}
+              </DialogTitle>
             </div>
             <button
               type="button"
-              className="rounded-full p-1.5 text-[var(--app-text-secondary)] transition hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
+              className="grid h-8 w-8 place-items-center rounded-[6px] text-[var(--app-text-secondary)] transition hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
+              aria-label="Fechar formulário de equipe"
               onClick={() => onOpenChange(false)}
             >
               <X className="h-4 w-4" />
@@ -221,17 +272,18 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
             <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
               <button
                 type="button"
-                className="group relative h-12 w-12 shrink-0 overflow-hidden rounded-full bg-white/10 sm:h-14 sm:w-14"
+                className="group relative h-12 w-12 shrink-0 overflow-hidden rounded-[6px] bg-primary/50 text-white transition-colors hover:bg-primary sm:h-14 sm:w-14"
+                aria-label="Alterar logo da equipe"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={!canEditTeamIdentity}
               >
-                <Avatar className="h-full w-full">
+                <Avatar className="h-full w-full rounded-[6px]">
                   <AvatarImage src={displayLogo} />
-                  <AvatarFallback className="bg-primary/20 text-sm text-primary">
-                    {getInitials(name || 'Equipe')}
+                  <AvatarFallback className="rounded-[6px] bg-primary/50 text-[12px] font-light text-white">
+                    {getInitials(name || "Equipe")}
                   </AvatarFallback>
                 </Avatar>
-                <span className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition group-hover:opacity-100">
+                <span className="absolute inset-0 flex items-center justify-center bg-primary/80 text-white opacity-0 transition group-hover:opacity-100">
                   <Camera className="h-4 w-4" />
                 </span>
               </button>
@@ -241,7 +293,9 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
                 accept="image/*"
                 className="hidden"
                 disabled={!canEditTeamIdentity}
-                onChange={(event) => setLogoFile(event.target.files?.[0] || null)}
+                onChange={(event) =>
+                  setLogoFile(event.target.files?.[0] || null)
+                }
               />
               <div className="min-w-0 flex-1">
                 <Input
@@ -249,10 +303,13 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
                   onChange={(event) => setName(event.target.value)}
                   placeholder="Nome da equipe"
                   disabled={!canEditTeamIdentity}
-                  className="h-10 rounded-[8px] border-0 bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] placeholder:text-[var(--app-text-tertiary)] focus-visible:ring-1 focus-visible:ring-primary"
+                  className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light text-[var(--app-text-primary)] shadow-none placeholder:text-[var(--app-text-tertiary)] focus-visible:ring-1 focus-visible:ring-primary/30"
                 />
-                <p className="mt-1.5 text-xs text-[var(--app-text-tertiary)]">
-                  {selectedMembers.length} {selectedMembers.length === 1 ? 'membro selecionado' : 'membros selecionados'}
+                <p className="mt-1.5 text-[12px] font-light text-[var(--app-text-tertiary)]">
+                  {selectedMembers.length}{" "}
+                  {selectedMembers.length === 1
+                    ? "membro selecionado"
+                    : "membros selecionados"}
                 </p>
               </div>
             </div>
@@ -267,8 +324,10 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
                   return (
                     <div
                       key={user.id}
-                      className={`flex w-full min-w-0 items-center gap-1.5 rounded-[8px] px-2 py-1 transition sm:gap-2 sm:px-2.5 ${
-                        isSelected ? 'bg-primary/12' : 'bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-hover)]'
+                      className={`flex w-full min-w-0 items-center gap-1.5 rounded-[6px] px-2 py-1 transition sm:gap-2 sm:px-2.5 ${
+                        isSelected
+                          ? "bg-[var(--app-surface-hover)]"
+                          : "bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-hover)]"
                       }`}
                     >
                       {/*
@@ -279,50 +338,70 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
                         type="button"
                         className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none ring-0 focus-visible:outline-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-75 sm:gap-2.5"
                         onClick={() => toggleMember(user.id)}
-                        disabled={!canEditLeadership && !!savedMember?.is_leader}
+                        disabled={
+                          !canEditLeadership && !!savedMember?.is_leader
+                        }
                       >
-                        <Avatar className="h-8 w-8 shrink-0">
+                        <Avatar className="h-8 w-8 shrink-0 rounded-[6px]">
                           <AvatarImage src={user.avatar_url || undefined} />
-                          <AvatarFallback className="bg-primary text-[10px] text-primary-foreground">
-                            {getInitials(user.name || '?')}
+                          <AvatarFallback className="rounded-[6px] bg-primary/50 text-[10px] font-light text-white">
+                            {getInitials(user.name || "?")}
                           </AvatarFallback>
                         </Avatar>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-semibold">{user.name}</p>
-                          <p className="truncate text-xs text-[var(--app-text-tertiary)]">{user.email}</p>
+                          <p className="truncate text-[12px] font-light">
+                            {user.name}
+                          </p>
+                          <p className="truncate text-[12px] font-light text-[var(--app-text-tertiary)]">
+                            {user.email}
+                          </p>
                         </div>
                         <span
-                          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full transition ${
-                            isSelected ? 'bg-primary' : 'bg-[var(--app-surface-hover)]'
+                          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-[6px] transition ${
+                            isSelected
+                              ? "bg-primary/50"
+                              : "bg-[var(--app-surface-hover)]"
                           }`}
                         >
-                          {isSelected && <span className="h-2 w-2 rounded-full bg-white" />}
+                          {isSelected && (
+                            <span className="h-2 w-2 rounded-[4px] bg-primary-foreground" />
+                          )}
                         </span>
                       </button>
 
                       {isSelected && (
-                        <div className="flex shrink-0 items-center gap-1 rounded-[8px] bg-[var(--app-surface)]/80 px-1.5 py-1 sm:gap-1.5 sm:px-2">
+                        <div className="flex shrink-0 items-center gap-1 rounded-[6px] bg-[var(--app-surface-soft)] px-1.5 py-1 sm:gap-1.5 sm:px-2">
                           <button
                             type="button"
-                            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-text-secondary)] transition hover:bg-[var(--app-surface-hover)] hover:text-primary"
+                            className="flex h-8 w-8 items-center justify-center rounded-[6px] bg-primary/50 text-white transition hover:bg-primary"
                             title="Editar escala"
                             onClick={() => {
                               if (savedMember) {
                                 setAvailabilityMember({
                                   id: savedMember.id,
-                                  name: user.name || 'Usuario',
+                                  name: user.name || "Usuario",
                                   avatar: user.avatar_url,
                                 });
                               } else {
-                                toast.info('Salve a equipe primeiro para poder configurar a escala deste membro.');
+                                toast.info(
+                                  "Salve a equipe primeiro para poder configurar a escala deste membro.",
+                                );
                               }
                             }}
                           >
                             <Clock className="h-4 w-4" />
                           </button>
-                          <div className="flex items-center gap-1.5 text-xs text-[var(--app-text-secondary)]">
-                            <Crown className={`h-3.5 w-3.5 ${memberData?.isLeader ? 'text-amber-400' : 'text-[var(--app-text-tertiary)]'}`} />
-                            <span className="max-[440px]:hidden">Lider</span>
+                          <div className="flex items-center gap-1.5 text-[12px] font-light text-[var(--app-text-secondary)]">
+                            <span
+                              className={`grid h-6 w-6 place-items-center rounded-[6px] transition-colors ${
+                                memberData?.isLeader
+                                  ? "bg-primary/50 text-white"
+                                  : "bg-[var(--app-surface-hover)] text-[var(--app-text-tertiary)]"
+                              }`}
+                            >
+                              <Crown className="h-3.5 w-3.5" />
+                            </span>
+                            <span className="max-[440px]:hidden">Líder</span>
                           </div>
                           <Switch
                             checked={memberData?.isLeader || false}
@@ -342,19 +421,21 @@ export function TeamDialog({ open, onOpenChange, team, canEditLeadership = true 
           <div className="mt-4 grid min-w-0 grid-cols-[minmax(0,3fr)_minmax(0,7fr)] gap-3">
             <Button
               type="button"
-              className="h-10 min-w-0 rounded-[8px] border-0 bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]"
+              className="h-9 min-w-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]"
               onClick={() => onOpenChange(false)}
             >
               Cancelar
             </Button>
             <Button
               type="button"
-              className="h-10 min-w-0 rounded-[8px] shadow-none"
+              className="h-9 min-w-0 rounded-[6px] bg-primary/50 text-[12px] font-light text-white shadow-none hover:bg-primary"
               onClick={handleSubmit}
               disabled={isSubmitting || !name.trim()}
             >
-              {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {team ? 'Salvar' : 'Criar equipe'}
+              {isSubmitting && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              {team ? "Salvar" : "Criar equipe"}
             </Button>
           </div>
         </div>

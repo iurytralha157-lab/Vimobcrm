@@ -18,12 +18,13 @@ async function fetchLeadVisibility(userId: string, organizationId?: string | nul
 }
 
 export function useLeadVisibility(userId: string | undefined) {
-  const { organization } = useAuth();
+  const { organization, profile } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
 
   return useQuery({
-    queryKey: ['lead-visibility', userId, organization?.id],
-    queryFn: () => fetchLeadVisibility(userId!, organization?.id),
-    enabled: !!userId && !!organization?.id,
+    queryKey: ['lead-visibility', userId, organizationId],
+    queryFn: () => fetchLeadVisibility(userId!, organizationId),
+    enabled: !!userId && !!organizationId,
     staleTime: 1000 * 60 * 15,
   });
 }

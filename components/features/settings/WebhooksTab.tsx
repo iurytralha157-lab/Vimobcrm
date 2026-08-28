@@ -7,6 +7,15 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   Sheet,
   SheetContent,
   SheetHeader,
@@ -69,6 +78,12 @@ type WebhookUpdatePayload = {
   field_mapping: Record<string, string>;
 };
 
+type WebhookConfirmation = {
+  action: 'delete' | 'regenerate';
+  id: string;
+  name: string;
+};
+
 const DEFAULT_WEBHOOK_API_URL = 'http://localhost:8081';
 
 export function WebhooksTab() {
@@ -82,6 +97,7 @@ export function WebhooksTab() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedWebhook, setSelectedWebhook] = useState<WebhookIntegration | null>(null);
+  const [confirmation, setConfirmation] = useState<WebhookConfirmation | null>(null);
   const [formData, setFormData] = useState<WebhookFormData>({
     name: '',
     type: 'incoming',
@@ -177,15 +193,27 @@ export function WebhooksTab() {
     toast.success(`${label} copiado!`);
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Tem certeza que deseja excluir este webhook?')) return;
-    await deleteWebhook.mutateAsync(id);
+  const handleConfirmedAction = async () => {
+    if (!confirmation) return;
+
+    try {
+      if (confirmation.action === 'delete') {
+        await deleteWebhook.mutateAsync(confirmation.id);
+      } else {
+        await regenerateToken.mutateAsync(confirmation.id);
+      }
+      setConfirmation(null);
+    } catch {
+      // Mutation hooks already surface the actionable error. Keep the dialog open for retry.
+    }
   };
 
-  const handleRegenerateToken = async (id: string) => {
-    if (!confirm('Isso invalidará o token atual. Continuar?')) return;
-    await regenerateToken.mutateAsync(id);
-  };
+  const confirmationPending =
+    confirmation?.action === 'delete'
+      ? deleteWebhook.isPending
+      : confirmation?.action === 'regenerate'
+        ? regenerateToken.isPending
+        : false;
 
   if (isLoading) {
     return (
@@ -228,7 +256,7 @@ export function WebhooksTab() {
               {webhooks.map((webhook) => (
                 <div
                   key={webhook.id}
-                  className="app-card-soft p-4 transition-colors hover:bg-white/[0.055]"
+                  className="app-card-soft p-4 transition-colors hover:bg-[var(--app-surface-hover)]"
                 >
                   <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                     {/* Info */}
@@ -279,7 +307,14 @@ export function WebhooksTab() {
                       <Button variant="ghost" size="icon" onClick={() => openEditDialog(webhook)}>
                         <Code className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleDelete(webhook.id)}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Excluir webhook ${webhook.name}`}
+                        onClick={() =>
+                          setConfirmation({ action: 'delete', id: webhook.id, name: webhook.name })
+                        }
+                      >
                         <Trash2 className="h-4 w-4 text-destructive" />
                       </Button>
                     </div>
@@ -318,7 +353,18 @@ export function WebhooksTab() {
                                 <Button variant="outline" size="icon" onClick={() => copyToClipboard(webhook.api_token, 'Token')}>
                                   <Copy className="h-4 w-4" />
                                 </Button>
-                                <Button variant="outline" size="icon" onClick={() => handleRegenerateToken(webhook.id)}>
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  aria-label={`Regenerar token do webhook ${webhook.name}`}
+                                  onClick={() =>
+                                    setConfirmation({
+                                      action: 'regenerate',
+                                      id: webhook.id,
+                                      name: webhook.name,
+                                    })
+                                  }
+                                >
                                   <RefreshCw className="h-4 w-4" />
                                 </Button>
                               </div>
@@ -362,7 +408,7 @@ export function WebhooksTab() {
                               <Label className="text-xs text-muted-foreground">Mapeamento de Campos</Label>
                               <div className="grid grid-cols-2 gap-2 text-xs">
                                 {Object.entries(webhook.field_mapping || {}).map(([target, source]) => (
-                                  <div key={target} className="flex items-center gap-2 bg-white/[0.045] rounded px-2 py-1">
+                                  <div key={target} className="flex items-center gap-2 rounded bg-[var(--app-surface-soft)] px-2 py-1">
                                     <span className="text-muted-foreground">{String(source)}</span>
                                     <span>→</span>
                                     <span className="font-medium">{target}</span>
@@ -602,6 +648,47 @@ export function WebhooksTab() {
           </div>
         </SheetContent>
       </Sheet>
+
+      <AlertDialog
+        open={confirmation !== null}
+        onOpenChange={(open) => {
+          if (!open && !confirmationPending) setConfirmation(null);
+        }}
+      >
+        <AlertDialogContent className="w-[calc(100vw-24px)] max-w-[440px] gap-3 rounded-[8px] p-4 sm:p-5">
+          <AlertDialogHeader className="space-y-1.5 text-left">
+            <AlertDialogTitle className="text-[14px] font-normal">
+              {confirmation?.action === 'delete' ? 'Excluir webhook' : 'Regenerar token'}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-[12px] font-light leading-[18px]">
+              {confirmation?.action === 'delete'
+                ? `O webhook “${confirmation.name}” será excluído e deixará de receber leads. Esta ação não pode ser desfeita.`
+                : `O token atual de “${confirmation?.name ?? ''}” será invalidado imediatamente. Sistemas que ainda usam esse token deixarão de enviar leads.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:space-x-0">
+            <AlertDialogCancel
+              disabled={confirmationPending}
+              className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]"
+            >
+              Cancelar
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              disabled={confirmationPending}
+              onClick={() => void handleConfirmedAction()}
+              className={
+                confirmation?.action === 'delete'
+                  ? 'h-9 rounded-[6px] bg-destructive px-3 text-[12px] font-light text-destructive-foreground shadow-none hover:bg-destructive/90'
+                  : 'h-9 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary'
+              }
+            >
+              {confirmationPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+              {confirmation?.action === 'delete' ? 'Excluir webhook' : 'Regenerar token'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

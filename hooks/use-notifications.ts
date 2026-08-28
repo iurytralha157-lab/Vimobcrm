@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { notificationsAPI } from '@/lib/api/notifications';
@@ -8,6 +8,7 @@ export type { Notification } from '@/lib/api/notifications';
 let globalAudioContext: AudioContext | null = null;
 let audioInitialized = false;
 const NOTIFICATIONS_INITIAL_LOAD_DELAY_MS = 2500;
+const NOTIFICATIONS_PAGE_SIZE = 25;
 type WebkitAudioWindow = Window & typeof globalThis & {
   webkitAudioContext?: typeof AudioContext;
 };
@@ -125,20 +126,26 @@ export function useNotifications() {
     playSound(type, type === 'new-lead' ? 0.7 : 0.5);
   }, []);
 
-  const query = useQuery({
-    queryKey: ['notifications', profile?.id, organization?.id],
-    queryFn: () => notificationsAPI.list({ userId: profile!.id, limit: 50 }),
+  const query = useInfiniteQuery({
+    queryKey: ['notifications', profile?.id, organization?.id, NOTIFICATIONS_PAGE_SIZE],
+    queryFn: ({ pageParam }) => notificationsAPI.list({
+      userId: profile!.id,
+      limit: NOTIFICATIONS_PAGE_SIZE,
+      cursor: pageParam,
+    }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextCursor || undefined,
     enabled: queryEnabled,
     refetchInterval: 60_000,
     refetchIntervalInBackground: false,
     staleTime: 30_000,
     gcTime: 10 * 60_000,
     refetchOnWindowFocus: false,
-    placeholderData: (previous) => previous ?? [],
   });
 
   return {
     ...query,
+    data: query.data?.pages.flatMap((page) => page.notifications) ?? [],
     playNotificationSound,
   };
 }
@@ -161,7 +168,6 @@ export function useUnreadNotificationsCount() {
     staleTime: 30_000,
     gcTime: 10 * 60_000,
     refetchOnWindowFocus: false,
-    placeholderData: (previous) => previous ?? 0,
   });
 }
 

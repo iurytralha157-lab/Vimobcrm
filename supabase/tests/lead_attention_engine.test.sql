@@ -1,7 +1,46 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(30);
+select plan(33);
+
+select is(
+  (
+    select procedure.prosecdef
+    from pg_proc as procedure
+    where procedure.oid = 'private.guard_lead_clocks()'::regprocedure
+  ),
+  true,
+  'all-lead enrollment guard remains a privileged internal trigger'
+);
+
+select ok(
+  (
+    select
+      procedure.prosecdef
+      and exists (
+        select 1
+        from unnest(coalesce(procedure.proconfig, array[]::text[])) as setting
+        where setting like 'search_path=%'
+      )
+    from pg_proc as procedure
+    where procedure.oid = 'private.capture_lead_cycles()'::regprocedure
+  ),
+  'cycle materialization is SECURITY DEFINER with an immutable search_path'
+);
+
+select ok(
+  not has_function_privilege(
+    'authenticated',
+    'private.capture_lead_cycles()',
+    'execute'
+  )
+  and not has_function_privilege(
+    'anon',
+    'private.capture_lead_cycles()',
+    'execute'
+  ),
+  'browser roles cannot invoke the privileged cycle trigger directly'
+);
 
 insert into auth.users (
   instance_id,
@@ -132,8 +171,8 @@ values (
   60
 );
 
--- This lead came through the manual create flow. The selected marketing source
--- is intentionally non-manual: source labels must never opt a manual lead in.
+-- All CRM leads participate in operational attention. The marketing source is
+-- descriptive only and does not change the enrollment decision.
 insert into public.leads (
   id,
   organization_id,
@@ -161,26 +200,26 @@ values (
 
 select is(
   (select attention_eligible from public.leads where id = 'a5000000-0000-0000-0000-000000000001'),
-  false,
-  'future manual lead stays ineligible even with a non-manual source label'
+  true,
+  'manual leads participate in operational attention'
 );
 
-select is(
+select isnt(
   (select attention_enrolled_at from public.leads where id = 'a5000000-0000-0000-0000-000000000001'),
   null::timestamptz,
-  'future manual lead has no enrollment timestamp'
+  'manual lead receives an enrollment timestamp'
 );
 
 select is(
   (select count(*) from public.lead_assignment_cycles where lead_id = 'a5000000-0000-0000-0000-000000000001'),
-  0::bigint,
-  'future manual lead creates no assignment cycle'
+  1::bigint,
+  'manual lead creates an assignment cycle'
 );
 
 select is(
   (select count(*) from public.lead_stage_cycles where lead_id = 'a5000000-0000-0000-0000-000000000001'),
-  0::bigint,
-  'future manual lead creates no stage cycle'
+  1::bigint,
+  'manual lead creates a stage cycle'
 );
 
 set local role authenticated;
@@ -197,8 +236,7 @@ select lives_ok(
       assigned_user_id,
       name,
       phone,
-      source,
-      meta_lead_id
+      source
     )
     values (
       'a5000000-0000-0000-0000-000000000003',
@@ -206,21 +244,20 @@ select lives_ok(
       'a3000000-0000-0000-0000-000000000001',
       'a4000000-0000-0000-0000-000000000001',
       'a1000000-0000-0000-0000-000000000001',
-      'Forged browser integration lead',
+      'Authenticated browser lead',
       '5511999999003',
-      'meta',
-      'forged-meta-marker'
+      'manual'
     )
   $$,
-  'authenticated manual creation cannot turn into an engine permission error by forging an integration marker'
+  'authenticated lead creation can materialize backend-owned attention cycles'
 );
 
 reset role;
 
 select is(
   (select attention_eligible from public.leads where id = 'a5000000-0000-0000-0000-000000000003'),
-  false,
-  'authenticated clients cannot forge trusted integration enrollment markers'
+  true,
+  'authenticated lead creation participates in operational attention'
 );
 
 select is(
@@ -231,11 +268,11 @@ select is(
     from public.leads l
     where l.id = 'a5000000-0000-0000-0000-000000000003'
   ),
-  0::bigint,
-  'forged browser integration markers create no attention cycles'
+  2::bigint,
+  'authenticated lead creation opens assignment and stage cycles'
 );
 
--- Only a trusted integration write explicitly opts a newly-created lead in.
+-- Integration-created leads follow the same all-leads enrollment contract.
 insert into public.leads (
   id,
   organization_id,
@@ -266,13 +303,13 @@ values (
 select is(
   (select attention_eligible from public.leads where id = 'a5000000-0000-0000-0000-000000000002'),
   true,
-  'future trusted integration lead is eligible'
+  'integration lead participates in operational attention'
 );
 
 select isnt(
   (select attention_enrolled_at from public.leads where id = 'a5000000-0000-0000-0000-000000000002'),
   null::timestamptz,
-  'future trusted integration lead receives an enrollment timestamp'
+  'integration lead receives an enrollment timestamp'
 );
 
 select is(
@@ -314,26 +351,26 @@ values (
   now() + interval '5 minutes'
 );
 
--- Eligibility is immutable. This models both a legacy row and a manual row
--- later edited to look like an integration lead.
+-- Enrollment is immutable after creation. Editing commercial attribution must
+-- not reset the existing engine clock or open duplicate cycles.
 update public.leads
 set source = 'meta',
-    meta_lead_id = 'late-meta-id-must-not-enroll',
+    meta_lead_id = 'late-meta-id-does-not-reenroll',
     attention_eligible = true,
-    attention_enrolled_at = now(),
+    attention_enrolled_at = '2099-01-01 00:00:00+00',
     updated_at = now()
 where id = 'a5000000-0000-0000-0000-000000000001';
 
 select is(
   (select attention_eligible from public.leads where id = 'a5000000-0000-0000-0000-000000000001'),
-  false,
-  'updating a legacy or manual lead cannot enroll it'
+  true,
+  'updating attribution preserves lead enrollment'
 );
 
-select is(
+select isnt(
   (select attention_enrolled_at from public.leads where id = 'a5000000-0000-0000-0000-000000000001'),
-  null::timestamptz,
-  'updating a legacy or manual lead cannot forge enrolled_at'
+  '2099-01-01 00:00:00+00'::timestamptz,
+  'updating attribution cannot rewrite the enrollment clock'
 );
 
 select is(
@@ -344,8 +381,8 @@ select is(
     from public.leads l
     where l.id = 'a5000000-0000-0000-0000-000000000001'
   ),
-  0::bigint,
-  'updating a legacy or manual lead creates no cycles'
+  2::bigint,
+  'updating attribution creates no duplicate attention cycles'
 );
 
 update public.leads

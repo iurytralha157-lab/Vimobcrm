@@ -114,16 +114,16 @@ export const AudioNode = memo(({ data, selected }: NodeProps) => {
   const pct = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
 
   return (
-    <div className={`automation-node px-4 py-3 rounded-xl min-w-[220px] max-w-[280px] ${
+    <div className={`automation-node min-w-[220px] max-w-[280px] rounded-[8px] px-4 py-3 ${
       selected ? 'automation-node-selected' : ''
-    }`} style={{ '--node-accent': '#f59e0b' } as React.CSSProperties}>
+    }`} style={{ '--node-accent': 'var(--warning)' } as React.CSSProperties}>
       <Handle type="target" position={Position.Left} className="!bg-amber-400 !w-3 !h-3 !border-2 !border-amber-500/50" />
       <div className="flex items-center gap-3">
         <div className="p-2 rounded-lg bg-amber-500 shrink-0">
-          <Headphones className="h-5 w-5 text-white" />
+          <Headphones className="h-5 w-5 text-primary-foreground" />
         </div>
         <div className="flex-1 min-w-0">
-          <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">Áudio</span>
+          <span className="text-[12px] font-normal text-amber-600 dark:text-amber-400">Áudio</span>
           <p className="text-xs text-muted-foreground mt-0.5">
             {isConfigured ? 'Áudio configurado' : 'Clique para configurar...'}
           </p>
@@ -136,9 +136,9 @@ export const AudioNode = memo(({ data, selected }: NodeProps) => {
             aria-label={isPlaying ? 'Pausar prévia do áudio' : 'Reproduzir prévia do áudio'}
           >
             {isPlaying ? (
-              <Pause className="h-3.5 w-3.5 text-white" />
+              <Pause className="h-3.5 w-3.5 text-primary-foreground" />
             ) : (
-              <Play className="h-3.5 w-3.5 text-white ml-0.5" />
+              <Play className="ml-0.5 h-3.5 w-3.5 text-primary-foreground" />
             )}
           </button>
         )}
@@ -147,15 +147,15 @@ export const AudioNode = memo(({ data, selected }: NodeProps) => {
         <div className="mt-2 space-y-1.5">
           <div
             ref={progressRef}
-            className="relative h-2 bg-white/20 rounded-full cursor-pointer group"
+            className="group relative h-2 cursor-pointer rounded-full bg-[var(--app-surface-hover)]"
             onClick={handleSeek}
           >
             <div
-              className="absolute inset-y-0 left-0 bg-white rounded-full"
+              className="absolute inset-y-0 left-0 rounded-full bg-amber-500"
               style={{ width: `${pct}%` }}
             />
             <div
-              className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
+              className="absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full bg-amber-500 opacity-0 shadow-none transition-opacity group-hover:opacity-100"
               style={{ left: `calc(${pct}% - 6px)` }}
             />
           </div>

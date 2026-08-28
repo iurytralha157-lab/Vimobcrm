@@ -1,0 +1,136 @@
+{
+  "terms": {
+    "kind": "terms",
+    "title": "Termos de Uso",
+    "eyebrow": "Documentação legal",
+    "version": "2026-08-04+sha256-75afb10bf95d",
+    "effectiveDate": "2026-08-04",
+    "fingerprint": "sha256:75afb10bf95d70b2556d5b30aa43db79fcf71119bccd4c5813e6a75c28ac755d",
+    "introduction": [
+      "Ao acessar ou utilizar o Vimob, o cliente declara que leu, entendeu e concorda com estes Termos de Uso. O documento regula o uso da plataforma de CRM imobiliário, seus módulos, integrações e serviços relacionados."
+    ],
+    "sections": [
+      {
+        "title": "1. Licenciamento e escopo de uso",
+        "paragraphs": [
+          "O Vimob concede uma licença de uso revogável, não exclusiva e intransferível da plataforma, conforme o plano contratado ou período de teste disponibilizado. Limites de usuários, recursos, integrações e módulos podem variar de acordo com a assinatura ativa."
+        ]
+      },
+      {
+        "title": "2. Responsabilidades do usuário",
+        "paragraphs": [
+          "Ao utilizar a infraestrutura do Vimob, o cliente compromete-se a:"
+        ],
+        "list": {
+          "type": "unordered",
+          "items": [
+            "Manter o sigilo das credenciais de acesso e responder pelas atividades realizadas nas contas vinculadas à organização.",
+            "Garantir a origem legítima dos leads, contatos, dados de clientes e mídias inseridos ou integrados à plataforma.",
+            "Utilizar o Vimob conforme a lei, estes termos, as políticas aplicáveis e as permissões contratadas no plano ativo.",
+            "Não tentar explorar vulnerabilidades, executar testes de estresse não autorizados ou realizar engenharia reversa da plataforma."
+          ]
+        }
+      },
+      {
+        "title": "3. Disponibilidade e serviços terceiros",
+        "paragraphs": [
+          "O Vimob busca manter um padrão elevado de disponibilidade e segurança. Ainda assim, a plataforma depende de serviços de infraestrutura, autenticação, banco de dados, mensageria, provedores de pagamento e integrações externas. Instabilidades nesses terceiros podem afetar temporariamente recursos do sistema."
+        ]
+      },
+      {
+        "title": "4. Cancelamento e encerramento",
+        "paragraphs": [
+          "Violações de segurança, fraude, uso abusivo ou descumprimento destes termos poderão resultar em bloqueio ou suspensão do acesso. Em cancelamentos regulares, o cliente poderá solicitar exportação dos dados disponíveis conforme os limites técnicos, contratuais e legais aplicáveis."
+        ]
+      },
+      {
+        "title": "5. Alterações dos termos",
+        "paragraphs": [
+          "Estes termos poderão ser atualizados para refletir mudanças legais, operacionais ou evoluções do produto. Quando necessário, o Vimob poderá comunicar alterações relevantes pelos canais cadastrados na plataforma."
+        ]
+      },
+      {
+        "title": "6. Foro",
+        "paragraphs": [
+          "Para dirimir eventuais controvérsias relacionadas a estes termos, as partes elegem o foro competente conforme a sede da empresa proprietária da marca Vimob, salvo disposição legal obrigatória em sentido diverso."
+        ]
+      }
+    ]
+  },
+  "privacy": {
+    "kind": "privacy",
+    "title": "Política de Privacidade",
+    "eyebrow": "Documentação legal",
+    "version": "2026-08-04+sha256-cb69fff4e802",
+    "effectiveDate": "2026-08-04",
+    "fingerprint": "sha256:cb69fff4e8028953a0ba3583d93a22787f1c7a0b3ee50ec04bfc9b326d241bc8",
+    "introduction": [
+      "Esta Política de Privacidade explica, de forma clara e objetiva, como o Vimob trata dados pessoais no contexto da utilização de sua plataforma de CRM imobiliário.",
+      "Em regra, o Vimob atua como operador de dados, fornecendo infraestrutura tecnológica para que organizações contratantes gerenciem leads, contatos, atendimentos e negociações.",
+      "A organização contratante atua, em regra, como controladora dos dados inseridos, importados, integrados ou tratados dentro da plataforma."
+    ],
+    "sections": [
+      {
+        "title": "1. Dados coletados",
+        "paragraphs": [
+          "Para viabilizar o funcionamento da plataforma e a prestação dos serviços contratados, o Vimob poderá tratar:"
+        ],
+        "list": {
+          "type": "unordered",
+          "items": [
+            "Dados da organização contratante, como razão social, nome fantasia, CNPJ, telefone, e-mail, endereço comercial e configurações da conta.",
+            "Dados de usuários da plataforma, como nome, e-mail, WhatsApp, função, permissões, organização vinculada e registros de autenticação.",
+            "Dados de leads, contatos e clientes finais inseridos ou integrados pela organização, incluindo histórico de atendimento e informações comerciais necessárias ao CRM.",
+            "Dados técnicos de uso, como endereço IP, datas de acesso, navegador, dispositivo, eventos de segurança, logs de erro e registros operacionais."
+          ]
+        }
+      },
+      {
+        "title": "2. Finalidades de uso",
+        "paragraphs": [
+          "Os dados poderão ser tratados conforme a natureza da contratação, funcionalidades utilizadas e integrações autorizadas pelo cliente:"
+        ],
+        "list": {
+          "type": "ordered",
+          "items": [
+            "Criar, configurar, manter e operar a conta do cliente na plataforma Vimob.",
+            "Disponibilizar funcionalidades de CRM, leads, pipelines, agenda, WhatsApp, imóveis, integrações e automações.",
+            "Executar integrações autorizadas pelo cliente, como Meta, WhatsApp, sites, formulários, APIs e provedores de pagamento.",
+            "Proteger a plataforma, controlar acessos, auditar eventos, prevenir fraudes e investigar uso indevido.",
+            "Prestar suporte técnico, corrigir incidentes, melhorar estabilidade, desempenho e experiência de uso.",
+            "Cumprir obrigações legais, regulatórias, contratuais ou ordens de autoridades competentes.",
+            "Enviar comunicações operacionais, administrativas, de segurança, cobrança, manutenção ou atualização da plataforma."
+          ]
+        }
+      },
+      {
+        "title": "3. Compartilhamento",
+        "paragraphs": [
+          "O Vimob não vende dados pessoais. O compartilhamento ocorre apenas quando necessário para operação da plataforma, execução do contrato, cumprimento de obrigação legal ou proteção de direitos."
+        ],
+        "list": {
+          "type": "unordered",
+          "items": [
+            "Provedores de infraestrutura, hospedagem, banco de dados, autenticação, armazenamento, monitoramento, mensageria e segurança.",
+            "Ferramentas externas configuradas, contratadas ou autorizadas pela organização administradora da conta.",
+            "Prestadores necessários para suporte técnico, manutenção, segurança, melhoria e continuidade da plataforma.",
+            "Autoridades públicas, judiciais, administrativas ou regulatórias, quando houver obrigação legal ou necessidade de defesa de direitos."
+          ]
+        }
+      },
+      {
+        "title": "4. Direitos dos titulares",
+        "paragraphs": [
+          "Nos termos da LGPD, titulares de dados pessoais poderão solicitar, quando aplicável, confirmação de tratamento, acesso, correção, anonimização, bloqueio, eliminação, portabilidade, informações de compartilhamento e revogação de consentimento.",
+          "Como o Vimob normalmente atua como operador, solicitações ligadas a leads, contatos ou clientes finais devem ser direcionadas preferencialmente à organização responsável pelo cadastro e uso desses dados."
+        ]
+      },
+      {
+        "title": "5. Retenção e segurança",
+        "paragraphs": [
+          "Os dados são mantidos pelo tempo necessário para cumprir as finalidades descritas, obrigações legais, contratuais, regulatórias, fiscais, contábeis, de auditoria, segurança ou defesa de direitos."
+        ]
+      }
+    ]
+  }
+}

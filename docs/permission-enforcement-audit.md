@@ -14,7 +14,7 @@
 | --- | --- | --- | --- | --- |
 | Dashboard geral | `dashboard_view` | Somente leitura | proprio, equipe explicita ou organizacao | Protegido na rota, API e filtros |
 | Dashboard do site | `dashboard_site_view` | Somente leitura | organizacao | Protegido na rota e API |
-| Dashboard de campanhas | `dashboard_campaigns_view` | Somente leitura | organizacao | Protegido na rota e API |
+| Marketing | `dashboard_campaigns_view` | Somente leitura | organizacao | Protegido na rota e API |
 | Pipeline | `lead_view_own`, `lead_view_team` ou `lead_view_all` | `lead_operate` | proprio, `team_id` liderado ou organizacao | Protegido na rota, consultas e mutacoes |
 | Contatos | mesmas permissoes de leads | `lead_operate` | mesmo escopo do Pipeline | Protegido na rota, consultas e mutacoes |
 | Conversas | `whatsapp_view` | `whatsapp_operate` | somente conversas de leads visiveis | Protegido na rota e em todos os endpoints |

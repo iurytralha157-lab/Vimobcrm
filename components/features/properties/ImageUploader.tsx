@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Label } from '@/components/ui/label';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { uploadPropertyImage } from '@/lib/api/property-images';
+import { getSafePropertyImageSource } from '@/lib/property-media';
 import { cn } from '@/lib/utils';
 
 interface ImageUploaderProps {
@@ -46,8 +47,7 @@ function MediaActionButton({ label, onClick, children, className }: MediaActionB
           size="icon"
           aria-label={label}
           className={cn(
-            'h-8 w-8 rounded-[6px] border-0 bg-white/95 text-zinc-900 shadow-sm hover:bg-white',
-            'dark:bg-zinc-950/90 dark:text-zinc-50 dark:hover:bg-zinc-900',
+            'h-8 w-8 rounded-[6px] border-0 bg-[var(--app-surface-solid)]/95 text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]',
             className,
           )}
           onClick={onClick}
@@ -78,6 +78,7 @@ export function ImageUploader({
   const [uploadingMain, setUploadingMain] = useState(false);
   const [uploadingGallery, setUploadingGallery] = useState(false);
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
+  const safeMainImage = getSafePropertyImageSource(mainImage);
 
   const uploadFile = useCallback(
     async (file: File): Promise<string | null> => {
@@ -225,33 +226,32 @@ export function ImageUploader({
     <TooltipProvider delayDuration={100}>
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       <div className="space-y-3">
-        <Label className="text-base font-medium">Imagem Principal</Label>
-        <p className="text-sm text-muted-foreground">
+        <Label className="text-[14px] font-normal">Imagem Principal</Label>
+        <p className="text-[12px] font-light text-muted-foreground">
           Esta imagem será exibida em destaque nos anúncios
         </p>
 
-        {mainImage ? (
+        {safeMainImage ? (
           <div className="group relative h-[220px] w-full overflow-hidden rounded-[8px] border border-primary/55 bg-[var(--app-surface-soft)]">
             <Image
-              src={mainImage}
+              src={safeMainImage}
               alt="Imagem principal"
               fill
               sizes="(max-width: 1024px) 100vw, 50vw"
               className="object-cover"
               unoptimized
             />
-            <div className="absolute left-2 top-2 flex items-center gap-1 rounded-[6px] bg-primary px-2 py-1 text-xs font-medium text-primary-foreground shadow-sm">
+            <div className="absolute left-2 top-2 flex items-center gap-1 rounded-[6px] bg-primary/50 px-2 py-1 text-[12px] font-light text-primary-foreground shadow-none">
               <Star className="h-3 w-3 fill-current" />
               Principal
             </div>
             <div className="absolute right-2 top-2 flex items-center gap-1.5">
-              <MediaActionButton label="Ver imagem inteira" onClick={() => setPreviewImage({ url: mainImage, title: 'Imagem principal' })}>
+              <MediaActionButton label="Ver imagem inteira" onClick={() => setPreviewImage({ url: safeMainImage, title: 'Imagem principal' })}>
                 <Maximize2 className="h-4 w-4" />
               </MediaActionButton>
               <label
                 className={cn(
-                  'inline-flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-[6px] bg-white/95 px-2 text-xs font-medium text-zinc-900 shadow-sm hover:bg-white',
-                  'dark:bg-zinc-950/90 dark:text-zinc-50 dark:hover:bg-zinc-900',
+                  'inline-flex h-8 cursor-pointer items-center justify-center gap-1.5 rounded-[6px] bg-[var(--app-surface-solid)]/95 px-2 text-[12px] font-light text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]',
                 )}
                 title="Trocar imagem principal"
               >
@@ -273,7 +273,7 @@ export function ImageUploader({
         ) : (
           <label
             className={cn(
-              'flex flex-col items-center justify-center w-full min-h-[200px] border-2 border-dashed rounded-lg cursor-pointer',
+              'flex min-h-[200px] w-full cursor-pointer flex-col items-center justify-center rounded-[8px] border border-dashed',
               'border-primary/35 bg-primary/5 transition-colors hover:border-primary/45 hover:bg-primary/10',
               uploadingMain && 'opacity-50 cursor-not-allowed',
             )}
@@ -285,7 +285,7 @@ export function ImageUploader({
                 <>
                   <Star className="h-10 w-10 text-primary/60 mb-2" />
                   <p className="text-sm text-muted-foreground">
-                    <span className="font-medium text-primary">Clique para enviar</span> a imagem
+                    <span className="font-normal text-primary">Clique para enviar</span> a imagem
                     principal
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">PNG, JPG ate 10MB</p>
@@ -304,14 +304,14 @@ export function ImageUploader({
       </div>
 
       <div className="space-y-3">
-        <Label className="text-base font-medium">Galeria de Fotos</Label>
-        <p className="text-sm text-muted-foreground">
+        <Label className="text-[14px] font-normal">Galeria de Fotos</Label>
+        <p className="text-[12px] font-light text-muted-foreground">
           Adicione mais fotos do imóvel. Arraste para reordenar.
         </p>
 
         <label
           className={cn(
-            'flex flex-col items-center justify-center w-full h-28 border-2 border-dashed rounded-lg cursor-pointer',
+            'flex h-28 w-full cursor-pointer flex-col items-center justify-center rounded-[8px] border border-dashed',
             'border-[var(--app-border)] bg-[var(--app-surface-soft)] transition-colors hover:border-primary/35 hover:bg-[var(--app-surface-hover)]',
             uploadingGallery && 'opacity-50 cursor-not-allowed',
           )}
@@ -323,7 +323,7 @@ export function ImageUploader({
               <>
                 <Upload className="h-8 w-8 text-muted-foreground mb-2" />
                 <p className="text-sm text-muted-foreground">
-                  <span className="font-medium text-primary">Clique para enviar</span> ou arraste
+                  <span className="font-normal text-primary">Clique para enviar</span> ou arraste
                   arquivos
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
@@ -353,6 +353,7 @@ export function ImageUploader({
                 >
                   {images.map((url, index) => {
                     const isHiddenFromSite = hiddenSiteImages.includes(url);
+                    const safeImageURL = getSafePropertyImageSource(url);
 
                     return (
                       <Draggable key={url} draggableId={url} index={index}>
@@ -365,37 +366,45 @@ export function ImageUploader({
                             {...draggableProps}
                             style={style as CSSProperties}
                             className={cn(
-                              'relative aspect-square overflow-hidden rounded-lg border-0 bg-[var(--app-surface-soft)] group',
-                              snapshot.isDragging && 'ring-2 ring-primary shadow-lg',
+                              'group relative aspect-square overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-soft)]',
+                              snapshot.isDragging && 'ring-2 ring-primary',
                             )}
                           >
                             <div
                               {...draggableProvided.dragHandleProps}
-                              className="absolute left-1.5 top-1.5 z-10 rounded-[6px] bg-zinc-950/75 p-1 text-white shadow-sm cursor-grab active:cursor-grabbing"
+                              className="absolute left-1.5 top-1.5 z-10 cursor-grab rounded-[6px] bg-[var(--app-surface-solid)]/90 p-1 text-[var(--app-text-primary)] shadow-none active:cursor-grabbing"
                               title="Arrastar foto"
                             >
-                              <GripVertical className="h-4 w-4 text-white" />
+                              <GripVertical className="h-4 w-4" />
                             </div>
-                            <div className="absolute right-1.5 top-1.5 z-10 rounded-[6px] bg-zinc-950/75 px-1.5 py-0.5 text-xs font-medium text-white shadow-sm">
+                            <div className="absolute right-1.5 top-1.5 z-10 rounded-[6px] bg-[var(--app-surface-solid)]/90 px-1.5 py-0.5 text-[12px] font-light text-[var(--app-text-primary)] shadow-none">
                               {index + 1}
                             </div>
                             {isHiddenFromSite && (
-                              <div className="absolute left-1.5 top-8 z-10 rounded-[6px] bg-white/95 px-1.5 py-0.5 text-[10px] font-medium uppercase text-zinc-900 shadow-sm dark:bg-zinc-950/90 dark:text-zinc-50">
+                              <div className="absolute left-1.5 top-8 z-10 rounded-[6px] bg-[var(--app-surface-solid)]/95 px-1.5 py-0.5 text-[10px] font-light text-[var(--app-text-primary)] shadow-none">
                                 Interna
                               </div>
                             )}
-                            <Image
-                              src={url}
-                              alt={`Foto ${index + 1}`}
-                              fill
-                              sizes="(max-width: 768px) 50vw, 25vw"
-                              className="object-cover"
-                              unoptimized
-                            />
+                            {safeImageURL ? (
+                              <Image
+                                src={safeImageURL}
+                                alt={`Foto ${index + 1}`}
+                                fill
+                                sizes="(max-width: 768px) 50vw, 25vw"
+                                className="object-cover"
+                                unoptimized
+                              />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center" role="img" aria-label={`Foto ${index + 1} indisponível`}>
+                                <ImageIcon className="h-8 w-8 text-[var(--app-text-tertiary)]" />
+                              </div>
+                            )}
                             <div className="absolute inset-x-1.5 bottom-1.5 flex justify-end gap-1.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
-                              <MediaActionButton label="Ver foto" onClick={() => setPreviewImage({ url, title: `Foto ${index + 1}` })}>
-                                <Maximize2 className="h-4 w-4" />
-                              </MediaActionButton>
+                              {safeImageURL ? (
+                                <MediaActionButton label="Ver foto" onClick={() => setPreviewImage({ url: safeImageURL, title: `Foto ${index + 1}` })}>
+                                  <Maximize2 className="h-4 w-4" />
+                                </MediaActionButton>
+                              ) : null}
                               <MediaActionButton label="Definir como principal" onClick={() => promoteToMain(url)}>
                                 <Star className="h-4 w-4" />
                               </MediaActionButton>
@@ -420,10 +429,10 @@ export function ImageUploader({
             </Droppable>
           </DragDropContext>
         ) : (
-          <div className="flex items-center gap-3 rounded-lg bg-[var(--app-surface-soft)] p-4">
+          <div className="flex items-center gap-3 rounded-[8px] bg-[var(--app-surface-soft)] p-4">
             <ImageIcon className="h-8 w-8 text-muted-foreground" />
             <div>
-              <p className="text-sm font-medium">Nenhuma foto na galeria</p>
+              <p className="text-[14px] font-normal">Nenhuma foto na galeria</p>
               <p className="text-xs text-muted-foreground">Adicione mais fotos do imóvel</p>
             </div>
           </div>
@@ -432,11 +441,11 @@ export function ImageUploader({
     </div>
 
     <Dialog open={Boolean(previewImage)} onOpenChange={(open) => !open && setPreviewImage(null)}>
-      <DialogContent className="flex h-[85vh] w-[min(960px,calc(100vw-2rem))] max-w-[960px] flex-col overflow-hidden p-0">
+      <DialogContent className="flex h-[85vh] w-[min(960px,calc(100vw-2rem))] max-w-[960px] flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 shadow-none">
         <DialogHeader className="shrink-0 border-b px-4 py-3">
-          <DialogTitle className="text-base font-medium">{previewImage?.title || 'Visualizar foto'}</DialogTitle>
+          <DialogTitle className="text-[14px] font-normal">{previewImage?.title || 'Visualizar foto'}</DialogTitle>
         </DialogHeader>
-        <div className="relative min-h-0 flex-1 bg-zinc-950">
+        <div className="relative min-h-0 flex-1 bg-[var(--app-surface-soft)]">
           {previewImage && (
             <Image
               src={previewImage.url}

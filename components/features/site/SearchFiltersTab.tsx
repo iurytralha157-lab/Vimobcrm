@@ -6,6 +6,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { DragDropContext, Droppable, Draggable, DropResult } from "@hello-pangea/dnd";
 import { Plus, GripVertical, Pencil, Trash2 } from "lucide-react";
 import {
@@ -31,7 +41,7 @@ const defaultForm: FilterFormData = {
 };
 
 export function SearchFiltersTab() {
-  const { data: items = [], isLoading } = useSiteSearchFilters();
+  const { data: items = [], isLoading, isError, refetch } = useSiteSearchFilters();
   const createItem = useCreateSearchFilter();
   const updateItem = useUpdateSearchFilter();
   const deleteItem = useDeleteSearchFilter();
@@ -40,6 +50,7 @@ export function SearchFiltersTab() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FilterFormData>(defaultForm);
+  const [itemToDelete, setItemToDelete] = useState<SiteSearchFilter | null>(null);
 
   // Filters already added
   const usedKeys = items.map(i => i.filter_key);
@@ -88,8 +99,14 @@ export function SearchFiltersTab() {
     setDialogOpen(false);
   };
 
-  const handleDelete = async (id: string) => {
-    await deleteItem.mutateAsync(id);
+  const handleDelete = async () => {
+    if (!itemToDelete) return;
+    try {
+      await deleteItem.mutateAsync(itemToDelete.id);
+      setItemToDelete(null);
+    } catch {
+      // The mutation already presents the API error and the dialog remains open for retry.
+    }
   };
 
   const handleDragEnd = (result: DropResult) => {
@@ -127,6 +144,13 @@ export function SearchFiltersTab() {
       </div>
         {isLoading ? (
           <p className="text-sm text-muted-foreground">Carregando...</p>
+        ) : isError ? (
+          <div className="flex flex-col items-center gap-3 py-8 text-center text-sm text-muted-foreground">
+            <p>Não foi possível carregar os filtros públicos.</p>
+            <Button variant="outline" size="sm" onClick={() => void refetch()}>
+              Tentar novamente
+            </Button>
+          </div>
         ) : items.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             <p className="mb-2">Nenhum filtro configurado</p>
@@ -149,7 +173,7 @@ export function SearchFiltersTab() {
                             ref={provided.innerRef}
                             {...(provided.draggableProps as HTMLAttributes<HTMLDivElement>)}
                             className={`flex items-center gap-3 rounded-[6px] p-3 transition-colors ${
-                              snapshot.isDragging ? "bg-accent shadow-lg" : "bg-background hover:bg-accent/50"
+                              snapshot.isDragging ? "bg-accent shadow-none" : "bg-background hover:bg-accent/50"
                             } ${!item.is_active ? "opacity-50" : ""}`}
                           >
                             <div {...provided.dragHandleProps} className="cursor-grab">
@@ -167,10 +191,10 @@ export function SearchFiltersTab() {
                               </div>
                             </div>
                             <div className="flex items-center gap-1">
-                              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(item)}>
+                              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(item)} aria-label={`Editar ${item.label}`}>
                                 <Pencil className="w-3.5 h-3.5" />
                               </Button>
-                              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDelete(item.id)}>
+                              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => setItemToDelete(item)} aria-label={`Excluir ${item.label}`}>
                                 <Trash2 className="w-3.5 h-3.5" />
                               </Button>
                             </div>
@@ -228,6 +252,33 @@ export function SearchFiltersTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={!!itemToDelete}
+        onOpenChange={(open) => !open && !deleteItem.isPending && setItemToDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir filtro público?</AlertDialogTitle>
+            <AlertDialogDescription>
+              “{itemToDelete?.label}” deixará de aparecer na busca do site. Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteItem.isPending}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handleDelete();
+              }}
+              disabled={deleteItem.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

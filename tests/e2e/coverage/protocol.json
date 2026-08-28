@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 2,
+  "attemptKind": "vimob.e2e.claim-attempt",
+  "attemptContentType": "application/vnd.vimob.e2e-claim-attempt+json",
+  "attemptAttachmentPrefix": "vimob-e2e-claim-attempt:",
+  "proofKind": "vimob.e2e.claim-proof",
+  "proofContentType": "application/vnd.vimob.e2e-claim-proof+json",
+  "proofAttachmentPrefix": "vimob-e2e-claim-proof:",
+  "attestationSchemaVersion": 1,
+  "attestationKind": "vimob.e2e.report-attestation",
+  "attestationAlgorithm": "HMAC-SHA256"
+}

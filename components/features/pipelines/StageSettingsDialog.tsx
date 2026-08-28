@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Sheet,
   SheetContent,
@@ -10,31 +10,17 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { ColorPicker } from '@/components/ui/color-picker';
-import { Plus, Trash2, Phone, MessageCircle, Mail, FileText, Clock, Loader2, Lock, Pencil, Check, X } from 'lucide-react';
-import { useCadenceTemplates, useCreateCadenceTask, useDeleteCadenceTask, useUpdateCadenceTask } from '@/hooks/use-cadences';
-import type { CadenceTaskTemplate } from '@/hooks/use-cadences';
+import { Switch } from '@/components/ui/switch';
+import { AlertCircle, Loader2, Lock, Plus, Target, Trophy } from 'lucide-react';
 import { useCanEditCadences } from '@/hooks/use-can-edit-cadences';
 import { useUpdateStage } from '@/hooks/use-stages';
 import { toast } from 'sonner';
 import { AutomationForm } from '@/components/features/automations/AutomationForm';
 import { AutomationsList } from '@/components/features/automations/AutomationsList';
+import { StageOperationalRules } from '@/components/features/cadences';
 import { StageAutomation } from '@/hooks/use-stage-automations';
+import { StageColorPicker } from './StageColorPicker';
+import { PIPELINE_STAGE_COLOR_FALLBACK } from '@/config/pipeline-stage-colors';
 
 interface StageSettingsDialogProps {
   open: boolean;
@@ -45,23 +31,12 @@ interface StageSettingsDialogProps {
     color: string;
     stage_key: string;
     pipeline_id?: string;
+    is_qualified?: boolean;
+    is_won?: boolean;
+    is_lost?: boolean;
+    is_active?: boolean;
   } | null;
   onStageUpdate: () => void;
-}
-
-const taskTypeIcons: Record<string, typeof Phone> = {
-  call: Phone,
-  message: MessageCircle,
-  email: Mail,
-  note: FileText,
-};
-
-type TaskType = 'call' | 'message' | 'email' | 'note';
-
-const taskTypes: TaskType[] = ['call', 'message', 'email', 'note'];
-
-function isTaskType(value: string | null | undefined): value is TaskType {
-  return Boolean(value && taskTypes.includes(value as TaskType));
 }
 
 function getErrorMessage(error: unknown) {
@@ -82,138 +57,73 @@ export function StageSettingsDialog({
   onStageUpdate
 }: StageSettingsDialogProps) {
   const [name, setName] = useState(stage?.name || '');
-  const [color, setColor] = useState(stage?.color || '#22c55e');
+  const [color, setColor] = useState(stage?.color || PIPELINE_STAGE_COLOR_FALLBACK);
+  const [isQualified, setIsQualified] = useState(stage?.is_qualified || false);
   const [isSaving, setIsSaving] = useState(false);
+  const saveInFlightRef = useRef(false);
   const canEdit = useCanEditCadences();
-
-  // Task dialog state
-  const [taskDialogOpen, setTaskDialogOpen] = useState(false);
-  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
-  const [editingTask, setEditingTask] = useState({
-    dayOffset: 1,
-    type: 'call' as 'call' | 'message' | 'email' | 'note',
-    title: ''
-  });
-  const [newTask, setNewTask] = useState({
-    dayOffset: 1,
-    type: 'call' as 'call' | 'message' | 'email' | 'note',
-    title: ''
-  });
 
   // Automation state
   const [automationFormOpen, setAutomationFormOpen] = useState(false);
   const [editingAutomation, setEditingAutomation] = useState<StageAutomation | null>(null);
 
-  const { data: templates = [] } = useCadenceTemplates();
-  const createTask = useCreateCadenceTask();
-  const updateTask = useUpdateCadenceTask();
-  const deleteTask = useDeleteCadenceTask();
   const updateStage = useUpdateStage();
-
-  // Find the cadence template for this exact stage first, then fall back to old stage_key data.
-  const stageTemplate = templates.find(t =>
-    (stage?.id && t.stage_id === stage.id) ||
-    (stage?.pipeline_id && t.pipeline_id === stage.pipeline_id && t.stage_key === stage.stage_key) ||
-    t.stage_key === stage?.stage_key
-  );
+  const qualificationRestriction = stage?.is_won
+    ? 'Colunas de Ganho já representam a conversão final do lead.'
+    : stage?.is_lost
+      ? 'Colunas de Perdido não podem ser usadas como etapa de qualificação.'
+      : stage?.is_active === false
+        ? 'Ative esta coluna antes de usá-la como etapa de qualificação.'
+        : null;
+  const canToggleQualification = canEdit && (!qualificationRestriction || isQualified);
 
   // Update local state when stage changes
   /* eslint-disable react-hooks/set-state-in-effect -- Keeps editable draft fields in sync with the selected stage. */
   useEffect(() => {
     if (stage) {
       setName(stage.name);
-      setColor(stage.color || '#22c55e');
+      setColor(stage.color || PIPELINE_STAGE_COLOR_FALLBACK);
+      setIsQualified(stage.is_qualified || false);
     }
   }, [stage]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleSaveGeneral = async () => {
-    if (!stage) return;
+    if (!stage || !canEdit || isSaving || saveInFlightRef.current) return;
+    const normalizedName = name.trim();
+    if (normalizedName.length < 2) {
+      toast.error('O nome da coluna deve ter pelo menos 2 caracteres.');
+      return;
+    }
+    saveInFlightRef.current = true;
     setIsSaving(true);
 
     try {
-      await updateStage.mutateAsync({ id: stage.id, name, color });
+      await updateStage.mutateAsync({ id: stage.id, name: normalizedName, color, isQualified });
       toast.success('Configurações salvas!');
       onStageUpdate();
     } catch (error: unknown) {
       toast.error('Erro ao salvar: ' + getErrorMessage(error));
     } finally {
+      saveInFlightRef.current = false;
       setIsSaving(false);
     }
   };
 
-  const handleAddTask = async () => {
-    if (!newTask.title.trim()) {
-      toast.error('Informe o título da tarefa.');
-      return;
-    }
-
-    if (!stageTemplate) {
-      toast.error('A cadência desta coluna ainda está carregando. Tente novamente em instantes.');
-      return;
-    }
-
-    try {
-      await createTask.mutateAsync({
-        cadence_template_id: stageTemplate.id,
-        day_offset: newTask.dayOffset,
-        type: newTask.type,
-        title: newTask.title.trim(),
-      });
-
-      setTaskDialogOpen(false);
-      setNewTask({ dayOffset: 1, type: 'call', title: '' });
-      toast.success('Tarefa adicionada à cadência.');
-    } catch (error: unknown) {
-      toast.error('Erro ao adicionar tarefa: ' + getErrorMessage(error));
-    }
+  const handleQualifiedChange = (checked: boolean) => {
+    if (checked && qualificationRestriction) return;
+    setIsQualified(checked);
   };
 
-  const handleDeleteTask = async (taskId: string) => {
-    try {
-      await deleteTask.mutateAsync(taskId);
-      toast.success('Tarefa removida.');
-    } catch (error: unknown) {
-      toast.error('Erro ao remover tarefa: ' + getErrorMessage(error));
-    }
-  };
-
-  const handleStartEditTask = (task: CadenceTaskTemplate) => {
-    setEditingTaskId(task.id);
-    setEditingTask({
-      dayOffset: task.day_offset ?? 0,
-      type: isTaskType(task.type) ? task.type : 'call',
-      title: task.title || '',
-    });
-  };
-
-  const handleCancelEditTask = () => {
-    setEditingTaskId(null);
-    setEditingTask({ dayOffset: 1, type: 'call', title: '' });
-  };
-
-  const handleSaveTask = async () => {
-    if (!editingTaskId || !editingTask.title.trim()) return;
-
-    try {
-      await updateTask.mutateAsync({
-        id: editingTaskId,
-        day_offset: editingTask.dayOffset,
-        type: editingTask.type,
-        title: editingTask.title.trim(),
-      });
-
-      handleCancelEditTask();
-      toast.success('Tarefa atualizada.');
-    } catch (error: unknown) {
-      toast.error('Erro ao atualizar tarefa: ' + getErrorMessage(error));
-    }
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && isSaving) return;
+    onOpenChange(nextOpen);
   };
 
   if (!stage) return null;
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent side="right" className="w-[90%] sm:w-[650px] sm:max-w-[650px] border-0 bg-[var(--app-surface-solid)] p-6 text-[var(--app-text-primary)] shadow-none flex flex-col overflow-y-auto">
         <SheetHeader>
           <SheetTitle>Configurações da Coluna</SheetTitle>
@@ -222,7 +132,7 @@ export function StageSettingsDialog({
         <Tabs defaultValue="general" className="mt-4">
           <TabsList className="mb-4 grid w-full grid-cols-3 rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-1">
             <TabsTrigger value="general" className="rounded-[6px] text-xs data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:text-[var(--app-text-primary)]"><span className="sm:hidden">Gerais</span><span className="hidden sm:inline">Configurações Gerais</span></TabsTrigger>
-            <TabsTrigger value="cadence" className="rounded-[6px] text-xs data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:text-[var(--app-text-primary)]"><span className="sm:hidden">Cadência</span><span className="hidden sm:inline">Cadência de tarefas</span></TabsTrigger>
+            <TabsTrigger value="cadence" className="rounded-[6px] text-xs data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:text-[var(--app-text-primary)]"><span className="sm:hidden">Regras</span><span className="hidden sm:inline">Regras da etapa</span></TabsTrigger>
             <TabsTrigger value="automations" className="rounded-[6px] text-xs data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:text-[var(--app-text-primary)]"><span className="sm:hidden">Automações</span><span className="hidden sm:inline">Automações</span></TabsTrigger>
           </TabsList>
 
@@ -235,8 +145,9 @@ export function StageSettingsDialog({
               </Badge>
             )}
             <div className="space-y-2">
-              <Label>Nome da coluna</Label>
+              <Label htmlFor="stage-settings-name">Nome da coluna</Label>
               <Input
+                id="stage-settings-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Nome do estágio"
@@ -246,9 +157,9 @@ export function StageSettingsDialog({
             </div>
 
             <div className="space-y-2">
-              <Label>Cor</Label>
+              <Label>Cor da coluna</Label>
               {canEdit ? (
-                <ColorPicker value={color} onChange={setColor} />
+                <StageColorPicker value={color} onChange={setColor} />
               ) : (
                 <div className="flex items-center gap-3 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-2">
                   <div
@@ -260,9 +171,87 @@ export function StageSettingsDialog({
               )}
             </div>
 
+            <section
+              aria-labelledby="marketing-results-title"
+              className="space-y-3 rounded-[8px] bg-[var(--app-surface-soft)] p-4"
+            >
+              <div className="flex items-start gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-hover)] text-primary">
+                  <Target className="h-4 w-4" aria-hidden="true" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 id="marketing-results-title" className="text-sm font-medium text-[var(--app-text-primary)]">
+                      Resultados de Marketing
+                    </h3>
+                    <Badge
+                      variant="secondary"
+                      className="h-5 rounded-[4px] border-0 bg-[var(--app-surface-hover)] px-2 text-[9px] font-light text-[var(--app-text-secondary)] shadow-none"
+                    >
+                      Por pipeline
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-[11px] font-light leading-4 text-[var(--app-text-tertiary)]">
+                    Defina como o avanço do lead será interpretado nos relatórios e nas integrações de Marketing.
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-[6px] bg-[var(--app-surface-solid)] p-3">
+                <div className="flex items-center justify-between gap-4">
+                  <Label
+                    htmlFor="stage-is-qualified"
+                    className="text-[12px] font-medium leading-5 text-[var(--app-text-primary)]"
+                  >
+                    Esta é a etapa de lead qualificado
+                  </Label>
+                  <Switch
+                    id="stage-is-qualified"
+                    checked={isQualified}
+                    onCheckedChange={handleQualifiedChange}
+                    disabled={!canToggleQualification}
+                    aria-describedby={
+                      qualificationRestriction
+                        ? 'stage-is-qualified-description stage-is-qualified-restriction'
+                        : 'stage-is-qualified-description'
+                    }
+                    aria-label="Definir esta coluna como etapa de lead qualificado"
+                  />
+                </div>
+                <p
+                  id="stage-is-qualified-description"
+                  className="mt-1.5 text-[11px] font-light leading-4 text-[var(--app-text-tertiary)]"
+                >
+                  Ao ativar, esta coluna substitui a outra etapa qualificada desta pipeline. O lead passa a contar como qualificado quando entrar aqui.
+                </p>
+
+                {qualificationRestriction ? (
+                  <div
+                    id="stage-is-qualified-restriction"
+                    className="mt-3 flex items-start gap-2 rounded-[6px] bg-[var(--app-surface-hover)] px-3 py-2.5 text-[11px] font-light leading-4 text-[var(--app-text-secondary)]"
+                  >
+                    <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
+                    <span>{qualificationRestriction}</span>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="flex items-center gap-3 rounded-[6px] bg-[var(--app-surface-solid)] p-3">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-emerald-500/10 text-emerald-500">
+                  <Trophy className="h-4 w-4" aria-hidden="true" />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[12px] font-medium text-[var(--app-text-primary)]">Convertido</p>
+                  <p className="mt-0.5 text-[11px] font-light leading-4 text-[var(--app-text-tertiary)]">
+                    Automático ao marcar o lead como Ganho.
+                  </p>
+                </div>
+              </div>
+            </section>
+
             {canEdit && (
               <div className="flex gap-2 pt-4">
-                <Button variant="outline" className="w-[40%] rounded-[6px] border-0 bg-transparent hover:bg-[var(--app-surface-hover)]" onClick={() => onOpenChange(false)}>
+                <Button variant="outline" className="w-[40%] rounded-[6px] border-0 bg-transparent hover:bg-[var(--app-surface-hover)]" onClick={() => handleOpenChange(false)} disabled={isSaving}>
                   Cancelar
                 </Button>
                 <Button className="w-[60%] rounded-[6px]" onClick={handleSaveGeneral} disabled={isSaving}>
@@ -274,204 +263,16 @@ export function StageSettingsDialog({
           </TabsContent>
 
           {/* Cadence Tab */}
-          <TabsContent value="cadence" className="space-y-4">
-            <div className="flex items-center justify-between">
-              <Label className="text-base">Cadência de tarefas</Label>
-              {canEdit ? (
-                <Button
-                  size="sm"
-                  onClick={() => setTaskDialogOpen(true)}
-                  className="bg-primary hover:bg-primary/90"
-                >
-                  <Plus className="h-4 w-4 mr-1" />
-                  Adicionar
-                </Button>
-              ) : (
-                <Badge variant="secondary" className="gap-1">
-                  <Lock className="h-3 w-3" />
-                  Somente visualização
-                </Badge>
-              )}
-            </div>
-
-            {stageTemplate && stageTemplate.tasks.length > 0 ? (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-16">Dia</TableHead>
-                    <TableHead className="w-16">Tipo</TableHead>
-                    <TableHead>Título</TableHead>
-                    <TableHead className="w-10"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {stageTemplate.tasks.map((task) => {
-                    const taskType = task.type || 'task';
-                    const Icon = taskTypeIcons[taskType] || Clock;
-                    return (
-                      <TableRow key={task.id}>
-                        {editingTaskId === task.id ? (
-                          <>
-                            <TableCell>
-                              <Input
-                                type="number"
-                                min="0"
-                                value={editingTask.dayOffset}
-                                onChange={(e) => setEditingTask({ ...editingTask, dayOffset: parseInt(e.target.value) || 0 })}
-                                className="h-8 w-16"
-                              />
-                            </TableCell>
-                            <TableCell>
-                              <Select
-                                value={editingTask.type}
-                                onValueChange={(v) => setEditingTask({ ...editingTask, type: isTaskType(v) ? v : 'call' })}
-                              >
-                                <SelectTrigger className="h-8 w-28">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="call">Ligação</SelectItem>
-                                  <SelectItem value="message">Mensagem</SelectItem>
-                                  <SelectItem value="email">Email</SelectItem>
-                                  <SelectItem value="note">Observação</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </TableCell>
-                            <TableCell>
-                              <Input
-                                value={editingTask.title}
-                                onChange={(e) => setEditingTask({ ...editingTask, title: e.target.value })}
-                                className="h-8"
-                                autoFocus
-                              />
-                            </TableCell>
-                          </>
-                        ) : (
-                          <>
-                            <TableCell className="font-mono">{task.day_offset}</TableCell>
-                            <TableCell>
-                              <Icon className="h-4 w-4 text-muted-foreground" />
-                            </TableCell>
-                            <TableCell>{task.title}</TableCell>
-                          </>
-                        )}
-                        <TableCell>
-                          {canEdit && (
-                            <div className="flex items-center justify-end gap-1">
-                              {editingTaskId === task.id ? (
-                                <>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 text-primary"
-                                    onClick={handleSaveTask}
-                                    disabled={updateTask.isPending}
-                                  >
-                                    <Check className="h-3.5 w-3.5" />
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7"
-                                    onClick={handleCancelEditTask}
-                                  >
-                                    <X className="h-3.5 w-3.5" />
-                                  </Button>
-                                </>
-                              ) : (
-                                <>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                                    onClick={() => handleStartEditTask(task)}
-                                  >
-                                    <Pencil className="h-3.5 w-3.5" />
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                                    onClick={() => handleDeleteTask(task.id)}
-                                  >
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </Button>
-                                </>
-                              )}
-                            </div>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            ) : (
-              <div className="text-center py-8 text-muted-foreground text-sm border rounded-lg">
-                Nenhuma tarefa configurada
-              </div>
-            )}
-
-            {/* Add Task Mini Dialog - only show if canEdit */}
-            {canEdit && taskDialogOpen && (
-              <div className="rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-4 space-y-4">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs">Dia</Label>
-                    <Input
-                      type="number"
-                      min="0"
-                      value={newTask.dayOffset}
-                      onChange={(e) => setNewTask({ ...newTask, dayOffset: parseInt(e.target.value) || 0 })}
-                      className="h-8"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Tipo</Label>
-                    <Select
-                      value={newTask.type}
-                      onValueChange={(v) => setNewTask({ ...newTask, type: isTaskType(v) ? v : 'call' })}
-                    >
-                      <SelectTrigger className="h-8">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="call">Ligação</SelectItem>
-                        <SelectItem value="message">Mensagem</SelectItem>
-                        <SelectItem value="email">Email</SelectItem>
-                        <SelectItem value="note">Observação</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Título</Label>
-                  <Input
-                    value={newTask.title}
-                    onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
-                    placeholder="Ex: Primeira ligação"
-                    className="h-8"
-                  />
-                </div>
-                <div className="flex justify-end gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setTaskDialogOpen(false)}
-                  >
-                    Cancelar
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={handleAddTask}
-                    disabled={!newTask.title || createTask.isPending}
-                  >
-                    {createTask.isPending && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
-                    Adicionar
-                  </Button>
-                </div>
-              </div>
-            )}
+          <TabsContent
+            value="cadence"
+            forceMount
+            className="space-y-4 data-[state=inactive]:hidden"
+          >
+            <StageOperationalRules
+              stageId={stage.id}
+              stageName={stage.name}
+              canEdit={canEdit}
+            />
           </TabsContent>
 
           {/* Automations Tab */}

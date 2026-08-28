@@ -9,30 +9,35 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Erro desconhecido'
 }
 
+function useOrganizationId() {
+  const { profile, organization } = useAuth()
+  return organization?.id || profile?.organization_id || undefined
+}
+
 export function useSiteMenuItems() {
-  const { profile } = useAuth()
+  const organizationId = useOrganizationId()
 
   return useQuery({
-    queryKey: ['site-menu-items', profile?.organization_id],
+    queryKey: ['site-menu-items', organizationId],
     queryFn: async () => {
-      if (!profile?.organization_id) return []
-      return siteAPI.listMenuItems(profile.organization_id)
+      if (!organizationId) return []
+      return siteAPI.listMenuItems(organizationId)
     },
-    enabled: !!profile?.organization_id,
+    enabled: !!organizationId,
   })
 }
 
 export function useCreateMenuItem() {
   const queryClient = useQueryClient()
-  const { profile } = useAuth()
+  const organizationId = useOrganizationId()
 
   return useMutation({
     mutationFn: async (item: Omit<SiteMenuItem, 'id' | 'organization_id' | 'created_at'>) => {
-      if (!profile?.organization_id) throw new Error('Organização não encontrada')
-      return siteAPI.createMenuItem(item, profile.organization_id)
+      if (!organizationId) throw new Error('Organização não encontrada')
+      return siteAPI.createMenuItem(item, organizationId)
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['site-menu-items'] })
+      queryClient.invalidateQueries({ queryKey: ['site-menu-items', organizationId] })
       toast.success('Item de menu adicionado!')
     },
     onError: (error: unknown) => {
@@ -43,14 +48,15 @@ export function useCreateMenuItem() {
 
 export function useUpdateMenuItem() {
   const queryClient = useQueryClient()
-  const { profile } = useAuth()
+  const organizationId = useOrganizationId()
 
   return useMutation({
     mutationFn: async (item: Partial<SiteMenuItem> & { id: string }) => {
-      return siteAPI.updateMenuItem(item, profile?.organization_id)
+      if (!organizationId) throw new Error('Organização não encontrada')
+      return siteAPI.updateMenuItem(item, organizationId)
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['site-menu-items'] })
+      queryClient.invalidateQueries({ queryKey: ['site-menu-items', organizationId] })
       toast.success('Item atualizado!')
     },
     onError: (error: unknown) => {
@@ -61,14 +67,15 @@ export function useUpdateMenuItem() {
 
 export function useDeleteMenuItem() {
   const queryClient = useQueryClient()
-  const { profile } = useAuth()
+  const organizationId = useOrganizationId()
 
   return useMutation({
     mutationFn: async (id: string) => {
-      await siteAPI.deleteMenuItem(id, profile?.organization_id)
+      if (!organizationId) throw new Error('Organização não encontrada')
+      await siteAPI.deleteMenuItem(id, organizationId)
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['site-menu-items'] })
+      queryClient.invalidateQueries({ queryKey: ['site-menu-items', organizationId] })
       toast.success('Item removido!')
     },
     onError: (error: unknown) => {
@@ -79,14 +86,15 @@ export function useDeleteMenuItem() {
 
 export function useReorderMenuItems() {
   const queryClient = useQueryClient()
-  const { profile } = useAuth()
+  const organizationId = useOrganizationId()
 
   return useMutation({
     mutationFn: async (items: { id: string; position: number }[]) => {
-      await siteAPI.reorderMenuItems(items, profile?.organization_id)
+      if (!organizationId) throw new Error('Organização não encontrada')
+      await siteAPI.reorderMenuItems(items, organizationId)
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['site-menu-items'] })
+      queryClient.invalidateQueries({ queryKey: ['site-menu-items', organizationId] })
     },
     onError: (error: unknown) => {
       toast.error('Erro ao reordenar: ' + getErrorMessage(error))

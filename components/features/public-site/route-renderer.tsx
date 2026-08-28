@@ -13,6 +13,7 @@ import {
   type PublicProperty,
   type PublicSiteConfig,
 } from "@/lib/api/public-site-server";
+import { parseNumericFilter } from "@/lib/validation";
 import { PublicSiteUnavailable } from "@/components/public/PublicSiteUnavailable";
 import { PublicSiteMaintenance } from "./PublicSiteMaintenance";
 import { PublicSiteShell } from "./PublicSiteShell";
@@ -354,20 +355,25 @@ function normalizePropertiesQuery(query: Record<string, string | string[] | unde
     banheiros: stringQuery(query.banheiros),
     vagas: stringQuery(query.vagas),
     mobilia: stringQuery(query.mobilia),
-    area_util_min: stringQuery(query.area_util_min),
-    area_util_max: stringQuery(query.area_util_max),
-    area_total_min: stringQuery(query.area_total_min),
-    area_total_max: stringQuery(query.area_total_max),
+    area_util_min: numericQuery(query.area_util_min),
+    area_util_max: numericQuery(query.area_util_max),
+    area_total_min: numericQuery(query.area_total_min),
+    area_total_max: numericQuery(query.area_total_max),
     aceita_financiamento: stringQuery(query.aceita_financiamento),
     aceita_permuta: stringQuery(query.aceita_permuta),
-    min_price: stringQuery(query.min_price) || stringQuery(query.minPrice),
-    max_price: stringQuery(query.max_price) || stringQuery(query.maxPrice),
+    min_price: numericQuery(query.min_price) || numericQuery(query.minPrice),
+    max_price: numericQuery(query.max_price) || numericQuery(query.maxPrice),
   };
 }
 
 function stringQuery(value: string | string[] | undefined) {
   if (Array.isArray(value)) return value[0] || "";
   return value || "";
+}
+
+function numericQuery(value: string | string[] | undefined) {
+  const parsed = parseNumericFilter(stringQuery(value));
+  return parsed === undefined ? "" : String(parsed);
 }
 
 function normalizePurposeQuery(value: string) {

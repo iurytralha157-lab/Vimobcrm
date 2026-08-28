@@ -1,10 +1,21 @@
 package leads
 
 import (
+	"context"
 	"encoding/base64"
+	"io"
+	"net/http"
+	"os"
 	"strings"
 	"testing"
+	"time"
 )
+
+type notificationRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (function notificationRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
+}
 
 func TestShouldDispatchLeadWhatsAppNotification(t *testing.T) {
 	t.Parallel()
@@ -21,6 +32,10 @@ func TestShouldDispatchLeadWhatsAppNotification(t *testing.T) {
 		"lead_redistributed_away",
 		"whatsapp_disconnected",
 		"schedule_reminder",
+		"billing_due_today",
+		"billing_payment_confirmed",
+		"billing_payment_receipt",
+		"onboarding_welcome",
 		"test_push",
 	}
 	for _, eventKey := range criticalEvents {
@@ -31,6 +46,85 @@ func TestShouldDispatchLeadWhatsAppNotification(t *testing.T) {
 
 	if shouldDispatchLeadWhatsAppNotification("gamification_update") {
 		t.Fatal("gamification update must not trigger WhatsApp dispatch")
+	}
+}
+
+func TestTransactionalEmailCapturesResendIdentityAndIdempotency(t *testing.T) {
+	t.Parallel()
+
+	client := newNotificationEmailClient(EmailConfig{
+		ResendAPIKey: "test-key",
+		FromEmail:    "Vimob <naoresponde@vimobcrm.com.br>",
+		AppURL:       "https://app.vimobcrm.com.br",
+	})
+	client.httpClient = &http.Client{Transport: notificationRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if got := request.Header.Get("Idempotency-Key"); got != "vimob:billing_payment_receipt:notification-id:v1" {
+			t.Fatalf("unexpected idempotency header %q", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"id":"resend-message-id"}`)),
+			Request:    request,
+		}, nil
+	})}
+
+	result := client.sendBilling(context.Background(), billingEmailPayload{
+		RecipientEmail:   "financeiro@example.com",
+		Title:            "Comprovante de pagamento Vimob",
+		EventKey:         "billing_payment_receipt",
+		ReceiptNumber:    "VIMOB-202608-ABC123",
+		Organization:     "Imobiliaria Exemplo",
+		PayerName:        "Imobiliaria Exemplo Ltda",
+		PayerTaxID:       "12345678000195",
+		PlanName:         "Pro",
+		BillingPeriod:    "mensal",
+		BillingType:      "PIX",
+		Amount:           "R$ 297,00",
+		PaidAt:           "03/08/2026 17:30",
+		VerificationPath: "/comprovantes/22222222-2222-4222-8222-222222222222",
+		IdempotencyKey:   "vimob:billing_payment_receipt:notification-id:v1",
+	})
+
+	if !result.OK || result.MessageID != "resend-message-id" {
+		t.Fatalf("expected accepted Resend message, got %#v", result)
+	}
+	if result.Recipient != "financeiro@example.com" {
+		t.Fatalf("expected normalized recipient, got %q", result.Recipient)
+	}
+}
+
+func TestPaymentReceiptHTMLMasksTaxDocumentAndUsesVimobVerification(t *testing.T) {
+	t.Parallel()
+
+	client := newNotificationEmailClient(EmailConfig{AppURL: "https://app.vimobcrm.com.br"})
+	html := client.paymentReceiptHTML(billingEmailPayload{
+		ReceiptNumber:     "VIMOB-202608-ABC123",
+		Organization:      "Imobiliaria Exemplo",
+		PayerName:         "Imobiliaria Exemplo Ltda",
+		PayerTaxID:        "12345678000195",
+		PlanName:          "Pro",
+		BillingPeriod:     "mensal",
+		BillingType:       "PIX",
+		Amount:            "R$ 297,00",
+		PaidAt:            "03/08/2026 17:30",
+		VerificationPath:  "/comprovantes/22222222-2222-4222-8222-222222222222",
+		ProviderReference: "pay_123",
+	})
+
+	for _, expected := range []string{
+		"VIMOB-202608-ABC123",
+		"••••••••••0195",
+		"https://app.vimobcrm.com.br/comprovantes/22222222-2222-4222-8222-222222222222",
+		"não substitui nota fiscal",
+	} {
+		if !strings.Contains(html, expected) {
+			t.Fatalf("expected receipt HTML to contain %q", expected)
+		}
+	}
+	if strings.Contains(html, "12345678000195") {
+		t.Fatal("receipt email must not expose the complete tax document")
 	}
 }
 
@@ -59,6 +153,77 @@ func TestApplyNotificationDispatchMetadata(t *testing.T) {
 	}
 	if !truthyValue(mapFromAny(dispatch["email"])["required"]) {
 		t.Fatal("deal_won must require email dispatch")
+	}
+}
+
+func TestBillingNotificationChannelsAndWhatsAppTemplate(t *testing.T) {
+	t.Parallel()
+
+	if !shouldDispatchEmailNotification("billing_due_today") {
+		t.Fatal("billing events must support email delivery")
+	}
+	if notificationTypeForEvent("billing_payment_confirmed") != "billing" {
+		t.Fatal("billing events must keep their own in-app category")
+	}
+
+	text := buildWhatsAppNotificationText(
+		"billing_due_today",
+		"Sua assinatura vence hoje",
+		"Consulte a cobranca dentro da sua conta Vimob.",
+		map[string]any{
+			"amount":      "R$ 297,00",
+			"due_date":    "31/07/2026",
+			"billing_url": "https://app.vimobcrm.com.br/settings?tab=subscription&billing=payments&payment=abc",
+		},
+	)
+
+	for _, expected := range []string{
+		"SUA ASSINATURA VENCE HOJE",
+		"Valor: R$ 297,00",
+		"Vencimento: 31/07/2026",
+		"https://app.vimobcrm.com.br/settings?tab=subscription",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("expected billing WhatsApp message to contain %q, got %q", expected, text)
+		}
+	}
+}
+
+func TestReceiptAndWelcomeWhatsAppTemplates(t *testing.T) {
+	t.Parallel()
+
+	receipt := buildWhatsAppNotificationText(
+		"billing_payment_receipt",
+		"Comprovante de pagamento Vimob",
+		"Pagamento confirmado.",
+		map[string]any{
+			"receipt_number":   "VIMOB-202608-ABC123",
+			"amount":           "R$ 297,00",
+			"billing_type":     "PIX",
+			"paid_at":          "03/08/2026 17:30",
+			"verification_url": "https://app.vimobcrm.com.br/comprovantes/token",
+		},
+	)
+	for _, expected := range []string{"VIMOB-202608-ABC123", "Pagamento: PIX", "Pago em: 03/08/2026 17:30", "https://app.vimobcrm.com.br/comprovantes/token"} {
+		if !strings.Contains(receipt, expected) {
+			t.Fatalf("expected receipt WhatsApp to contain %q, got %q", expected, receipt)
+		}
+	}
+
+	welcome := buildWhatsAppNotificationText(
+		"onboarding_welcome",
+		"Bem-vindo ao Vimob",
+		"Cadastro concluido.",
+		map[string]any{
+			"organization_name": "Imobiliaria Exemplo",
+			"plan_name":         "Pro",
+			"checkout_url":      "https://app.vimobcrm.com.br/checkout/token",
+		},
+	)
+	for _, expected := range []string{"BEM-VINDO AO VIMOB", "Imobiliaria Exemplo", "Plano: Pro", "https://app.vimobcrm.com.br/checkout/token"} {
+		if !strings.Contains(welcome, expected) {
+			t.Fatalf("expected welcome WhatsApp to contain %q, got %q", expected, welcome)
+		}
 	}
 }
 
@@ -124,6 +289,174 @@ func TestPermanentPushFailureIsNotRetriedOrOverwritten(t *testing.T) {
 	}
 	if pushDispatch["error"] != "VAPID credentials do not correspond" {
 		t.Fatalf("expected provider error to be preserved, got %#v", pushDispatch["error"])
+	}
+}
+
+func TestTransientDeliveryFailureUsesDurableBackoff(t *testing.T) {
+	t.Parallel()
+
+	metadata := setNotificationChannelDispatch(map[string]any{}, "email", DispatchChannelResult{
+		Enabled:   true,
+		Attempted: true,
+		Provider:  "resend",
+		Status:    http.StatusServiceUnavailable,
+		Error:     "temporary provider failure",
+	})
+	emailDispatch := mapFromAny(mapFromAny(metadata["dispatch"])["email"])
+	if emailDispatch["status"] != "failed" {
+		t.Fatalf("transient failure must remain retryable, got %#v", emailDispatch["status"])
+	}
+	if stringFromMap(emailDispatch, "next_attempt_at") == "" {
+		t.Fatal("transient failure must schedule a future attempt")
+	}
+	if emailDispatch["status"] == "skipped" {
+		t.Fatal("missing configuration or temporary failures must not be terminally skipped")
+	}
+}
+
+func TestProviderAcceptanceAndSignedWebhookOutcomesAreNotAutomaticallyRetried(t *testing.T) {
+	t.Parallel()
+
+	for _, channel := range []string{"email", "whatsapp"} {
+		metadata := setNotificationChannelDispatch(map[string]any{}, channel, DispatchChannelResult{
+			Enabled:   true,
+			Attempted: true,
+			OK:        true,
+			Provider:  "provider",
+			Status:    http.StatusAccepted,
+			MessageID: "provider-message-id",
+		})
+		dispatch := mapFromAny(mapFromAny(metadata["dispatch"])[channel])
+		if dispatch["status"] != "accepted" {
+			t.Fatalf("%s 2xx must mean accepted, not delivered: %#v", channel, dispatch)
+		}
+		if shouldAttemptNotificationChannel(metadata, channel, nil) {
+			t.Fatalf("%s accepted request must not be duplicated automatically", channel)
+		}
+	}
+
+	for _, terminalStatus := range []string{"delivered", "delivery_failed"} {
+		metadata := map[string]any{
+			"dispatch": map[string]any{
+				"email": map[string]any{"required": true, "status": terminalStatus},
+			},
+		}
+		if shouldAttemptNotificationChannel(metadata, "email", nil) {
+			t.Fatalf("signed webhook status %s must require assisted/manual handling, not an automatic resend", terminalStatus)
+		}
+	}
+}
+
+func TestNotificationClaimTokenPreventsAnExpiredWorkerFromFinalizingAReclaimedChannel(t *testing.T) {
+	t.Parallel()
+
+	firstClaim := setNotificationChannelProcessing(map[string]any{}, "email", "claim-one")
+	secondClaim := setNotificationChannelProcessing(map[string]any{}, "email", "claim-two")
+	if !notificationClaimsMatch(firstClaim, firstClaim, nil) {
+		t.Fatal("the active claim must match its persisted token")
+	}
+	if notificationClaimsMatch(firstClaim, secondClaim, nil) {
+		t.Fatal("an expired worker must not finalize after another worker reclaimed the channel")
+	}
+	if notificationDispatchBatchLimit < 1 || notificationDispatchBatchLimit > 5 {
+		t.Fatalf("delivery worker batch limit = %d; want a small bounded provider fan-out", notificationDispatchBatchLimit)
+	}
+	if notificationDispatchConcurrency < 1 || notificationDispatchConcurrency > 8 {
+		t.Fatalf("delivery concurrency = %d; want a bounded worker pool", notificationDispatchConcurrency)
+	}
+	if notificationDispatchDrainLimit < notificationDispatchConcurrency || notificationDispatchDrainLimit > 100 {
+		t.Fatalf("delivery drain limit = %d; want at least one job per worker and no unbounded drain", notificationDispatchDrainLimit)
+	}
+	if notificationDispatchClaimTimeout < 15*time.Minute {
+		t.Fatalf("delivery claim timeout = %s; want at least 15 minutes", notificationDispatchClaimTimeout)
+	}
+}
+
+func TestNotificationDrainUsesRowSkipLockedInsteadOfAGlobalClaimLock(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile("notification_dispatch_worker.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	if !strings.Contains(source, "for update skip locked") {
+		t.Fatal("parallel claimers need row-level SKIP LOCKED")
+	}
+	if strings.Contains(source, "notificationDispatchLockKey") {
+		t.Fatal("a global advisory lock disables the bounded three-worker drain")
+	}
+}
+
+func TestCadenceNotificationDeliveryIsSuppressedWithoutTouchingOtherAttentionEvents(t *testing.T) {
+	t.Parallel()
+
+	for _, metadata := range []map[string]any{
+		{"policy_type": "cadence_task", "event_key": "lead_attention_warning"},
+		{"policy_type": " CADENCE_TASK ", "event_key": "lead_attention_overdue"},
+		{"event_key": "cadence_task_reminder"},
+		{"event_key": "LEAD_CADENCE_TASK"},
+	} {
+		if !isCadenceNotificationDeliverySuppressed(metadata) {
+			t.Fatalf("cadence delivery was not suppressed for %#v", metadata)
+		}
+	}
+
+	for _, metadata := range []map[string]any{
+		nil,
+		{},
+		{"policy_type": "first_contact", "event_key": "lead_attention_warning"},
+		{"event_key": "schedule_reminder"},
+		{"event_key": "billing_payment_receipt"},
+	} {
+		if isCadenceNotificationDeliverySuppressed(metadata) {
+			t.Fatalf("legitimate delivery was suppressed for %#v", metadata)
+		}
+	}
+}
+
+func TestPendingDeliveryQueryExcludesCadenceBeforeClaimLimit(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile("notification_dispatch_worker.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	policyFilter := strings.Index(source, "metadata->>'policy_type'")
+	eventFilter := strings.Index(source, "metadata->>'event_key'")
+	claimLimit := strings.Index(source, "limit $2")
+	if policyFilter < 0 || eventFilter < 0 || claimLimit < 0 {
+		t.Fatal("pending-delivery query must contain cadence filters and its bounded limit")
+	}
+	if policyFilter > claimLimit || eventFilter > claimLimit {
+		t.Fatal("cadence rows must be excluded before ORDER/LIMIT so they cannot block legitimate work")
+	}
+}
+
+func TestCadenceDispatchGuardDoesNotPersistOrCallProviders(t *testing.T) {
+	t.Parallel()
+
+	delivery := (Repository{}).dispatchPendingNotification(
+		context.Background(),
+		pendingNotification{
+			Metadata: map[string]any{
+				"policy_type": "cadence_task",
+				"dispatch": map[string]any{
+					"push": map[string]any{"required": true, "status": "pending"},
+				},
+			},
+		},
+		nil,
+	)
+
+	if delivery.Error != "cadence_notification_delivery_disabled" {
+		t.Fatalf("unexpected cadence guard result: %#v", delivery)
+	}
+	if !delivery.SkipPersistence {
+		t.Fatal("retired cadence backlog must remain untouched instead of being claimed or rewritten")
+	}
+	if delivery.Push.Attempted || delivery.WhatsApp.Attempted || delivery.Email.Attempted {
+		t.Fatal("retired cadence backlog must never reach a provider")
 	}
 }
 

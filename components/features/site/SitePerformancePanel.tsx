@@ -13,9 +13,9 @@ type SitePerformancePanelProps = {
 }
 
 function getScoreColor(score: number) {
-  if (score >= 90) return '#10b981'
-  if (score >= 50) return '#f59e0b'
-  return '#ef4444'
+  if (score >= 90) return 'var(--success)'
+  if (score >= 50) return 'var(--warning)'
+  return 'var(--destructive)'
 }
 
 function getScoreLabel(score: number) {
@@ -51,7 +51,7 @@ function PerformanceScore({
           {score === undefined ? (
             <Icon className="h-5 w-5 text-muted-foreground" />
           ) : (
-            <span className="text-lg font-semibold tabular-nums">{score}</span>
+            <span className="text-[14px] font-normal tabular-nums">{score}</span>
           )}
         </div>
       </div>
@@ -90,7 +90,7 @@ export function SitePerformancePanel({
         <div>
           <div className="flex items-center gap-2">
             <Gauge className="h-4 w-4 text-primary" />
-            <h2 id="site-performance-title" className="text-base font-semibold">Desempenho</h2>
+            <h2 id="site-performance-title" className="text-[14px] font-normal">Desempenho</h2>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
             Teste de laboratório do endereço público com Lighthouse.

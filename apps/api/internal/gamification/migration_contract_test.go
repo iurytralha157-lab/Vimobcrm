@@ -15,16 +15,28 @@ func TestCanonicalMigrationContract(t *testing.T) {
 	if !ok {
 		t.Fatal("unable to resolve test source path")
 	}
-	migrationPath := filepath.Clean(filepath.Join(
+	migrationsDirectory := filepath.Clean(filepath.Join(
 		filepath.Dir(sourceFile),
 		"..", "..", "..", "..",
-		"supabase", "migrations", "20260712200000_gamification_canonical_engine.sql",
+		"supabase", "migrations",
 	))
-	payload, err := os.ReadFile(migrationPath)
-	if err != nil {
-		t.Fatalf("read canonical migration: %v", err)
+	migrationFiles := []string{
+		"20260722000000_production_public_private_baseline.sql",
+		"20260722000002_external_schema_objects.sql",
 	}
-	sql := string(payload)
+	var migrationSQL strings.Builder
+	for _, migrationFile := range migrationFiles {
+		payload, err := os.ReadFile(filepath.Join(migrationsDirectory, migrationFile))
+		if err != nil {
+			t.Fatalf("read canonical migration %s: %v", migrationFile, err)
+		}
+		migrationSQL.Write(payload)
+		migrationSQL.WriteByte('\n')
+	}
+	// The production migration is a schema snapshot and quotes every
+	// identifier. Normalize it so this test validates the migration a fresh
+	// environment actually applies, not the retired pre-squash source file.
+	sql := strings.ToLower(strings.ReplaceAll(migrationSQL.String(), `"`, ""))
 
 	required := []string{
 		"create table if not exists public.gamification_outbox",
@@ -34,29 +46,37 @@ func TestCanonicalMigrationContract(t *testing.T) {
 		"gamification_canonical_module_insert_season",
 		"gamification_canonical_module_update_season",
 		"exception\n  when others then",
-		"'gamification_events'",
-		"'user_gamification_stats'",
-		"'gamification_seasons'",
-		"'gamification_participants'",
-		"'gamification_missions'",
-		"'gamification_manual_entries'",
-		"alter publication supabase_realtime add table public.%I",
-		"revoke all on table public.gamification_outbox from public, anon, authenticated, service_role",
-		"alter column total_points type bigint",
-		"occurred_at timestamptz not null default now()",
+		"alter publication supabase_realtime add table public.gamification_events",
+		"alter publication supabase_realtime add table public.user_gamification_stats",
+		"alter publication supabase_realtime add table public.gamification_seasons",
+		"alter publication supabase_realtime add table public.gamification_participants",
+		"alter publication supabase_realtime add table public.gamification_missions",
+		"alter publication supabase_realtime add table public.gamification_manual_entries",
+		"total_points bigint default 0",
+		"occurred_at timestamp with time zone default now() not null",
 		"'migration_baseline'",
 		"create table if not exists private.gamification_activity_days",
 		"create table if not exists private.gamification_legacy_mission_progress_archive",
-		"sum(event.points_earned)::bigint as total_points",
 		"on delete cascade;",
-		"user_id = (select auth.uid())",
+		"select auth.uid() as uid",
+		"gamification members read canonical events",
+		"gamification users read own manual entries",
 	}
 	for _, fragment := range required {
 		if !strings.Contains(sql, fragment) {
 			t.Errorf("canonical migration is missing contract fragment %q", fragment)
 		}
 	}
-	if strings.Contains(sql, "pg_advisory_xact_lock") {
+	enqueueStart := strings.Index(sql, "create or replace function private.enqueue_gamification_outbox")
+	if enqueueStart < 0 {
+		t.Fatal("canonical enqueue function is missing from the production baseline")
+	}
+	enqueueEnd := strings.Index(sql[enqueueStart:], "alter function private.enqueue_gamification_outbox")
+	if enqueueEnd < 0 {
+		t.Fatal("canonical enqueue function terminator is missing from the production baseline")
+	}
+	enqueueFunction := sql[enqueueStart : enqueueStart+enqueueEnd]
+	if strings.Contains(enqueueFunction, "pg_advisory_xact_lock") {
 		t.Fatal("hot-path enqueue must not use an organization-wide advisory lock")
 	}
 	if count := strings.Count(sql, "gamification producer % skipped"); count != 6 {
@@ -65,9 +85,14 @@ func TestCanonicalMigrationContract(t *testing.T) {
 	if strings.Contains(sql, "sum(event.points_earned)::integer") || strings.Contains(sql, "sum(event.xp_earned)::integer") {
 		t.Fatal("ledger reconciliation must not narrow bigint totals back to integer")
 	}
-	normalizeAt := strings.Index(sql, "update public.gamification_rules\nset action_type = case")
-	uniqueAt := strings.Index(sql, "add constraint gamification_rules_org_action_canonical_key")
-	if normalizeAt < 0 || uniqueAt < 0 || normalizeAt > uniqueAt {
-		t.Fatal("rule aliases must be normalized and deduplicated before the canonical unique constraint")
+	for _, role := range []string{"anon", "authenticated"} {
+		for _, privilege := range []string{"all", "select", "insert", "update", "delete"} {
+			if strings.Contains(sql, "grant "+privilege+" on table public.gamification_outbox to "+role) {
+				t.Fatalf("canonical outbox must not grant %s to %s", privilege, role)
+			}
+		}
+	}
+	if strings.Contains(sql, "execute function public.handle_gamification_event") {
+		t.Fatal("retired direct ledger trigger must not be attached in the production baseline")
 	}
 }

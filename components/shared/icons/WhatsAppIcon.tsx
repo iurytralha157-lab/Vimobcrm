@@ -31,10 +31,16 @@ export const WhatsAppIcon: React.FC<WhatsAppIconProps> = ({
   const iconData = variant === 'logo' ? WHATSAPP_LOGO_JSON : WHATSAPP_CONVERSATION_JSON;
 
   const colors = useMemo(() => {
-    const isDark = resolvedTheme === 'dark';
+    const rootStyles =
+      typeof window !== 'undefined' && resolvedTheme
+        ? window.getComputedStyle(document.documentElement)
+        : null;
+    const tokenColor = (token: string) =>
+      rootStyles?.getPropertyValue(token).trim() || 'currentColor';
+
     return {
-      primary: customColors.primary || (isDark ? '#f8fafc' : '#121212'), // White for dark mode, dark for light mode
-      secondary: customColors.secondary || '#ed492f' // Default orange
+      primary: customColors.primary || tokenColor('--app-text-primary'),
+      secondary: customColors.secondary || tokenColor('--vimob-accent')
     };
   }, [resolvedTheme, customColors]);
 

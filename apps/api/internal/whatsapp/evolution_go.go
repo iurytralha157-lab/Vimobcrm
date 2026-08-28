@@ -10,9 +10,25 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/sync/singleflight"
 )
+
+const (
+	evolutionQRCodeFlowTimeout      = 18 * time.Second
+	evolutionQRCodeRecoveryCooldown = 30 * time.Second
+)
+
+var evolutionQRCodeRecoveryState = struct {
+	group        singleflight.Group
+	mu           sync.Mutex
+	lastAttempts map[string]time.Time
+}{
+	lastAttempts: map[string]time.Time{},
+}
 
 type evolutionSessionConfig struct {
 	ID           string
@@ -90,13 +106,34 @@ func (client functionsClient) invokeEvolutionDirect(ctx context.Context, action 
 			},
 		}, nil
 	case "instance.qr":
-		result, err := client.evolutionFetch(ctx, http.MethodGet, "/instance/qr", evolutionFetchOptions{
-			Token: token,
-		})
+		qrContext, cancel := context.WithTimeout(ctx, evolutionQRCodeFlowTimeout)
+		defer cancel()
+
+		const sourceEndpoint = "/instance/qr"
+		qrOptions := evolutionFetchOptions{
+			Query:      map[string]any{"instanceId": instanceKey},
+			InstanceID: instanceKey,
+			Token:      token,
+		}
+		result, err := client.evolutionFetch(qrContext, http.MethodGet, sourceEndpoint, qrOptions)
 		if err != nil {
 			return nil, err
 		}
 		qr := normalizeEvolutionQR(result.Data)
+		if qr == "" {
+			statusResult, statusErr := client.evolutionFetch(qrContext, http.MethodGet, "/instance/status", evolutionFetchOptions{
+				Query:      map[string]any{"instanceId": instanceKey},
+				InstanceID: instanceKey,
+				Token:      token,
+			})
+			if statusErr == nil && evolutionQRClientCanBeRecovered(statusResult, instanceKey) {
+				result, err = client.recoverEvolutionQRCode(qrContext, instanceKey, sourceEndpoint, qrOptions)
+				if err != nil {
+					return nil, err
+				}
+				qr = normalizeEvolutionQR(result.Data)
+			}
+		}
 		response := map[string]any{
 			"ok":     result.OK && qr != "",
 			"status": result.Status,
@@ -105,7 +142,7 @@ func (client functionsClient) invokeEvolutionDirect(ctx context.Context, action 
 			response["data"] = map[string]any{
 				"qrcode":         qr,
 				"instanceKey":    instanceKey,
-				"sourceEndpoint": "/instance/qr",
+				"sourceEndpoint": sourceEndpoint,
 			}
 		} else {
 			response["data"] = result.Data
@@ -164,6 +201,121 @@ func (client functionsClient) invokeEvolutionDirect(ctx context.Context, action 
 	}
 
 	return response, nil
+}
+
+func (client functionsClient) recoverEvolutionQRCode(
+	ctx context.Context,
+	instanceKey string,
+	sourceEndpoint string,
+	qrOptions evolutionFetchOptions,
+) (evolutionFetchResult, error) {
+	recoveryKey := client.evolutionGoAPIURL + "|" + instanceKey
+	resultChannel := evolutionQRCodeRecoveryState.group.DoChan(recoveryKey, func() (any, error) {
+		current, err := client.evolutionFetch(ctx, http.MethodGet, sourceEndpoint, qrOptions)
+		if err != nil || normalizeEvolutionQR(current.Data) != "" {
+			return current, err
+		}
+
+		statusResult, err := client.evolutionFetch(ctx, http.MethodGet, "/instance/status", evolutionFetchOptions{
+			Query:      map[string]any{"instanceId": instanceKey},
+			InstanceID: instanceKey,
+			Token:      qrOptions.Token,
+		})
+		if err != nil || !evolutionQRClientCanBeRecovered(statusResult, instanceKey) {
+			return current, err
+		}
+		if !reserveEvolutionQRCodeRecovery(recoveryKey, time.Now()) {
+			return current, nil
+		}
+
+		forceResult, err := client.evolutionFetch(
+			ctx,
+			http.MethodPost,
+			fmt.Sprintf("/instance/forcereconnect/%s", url.PathEscape(instanceKey)),
+			evolutionFetchOptions{
+				Body:            map[string]any{"number": instanceKey},
+				UseGlobalAPIKey: true,
+			},
+		)
+		if err != nil {
+			return evolutionFetchResult{}, err
+		}
+		if !evolutionForceReconnectStarted(forceResult) {
+			return evolutionFetchResult{}, fmt.Errorf(
+				"%w: Evolution Go QR recovery failed",
+				ErrProviderFailed,
+			)
+		}
+
+		recovered, err := client.evolutionFetch(ctx, http.MethodGet, sourceEndpoint, qrOptions)
+		if err == nil && normalizeEvolutionQR(recovered.Data) != "" {
+			clearEvolutionQRCodeRecovery(recoveryKey)
+		}
+		return recovered, err
+	})
+
+	select {
+	case <-ctx.Done():
+		return evolutionFetchResult{}, fmt.Errorf(
+			"%w: %w: Evolution Go QR recovery timed out",
+			ErrProviderFailed,
+			ErrProviderOutcomeUnknown,
+		)
+	case outcome := <-resultChannel:
+		if outcome.Err != nil {
+			return evolutionFetchResult{}, outcome.Err
+		}
+		result, ok := outcome.Val.(evolutionFetchResult)
+		if !ok {
+			return evolutionFetchResult{}, fmt.Errorf("%w: invalid Evolution Go QR recovery result", ErrProviderFailed)
+		}
+		return result, nil
+	}
+}
+
+func evolutionQRClientCanBeRecovered(result evolutionFetchResult, instanceKey string) bool {
+	if result.OK {
+		return false
+	}
+	if _, valid := normalizeUUID(instanceKey); !valid {
+		return false
+	}
+
+	message := strings.ToLower(strings.TrimSpace(evolutionErrorMessage(result.Data, result.RawText)))
+	return message == "client disconnected"
+}
+
+func evolutionForceReconnectStarted(result evolutionFetchResult) bool {
+	if result.OK {
+		return true
+	}
+
+	message := strings.ToLower(strings.TrimSpace(evolutionErrorMessage(result.Data, result.RawText)))
+	return message == "failed to login"
+}
+
+func reserveEvolutionQRCodeRecovery(key string, now time.Time) bool {
+	evolutionQRCodeRecoveryState.mu.Lock()
+	defer evolutionQRCodeRecoveryState.mu.Unlock()
+
+	for candidate, attemptedAt := range evolutionQRCodeRecoveryState.lastAttempts {
+		if now.Sub(attemptedAt) >= evolutionQRCodeRecoveryCooldown {
+			delete(evolutionQRCodeRecoveryState.lastAttempts, candidate)
+		}
+	}
+	if attemptedAt, exists := evolutionQRCodeRecoveryState.lastAttempts[key]; exists &&
+		now.Sub(attemptedAt) < evolutionQRCodeRecoveryCooldown {
+		return false
+	}
+
+	evolutionQRCodeRecoveryState.lastAttempts[key] = now
+	return true
+}
+
+func clearEvolutionQRCodeRecovery(key string) {
+	evolutionQRCodeRecoveryState.mu.Lock()
+	delete(evolutionQRCodeRecoveryState.lastAttempts, key)
+	evolutionQRCodeRecoveryState.mu.Unlock()
 }
 
 func evolutionInstanceHeader(action string, instanceKey string) string {
@@ -566,11 +718,19 @@ func normalizeEvolutionQR(data any) string {
 		"Qrcode",
 		"qrCode",
 		"base64",
-		"code",
+		"qrcode.base64",
+		"qrCode.base64",
 		"data.qrcode",
 		"data.Qrcode",
+		"data.qrCode",
 		"data.base64",
-		"data.code",
+		"data.qrcode.base64",
+		"data.qrCode.base64",
+		"response.qrcode",
+		"response.qrCode",
+		"response.base64",
+		"response.qrcode.base64",
+		"response.qrCode.base64",
 	)
 }
 

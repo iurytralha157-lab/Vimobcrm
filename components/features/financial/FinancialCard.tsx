@@ -40,17 +40,17 @@ export function FinancialCard({
 
   return (
     <Card className={cn('card-hover', variantStyles[variant], className)}>
-      <CardContent className="p-3 sm:p-4 md:p-6">
+      <CardContent className="p-3 sm:p-4">
         <div className="flex items-start justify-between gap-2">
-          <div className="flex-1 min-w-0 space-y-1 sm:space-y-2">
-            <p className="text-xs sm:text-sm font-medium text-muted-foreground leading-tight">{title}</p>
-            <p className="text-base sm:text-xl md:text-2xl font-bold tracking-tight break-all">{value}</p>
+          <div className="min-w-0 flex-1 space-y-1">
+            <p className="text-[12px] font-light leading-tight text-muted-foreground">{title}</p>
+            <p className="break-all text-[16px] font-normal leading-tight">{value}</p>
             {description && (
-              <p className="text-[10px] sm:text-xs text-muted-foreground leading-tight">{description}</p>
+              <p className="text-[11px] font-light leading-tight text-muted-foreground">{description}</p>
             )}
             {trend && (
               <p className={cn(
-                "text-xs font-medium",
+                "text-[12px] font-light",
                 trend.isPositive ? "text-success" : "text-destructive"
               )}>
                 {trend.isPositive ? '↑' : '↓'} {Math.abs(trend.value)}% vs mês anterior
@@ -58,10 +58,10 @@ export function FinancialCard({
             )}
           </div>
           <div className={cn(
-            "p-2 sm:p-3 rounded-lg shrink-0",
+            "flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] p-0",
             iconStyles[variant]
           )}>
-            <Icon className="h-4 w-4 sm:h-5 sm:w-5" />
+            <Icon className="h-4 w-4" aria-hidden="true" />
           </div>
         </div>
       </CardContent>

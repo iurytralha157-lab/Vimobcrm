@@ -1,8 +1,14 @@
 import {
   analyticsQuerySchema,
+  apiLeadAnalyticsResponseSchema,
+  apiMarketingCampaignInsightsResponseSchema,
+  apiSiteAnalyticsDetailedResponseSchema,
+  apiSiteAnalyticsSummaryResponseSchema,
   apiUnknownEnvelopeSchema,
   apiUnknownListEnvelopeSchema,
+  campaignInsightsQuerySchema,
   parseDomainInput,
+  siteAnalyticsQuerySchema,
   uuidSchema,
   validateDomainResponse,
 } from '@/lib/validation';
@@ -13,6 +19,10 @@ type Envelope<T> = {
 };
 
 type Query = Record<string, string | number | boolean | null | undefined>;
+type TenantRequestOptions = {
+  organizationId?: string | null;
+  signal?: AbortSignal;
+};
 
 export const analyticsAPI = {
   async metaInsights<T = unknown>(query: Query) {
@@ -22,32 +32,63 @@ export const analyticsAPI = {
     return response.data;
   },
 
-  async campaignInsights<T = unknown>(query: Query) {
-    const validatedQuery = parseDomainInput(analyticsQuerySchema, query, 'analytics.campaign-insights');
-    const response = await vimobAPIRequest<Envelope<T>>('/v1/analytics/campaign-insights', { query: validatedQuery });
-    validateDomainResponse(apiUnknownEnvelopeSchema, response, 'analytics.campaign-insights');
-    return response.data;
+  async campaignInsights(
+    query: Query,
+    options?: TenantRequestOptions,
+  ) {
+    const validatedQuery = parseDomainInput(
+      campaignInsightsQuerySchema,
+      query,
+      'analytics.campaign-insights',
+    );
+    const response = await vimobAPIRequest<unknown>('/v1/analytics/campaign-insights', {
+      query: validatedQuery,
+      organizationId: options?.organizationId,
+      signal: options?.signal,
+    });
+    return validateDomainResponse(
+      apiMarketingCampaignInsightsResponseSchema,
+      response,
+      'analytics.campaign-insights',
+    ).data;
   },
 
-  async leadAnalytics<T = unknown>(query: Query) {
-    const validatedQuery = parseDomainInput(analyticsQuerySchema, query, 'analytics.lead');
-    const response = await vimobAPIRequest<Envelope<T>>('/v1/analytics/lead', { query: validatedQuery });
-    validateDomainResponse(apiUnknownEnvelopeSchema, response, 'analytics.lead');
-    return response.data;
+  async leadAnalytics(query: Query, options?: TenantRequestOptions) {
+    const validatedQuery = parseDomainInput(siteAnalyticsQuerySchema, query, 'analytics.lead');
+    const response = await vimobAPIRequest<unknown>('/v1/analytics/lead', {
+      query: validatedQuery,
+      organizationId: options?.organizationId,
+      signal: options?.signal,
+    });
+    return validateDomainResponse(apiLeadAnalyticsResponseSchema, response, 'analytics.lead').data;
   },
 
-  async siteSummary<T = unknown>(query: Query) {
-    const validatedQuery = parseDomainInput(analyticsQuerySchema, query, 'analytics.site-summary');
-    const response = await vimobAPIRequest<Envelope<T>>('/v1/analytics/site-summary', { query: validatedQuery });
-    validateDomainResponse(apiUnknownEnvelopeSchema, response, 'analytics.site-summary');
-    return response.data;
+  async siteSummary(query: Query, options?: TenantRequestOptions) {
+    const validatedQuery = parseDomainInput(siteAnalyticsQuerySchema, query, 'analytics.site-summary');
+    const response = await vimobAPIRequest<unknown>('/v1/analytics/site-summary', {
+      query: validatedQuery,
+      organizationId: options?.organizationId,
+      signal: options?.signal,
+    });
+    return validateDomainResponse(
+      apiSiteAnalyticsSummaryResponseSchema,
+      response,
+      'analytics.site-summary',
+    ).data;
   },
 
-  async siteDetailed<T = unknown>(query: Query) {
-    const validatedQuery = parseDomainInput(analyticsQuerySchema, query, 'analytics.site-detailed');
-    const response = await vimobAPIRequest<Envelope<T>>('/v1/analytics/site-detailed', { query: validatedQuery });
-    validateDomainResponse(apiUnknownEnvelopeSchema, response, 'analytics.site-detailed');
-    return response.data;
+  async siteDetailed(query: Query, options?: TenantRequestOptions) {
+    const validatedQuery = parseDomainInput(siteAnalyticsQuerySchema, query, 'analytics.site-detailed');
+    const response = await vimobAPIRequest<unknown>('/v1/analytics/site-detailed', {
+      query: validatedQuery,
+      organizationId: options?.organizationId,
+      signal: options?.signal,
+    });
+    return validateDomainResponse(
+      apiSiteAnalyticsDetailedResponseSchema,
+      response,
+      'analytics.site-detailed',
+    ).data;
   },
 
   async enterpriseKPIs<T = unknown>(query: Query) {

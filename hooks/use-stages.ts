@@ -12,6 +12,14 @@ import {
   type PipelineBoardFilters,
 } from '@/lib/api/pipeline-board';
 import { VimobAPIError } from '@/lib/api/vimob-client';
+import {
+  stageWithLeadsQueryKey,
+  type PipelineQueryKeyFilters,
+} from '@/lib/pipeline-query-key';
+import {
+  getPendingPipelineMoves,
+  reconcilePipelineBoardSnapshot,
+} from '@/lib/pipeline-board-cache';
 import type { Tables } from '@/integrations/supabase/types';
 
 export type Stage = Tables<'stages'> & {
@@ -55,17 +63,7 @@ export type StageWithLeads = Stage & {
   has_more: boolean;
 };
 
-export interface PipelineQueryFilters {
-  dateRange?: { from: Date; to: Date } | null;
-  filterTag?: string;
-  filterDealStatus?: string;
-  searchQuery?: string;
-  filterCampaign?: string;
-  filterAdSet?: string;
-  filterAd?: string;
-  filterSource?: string;
-  filterUserIds?: string[];
-}
+export type PipelineQueryFilters = PipelineQueryKeyFilters;
 
 interface FilteredStageCountsParams extends PipelineQueryFilters {
   pipelineId?: string;
@@ -118,24 +116,41 @@ export function useStagesWithLeads(
   },
 ) {
   const organizationId = useOrganizationId();
+  const queryKey = stageWithLeadsQueryKey({
+    organizationId,
+    pipelineId,
+    filterUserId,
+    filters,
+  });
 
   return useQuery({
-    queryKey: stageWithLeadsQueryKey({ organizationId, pipelineId, filterUserId, filters }),
+    queryKey,
     staleTime: PIPELINE_BOARD_STALE_TIME_MS,
     gcTime: PIPELINE_CACHE_TIME_MS,
     placeholderData: keepPreviousData,
     enabled: Boolean(organizationId && pipelineId && (options?.enabled ?? true)),
     refetchOnMount: true,
-    queryFn: async () => {
+    structuralSharing: (oldData, newData) =>
+      reconcilePipelineBoardSnapshot(
+        oldData as StageWithLeads[] | undefined,
+        newData as StageWithLeads[],
+        getPendingPipelineMoves<PipelineLead>(queryKey),
+      ),
+    queryFn: async ({ signal }) => {
       return (await getPipelineBoard({
         organizationId,
         pipelineId,
         filterUserId,
         filters: filters as PipelineBoardFilters,
         limit: LEADS_PER_STAGE,
+        signal,
       })) as StageWithLeads[];
     },
     retry: (failureCount, error) => {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return false;
+      }
+
       if (error instanceof VimobAPIError && ['api_timeout', 'api_unavailable'].includes(error.code)) {
         return failureCount < 1;
       }
@@ -294,16 +309,17 @@ export function useUpdateStage() {
   const organizationId = useOrganizationId();
 
   return useMutation({
-    mutationFn: ({ id, name, color, stageKey, isWon, isLost, isActive }: {
+    mutationFn: ({ id, name, color, stageKey, isWon, isLost, isQualified, isActive }: {
       id: string;
       name?: string;
       color?: string;
       stageKey?: string;
       isWon?: boolean;
       isLost?: boolean;
+      isQualified?: boolean;
       isActive?: boolean;
     }) => {
-      return pipelinesAPI.updateStage(id, { name, color, stageKey, isWon, isLost, isActive }, organizationId);
+      return pipelinesAPI.updateStage(id, { name, color, stageKey, isWon, isLost, isQualified, isActive }, organizationId);
     },
     onSuccess: () => invalidatePipelineQueries(queryClient),
   });
@@ -350,20 +366,15 @@ export function useLoadMoreLeads() {
       filterUserId?: string;
       filters?: PipelineQueryFilters;
     }) => {
-      try {
-        return (await getPipelineStageLeads({
-          organizationId,
-          pipelineId,
-          stageId,
-          offset,
-          filterUserId,
-          filters: filters as PipelineBoardFilters,
-          limit: LEADS_PER_STAGE,
-        })) as { stageId: string; leads: PipelineLead[] };
-      } catch (err) {
-        console.error('[Pipeline filters] useLoadMoreLeads error:', err);
-        return { stageId, leads: [] };
-      }
+      return (await getPipelineStageLeads({
+        organizationId,
+        pipelineId,
+        stageId,
+        offset,
+        filterUserId,
+        filters: filters as PipelineBoardFilters,
+        limit: LEADS_PER_STAGE,
+      })) as { stageId: string; leads: PipelineLead[] };
     },
     onSuccess: ({ stageId, leads }, { pipelineId, filterUserId, filters }) => {
       queryClient.setQueryData(
@@ -371,10 +382,13 @@ export function useLoadMoreLeads() {
         (old: StageWithLeads[] | undefined) => {
           if (!old) return old;
 
+          const existingIds = new Set(
+            old.flatMap((stage) => (stage.leads || []).map((lead) => lead.id)),
+          );
+
           return old.map((stage) => {
             if (stage.id !== stageId) return stage;
 
-            const existingIds = new Set((stage.leads || []).map((lead) => lead.id));
             const newLeads = leads.filter((lead) => !existingIds.has(lead.id));
 
             return {
@@ -392,32 +406,6 @@ export function useLoadMoreLeads() {
 function useOrganizationId() {
   const { organization, profile } = useAuth();
   return organization?.id || profile?.organization_id || undefined;
-}
-
-function stageWithLeadsQueryKey(params: {
-  organizationId?: string;
-  pipelineId?: string;
-  filterUserId?: string;
-  filters?: PipelineQueryFilters;
-}) {
-  const { organizationId, pipelineId, filterUserId, filters } = params;
-
-  return [
-    'stages-with-leads',
-    organizationId,
-    pipelineId,
-    filterUserId,
-    filters?.dateRange?.from?.toISOString(),
-    filters?.dateRange?.to?.toISOString(),
-    filters?.filterTag,
-    filters?.filterDealStatus,
-    filters?.searchQuery,
-    filters?.filterCampaign,
-    filters?.filterAdSet,
-    filters?.filterAd,
-    filters?.filterSource,
-    filters?.filterUserIds?.join(','),
-  ];
 }
 
 function invalidatePipelineQueries(queryClient: ReturnType<typeof useQueryClient>) {

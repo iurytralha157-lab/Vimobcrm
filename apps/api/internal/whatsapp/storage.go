@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/supabasehttp"
 )
 
 var ErrStorageNotConfigured = errors.New("whatsapp storage is not configured")
@@ -61,8 +63,7 @@ func (client storageClient) signedURL(ctx context.Context, bucket string, object
 	if err != nil {
 		return "", err
 	}
-	request.Header.Set("apikey", client.apiKey)
-	request.Header.Set("Authorization", "Bearer "+client.apiKey)
+	supabasehttp.SetServiceAuth(request, client.apiKey)
 	request.Header.Set("Content-Type", "application/json")
 
 	response, err := client.httpClient.Do(request)
@@ -113,8 +114,7 @@ func (client storageClient) upload(ctx context.Context, bucket string, objectPat
 	if strings.TrimSpace(contentType) == "" {
 		contentType = "application/octet-stream"
 	}
-	request.Header.Set("apikey", client.apiKey)
-	request.Header.Set("Authorization", "Bearer "+client.apiKey)
+	supabasehttp.SetServiceAuth(request, client.apiKey)
 	request.Header.Set("Content-Type", contentType)
 	request.Header.Set("Cache-Control", "3600")
 	if upsert {

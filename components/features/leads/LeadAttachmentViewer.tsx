@@ -34,9 +34,9 @@ function getKindLabel(kind: AttachmentKind) {
     case 'image':
       return 'Imagem';
     case 'video':
-      return 'Video';
+      return 'Vídeo';
     case 'audio':
-      return 'Audio';
+      return 'Áudio';
     case 'pdf':
       return 'PDF';
     default:
@@ -61,17 +61,20 @@ function normalizeAttachmentFileURL(value: string | null | undefined) {
   const fileURL = (value || '').trim();
   if (!fileURL) return '';
 
-  try {
-    const parsed = new URL(fileURL);
-    if (parsed.pathname.startsWith('/object/')) {
-      parsed.pathname = `/storage/v1${parsed.pathname}`;
-      return parsed.toString();
-    }
-  } catch {
-    return fileURL;
+  if (fileURL.startsWith('/') && !fileURL.startsWith('//')) {
+    return fileURL.startsWith('/object/') ? `/storage/v1${fileURL}` : fileURL;
   }
 
-  return fileURL;
+  try {
+    const parsed = new URL(fileURL);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+    if (parsed.pathname.startsWith('/object/')) {
+      parsed.pathname = `/storage/v1${parsed.pathname}`;
+    }
+    return parsed.toString();
+  } catch {
+    return '';
+  }
 }
 
 export function LeadAttachmentViewer({ attachment, open, onOpenChange }: LeadAttachmentViewerProps) {
@@ -166,18 +169,18 @@ export function LeadAttachmentViewer({ attachment, open, onOpenChange }: LeadAtt
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="flex h-[88vh] w-[94vw] max-w-5xl flex-col overflow-hidden border-0 bg-[#090909] p-0 text-white shadow-2xl [&>button]:hidden">
+      <DialogContent className="flex h-[88vh] w-[94vw] max-w-5xl flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none [&>button]:hidden">
         <DialogTitle className="sr-only">{attachment.file_name}</DialogTitle>
 
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--app-border)] px-4 py-3">
             <div className="flex min-w-0 items-center gap-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] bg-white/10 text-white">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]">
                 <AttachmentKindIcon kind={kind} className="h-4 w-4" />
               </span>
               <div className="min-w-0">
-                <p className="truncate text-sm font-semibold">{attachment.file_name}</p>
-                <p className="text-xs text-white/55">{getKindLabel(kind)}</p>
+                <p className="truncate text-sm font-normal">{attachment.file_name}</p>
+                <p className="text-xs font-light text-[var(--app-text-tertiary)]">{getKindLabel(kind)}</p>
               </div>
             </div>
 
@@ -186,8 +189,10 @@ export function LeadAttachmentViewer({ attachment, open, onOpenChange }: LeadAtt
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="h-9 w-9 rounded-[6px] text-white hover:bg-white/10 hover:text-white"
+                className="h-9 w-9 rounded-[6px] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
                 onClick={handleDownload}
+                disabled={!fileURL}
+                aria-label={`Baixar ${attachment.file_name}`}
                 title="Baixar"
               >
                 <Download className="h-4 w-4" />
@@ -196,8 +201,9 @@ export function LeadAttachmentViewer({ attachment, open, onOpenChange }: LeadAtt
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="h-9 w-9 rounded-[6px] text-white hover:bg-white/10 hover:text-white"
-                onClick={() => onOpenChange(false)}
+                className="h-9 w-9 rounded-[6px] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
+                onClick={() => handleOpenChange(false)}
+                aria-label="Fechar visualização do anexo"
                 title="Fechar"
               >
                 <X className="h-5 w-5" />
@@ -205,30 +211,30 @@ export function LeadAttachmentViewer({ attachment, open, onOpenChange }: LeadAtt
             </div>
           </div>
 
-          <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black">
+          <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[var(--app-surface-soft)]">
             {isPreparingPreview ? (
               <div className="flex flex-col items-center gap-3 px-6 text-center">
-                <Loader2 className="h-8 w-8 animate-spin text-white/70" />
-                <p className="text-sm text-white/65">Carregando previa...</p>
+                <Loader2 className="h-8 w-8 animate-spin text-[var(--app-text-secondary)]" />
+                <p className="text-sm font-light text-[var(--app-text-secondary)]">Carregando prévia...</p>
               </div>
             ) : previewUnavailable ? (
               <div className="flex max-w-md flex-col items-center gap-3 px-6 text-center">
                 {hasError ? (
                   <AlertCircle className="h-10 w-10 text-red-400" />
                 ) : (
-                  <AttachmentKindIcon kind={kind} className="h-12 w-12 text-white/65" />
+                  <AttachmentKindIcon kind={kind} className="h-12 w-12 text-[var(--app-text-secondary)]" />
                 )}
                 <div>
-                  <p className="text-base font-semibold">
+                  <p className="text-base font-normal">
                     {hasError ? 'Não foi possível carregar a prévia' : 'Prévia indisponível'}
                   </p>
-                  <p className="mt-1 text-sm text-white/55">
+                  <p className="mt-1 text-sm font-light text-[var(--app-text-tertiary)]">
                     {hasError
                       ? 'A URL do arquivo não respondeu corretamente. O arquivo continua anexado e pode ser baixado.'
-                      : 'Este tipo de arquivo nao tem visualizacao direta no navegador. O arquivo esta anexado e pode ser baixado.'}
+                      : 'Este tipo de arquivo não tem visualização direta no navegador. O arquivo está anexado e pode ser baixado.'}
                   </p>
                 </div>
-                <Button type="button" onClick={handleDownload} className="mt-2 rounded-[6px]">
+                <Button type="button" onClick={handleDownload} disabled={!fileURL} className="mt-2 h-8 rounded-[6px] px-3 text-[11px] font-light">
                   <Download className="mr-2 h-4 w-4" />
                   Baixar arquivo
                 </Button>
@@ -251,10 +257,10 @@ export function LeadAttachmentViewer({ attachment, open, onOpenChange }: LeadAtt
               />
             ) : kind === 'audio' ? (
               <div className="w-full max-w-lg px-6">
-                <div className="rounded-[8px] bg-white/10 p-5">
+                <div className="rounded-[8px] bg-[var(--app-surface-solid)] p-4">
                   <div className="mb-4 flex items-center gap-3">
-                    <FileAudio className="h-6 w-6 text-white/75" />
-                    <span className="min-w-0 truncate text-sm font-medium">{attachment.file_name}</span>
+                    <FileAudio className="h-6 w-6 text-[var(--app-text-secondary)]" />
+                    <span className="min-w-0 truncate text-sm font-normal">{attachment.file_name}</span>
                   </div>
                   <audio src={previewObjectUrl || fileURL} controls className="w-full" onError={handlePreviewError} />
                 </div>
@@ -263,7 +269,8 @@ export function LeadAttachmentViewer({ attachment, open, onOpenChange }: LeadAtt
               <iframe
                 src={previewObjectUrl || fileURL}
                 title={attachment.file_name}
-                className="h-full w-full border-0 bg-white"
+                className="h-full w-full border-0 bg-[var(--app-surface-solid)]"
+                referrerPolicy="no-referrer"
               />
             )}
           </div>

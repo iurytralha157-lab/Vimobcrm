@@ -40,8 +40,10 @@ import { Badge } from '@/components/ui/badge';
 import { CommissionStatusBadge } from '@/components/features/financial/CommissionStatusBadge';
 import { FinancialDrawer } from '@/components/features/financial/FinancialDrawer';
 import { FinancialEmptyState } from '@/components/features/financial/FinancialEmptyState';
+import { FinancialConfirmationDialog } from '@/components/features/financial/FinancialConfirmationDialog';
 
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { searchTextIncludes } from '@/lib/search-text';
 import {
   useCommissions,
@@ -59,6 +61,7 @@ import {
   Plus,
   Search,
   MoreHorizontal,
+  BadgeDollarSign,
   CheckCircle2,
   Trash2,
   Download,
@@ -68,19 +71,23 @@ import {
   User,
   FileText,
   Building2,
-  Calendar
-} from 'lucide-react';
+  Calendar,
+  Settings2,
+  Loader2,
+} from "lucide-react";
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 
 // Mobile Commission Card - Melhorado para mobile
-function CommissionCard({ commission, onApprove, onPay, onCancel }: {
+function CommissionCard({ commission, onApprove, onPay, onCancel, canManage, actionsPending }: {
   commission: Commission;
   onApprove: () => void;
   onPay: () => void;
   onCancel: () => void;
+  canManage: boolean;
+  actionsPending: boolean;
 }) {
   return (
     <Card className="app-card-soft mb-2 sm:mb-3">
@@ -114,13 +121,13 @@ function CommissionCard({ commission, onApprove, onPay, onCancel }: {
             <p className="text-[10px] sm:text-xs text-muted-foreground">Base</p>
             <p className="text-xs sm:text-sm font-medium truncate">{formatCurrency(commission.base_value)}</p>
           </div>
-          <div className="text-center border-x border-white/[0.055]">
+          <div className="border-x border-border/60 text-center">
             <p className="text-[10px] sm:text-xs text-muted-foreground">%</p>
             <p className="text-xs sm:text-sm font-medium">{commission.percentage ? `${commission.percentage}%` : '-'}</p>
           </div>
           <div className="text-center">
             <p className="text-[10px] sm:text-xs text-muted-foreground">Comissão</p>
-            <p className="text-xs sm:text-sm font-bold text-primary truncate">{formatCurrency(commission.calculated_value)}</p>
+            <p className="truncate text-xs font-normal text-primary sm:text-sm">{formatCurrency(commission.calculated_value)}</p>
           </div>
         </div>
 
@@ -131,40 +138,45 @@ function CommissionCard({ commission, onApprove, onPay, onCancel }: {
           </p>
         )}
 
-        <div className="flex items-center gap-1.5 sm:gap-2 pt-2 border-t border-white/[0.055]">
+        {(commission.status === 'forecast' || canManage) && (
+        <div className="flex items-center gap-1.5 border-t border-border/60 pt-2 sm:gap-2">
           {commission.status === 'forecast' && (
             <p className="flex-1 text-[10px] sm:text-xs text-muted-foreground italic">
               Aguardando 1º pagamento do contrato
             </p>
           )}
-          {commission.status === 'pending' && (
-            <Button variant="outline" size="sm" className="flex-1 h-8 text-xs" onClick={onApprove}>
+          {canManage && commission.status === 'pending' && (
+            <Button variant="outline" size="sm" className="flex-1 h-8 text-xs" onClick={onApprove} disabled={actionsPending}>
               <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
               Aprovar
             </Button>
           )}
-          {commission.status === 'approved' && (
-            <Button size="sm" className="flex-1 h-8 text-xs" onClick={onPay}>
+          {canManage && commission.status === 'approved' && (
+            <Button size="sm" className="flex-1 h-8 text-xs" onClick={onPay} disabled={actionsPending}>
               <DollarSign className="h-3.5 w-3.5 mr-1" />
               Pagar
             </Button>
           )}
-          {(commission.status === 'forecast' || commission.status === 'pending' || commission.status === 'approved') && (
-            <Button variant="ghost" size="sm" className="text-destructive h-8 w-8 p-0" onClick={onCancel}>
+          {canManage && (commission.status === 'forecast' || commission.status === 'pending' || commission.status === 'approved') && (
+            <Button variant="ghost" size="sm" className="text-destructive h-8 w-8 p-0" onClick={onCancel} disabled={actionsPending}>
               <XCircle className="h-4 w-4" />
+              <span className="sr-only">Cancelar comissão</span>
             </Button>
           )}
         </div>
+        )}
       </CardContent>
     </Card>
   );
 }
 
 // Mobile Rule Card - Melhorado para mobile
-function RuleCard({ rule, onEdit, onDelete }: {
+function RuleCard({ rule, onEdit, onDelete, canManage, actionsPending }: {
   rule: CommissionRule;
   onEdit: () => void;
   onDelete: () => void;
+  canManage: boolean;
+  actionsPending: boolean;
 }) {
   return (
     <Card className="app-card-soft mb-2 sm:mb-3">
@@ -191,23 +203,23 @@ function RuleCard({ rule, onEdit, onDelete }: {
               </Badge>
             </div>
           </div>
-          <DropdownMenu>
+          {canManage && <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8">
+              <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`Ações da regra ${rule.name}`}>
                 <MoreHorizontal className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="bg-popover">
-              <DropdownMenuItem onClick={onEdit}>
+              <DropdownMenuItem onClick={onEdit} disabled={actionsPending}>
                 <Pencil className="h-4 w-4 mr-2" />
                 Editar
               </DropdownMenuItem>
-              <DropdownMenuItem className="text-destructive" onClick={onDelete}>
+              <DropdownMenuItem className="text-destructive" onClick={onDelete} disabled={actionsPending}>
                 <Trash2 className="h-4 w-4 mr-2" />
                 Excluir
               </DropdownMenuItem>
             </DropdownMenuContent>
-          </DropdownMenu>
+          </DropdownMenu>}
         </div>
       </CardContent>
     </Card>
@@ -217,11 +229,15 @@ function RuleCard({ rule, onEdit, onDelete }: {
 export default function Commissions() {
   const isMobile = useIsMobile();
   const router = useRouter();
+  const { hasPermission } = useUserPermissions();
+  const canManage = hasPermission('financial_manage');
   const [activeTab, setActiveTab] = useState('pending');
   const [searchQuery, setSearchQuery] = useState('');
   const [payDialog, setPayDialog] = useState<{ open: boolean; commission: Commission | null }>({ open: false, commission: null });
   const [cancelDialog, setCancelDialog] = useState<{ open: boolean; commission: Commission | null }>({ open: false, commission: null });
   const [ruleDialog, setRuleDialog] = useState<{ open: boolean; rule: CommissionRule | null }>({ open: false, rule: null });
+  const [commissionToApprove, setCommissionToApprove] = useState<Commission | null>(null);
+  const [ruleToDelete, setRuleToDelete] = useState<CommissionRule | null>(null);
   const [paymentProof, setPaymentProof] = useState('');
   const [cancelNotes, setCancelNotes] = useState('');
 
@@ -240,10 +256,21 @@ export default function Commissions() {
     rules: undefined,
   };
 
-  const { data: commissions, isLoading: commissionsLoading } = useCommissions({
-    status: statusMap[activeTab]
-  });
-  const { data: rules, isLoading: rulesLoading } = useCommissionRules();
+  const {
+    data: commissions,
+    isLoading: commissionsLoading,
+    error: commissionsError,
+    refetch: refetchCommissions,
+  } = useCommissions(
+    { status: statusMap[activeTab] },
+    { enabled: activeTab !== 'rules' },
+  );
+  const {
+    data: rules,
+    isLoading: rulesLoading,
+    error: rulesError,
+    refetch: refetchRules,
+  } = useCommissionRules({ enabled: activeTab === 'rules' });
 
   const approveCommission = useApproveCommission();
   const payCommission = usePayCommission();
@@ -251,6 +278,19 @@ export default function Commissions() {
   const createRule = useCreateCommissionRule();
   const updateRule = useUpdateCommissionRule();
   const deleteRule = useDeleteCommissionRule();
+  const commissionActionsPending =
+    approveCommission.isPending ||
+    payCommission.isPending ||
+    cancelCommission.isPending;
+  const ruleActionsPending =
+    createRule.isPending || updateRule.isPending || deleteRule.isPending;
+  const ruleValueError =
+    !Number.isFinite(ruleValue) || ruleValue <= 0
+      ? 'Informe um valor maior que zero.'
+      : ruleCommissionType === 'percentage' && ruleValue > 100
+        ? 'O percentual não pode exceder 100%.'
+        : null;
+  const ruleNameError = !ruleName.trim() ? 'Informe o nome da regra.' : null;
 
   const filteredCommissions = commissions?.filter(c =>
     searchTextIncludes(c.user?.name, searchQuery) ||
@@ -267,35 +307,45 @@ export default function Commissions() {
     toast.success('Arquivo exportado com sucesso');
   };
 
-  const handleApprove = async (id: string) => {
-    if (confirm('Tem certeza que deseja aprovar esta comissão?')) {
-      await approveCommission.mutateAsync(id);
-    }
-  };
+  const handleApprove = (commission: Commission) =>
+    setCommissionToApprove(commission);
 
-  const handlePay = async () => {
-    if (!payDialog.commission) return;
-    await payCommission.mutateAsync({
-      id: payDialog.commission.id,
-      payment_proof: paymentProof || undefined,
-    });
+  const closePayDialog = () => {
     setPayDialog({ open: false, commission: null });
     setPaymentProof('');
   };
 
-  const handleCancel = async () => {
-    if (!cancelDialog.commission) return;
-    await cancelCommission.mutateAsync({
-      id: cancelDialog.commission.id,
-      notes: cancelNotes,
-    });
+  const closeCancelDialog = () => {
     setCancelDialog({ open: false, commission: null });
     setCancelNotes('');
   };
 
-  const handleSaveRule = async () => {
+  const handlePay = () => {
+    if (!payDialog.commission) return;
+    payCommission.mutate(
+      {
+        id: payDialog.commission.id,
+        payment_proof: paymentProof.trim() || undefined,
+      },
+      { onSuccess: closePayDialog },
+    );
+  };
+
+  const handleCancel = () => {
+    if (!cancelDialog.commission) return;
+    cancelCommission.mutate(
+      {
+        id: cancelDialog.commission.id,
+        notes: cancelNotes.trim() || undefined,
+      },
+      { onSuccess: closeCancelDialog },
+    );
+  };
+
+  const handleSaveRule = () => {
+    if (ruleNameError || ruleValueError || ruleActionsPending) return;
     const payload: Partial<CommissionRule> = {
-      name: ruleName,
+      name: ruleName.trim(),
       business_type: ruleBusinessType,
       commission_type: ruleCommissionType,
       commission_value: ruleValue,
@@ -303,19 +353,26 @@ export default function Commissions() {
     };
 
     if (ruleDialog.rule) {
-      await updateRule.mutateAsync({ id: ruleDialog.rule.id, ...payload });
-    } else {
-      await createRule.mutateAsync(payload);
+      updateRule.mutate(
+        { id: ruleDialog.rule.id, ...payload },
+        {
+          onSuccess: () => {
+            setRuleDialog({ open: false, rule: null });
+            resetRuleForm();
+          },
+        },
+      );
+      return;
     }
-    setRuleDialog({ open: false, rule: null });
-    resetRuleForm();
+    createRule.mutate(payload, {
+      onSuccess: () => {
+        setRuleDialog({ open: false, rule: null });
+        resetRuleForm();
+      },
+    });
   };
 
-  const handleDeleteRule = async (id: string) => {
-    if (confirm('Tem certeza que deseja excluir esta regra?')) {
-      await deleteRule.mutateAsync(id);
-    }
-  };
+  const handleDeleteRule = (rule: CommissionRule) => setRuleToDelete(rule);
 
   const openRuleDialog = (rule?: CommissionRule) => {
     if (rule) {
@@ -324,6 +381,8 @@ export default function Commissions() {
       setRuleCommissionType(rule.commission_type);
       setRuleValue(rule.commission_value);
       setRuleActive(rule.is_active);
+    } else {
+      resetRuleForm();
     }
     setRuleDialog({ open: true, rule: rule || null });
   };
@@ -348,13 +407,13 @@ export default function Commissions() {
           <TableHead className="text-right">Valor Comissão</TableHead>
           <TableHead>Status</TableHead>
           <TableHead>Previsão</TableHead>
-          <TableHead className="w-10"></TableHead>
+          {canManage && <TableHead className="w-10"></TableHead>}
         </TableRow>
       </TableHeader>
       <TableBody>
         {filteredCommissions.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={9} className="py-12">
+            <TableCell colSpan={canManage ? 9 : 8} className="py-12">
               <FinancialEmptyState
                 title="Nenhuma comissão encontrada"
                 description={activeTab === 'rules' ? "Nenhuma regra de comissão cadastrada." : "Não encontramos comissões para o filtro selecionado."}
@@ -376,40 +435,47 @@ export default function Commissions() {
                 <CommissionStatusBadge status={commission.status} />
               </TableCell>
               <TableCell>{formatDate(commission.forecast_date)}</TableCell>
-              <TableCell>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon">
-                      <MoreHorizontal className="h-4 w-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="bg-popover">
-                    {commission.status === 'pending' && (
-                      <DropdownMenuItem onClick={() => handleApprove(commission.id)}>
-                        <CheckCircle2 className="h-4 w-4 mr-2" />
-                        Aprovar
-                      </DropdownMenuItem>
-                    )}
-                    {commission.status === 'approved' && (
-                      <DropdownMenuItem onClick={() => {
-                        setPayDialog({ open: true, commission });
-                      }}>
-                        <DollarSign className="h-4 w-4 mr-2" />
-                        Registrar Pagamento
-                      </DropdownMenuItem>
-                    )}
-                    {(commission.status === 'forecast' || commission.status === 'pending' || commission.status === 'approved') && (
-                      <DropdownMenuItem
-                        className="text-destructive"
-                        onClick={() => setCancelDialog({ open: true, commission })}
+              {canManage && (
+                <TableCell>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Ações da comissão de ${commission.user?.name || 'corretor'}`}
                       >
-                        <XCircle className="h-4 w-4 mr-2" />
-                        Cancelar
-                      </DropdownMenuItem>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </TableCell>
+                        <MoreHorizontal className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="bg-popover">
+                      {commission.status === 'pending' && (
+                        <DropdownMenuItem onClick={() => handleApprove(commission)} disabled={commissionActionsPending}>
+                          <CheckCircle2 className="h-4 w-4 mr-2" />
+                          Aprovar
+                        </DropdownMenuItem>
+                      )}
+                      {commission.status === 'approved' && (
+                        <DropdownMenuItem onClick={() => {
+                          setPayDialog({ open: true, commission });
+                        }} disabled={commissionActionsPending}>
+                          <DollarSign className="h-4 w-4 mr-2" />
+                          Registrar Pagamento
+                        </DropdownMenuItem>
+                      )}
+                      {(commission.status === 'forecast' || commission.status === 'pending' || commission.status === 'approved') && (
+                        <DropdownMenuItem
+                          className="text-destructive"
+                          onClick={() => setCancelDialog({ open: true, commission })}
+                          disabled={commissionActionsPending}
+                        >
+                          <XCircle className="h-4 w-4 mr-2" />
+                          Cancelar
+                        </DropdownMenuItem>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </TableCell>
+              )}
             </TableRow>
           ))
         )}
@@ -422,41 +488,116 @@ export default function Commissions() {
       <div className="space-y-3 sm:space-y-4 md:space-y-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3">
-          <p className="text-xs sm:text-sm text-muted-foreground">Gerencie comissões e repasses</p>
+          <p className="text-xs sm:text-sm text-muted-foreground">
+            Gerencie comissões e repasses
+          </p>
           <div className="flex gap-2 w-full sm:w-auto">
-            <Button variant="outline" size={isMobile ? "sm" : "default"} onClick={() => router.push('/financeiro/corretor')} className="flex-1 sm:flex-none">
+            <Button
+              variant="outline"
+              size={isMobile ? "sm" : "default"}
+              onClick={() => router.push("/financeiro/corretor")}
+              className="flex-1 sm:flex-none"
+            >
               <User className="h-4 w-4 mr-1.5" />
               Minhas Comissões
             </Button>
-            <Button variant="outline" size={isMobile ? "sm" : "default"} onClick={handleExport} className="flex-1 sm:flex-none">
+            {activeTab !== 'rules' && <Button
+              variant="outline"
+              size={isMobile ? "sm" : "default"}
+              onClick={handleExport}
+              className="flex-1 sm:flex-none"
+            >
               <Download className="h-4 w-4 mr-1.5" />
               Exportar
-            </Button>
+            </Button>}
           </div>
         </div>
 
         {/* Tabs */}
+        {activeTab !== 'rules' && commissionsError && commissions && (
+          <div className="app-card-soft flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm text-muted-foreground" role="alert">
+            <span>As comissões podem estar desatualizadas.</span>
+            <Button type="button" size="sm" variant="outline" onClick={() => void refetchCommissions()}>
+              Atualizar novamente
+            </Button>
+          </div>
+        )}
+        {activeTab === 'rules' && rulesError && rules && (
+          <div className="app-card-soft flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm text-muted-foreground" role="alert">
+            <span>As regras podem estar desatualizadas.</span>
+            <Button type="button" size="sm" variant="outline" onClick={() => void refetchRules()}>
+              Atualizar novamente
+            </Button>
+          </div>
+        )}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="w-full grid grid-cols-5">
-            <TabsTrigger value="forecast" className="text-xs sm:text-sm">
-              Previstas
-            </TabsTrigger>
-            <TabsTrigger value="pending" className="text-xs sm:text-sm">
-              Liberadas
-            </TabsTrigger>
-            <TabsTrigger value="approved" className="text-xs sm:text-sm">
-              Aprovadas
-            </TabsTrigger>
-            <TabsTrigger value="paid" className="text-xs sm:text-sm">
-              Pagas
-            </TabsTrigger>
-            <TabsTrigger value="rules" className="text-xs sm:text-sm">
-              Regras
-            </TabsTrigger>
-          </TabsList>
+          <div
+            data-collapse="standard"
+            className="app-responsive-tab-list min-w-0 flex-1"
+          >
+            <TabsList
+              data-responsive-tab-scroll
+              aria-label="Status das comissões"
+              className="flex w-fit max-w-full flex-nowrap justify-start overflow-x-auto"
+            >
+              <TabsTrigger
+                value="forecast"
+                data-responsive-tab
+                aria-label="Previstas"
+                title="Previstas"
+                className="shrink-0 gap-2 text-xs sm:text-sm"
+              >
+                <Calendar aria-hidden="true" className="h-4 w-4 shrink-0" />
+                <span className="app-responsive-tab-label">Previstas</span>
+              </TabsTrigger>
+              <TabsTrigger
+                value="pending"
+                data-responsive-tab
+                aria-label="Liberadas"
+                title="Liberadas"
+                className="shrink-0 gap-2 text-xs sm:text-sm"
+              >
+                <DollarSign aria-hidden="true" className="h-4 w-4 shrink-0" />
+                <span className="app-responsive-tab-label">Liberadas</span>
+              </TabsTrigger>
+              <TabsTrigger
+                value="approved"
+                data-responsive-tab
+                aria-label="Aprovadas"
+                title="Aprovadas"
+                className="shrink-0 gap-2 text-xs sm:text-sm"
+              >
+                <CheckCircle2 aria-hidden="true" className="h-4 w-4 shrink-0" />
+                <span className="app-responsive-tab-label">Aprovadas</span>
+              </TabsTrigger>
+              <TabsTrigger
+                value="paid"
+                data-responsive-tab
+                aria-label="Pagas"
+                title="Pagas"
+                className="shrink-0 gap-2 text-xs sm:text-sm"
+              >
+                <BadgeDollarSign
+                  aria-hidden="true"
+                  className="h-4 w-4 shrink-0"
+                />
+                <span className="app-responsive-tab-label">Pagas</span>
+              </TabsTrigger>
+              <TabsTrigger
+                value="rules"
+                data-responsive-tab
+                aria-label="Regras"
+                title="Regras"
+                className="shrink-0 gap-2 text-xs sm:text-sm"
+              >
+                <Settings2 aria-hidden="true" className="h-4 w-4 shrink-0" />
+                <span className="app-responsive-tab-label">Regras</span>
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
           {/* Commissions Tabs */}
-          {['forecast', 'pending', 'approved', 'paid'].map((tab) => (
+          {["forecast", "pending", "approved", "paid"].map((tab) => (
             <TabsContent key={tab} value={tab}>
               <Card className="app-card">
                 <CardHeader className="p-3 sm:p-4 md:p-6 pb-2 sm:pb-3 md:pb-4">
@@ -473,7 +614,16 @@ export default function Commissions() {
                 <CardContent className="p-2 sm:p-3 md:p-4 pt-0">
                   {commissionsLoading ? (
                     <div className="space-y-2 sm:space-y-3">
-                      {[1, 2, 3].map(i => <Skeleton key={i} className="h-20 sm:h-24 md:h-12" />)}
+                      {[1, 2, 3].map((i) => (
+                        <Skeleton key={i} className="h-20 sm:h-24 md:h-12" />
+                      ))}
+                    </div>
+                  ) : commissionsError && !commissions ? (
+                    <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 px-6 text-center" role="alert">
+                      <p className="text-sm text-destructive">Não foi possível carregar as comissões.</p>
+                      <Button type="button" size="sm" variant="outline" onClick={() => void refetchCommissions()}>
+                        Tentar novamente
+                      </Button>
                     </div>
                   ) : isMobile ? (
                     <div className="p-4">
@@ -486,9 +636,15 @@ export default function Commissions() {
                           <CommissionCard
                             key={commission.id}
                             commission={commission}
-                            onApprove={() => handleApprove(commission.id)}
-                            onPay={() => setPayDialog({ open: true, commission })}
-                            onCancel={() => setCancelDialog({ open: true, commission })}
+                            canManage={canManage}
+                            actionsPending={commissionActionsPending}
+                            onApprove={() => handleApprove(commission)}
+                            onPay={() =>
+                              setPayDialog({ open: true, commission })
+                            }
+                            onCancel={() =>
+                              setCancelDialog({ open: true, commission })
+                            }
                           />
                         ))
                       )}
@@ -505,17 +661,31 @@ export default function Commissions() {
           <TabsContent value="rules">
             <Card className="app-card">
               <CardHeader className="flex flex-row items-center justify-between pb-3 md:pb-4">
-                <CardTitle className="text-base md:text-lg">Regras de Comissão</CardTitle>
-                <Button size={isMobile ? "sm" : "default"} onClick={() => openRuleDialog()}>
+                <CardTitle className="text-base md:text-lg">
+                  Regras de Comissão
+                </CardTitle>
+                {canManage && <Button
+                  size={isMobile ? "sm" : "default"}
+                  onClick={() => openRuleDialog()}
+                >
                   <Plus className="h-4 w-4 mr-1 md:mr-2" />
                   <span className="hidden sm:inline">Nova Regra</span>
                   <span className="sm:hidden">Nova</span>
-                </Button>
+                </Button>}
               </CardHeader>
               <CardContent className="p-0 md:p-0">
                 {rulesLoading ? (
                   <div className="p-4 space-y-3">
-                    {[1, 2, 3].map(i => <Skeleton key={i} className="h-16 md:h-12" />)}
+                    {[1, 2, 3].map((i) => (
+                      <Skeleton key={i} className="h-16 md:h-12" />
+                    ))}
+                  </div>
+                ) : rulesError && !rules ? (
+                  <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 px-6 text-center" role="alert">
+                    <p className="text-sm text-destructive">Não foi possível carregar as regras.</p>
+                    <Button type="button" size="sm" variant="outline" onClick={() => void refetchRules()}>
+                      Tentar novamente
+                    </Button>
                   </div>
                 ) : isMobile ? (
                   <div className="p-4">
@@ -528,8 +698,10 @@ export default function Commissions() {
                         <RuleCard
                           key={rule.id}
                           rule={rule}
+                          canManage={canManage}
+                          actionsPending={ruleActionsPending}
                           onEdit={() => openRuleDialog(rule)}
-                          onDelete={() => handleDeleteRule(rule.id)}
+                          onDelete={() => handleDeleteRule(rule)}
                         />
                       ))
                     )}
@@ -543,60 +715,83 @@ export default function Commissions() {
                         <TableHead>Tipo de Comissão</TableHead>
                         <TableHead className="text-right">Valor</TableHead>
                         <TableHead>Status</TableHead>
-                        <TableHead className="w-10"></TableHead>
+                        {canManage && <TableHead className="w-10"></TableHead>}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {rules?.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                          <TableCell
+                            colSpan={canManage ? 6 : 5}
+                            className="text-center py-8 text-muted-foreground"
+                          >
                             Nenhuma regra cadastrada
                           </TableCell>
                         </TableRow>
                       ) : (
                         rules?.map((rule) => (
                           <TableRow key={rule.id}>
-                            <TableCell className="font-medium">{rule.name}</TableCell>
-                            <TableCell>
-                              {rule.business_type === 'sale' ? 'Venda' :
-                               rule.business_type === 'rental' ? 'Locação' :
-                               rule.business_type === 'service' ? 'Serviço' : 'Todos'}
+                            <TableCell className="font-medium">
+                              {rule.name}
                             </TableCell>
                             <TableCell>
-                              {rule.commission_type === 'percentage' ? 'Percentual' : 'Valor Fixo'}
+                              {rule.business_type === "sale"
+                                ? "Venda"
+                                : rule.business_type === "rental"
+                                  ? "Locação"
+                                  : rule.business_type === "service"
+                                    ? "Serviço"
+                                    : "Todos"}
+                            </TableCell>
+                            <TableCell>
+                              {rule.commission_type === "percentage"
+                                ? "Percentual"
+                                : "Valor Fixo"}
                             </TableCell>
                             <TableCell className="text-right">
-                              {rule.commission_type === 'percentage'
+                              {rule.commission_type === "percentage"
                                 ? `${rule.commission_value}%`
                                 : formatCurrency(rule.commission_value)}
                             </TableCell>
                             <TableCell>
-                              <span className={`text-sm font-medium ${rule.is_active ? 'text-success' : 'text-muted-foreground'}`}>
-                                {rule.is_active ? 'Ativa' : 'Inativa'}
+                              <span
+                                className={`text-sm font-medium ${rule.is_active ? "text-success" : "text-muted-foreground"}`}
+                              >
+                                {rule.is_active ? "Ativa" : "Inativa"}
                               </span>
                             </TableCell>
-                            <TableCell>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="icon">
-                                    <MoreHorizontal className="h-4 w-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  <DropdownMenuItem onClick={() => openRuleDialog(rule)}>
-                                    <Pencil className="h-4 w-4 mr-2" />
-                                    Editar
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    className="text-destructive"
-                                    onClick={() => handleDeleteRule(rule.id)}
-                                  >
-                                    <Trash2 className="h-4 w-4 mr-2" />
-                                    Excluir
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </TableCell>
+                            {canManage && (
+                              <TableCell>
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      aria-label={`Ações da regra ${rule.name}`}
+                                    >
+                                      <MoreHorizontal className="h-4 w-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem
+                                      onClick={() => openRuleDialog(rule)}
+                                      disabled={ruleActionsPending}
+                                    >
+                                      <Pencil className="h-4 w-4 mr-2" />
+                                      Editar
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      className="text-destructive"
+                                      onClick={() => handleDeleteRule(rule)}
+                                      disabled={ruleActionsPending}
+                                    >
+                                      <Trash2 className="h-4 w-4 mr-2" />
+                                      Excluir
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </TableCell>
+                            )}
                           </TableRow>
                         ))
                       )}
@@ -609,66 +804,142 @@ export default function Commissions() {
         </Tabs>
 
         {/* Pay Dialog */}
-        <Dialog open={payDialog.open} onOpenChange={(open) => setPayDialog({ open, commission: null })}>
-          <DialogContent className="w-[90%] sm:max-w-md sm:w-full rounded-lg">
+        <Dialog
+          open={payDialog.open}
+          onOpenChange={(open) => {
+            if (!open && !payCommission.isPending) closePayDialog();
+          }}
+        >
+          <DialogContent
+            className="w-[90%] sm:max-w-md sm:w-full rounded-lg"
+            onEscapeKeyDown={(event) => {
+              if (payCommission.isPending) event.preventDefault();
+            }}
+            onPointerDownOutside={(event) => {
+              if (payCommission.isPending) event.preventDefault();
+            }}
+          >
             <DialogHeader>
               <DialogTitle>Registrar Pagamento</DialogTitle>
               <DialogDescription>
-                Confirme o pagamento da comissão de {payDialog.commission?.user?.name}
+                Confirme o pagamento da comissão de{" "}
+                {payDialog.commission?.user?.name}
               </DialogDescription>
             </DialogHeader>
+            <form
+              className="space-y-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                handlePay();
+              }}
+            >
             <div className="space-y-4">
               <div>
                 <Label>Valor</Label>
-                <p className="text-2xl font-bold">{formatCurrency(payDialog.commission?.calculated_value)}</p>
+                <p className="text-2xl font-normal">
+                  {formatCurrency(payDialog.commission?.calculated_value)}
+                </p>
               </div>
               <div>
-                <Label>Comprovante (opcional)</Label>
+                <Label htmlFor="commission-payment-proof">Comprovante (opcional)</Label>
                 <Input
+                  id="commission-payment-proof"
                   placeholder="URL ou referência do comprovante"
                   value={paymentProof}
+                  maxLength={2_000}
+                  disabled={payCommission.isPending}
                   onChange={(e) => setPaymentProof(e.target.value)}
                 />
               </div>
             </div>
             <div className="flex gap-2 pt-2">
-              <Button variant="outline" className="w-[40%] rounded-xl" onClick={() => setPayDialog({ open: false, commission: null })}>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-[40%] rounded-lg"
+                onClick={closePayDialog}
+                disabled={payCommission.isPending}
+              >
                 Cancelar
               </Button>
-              <Button className="w-[60%] rounded-xl" onClick={handlePay} disabled={payCommission.isPending}>
-                Confirmar Pagamento
+              <Button
+                type="submit"
+                className="w-[60%] rounded-lg"
+                disabled={payCommission.isPending}
+              >
+                {payCommission.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                {payCommission.isPending ? 'Processando...' : 'Confirmar Pagamento'}
               </Button>
             </div>
+            </form>
           </DialogContent>
         </Dialog>
 
         {/* Cancel Dialog */}
-        <Dialog open={cancelDialog.open} onOpenChange={(open) => setCancelDialog({ open, commission: null })}>
-          <DialogContent className="w-[90%] sm:max-w-md sm:w-full rounded-lg">
+        <Dialog
+          open={cancelDialog.open}
+          onOpenChange={(open) => {
+            if (!open && !cancelCommission.isPending) closeCancelDialog();
+          }}
+        >
+          <DialogContent
+            className="w-[90%] sm:max-w-md sm:w-full rounded-lg"
+            onEscapeKeyDown={(event) => {
+              if (cancelCommission.isPending) event.preventDefault();
+            }}
+            onPointerDownOutside={(event) => {
+              if (cancelCommission.isPending) event.preventDefault();
+            }}
+          >
             <DialogHeader>
               <DialogTitle>Cancelar Comissão</DialogTitle>
               <DialogDescription>
-                Informe o motivo do cancelamento
+                Você pode registrar um motivo para manter o histórico da decisão.
               </DialogDescription>
             </DialogHeader>
+            <form
+              className="space-y-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                handleCancel();
+              }}
+            >
             <div className="space-y-4">
               <div>
-                <Label>Motivo</Label>
+                <Label htmlFor="commission-cancel-notes">Motivo (opcional)</Label>
                 <Input
+                  id="commission-cancel-notes"
                   placeholder="Descreva o motivo..."
                   value={cancelNotes}
+                  maxLength={2_000}
+                  disabled={cancelCommission.isPending}
                   onChange={(e) => setCancelNotes(e.target.value)}
                 />
               </div>
             </div>
             <div className="flex gap-2 pt-2">
-              <Button variant="outline" className="w-[40%] rounded-xl" onClick={() => setCancelDialog({ open: false, commission: null })}>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-[40%] rounded-lg"
+                onClick={() =>
+                  closeCancelDialog()
+                }
+                disabled={cancelCommission.isPending}
+              >
                 Voltar
               </Button>
-              <Button variant="destructive" className="w-[60%] rounded-xl" onClick={handleCancel} disabled={cancelCommission.isPending}>
-                Confirmar Cancelamento
+              <Button
+                type="submit"
+                variant="destructive"
+                className="w-[60%] rounded-lg"
+                disabled={cancelCommission.isPending}
+              >
+                {cancelCommission.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                {cancelCommission.isPending ? 'Processando...' : 'Confirmar Cancelamento'}
               </Button>
             </div>
+            </form>
           </DialogContent>
         </Dialog>
 
@@ -676,29 +947,53 @@ export default function Commissions() {
         <FinancialDrawer
           open={ruleDialog.open}
           onOpenChange={(open) => {
+            if (createRule.isPending || updateRule.isPending) return;
             setRuleDialog({ open, rule: null });
             if (!open) resetRuleForm();
           }}
-          title={ruleDialog.rule ? 'Editar Regra' : 'Nova Regra'}
+          title={ruleDialog.rule ? "Editar Regra" : "Nova Regra"}
           description="Configure a regra de comissão"
+          pending={createRule.isPending || updateRule.isPending}
         >
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              handleSaveRule();
+            }}
+          >
           <div className="space-y-4">
             <div>
-              <Label>Nome da Regra</Label>
+              <Label htmlFor="commission-rule-name">Nome da Regra</Label>
               <Input
+                id="commission-rule-name"
                 placeholder="Ex: Comissão padrão vendas"
                 value={ruleName}
+                maxLength={180}
+                aria-invalid={Boolean(ruleNameError)}
+                aria-describedby={ruleNameError ? 'commission-rule-name-error' : undefined}
+                disabled={createRule.isPending || updateRule.isPending}
                 onChange={(e) => setRuleName(e.target.value)}
               />
+              {ruleNameError && (
+                <p id="commission-rule-name-error" className="mt-1 text-xs text-destructive" role="alert">
+                  {ruleNameError}
+                </p>
+              )}
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <Label>Tipo de Negócio</Label>
+                <Label htmlFor="commission-rule-business-type">Tipo de Negócio</Label>
                 <Select
                   value={ruleBusinessType}
-                  onValueChange={(value) => setRuleBusinessType(value as CommissionRule['business_type'])}
+                  disabled={createRule.isPending || updateRule.isPending}
+                  onValueChange={(value) =>
+                    setRuleBusinessType(
+                      value as CommissionRule["business_type"],
+                    )
+                  }
                 >
-                  <SelectTrigger>
+                  <SelectTrigger id="commission-rule-business-type">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -710,12 +1005,17 @@ export default function Commissions() {
                 </Select>
               </div>
               <div>
-                <Label>Tipo de Comissão</Label>
+                <Label htmlFor="commission-rule-type">Tipo de Comissão</Label>
                 <Select
                   value={ruleCommissionType}
-                  onValueChange={(value) => setRuleCommissionType(value as CommissionRule['commission_type'])}
+                  disabled={createRule.isPending || updateRule.isPending}
+                  onValueChange={(value) =>
+                    setRuleCommissionType(
+                      value as CommissionRule["commission_type"],
+                    )
+                  }
                 >
-                  <SelectTrigger>
+                  <SelectTrigger id="commission-rule-type">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -726,35 +1026,121 @@ export default function Commissions() {
               </div>
             </div>
             <div>
-              <Label>{ruleCommissionType === 'percentage' ? 'Percentual (%)' : 'Valor (R$)'}</Label>
+              <Label htmlFor="commission-rule-value">
+                {ruleCommissionType === "percentage"
+                  ? "Percentual (%)"
+                  : "Valor (R$)"}
+              </Label>
               <Input
+                id="commission-rule-value"
                 type="number"
-                step={ruleCommissionType === 'percentage' ? '0.1' : '0.01'}
+                min="0.01"
+                max={ruleCommissionType === 'percentage' ? 100 : undefined}
+                step={ruleCommissionType === "percentage" ? "0.1" : "0.01"}
                 value={ruleValue}
-                onChange={(e) => setRuleValue(parseFloat(e.target.value) || 0)}
+                aria-invalid={Boolean(ruleValueError)}
+                aria-describedby={ruleValueError ? 'commission-rule-value-error' : undefined}
+                disabled={createRule.isPending || updateRule.isPending}
+                onChange={(e) =>
+                  setRuleValue(
+                    e.target.value === '' ? 0 : Number(e.target.value),
+                  )
+                }
               />
+              {ruleValueError && (
+                <p id="commission-rule-value-error" className="mt-1 text-xs text-destructive" role="alert">
+                  {ruleValueError}
+                </p>
+              )}
             </div>
             <div className="flex items-center gap-3">
               <Switch
+                id="commission-rule-active"
                 checked={ruleActive}
                 onCheckedChange={setRuleActive}
+                disabled={createRule.isPending || updateRule.isPending}
               />
-              <Label>Regra ativa</Label>
+              <Label htmlFor="commission-rule-active">Regra ativa</Label>
             </div>
           </div>
           <div className="flex gap-2 pt-6">
-            <Button variant="outline" className="w-[40%] rounded-xl" onClick={() => {
-              setRuleDialog({ open: false, rule: null });
-              resetRuleForm();
-            }}>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-[40%] rounded-lg"
+              onClick={() => {
+                setRuleDialog({ open: false, rule: null });
+                resetRuleForm();
+              }}
+              disabled={createRule.isPending || updateRule.isPending}
+            >
               Cancelar
             </Button>
-            <Button className="w-[60%] rounded-xl" onClick={handleSaveRule} disabled={createRule.isPending || updateRule.isPending}>
-              {ruleDialog.rule ? 'Salvar' : 'Criar Regra'}
+            <Button
+              type="submit"
+              className="w-[60%] rounded-lg"
+              disabled={
+                createRule.isPending ||
+                updateRule.isPending ||
+                Boolean(ruleNameError) ||
+                Boolean(ruleValueError)
+              }
+            >
+              {(createRule.isPending || updateRule.isPending) && (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              )}
+              {createRule.isPending || updateRule.isPending
+                ? 'Processando...'
+                : ruleDialog.rule
+                  ? 'Salvar'
+                  : 'Criar Regra'}
             </Button>
           </div>
+          </form>
         </FinancialDrawer>
 
+        <FinancialConfirmationDialog
+          open={commissionToApprove !== null}
+          onOpenChange={(open) => {
+            if (!open) setCommissionToApprove(null);
+          }}
+          title="Aprovar comissão?"
+          description={
+            commissionToApprove
+              ? `A comissão de ${formatCurrency(commissionToApprove.calculated_value)}, destinada a ${commissionToApprove.user?.name || 'corretor não identificado'}, ficará disponível para pagamento.`
+              : 'Revise a comissão antes de continuar.'
+          }
+          confirmLabel="Aprovar comissão"
+          isPending={approveCommission.isPending}
+          onConfirm={() => {
+            if (!commissionToApprove) return;
+            approveCommission.mutate(commissionToApprove.id, {
+              onSuccess: () => setCommissionToApprove(null),
+            });
+          }}
+        />
+
+        <FinancialConfirmationDialog
+          open={ruleToDelete !== null}
+          onOpenChange={(open) => {
+            if (!open) setRuleToDelete(null);
+          }}
+          title="Excluir regra de comissão?"
+          description={
+            ruleToDelete
+              ? `A regra “${ruleToDelete.name}” será excluída permanentemente e não poderá ser usada em novos cálculos.`
+              : 'Esta ação não pode ser desfeita.'
+          }
+          confirmLabel="Excluir regra"
+          destructive
+          isPending={deleteRule.isPending}
+          onConfirm={() => {
+            if (!ruleToDelete) return;
+            deleteRule.mutate(ruleToDelete.id, {
+              onSuccess: () => setRuleToDelete(null),
+            });
+          }}
+        />
       </div>
     </AppLayout>
   );

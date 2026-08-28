@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import {
@@ -12,6 +12,7 @@ import {
 } from "@/hooks/use-setup-guide";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
+import { setupGuidePathMatches } from "@/lib/setup-guide/navigation";
 
 type TourItem = {
   selector: string | string[];
@@ -452,10 +453,15 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
         },
       },
       {
-        selector: '[data-tour="contacts-lost"]',
-        title: "Leads perdidos",
-        body: "Este filtro abre uma visao focada nos leads perdidos e seus motivos.",
-        closeOpenLayer: true,
+        selector: '[data-tour="contacts-filters-panel"]',
+        title: "Status do negocio",
+        body: "Abra os filtros e escolha Perdido para revisar os leads encerrados e os motivos registrados na lista.",
+        action: {
+          type: "click",
+          selector: '[data-tour="contacts-advanced-filters"]',
+          waitFor: '[data-tour="contacts-filters-panel"]',
+          closeOpenLayer: true,
+        },
       },
       {
         selector: '[data-tour="contacts-list"]',
@@ -784,13 +790,6 @@ const TOUR_PLANS: Partial<Record<SetupStepId, TourPlan>> = {
         selector: '[data-tour="team-user-role"]',
         title: "Usuario ou administrador",
         body: "Administradores possuem acesso ampliado. Promova somente quem realmente precisa gerenciar a organizacao.",
-      },
-      {
-        selector: '[data-tour="team-user-custom-role"]',
-        title: "Funcao personalizada",
-        body: "Funcoes personalizadas refinam as permissoes de usuarios comuns sem transforma-los em administradores.",
-        missingTitle: "Funcoes personalizadas",
-        missingBody: "Este controle aparece quando a organizacao possui funcoes personalizadas cadastradas.",
       },
       {
         selector: '[data-tour="team-user-active"]',
@@ -1411,6 +1410,8 @@ export function SetupGuideTour() {
   const [targetElement, setTargetElement] = useState<HTMLElement | null>(null);
   const [targetRect, setTargetRect] = useState<DOMRect | null>(null);
   const [isResolving, setIsResolving] = useState(false);
+  const tourDialogRef = useRef<HTMLDivElement | null>(null);
+  const previousFocusedElementRef = useRef<HTMLElement | null>(null);
 
   const organizationId = organization?.id || profile?.organization_id;
   const storageKey = user?.id && organizationId
@@ -1418,7 +1419,7 @@ export function SetupGuideTour() {
     : null;
   const queryStepId = normalizeStepId(searchParams.get("setupGuide"));
   const plan = activeStepId ? TOUR_PLANS[activeStepId] : null;
-  const routeMatches = !!plan && !!pathname && pathname.startsWith(plan.path);
+  const routeMatches = !!plan && setupGuidePathMatches(pathname, plan.path);
   const currentItem = items[currentIndex];
 
   const readActiveStep = useCallback(() => {
@@ -1454,6 +1455,58 @@ export function SetupGuideTour() {
     }
   }, [activeStepId, storageKey]);
 
+  const handleTourDialogKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      finishTour(false);
+      return;
+    }
+
+    if (event.key !== "Tab") return;
+    const dialog = tourDialogRef.current;
+    if (!dialog) return;
+    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )).filter((element) => element.getClientRects().length > 0);
+
+    if (focusable.length === 0) {
+      event.preventDefault();
+      dialog.focus({ preventScroll: true });
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus({ preventScroll: true });
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus({ preventScroll: true });
+    }
+  }, [finishTour]);
+
+  useEffect(() => {
+    if (!activeStepId) return;
+    previousFocusedElementRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+
+    return () => {
+      previousFocusedElementRef.current?.focus({ preventScroll: true });
+      previousFocusedElementRef.current = null;
+    };
+  }, [activeStepId]);
+
+  useEffect(() => {
+    if (!activeStepId) return;
+    const frame = requestAnimationFrame(() => {
+      tourDialogRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeStepId, currentIndex, isResolving, routeMatches]);
+
   useEffect(() => {
     queueMicrotask(readActiveStep);
   }, [readActiveStep]);
@@ -1467,6 +1520,7 @@ export function SetupGuideTour() {
     }
 
     return () => {
+      delete document.documentElement.dataset.setupGuideActiveStep;
       delete document.body.dataset.setupGuideActive;
     };
   }, [activeStepId]);
@@ -1681,23 +1735,32 @@ export function SetupGuideTour() {
 
   if (!routeMatches) {
     return (
-      <div className="pointer-events-none fixed inset-0 z-[1000] flex items-center justify-center bg-black/45 px-4">
-        <div className="pointer-events-auto w-[min(360px,calc(100vw-32px))] rounded-[10px] bg-[var(--app-surface-solid)] p-4 text-[var(--app-text-primary)] shadow-2xl">
-          <p className="text-sm font-light">Abrindo a área do guia</p>
-          <p className="mt-2 text-xs font-extralight leading-5 text-[var(--app-text-secondary)]">
+      <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-[var(--app-overlay)] px-4">
+        <div
+          ref={tourDialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="setup-guide-route-title"
+          aria-describedby="setup-guide-route-description"
+          tabIndex={-1}
+          onKeyDown={handleTourDialogKeyDown}
+          className="app-header-popover pointer-events-auto max-h-[calc(100dvh-32px)] w-[min(360px,calc(100vw-32px))] overflow-y-auto rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4 text-[var(--app-text-primary)]"
+        >
+          <p id="setup-guide-route-title" className="text-[14px] font-normal">Abrindo a área do guia</p>
+          <p id="setup-guide-route-description" className="mt-2 text-[12px] font-light leading-5 text-[var(--app-text-secondary)]">
             Vou levar você para a tela certa e apontar os pontos principais por lá.
           </p>
           <div className="mt-4 flex justify-end gap-2">
             <button
               type="button"
-              className="h-8 rounded-[7px] px-3 text-xs font-light text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]"
+              className="h-8 rounded-[6px] px-3 text-[12px] font-light text-[var(--app-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/35"
               onClick={() => finishTour(false)}
             >
               Fechar
             </button>
             <button
               type="button"
-              className="h-8 rounded-[7px] bg-[#FF4529] px-3 text-xs font-light text-white"
+              className="h-8 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-primary-foreground transition-colors hover:bg-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/35"
               onClick={() => router.push(plan.route)}
             >
               Ir para tela
@@ -1710,9 +1773,17 @@ export function SetupGuideTour() {
 
   if (isResolving) {
     return (
-      <div className="pointer-events-none fixed inset-0 z-[1000] flex items-center justify-center bg-black/35 px-4">
-        <div className="flex items-center gap-3 rounded-[8px] bg-[var(--app-surface-solid)] px-4 py-3 text-sm font-light text-[var(--app-text-primary)]">
-          <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#FF4529]/25 border-t-[#FF4529]" />
+      <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-[var(--app-overlay-soft)] px-4">
+        <div
+          ref={tourDialogRef}
+          role="status"
+          aria-live="polite"
+          aria-label="Preparando o ponto atual do guia"
+          tabIndex={-1}
+          onKeyDown={handleTourDialogKeyDown}
+          className="flex items-center gap-3 rounded-[8px] bg-[var(--app-surface-solid)] px-4 py-3 text-[12px] font-light text-[var(--app-text-primary)] outline-none"
+        >
+          <span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-primary/25 border-t-primary motion-reduce:animate-none" />
           Preparando este ponto...
         </div>
       </div>
@@ -1730,32 +1801,63 @@ export function SetupGuideTour() {
       "Essa área pode estar indisponível para o perfil atual ou ainda carregando. Você pode fechar e abrir o guia novamente depois.";
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-[1000]">
+    <div className="fixed inset-0 z-[1000]">
       {hasTarget ? (
-        <div
-          data-tour="setup-guide-highlight"
-          className="fixed rounded-[10px] border-2 border-[#FF4529] shadow-[0_0_0_9999px_rgba(0,0,0,0.50),0_0_28px_rgba(255,69,41,0.26)] transition-all duration-200"
-          style={{
-            left: targetRect.left - 6,
-            top: targetRect.top - 6,
-            width: targetRect.width + 12,
-            height: targetRect.height + 12,
-          }}
-        />
+        <>
+          <svg className="pointer-events-none fixed inset-0 h-full w-full" aria-hidden="true">
+            <defs>
+              <mask id="setup-guide-spotlight-mask">
+                <rect width="100%" height="100%" fill="white" />
+                <rect
+                  x={targetRect.left - 6}
+                  y={targetRect.top - 6}
+                  width={targetRect.width + 12}
+                  height={targetRect.height + 12}
+                  rx="8"
+                  fill="black"
+                />
+              </mask>
+            </defs>
+            <rect
+              width="100%"
+              height="100%"
+              fill="rgb(0 0 0 / 0.45)"
+              mask="url(#setup-guide-spotlight-mask)"
+            />
+          </svg>
+          <div
+            data-tour="setup-guide-highlight"
+            aria-hidden="true"
+            className="pointer-events-none fixed rounded-[8px] border-2 border-primary transition-[left,top,width,height] duration-200 motion-reduce:transition-none"
+            style={{
+              left: targetRect.left - 6,
+              top: targetRect.top - 6,
+              width: targetRect.width + 12,
+              height: targetRect.height + 12,
+            }}
+          />
+        </>
       ) : (
-        <div className="fixed inset-0 bg-black/45" />
+        <div className="fixed inset-0 bg-[var(--app-overlay)]" />
       )}
 
       <div
+        ref={tourDialogRef}
         data-tour="setup-guide-tooltip"
-        className="pointer-events-auto fixed rounded-[10px] border border-[#FF4529]/20 bg-[var(--app-surface-solid)] p-4 text-[var(--app-text-primary)] shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="setup-guide-tooltip-title"
+        aria-describedby="setup-guide-tooltip-body"
+        tabIndex={-1}
+        onKeyDown={handleTourDialogKeyDown}
+        className="app-header-popover pointer-events-auto fixed max-h-[calc(100dvh-32px)] overflow-y-auto rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4 text-[var(--app-text-primary)]"
         style={tooltipStyle}
       >
         {hasTarget ? (
           <span
             aria-hidden="true"
             className={cn(
-              "absolute h-3 w-3 rotate-45 border border-[#FF4529]/20 bg-[var(--app-surface-solid)]",
+              "absolute h-3 w-3 rotate-45 border border-[var(--app-border)] bg-[var(--app-surface-solid)]",
               tooltipStyle["--tour-arrow-position"] === "bottom"
                 ? "-bottom-1.5 border-l-0 border-t-0"
                 : "-top-1.5 border-b-0 border-r-0",
@@ -1764,31 +1866,31 @@ export function SetupGuideTour() {
           />
         ) : null}
 
-        <p className="text-[11px] font-extralight uppercase tracking-[0.16em] text-[#FF4529]">
+        <p className="text-[11px] font-light text-primary">
           Guia de configuração
         </p>
-        <h3 data-tour="setup-guide-tooltip-title" className="mt-2 text-base font-light leading-6">
+        <h3 id="setup-guide-tooltip-title" data-tour="setup-guide-tooltip-title" className="mt-2 text-[14px] font-normal leading-5">
           {formatGuideText(title)}
         </h3>
-        <p data-tour="setup-guide-tooltip-body" className="mt-2 text-sm font-extralight leading-6 text-[var(--app-text-secondary)]">
+        <p id="setup-guide-tooltip-body" data-tour="setup-guide-tooltip-body" className="mt-2 text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
           {formatGuideText(body)}
         </p>
 
-        <div className="mt-4 flex items-center justify-between gap-3">
-          <span className="text-xs font-extralight text-[var(--app-text-tertiary)]">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <span className="text-[12px] font-light text-[var(--app-text-tertiary)]">
             {items.length > 0 ? `${currentIndex + 1}/${items.length}` : "0/0"}
           </span>
-          <div className="flex items-center gap-2">
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
             <button
               type="button"
-              className="h-8 rounded-[7px] px-3 text-xs font-light text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]"
+              className="h-8 rounded-[6px] px-3 text-[12px] font-light text-[var(--app-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/35"
               onClick={() => finishTour(false)}
             >
               Fechar
             </button>
             <button
               type="button"
-              className="h-8 rounded-[7px] px-3 text-xs font-light text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] disabled:opacity-40"
+              className="h-8 rounded-[6px] px-3 text-[12px] font-light text-[var(--app-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/35 disabled:opacity-40"
               disabled={currentIndex === 0}
               onClick={() => setCurrentIndex((index) => Math.max(0, index - 1))}
             >
@@ -1796,7 +1898,7 @@ export function SetupGuideTour() {
             </button>
             <button
               type="button"
-              className="h-8 rounded-[7px] bg-[#FF4529] px-3 text-xs font-light text-white"
+              className="h-8 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-primary-foreground transition-colors hover:bg-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/35"
               onClick={() => {
                 if (currentIndex >= items.length - 1) {
                   finishTour(true);

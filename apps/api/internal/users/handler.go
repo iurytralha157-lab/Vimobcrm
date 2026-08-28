@@ -247,6 +247,8 @@ func writeUserError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusInternalServerError, "auth_admin_not_configured", "Auth admin is not configured.")
 	case errors.Is(err, ErrAuthAdminOperation):
 		httpserver.WriteError(w, r, http.StatusBadGateway, "auth_admin_operation_failed", "Auth admin operation failed.")
+	case errors.Is(err, ErrInvitationRequired):
+		httpserver.WriteError(w, r, http.StatusConflict, "invitation_required", "Envie um convite por e-mail para adicionar o usuario.")
 	case errors.Is(err, tenant.ErrOrganizationAccessDenied):
 		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
 	default:

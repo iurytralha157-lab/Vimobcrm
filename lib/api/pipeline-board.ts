@@ -14,6 +14,7 @@ export type PipelineBoardLead = {
 
 export type PipelineBoardStage = {
   id: string
+  is_qualified: boolean
   leads: PipelineBoardLead[]
   total_lead_count: number
   total_value?: number
@@ -62,11 +63,14 @@ export async function getPipelineBoard(params: {
   filterUserId?: string
   filters?: PipelineBoardFilters
   limit?: number
+  signal?: AbortSignal
 }) {
   const response = await vimobAPIRequest<BoardResponse>('/v1/pipeline-board', {
     organizationId: params.organizationId,
     query: buildPipelineBoardQuery(params),
+    signal: params.signal,
     timeoutMs: 4_000,
+    retry: false,
     skipTelemetry: true,
   })
   validateDomainResponse(pipelineBoardResponseSchema, response, 'pipeline-board.list')

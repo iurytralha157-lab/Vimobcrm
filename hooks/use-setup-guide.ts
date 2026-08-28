@@ -53,6 +53,20 @@ interface SetupGuideProgressRow {
   skipped: boolean | null;
 }
 
+type SetupGuideProgressPatch = {
+  completed_steps?: Record<string, boolean>;
+  skipped?: boolean;
+};
+
+type SetupGuideSyncStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error';
+
+interface SetupGuideSaveQueue {
+  organizationId: string;
+  patch: SetupGuideProgressPatch;
+  timer: ReturnType<typeof setTimeout> | null;
+  flushing: boolean;
+}
+
 function normalizeProgress(value: unknown): Record<string, boolean> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
 
@@ -75,7 +89,10 @@ export function useSetupGuide() {
 
   const [progress, setProgress] = useState<Record<string, boolean>>({});
   const [skipped, setSkipped] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  const [loadedContextKey, setLoadedContextKey] = useState<string | null>(null);
+  const [loadWarning, setLoadWarning] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<SetupGuideSyncStatus>('idle');
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [open, setOpen] = useState(false);
   const userId = user?.id;
   const organizationId = organization?.id || profile?.organization_id;
@@ -86,8 +103,12 @@ export function useSetupGuide() {
   const activeStepStorageKey = userId && organizationId
     ? `${SETUP_GUIDE_ACTIVE_STEP_PREFIX}${userId}:${organizationId}`
     : null;
+  const progressContextKey = userId && organizationId
+    ? `${userId}:${organizationId}`
+    : null;
   const isNewUser = !!user?.created_at && new Date(user.created_at) >= GUIDE_CUTOFF_DATE;
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveQueues = useRef<Map<string, SetupGuideSaveQueue>>(new Map());
+  const activeProgressContextKey = useRef<string | null>(progressContextKey);
 
   const metaProgressSource = user?.user_metadata?.setup_progress;
   const metaProgress = useMemo(() => normalizeProgress(metaProgressSource), [metaProgressSource]);
@@ -615,16 +636,26 @@ export function useSetupGuide() {
 
   const accessLoading = permissionsLoading || modulesLoading || accessScope.isLoading;
   const steps = resolvedSteps;
-  const guideReady = loaded && !accessLoading;
+  const guideReady = !!progressContextKey && loadedContextKey === progressContextKey && !accessLoading;
+
+  useEffect(() => {
+    activeProgressContextKey.current = progressContextKey;
+  }, [progressContextKey]);
 
   /* eslint-disable react-hooks/set-state-in-effect -- Hydrates setup-guide state from DB with metadata fallback. */
   useEffect(() => {
-    if (!userId || !organizationId) {
-      if (!userId) setLoaded(false);
+    if (!userId || !organizationId || !progressContextKey) {
+      setLoadedContextKey(null);
+      setLoadWarning(null);
+      setSyncStatus('idle');
+      setProgress({});
+      setSkipped(false);
       return;
     }
 
     let cancelled = false;
+    setLoadWarning(null);
+    setSyncStatus('idle');
 
     (async () => {
       try {
@@ -644,33 +675,104 @@ export function useSetupGuide() {
         if (!cancelled) {
           setProgress(metaProgress);
           setSkipped(metaSkipped);
+          setLoadWarning('Não foi possível sincronizar o progresso. Você ainda pode usar o guia normalmente.');
         }
       } finally {
-        if (!cancelled) setLoaded(true);
+        if (!cancelled) setLoadedContextKey(progressContextKey);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [userId, organizationId, metaProgress, metaSkipped]);
+  }, [userId, organizationId, progressContextKey, metaProgress, metaSkipped, loadAttempt]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  const persist = useCallback(
-    (next: { completed_steps?: Record<string, boolean>; skipped?: boolean }) => {
-      if (!userId) return;
-      if (saveTimer.current) clearTimeout(saveTimer.current);
+  const flushPendingSave = useCallback(async (contextKey: string) => {
+    const queue = saveQueues.current.get(contextKey);
+    if (!queue || queue.flushing) return;
 
-      saveTimer.current = setTimeout(async () => {
-        try {
-          await settingsAPI.updateSetupGuideProgress(next, organizationId);
-        } catch (dbError) {
-          console.warn('[SetupGuide] DB save failed', dbError);
-        }
-      }, 500);
+    queue.flushing = true;
+    queue.timer = null;
+    if (activeProgressContextKey.current === contextKey) setSyncStatus('saving');
+
+    while (Object.keys(queue.patch).length > 0) {
+      const patch = queue.patch;
+      queue.patch = {};
+
+      try {
+        await settingsAPI.updateSetupGuideProgress(patch, queue.organizationId);
+      } catch (dbError) {
+        queue.patch = { ...patch, ...queue.patch };
+        queue.flushing = false;
+        if (activeProgressContextKey.current === contextKey) setSyncStatus('error');
+        console.warn('[SetupGuide] DB save failed', dbError);
+        return;
+      }
+    }
+
+    queue.flushing = false;
+    saveQueues.current.delete(contextKey);
+    if (activeProgressContextKey.current === contextKey) {
+      setLoadWarning(null);
+      setSyncStatus('saved');
+    }
+  }, []);
+
+  const persist = useCallback(
+    (next: SetupGuideProgressPatch) => {
+      if (!userId || !organizationId || !progressContextKey) return;
+
+      const currentQueue = saveQueues.current.get(progressContextKey);
+      const queue = currentQueue || {
+        organizationId,
+        patch: {},
+        timer: null,
+        flushing: false,
+      };
+
+      queue.patch = { ...queue.patch, ...next };
+      if (queue.timer) clearTimeout(queue.timer);
+      if (!queue.flushing) {
+        queue.timer = setTimeout(() => {
+          void flushPendingSave(progressContextKey);
+        }, 500);
+      }
+      saveQueues.current.set(progressContextKey, queue);
+      setSyncStatus(queue.flushing ? 'saving' : 'pending');
     },
-    [userId, organizationId],
+    [flushPendingSave, organizationId, progressContextKey, userId],
   );
+
+  const retrySave = useCallback(() => {
+    if (!progressContextKey) return;
+    const queue = saveQueues.current.get(progressContextKey);
+    if (!queue || Object.keys(queue.patch).length === 0) return;
+    if (queue.timer) clearTimeout(queue.timer);
+    queue.timer = null;
+    setSyncStatus('pending');
+    void flushPendingSave(progressContextKey);
+  }, [flushPendingSave, progressContextKey]);
+
+  const retryLoad = useCallback(() => {
+    if (!progressContextKey) return;
+    void (async () => {
+      const queue = saveQueues.current.get(progressContextKey);
+      if (queue?.timer) {
+        clearTimeout(queue.timer);
+        queue.timer = null;
+        await flushPendingSave(progressContextKey);
+      }
+
+      const remainingQueue = saveQueues.current.get(progressContextKey);
+      if (remainingQueue?.flushing || (remainingQueue && Object.keys(remainingQueue.patch).length > 0)) {
+        return;
+      }
+
+      setLoadedContextKey(null);
+      setLoadAttempt((attempt) => attempt + 1);
+    })();
+  }, [flushPendingSave, progressContextKey]);
 
   useEffect(() => {
     if (!userId || !profile || !guideReady) return;
@@ -819,5 +921,9 @@ export function useSetupGuide() {
     isNewUser,
     skipped,
     guideReady,
+    loadWarning,
+    syncStatus,
+    retryLoad,
+    retrySave,
   };
 }

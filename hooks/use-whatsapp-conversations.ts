@@ -1,10 +1,19 @@
-import { useEffect } from "react";
-import { useQuery, useMutation, useQueryClient, type Query } from "@tanstack/react-query";
+import { useEffect, useMemo } from "react";
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient, type Query } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
+import { useOrganizationModules } from "@/hooks/use-organization-modules";
+import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { whatsappAPI, type SendWhatsAppMessageResult } from "@/lib/api/whatsapp";
+import { reportErrorEvent } from "@/lib/api/telemetry";
+import { canSubscribeToWhatsAppRealtime } from "@/lib/access/whatsapp-realtime";
 import { createClientId } from "@/lib/client-id";
 import { createClient } from "@/lib/supabase/client";
+import { getPrivateBroadcastRegistry } from "@/lib/supabase/private-broadcast";
+import type {
+  PrivateBroadcastDiagnostic,
+  PrivateBroadcastStatus,
+} from "@/lib/realtime/private-broadcast-registry";
 import {
   getWhatsAppSendFailureStatus,
   matchesLeadMessagesQueryKey,
@@ -23,6 +32,8 @@ const WHATSAPP_CONVERSATIONS_REFETCH_MS = 90_000;
 const WHATSAPP_ACTIVE_MESSAGES_REFETCH_MS = 30_000;
 const WHATSAPP_ACTIVE_MESSAGES_STALE_MS = 10_000;
 const lastWhatsAppSendByUser = new Map<string, number>();
+const realtimeDiagnosticReportedAt = new Map<string, number>();
+const WHATSAPP_REALTIME_DIAGNOSTIC_THROTTLE_MS = 60_000;
 
 export interface WhatsAppConversation {
   id: string;
@@ -112,6 +123,9 @@ export interface WhatsAppMessage {
 export interface ConversationFilters {
   hideGroups?: boolean;
   showArchived?: boolean;
+  onlyLeads?: boolean;
+  withoutLead?: boolean;
+  pendingReply?: boolean;
   search?: string;
 }
 
@@ -181,29 +195,40 @@ export function useWhatsAppConversations(
     ? [...accessibleSessionIds].sort().join(",")
     : "pending";
 
-  return useQuery({
+  const query = useInfiniteQuery({
     queryKey: whatsappQueryKeys.conversations(scope, {
       sessionId,
       hideGroups: filters?.hideGroups ?? false,
       showArchived: filters?.showArchived ?? false,
+      onlyLeads: filters?.onlyLeads ?? false,
+      withoutLead: filters?.withoutLead ?? false,
+      pendingReply: filters?.pendingReply ?? false,
       search: filters?.search?.trim() ?? "",
       accessibleSessionKey,
       limit,
     }),
-    queryFn: async () => {
-      if (!scope.organizationId) return [];
-      if (!sessionId && accessibleSessionIds !== undefined && accessibleSessionIds.length === 0) return [];
+    queryFn: async ({ pageParam }) => {
+      if (!scope.organizationId) return { conversations: [], nextCursor: null };
+      if (!sessionId && accessibleSessionIds !== undefined && accessibleSessionIds.length === 0) {
+        return { conversations: [], nextCursor: null };
+      }
 
-      return whatsappAPI.getConversations({
+      return whatsappAPI.getConversationsPage({
         organizationId: scope.organizationId,
         sessionId,
         filters,
         accessibleSessionIds,
         limit,
-      }) as Promise<WhatsAppConversation[]>;
+        cursor: pageParam,
+      }) as Promise<{ conversations: WhatsAppConversation[]; nextCursor: string | null }>;
     },
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
     enabled: !!scope.organizationId && !!scope.userId,
-    refetchInterval: WHATSAPP_CONVERSATIONS_REFETCH_MS,
+    refetchInterval: (currentQuery) => {
+      const data = currentQuery.state.data as { pages?: unknown[] } | undefined;
+      return (data?.pages?.length ?? 0) <= 1 ? WHATSAPP_CONVERSATIONS_REFETCH_MS : false;
+    },
     refetchIntervalInBackground: false,
     refetchOnReconnect: true,
     refetchOnWindowFocus: false,
@@ -211,6 +236,23 @@ export function useWhatsAppConversations(
     gcTime: 1000 * 60 * 10,
     retry: false,
   });
+
+  const conversations = useMemo(() => {
+    const seen = new Set<string>();
+    return (query.data?.pages ?? []).flatMap((page) => page.conversations).filter((conversation) => {
+      if (seen.has(conversation.id)) return false;
+      seen.add(conversation.id);
+      return true;
+    });
+  }, [query.data?.pages]);
+
+  return {
+    ...query,
+    data: conversations,
+    hasMoreConversations: query.hasNextPage,
+    loadMoreConversations: query.fetchNextPage,
+    isLoadingMoreConversations: query.isFetchingNextPage,
+  };
 }
 
 export function useWhatsAppConversation(conversationId: string | null) {
@@ -223,6 +265,25 @@ export function useWhatsAppConversation(conversationId: string | null) {
       return whatsappAPI.getConversation(conversationId, scope.organizationId) as Promise<WhatsAppConversation>;
     },
     enabled: !!conversationId && !!scope.organizationId && !!scope.userId,
+  });
+}
+
+export function useWhatsAppConversationForLead(leadId: string | null | undefined) {
+  const scope = useWhatsAppQueryScope();
+
+  return useQuery({
+    queryKey: whatsappQueryKeys.conversationForLead(scope, leadId ?? null),
+    queryFn: async () => {
+      if (!leadId || !scope.organizationId) return null;
+      return whatsappAPI.findConversation({
+        leadId,
+        phone: "",
+        organizationId: scope.organizationId,
+      }) as Promise<WhatsAppConversation | null>;
+    },
+    enabled: !!leadId && !!scope.organizationId && !!scope.userId,
+    retry: false,
+    staleTime: 30_000,
   });
 }
 
@@ -892,6 +953,13 @@ export function useArchiveConversation() {
           : "A conversa foi restaurada",
       });
     },
+    onError: () => {
+      toast({
+        title: "Não foi possível atualizar a conversa",
+        description: "Tente novamente em alguns instantes.",
+        variant: "destructive",
+      });
+    },
   });
 }
 
@@ -908,6 +976,13 @@ export function useDeleteConversation() {
       toast({
         title: "Conversa removida",
         description: "A conversa foi removida da lista",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Não foi possível remover a conversa",
+        description: "A conversa foi mantida. Tente novamente.",
+        variant: "destructive",
       });
     },
   });
@@ -934,24 +1009,78 @@ export function useLinkConversationToLead() {
   });
 }
 
-export function useWhatsAppRealtimeConversations(
-  enabled: boolean = true,
-  accessibleSessionIds?: string[],
-  leadIds: string[] = [],
-) {
+function getWhatsAppRealtimeChannelScope(topic: string) {
+  return topic.split(":")[2] === "lead" ? "lead" : "inbox";
+}
+
+function getWhatsAppRealtimeError(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      name: error.name.slice(0, 120),
+      message: error.message.slice(0, 500),
+    };
+  }
+  return {
+    name: "UnknownError",
+    message: String(error ?? "Unknown Realtime error").slice(0, 500),
+  };
+}
+
+function reportWhatsAppRealtimeDiagnostic(diagnostic: PrivateBroadcastDiagnostic) {
+  const channelScope = getWhatsAppRealtimeChannelScope(diagnostic.topic);
+  const organizationId = diagnostic.topic.split(":")[1] || undefined;
+  const throttleKey = `${organizationId ?? "unknown"}:${diagnostic.kind}:${channelScope}`;
+  const now = Date.now();
+  const lastReportedAt = realtimeDiagnosticReportedAt.get(throttleKey) ?? 0;
+  if (now - lastReportedAt < WHATSAPP_REALTIME_DIAGNOSTIC_THROTTLE_MS) return;
+  realtimeDiagnosticReportedAt.set(throttleKey, now);
+
+  const normalizedError = getWhatsAppRealtimeError(diagnostic.error);
+  void reportErrorEvent({
+    organizationId,
+    source: "frontend",
+    severity: diagnostic.kind === "auth_error" || diagnostic.kind === "open_error"
+      ? "error"
+      : "warning",
+    category: "supabase_realtime",
+    message: `WhatsApp Realtime ${diagnostic.kind}: ${normalizedError.message}`,
+    errorCode: `WHATSAPP_REALTIME_${diagnostic.kind.toUpperCase()}`,
+    component: "WhatsAppPrivateRealtime",
+    fingerprint: `frontend:whatsapp-realtime:${diagnostic.kind}:${channelScope}`,
+    metadata: {
+      channelScope,
+      event: diagnostic.event,
+      status: diagnostic.status,
+      errorName: normalizedError.name,
+    },
+  }).catch(() => undefined);
+}
+
+function useCanSubscribeWhatsAppRealtime(enabled: boolean) {
+  const { isLoading: modulesLoading, hasModule } = useOrganizationModules();
+  const { isLoading: permissionsLoading, hasPermission } = useUserPermissions();
+
+  return canSubscribeToWhatsAppRealtime({
+    enabled,
+    modulesLoading,
+    permissionsLoading,
+    hasWhatsAppModule: hasModule("whatsapp"),
+    hasWhatsAppViewPermission: hasPermission("whatsapp_view"),
+  });
+}
+
+export function useWhatsAppInboxRealtime(enabled: boolean = true) {
   const queryClient = useQueryClient();
   const scope = useWhatsAppQueryScope();
-  const accessibleSessionKey = accessibleSessionIds ? [...accessibleSessionIds].sort().join("|") : null;
-  const leadKey = [...new Set(leadIds.filter(Boolean))].sort().join("|");
+  const canSubscribe = useCanSubscribeWhatsAppRealtime(enabled);
 
   useEffect(() => {
-    if (!enabled || !scope.organizationId || !scope.userId) return;
+    if (!canSubscribe || !scope.organizationId || !scope.userId) return;
     const organizationId = scope.organizationId;
 
     queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
-    const scopedLeadIds = leadKey ? leadKey.split("|") : [];
     const supabase = createClient();
-    const channels: ReturnType<typeof supabase.channel>[] = [];
+    const registry = getPrivateBroadcastRegistry(supabase, reportWhatsAppRealtimeDiagnostic);
     const reconcileTimers: ReturnType<typeof setTimeout>[] = [];
     let inboxDebounceTimer: ReturnType<typeof setTimeout> | undefined;
     let cancelled = false;
@@ -964,92 +1093,100 @@ export function useWhatsAppRealtimeConversations(
       });
     };
 
-    void supabase.realtime.setAuth().then(() => {
-      if (cancelled) return;
-
-      // The organization inbox channel is only a content-free wake-up signal.
-      // It makes brand-new conversations visible before their lead-specific
-      // channel is known locally. Canonical data still comes from the scoped API.
-      const inboxChannel = supabase
-        .channel(whatsappInboxTopic(organizationId), { config: { private: true } })
-        .on("broadcast", { event: "whatsapp.inbox.changed" }, ({ payload }) => {
-          if (!isWhatsAppInboxWakePayload(payload)) return;
-          if (inboxDebounceTimer) return;
-          inboxDebounceTimer = setTimeout(() => {
-            inboxDebounceTimer = undefined;
-            reconcileConversations();
-          }, 150);
-        })
-        .subscribe((status) => {
-          if (status !== "SUBSCRIBED") return;
+    // The organization inbox channel is only a content-free wake-up signal.
+    // Canonical data still comes from the scoped API.
+    const lease = registry.acquire({
+      topic: whatsappInboxTopic(organizationId),
+      event: "whatsapp.inbox.changed",
+      onPayload: (payload) => {
+        if (!isWhatsAppInboxWakePayload(payload)) return;
+        if (inboxDebounceTimer) return;
+        inboxDebounceTimer = setTimeout(() => {
+          inboxDebounceTimer = undefined;
           reconcileConversations();
-          reconcileTimers.push(setTimeout(reconcileConversations, 1_000));
-        });
-      channels.push(inboxChannel);
-
-      scopedLeadIds.forEach((leadId) => {
-        const topic = `whatsapp:${organizationId}:lead:${leadId}`;
-        const channel = supabase
-          .channel(topic, { config: { private: true } })
-          .on("broadcast", { event: "whatsapp.message.changed" }, ({ payload }) => {
-            const event = (payload || {}) as Record<string, unknown>;
-            const conversationId = typeof event.conversationId === "string" ? event.conversationId : null;
-            queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
-            queryClient.invalidateQueries({
-              predicate: (query) => matchesWhatsAppMessagesQuery(query, scope, conversationId, leadId),
-            });
-            queryClient.invalidateQueries({
-              queryKey: conversationId
-                ? whatsappQueryKeys.paginatedMessagesForConversation(scope, conversationId)
-                : whatsappQueryKeys.paginatedMessagesScope(scope),
-              refetchType: "active",
-            });
-            queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.leadMessagesScope(scope, leadId) });
-            if (typeof window !== "undefined") {
-              window.dispatchEvent(new CustomEvent("vimob:whatsapp-message-changed", {
-                detail: { ...event, leadId, conversationId },
-              }));
-            }
-          })
-          .subscribe((status) => {
-            if (status !== "SUBSCRIBED") return;
-            // Broadcast is only a low-latency hint. A cold/reconnected Realtime
-            // tenant can become subscribed after an event was committed, so always
-            // reconcile canonical state once the stream reports readiness.
-            const reconcile = () => {
-              if (cancelled) return;
-              queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
-              queryClient.invalidateQueries({
-                predicate: (query) => matchesWhatsAppMessagesQuery(query, scope, null, leadId),
-              });
-              queryClient.invalidateQueries({
-                queryKey: whatsappQueryKeys.paginatedMessagesScope(scope),
-                refetchType: "active",
-              });
-              queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.leadMessagesScope(scope, leadId) });
-            };
-            reconcile();
-            // Supabase can emit SUBSCRIBED just before a cold replication stream is
-            // fully consuming WAL. The delayed reconciliation closes that window.
-            reconcileTimers.push(setTimeout(reconcile, 1_000));
-          });
-        channels.push(channel);
-      });
+        }, 150);
+      },
+      onStatus: (status: PrivateBroadcastStatus) => {
+        if (status !== "SUBSCRIBED") return;
+        reconcileConversations();
+        reconcileTimers.push(setTimeout(reconcileConversations, 1_000));
+      },
     });
 
     return () => {
       cancelled = true;
       if (inboxDebounceTimer) clearTimeout(inboxDebounceTimer);
       reconcileTimers.forEach((timer) => clearTimeout(timer));
-      channels.forEach((channel) => {
-        void supabase.removeChannel(channel);
-      });
+      lease.release();
     };
-  }, [
-    enabled,
-    scope,
-    queryClient,
-    accessibleSessionKey,
-    leadKey,
-  ]);
+  }, [canSubscribe, scope, queryClient]);
+}
+
+export function useWhatsAppLeadRealtime(
+  enabled: boolean = true,
+  leadIds: string[] = [],
+) {
+  const queryClient = useQueryClient();
+  const scope = useWhatsAppQueryScope();
+  const canSubscribe = useCanSubscribeWhatsAppRealtime(enabled);
+  const leadKey = [...new Set(leadIds.filter(Boolean))].sort().join("|");
+
+  useEffect(() => {
+    if (!canSubscribe || !scope.organizationId || !scope.userId || !leadKey) return;
+    const organizationId = scope.organizationId;
+    const scopedLeadIds = leadKey.split("|");
+    const registry = getPrivateBroadcastRegistry(createClient(), reportWhatsAppRealtimeDiagnostic);
+    const reconcileTimers: ReturnType<typeof setTimeout>[] = [];
+    let cancelled = false;
+
+    const leases = scopedLeadIds.map((leadId) => registry.acquire({
+      topic: `whatsapp:${organizationId}:lead:${leadId}`,
+      event: "whatsapp.message.changed",
+      onPayload: (payload) => {
+        const event = (payload || {}) as Record<string, unknown>;
+        const conversationId = typeof event.conversationId === "string" ? event.conversationId : null;
+        queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
+        queryClient.invalidateQueries({
+          predicate: (query) => matchesWhatsAppMessagesQuery(query, scope, conversationId, leadId),
+        });
+        queryClient.invalidateQueries({
+          queryKey: conversationId
+            ? whatsappQueryKeys.paginatedMessagesForConversation(scope, conversationId)
+            : whatsappQueryKeys.paginatedMessagesScope(scope),
+          refetchType: "active",
+        });
+        queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.leadMessagesScope(scope, leadId) });
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("vimob:whatsapp-message-changed", {
+            detail: { ...event, leadId, conversationId },
+          }));
+        }
+      },
+      onStatus: (status: PrivateBroadcastStatus) => {
+        if (status !== "SUBSCRIBED") return;
+        // Broadcast is a low-latency hint. Reconcile once immediately and once
+        // after a cold subscription to close the commit-before-join window.
+        const reconcile = () => {
+          if (cancelled) return;
+          queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
+          queryClient.invalidateQueries({
+            predicate: (query) => matchesWhatsAppMessagesQuery(query, scope, null, leadId),
+          });
+          queryClient.invalidateQueries({
+            queryKey: whatsappQueryKeys.paginatedMessagesScope(scope),
+            refetchType: "active",
+          });
+          queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.leadMessagesScope(scope, leadId) });
+        };
+        reconcile();
+        reconcileTimers.push(setTimeout(reconcile, 1_000));
+      },
+    }));
+
+    return () => {
+      cancelled = true;
+      reconcileTimers.forEach((timer) => clearTimeout(timer));
+      leases.forEach((lease) => lease.release());
+    };
+  }, [canSubscribe, leadKey, scope, queryClient]);
 }

@@ -2,13 +2,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { adminAPI } from '@/lib/api/admin';
 import { useAuth } from '@/contexts/AuthContext';
+import { createInvitationPath } from '@/lib/auth/invitation';
 
 export interface Invitation {
   id: string;
   organization_id: string;
   organization_name?: string | null;
   email: string | null;
-  token: string;
+  token?: string;
   role: 'admin' | 'manager' | 'user';
   created_by: string | null;
   expires_at: string;
@@ -17,6 +18,11 @@ export interface Invitation {
   updated_at?: string;
   is_expired?: boolean;
   email_sent?: boolean;
+  email_status?: string | null;
+  email_provider_message_id?: string | null;
+  email_accepted_at?: string | null;
+  email_delivered_at?: string | null;
+  email_last_event_at?: string | null;
 }
 
 export function useInvitations() {
@@ -36,17 +42,17 @@ export function useCreateInvitation() {
   const organizationId = organization?.id ?? profile?.organization_id;
 
   return useMutation({
-    mutationFn: ({ email, role }: { email?: string; role: 'admin' | 'user' }) => {
+    mutationFn: ({ email, role }: { email?: string; role: 'admin' | 'manager' | 'user' }) => {
       if (!organizationId) throw new Error('Organização não encontrada');
       return adminAPI.createInvitation<Invitation>({
         email: email || '',
         role,
         organizationId,
-      });
+      }, organizationId);
     },
     onSuccess: (invitation) => {
-      queryClient.invalidateQueries({ queryKey: ['invitations'] });
-      queryClient.invalidateQueries({ queryKey: ['organization-users'] });
+      queryClient.invalidateQueries({ queryKey: ['invitations', organizationId] });
+      queryClient.invalidateQueries({ queryKey: ['organization-users', organizationId] });
       toast.success(invitation.email_sent === false ? 'Convite criado sem envio de e-mail.' : 'Convite enviado por e-mail.');
     },
     onError: (error) => {
@@ -57,12 +63,14 @@ export function useCreateInvitation() {
 
 export function useDeleteInvitation() {
   const queryClient = useQueryClient();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id ?? profile?.organization_id;
 
   return useMutation({
-    mutationFn: (id: string) => adminAPI.deleteInvitation(id),
+    mutationFn: (id: string) => adminAPI.deleteInvitation(id, organizationId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['invitations'] });
-      queryClient.invalidateQueries({ queryKey: ['organization-users'] });
+      queryClient.invalidateQueries({ queryKey: ['invitations', organizationId] });
+      queryClient.invalidateQueries({ queryKey: ['organization-users', organizationId] });
       toast.success('Convite cancelado!');
     },
     onError: (error) => {
@@ -73,11 +81,13 @@ export function useDeleteInvitation() {
 
 export function useResendInvitation() {
   const queryClient = useQueryClient();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id ?? profile?.organization_id;
 
   return useMutation({
-    mutationFn: (id: string) => adminAPI.resendInvitation<Invitation>(id),
+    mutationFn: (id: string) => adminAPI.resendInvitation<Invitation>(id, organizationId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['invitations'] });
+      queryClient.invalidateQueries({ queryKey: ['invitations', organizationId] });
       toast.success('Convite reenviado. A validade foi renovada por 7 dias.');
     },
     onError: (error) => {
@@ -87,5 +97,7 @@ export function useResendInvitation() {
 }
 
 export function getInviteLink(token: string) {
-  return `${window.location.origin}/convite/${token}`;
+  const path = createInvitationPath(token);
+  if (!path) throw new Error('Token de convite inválido');
+  return `${window.location.origin}${path}`;
 }

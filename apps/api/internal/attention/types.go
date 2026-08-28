@@ -136,19 +136,20 @@ type ItemPage struct {
 }
 
 type Summary struct {
-	Total           int `json:"total"`
-	Monitoring      int `json:"monitoring"`
-	Warning         int `json:"warning"`
-	Breached        int `json:"breached"`
-	Escalated       int `json:"escalated"`
-	Acknowledged    int `json:"acknowledged"`
-	DueToday        int `json:"dueToday"`
-	Overdue         int `json:"overdue"`
-	Unassigned      int `json:"unassigned"`
-	FirstContact    int `json:"firstContact"`
-	StageInactivity int `json:"stageInactivity"`
-	StageAge        int `json:"stageAge"`
-	CadenceTasks    int `json:"cadenceTasks"`
+	Total                 int `json:"total"`
+	Monitoring            int `json:"monitoring"`
+	Warning               int `json:"warning"`
+	Breached              int `json:"breached"`
+	Escalated             int `json:"escalated"`
+	Acknowledged          int `json:"acknowledged"`
+	DueToday              int `json:"dueToday"`
+	Overdue               int `json:"overdue"`
+	Unassigned            int `json:"unassigned"`
+	FirstContact          int `json:"firstContact"`
+	FirstEffectiveContact int `json:"firstEffectiveContact"`
+	StageInactivity       int `json:"stageInactivity"`
+	StageAge              int `json:"stageAge"`
+	CadenceTasks          int `json:"cadenceTasks"`
 }
 
 type ListFilter struct {
@@ -168,8 +169,9 @@ type SnoozeRequest struct {
 }
 
 type ResolveRequest struct {
-	Reason string  `json:"reason"`
-	Note   *string `json:"note,omitempty"`
+	Reason                 string  `json:"reason"`
+	Note                   *string `json:"note,omitempty"`
+	AdministrativeOverride bool    `json:"administrativeOverride"`
 }
 
 type Settings struct {
@@ -312,7 +314,7 @@ func mergePolicyInput(input policyInput, request PolicyRequest, creating bool) (
 
 func validPolicyType(value string) bool {
 	switch value {
-	case "unassigned", "first_contact", "stage_inactivity", "stage_age", "cadence_task":
+	case "unassigned", "first_contact", "first_effective_contact", "stage_inactivity", "stage_age", "cadence_task":
 		return true
 	default:
 		return false
@@ -352,6 +354,10 @@ func canViewOrganizationAttention(context tenant.Context) bool {
 
 func canActOnItem(context tenant.Context, assignedUserID string) bool {
 	return authorization.CanOperateLead(context, authorization.LeadResource{AssignedUserID: assignedUserID})
+}
+
+func canAdministrativelyOverrideItem(context tenant.Context) bool {
+	return context.IsSuperAdmin || context.HasRole("owner", "admin")
 }
 
 func cleanOptionalString(value *string) *string {

@@ -2,33 +2,25 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import NextImage from 'next/image';
+import { useTheme } from 'next-themes';
 import { useRouter } from 'next/navigation';
 import { AlertCircle, ArrowRight, Building2, LogOut, Shield, User } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSystemSettings } from '@/hooks/use-system-settings';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { VimobLoader } from '@/components/shared/loading';
+import { BRAND_HEADER_LAYOUT, DEFAULT_AUTHENTICATED_ROUTE } from '@/config/constants';
+import {
+  createLoginPath,
+  getPostLoginPathFromSearchParams,
+} from '@/lib/auth/post-login-redirect';
+import {
+  ORGANIZATION_SWITCH_WAIT_MS,
+  runBestEffortAuthOperation,
+  shouldShowOrganizationSelectionLoader,
+} from '@/lib/auth/frontend-auth-reliability';
 
-const defaultOrganizationRedirectPath = '/dashboard';
-const blockedOrganizationRedirectPrefixes = [
-  '/login',
-  '/cadastro',
-  '/reset-password',
-  '/onboarding',
-  '/select-organization',
-];
-
-function getSafeRedirectPath(value?: string | null) {
-  if (!value || !value.startsWith('/') || value.startsWith('//')) {
-    return defaultOrganizationRedirectPath;
-  }
-
-  if (blockedOrganizationRedirectPrefixes.some((prefix) => value.startsWith(prefix))) {
-    return defaultOrganizationRedirectPath;
-  }
-
-  return value;
-}
+const defaultOrganizationRedirectPath = DEFAULT_AUTHENTICATED_ROUTE;
 
 function getCurrentRedirectPath() {
   if (typeof window === 'undefined') {
@@ -36,7 +28,7 @@ function getCurrentRedirectPath() {
   }
 
   const params = new URLSearchParams(window.location.search);
-  return getSafeRedirectPath(params.get('redirectTo'));
+  return getPostLoginPathFromSearchParams(params, defaultOrganizationRedirectPath);
 }
 
 function getInitials(name?: string | null) {
@@ -51,6 +43,8 @@ function formatLastAccess(iso: string | null) {
 
   try {
     const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return null;
+
     return date.toLocaleString('pt-BR', {
       day: '2-digit',
       month: '2-digit',
@@ -73,12 +67,18 @@ export default function SelectOrganization() {
     signOut,
     userOrganizations: rawOrganizations = [],
     organizationsLoaded,
+    organizationsError,
     isInitializingOrg,
+    refreshOrganizations,
   } = useAuth();
   const router = useRouter();
+  const { resolvedTheme } = useTheme();
   const { data: systemSettings } = useSystemSettings();
   const [emptyStateReadyKey, setEmptyStateReadyKey] = useState<string | null>(null);
   const [pendingOrgId, setPendingOrgId] = useState<string | null>(null);
+  const [selectionError, setSelectionError] = useState<string | null>(null);
+  const [failedOrgId, setFailedOrgId] = useState<string | null>(null);
+  const [failedLogoUrl, setFailedLogoUrl] = useState<string | null>(null);
   const autoRoutingOrgIdRef = useRef<string | null>(null);
 
   const organizations = useMemo(() => {
@@ -93,18 +93,33 @@ export default function SelectOrganization() {
 
   const logoUrl = useMemo(() => {
     if (!systemSettings) return null;
-    // Esta tela é sempre escura, portanto sempre exibimos o logotipo para modo escuro (logo branca)
-    return systemSettings.logo_url_dark || systemSettings.logo_url_light;
-  }, [systemSettings]);
+    return resolvedTheme === 'dark'
+      ? systemSettings.logo_url_dark || systemSettings.logo_url_light
+      : systemSettings.logo_url_light || systemSettings.logo_url_dark;
+  }, [resolvedTheme, systemSettings]);
+
+  const defaultLogoUrl = resolvedTheme === 'dark'
+    ? '/images/logo-white.png'
+    : '/images/logo-black.png';
+  const displayLogoUrl = logoUrl && logoUrl !== failedLogoUrl
+    ? logoUrl
+    : defaultLogoUrl;
+  const isConfiguredLogo = Boolean(logoUrl && displayLogoUrl === logoUrl);
 
   useEffect(() => {
     if (!loading && authInitialized && !user) {
-      router.replace('/login');
+      router.replace(createLoginPath(
+        getCurrentRedirectPath(),
+        defaultOrganizationRedirectPath,
+      ));
     }
   }, [authInitialized, loading, router, user]);
 
   const emptyStateKey = `${organizationsLoaded}:${organizations.length}`;
-  const showEmptyState = emptyStateReadyKey === emptyStateKey && organizationsLoaded && organizations.length === 0;
+  const showEmptyState = emptyStateReadyKey === emptyStateKey
+    && organizationsLoaded
+    && !organizationsError
+    && organizations.length === 0;
 
   useEffect(() => {
     if (!organizationsLoaded || organizations.length !== 0) return;
@@ -113,40 +128,75 @@ export default function SelectOrganization() {
   }, [emptyStateKey, organizations.length, organizationsLoaded]);
 
   const shouldAutoRouteSingleOrg =
-    organizationsLoaded && !loading && !isInitializingOrg && organizations.length === 1;
+    organizationsLoaded
+    && !organizationsError
+    && !loading
+    && !isInitializingOrg
+    && pendingOrgId === null
+    && organizations.length === 1;
 
   useEffect(() => {
-    if (!shouldAutoRouteSingleOrg) return;
+    if (!shouldAutoRouteSingleOrg || selectionError) return;
 
     const onlyOrgId = organizations[0]?.organization_id;
     if (!onlyOrgId || autoRoutingOrgIdRef.current === onlyOrgId) return;
 
     autoRoutingOrgIdRef.current = onlyOrgId;
-    void switchOrganization(onlyOrgId)
-      .then(() => {
+    void (async () => {
+      const result = await runBestEffortAuthOperation(
+        () => switchOrganization(onlyOrgId),
+        ORGANIZATION_SWITCH_WAIT_MS,
+      );
+
+      if (result === 'completed') {
         router.replace(getCurrentRedirectPath());
-      })
-      .catch(() => {
-        autoRoutingOrgIdRef.current = null;
-      });
-  }, [organizations, router, shouldAutoRouteSingleOrg, switchOrganization]);
+        return;
+      }
+
+      autoRoutingOrgIdRef.current = null;
+      setFailedOrgId(onlyOrgId);
+      setSelectionError('Não foi possível abrir esta organização. Tente novamente.');
+    })();
+  }, [organizations, router, selectionError, shouldAutoRouteSingleOrg, switchOrganization]);
 
   async function handleSelectOrg(orgId: string) {
+    setSelectionError(null);
+    setFailedOrgId(null);
     setPendingOrgId(orgId);
+
     try {
-      await switchOrganization(orgId);
-      router.replace(getCurrentRedirectPath());
+      const result = await runBestEffortAuthOperation(
+        () => switchOrganization(orgId),
+        ORGANIZATION_SWITCH_WAIT_MS,
+      );
+
+      if (result === 'completed') {
+        router.replace(getCurrentRedirectPath());
+        return;
+      }
+
+      setFailedOrgId(orgId);
+      setSelectionError('Não foi possível abrir esta organização. Tente novamente.');
     } finally {
       setPendingOrgId(null);
     }
   }
 
-  if (loading || !organizationsLoaded || isInitializingOrg || shouldAutoRouteSingleOrg) {
+  const showOrganizationLoader = shouldShowOrganizationSelectionLoader({
+    authLoading: loading,
+    hasSelectionError: selectionError !== null,
+    isInitializingOrganization: isInitializingOrg,
+    organizationsLoaded,
+    shouldAutoRouteSingleOrganization: shouldAutoRouteSingleOrg,
+  });
+  const visibleSelectionError = selectionError || organizationsError;
+
+  if (showOrganizationLoader) {
     return (
-      <div className="dark flex min-h-screen items-center justify-center bg-[#090909]">
+      <div className="flex min-h-screen items-center justify-center bg-[var(--app-background)] text-[var(--app-text-primary)]">
         <div className="flex flex-col items-center gap-4">
           <VimobLoader size="lg" label="Carregando ambiente..." />
-          <p className="animate-pulse text-sm font-extralight tracking-wide text-white/48">
+          <p className="animate-pulse text-[12px] font-light text-[var(--app-text-tertiary)]">
             Carregando seu ambiente...
           </p>
         </div>
@@ -154,20 +204,50 @@ export default function SelectOrganization() {
     );
   }
 
+  if (organizationsError && organizations.length === 0) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-[var(--app-background)] p-4 text-center text-[var(--app-text-primary)]">
+        <div className="grid h-12 w-12 place-items-center rounded-[8px] bg-destructive/10 text-destructive">
+          <AlertCircle className="h-6 w-6" strokeWidth={1.35} />
+        </div>
+        <h2 className="mt-5 text-[16px] font-normal">Não foi possível carregar os acessos</h2>
+        <p className="mt-2 max-w-sm text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
+          {organizationsError}
+        </p>
+        <div className="mt-6 flex flex-col gap-2 sm:flex-row">
+          <button
+            type="button"
+            onClick={() => void refreshOrganizations()}
+            className="h-10 rounded-[6px] bg-primary/50 px-5 text-[12px] font-light text-primary-foreground transition-colors hover:bg-primary"
+          >
+            Tentar novamente
+          </button>
+          <button
+            type="button"
+            onClick={() => void signOut()}
+            className="h-10 rounded-[6px] bg-[var(--app-surface-soft)] px-5 text-[12px] font-light text-[var(--app-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)]"
+          >
+            Sair
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (showEmptyState && organizations.length === 0) {
     return (
-      <div className="dark flex min-h-screen flex-col items-center justify-center bg-[#090909] p-4 text-center">
-        <div className="flex h-12 w-12 items-center justify-center rounded-[8px] bg-white/[0.055] text-white/48">
+      <div className="flex min-h-screen flex-col items-center justify-center bg-[var(--app-background)] p-4 text-center text-[var(--app-text-primary)]">
+        <div className="flex h-12 w-12 items-center justify-center rounded-[8px] bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)]">
           <Building2 className="h-6 w-6" strokeWidth={1.35} />
         </div>
-        <h2 className="mt-5 text-xl font-extralight tracking-wide text-white">
+        <h2 className="mt-5 text-[16px] font-normal text-[var(--app-text-primary)]">
           Nenhuma organização encontrada
         </h2>
-        <p className="mt-2 max-w-xs text-sm font-extralight leading-6 tracking-wide text-white/48">
+        <p className="mt-2 max-w-xs text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
           Você não possui acesso a nenhuma organização ativa no momento.
         </p>
 
-        <div className="mt-5 flex max-w-sm items-start gap-2 rounded-[6px] bg-[#FF4529]/10 px-4 py-3 text-left text-sm font-extralight leading-5 tracking-wide text-[#ff7a66]">
+        <div className="mt-5 flex max-w-sm items-start gap-2 rounded-[8px] bg-destructive/10 px-4 py-3 text-left text-[12px] font-light leading-[18px] text-destructive">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.5} />
           <span>
             Erro: este usuário não está vinculado a uma organização ativa. Peça ao administrador para revisar o convite ou liberar o acesso.
@@ -177,7 +257,7 @@ export default function SelectOrganization() {
         <div className="mt-8 flex flex-col gap-2">
           <button
             onClick={() => window.location.reload()}
-            className="h-10 rounded-[6px] bg-[#FF4529] px-5 text-sm font-light text-white transition-colors hover:bg-[#ff583f]"
+            className="h-10 rounded-[6px] bg-primary/50 px-5 text-[12px] font-light text-primary-foreground transition-colors hover:bg-primary"
           >
             Tentar novamente
           </button>
@@ -185,7 +265,7 @@ export default function SelectOrganization() {
           {isSuperAdmin && (
             <button
               onClick={() => router.push('/admin')}
-              className="h-10 text-sm font-extralight tracking-wide text-white/48 transition-colors hover:text-[#FF4529]"
+              className="h-10 text-[12px] font-light text-[var(--app-text-tertiary)] transition-colors hover:text-primary"
             >
               Acessar Painel Super Admin
             </button>
@@ -193,7 +273,7 @@ export default function SelectOrganization() {
 
           <button
             onClick={signOut}
-            className="h-10 text-sm font-extralight tracking-wide text-white/48 transition-colors hover:text-white"
+            className="h-10 text-[12px] font-light text-[var(--app-text-tertiary)] transition-colors hover:text-[var(--app-text-primary)]"
           >
             Sair
           </button>
@@ -204,10 +284,10 @@ export default function SelectOrganization() {
 
   if (organizations.length === 0) {
     return (
-      <div className="dark flex min-h-screen items-center justify-center bg-[#090909]">
+      <div className="flex min-h-screen items-center justify-center bg-[var(--app-background)] text-[var(--app-text-primary)]">
         <div className="flex flex-col items-center gap-4">
           <VimobLoader size="lg" label="Verificando acessos..." />
-          <p className="animate-pulse text-sm font-extralight tracking-wide text-white/48">
+          <p className="animate-pulse text-[12px] font-light text-[var(--app-text-tertiary)]">
             Verificando acessos...
           </p>
         </div>
@@ -216,48 +296,78 @@ export default function SelectOrganization() {
   }
 
   return (
-    <div className="dark min-h-screen bg-[#090909] px-5 py-8 text-white sm:px-8">
-      <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-6xl flex-col">
-        <div className="flex items-center justify-end">
+    <div className="app-shell min-h-screen bg-[var(--app-background)] text-[var(--app-text-primary)]">
+      <header className="sticky top-0 z-30 bg-[var(--app-background)]">
+        <div
+          className="mx-auto flex h-[72px] w-full items-center justify-between px-4 sm:px-6 lg:px-8"
+          style={{ maxWidth: BRAND_HEADER_LAYOUT.maxWidth }}
+        >
+          <div className="inline-flex min-h-11 w-fit items-center">
+            <NextImage
+              src={displayLogoUrl}
+              alt="Vimob"
+              width={1228}
+              height={429}
+              className="h-auto w-auto object-contain"
+              style={{ width: BRAND_HEADER_LAYOUT.logoWidth }}
+              preload
+              unoptimized={isConfiguredLogo}
+              onError={() => {
+                if (isConfiguredLogo && logoUrl) {
+                  setFailedLogoUrl(logoUrl);
+                }
+              }}
+            />
+          </div>
           <button
+            type="button"
             onClick={signOut}
-            className="inline-flex h-9 items-center gap-2 rounded-[6px] bg-white/[0.055] px-3 text-xs font-extralight tracking-wide text-white/70 transition-colors hover:bg-white/[0.085] hover:text-white"
+            className="group inline-flex h-10 items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-4 text-xs font-light text-[var(--app-text-secondary)] outline-none transition-colors hover:bg-primary hover:text-primary-foreground focus-visible:ring-2 focus-visible:ring-primary/30"
           >
-            <LogOut className="h-3.5 w-3.5" strokeWidth={1.35} />
+            <LogOut className="h-4 w-4 text-primary/70 transition-colors group-hover:text-primary-foreground" strokeWidth={1.6} />
             Sair
           </button>
         </div>
+      </header>
 
-        <div className="flex flex-1 flex-col justify-center py-10">
+      <main className="mx-auto flex min-h-[calc(100vh-72px)] w-full max-w-[1040px] flex-col px-4 pb-8 pt-5 sm:px-6 sm:pb-10 sm:pt-7 lg:px-8">
+        <div className="flex flex-1 flex-col justify-center py-7 sm:py-9">
           <div className="mx-auto w-full max-w-3xl text-center">
-            {logoUrl ? (
-              <NextImage
-                src={logoUrl}
-                alt="Vimob"
-                width={180}
-                height={48}
-                className="mx-auto h-auto w-[136px] object-contain"
-                unoptimized
-              />
-            ) : (
-              <NextImage
-                src="/images/logo-white.png"
-                alt="Vimob"
-                width={1228}
-                height={429}
-                className="mx-auto h-auto w-[136px]"
-                priority
-              />
-            )}
-            <h1 className="mt-7 text-[28px] font-extralight tracking-wide text-white sm:text-[34px]">
+            <h1 className="text-[16px] font-normal text-[var(--app-text-primary)]">
               Selecione a organização
             </h1>
-            <p className="mx-auto mt-2 max-w-xl text-sm font-extralight leading-6 tracking-wide text-white/48">
+            <p className="mx-auto mt-2 max-w-xl text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
               Você tem acesso a múltiplas organizações. Escolha o ambiente para continuar.
             </p>
           </div>
 
-          <div className="mx-auto mt-8 grid w-full max-w-5xl grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {visibleSelectionError ? (
+            <div
+              role="alert"
+              className="mx-auto mt-6 flex w-full max-w-3xl flex-col items-center gap-3 rounded-[8px] bg-destructive/10 px-4 py-3 text-center text-[12px] font-light leading-[18px] text-destructive sm:flex-row sm:justify-between sm:text-left"
+            >
+              <span className="flex items-start gap-2">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.5} />
+                {visibleSelectionError}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  if (failedOrgId) {
+                    void handleSelectOrg(failedOrgId);
+                    return;
+                  }
+                  void refreshOrganizations();
+                }}
+                disabled={pendingOrgId !== null}
+                className="h-9 shrink-0 rounded-[6px] bg-primary/50 px-4 text-[12px] font-light text-primary-foreground transition-colors hover:bg-primary disabled:cursor-wait disabled:opacity-60"
+              >
+                Tentar novamente
+              </button>
+            </div>
+          ) : null}
+
+          <div className="mt-8 grid w-full grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {organizations.map((org) => {
               const name = org.organization_name || 'Organização';
               const lastAccess = formatLastAccess(org.last_accessed_at);
@@ -270,49 +380,51 @@ export default function SelectOrganization() {
                   type="button"
                   onClick={() => handleSelectOrg(org.organization_id)}
                   disabled={pendingOrgId !== null}
-                  className="group flex min-h-[148px] flex-col rounded-[8px] bg-[#121212] p-5 text-left transition-colors hover:bg-[#171717] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#FF4529]/70 disabled:cursor-wait disabled:opacity-70"
+                  aria-busy={isPending}
+                  className="group flex min-h-[124px] flex-col rounded-[8px] border-0 bg-[var(--app-surface-solid)] px-5 py-4 text-left shadow-none transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-vimob-accent/70 disabled:cursor-wait disabled:opacity-70"
                 >
-                  <div className="flex items-start justify-between gap-4">
-                    <Avatar className="h-12 w-12 rounded-full bg-black/40">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Avatar className="h-12 w-12 shrink-0 rounded-[8px] bg-[var(--app-surface-soft)]">
                       {org.organization_logo ? (
-                        <AvatarImage src={org.organization_logo} className="object-contain" />
+                        <AvatarImage src={org.organization_logo} alt="" className="object-contain" />
                       ) : null}
-                      <AvatarFallback className="rounded-full bg-[#FF4529] text-sm font-light tracking-wide text-white">
+                      <AvatarFallback className="rounded-[8px] bg-primary/50 text-[12px] font-light text-primary-foreground transition-colors group-hover:bg-primary group-focus-visible:bg-primary">
                         {getInitials(name)}
                       </AvatarFallback>
                     </Avatar>
 
-                    <span className="inline-flex h-8 w-8 items-center justify-center rounded-[6px] bg-white/[0.045] text-white/38 transition-colors group-hover:bg-[#FF4529] group-hover:text-white">
-                      <ArrowRight className="h-4 w-4" strokeWidth={1.35} />
-                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[14px] font-normal text-[var(--app-text-primary)]">
+                        {name}
+                      </p>
+                      <p className="mt-1 truncate text-[12px] font-light text-[var(--app-text-tertiary)]">
+                        {lastAccess ? `Último acesso ${lastAccess}` : 'Primeiro acesso'}
+                      </p>
+                    </div>
                   </div>
 
-                  <div className="mt-5 min-w-0">
-                    <p className="truncate text-sm font-light tracking-wide text-white">
-                      {name}
-                    </p>
-                    <p className="mt-1 text-xs font-extralight tracking-wide text-white/38">
-                      {lastAccess ? `Último acesso ${lastAccess}` : 'Primeiro acesso'}
-                    </p>
-                  </div>
-
-                  <div className="mt-auto flex items-center justify-between gap-3 pt-5">
-                    <span className="inline-flex h-7 items-center gap-2 rounded-[6px] bg-white/[0.055] px-2.5 text-xs font-extralight tracking-wide text-white/68">
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <span className="inline-flex h-7 items-center gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[12px] font-light text-[var(--app-text-secondary)]">
                       {isAdmin ? (
                         <>
-                          <Shield className="h-3.5 w-3.5 text-[#FF4529]" strokeWidth={1.35} /> Administrador
+                          <Shield className="h-3.5 w-3.5 text-primary" strokeWidth={1.35} /> Administrador
                         </>
                       ) : (
                         <>
-                          <User className="h-3.5 w-3.5 text-[#FF4529]" strokeWidth={1.35} /> Usuário
+                          <User className="h-3.5 w-3.5 text-primary" strokeWidth={1.35} /> Usuário
                         </>
                       )}
                     </span>
-                    {isPending ? (
-                      <span className="text-xs font-extralight tracking-wide text-[#FF4529]">
-                        Entrando...
+                    <span className="flex items-center gap-2">
+                      {isPending ? (
+                        <span role="status" className="text-[12px] font-light text-primary">
+                          Entrando...
+                        </span>
+                      ) : null}
+                      <span className="inline-flex h-8 w-8 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground transition-colors group-hover:bg-primary group-focus-visible:bg-primary">
+                        <ArrowRight className="h-4 w-4" strokeWidth={1.35} />
                       </span>
-                    ) : null}
+                    </span>
                   </div>
                 </button>
               );
@@ -322,15 +434,13 @@ export default function SelectOrganization() {
           {isSuperAdmin && (
             <button
               onClick={() => router.push('/admin')}
-              className="mx-auto mt-8 block text-center text-sm font-extralight tracking-wide text-white/42 transition-colors hover:text-[#FF4529]"
+              className="mx-auto mt-8 block text-center text-[12px] font-light text-[var(--app-text-tertiary)] transition-colors hover:text-primary"
             >
               Acessar Painel Super Admin
             </button>
           )}
-
-          <div className="mx-auto mt-10 h-px w-full max-w-5xl bg-white/[0.045]" />
         </div>
-      </div>
+      </main>
     </div>
   );
 }

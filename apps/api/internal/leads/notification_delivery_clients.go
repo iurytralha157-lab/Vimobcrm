@@ -3,6 +3,7 @@ package leads
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,12 +17,13 @@ import (
 )
 
 type notificationEmailClient struct {
-	apiKey       string
-	fromEmail    string
-	replyTo      string
-	supportEmail string
-	appURL       string
-	httpClient   *http.Client
+	apiKey         string
+	fromEmail      string
+	replyTo        string
+	supportEmail   string
+	appURL         string
+	authProjectURL string
+	httpClient     *http.Client
 }
 
 type dealWonEmailPayload struct {
@@ -32,22 +34,85 @@ type dealWonEmailPayload struct {
 	Organization   string
 	Value          string
 	LeadURL        string
+	IdempotencyKey string
+}
+
+type billingEmailPayload struct {
+	RecipientEmail    string
+	RecipientName     string
+	EventKey          string
+	Title             string
+	Content           string
+	Amount            string
+	DueDate           string
+	TargetURL         string
+	ReceiptNumber     string
+	Organization      string
+	PayerName         string
+	PayerTaxID        string
+	PlanName          string
+	BillingPeriod     string
+	BillingType       string
+	PaidAt            string
+	ProviderReference string
+	VerificationPath  string
+	IssuerName        string
+	IssuedAt          string
+	IdempotencyKey    string
+}
+
+type onboardingEmailPayload struct {
+	RecipientEmail       string
+	RecipientName        string
+	Organization         string
+	PlanName             string
+	SignupPath           string
+	TrialDays            string
+	TrialEndsAt          string
+	CheckoutPath         string
+	EmailConfirmationURL string
+	TermsVersion         string
+	PrivacyVersion       string
+	IdempotencyKey       string
+}
+
+type resendEmailResponse struct {
+	ID      string `json:"id"`
+	Message string `json:"message"`
+	Name    string `json:"name"`
+	Error   string `json:"error"`
 }
 
 func newNotificationEmailClient(config EmailConfig) notificationEmailClient {
 	return notificationEmailClient{
-		apiKey:       strings.TrimSpace(config.ResendAPIKey),
-		fromEmail:    firstNotificationText(config.FromEmail, "Vimob CRM <naoresponde@vimobcrm.com.br>"),
-		replyTo:      strings.TrimSpace(config.ReplyTo),
-		supportEmail: strings.TrimSpace(config.SupportEmail),
-		appURL:       strings.TrimRight(firstNotificationText(config.AppURL, "https://app.vimobcrm.com.br"), "/"),
-		httpClient:   &http.Client{Timeout: 15 * time.Second},
+		apiKey:         strings.TrimSpace(config.ResendAPIKey),
+		fromEmail:      firstNotificationText(config.FromEmail, "Vimob CRM <naoresponde@vimobcrm.com.br>"),
+		replyTo:        strings.TrimSpace(config.ReplyTo),
+		supportEmail:   strings.TrimSpace(config.SupportEmail),
+		appURL:         strings.TrimRight(firstNotificationText(config.AppURL, "https://app.vimobcrm.com.br"), "/"),
+		authProjectURL: strings.TrimRight(strings.TrimSpace(config.AuthProjectURL), "/"),
+		httpClient:     &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
 func (client notificationEmailClient) sendDealWon(ctx context.Context, payload dealWonEmailPayload) DispatchChannelResult {
-	result := DispatchChannelResult{Enabled: client.apiKey != ""}
-	if strings.TrimSpace(payload.RecipientEmail) == "" {
+	subject := transactionalEmailSubject("deal_won", "")
+	leadName := firstNotificationText(payload.LeadName, "Lead")
+	actorName := firstNotificationText(payload.ActorName, "Equipe Vimob")
+	body := client.dealWonHTML(payload, leadName, actorName)
+	return client.sendHTML(ctx, payload.RecipientEmail, subject, body, payload.IdempotencyKey)
+}
+
+func (client notificationEmailClient) sendHTML(ctx context.Context, recipient string, subject string, body string, idempotencyKey string) DispatchChannelResult {
+	recipient = strings.TrimSpace(recipient)
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	result := DispatchChannelResult{
+		Enabled:        client.apiKey != "",
+		Provider:       "resend",
+		Recipient:      recipient,
+		IdempotencyKey: idempotencyKey,
+	}
+	if recipient == "" {
 		result.Error = "recipient_email_missing"
 		return result
 	}
@@ -56,13 +121,9 @@ func (client notificationEmailClient) sendDealWon(ctx context.Context, payload d
 		return result
 	}
 
-	subject := "Lead ganho no Vimob"
-	leadName := firstNotificationText(payload.LeadName, "Lead")
-	actorName := firstNotificationText(payload.ActorName, "Equipe Vimob")
-	body := client.dealWonHTML(payload, leadName, actorName)
 	requestBody := map[string]any{
 		"from":    client.fromEmail,
-		"to":      []string{strings.TrimSpace(payload.RecipientEmail)},
+		"to":      []string{recipient},
 		"subject": subject,
 		"html":    body,
 	}
@@ -82,9 +143,11 @@ func (client notificationEmailClient) sendDealWon(ctx context.Context, payload d
 	}
 	request.Header.Set("Authorization", "Bearer "+client.apiKey)
 	request.Header.Set("Content-Type", "application/json")
+	if idempotencyKey != "" {
+		request.Header.Set("Idempotency-Key", idempotencyKey)
+	}
 
 	result.Attempted = true
-	result.Provider = "resend"
 	response, err := client.httpClient.Do(request)
 	if err != nil {
 		result.Error = err.Error()
@@ -92,10 +155,18 @@ func (client notificationEmailClient) sendDealWon(ctx context.Context, payload d
 	}
 	defer response.Body.Close()
 	result.Status = response.StatusCode
-	result.OK = response.StatusCode >= 200 && response.StatusCode < 300
+	raw, _ := io.ReadAll(io.LimitReader(response.Body, 8192))
+	var providerResponse resendEmailResponse
+	_ = json.Unmarshal(raw, &providerResponse)
+	result.MessageID = strings.TrimSpace(providerResponse.ID)
+	result.OK = response.StatusCode >= 200 && response.StatusCode < 300 && result.MessageID != ""
 	if !result.OK {
-		raw, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
-		result.Error = trimMax(firstNotificationText(strings.TrimSpace(string(raw)), response.Status), 240)
+		result.Error = trimMax(firstNotificationText(
+			strings.TrimSpace(providerResponse.Message),
+			strings.TrimSpace(providerResponse.Error),
+			strings.TrimSpace(string(raw)),
+			response.Status,
+		), 240)
 	}
 	return result
 }
@@ -121,6 +192,206 @@ func (client notificationEmailClient) dealWonHTML(payload dealWonEmailPayload, l
   </div>
 </div>
 </body></html>`, htmlEscape(actorName), htmlEscape(leadName), valueLine, htmlEscape(firstNotificationText(payload.Organization, "Vimob CRM")), button)
+}
+
+func (client notificationEmailClient) sendBilling(ctx context.Context, payload billingEmailPayload) DispatchChannelResult {
+	subject := transactionalEmailSubject(payload.EventKey, payload.Title)
+	body := client.billingHTML(payload)
+	return client.sendHTML(ctx, payload.RecipientEmail, subject, body, payload.IdempotencyKey)
+}
+
+func (client notificationEmailClient) billingHTML(payload billingEmailPayload) string {
+	if payload.EventKey == "billing_payment_receipt" {
+		return client.paymentReceiptHTML(payload)
+	}
+	name := firstNotificationText(payload.RecipientName, "cliente")
+	details := ""
+	if strings.TrimSpace(payload.Amount) != "" {
+		details += fmt.Sprintf(`<p style="margin:0 0 8px;color:#4b5563;font-size:15px;">Valor: <strong style="color:#111827;">%s</strong></p>`, htmlEscape(payload.Amount))
+	}
+	if strings.TrimSpace(payload.DueDate) != "" {
+		details += fmt.Sprintf(`<p style="margin:0 0 8px;color:#4b5563;font-size:15px;">Vencimento: <strong style="color:#111827;">%s</strong></p>`, htmlEscape(payload.DueDate))
+	}
+	button := ""
+	if strings.HasPrefix(strings.TrimSpace(payload.TargetURL), "/") {
+		button = fmt.Sprintf(`<a href="%s%s" style="display:inline-block;background:#ff482a;color:#fff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:700;font-size:14px;">Ver cobranca no Vimob</a>`, htmlEscape(client.appURL), htmlEscape(payload.TargetURL))
+	}
+
+	return fmt.Sprintf(`<!doctype html><html><body style="margin:0;background:#f5f5f5;font-family:Arial,sans-serif;">
+<div style="max-width:560px;margin:0 auto;padding:28px;">
+  <div style="background:#fff;border-radius:12px;padding:28px;border:1px solid #eee;">
+    <p style="margin:0 0 8px;color:#ff482a;font-size:13px;font-weight:700;text-transform:uppercase;">Assinatura Vimob</p>
+    <h1 style="margin:0 0 16px;color:#111827;font-size:24px;line-height:1.25;">%s</h1>
+    <p style="margin:0 0 16px;color:#4b5563;font-size:15px;">Ola, %s. %s</p>
+    %s
+    <div style="margin-top:24px;">%s</div>
+    <p style="margin:24px 0 0;color:#6b7280;font-size:12px;">Por seguranca, consulte os dados da cobranca somente dentro da sua conta Vimob.</p>
+  </div>
+</div>
+</body></html>`, htmlEscape(firstNotificationText(payload.Title, "Atualizacao da assinatura")), htmlEscape(name), htmlEscape(payload.Content), details, button)
+}
+
+func (client notificationEmailClient) paymentReceiptHTML(payload billingEmailPayload) string {
+	name := firstNotificationText(payload.RecipientName, "cliente")
+	verificationURL := ""
+	if strings.HasPrefix(strings.TrimSpace(payload.VerificationPath), "/") {
+		verificationURL = client.appURL + strings.TrimSpace(payload.VerificationPath)
+	}
+	verificationButton := ""
+	if verificationURL != "" {
+		verificationButton = fmt.Sprintf(`<a href="%s" style="display:inline-block;background:#ff482a;color:#fff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:700;font-size:14px;">Verificar comprovante</a>`, htmlEscape(verificationURL))
+	}
+
+	return fmt.Sprintf(`<!doctype html><html><body style="margin:0;background:#f5f5f5;font-family:Arial,sans-serif;">
+<div style="max-width:620px;margin:0 auto;padding:28px;">
+  <div style="background:#fff;border-radius:12px;padding:28px;border:1px solid #eee;">
+    <p style="margin:0 0 8px;color:#ff482a;font-size:13px;font-weight:700;text-transform:uppercase;">Comprovante de pagamento</p>
+    <h1 style="margin:0 0 10px;color:#111827;font-size:24px;line-height:1.25;">Pagamento confirmado</h1>
+    <p style="margin:0 0 24px;color:#4b5563;font-size:15px;">Olá, %s. O %s confirmou o pagamento da assinatura da %s.</p>
+    <table role="presentation" style="width:100%%;border-collapse:collapse;font-size:14px;color:#374151;">
+      <tr><td style="padding:9px 0;border-bottom:1px solid #eee;">Comprovante</td><td style="padding:9px 0;border-bottom:1px solid #eee;text-align:right;font-weight:700;color:#111827;">%s</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #eee;">Pagador</td><td style="padding:9px 0;border-bottom:1px solid #eee;text-align:right;font-weight:700;color:#111827;">%s</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #eee;">CPF/CNPJ</td><td style="padding:9px 0;border-bottom:1px solid #eee;text-align:right;font-weight:700;color:#111827;">%s</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #eee;">Plano</td><td style="padding:9px 0;border-bottom:1px solid #eee;text-align:right;font-weight:700;color:#111827;">%s · %s</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #eee;">Forma de pagamento</td><td style="padding:9px 0;border-bottom:1px solid #eee;text-align:right;font-weight:700;color:#111827;">%s</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #eee;">Valor</td><td style="padding:9px 0;border-bottom:1px solid #eee;text-align:right;font-weight:700;color:#111827;">%s</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #eee;">Pago em</td><td style="padding:9px 0;border-bottom:1px solid #eee;text-align:right;font-weight:700;color:#111827;">%s</td></tr>
+      <tr><td style="padding:9px 0;">Referência</td><td style="padding:9px 0;text-align:right;font-weight:700;color:#111827;">%s</td></tr>
+    </table>
+    <div style="margin-top:24px;">%s</div>
+    <p style="margin:22px 0 0;color:#6b7280;font-size:12px;line-height:1.5;">Emitido em %s. Este comprovante confirma o pagamento registrado pelo Vimob e não substitui nota fiscal ou documento fiscal.</p>
+  </div>
+</div>
+</body></html>`,
+		htmlEscape(name),
+		htmlEscape(firstNotificationText(payload.IssuerName, "Vimob CRM")),
+		htmlEscape(firstNotificationText(payload.Organization, "sua organização")),
+		htmlEscape(firstNotificationText(payload.ReceiptNumber, "—")),
+		htmlEscape(firstNotificationText(payload.PayerName, payload.Organization, "—")),
+		htmlEscape(maskTaxDocument(payload.PayerTaxID)),
+		htmlEscape(firstNotificationText(payload.PlanName, "Plano Vimob")),
+		htmlEscape(firstNotificationText(payload.BillingPeriod, "mensal")),
+		htmlEscape(billingMethodLabel(payload.BillingType)),
+		htmlEscape(firstNotificationText(payload.Amount, "—")),
+		htmlEscape(firstNotificationText(payload.PaidAt, "—")),
+		htmlEscape(firstNotificationText(payload.ProviderReference, "—")),
+		verificationButton,
+		htmlEscape(firstNotificationText(payload.IssuedAt, payload.PaidAt, "—")),
+	)
+}
+
+func (client notificationEmailClient) sendOnboarding(ctx context.Context, payload onboardingEmailPayload) DispatchChannelResult {
+	if !client.isSafeEmailConfirmationURL(payload.EmailConfirmationURL) {
+		return DispatchChannelResult{
+			Enabled:        true,
+			Provider:       "resend",
+			Recipient:      strings.TrimSpace(payload.RecipientEmail),
+			IdempotencyKey: strings.TrimSpace(payload.IdempotencyKey),
+			Error:          "onboarding_email_confirmation_url_invalid",
+		}
+	}
+	subject := transactionalEmailSubject("onboarding_welcome", "")
+	body := client.onboardingHTML(payload)
+	return client.sendHTML(ctx, payload.RecipientEmail, subject, body, payload.IdempotencyKey)
+}
+
+func transactionalEmailSubject(eventKey string, title string) string {
+	switch strings.TrimSpace(eventKey) {
+	case "deal_won":
+		return "Lead ganho no Vimob"
+	case "onboarding_welcome", "onboarding_email_confirmation":
+		return "Confirme seu e-mail para acessar o Vimob"
+	default:
+		return firstNotificationText(title, "Atualizacao da sua assinatura Vimob")
+	}
+}
+
+func (client notificationEmailClient) onboardingHTML(payload onboardingEmailPayload) string {
+	encodedConfirmationURL := base64.RawURLEncoding.EncodeToString([]byte(strings.TrimSpace(payload.EmailConfirmationURL)))
+	confirmationLandingURL := strings.TrimRight(client.appURL, "/") + "/confirmar-email#confirmation_url=" + encodedConfirmationURL
+	confirmationAction := fmt.Sprintf(`<a href="%s" style="display:inline-block;background:#ff482a;color:#fff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:700;font-size:14px;">Revisar confirmação de e-mail</a>`, htmlEscape(confirmationLandingURL))
+	checkoutAction := ""
+	if strings.HasPrefix(strings.TrimSpace(payload.CheckoutPath), "/") {
+		checkoutLabel := "Abrir o Vimob"
+		if strings.EqualFold(strings.TrimSpace(payload.SignupPath), "paid") {
+			checkoutLabel = "Finalizar pagamento"
+		}
+		checkoutAction = fmt.Sprintf(`<p style="margin:16px 0 0;"><a href="%s%s" style="display:inline-block;color:#ff482a;text-decoration:none;font-weight:700;font-size:14px;">%s</a></p>`, htmlEscape(client.appURL), htmlEscape(payload.CheckoutPath), htmlEscape(checkoutLabel))
+	}
+	trialLine := ""
+	if strings.TrimSpace(payload.TrialDays) != "" {
+		trialLine = fmt.Sprintf(`<p style="margin:0 0 8px;color:#4b5563;font-size:15px;">Período de teste: <strong style="color:#111827;">%s dias</strong></p>`, htmlEscape(payload.TrialDays))
+	}
+	return fmt.Sprintf(`<!doctype html><html><body style="margin:0;background:#f5f5f5;font-family:Arial,sans-serif;">
+<div style="max-width:560px;margin:0 auto;padding:28px;">
+  <div style="background:#fff;border-radius:12px;padding:28px;border:1px solid #eee;">
+    <p style="margin:0 0 8px;color:#ff482a;font-size:13px;font-weight:700;text-transform:uppercase;">Cadastro concluído</p>
+    <h1 style="margin:0 0 16px;color:#111827;font-size:24px;line-height:1.25;">Bem-vindo ao Vimob</h1>
+    <p style="margin:0 0 16px;color:#4b5563;font-size:15px;">Olá, %s. A organização <strong style="color:#111827;">%s</strong> foi criada com sucesso.</p>
+    <p style="margin:0 0 16px;color:#4b5563;font-size:15px;">Abra a página segura abaixo e confirme que este e-mail pertence a você antes de entrar no Vimob.</p>
+    <p style="margin:0 0 8px;color:#4b5563;font-size:15px;">Plano: <strong style="color:#111827;">%s</strong></p>
+    %s
+    <div style="margin-top:24px;">%s%s</div>
+    <p style="margin:24px 0 0;color:#6b7280;font-size:12px;line-height:1.5;">Aceites registrados: Termos %s · Privacidade %s. Se você não realizou este cadastro, responda este e-mail imediatamente.</p>
+  </div>
+</div>
+</body></html>`,
+		htmlEscape(firstNotificationText(payload.RecipientName, "cliente")),
+		htmlEscape(firstNotificationText(payload.Organization, "sua organização")),
+		htmlEscape(firstNotificationText(payload.PlanName, "Plano Vimob")),
+		trialLine,
+		confirmationAction,
+		checkoutAction,
+		htmlEscape(firstNotificationText(payload.TermsVersion, "—")),
+		htmlEscape(firstNotificationText(payload.PrivacyVersion, "—")),
+	)
+}
+
+func (client notificationEmailClient) isSafeEmailConfirmationURL(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	project, projectErr := url.Parse(strings.TrimSpace(client.authProjectURL))
+	if err != nil || projectErr != nil ||
+		parsed.User != nil || parsed.Fragment != "" || parsed.Host == "" ||
+		project.User != nil || project.Host == "" {
+		return false
+	}
+	if !strings.EqualFold(parsed.Scheme, project.Scheme) ||
+		!strings.EqualFold(parsed.Host, project.Host) ||
+		parsed.Path != strings.TrimRight(project.Path, "/")+"/auth/v1/verify" {
+		return false
+	}
+
+	query := parsed.Query()
+	expectedRedirect := strings.TrimRight(client.appURL, "/") + "/login?emailConfirmation=success"
+	return query.Get("type") == "signup" &&
+		strings.TrimSpace(query.Get("token")) != "" &&
+		query.Get("redirect_to") == expectedRedirect
+}
+
+func billingMethodLabel(value string) string {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "PIX":
+		return "PIX"
+	case "BOLETO":
+		return "Boleto bancário"
+	case "CREDIT_CARD":
+		return "Cartão de crédito"
+	default:
+		return firstNotificationText(strings.TrimSpace(value), "Não informado")
+	}
+}
+
+func maskTaxDocument(value string) string {
+	digits := make([]rune, 0, len(value))
+	for _, character := range value {
+		if character >= '0' && character <= '9' {
+			digits = append(digits, character)
+		}
+	}
+	if len(digits) <= 4 {
+		return firstNotificationText(string(digits), "—")
+	}
+	return strings.Repeat("•", len(digits)-4) + string(digits[len(digits)-4:])
 }
 
 type notificationPushClient struct {

@@ -19,12 +19,16 @@ import {
 } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Globe, FileText, Home, RefreshCw, Route, Tag } from "lucide-react";
+import { Globe, FileText, Home, Plus, RefreshCw, Route, Tag } from "lucide-react";
 import { useProperties } from "@/hooks/use-properties";
 import { MetaForm, MetaFormConfig, useSaveFormConfig } from "@/hooks/use-meta-forms";
 import { useRoundRobins } from "@/hooks/use-round-robins";
 import { InlineTagSelector } from "@/components/ui/tag-selector";
 import { PropertyPickerDialog } from "@/components/features/properties/PropertyPickerDialog";
+import { DistributionQueueEditor } from "@/components/features/round-robin/DistributionQueueEditor";
+import { useCreateQueueAdvanced } from "@/hooks/use-create-queue-advanced";
+import { useOrganizationModules } from "@/hooks/use-organization-modules";
+import { useUserPermissions } from "@/hooks/use-user-permissions";
 
 interface MetaFormConfigDialogProps {
   open: boolean;
@@ -81,10 +85,23 @@ export function MetaFormConfigDialog({
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [fieldMapping, setFieldMapping] = useState<Record<string, string>>({});
   const [customFields, setCustomFields] = useState<string[]>([]);
+  const [queueEditorOpen, setQueueEditorOpen] = useState(false);
 
-  const { data: properties } = useProperties();
-  const { data: allRoundRobins = [] } = useRoundRobins();
+  const { hasModule } = useOrganizationModules();
+  const { hasPermission } = useUserPermissions();
+  const hasPropertiesModule = hasModule("properties");
+  const canViewProperties =
+    hasPropertiesModule &&
+    (hasPermission("property_view") || hasPermission("property_manage"));
+  const canManageDistribution = hasPermission("distribution_manage");
+  const { data: properties } = useProperties(undefined, {}, {
+    enabled: open && canViewProperties,
+  });
+  const { data: allRoundRobins = [] } = useRoundRobins({
+    enabled: open && canManageDistribution,
+  });
   const saveConfig = useSaveFormConfig();
+  const createQueue = useCreateQueueAdvanced();
   const roundRobins = open
     ? allRoundRobins.filter((queue) => queue.is_active).sort((a, b) => a.name.localeCompare(b.name))
     : [];
@@ -152,35 +169,44 @@ export function MetaFormConfigDialog({
   };
 
   const handleSave = async () => {
-    await saveConfig.mutateAsync({
-      integrationId,
-      formId: form.id,
-      formName: form.name,
-      propertyId: propertyId || undefined,
-      roundRobinId: roundRobinId || null,
-      purpose,
-      source: null,
-      sourceDetails: null,
-      defaultValues: {
+    try {
+      await saveConfig.mutateAsync({
+        integrationId,
+        formId: form.id,
+        formName: form.name,
+        propertyId: propertyId || undefined,
+        roundRobinId: roundRobinId || null,
         purpose,
-        property_id: propertyId || null,
-        auto_tags: selectedTags,
-      },
-      autoTags: selectedTags,
-      fieldMapping,
-      customFieldsConfig: customFields,
-      isActive: true,
-    });
+        source: null,
+        sourceDetails: null,
+        defaultValues: {
+          purpose,
+          property_id: propertyId || null,
+          auto_tags: selectedTags,
+        },
+        autoTags: selectedTags,
+        fieldMapping,
+        customFieldsConfig: customFields,
+        isActive: true,
+      });
 
-    onOpenChange(false);
+      onOpenChange(false);
+    } catch {
+      // The mutation owns the error feedback; keep the dialog open for retry.
+    }
+  };
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!saveConfig.isPending) onOpenChange(nextOpen);
   };
 
   return (
-    <Dialog key={form.id} open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="app-card w-[96vw] sm:max-w-4xl sm:w-full rounded-xl max-h-[90vh] p-0 overflow-hidden">
-        <DialogHeader className="border-b border-white/[0.045] px-5 py-3">
-          <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
-            <Globe className="h-5 w-5 text-blue-600" />
+    <>
+    <Dialog key={form.id} open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="app-card max-h-[90vh] w-[96vw] overflow-hidden rounded-[8px] p-0 sm:w-full sm:max-w-4xl">
+        <DialogHeader className="border-b border-[var(--app-border)] px-5 py-3">
+          <DialogTitle className="flex items-center gap-2 text-[14px] font-normal">
+            <Globe className="h-5 w-5 text-primary" />
             Configurar formulário Meta
           </DialogTitle>
           <DialogDescription>
@@ -193,7 +219,7 @@ export function MetaFormConfigDialog({
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h4 className="font-semibold flex items-center gap-2">
+                  <h4 className="flex items-center gap-2 text-[14px] font-normal">
                     <FileText className="h-4 w-4 text-primary" />
                     Campos do lead
                   </h4>
@@ -206,7 +232,7 @@ export function MetaFormConfigDialog({
                 {formQuestions.map((question) => (
                   <div key={question.key} className="app-card-soft space-y-2 p-2.5">
                     <div className="min-w-0">
-                      <p className="text-sm font-semibold truncate">{question.label || question.key}</p>
+                      <p className="truncate text-[12px] font-normal">{question.label || question.key}</p>
                     </div>
                     <Select
                       value={fieldMapping[question.key] || "_ignore"}
@@ -231,7 +257,7 @@ export function MetaFormConfigDialog({
 
             <div className="space-y-4">
               <div>
-                <h4 className="font-semibold flex items-center gap-2">
+                <h4 className="flex items-center gap-2 text-[14px] font-normal">
                   <Home className="h-4 w-4 text-primary" />
                   Configuração do lead
                 </h4>
@@ -253,27 +279,54 @@ export function MetaFormConfigDialog({
                   </Select>
                 </div>
 
-                <div className="space-y-2">
-                  <Label className="flex items-center gap-2">
-                    <Route className="h-3.5 w-3.5 text-primary" />
-                    Fila
-                  </Label>
-                  <Select value={roundRobinId || "_none"} onValueChange={(value) => setRoundRobinId(value === "_none" ? "" : value)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione uma fila" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="_none">Sem fila</SelectItem>
-                      {roundRobins.map((queue) => (
-                        <SelectItem key={queue.id} value={queue.id}>{queue.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                {canManageDistribution ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <Label className="flex items-center gap-2">
+                        <Route className="h-3.5 w-3.5 text-primary" />
+                        Fila
+                      </Label>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 rounded-[6px] px-2 text-xs"
+                        onClick={() => setQueueEditorOpen(true)}
+                      >
+                        <Plus className="mr-1 h-3.5 w-3.5" />
+                        Nova fila
+                      </Button>
+                    </div>
+                    <Select value={roundRobinId || "_none"} onValueChange={(value) => setRoundRobinId(value === "_none" ? "" : value)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Selecione uma fila" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="_none">Sem fila</SelectItem>
+                        {roundRobins.map((queue) => (
+                          <SelectItem key={queue.id} value={queue.id}>{queue.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : (
+                  <div className="rounded-[8px] border border-[var(--app-border)] bg-[var(--app-surface-soft)] px-3 py-2.5">
+                    <p className="flex items-center gap-2 text-xs font-medium text-[var(--app-text-primary)]">
+                      <Route className="h-3.5 w-3.5 text-[var(--app-text-tertiary)]" />
+                      Fila de distribuição
+                    </p>
+                    <p className="mt-1 text-xs text-[var(--app-text-tertiary)]">
+                      Seu perfil não pode consultar ou alterar filas. A configuração atual será preservada.
+                    </p>
+                  </div>
+                )}
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr] gap-4">
-                <div className="space-y-2">
+              <div className={canViewProperties
+                ? "grid grid-cols-1 gap-4 lg:grid-cols-[1.2fr_1fr]"
+                : "grid grid-cols-1 gap-4"
+              }>
+                {canViewProperties && <div className="space-y-2">
                   <Label>Imóvel</Label>
                   <div className="flex gap-2">
                     <PropertyPickerDialog
@@ -282,12 +335,12 @@ export function MetaFormConfigDialog({
                       onSelect={(property) => setPropertyId(property.id)}
                     />
                     {propertyId && (
-                      <Button variant="outline" className="h-10 rounded-xl" onClick={() => setPropertyId("")}>
+                      <Button type="button" variant="outline" className="h-10 rounded-[6px]" onClick={() => setPropertyId("")}>
                         Limpar
                       </Button>
                     )}
                   </div>
-                </div>
+                </div>}
 
                 <div className="space-y-2">
                   <Label className="flex items-center gap-2">
@@ -304,16 +357,27 @@ export function MetaFormConfigDialog({
           </div>
         </ScrollArea>
 
-        <DialogFooter className="border-t border-white/[0.045] p-4 flex-row gap-2 sm:justify-end">
-          <Button variant="outline" className="rounded-xl" onClick={() => onOpenChange(false)}>
+        <DialogFooter className="flex-row gap-2 border-t border-[var(--app-border)] p-4 sm:justify-end">
+          <Button type="button" variant="outline" className="rounded-[6px]" onClick={() => onOpenChange(false)} disabled={saveConfig.isPending}>
             Cancelar
           </Button>
-          <Button className="rounded-xl min-w-[140px]" onClick={handleSave} disabled={saveConfig.isPending}>
+          <Button type="button" className="min-w-[140px] rounded-[6px] bg-primary/50 text-primary-foreground shadow-none hover:bg-primary" onClick={handleSave} disabled={saveConfig.isPending}>
             {saveConfig.isPending && <RefreshCw className="h-4 w-4 mr-2 animate-spin" />}
             Salvar
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    {canManageDistribution && (
+      <DistributionQueueEditor
+        open={queueEditorOpen}
+        onOpenChange={setQueueEditorOpen}
+        onSave={async (data) => {
+          const createdQueue = await createQueue.mutateAsync(data);
+          setRoundRobinId(createdQueue.id);
+        }}
+      />
+    )}
+    </>
   );
 }

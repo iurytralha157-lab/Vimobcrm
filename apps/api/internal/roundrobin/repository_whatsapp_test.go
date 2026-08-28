@@ -370,14 +370,17 @@ func TestWhatsAppMessageDistributionStateQueryMatchesCanonicalRuntime(t *testing
 		"coalesce(user_account.is_active, false) = true",
 		"join public.organization_members organization_member",
 		"coalesce(organization_member.is_active, false) = true",
-		"and member.team_id is null",
+		"left join public.teams member_team",
+		"left join public.team_members team_member",
+		"member.team_id is null",
+		"or (member_team.id is not null and team_member.user_id is not null)",
 	} {
 		if !strings.Contains(queryer.query, fragment) {
 			t.Errorf("state query does not contain %q", fragment)
 		}
 	}
-	teamCountEnd := strings.Index(queryer.query, "and member.team_id is not null")
-	directCountEnd := strings.Index(queryer.query, "and member.team_id is null")
+	teamCountEnd := strings.Index(queryer.query, "and member.user_id is null")
+	directCountEnd := strings.Index(queryer.query, "and member.user_id is not null")
 	activeUserJoin := strings.Index(queryer.query, "join public.users user_account")
 	if teamCountEnd < 0 || directCountEnd < teamCountEnd || activeUserJoin < directCountEnd {
 		t.Error("eligible user joins must belong to EligibleUserCount after the direct member count")

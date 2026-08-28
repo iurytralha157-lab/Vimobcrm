@@ -94,8 +94,9 @@ type BulkAvailabilityRequest struct {
 }
 
 type TeamMemberInput struct {
-	UserID   string `json:"userId"`
-	IsLeader bool   `json:"isLeader"`
+	UserID       string                `json:"userId"`
+	IsLeader     bool                  `json:"isLeader"`
+	Availability []AvailabilityRequest `json:"availability,omitempty"`
 }
 
 type CreateTeamRequest struct {

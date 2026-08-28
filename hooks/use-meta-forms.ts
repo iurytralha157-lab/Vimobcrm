@@ -113,10 +113,7 @@ export function useFetchPageForms() {
 
   return useMutation({
     mutationFn: ({ pageId }: { pageId: string }) =>
-      integrationsAPI.invokeFunction<{ forms: MetaForm[] }>("meta-oauth", {
-        action: "get_page_forms",
-        page_id: pageId,
-      }, organizationId),
+      integrationsAPI.listMetaPageForms<MetaForm>(pageId, organizationId),
   });
 }
 

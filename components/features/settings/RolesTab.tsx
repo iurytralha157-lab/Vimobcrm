@@ -375,7 +375,7 @@ export function RolesTab() {
                                           {groupPerms.map(permission => (
                                             <div
                                               key={permission.key}
-                                              className="app-card-soft flex items-start gap-3 p-3 transition-colors cursor-pointer hover:bg-white/[0.055]"
+                                              className="app-card-soft flex cursor-pointer items-start gap-3 p-3 transition-colors hover:bg-[var(--app-surface-hover)]"
                                               onClick={() => togglePermission(permission.key)}
                                             >
                                               <div className={`mt-0.5 h-5 w-5 rounded border flex items-center justify-center transition-colors ${
@@ -408,7 +408,7 @@ export function RolesTab() {
                                       {ungroupedPerms.map(permission => (
                                         <div
                                           key={permission.key}
-                                          className="app-card-soft flex items-start gap-3 p-3 transition-colors cursor-pointer hover:bg-white/[0.055]"
+                                          className="app-card-soft flex cursor-pointer items-start gap-3 p-3 transition-colors hover:bg-[var(--app-surface-hover)]"
                                           onClick={() => togglePermission(permission.key)}
                                         >
                                           <div className={`mt-0.5 h-5 w-5 rounded border flex items-center justify-center transition-colors ${
@@ -440,7 +440,7 @@ export function RolesTab() {
               </div>
             </div>
 
-            <div className="flex gap-2 pt-4 border-t border-white/[0.055]">
+            <div className="flex gap-2 border-t border-[var(--app-border)] pt-4">
               <Button variant="secondary" className="w-[40%]" onClick={() => setCreateDialogOpen(false)} disabled={isLoading}>
                 Cancelar
               </Button>

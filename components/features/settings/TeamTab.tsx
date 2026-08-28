@@ -43,7 +43,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useDeleteUser, useDeleteUserImpact, useOrganizationUsers, useUpdateUser } from '@/hooks/use-users';
-import { useCreateInvitation, useDeleteInvitation, useInvitations, useResendInvitation } from '@/hooks/use-invitations';
+import { useCreateInvitation, useDeleteInvitation, useInvitations, useResendInvitation, type Invitation } from '@/hooks/use-invitations';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 import { canManageOrganization } from '@/lib/access/organization';
@@ -54,14 +54,31 @@ const getErrorMessage = (error: unknown, fallback: string) => {
   return fallback;
 };
 
+type OrganizationMemberRole = 'admin' | 'manager' | 'user';
+
 export function TeamTab() {
   const { profile, isSuperAdmin, organization, userOrganizations } = useAuth();
   const { t } = useLanguage();
   const queryClient = useQueryClient();
   const { hasPermission } = useUserPermissions();
+  const roleLabel = (role: string) => {
+    if (role === 'admin' || role === 'owner') return t.settings.users.admin;
+    if (role === 'manager') return t.settings.users.manager;
+    return t.settings.users.user;
+  };
   
-  const { data: users = [], isLoading: usersLoading } = useOrganizationUsers();
-  const { data: invitations = [], isLoading: invitationsLoading } = useInvitations();
+  const {
+    data: users = [],
+    isLoading: usersLoading,
+    isError: usersFailed,
+    refetch: refetchUsers,
+  } = useOrganizationUsers();
+  const {
+    data: invitations = [],
+    isLoading: invitationsLoading,
+    isError: invitationsFailed,
+    refetch: refetchInvitations,
+  } = useInvitations();
   
   const updateUser = useUpdateUser();
   const deleteUser = useDeleteUser();
@@ -75,10 +92,12 @@ export function TeamTab() {
   const [deletingUser, setDeletingUser] = useState(false);
   const [transferLeadsToUserId, setTransferLeadsToUserId] = useState<string>('');
   const [transferPropertiesToUserId, setTransferPropertiesToUserId] = useState<string>('');
+  const [invitationToDelete, setInvitationToDelete] = useState<Invitation | null>(null);
+  const [userToDeactivate, setUserToDeactivate] = useState<{ id: string; name: string } | null>(null);
 
   // Invitation state for new user
   const [newUserEmail, setNewUserEmail] = useState('');
-  const [newUserRole, setNewUserRole] = useState<'admin' | 'user'>('user');
+  const [newUserRole, setNewUserRole] = useState<OrganizationMemberRole>('user');
 
   const activeOrganizationId = organization?.id || profile?.organization_id;
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
@@ -88,6 +107,7 @@ export function TeamTab() {
   });
   const canManageUsers = isAdmin || hasPermission('users_manage');
   const canManagePermissions = isAdmin || hasPermission('permissions_manage');
+  const canManageAdminRole = isAdmin && canManagePermissions;
   const { data: deleteImpact, isLoading: deleteImpactLoading, isError: deleteImpactFailed } = useDeleteUserImpact(
     userToDelete?.id,
     deleteUserDialogOpen && !!userToDelete,
@@ -107,6 +127,10 @@ export function TeamTab() {
     (!requiresLeadTransfer || !!transferLeadsToUserId) &&
     (!requiresPropertyTransfer || !!transferPropertiesToUserId);
   const pendingInvitations = invitations.filter((invitation) => !invitation.used_at);
+  const recentAcceptedInvitations = invitations
+    .filter((invitation) => !!invitation.used_at)
+    .slice(0, 5);
+  const visibleInvitations = [...pendingInvitations, ...recentAcceptedInvitations];
 
   useEffect(() => {
     if (!canManageUsers) return;
@@ -118,10 +142,28 @@ export function TeamTab() {
 
   // Helper para obter a função customizada de um usuário
   const handleToggleUserActive = async (userId: string, currentValue: boolean) => {
-    await updateUser.mutateAsync({ id: userId, is_active: !currentValue });
+    try {
+      await updateUser.mutateAsync({ id: userId, is_active: !currentValue });
+    } catch {
+      // The mutation already shows the API error and the controlled switch keeps its server state.
+    }
   };
 
-  const handleUpdateUserRole = async (userId: string, role: 'admin' | 'user') => {
+  const handleDeactivateUser = async () => {
+    if (!userToDeactivate) return;
+    try {
+      await updateUser.mutateAsync({ id: userToDeactivate.id, is_active: false });
+      setUserToDeactivate(null);
+    } catch {
+      // The mutation already shows the API error; keep the confirmation open for retry.
+    }
+  };
+
+  const handleUpdateUserRole = async (userId: string, role: OrganizationMemberRole) => {
+    if (role !== 'user' && !canManageAdminRole) {
+      toast.error('Você não tem permissão para atribuir um papel privilegiado.');
+      return;
+    }
     await updateUser.mutateAsync({ id: userId, role });
     await queryClient.invalidateQueries({ queryKey: ['organization-users'] });
   };
@@ -162,6 +204,10 @@ export function TeamTab() {
       toast.error('Informe o e-mail do convite');
       return;
     }
+    if (newUserRole !== 'user' && !canManageAdminRole) {
+      toast.error('Você não tem permissão para convidar um papel privilegiado.');
+      return;
+    }
     try {
       await createInvitation.mutateAsync({
         email: newUserEmail.trim(),
@@ -171,6 +217,16 @@ export function TeamTab() {
       resetNewUserForm();
     } catch (error: unknown) {
       console.error('[TeamTab] invitation failed', error);
+    }
+  };
+
+  const handleDeleteInvitation = async () => {
+    if (!invitationToDelete) return;
+    try {
+      await deleteInvitation.mutateAsync(invitationToDelete.id);
+      setInvitationToDelete(null);
+    } catch {
+      // The mutation already shows the API error; keep the dialog open for retry.
     }
   };
 
@@ -186,7 +242,7 @@ export function TeamTab() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
             <div>
-              <CardTitle className="text-xl font-semibold text-foreground">{t.settings.users.title}</CardTitle>
+              <CardTitle className="text-[14px] font-normal text-foreground">{t.settings.users.title}</CardTitle>
               <CardDescription className="mt-0.5 text-sm text-muted-foreground">{t.settings.users.description}</CardDescription>
             </div>
             {canManageUsers && (
@@ -198,7 +254,7 @@ export function TeamTab() {
                   <Button 
                     data-tour="team-add-user" 
                     size="sm"
-                    className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-none border-2 border-primary/20 hover:scale-105 transition-all duration-200"
+                    className="rounded-[6px] border-0 bg-primary/50 text-[12px] font-light text-primary-foreground shadow-none transition-colors hover:bg-primary"
                   >
                     <Plus className="h-4 w-4 mr-2" />
                     {t.settings.users.newUser}
@@ -224,12 +280,20 @@ export function TeamTab() {
                       </div>
                       <div className="space-y-2">
                         <Label>{t.settings.users.role}</Label>
-                        <Select value={newUserRole} onValueChange={v => setNewUserRole(v as 'admin' | 'user')}>
+                        <Select
+                          value={canManageAdminRole ? newUserRole : 'user'}
+                          onValueChange={v => setNewUserRole(v as OrganizationMemberRole)}
+                        >
                           <SelectTrigger>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="admin">{t.settings.users.admin}</SelectItem>
+                            {canManageAdminRole && (
+                              <SelectItem value="admin">{t.settings.users.admin}</SelectItem>
+                            )}
+                            {canManageAdminRole && (
+                              <SelectItem value="manager">{t.settings.users.manager}</SelectItem>
+                            )}
                             <SelectItem value="user">{t.settings.users.user}</SelectItem>
                           </SelectContent>
                         </Select>
@@ -260,21 +324,56 @@ export function TeamTab() {
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
+            ) : usersFailed || invitationsFailed ? (
+              <div className="flex flex-col items-center gap-3 py-8 text-center text-sm text-muted-foreground">
+                <p>Não foi possível carregar usuários e convites desta organização.</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void Promise.all([refetchUsers(), refetchInvitations()])}
+                >
+                  Tentar novamente
+                </Button>
+              </div>
             ) : (
               <div data-tour="team-users-list" className="space-y-3">
-                {pendingInvitations.map((invitation) => {
+                {visibleInvitations.map((invitation) => {
+                  const isAccepted = !!invitation.used_at;
                   const isExpired = invitation.is_expired === true;
                   const isResending = resendInvitation.isPending && resendInvitation.variables === invitation.id;
                   const isDeleting = deleteInvitation.isPending && deleteInvitation.variables === invitation.id;
+                  const emailDeliveryLabel = (() => {
+                    switch (invitation.email_status) {
+                      case 'delivered':
+                        return 'E-mail entregue';
+                      case 'accepted':
+                      case 'sent':
+                        return 'E-mail aceito pelo provedor';
+                      case 'delayed':
+                        return 'Entrega do e-mail atrasada pelo provedor';
+                      case 'failed':
+                      case 'suppressed':
+                      case 'bounced':
+                        return 'Falha confirmada na entrega do e-mail';
+                      case 'complained':
+                        return 'E-mail entregue e marcado como spam';
+                      case 'processing':
+                        return 'Envio do e-mail em processamento';
+                      default:
+                        return 'Envio do e-mail sem confirmação';
+                    }
+                  })();
 
                   return (
                     <div
                       key={`invitation-${invitation.id}`}
-                      className="flex min-w-0 items-center justify-between gap-2 rounded-[6px] border-0 bg-amber-500/5 p-3"
+                      className={isAccepted
+                        ? 'flex min-w-0 items-center justify-between gap-2 rounded-[6px] border-0 bg-emerald-500/5 p-3'
+                        : 'flex min-w-0 items-center justify-between gap-2 rounded-[6px] border-0 bg-amber-500/5 p-3'}
                     >
                       <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
                         <Avatar className="h-8 w-8 shrink-0 sm:h-9 sm:w-9">
-                          <AvatarFallback className="bg-amber-500 text-white text-sm">
+                          <AvatarFallback className={isAccepted ? 'bg-emerald-500 text-white text-sm' : 'bg-amber-500 text-white text-sm'}>
                             <Mail className="h-4 w-4" />
                           </AvatarFallback>
                         </Avatar>
@@ -283,20 +382,27 @@ export function TeamTab() {
                             <p className="truncate text-sm font-medium">{invitation.email || 'Convite sem e-mail'}</p>
                             <Badge
                               variant="secondary"
-                              className={isExpired
+                              className={isAccepted
+                                ? 'shrink-0 rounded-[6px] border-0 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200'
+                                : isExpired
                                 ? 'shrink-0 rounded-[6px] border-0 bg-destructive/10 text-destructive'
                                 : 'shrink-0 rounded-[6px] border-0 bg-amber-500/10 text-amber-700 dark:text-amber-200'}
                             >
-                              {isExpired ? 'Expirado' : 'Pendente'}
+                              {isAccepted ? 'Aceito' : isExpired ? 'Expirado' : 'Pendente'}
                             </Badge>
                           </div>
                           <p className="truncate text-[10px] text-muted-foreground sm:text-xs">
-                            Convite enviado como {invitation.role === 'admin' ? t.settings.users.admin : t.settings.users.user}
-                            {!isExpired && ` · válido até ${new Intl.DateTimeFormat('pt-BR').format(new Date(invitation.expires_at))}`}
+                            Convite enviado como {roleLabel(invitation.role)}
+                            {isAccepted
+                              ? ` · aceito em ${new Intl.DateTimeFormat('pt-BR').format(new Date(invitation.used_at as string))}`
+                              : !isExpired && ` · válido até ${new Intl.DateTimeFormat('pt-BR').format(new Date(invitation.expires_at))}`}
+                          </p>
+                          <p className="truncate text-[10px] text-muted-foreground sm:text-xs">
+                            {emailDeliveryLabel}
                           </p>
                         </div>
                       </div>
-                      {canManageUsers && (
+                      {canManageUsers && !isAccepted && (!['admin', 'manager'].includes(invitation.role) || canManageAdminRole) && (
                         <div className="ml-3 flex shrink-0 items-center gap-1">
                           <Button
                             variant="ghost"
@@ -314,7 +420,7 @@ export function TeamTab() {
                             variant="ghost"
                             size="icon"
                             className="h-8 w-8 rounded-[6px] border-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                            onClick={() => deleteInvitation.mutate(invitation.id)}
+                            onClick={() => setInvitationToDelete(invitation)}
                             disabled={deleteInvitation.isPending || resendInvitation.isPending}
                             aria-label="Cancelar convite"
                           >
@@ -352,22 +458,29 @@ export function TeamTab() {
                       </div>
                     </div>
                     <div className="ml-auto flex shrink-0 items-center justify-end gap-0.5 sm:gap-2">
-                      {canManageUsers ? (
+                      {canManageUsers && (!['admin', 'manager', 'owner'].includes(user.role) || canManageAdminRole) ? (
                         <>
                           {/* Tipo de usuÃ¡rio (admin/user) */}
-                          <Select 
-                            value={user.role ?? 'user'} 
-                            onValueChange={v => handleUpdateUserRole(user.id, v as 'admin' | 'user')} 
-                            disabled={user.id === profile?.id}
-                          >
-                            <SelectTrigger data-tour="team-user-role" className="hidden h-8 w-24 text-xs sm:flex">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="admin">{t.settings.users.admin}</SelectItem>
-                              <SelectItem value="user">{t.settings.users.user}</SelectItem>
-                            </SelectContent>
-                          </Select>
+                          {canManageAdminRole ? (
+                            <Select
+                              value={user.role ?? 'user'}
+                              onValueChange={v => handleUpdateUserRole(user.id, v as OrganizationMemberRole)}
+                              disabled={user.id === profile?.id}
+                            >
+                              <SelectTrigger data-tour="team-user-role" className="hidden h-8 w-24 text-xs sm:flex">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="admin">{t.settings.users.admin}</SelectItem>
+                                <SelectItem value="manager">{t.settings.users.manager}</SelectItem>
+                                <SelectItem value="user">{t.settings.users.user}</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <Badge variant="secondary" className="hidden rounded-[6px] border-0 sm:inline-flex">
+                              {roleLabel(user.role)}
+                            </Badge>
+                          )}
                           
                           {canManagePermissions && (
                             <Button
@@ -389,8 +502,14 @@ export function TeamTab() {
                               data-tour="team-user-active"
                               className="scale-[0.85] sm:scale-100"
                               checked={user.is_active || false}
-                              onCheckedChange={() => handleToggleUserActive(user.id, user.is_active || false)}
-                              disabled={user.id === profile?.id}
+                              onCheckedChange={(checked) => {
+                                if (!checked) {
+                                  setUserToDeactivate({ id: user.id, name: user.name });
+                                  return;
+                                }
+                                void handleToggleUserActive(user.id, false);
+                              }}
+                              disabled={user.id === profile?.id || updateUser.isPending}
                               aria-label={`${user.is_active ? 'Desativar' : 'Ativar'} ${user.name}`}
                             />
                           </div>
@@ -414,7 +533,7 @@ export function TeamTab() {
                       ) : (
                         <div className="flex items-center gap-0.5 sm:gap-2">
                           <Badge variant={user.role === 'admin' ? 'default' : 'secondary'} className="hidden rounded-[6px] border-0 sm:inline-flex">
-                            {user.role === 'admin' ? t.settings.users.admin : t.settings.users.user}
+                            {roleLabel(user.role)}
                           </Badge>
                           {canManagePermissions && (
                             <Button
@@ -447,6 +566,7 @@ export function TeamTab() {
       <AlertDialog
         open={deleteUserDialogOpen}
         onOpenChange={(open) => {
+          if (!open && deletingUser) return;
           setDeleteUserDialogOpen(open);
           if (!open) {
             setUserToDelete(null);
@@ -473,15 +593,15 @@ export function TeamTab() {
               <div className="grid grid-cols-3 gap-2">
                 <div className="rounded-lg border border-border bg-muted/30 p-3">
                   <p className="text-xs text-muted-foreground">Leads</p>
-                  <p className="text-lg font-semibold">{impactLeads}</p>
+                  <p className="text-[20px] font-normal">{impactLeads}</p>
                 </div>
                 <div className="rounded-lg border border-border bg-muted/30 p-3">
                   <p className="text-xs text-muted-foreground">Imóveis</p>
-                  <p className="text-lg font-semibold">{impactProperties}</p>
+                  <p className="text-[20px] font-normal">{impactProperties}</p>
                 </div>
                 <div className="rounded-lg border border-border bg-muted/30 p-3">
                   <p className="text-xs text-muted-foreground">WhatsApp</p>
-                  <p className="text-lg font-semibold">{impactWhatsAppSessions}</p>
+                  <p className="text-[20px] font-normal">{impactWhatsAppSessions}</p>
                 </div>
               </div>
             )}
@@ -542,12 +662,68 @@ export function TeamTab() {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deletingUser}>Cancelar</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleDeleteUser}
+              onClick={(event) => {
+                event.preventDefault();
+                void handleDeleteUser();
+              }}
               disabled={!canConfirmDelete}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {deletingUser && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={!!userToDeactivate}
+        onOpenChange={(open) => !open && !updateUser.isPending && setUserToDeactivate(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Desativar usuário?</AlertDialogTitle>
+            <AlertDialogDescription>
+              <strong>{userToDeactivate?.name}</strong> perderá o acesso ao CRM até ser ativado novamente.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={updateUser.isPending}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handleDeactivateUser();
+              }}
+              disabled={updateUser.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {updateUser.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Desativar usuário
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!invitationToDelete} onOpenChange={(open) => !open && !deleteInvitation.isPending && setInvitationToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancelar convite?</AlertDialogTitle>
+            <AlertDialogDescription>
+              O convite enviado para <strong>{invitationToDelete?.email || 'este usuário'}</strong> deixará de ser válido imediatamente.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteInvitation.isPending}>Voltar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handleDeleteInvitation();
+              }}
+              disabled={deleteInvitation.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteInvitation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Cancelar convite
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

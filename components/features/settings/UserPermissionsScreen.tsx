@@ -9,6 +9,16 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { useOrganizationUsers } from '@/hooks/use-users'
 import {
   useReplaceUserPermissions,
@@ -54,6 +64,7 @@ export default function UserPermissionsScreen({ userId }: { userId: string }) {
   const replacePermissions = useReplaceUserPermissions(userId)
   const resetPermissions = useResetUserPermissions(userId)
   const [editedValues, setEditedValues] = useState<Record<string, boolean> | null>(null)
+  const [resetDialogOpen, setResetDialogOpen] = useState(false)
   const user = users.find((candidate) => candidate.id === userId)
   const values = editedValues ?? Object.fromEntries(
     (data?.permissions ?? []).map((permission) => [permission.key, permission.allowed]),
@@ -82,6 +93,7 @@ export default function UserPermissionsScreen({ userId }: { userId: string }) {
     try {
       await resetPermissions.mutateAsync()
       setEditedValues(null)
+      setResetDialogOpen(false)
       toast.success('Permissões restauradas para o padrão.')
     } catch (mutationError) {
       toast.error(mutationError instanceof Error ? mutationError.message : 'Não foi possível restaurar as permissões.')
@@ -98,12 +110,12 @@ export default function UserPermissionsScreen({ userId }: { userId: string }) {
             </Button>
             <Avatar className="h-11 w-11 shrink-0 md:h-12 md:w-12">
               <AvatarImage src={user?.avatar_url ?? undefined} alt={user?.name ?? 'Usuário'} />
-              <AvatarFallback className="bg-primary text-sm font-semibold text-primary-foreground">
+              <AvatarFallback className="bg-primary/50 text-sm font-light text-primary-foreground">
                 {userInitials(user?.name)}
               </AvatarFallback>
             </Avatar>
             <div className="min-w-0">
-              <h1 className="truncate text-base font-semibold md:text-lg">{user?.name ?? 'Usuário'}</h1>
+              <h1 className="truncate text-[14px] font-normal">{user?.name ?? 'Usuário'}</h1>
               <p className="truncate text-sm text-foreground/60">{user?.email ?? 'E-mail não informado'}</p>
             </div>
           </div>
@@ -127,8 +139,8 @@ export default function UserPermissionsScreen({ userId }: { userId: string }) {
         {!data?.locked && (
           <div className="columns-1 gap-4 lg:columns-2">
             {groups.map(([domain, permissions]) => (
-              <section key={domain} className="mb-3 break-inside-avoid rounded-lg bg-muted/40 p-3 md:mb-4 md:p-4">
-                <h2 className="px-2 pb-2 text-sm font-semibold text-foreground/80">{domainLabels[domain] ?? domain}</h2>
+              <section key={domain} className="mb-3 break-inside-avoid rounded-[8px] bg-muted/40 p-3 md:mb-4 md:p-4">
+                <h2 className="px-2 pb-2 text-[14px] font-normal text-foreground/80">{domainLabels[domain] ?? domain}</h2>
                 <div className="space-y-1">
                   {permissions.map((permission) => (
                     <div key={permission.key} className="flex min-h-16 items-center justify-between gap-4 rounded-md px-2 py-2.5 transition-colors hover:bg-background/60">
@@ -152,7 +164,7 @@ export default function UserPermissionsScreen({ userId }: { userId: string }) {
 
         {data && !data.locked && (
           <div className="flex flex-col-reverse justify-end gap-2 pb-2 pt-1 sm:flex-row">
-            <Button variant="ghost" className="bg-muted/50 hover:bg-muted" onClick={handleReset} disabled={resetPermissions.isPending || replacePermissions.isPending}>
+            <Button variant="ghost" className="bg-muted/50 hover:bg-muted" onClick={() => setResetDialogOpen(true)} disabled={resetPermissions.isPending || replacePermissions.isPending}>
               <RotateCcw className="mr-2 h-4 w-4" />Restaurar padrão
             </Button>
             <Button onClick={handleSave} disabled={editedValues === null || replacePermissions.isPending || resetPermissions.isPending}>
@@ -161,6 +173,37 @@ export default function UserPermissionsScreen({ userId }: { userId: string }) {
             </Button>
           </div>
         )}
+
+        <AlertDialog
+          open={resetDialogOpen}
+          onOpenChange={(open) => {
+            if (!open && resetPermissions.isPending) return
+            setResetDialogOpen(open)
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Restaurar permissões padrão?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Todas as exceções individuais deste usuário serão removidas e o acesso voltará a seguir o perfil atual.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={resetPermissions.isPending}>Cancelar</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(event) => {
+                  event.preventDefault()
+                  void handleReset()
+                }}
+                disabled={resetPermissions.isPending}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {resetPermissions.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Restaurar padrão
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </AppLayout>
   )

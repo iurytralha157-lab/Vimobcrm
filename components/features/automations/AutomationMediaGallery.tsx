@@ -3,6 +3,16 @@ import NextImage from 'next/image';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
@@ -40,14 +50,15 @@ export function AutomationMediaGallery({
   accept = 'image/*',
   mediaType = 'image',
 }: AutomationMediaGalleryProps) {
-  const { profile } = useAuth();
+  const { organization, profile } = useAuth();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const onSelectRef = useRef(onSelect);
   const [uploading, setUploading] = useState(false);
   const [search, setSearch] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<AutomationMediaFile | null>(null);
 
-  const orgId = profile?.organization_id;
+  const orgId = organization?.id || profile?.organization_id;
   const mediaQueryKey = ['automation-media', orgId, mediaType] as const;
 
   const {
@@ -72,6 +83,7 @@ export function AutomationMediaGallery({
 
   const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
+    event.currentTarget.value = '';
     if (!file || !orgId) return;
 
     if (file.size > 10 * 1024 * 1024) {
@@ -97,7 +109,6 @@ export function AutomationMediaGallery({
       toast.error('Erro ao enviar: ' + getErrorMessage(err));
     } finally {
       setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -121,8 +132,18 @@ export function AutomationMediaGallery({
   });
 
   const requestDelete = (file: AutomationMediaFile) => {
-    if (!window.confirm(`Remover o arquivo "${file.name}" da galeria?`)) return;
-    deleteMutation.mutate(file);
+    if (deleteMutation.isPending) return;
+    setDeleteTarget(file);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget || deleteMutation.isPending) return;
+    try {
+      await deleteMutation.mutateAsync(deleteTarget);
+      setDeleteTarget(null);
+    } catch {
+      // The mutation reports the error. Keep the dialog open for retry/cancel.
+    }
   };
 
   const filteredFiles = files.filter((file: AutomationMediaFile) => {
@@ -159,6 +180,7 @@ export function AutomationMediaGallery({
           accept={accept}
           className="hidden"
           onChange={handleUpload}
+          aria-label={`Selecionar ${typeLabels[mediaType]} para envio`}
         />
       </div>
 
@@ -177,8 +199,9 @@ export function AutomationMediaGallery({
 
       <ScrollArea className="max-h-[180px]">
         {isLoading ? (
-          <div className="flex items-center justify-center py-4">
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          <div className="flex items-center justify-center gap-2 py-4 text-[11px] text-muted-foreground" role="status" aria-live="polite">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />
+            Carregando galeria...
           </div>
         ) : error ? (
           <div className="py-4 text-center text-xs text-destructive" role="alert">
@@ -190,7 +213,9 @@ export function AutomationMediaGallery({
         ) : filteredFiles.length === 0 ? (
           <div className="text-center py-4 text-muted-foreground">
             <ImageIcon className="h-6 w-6 mx-auto mb-1 opacity-40" />
-            <p className="text-[11px]">Nenhum arquivo na galeria</p>
+            <p className="text-[11px]">
+              {search ? 'Nenhum arquivo corresponde à busca' : 'Nenhum arquivo na galeria'}
+            </p>
           </div>
         ) : (
           <div className={mediaType === 'image' ? 'grid grid-cols-3 gap-1.5' : 'space-y-1'}>
@@ -218,7 +243,7 @@ export function AutomationMediaGallery({
                       />
                       {isSelected && (
                         <div className="absolute inset-0 flex items-center justify-center bg-primary/20">
-                          <Check className="h-5 w-5 text-primary-foreground drop-shadow-md" aria-hidden="true" />
+                          <Check className="h-5 w-5 text-primary-foreground" aria-hidden="true" />
                         </div>
                       )}
                     </button>
@@ -227,6 +252,7 @@ export function AutomationMediaGallery({
                       onClick={() => requestDelete(file)}
                       className="absolute right-0.5 top-0.5 rounded-full bg-destructive p-0.5 text-destructive-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
                       aria-label={`Remover ${file.name}`}
+                      disabled={deleteMutation.isPending}
                     >
                       <Trash2 className="h-3 w-3" />
                     </button>
@@ -257,6 +283,7 @@ export function AutomationMediaGallery({
                     onClick={() => requestDelete(file)}
                     className="shrink-0 opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100 group-focus-within:opacity-100"
                     aria-label={`Remover ${file.name}`}
+                    disabled={deleteMutation.isPending}
                   >
                     <Trash2 className="h-3 w-3" />
                   </button>
@@ -279,6 +306,42 @@ export function AutomationMediaGallery({
           Carregar mais arquivos
         </Button>
       )}
+
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !deleteMutation.isPending) setDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-[440px] rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-5 shadow-none">
+          <AlertDialogHeader className="space-y-1.5 text-left">
+            <AlertDialogTitle className="text-[14px] font-medium text-[var(--app-text-primary)]">
+              Remover arquivo?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-[12px] font-light leading-5 text-[var(--app-text-tertiary)]">
+              {deleteTarget
+                ? `O arquivo “${deleteTarget.name}” será removido da galeria. Arquivos em uso por uma automação ativa permanecem protegidos.`
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="mt-4 gap-2 sm:gap-2">
+            <AlertDialogCancel disabled={deleteMutation.isPending} className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]">
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteMutation.isPending}
+              className="h-9 rounded-[6px] bg-destructive px-3 text-[12px] font-light text-destructive-foreground shadow-none hover:bg-destructive/90"
+              onClick={(event) => {
+                event.preventDefault();
+                void confirmDelete();
+              }}
+            >
+              {deleteMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+              {deleteMutation.isPending ? 'Removendo...' : 'Remover arquivo'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

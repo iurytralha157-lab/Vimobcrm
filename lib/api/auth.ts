@@ -4,22 +4,17 @@ import { meAPI } from './me'
 import { settingsAPI } from './settings'
 import type { UpdateOrganizationInput, UpdateProfileInput } from './settings'
 import { usersAPI } from './users'
-import { entityIdSchema, loginSchema, parseDomainInput, resetPasswordSchema, signUpSchema } from '@/lib/validation'
+import { entityIdSchema, loginSchema, parseDomainInput, resetPasswordSchema } from '@/lib/validation'
+import {
+  onboardingEmailConfirmationResendResponseSchema,
+  onboardingEmailConfirmationResendSchema,
+} from '@/lib/validation/onboarding'
 
 // Auth API functions
 export const authAPI = {
   async login(email: string, password: string) {
     const credentials = parseDomainInput(loginSchema, { email, password }, 'auth.login')
     return supabase.auth.signInWithPassword(credentials)
-  },
-
-  async signup(email: string, password: string, name: string) {
-    const credentials = parseDomainInput(signUpSchema, { email, password, name }, 'auth.signup')
-    return supabase.auth.signUp({
-      email: credentials.email,
-      password: credentials.password,
-      options: { data: { name: credentials.name } },
-    })
   },
 
   async logout() {
@@ -30,7 +25,6 @@ export const authAPI = {
     try {
       const input = parseDomainInput(resetPasswordSchema, { email }, 'auth.reset-password')
       const redirectUrl = getPublicAppUrl(ROUTES.RESET_PASSWORD);
-      console.log('[authAPI] Resetting password for:', email, 'redirectUrl:', redirectUrl);
 
       const result = await supabase.auth.resetPasswordForEmail(input.email, {
         redirectTo: redirectUrl,
@@ -44,6 +38,32 @@ export const authAPI = {
     } catch (err) {
       console.error('[authAPI] Reset password exception:', err);
       throw err;
+    }
+  },
+
+  async resendSignupEmailConfirmation(email: string) {
+    const input = parseDomainInput(
+      onboardingEmailConfirmationResendSchema,
+      { email },
+      'auth.signup-confirmation.resend',
+    )
+    const response = await fetch('/api/onboarding/email-confirmation/resend', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(input),
+    })
+    const payload = onboardingEmailConfirmationResendResponseSchema.safeParse(
+      await response.json().catch(() => null),
+    )
+    if (!payload.success) {
+      throw new Error('INVALID_SIGNUP_CONFIRMATION_RESEND_RESPONSE')
+    }
+    return {
+      ...payload.data,
+      status: response.status,
     }
   },
 

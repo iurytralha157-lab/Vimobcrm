@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTheme } from 'next-themes';
 import 'leaflet/dist/leaflet.css';
 import type { LatLngExpression, Map as LeafletMap } from 'leaflet';
@@ -40,10 +40,12 @@ export function VisitorMap({ locations }: VisitorMapProps) {
   const { resolvedTheme } = useTheme();
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<LeafletMap | null>(null);
+  const [mapError, setMapError] = useState(false);
 
   useEffect(() => {
     if (!mapRef.current) return;
     let disposed = false;
+    setMapError(false);
 
     mapInstance.current?.remove();
     mapInstance.current = null;
@@ -53,9 +55,10 @@ export function VisitorMap({ locations }: VisitorMapProps) {
 
       const map = L.map(mapRef.current, {
         zoomControl: true,
-		scrollWheelZoom: true,
+        scrollWheelZoom: false,
         attributionControl: false,
       });
+      mapInstance.current = map;
 
       const defaultCenter: LatLngExpression = [-14.235, -51.925];
       const defaultZoom = 4;
@@ -76,8 +79,8 @@ export function VisitorMap({ locations }: VisitorMapProps) {
           const radius = Math.min(Math.max(loc.sessions * 3, 6), 30);
           const marker = L.circleMarker(coordinates, {
             radius,
-			fillColor: '#FF4529',
-			color: '#D93620',
+			fillColor: 'var(--primary)',
+			color: 'var(--primary)',
             weight: 1.5,
             opacity: 0.9,
             fillOpacity: 0.5,
@@ -90,7 +93,7 @@ export function VisitorMap({ locations }: VisitorMapProps) {
           marker.bindPopup(
             `<div style="font-size:13px;min-width:120px">
               <strong>${city}</strong>${region}
-              <br/><span style="color:#666">${sessions} sessão${sessions > 1 ? 'es' : ''}</span>
+              <br/><span style="color:var(--app-text-tertiary)">${sessions} sessão${sessions > 1 ? 'es' : ''}</span>
             </div>`
           );
 
@@ -102,7 +105,11 @@ export function VisitorMap({ locations }: VisitorMapProps) {
         map.setView(defaultCenter, defaultZoom);
       }
 
-      mapInstance.current = map;
+    }).catch(() => {
+      if (disposed) return;
+      mapInstance.current?.remove();
+      mapInstance.current = null;
+      setMapError(true);
     });
 
     return () => {
@@ -112,14 +119,22 @@ export function VisitorMap({ locations }: VisitorMapProps) {
     };
   }, [locations, resolvedTheme]);
 
-	return (
-	  <div className="relative isolate z-0 h-full min-h-[300px] w-full overflow-hidden rounded-[8px] bg-[var(--app-surface-soft)]">
-		<div ref={mapRef} className="h-full min-h-[300px] w-full" />
-		{locations.length === 0 && (
-		  <div className="pointer-events-none absolute bottom-3 left-3 right-3 rounded-[7px] bg-[var(--app-surface-solid)]/95 px-3 py-2 text-xs text-[var(--app-text-secondary)] shadow-none backdrop-blur-sm">
-			A localização aparecerá aqui conforme novos visitantes acessarem o site.
-		  </div>
-		)}
-	  </div>
-	);
+  return (
+    <div className="relative isolate z-0 h-full min-h-[300px] w-full overflow-hidden rounded-[8px] bg-[var(--app-surface-soft)]">
+      <div
+        ref={mapRef}
+        className="h-full min-h-[300px] w-full"
+        aria-label="Mapa interativo com a localização aproximada dos visitantes"
+      />
+      {mapError ? (
+        <div className="absolute inset-3 flex items-center justify-center rounded-[6px] bg-[var(--app-surface-solid)]/95 px-4 text-center text-xs font-light leading-5 text-[var(--app-text-secondary)]">
+          Não foi possível carregar o mapa. A lista de localizações continua disponível abaixo.
+        </div>
+      ) : locations.length === 0 ? (
+        <div className="pointer-events-none absolute bottom-3 left-3 right-3 rounded-[6px] bg-[var(--app-surface-solid)]/95 px-3 py-2 text-xs font-light text-[var(--app-text-secondary)] shadow-none">
+          A localização aparecerá aqui conforme novos visitantes acessarem o site.
+        </div>
+      ) : null}
+    </div>
+  );
 }

@@ -1,11 +1,12 @@
 import type { MetadataRoute } from "next";
+import { DEFAULT_AUTHENTICATED_ROUTE } from "@/config/constants";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Vimob CRM",
     short_name: "Vimob",
     description: "CRM imobiliario Vimob",
-    start_url: "/dashboard",
+    start_url: DEFAULT_AUTHENTICATED_ROUTE,
     scope: "/",
     display: "standalone",
     background_color: "#111111",

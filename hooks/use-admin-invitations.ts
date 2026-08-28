@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { adminAPI } from '@/lib/api/admin';
 import { toast } from 'sonner';
 import { getFriendlyErrorMessage } from '@/lib/error-handler';
+import { createInvitationPath } from '@/lib/auth/invitation';
 
 export interface AdminInvitation {
   id: string;
@@ -78,7 +79,9 @@ export function useAdminInvitations(organizationId: string | undefined) {
   });
 
   const getInviteLink = (token: string) => {
-    return `${window.location.origin}/convite/${token}`;
+    const path = createInvitationPath(token);
+    if (!path) throw new Error('Token de convite inválido');
+    return `${window.location.origin}${path}`;
   };
 
   return {

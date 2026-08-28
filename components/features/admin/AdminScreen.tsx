@@ -12,7 +12,6 @@ import {
   CalendarDays,
   Check,
   CheckCircle2,
-  Clipboard,
   CreditCard,
   Database,
   Loader2,
@@ -36,6 +35,7 @@ import type { AdminSection } from "@/components/features/admin/admin-navigation"
 import { AnnouncementsContent } from "@/components/features/admin/AnnouncementsContent";
 import { AiAgentsContent } from "@/components/features/admin/AiAgentsContent";
 import { ErrorEventsContent } from "@/components/features/admin/ErrorEventsContent";
+import { HelpArticlesContent } from "@/components/features/admin/HelpArticlesContent";
 import { VimobLoader } from "@/components/shared/loading";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -52,6 +52,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -75,11 +76,12 @@ import {
   useAdminOrganizationsList,
   type AdminOrganization,
 } from "@/hooks/use-admin-organizations";
-import { adminAPI } from "@/lib/api/admin";
+import { adminAPI, type AdminNotificationDispatchSettings } from "@/lib/api/admin";
 import { notificationsAPI } from "@/lib/api/notifications";
-import { usersAPI } from "@/lib/api/users";
+import { resolveBillingPaymentStatus } from "@/lib/billing/checkout-ui-state";
 import { normalizeSearchText } from "@/lib/search-text";
 import { cn } from "@/lib/utils";
+import { adminInvitationInputSchema } from "@/lib/validation";
 
 type AdminRecord = Record<string, unknown>;
 type OrganizationModuleRow = AdminRecord & {
@@ -92,18 +94,23 @@ type OrganizationPaymentRow = AdminRecord & {
   value?: number | string;
   billing_type?: string;
   due_date?: string;
-  invoice_url?: string;
+  payment_date?: string;
 };
 type OrganizationUpdatePayload = AdminRecord;
 
 type NotificationDispatchForm = {
   enabled: boolean;
+  mode: "webhook" | "evolution_go_instance";
   instanceName: string;
   instanceToken: string;
+  instanceTokenConfigured: boolean;
+  clearInstanceToken: boolean;
   senderNumber: string;
   webhookUrl: string;
   headerName: string;
   headerValue: string;
+  headerValueConfigured: boolean;
+  clearHeaderValue: boolean;
   timeoutSeconds: number;
 };
 
@@ -140,6 +147,7 @@ const FIELD_LABELS: Record<string, string> = {
   price: "Preço",
   responsible_email: "E-mail responsável",
   responsible_name: "Responsável",
+  recipient_email: "Destinatário",
   role: "Perfil",
   segment: "Segmento",
   sent_at: "Enviado em",
@@ -163,9 +171,12 @@ const VALUE_LABELS: Record<string, string> = {
   admin: "Admin",
   all: "Todos",
   approved: "Aprovado",
+  accepted: "Aceito pelo provedor",
   cancelled: "Cancelado",
   draft: "Rascunho",
   failed: "Falhou",
+  delivered: "Entregue",
+  delivery_failed: "Falha na entrega",
   imobiliario: "Imobiliário",
   inactive: "Inativo",
   monthly: "Mensal",
@@ -208,7 +219,6 @@ const LEGACY_TABLES = [
   { name: "notifications", label: "Notificações", critical: false },
   { name: "email_templates", label: "Templates de e-mail", critical: false },
   { name: "email_logs", label: "Logs de e-mail", critical: false },
-  { name: "system_settings", label: "Configurações globais", critical: false },
 ];
 
 const SECTION_TABLE: Partial<Record<AdminSection, { table: string; title: string; fields: string[]; empty: string }>> = {
@@ -239,7 +249,7 @@ const SECTION_TABLE: Partial<Record<AdminSection, { table: string; title: string
   "email-logs": {
     table: "email_logs",
     title: "Logs de e-mail",
-    fields: ["to_email", "subject", "status", "sent_at"],
+    fields: ["recipient_email", "subject", "status", "sent_at"],
     empty: "Nenhum log de e-mail encontrado.",
   },
   announcements: {
@@ -379,9 +389,9 @@ function formatStatusValue(value: unknown, activeLabel = "Ativo") {
 function getStatusTone(value: unknown) {
   const normalized = normalizeValue(value);
   if (typeof value === "boolean") return value ? "active" : "muted";
-  if (["active", "true", "sim", "approved", "sent", "read"].includes(normalized)) return "active";
-  if (["pending", "new", "submitted", "trial"].includes(normalized)) return "warning";
-  if (["inactive", "false", "não", "nao", "cancelled", "failed"].includes(normalized)) return "muted";
+  if (["active", "true", "sim", "approved", "delivered", "sent", "read"].includes(normalized)) return "active";
+  if (["accepted", "pending", "processing", "new", "submitted", "trial"].includes(normalized)) return "warning";
+  if (["inactive", "false", "não", "nao", "cancelled", "delivery_failed", "failed"].includes(normalized)) return "muted";
   return "soft";
 }
 
@@ -398,10 +408,10 @@ function StatusBadge({
       variant="outline"
       className={cn(
         "rounded-[6px] border-0 px-2.5 py-1 font-medium transition-colors",
-        tone === "active" && "bg-[#FF4529] text-white hover:bg-[#FF4529]",
+        tone === "active" && "bg-primary text-primary-foreground hover:bg-primary",
         tone === "warning" && "bg-amber-500 text-white hover:bg-amber-500",
         tone === "muted" && "bg-[var(--app-surface-soft)] text-muted-foreground hover:bg-[var(--app-surface-soft)]",
-        tone === "soft" && "bg-[#FF4529]/12 text-[#FF806B] hover:bg-[#FF4529]/12",
+        tone === "soft" && "bg-primary/12 text-primary hover:bg-primary/12",
       )}
     >
       {formatStatusValue(value, activeLabel)}
@@ -478,17 +488,20 @@ function getDaysUntil(value: unknown) {
 }
 
 function getPaymentStatusLabel(status: unknown) {
-  const normalized = normalizeValue(status);
-  if (["confirmed", "received", "received_in_cash"].includes(normalized)) return "Pago";
-  if (["pending", "created"].includes(normalized)) return "Pendente";
-  if (["overdue"].includes(normalized)) return "Vencido";
-  if (["refunded", "chargeback"].includes(normalized)) return "Estornado";
-  if (["deleted", "cancelled", "canceled"].includes(normalized)) return "Cancelado";
-  return getString({ status }, "status");
+  if (typeof status !== "string") return "Em verificação";
+  return resolveBillingPaymentStatus(status).label;
+}
+
+function getPaymentMethodLabel(method: unknown) {
+  const normalized = normalizeValue(method);
+  if (normalized === "credit_card") return "Cartão";
+  if (normalized === "pix") return "Pix";
+  if (normalized === "boleto") return "Boleto";
+  return "Cobrança";
 }
 
 function isPaidPayment(payment: OrganizationPaymentRow) {
-  return ["CONFIRMED", "RECEIVED", "RECEIVED_IN_CASH"].includes(payment.status || "");
+  return resolveBillingPaymentStatus(payment.status).state === "paid";
 }
 
 function getEnabledModulesFromRows(rows: OrganizationModuleRow[], fallback: SystemModuleKey[]) {
@@ -554,51 +567,30 @@ function useAdminRows(table: string, limit = 60) {
   return useSafeAdminQuery(["admin-rows", table, limit], () => selectAdminRows(table, limit), []);
 }
 
-function asRecord(value: unknown): AdminRecord {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as AdminRecord : {};
+function useAdminUsersList() {
+  return useSafeAdminQuery<AdminRecord[]>(
+    ["admin-users-list"],
+    () => adminAPI.listUsers(),
+    [],
+  );
 }
 
-function getNotificationDispatchForm(row: AdminRecord | undefined): NotificationDispatchForm {
-  const value = asRecord(row?.value);
-  const dispatch = asRecord(value.notification_dispatch);
-  const whatsapp = asRecord(dispatch.whatsapp);
-  const headers = asRecord(whatsapp.headers);
-  const headerEntries = Object.entries(headers).filter(([, item]) => typeof item === "string" && item.trim() !== "");
-  const [headerName = "", headerValue = ""] = headerEntries[0] || [];
-
+function getNotificationDispatchForm(settings?: AdminNotificationDispatchSettings): NotificationDispatchForm {
   return {
-    enabled: whatsapp.enabled === true,
-    instanceName: typeof whatsapp.instance_name === "string" ? whatsapp.instance_name : "",
-    instanceToken: typeof whatsapp.token === "string" ? whatsapp.token : "",
-    senderNumber: typeof whatsapp.phone_number === "string" ? whatsapp.phone_number : "",
-    webhookUrl: typeof whatsapp.webhook_url === "string" ? whatsapp.webhook_url : "",
-    headerName,
-    headerValue: typeof headerValue === "string" ? headerValue : "",
-    timeoutSeconds: typeof whatsapp.timeout_seconds === "number" ? whatsapp.timeout_seconds : 10,
+    enabled: settings?.enabled ?? false,
+    mode: settings?.mode ?? "webhook",
+    instanceName: settings?.instanceName ?? "",
+    instanceToken: "",
+    instanceTokenConfigured: settings?.instanceTokenConfigured ?? false,
+    clearInstanceToken: false,
+    senderNumber: settings?.senderNumber ?? "",
+    webhookUrl: settings?.webhookUrl ?? "",
+    headerName: settings?.headerName ?? "",
+    headerValue: "",
+    headerValueConfigured: settings?.headerValueConfigured ?? false,
+    clearHeaderValue: false,
+    timeoutSeconds: settings?.timeoutSeconds ?? 10,
   };
-}
-
-function buildNotificationDispatchValue(row: AdminRecord | undefined, form: NotificationDispatchForm) {
-  const value = { ...asRecord(row?.value) };
-  const dispatch = { ...asRecord(value.notification_dispatch) };
-  const headers = form.headerName.trim() && form.headerValue.trim()
-    ? { [form.headerName.trim()]: form.headerValue.trim() }
-    : {};
-
-  dispatch.whatsapp = {
-    enabled: form.enabled,
-    mode: form.instanceName.trim() && form.instanceToken.trim() ? "evolution_go_instance" : "webhook",
-    instance_name: form.instanceName.trim(),
-    token: form.instanceToken.trim(),
-    phone_number: form.senderNumber.trim(),
-    webhook_url: form.webhookUrl.trim(),
-    allow_organization_session: false,
-    method: "POST",
-    headers,
-    timeout_seconds: Math.max(3, Math.min(Number(form.timeoutSeconds) || 10, 60)),
-  };
-  value.notification_dispatch = dispatch;
-  return value;
 }
 
 function useAdminOrganizationModules(organizationId?: string) {
@@ -629,10 +621,10 @@ function AdminWarning({ message }: { message: string | null | undefined }) {
   if (!message) return null;
 
   return (
-    <div className="flex items-start gap-3 rounded-[6px] bg-[#FF4529]/10 p-4 text-sm text-[#FFB3A6]">
+    <div className="flex items-start gap-3 rounded-[8px] bg-destructive/10 p-4 text-sm text-destructive">
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
       <div>
-        <p className="font-medium text-[#FF806B]">Dados indisponíveis no momento</p>
+        <p className="font-medium">Dados indisponíveis no momento</p>
         <p className="mt-1 text-muted-foreground">{message}</p>
       </div>
     </div>
@@ -654,11 +646,11 @@ function KpiCard({
     <div className="app-card card-hover min-h-[108px] p-3 sm:min-h-0 sm:p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[10px] font-medium uppercase leading-snug tracking-wider text-muted-foreground sm:text-xs">{title}</p>
-          <p className="mt-2 truncate text-xl font-semibold sm:text-2xl">{value}</p>
+          <p className="text-[10px] font-light leading-snug text-muted-foreground sm:text-xs">{title}</p>
+          <p className="mt-2 truncate text-xl font-medium sm:text-2xl">{value}</p>
           {helper ? <p className="mt-1 text-[11px] leading-snug text-muted-foreground sm:text-xs">{helper}</p> : null}
         </div>
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-[#FF4529]/12 text-[#FF4529] sm:h-10 sm:w-10">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/12 text-primary sm:h-10 sm:w-10">
           <Icon className="h-4 w-4 sm:h-5 sm:w-5" />
         </span>
       </div>
@@ -670,7 +662,7 @@ function EmptyState({ title, description }: { title: string; description: string
   return (
     <div className="app-card flex min-h-[260px] flex-col items-center justify-center p-8 text-center">
       <ShieldCheck className="mb-4 h-10 w-10 text-muted-foreground/50" />
-      <h3 className="text-base font-semibold">{title}</h3>
+      <h3 className="text-base font-medium">{title}</h3>
       <p className="mt-2 max-w-md text-sm text-muted-foreground">{description}</p>
     </div>
   );
@@ -688,7 +680,7 @@ function AdminDashboardV2Content() {
   const platform = data?.platform;
   const operational = data?.operational;
   const health = timeseries.data?.health;
-  const isLoading = overview.isLoading || timeseries.isLoading || pendingBoards.isLoading;
+  const isLoading = overview.isLoading || timeseries.isLoading || pendingBoards.isLoading || feed.isLoading;
   const errorMessage = [overview.error, timeseries.error, pendingBoards.error, feed.error].find(Boolean);
   const periodLabel = `${period} dias`;
 
@@ -698,20 +690,20 @@ function AdminDashboardV2Content() {
 
       <div className="app-card flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-base font-semibold">Controle executivo</h2>
+          <h2 className="text-base font-medium">Controle executivo</h2>
           <p className="text-sm text-muted-foreground">
-            Receita, carteira, uso, retenÃ§Ã£o e saÃºde operacional em {periodLabel}.
+            Receita, carteira, uso, retenção e saúde operacional em {periodLabel}.
           </p>
         </div>
-        <div className="grid grid-cols-4 gap-1 rounded-[6px] bg-[var(--app-surface-soft)] p-1">
+        <div className="grid grid-cols-4 gap-1 rounded-[8px] bg-[var(--app-surface-soft)] p-1">
           {([7, 30, 90, 365] as DashboardPeriod[]).map((item) => (
             <button
               key={item}
               type="button"
               onClick={() => setPeriod(item)}
               className={cn(
-                "h-8 rounded-[5px] px-2 text-xs font-semibold transition-colors",
-                period === item ? "bg-[#FF4529] text-white" : "text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground",
+                "h-8 rounded-[6px] px-2 text-xs font-light shadow-none transition-colors",
+                period === item ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground",
               )}
             >
               {item}d
@@ -726,26 +718,29 @@ function AdminDashboardV2Content() {
         </div>
       ) : null}
 
+      {!isLoading ? (
+        <>
+      {!overview.error && overview.data ? (
       <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
-            <KpiCard title="MRR" value={formatCurrency(financial?.mrr)} icon={CreditCard} helper={`${formatPercent(financial?.revenue_growth_pct)} vs. perÃ­odo`} />
+            <KpiCard title="MRR" value={formatCurrency(financial?.mrr)} icon={CreditCard} helper={`${formatPercent(financial?.revenue_growth_pct)} vs. período`} />
             <KpiCard title="Receita recebida" value={formatCurrency(financial?.revenue_period)} icon={BarChart3} helper={periodLabel} />
-            <KpiCard title="PrevisÃ£o" value={formatCurrency(financial?.revenue_forecast)} icon={CalendarDays} helper="Trial, pendente e ativa" />
-            <KpiCard title="Ticket mÃ©dio" value={formatCurrency(financial?.avg_ticket)} icon={CreditCard} helper={`Atraso: ${formatCurrency(financial?.overdue_total)}`} />
+            <KpiCard title="Previsão" value={formatCurrency(financial?.revenue_forecast)} icon={CalendarDays} helper="Trial, pendente e ativa" />
+            <KpiCard title="Ticket médio" value={formatCurrency(financial?.avg_ticket)} icon={CreditCard} helper={`Atraso: ${formatCurrency(financial?.overdue_total)}`} />
           </div>
 
           <div className="grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-4">
-            <KpiCard title="OrganizaÃ§Ãµes" value={formatNumber(platform?.total_orgs)} icon={Building2} helper={`${formatNumber(platform?.active_orgs)} ativas`} />
+            <KpiCard title="Organizações" value={formatNumber(platform?.total_orgs)} icon={Building2} helper={`${formatNumber(platform?.active_orgs)} ativas`} />
             <KpiCard title="Trial" value={formatNumber(platform?.trial_orgs)} icon={Inbox} helper={`${formatNumber(platform?.cancelled_orgs)} canceladas`} />
-            <KpiCard title="UsuÃ¡rios hoje" value={formatNumber(platform?.active_users_today)} icon={Users} helper="Ativos no dia" />
+            <KpiCard title="Usuários hoje" value={formatNumber(platform?.active_users_today)} icon={Users} helper="Ativos no dia" />
             <KpiCard title="Leads hoje" value={formatNumber(operational?.leads_today)} icon={Activity} helper={`${formatNumber(operational?.activities_today)} atividades`} />
           </div>
 
           <div className="app-card p-4">
             <div className="mb-4">
-              <h2 className="text-base font-semibold">SaÃºde da carteira</h2>
-              <p className="text-sm text-muted-foreground">DistribuiÃ§Ã£o atual de clientes por status comercial.</p>
+              <h2 className="text-base font-medium">Saúde da carteira</h2>
+              <p className="text-sm text-muted-foreground">Distribuição atual de clientes por status comercial.</p>
             </div>
             <div className="grid grid-cols-3 gap-2 md:gap-3">
               <StatusTile label="Ativas" value={Number(health?.active ?? platform?.active_orgs ?? 0)} total={Number(platform?.total_orgs || 0)} tone="success" />
@@ -757,18 +752,20 @@ function AdminDashboardV2Content() {
 
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-2 sm:gap-3">
-            <KpiCard title="AutomaÃ§Ãµes hoje" value={formatNumber(operational?.automations_today)} icon={Activity} helper="ExecuÃ§Ãµes" />
-            <KpiCard title="Erros recentes" value={formatNumber(operational?.errors_recent)} icon={AlertTriangle} helper="Ãšltimas 24h" />
+            <KpiCard title="Automações hoje" value={formatNumber(operational?.automations_today)} icon={Activity} helper="Execuções" />
+            <KpiCard title="Erros recentes" value={formatNumber(operational?.errors_recent)} icon={AlertTriangle} helper="Últimas 24h" />
           </div>
 
+          {!pendingBoards.error && pendingBoards.data ? (
+            <>
           <DashboardRowsCard
             title="Trials vencendo"
-            empty="Nenhum trial com data de fim prÃ³xima."
+            empty="Nenhum trial com data de fim próxima."
             rows={pendingBoards.data?.trials || []}
             renderRow={(trial) => (
               <DashboardRow
                 title={trial.name}
-                detail={`${trial.days_left} dias restantes Â· ${trial.email || trial.whatsapp || trial.telefone || "sem contato"}`}
+                detail={`${trial.days_left} dias restantes · ${trial.email || trial.whatsapp || trial.telefone || "sem contato"}`}
                 badge={formatDateOnly(trial.trial_ends_at)}
               />
             )}
@@ -776,28 +773,34 @@ function AdminDashboardV2Content() {
 
           <DashboardRowsCard
             title="Carteira parada"
-            empty="Nenhuma organizaÃ§Ã£o ativa sem acesso recente."
+            empty="Nenhuma organização ativa sem acesso recente."
             rows={pendingBoards.data?.idle || []}
             renderRow={(item) => (
               <DashboardRow
                 title={item.name}
-                detail={item.last_access_at ? `Ãšltimo acesso em ${formatDate(item.last_access_at)}` : "Sem acesso registrado"}
+                detail={item.last_access_at ? `Último acesso em ${formatDate(item.last_access_at)}` : "Sem acesso registrado"}
                 badge={item.days_idle === null ? "--" : `${item.days_idle}d`}
               />
             )}
           />
+            </>
+          ) : null}
         </div>
       </div>
+      ) : null}
 
       <div className="grid gap-4 xl:grid-cols-2">
+        {!timeseries.error && timeseries.data ? (
         <DashboardRowsCard
           title="Receita por dia"
-          empty="A API ainda nÃ£o retornou sÃ©rie financeira para este perÃ­odo."
+          empty="A API ainda não retornou série financeira para este período."
           rows={(timeseries.data?.revenue || []).slice(-8)}
           renderRow={(item) => (
             <DashboardRow title={formatDateOnly(item.date)} detail="Receita reconhecida" badge={formatCurrency(item.value)} />
           )}
         />
+        ) : null}
+        {!feed.error && feed.data ? (
         <DashboardRowsCard
           title="Feed de auditoria"
           empty="Nenhum evento de auditoria recente."
@@ -805,12 +808,15 @@ function AdminDashboardV2Content() {
           renderRow={(item) => (
             <DashboardRow
               title={item.title}
-              detail={`${item.organization_name || "Plataforma"} Â· ${formatDate(item.created_at)}`}
+              detail={`${item.organization_name || "Plataforma"} · ${formatDate(item.created_at)}`}
               badge={item.severity}
             />
           )}
         />
+        ) : null}
       </div>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -852,12 +858,12 @@ function DashboardRowsCard<T>({
 }) {
   return (
     <div className="app-card overflow-hidden">
-      <div className="border-b border-white/[0.045] px-4 py-3">
-        <h2 className="text-base font-semibold">{title}</h2>
+      <div className="border-b border-[var(--app-border)] px-4 py-3">
+        <h2 className="text-base font-medium">{title}</h2>
         <p className="text-sm text-muted-foreground">{formatRecordsCount(rows.length)}</p>
       </div>
       {rows.length > 0 ? (
-        <div className="divide-y divide-white/[0.045]">
+        <div className="divide-y divide-[var(--app-border)]">
           {rows.map((row, index) => (
             <div key={index}>{renderRow(row, index)}</div>
           ))}
@@ -881,14 +887,14 @@ function StatusTile({
   tone: "success" | "warning" | "danger";
 }) {
   const percentage = total > 0 ? Math.round((value / total) * 100) : 0;
-  const color = tone === "success" ? "bg-emerald-500" : tone === "warning" ? "bg-amber-500" : "bg-[#FF4529]";
+  const color = tone === "success" ? "bg-emerald-500" : tone === "warning" ? "bg-amber-500" : "bg-destructive";
 
   return (
     <div className="app-card-soft p-2.5 sm:p-4">
       <p className="truncate text-[11px] text-muted-foreground sm:text-sm">{label}</p>
       <div className="mt-2 flex items-end justify-between gap-2">
-        <p className="truncate text-xl font-semibold sm:text-2xl">{formatNumber(value)}</p>
-        <p className="pb-0.5 text-xs font-semibold sm:text-sm">{percentage}%</p>
+        <p className="truncate text-xl font-medium sm:text-2xl">{formatNumber(value)}</p>
+        <p className="pb-0.5 text-xs font-medium sm:text-sm">{percentage}%</p>
       </div>
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--app-surface-hover)] sm:mt-4 sm:h-2">
         <div className={cn("h-full rounded-full", color)} style={{ width: `${percentage}%` }} />
@@ -917,7 +923,7 @@ function OrganizationListActions({ organization }: { organization: AdminOrganiza
             <MoreHorizontal className="h-4 w-4" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-52 rounded-[6px] border-0">
+        <DropdownMenuContent align="end" className="min-w-52 rounded-[8px] border-0">
           <DropdownMenuItem
             className="cursor-pointer rounded-[4px]"
             disabled={toggleStatus.isPending}
@@ -959,6 +965,7 @@ function OrganizationDeleteDialog({
   onDeleted?: () => void;
 }) {
   const [confirmationName, setConfirmationName] = useState("");
+  const queryClient = useQueryClient();
   const { deleteOrganization } = useAdminOrganizationActions();
   const confirmed = confirmationName.trim() === organizationName.trim();
 
@@ -970,13 +977,18 @@ function OrganizationDeleteDialog({
 
   const handleDelete = async () => {
     if (!confirmed) return;
-    await deleteOrganization.mutateAsync({
-      id: organizationId,
-      confirmationName: confirmationName.trim(),
-    });
-    setConfirmationName("");
-    onOpenChange(false);
-    onDeleted?.();
+    try {
+      await deleteOrganization.mutateAsync({
+        id: organizationId,
+        confirmationName: confirmationName.trim(),
+      });
+      await queryClient.invalidateQueries({ queryKey: ["admin-users-list"] });
+      setConfirmationName("");
+      onOpenChange(false);
+      onDeleted?.();
+    } catch {
+      // Toast is handled by the mutation hook; keep the dialog open for retry.
+    }
   };
 
   return (
@@ -998,8 +1010,8 @@ function OrganizationDeleteDialog({
         </DialogHeader>
 
         <div className="space-y-4">
-          <div className="rounded-[6px] bg-destructive/10 p-4 text-sm text-destructive">
-            <p className="font-semibold">Esta ação é irreversível.</p>
+          <div className="rounded-[8px] bg-destructive/10 p-4 text-sm text-destructive">
+            <p className="font-medium">Esta ação é irreversível.</p>
             <p className="mt-1 text-foreground/75">
               Leads, imóveis, site, arquivos, agendas, WhatsApp, integrações, requisições e usuários exclusivos
               desta organização serão removidos.
@@ -1008,7 +1020,7 @@ function OrganizationDeleteDialog({
 
           <div className="space-y-2">
             <Label htmlFor={`delete-organization-${organizationId}`}>
-              Digite <span className="font-semibold">{organizationName}</span> para confirmar
+              Digite <span className="font-medium">{organizationName}</span> para confirmar
             </Label>
             <Input
               id={`delete-organization-${organizationId}`}
@@ -1050,6 +1062,7 @@ function OrganizationsContent() {
   const [search, setSearch] = useState("");
   const organizations = useAdminOrganizationsList();
   const rows = organizations.data || [];
+  const organizationErrorMessage = organizations.error ? getErrorMessage(organizations.error) : null;
   const filteredRows = rows.filter((org) => {
     const haystack = [org.name, org.email, org.cnpj, org.plan_name, org.subscription_status].map(normalizeText).join(" ");
     return haystack.includes(normalizeSearchText(search));
@@ -1057,7 +1070,7 @@ function OrganizationsContent() {
 
   return (
     <div className="space-y-4">
-      <AdminWarning message={organizations.error ? getErrorMessage(organizations.error) : null} />
+      <AdminWarning message={organizationErrorMessage} />
       <Toolbar search={search} onSearch={setSearch} placeholder="Buscar organização, plano, CNPJ ou status..." />
       {organizations.isLoading ? (
         <div className="flex min-h-[280px] items-center justify-center">
@@ -1069,7 +1082,7 @@ function OrganizationsContent() {
             <div key={org.id} className="app-card card-hover p-4">
               <div className="flex items-start justify-between gap-3">
                 <Link href={`/admin/organizations/${org.id}`} className="min-w-0 flex-1">
-                  <p className="truncate text-base font-semibold">{org.name || "Organização sem nome"}</p>
+                  <p className="truncate text-base font-medium">{org.name || "Organização sem nome"}</p>
                   <p className="mt-1 truncate text-xs text-muted-foreground">{org.email || "E-mail não informado"}</p>
                 </Link>
                 <div className="flex shrink-0 items-center gap-1.5">
@@ -1090,7 +1103,7 @@ function OrganizationsContent() {
           ))}
         </div>
       )}
-      {!organizations.isLoading && filteredRows.length === 0 && (
+      {!organizations.isLoading && !organizationErrorMessage && filteredRows.length === 0 && (
         <EmptyState
           title="Nenhuma organização na listagem"
           description="Nenhuma organização corresponde aos filtros informados."
@@ -1135,8 +1148,8 @@ export function OrganizationDetailContent({ organizationId }: { organizationId?:
       <div className="app-card p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Organização</p>
-            <h2 className="mt-2 text-2xl font-semibold">{getString(organization, "name")}</h2>
+            <p className="text-xs font-light text-muted-foreground">Organização</p>
+            <h2 className="mt-2 text-sm font-normal">{getString(organization, "name")}</h2>
             <p className="mt-1 text-sm text-muted-foreground">{getString(organization, "email", "E-mail não informado")}</p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -1166,13 +1179,34 @@ export function OrganizationDetailContent({ organizationId }: { organizationId?:
 function OrganizationDetailManagementContent({ organizationId }: { organizationId?: string }) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const organizations = useAdminRows("organizations", 200);
-  const users = useAdminRows("users", 200);
+  const organizations = useAdminOrganizationsList();
+  const organizationDetails = useAdminRows("organizations", 200);
+  const users = useAdminUsersList();
   const modulesQuery = useAdminOrganizationModules(organizationId);
   const paymentsQuery = useAdminOrganizationPayments(organizationId);
-  const { plans, isLoading: plansLoading } = useAdminPlans();
-  const organizationRows = useMemo(() => organizations.data?.data || [], [organizations.data?.data]);
-  const organization = organizationRows.find((org) => getString(org, "id") === organizationId);
+  const { plans, isLoading: plansLoading, error: plansError } = useAdminPlans();
+  const organizationRows = useMemo(
+    () => (organizations.data || []) as unknown as AdminRecord[],
+    [organizations.data],
+  );
+  const organizationDetailRows = useMemo(
+    () => organizationDetails.data?.data || [],
+    [organizationDetails.data?.data],
+  );
+  const organizationSummary = useMemo(
+    () => organizationRows.find((org) => getString(org, "id") === organizationId),
+    [organizationId, organizationRows],
+  );
+  const organizationDetail = useMemo(
+    () => organizationDetailRows.find((org) => getString(org, "id") === organizationId),
+    [organizationDetailRows, organizationId],
+  );
+  const organization = useMemo(
+    () => organizationSummary && organizationDetail
+      ? { ...organizationSummary, ...organizationDetail }
+      : organizationSummary,
+    [organizationDetail, organizationSummary],
+  );
   const orgUsers = (users.data?.data || []).filter((user) => getString(user, "organization_id") === organizationId);
   const moduleRows = useMemo(() => modulesQuery.data?.data || [], [modulesQuery.data?.data]);
   const payments = useMemo(() => paymentsQuery.data?.data || [], [paymentsQuery.data?.data]);
@@ -1183,6 +1217,22 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
   const paidPayments = useMemo(() => payments.filter(isPaidPayment), [payments]);
   const latestPaidPayment = paidPayments[0];
   const firstPaidPayment = paidPayments[paidPayments.length - 1];
+  const organizationErrorMessage = organizations.error ? getErrorMessage(organizations.error) : null;
+  const organizationDetailsErrorMessage = organizationDetails.data?.errorMessage;
+  const organizationDetailMissing = Boolean(
+    organizationSummary
+    && !organizationDetails.isPending
+    && !organizationDetailsErrorMessage
+    && !organizationDetail,
+  );
+  const organizationAccessDataErrorMessage = organizationDetailsErrorMessage
+    || (organizationDetailMissing
+      ? "A ficha completa da organização não está disponível nesta consulta. A edição foi bloqueada para preservar os dados atuais."
+      : null);
+  const usersErrorMessage = users.data?.errorMessage;
+  const plansErrorMessage = plansError ? getErrorMessage(plansError) : null;
+  const accessErrorMessage = organizationAccessDataErrorMessage || modulesQuery.data?.errorMessage || plansErrorMessage;
+  const accessDependenciesLoading = organizationDetails.isPending || modulesQuery.isPending || plansLoading;
   const [accessForm, setAccessForm] = useState<OrganizationAccessForm>({
     planId: NO_PLAN_VALUE,
     subscriptionStatus: "active",
@@ -1196,6 +1246,10 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
   });
   const [isEditingAccess, setIsEditingAccess] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const accessFormIsValid = isValidNumberInput(accessForm.maxUsers, { integer: true, min: 1 })
+    && isValidNumberInput(accessForm.maxWhatsappSessions, { allowEmpty: true, integer: true, min: 0 })
+    && isValidNumberInput(accessForm.subscriptionValue, { allowEmpty: true, min: 0 })
+    && isValidNumberInput(accessForm.billingDay, { allowEmpty: true, integer: true, min: 1, max: 31 });
   const organizationsById = useMemo(() => {
     return new Map(organizationRows.map((org) => [getString(org, "id"), org]));
   }, [organizationRows]);
@@ -1216,6 +1270,7 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
       toast.success("Acessos da organização atualizados.");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["admin-rows", "organizations"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin-organizations-list"] }),
         queryClient.invalidateQueries({ queryKey: ["admin-organization-modules", variables.organizationId] }),
         queryClient.invalidateQueries({ queryKey: ["organization-modules", variables.organizationId] }),
         queryClient.invalidateQueries({ queryKey: ["super-admin-organizations"] }),
@@ -1227,11 +1282,11 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
   });
 
   useEffect(() => {
-    if (!organization) return;
+    if (!organization || isEditingAccess) return;
 
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Sincroniza o formulario quando a organizacao carregada muda.
     setAccessForm(getOrganizationAccessForm(organization, currentPlan, moduleRows));
-  }, [organization, currentPlan, moduleRows]);
+  }, [organization, currentPlan, moduleRows, isEditingAccess]);
 
   const updateAccessForm = <K extends keyof OrganizationAccessForm>(key: K, value: OrganizationAccessForm[K]) => {
     setAccessForm((current) => ({ ...current, [key]: value }));
@@ -1269,7 +1324,7 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
   };
 
   const handleSaveAccess = async () => {
-    if (!organizationId || !organization) return;
+    if (!organizationId || !organization || !accessFormIsValid || accessDependenciesLoading || accessErrorMessage) return;
 
     const selectedPlan = plans.find((plan) => plan.id === accessForm.planId);
     const maxUsersFallback = Number(organization.max_users || 1);
@@ -1283,16 +1338,20 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
       billing_day: parseNullableNumberInput(accessForm.billingDay),
       next_billing_date: accessForm.nextBillingDate || null,
       clear_next_billing_date: !accessForm.nextBillingDate,
-      trial_ends_at: accessForm.trialEndsAt ? new Date(`${accessForm.trialEndsAt}T23:59:59`).toISOString() : null,
+      trial_ends_at: accessForm.trialEndsAt || null,
       clear_trial_ends_at: !accessForm.trialEndsAt,
       subscription_type: selectedPlan ? "paid" : getOptionalString(organization, "subscription_type") || null,
     };
 
-    await updateOrganizationAccess.mutateAsync({
-      organizationId,
-      organizationUpdates,
-      modules: accessForm.modules,
-    });
+    try {
+      await updateOrganizationAccess.mutateAsync({
+        organizationId,
+        organizationUpdates,
+        modules: accessForm.modules,
+      });
+    } catch {
+      // Toast is handled by the mutation; preserve the draft for retry.
+    }
   };
 
   const handleCancelAccessEdit = () => {
@@ -1309,27 +1368,36 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
     );
   }
 
+  if (!organization && organizationErrorMessage) {
+    return <AdminWarning message={organizationErrorMessage} />;
+  }
+
   if (!organization) {
     return (
-      <div className="space-y-4">
-        <AdminWarning message={organizations.data?.errorMessage} />
-        <EmptyState
-          title="Organização não encontrada"
-          description="A rota existe, mas a organização não foi retornada pelo Supabase conectado."
-        />
-      </div>
+      <EmptyState
+        title="Organização não encontrada"
+        description="A rota existe, mas a organização não foi retornada pela API administrativa."
+      />
     );
   }
 
   return (
     <div className="space-y-4">
-      <AdminWarning message={modulesQuery.data?.errorMessage || paymentsQuery.data?.errorMessage} />
+      <AdminWarning
+        message={[
+          organizationAccessDataErrorMessage,
+          usersErrorMessage,
+          modulesQuery.data?.errorMessage,
+          paymentsQuery.data?.errorMessage,
+          plansErrorMessage,
+        ].find(Boolean)}
+      />
 
       <div className="app-card p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Organização</p>
-            <h2 className="mt-2 text-2xl font-semibold">{getString(organization, "name")}</h2>
+            <p className="text-xs font-light text-muted-foreground">Organização</p>
+            <h2 className="mt-2 text-2xl font-medium">{getString(organization, "name")}</h2>
             <p className="mt-1 text-sm text-muted-foreground">{getString(organization, "email", "E-mail não informado")}</p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -1365,7 +1433,7 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
         <div className="app-card p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <h2 className="text-base font-semibold">Plano, status e limites</h2>
+              <h2 className="text-base font-medium">Plano, status e limites</h2>
               <p className="mt-1 text-sm text-muted-foreground">
                 {isEditingAccess
                   ? "Altere o plano, o status e os limites liberados para esta organização."
@@ -1386,8 +1454,8 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
                 <Button
                   type="button"
                   onClick={handleSaveAccess}
-                  disabled={updateOrganizationAccess.isPending}
-                  className="h-9 rounded-[6px] bg-[#FF4529] text-white hover:bg-[#FF4529]/90"
+                  disabled={updateOrganizationAccess.isPending || !accessFormIsValid || accessDependenciesLoading || Boolean(accessErrorMessage)}
+                  className="h-9 rounded-[6px] bg-primary text-primary-foreground shadow-none hover:bg-primary/90"
                 >
                   {updateOrganizationAccess.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
                   Salvar alterações
@@ -1398,6 +1466,7 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
                 type="button"
                 variant="outline"
                 onClick={() => setIsEditingAccess(true)}
+                disabled={accessDependenciesLoading || Boolean(accessErrorMessage)}
                 className="h-9 shrink-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)]"
               >
                 <Pencil className="h-4 w-4" />
@@ -1408,6 +1477,11 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
 
           {isEditingAccess ? (
             <>
+              {!accessFormIsValid ? (
+                <p className="mt-3 text-sm text-destructive">
+                  Revise os limites, o valor mensal e o dia da cobrança antes de salvar.
+                </p>
+              ) : null}
               <div className="mt-4 grid gap-3 md:grid-cols-3">
                 <div className="space-y-2 md:col-span-2">
                   <Label htmlFor="organization-plan">Plano comercial</Label>
@@ -1532,7 +1606,7 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
                         className={cn(
                           "flex h-10 items-center justify-between gap-2 rounded-[6px] px-2.5 text-left text-xs font-medium transition-colors",
                           checked
-                            ? "bg-[#FF4529] text-white shadow-sm"
+                            ? "bg-primary text-primary-foreground shadow-none"
                             : "bg-[var(--app-surface-soft)] text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground",
                         )}
                       >
@@ -1548,8 +1622,8 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
             <>
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <MiniInfo label="Plano comercial" value={currentPlan?.name || "Sem plano vinculado"} />
-                <div className="rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-2">
-                  <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Status</p>
+                <div className="rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-2">
+                  <p className="text-[10px] font-light text-muted-foreground">Status</p>
                   <div className="mt-1">
                     <StatusBadge value={getOrganizationStatus(organization)} activeLabel="Ativa" />
                   </div>
@@ -1592,10 +1666,10 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
           <div className="app-card p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h2 className="text-base font-semibold">Resumo financeiro</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Plano, vencimentos e cobrança Asaas.</p>
+                <h2 className="text-base font-medium">Resumo financeiro</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Plano, vencimentos e cobranças conciliadas.</p>
               </div>
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] bg-[#FF4529]/12 text-[#FF4529]">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] bg-primary/12 text-primary">
                 <CreditCard className="h-5 w-5" />
               </span>
             </div>
@@ -1617,43 +1691,38 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
               />
               <MiniInfo label="Primeiro pagamento" value={firstPaidPayment ? formatDateOnly(firstPaidPayment.payment_date || firstPaidPayment.due_date) : "--"} />
               <MiniInfo label="Último pagamento" value={latestPaidPayment ? formatDateOnly(latestPaidPayment.payment_date || latestPaidPayment.due_date) : "--"} />
-              <MiniInfo label="Cliente Asaas" value={getString(organization, "asaas_customer_id", "--")} />
-              <MiniInfo label="Assinatura Asaas" value={getString(organization, "asaas_subscription_id", "--")} />
             </div>
           </div>
 
           <div className="app-card overflow-hidden">
             <div className="flex items-center justify-between gap-3 p-4">
               <div>
-                <h2 className="text-base font-semibold">Histórico de pagamentos</h2>
+                <h2 className="text-base font-medium">Histórico de pagamentos</h2>
                 <p className="text-sm text-muted-foreground">{formatRecordsCount(payments.length)}</p>
               </div>
               <CalendarDays className="h-5 w-5 text-muted-foreground" />
             </div>
-            <div className="divide-y divide-white/[0.045]">
-              {payments.slice(0, 8).map((payment) => (
+            <div className="divide-y divide-[var(--app-border)]">
+              {!paymentsQuery.isPending ? payments.slice(0, 8).map((payment) => (
                 <div key={payment.id} className="grid gap-2 p-4 text-sm sm:grid-cols-[1fr_auto]">
                   <div className="min-w-0">
                     <p className="font-medium">{formatCurrency(payment.value)}</p>
                     <p className="mt-1 truncate text-xs text-muted-foreground">
-                      {payment.billing_type || "Cobrança"} · vence em {formatDateOnly(payment.due_date)}
+                      {getPaymentMethodLabel(payment.billing_type)} · vence em {formatDateOnly(payment.due_date)}
                     </p>
                   </div>
                   <div className="flex items-center gap-2 sm:justify-end">
                     <Badge className="border-0 bg-[var(--app-surface-soft)] text-muted-foreground">
                       {getPaymentStatusLabel(payment.status)}
                     </Badge>
-                    {payment.invoice_url ? (
-                      <Button asChild variant="outline" size="sm" className="h-8 border-0 bg-[var(--app-surface-soft)]">
-                        <a href={payment.invoice_url} target="_blank" rel="noreferrer">
-                          Abrir
-                        </a>
-                      </Button>
-                    ) : null}
                   </div>
                 </div>
-              ))}
-              {payments.length === 0 ? (
+              )) : (
+                <div className="flex min-h-[120px] items-center justify-center p-4">
+                  <VimobLoader label="Carregando pagamentos..." />
+                </div>
+              )}
+              {!paymentsQuery.isPending && !paymentsQuery.data?.errorMessage && payments.length === 0 ? (
                 <div className="p-4 text-sm text-muted-foreground">Nenhum pagamento registrado para esta organização.</div>
               ) : null}
             </div>
@@ -1666,6 +1735,8 @@ function OrganizationDetailManagementContent({ organizationId }: { organizationI
         rows={orgUsers}
         organizationsById={organizationsById}
         createOrganizationId={organizationId}
+        isLoading={users.isPending}
+        errorMessage={usersErrorMessage}
         empty="Nenhum usuário retornado para esta organização."
       />
     </div>
@@ -1689,9 +1760,9 @@ function UserMetaTile({
   className?: string;
 }) {
   return (
-    <div className={cn("min-w-0 rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-2", className)}>
-      <p className="text-[9px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
-      <p className="mt-1 truncate text-xs font-medium">{value}</p>
+    <div className={cn("min-w-0 rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-2", className)}>
+      <p className="text-[9px] font-light text-muted-foreground">{label}</p>
+      <p className="mt-1 truncate text-xs font-normal">{value}</p>
     </div>
   );
 }
@@ -1702,6 +1773,8 @@ function UsersRowsPreview({
   organizationsById,
   empty,
   createOrganizationId,
+  isLoading = false,
+  errorMessage,
   renderActions = (user) => <AdminUserActions user={user} />,
 }: {
   title: string;
@@ -1709,11 +1782,23 @@ function UsersRowsPreview({
   organizationsById: Map<string, AdminRecord>;
   empty: string;
   createOrganizationId?: string;
+  isLoading?: boolean;
+  errorMessage?: string | null;
   renderActions?: (user: AdminRecord) => ReactNode;
 }) {
   const headerAction = createOrganizationId ? (
     <CreateOrganizationUserDialog organizationId={createOrganizationId} />
   ) : null;
+
+  if (isLoading) {
+    return (
+      <div className="app-card flex min-h-[220px] items-center justify-center p-4">
+        <VimobLoader label="Carregando usuários..." />
+      </div>
+    );
+  }
+
+  if (errorMessage) return null;
 
   if (rows.length === 0) {
     if (!headerAction) {
@@ -1722,16 +1807,16 @@ function UsersRowsPreview({
 
     return (
       <div className="app-card overflow-hidden">
-        <div className="flex items-center justify-between gap-3 border-b border-white/[0.045] p-4">
+        <div className="flex items-center justify-between gap-3 border-b border-[var(--app-border)] p-4">
           <div>
-            <h2 className="text-base font-semibold">{title}</h2>
+            <h2 className="text-base font-medium">{title}</h2>
             <p className="text-sm text-muted-foreground">{formatRecordsCount(0)}</p>
           </div>
           {headerAction}
         </div>
         <div className="flex min-h-[220px] flex-col items-center justify-center p-8 text-center">
           <ShieldCheck className="mb-4 h-10 w-10 text-muted-foreground/50" />
-          <h3 className="text-base font-semibold">{title}</h3>
+          <h3 className="text-base font-medium">{title}</h3>
           <p className="mt-2 max-w-md text-sm text-muted-foreground">{empty}</p>
         </div>
       </div>
@@ -1740,16 +1825,16 @@ function UsersRowsPreview({
 
   return (
     <div className="app-card overflow-hidden">
-      <div className="flex items-center justify-between gap-3 border-b border-white/[0.045] p-4">
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--app-border)] p-4">
         <div>
-          <h2 className="text-base font-semibold">{title}</h2>
+          <h2 className="text-base font-medium">{title}</h2>
           <p className="text-sm text-muted-foreground">{formatRecordsCount(rows.length)}</p>
         </div>
         {headerAction}
       </div>
 
       <div className={cn(
-        "hidden gap-4 border-b border-white/[0.045] px-4 py-3 text-[10px] font-medium uppercase tracking-wider text-muted-foreground lg:grid",
+        "hidden gap-4 border-b border-[var(--app-border)] px-4 py-3 text-[10px] font-light text-muted-foreground lg:grid",
         "grid-cols-[minmax(240px,1.5fr)_120px_100px_minmax(160px,1fr)_130px_150px]",
       )}>
         <span>Usuário</span>
@@ -1760,7 +1845,7 @@ function UsersRowsPreview({
         <span>Ações</span>
       </div>
 
-      <div className="divide-y divide-white/[0.045]">
+      <div className="divide-y divide-[var(--app-border)]">
         {rows.map((user, index) => {
           const id = getString(user, "id", String(index));
           const name = getString(user, "name", "Usuário sem nome");
@@ -1777,14 +1862,14 @@ function UsersRowsPreview({
             >
               <div className="p-4 lg:hidden">
                 <div className="flex items-start gap-3">
-                  <Avatar className="h-10 w-10 shrink-0 border border-white/[0.055]">
+                  <Avatar className="h-10 w-10 shrink-0 border border-[var(--app-border)]">
                     {avatarUrl ? <AvatarImage src={avatarUrl} className="object-cover" /> : <AvatarImage src={undefined} />}
-                    <AvatarFallback className="bg-[#FF4529]/12 text-xs font-semibold text-[#FF4529]">
+                    <AvatarFallback className="bg-primary/12 text-xs font-medium text-primary">
                       {getInitials(name)}
                     </AvatarFallback>
                   </Avatar>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold">{name}</p>
+                    <p className="truncate text-sm font-medium">{name}</p>
                     <p className="mt-0.5 truncate text-xs text-muted-foreground">{email}</p>
                   </div>
                   <StatusBadge value={user.is_active !== false} />
@@ -1805,9 +1890,9 @@ function UsersRowsPreview({
                 "lg:grid-cols-[minmax(240px,1.5fr)_120px_100px_minmax(160px,1fr)_130px_150px]",
               )}>
                 <div className="flex min-w-0 items-center gap-3">
-                  <Avatar className="h-9 w-9 shrink-0 border border-white/[0.055]">
+                  <Avatar className="h-9 w-9 shrink-0 border border-[var(--app-border)]">
                     {avatarUrl ? <AvatarImage src={avatarUrl} className="object-cover" /> : <AvatarImage src={undefined} />}
-                    <AvatarFallback className="bg-[#FF4529]/12 text-xs font-semibold text-[#FF4529]">
+                    <AvatarFallback className="bg-primary/12 text-xs font-medium text-primary">
                       {getInitials(name)}
                     </AvatarFallback>
                   </Avatar>
@@ -1845,33 +1930,15 @@ function UsersRowsPreview({
   );
 }
 
-type PasswordSharePayload = {
-  name: string;
-  email: string;
-  password: string;
-};
-
-function buildPasswordShareText(payload: PasswordSharePayload) {
-  return [
-    `Nome: ${payload.name || "Nao informado"}`,
-    `E-mail: ${payload.email || "Nao informado"}`,
-    `Senha temporaria: ${payload.password}`,
-  ].join("\n");
-}
-
-async function copyCredentials(payload: PasswordSharePayload) {
-  await navigator.clipboard.writeText(buildPasswordShareText(payload));
-}
-
 function AdminUserActions({ user }: { user: AdminRecord }) {
   const queryClient = useQueryClient();
   const userId = getOptionalString(user, "id") || "";
   const isActive = user.is_active !== false;
-  const [resetResult, setResetResult] = useState<PasswordSharePayload | null>(null);
 
   const invalidateUsers = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["admin-rows", "users"] }),
+      queryClient.invalidateQueries({ queryKey: ["admin-users-list"] }),
       queryClient.invalidateQueries({ queryKey: ["admin-organizations-list"] }),
     ]);
   };
@@ -1890,13 +1957,10 @@ function AdminUserActions({ user }: { user: AdminRecord }) {
   const resetPassword = useMutation({
     mutationFn: async () => adminAPI.resetUserPassword(userId),
     onSuccess: (result) => {
-      const payload = {
-        name: getString(result, "name", getString(user, "name", "")),
-        email: getString(result, "email", getString(user, "email", "")),
-        password: getString(result, "temporary_password", ""),
-      };
-      setResetResult(payload);
-      toast.success("Senha temporária gerada.");
+      const email = getString(result, "email", getString(user, "email", ""));
+      toast.success(email
+        ? `Enviamos o link de recuperação para ${email}.`
+        : "Enviamos o link de recuperação por e-mail.");
     },
     onError: (error) => {
       toast.error(`Erro ao resetar senha: ${getErrorMessage(error)}`);
@@ -1910,7 +1974,7 @@ function AdminUserActions({ user }: { user: AdminRecord }) {
           type="button"
           variant="outline"
           size="icon"
-          className="h-8 w-8 border-0 bg-[var(--app-surface-soft)]"
+          className="h-8 w-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] shadow-none"
           onClick={() => resetPassword.mutate()}
           disabled={!userId || resetPassword.isPending || toggleStatus.isPending}
           aria-label="Resetar senha"
@@ -1922,46 +1986,16 @@ function AdminUserActions({ user }: { user: AdminRecord }) {
           type="button"
           variant="outline"
           size="icon"
-          className="h-8 w-8 border-0 bg-[var(--app-surface-soft)]"
+          className="h-8 w-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] shadow-none"
           onClick={() => toggleStatus.mutate()}
           disabled={!userId || resetPassword.isPending || toggleStatus.isPending}
-          aria-label={isActive ? "Inativar usuario" : "Reativar usuario"}
-          title={isActive ? "Inativar usuario" : "Reativar usuario"}
+          aria-label={isActive ? "Inativar usuário" : "Reativar usuário"}
+          title={isActive ? "Inativar usuário" : "Reativar usuário"}
         >
           {toggleStatus.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Power className={cn("h-3.5 w-3.5", isActive ? "text-amber-400" : "text-emerald-400")} />}
         </Button>
       </div>
 
-      <Dialog open={Boolean(resetResult)} onOpenChange={(open) => !open && setResetResult(null)}>
-        <DialogContent className="max-w-md rounded-[8px]">
-          <DialogHeader>
-            <DialogTitle>Senha temporária</DialogTitle>
-          </DialogHeader>
-          {resetResult ? (
-            <div className="space-y-3">
-              <div className="rounded-[6px] bg-[var(--app-surface-soft)] p-3 text-sm">
-                <p><span className="text-muted-foreground">Nome:</span> {resetResult.name}</p>
-                <p><span className="text-muted-foreground">E-mail:</span> {resetResult.email}</p>
-                <p><span className="text-muted-foreground">Senha:</span> <span className="font-mono">{resetResult.password}</span></p>
-              </div>
-              <Button
-                className="w-full bg-[#FF4529] text-white hover:bg-[#FF4529]/90"
-                onClick={async () => {
-                  try {
-                    await copyCredentials(resetResult);
-                    toast.success("Dados copiados.");
-                  } catch {
-                    toast.error("Não foi possível copiar automaticamente.");
-                  }
-                }}
-              >
-                <Clipboard className="h-4 w-4" />
-                Copiar nome, e-mail e senha
-              </Button>
-            </div>
-          ) : null}
-        </DialogContent>
-      </Dialog>
     </>
   );
 }
@@ -1969,44 +2003,39 @@ function AdminUserActions({ user }: { user: AdminRecord }) {
 function CreateOrganizationUserDialog({ organizationId }: { organizationId?: string }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [createdCredentials, setCreatedCredentials] = useState<PasswordSharePayload | null>(null);
   const [form, setForm] = useState({
-    name: "",
     email: "",
-    whatsapp: "",
     role: "user" as "admin" | "user",
   });
+  const invitationInput = {
+    email: form.email.trim(),
+    role: form.role,
+    organizationId,
+  };
+  const invitationValidation = adminInvitationInputSchema.safeParse(invitationInput);
+  const emailInvalid = Boolean(form.email.trim()) && !invitationValidation.success;
 
   const resetForm = () => {
-    setForm({ name: "", email: "", whatsapp: "", role: "user" });
-    setCreatedCredentials(null);
+    setForm({ email: "", role: "user" });
   };
 
   const createUser = useMutation({
     mutationFn: async () => {
       if (!organizationId) throw new Error("Organização não informada.");
-      return usersAPI.createUser({
-        name: form.name.trim(),
-        email: form.email.trim(),
-        whatsapp: form.whatsapp.trim() || null,
-        role: form.role,
-      }, organizationId);
+      const validated = adminInvitationInputSchema.parse(invitationInput);
+      return adminAPI.createInvitation(validated);
     },
     onSuccess: async (result) => {
-      toast.success(result.generatedPassword ? "Usuário criado com senha temporária." : "Usuário vinculado à organização.");
-      if (result.generatedPassword) {
-        setCreatedCredentials({
-          name: result.user.name,
-          email: result.user.email,
-          password: result.generatedPassword,
-        });
-      } else {
-        setOpen(false);
-        resetForm();
-      }
+      toast.success(result.email_sent === false
+        ? "Convite criado, mas o e-mail não foi enviado. Use Reenviar quando o serviço normalizar."
+        : "Convite enviado por e-mail.");
+      setOpen(false);
+      resetForm();
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["admin-rows", "users"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin-users-list"] }),
         queryClient.invalidateQueries({ queryKey: ["admin-organizations-list"] }),
+        queryClient.invalidateQueries({ queryKey: ["invitations"] }),
       ]);
     },
     onError: (error) => {
@@ -2016,104 +2045,73 @@ function CreateOrganizationUserDialog({ organizationId }: { organizationId?: str
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => {
+      if (createUser.isPending) return;
       setOpen(nextOpen);
       if (!nextOpen) resetForm();
     }}>
-      <Button
-        type="button"
-        className="h-9 shrink-0 gap-2 rounded-[6px] bg-[#FF4529] px-3 font-medium text-white shadow-none hover:bg-[#FF4529]/90"
-        onClick={() => setOpen(true)}
-        aria-label="Adicionar novo usuário"
-      >
-        <UserPlus className="h-4 w-4" />
-        <span className="hidden sm:inline">Novo usuário</span>
-      </Button>
-      <DialogContent className="max-w-lg rounded-[8px] p-0">
-        <DialogHeader className="border-b border-white/[0.045] px-4 py-3">
-          <DialogTitle>Novo usuário</DialogTitle>
-        </DialogHeader>
+      <DialogTrigger asChild>
+        <Button
+          type="button"
+          className="h-9 shrink-0 gap-2 rounded-[6px] bg-primary px-3 font-light text-primary-foreground shadow-none hover:bg-primary/90"
+          aria-label="Adicionar novo usuário"
+        >
+          <UserPlus className="h-4 w-4" />
+          <span className="hidden sm:inline">Novo usuário</span>
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-lg rounded-[8px] border-0 p-0">
+        <DialogHeader className="border-b border-[var(--app-border)] px-4 py-3">
+        <DialogTitle>Convidar usuário</DialogTitle>
+      </DialogHeader>
 
-        {createdCredentials ? (
-          <div className="space-y-3 px-4 py-3">
-            <div className="rounded-[6px] bg-[var(--app-surface-soft)] p-3 text-sm">
-              <p><span className="text-muted-foreground">Nome:</span> {createdCredentials.name}</p>
-              <p><span className="text-muted-foreground">E-mail:</span> {createdCredentials.email}</p>
-              <p><span className="text-muted-foreground">Senha:</span> <span className="font-mono">{createdCredentials.password}</span></p>
-            </div>
-            <Button
-              className="w-full bg-[#FF4529] text-white hover:bg-[#FF4529]/90"
-              onClick={async () => {
-                try {
-                  await copyCredentials(createdCredentials);
-                  toast.success("Dados copiados.");
-                } catch {
-                  toast.error("Não foi possível copiar automaticamente.");
-                }
-              }}
-            >
-              <Clipboard className="h-4 w-4" />
-              Copiar acesso
-            </Button>
-          </div>
-        ) : (
-          <div className="grid gap-3 px-4 py-3">
-            <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid gap-3 px-4 py-3">
+          <p className="text-sm text-muted-foreground">
+            O usuário receberá um link seguro, confirmará o e-mail e definirá a própria senha.
+          </p>
+          <div className="grid gap-3 md:grid-cols-2">
               <label className="space-y-2">
-                <span className="text-sm font-medium">Nome</span>
-                <Input
-                  value={form.name}
-                  onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                  className="border-0 bg-[var(--app-surface-soft)]"
-                />
-              </label>
-              <label className="space-y-2">
-                <span className="text-sm font-medium">E-mail</span>
+                <span className="text-sm font-light">E-mail</span>
                 <Input
                   type="email"
                   value={form.email}
                   onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))}
-                  className="border-0 bg-[var(--app-surface-soft)]"
-                />
-              </label>
-            </div>
-            <div className="grid gap-3 md:grid-cols-2">
-              <label className="space-y-2">
-                <span className="text-sm font-medium">WhatsApp</span>
-                <Input
-                  value={form.whatsapp}
-                  onChange={(event) => setForm((current) => ({ ...current, whatsapp: event.target.value }))}
+                  disabled={createUser.isPending}
+                  aria-invalid={emailInvalid}
                   className="border-0 bg-[var(--app-surface-soft)]"
                 />
               </label>
               <label className="space-y-2">
-                <span className="text-sm font-medium">Perfil</span>
+                <span className="text-sm font-light">Perfil</span>
                 <select
                   value={form.role}
                   onChange={(event) => setForm((current) => ({ ...current, role: event.target.value as "admin" | "user" }))}
+                  disabled={createUser.isPending}
                   className="h-10 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-sm outline-none"
                 >
                   <option value="user">Usuário</option>
                   <option value="admin">Admin</option>
                 </select>
               </label>
-            </div>
           </div>
-        )}
+        </div>
 
-        <DialogFooter className="border-t border-white/[0.045] px-4 py-3">
-          <Button variant="outline" className="border-0 bg-[var(--app-surface-soft)]" onClick={() => setOpen(false)}>
+        <DialogFooter className="border-t border-[var(--app-border)] px-4 py-3">
+          <Button
+            variant="outline"
+            className="rounded-[6px] border-0 bg-[var(--app-surface-soft)] shadow-none"
+            onClick={() => setOpen(false)}
+            disabled={createUser.isPending}
+          >
             Fechar
           </Button>
-          {!createdCredentials ? (
-            <Button
-              className="bg-[#FF4529] text-white hover:bg-[#FF4529]/90"
-              onClick={() => createUser.mutate()}
-              disabled={createUser.isPending || form.name.trim().length < 2 || !form.email.trim()}
-            >
-              {createUser.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
-              Criar
-            </Button>
-          ) : null}
+          <Button
+            className="rounded-[6px] bg-primary text-primary-foreground shadow-none hover:bg-primary/90"
+            onClick={() => createUser.mutate()}
+            disabled={createUser.isPending || !organizationId || !invitationValidation.success}
+          >
+            {createUser.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+            Enviar convite
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -2122,10 +2120,14 @@ function CreateOrganizationUserDialog({ organizationId }: { organizationId?: str
 
 function UsersContent() {
   const [search, setSearch] = useState("");
-  const users = useAdminRows("users", 160);
-  const organizations = useAdminRows("organizations", 200);
+  const users = useAdminUsersList();
+  const organizations = useAdminOrganizationsList();
   const rows = users.data?.data || [];
-  const organizationRows = useMemo(() => organizations.data?.data || [], [organizations.data?.data]);
+  const organizationRows = useMemo(
+    () => (organizations.data || []) as unknown as AdminRecord[],
+    [organizations.data],
+  );
+  const organizationsErrorMessage = organizations.error ? getErrorMessage(organizations.error) : null;
   const organizationsById = useMemo(() => {
     return new Map(organizationRows.map((org) => [getString(org, "id"), org]));
   }, [organizationRows]);
@@ -2137,12 +2139,14 @@ function UsersContent() {
 
   return (
     <div className="space-y-4">
-      <AdminWarning message={users.data?.errorMessage} />
+      <AdminWarning message={users.data?.errorMessage || organizationsErrorMessage} />
       <Toolbar search={search} onSearch={setSearch} placeholder="Buscar usuário, e-mail, papel ou organização..." />
       <UsersRowsPreview
         title="Usuários da plataforma"
         rows={filteredRows}
         organizationsById={organizationsById}
+        isLoading={users.isPending || organizations.isLoading}
+        errorMessage={users.data?.errorMessage || organizationsErrorMessage}
         empty="Nenhum usuário retornado pelo Supabase conectado."
       />
     </div>
@@ -2232,6 +2236,20 @@ function parseNullableNumberInput(value: string) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function isValidNumberInput(
+  value: string,
+  options: { allowEmpty?: boolean; integer?: boolean; min?: number; max?: number } = {},
+) {
+  const normalized = value.trim().replace(",", ".");
+  if (!normalized) return options.allowEmpty === true;
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) return false;
+  if (options.integer && !Number.isInteger(parsed)) return false;
+  if (options.min !== undefined && parsed < options.min) return false;
+  if (options.max !== undefined && parsed > options.max) return false;
+  return true;
+}
+
 function planFormToPayload(form: PlanFormState) {
   return {
     slug: form.slug.trim() || slugifyPlanName(form.name),
@@ -2254,20 +2272,29 @@ function PlansContent() {
   const { plans, isLoading, error, createPlan, updatePlan } = useAdminPlans();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingPlan, setEditingPlan] = useState<SubscriptionPlan | null>(null);
+  const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
   const [form, setForm] = useState<PlanFormState>(() => ({
     ...DEFAULT_PLAN_FORM,
     modules: [...DEFAULT_PLAN_FORM.modules],
   }));
   const isSaving = createPlan.isPending || updatePlan.isPending;
+  const planFormIsValid = Boolean(form.name.trim() && form.slug.trim())
+    && isValidNumberInput(form.price, { min: 0 })
+    && isValidNumberInput(form.trial_days, { allowEmpty: true, integer: true, min: 0 })
+    && isValidNumberInput(form.max_users, { allowEmpty: true, integer: true, min: 0 })
+    && isValidNumberInput(form.max_leads, { allowEmpty: true, integer: true, min: 0 })
+    && isValidNumberInput(form.max_whatsapp_sessions, { allowEmpty: true, integer: true, min: 0 });
 
   const openCreateDialog = () => {
     setEditingPlan(null);
+    setSlugManuallyEdited(false);
     setForm({ ...DEFAULT_PLAN_FORM, modules: [...DEFAULT_PLAN_FORM.modules] });
     setDialogOpen(true);
   };
 
   const openEditDialog = (plan: SubscriptionPlan) => {
     setEditingPlan(plan);
+    setSlugManuallyEdited(true);
     setForm(planToFormState(plan));
     setDialogOpen(true);
   };
@@ -2292,11 +2319,12 @@ function PlansContent() {
     setForm((current) => ({
       ...current,
       name: value,
-      slug: current.slug || slugifyPlanName(value),
+      slug: slugManuallyEdited ? current.slug : slugifyPlanName(value),
     }));
   };
 
   const handleSubmitPlan = async () => {
+    if (!planFormIsValid || isSaving) return;
     const payload = planFormToPayload(form);
     try {
       if (editingPlan) {
@@ -2316,13 +2344,13 @@ function PlansContent() {
 
       <div className="app-card flex items-center justify-between gap-3 p-3">
         <div className="min-w-0">
-          <h2 className="text-base font-semibold">Planos comerciais</h2>
+          <h2 className="text-base font-medium">Planos comerciais</h2>
           <p className="text-sm text-muted-foreground">{formatRecordsCount(plans.length)}</p>
         </div>
         <Button
           onClick={openCreateDialog}
           size="icon"
-          className="h-10 w-10 shrink-0 rounded-[6px] bg-[#FF4529] text-white hover:bg-[#FF4529]/90 sm:w-auto sm:px-4"
+          className="h-10 w-10 shrink-0 rounded-[6px] bg-primary text-primary-foreground shadow-none hover:bg-primary/90 sm:w-auto sm:px-4"
           aria-label="Novo plano"
           title="Novo plano"
         >
@@ -2341,15 +2369,15 @@ function PlansContent() {
             <div key={plan.id} className="app-card p-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="truncate text-base font-semibold">{plan.name}</p>
+                  <p className="truncate text-base font-medium">{plan.name}</p>
                 </div>
                 <StatusBadge value={plan.is_active !== false} />
               </div>
 
               <div className="mt-3 flex items-end justify-between gap-3">
                 <div>
-                  <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Preço</p>
-                  <p className="mt-0.5 text-2xl font-semibold">{formatCurrency(plan.price)}</p>
+                  <p className="text-[10px] font-light text-muted-foreground">Preço</p>
+                  <p className="mt-0.5 text-2xl font-medium">{formatCurrency(plan.price)}</p>
                 </div>
                 <Badge className="border-0 bg-[var(--app-surface-soft)] text-muted-foreground">
                   {formatFieldValue(plan as unknown as AdminRecord, "billing_cycle")}
@@ -2366,7 +2394,7 @@ function PlansContent() {
               {(plan.modules || []).length > 0 ? (
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   {(plan.modules || []).slice(0, 6).map((module) => (
-                    <Badge key={module} className="border-0 bg-[#FF4529]/10 px-2 py-0.5 text-[11px] text-[#FF806B]">
+                    <Badge key={module} className="border-0 bg-primary/10 px-2 py-0.5 text-[11px] text-primary">
                       {getSystemModuleLabel(module)}
                     </Badge>
                   ))}
@@ -2378,7 +2406,7 @@ function PlansContent() {
                 </div>
               ) : null}
 
-              <div className="mt-3 flex items-center justify-between gap-3 border-t border-white/[0.045] pt-2.5">
+              <div className="mt-3 flex items-center justify-between gap-3 border-t border-[var(--app-border)] pt-2.5">
                 <span className="text-xs text-muted-foreground">{plan.is_public === false ? "Interno" : "Público"}</span>
                 <Button
                   variant="outline"
@@ -2397,17 +2425,25 @@ function PlansContent() {
         </div>
       )}
 
-      {!isLoading && plans.length === 0 && (
+      {!isLoading && !error && plans.length === 0 && (
         <EmptyState title="Nenhum plano carregado" description="Crie o primeiro plano comercial para disponibilizar no onboarding." />
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-h-[92dvh] max-w-2xl overflow-y-auto rounded-[8px] p-0">
-          <DialogHeader className="border-b border-white/[0.045] px-4 py-3">
+      <Dialog open={dialogOpen} onOpenChange={(nextOpen) => {
+        if (isSaving) return;
+        setDialogOpen(nextOpen);
+      }}>
+        <DialogContent className="max-h-[92dvh] max-w-2xl overflow-y-auto rounded-[8px] border-0 p-0">
+          <DialogHeader className="border-b border-[var(--app-border)] px-4 py-3">
             <DialogTitle className="text-base">{editingPlan ? "Editar plano" : "Novo plano"}</DialogTitle>
           </DialogHeader>
 
           <div className="grid gap-3 px-4 py-3">
+            {!planFormIsValid ? (
+              <p className="text-sm text-destructive">
+                Informe nome, slug e valores numéricos válidos antes de salvar.
+              </p>
+            ) : null}
             <div className="grid gap-3 md:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="plan-name">Nome</Label>
@@ -2424,7 +2460,10 @@ function PlansContent() {
                 <Input
                   id="plan-slug"
                   value={form.slug}
-                  onChange={(event) => updateForm("slug", slugifyPlanName(event.target.value))}
+                  onChange={(event) => {
+                    setSlugManuallyEdited(true);
+                    updateForm("slug", slugifyPlanName(event.target.value));
+                  }}
                   placeholder="starter"
                   className="border-0 bg-[var(--app-surface-soft)]"
                 />
@@ -2519,7 +2558,7 @@ function PlansContent() {
                       className={cn(
                         "flex h-9 items-center justify-between gap-2 rounded-[6px] px-2.5 text-left text-xs font-medium transition-colors",
                         checked
-                          ? "bg-[#FF4529] text-white shadow-sm"
+                          ? "bg-primary text-primary-foreground shadow-none"
                           : "bg-[var(--app-surface-soft)] text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground",
                       )}
                     >
@@ -2547,11 +2586,16 @@ function PlansContent() {
             </div>
           </div>
 
-          <DialogFooter className="border-t border-white/[0.045] px-4 py-3">
-            <Button variant="outline" className="border-0 bg-[var(--app-surface-soft)]" onClick={() => setDialogOpen(false)}>
+          <DialogFooter className="border-t border-[var(--app-border)] px-4 py-3">
+            <Button
+              variant="outline"
+              className="rounded-[6px] border-0 bg-[var(--app-surface-soft)] shadow-none"
+              onClick={() => setDialogOpen(false)}
+              disabled={isSaving}
+            >
               Cancelar
             </Button>
-            <Button className="bg-[#FF4529] text-white hover:bg-[#FF4529]/90" onClick={handleSubmitPlan} disabled={isSaving}>
+            <Button className="rounded-[6px] bg-primary text-primary-foreground shadow-none hover:bg-primary/90" onClick={handleSubmitPlan} disabled={isSaving || !planFormIsValid}>
               {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               {editingPlan ? "Salvar plano" : "Criar plano"}
             </Button>
@@ -2577,15 +2621,23 @@ function GenericTable({
   const [search, setSearch] = useState("");
   const query = useAdminRows(tableConfig.table, 120);
   const rows = query.data?.data || [];
+  const errorMessage = query.data?.errorMessage;
   const filteredRows = rows.filter((row) =>
     tableConfig.fields.some((field) => normalizeText(row[field]).includes(normalizeSearchText(search))),
   );
 
   return (
     <div className="space-y-4">
-      <AdminWarning message={query.data?.errorMessage} />
+      <AdminWarning message={errorMessage} />
       <Toolbar search={search} onSearch={setSearch} placeholder={`Buscar em ${tableConfig.title.toLowerCase()}...`} />
-      <GenericRowsPreview title={tableConfig.title} rows={filteredRows} fields={tableConfig.fields} empty={tableConfig.empty} />
+      {query.isPending ? (
+        <div className="flex min-h-[220px] items-center justify-center">
+          <VimobLoader label={`Carregando ${tableConfig.title.toLowerCase()}...`} />
+        </div>
+      ) : null}
+      {!query.isPending && !errorMessage ? (
+        <GenericRowsPreview title={tableConfig.title} rows={filteredRows} fields={tableConfig.fields} empty={tableConfig.empty} />
+      ) : null}
     </div>
   );
 }
@@ -2608,12 +2660,24 @@ function DatabaseContent() {
     [],
   );
 
-  const countByTable = new Map((counts.data?.data || []).map((item) => [item.table, item]));
-  const configured = LEGACY_TABLES.filter((item) => !countByTable.get(item.name)?.errorMessage).length;
-  const criticalMissing = LEGACY_TABLES.filter((item) => item.critical && countByTable.get(item.name)?.errorMessage).length;
+  const countResults = counts.data?.data || [];
+  const countByTable = new Map(countResults.map((item) => [item.table, item]));
+  const configured = countResults.filter((item) => !item.errorMessage).length;
+  const criticalMissing = LEGACY_TABLES.filter((item) => {
+    const result = countByTable.get(item.name);
+    return item.critical && (!result || Boolean(result.errorMessage));
+  }).length;
 
   return (
     <div className="space-y-4">
+      <AdminWarning message={counts.data?.errorMessage} />
+      {counts.isPending ? (
+        <div className="flex min-h-[220px] items-center justify-center">
+          <VimobLoader label="Verificando estrutura..." />
+        </div>
+      ) : null}
+      {!counts.isPending ? (
+        <>
       <div className="grid gap-3 sm:grid-cols-3">
         <KpiCard title="Tabelas mapeadas" value={LEGACY_TABLES.length} icon={Database} />
         <KpiCard title="Respondendo" value={configured} icon={CheckCircle2} />
@@ -2622,7 +2686,7 @@ function DatabaseContent() {
 
       <div className="app-card p-4">
         <div className="mb-4">
-          <h2 className="text-base font-semibold">Checklist visual de estrutura</h2>
+          <h2 className="text-base font-medium">Checklist visual de estrutura</h2>
           <p className="text-sm text-muted-foreground">
             Checagem feita via cliente Supabase da aplicação. Não executei SQL manual nem alterei schema.
           </p>
@@ -2630,21 +2694,23 @@ function DatabaseContent() {
         <div className="grid gap-2 md:grid-cols-2">
           {LEGACY_TABLES.map((item) => {
             const result = countByTable.get(item.name);
-            const error = result?.errorMessage;
+            const pending = !result || Boolean(result.errorMessage);
             return (
               <div key={item.name} className="app-card-soft flex items-center justify-between gap-3 p-3">
                 <div className="min-w-0">
                   <p className="font-medium">{item.label}</p>
                   <p className="truncate text-xs text-muted-foreground">{item.name}</p>
                 </div>
-                <Badge className={cn("border-0", error ? "bg-amber-500/12 text-amber-400" : "bg-emerald-500/12 text-emerald-400")}>
-                  {error ? "Pendente" : `${formatNumber(result?.count)} registros`}
+                <Badge className={cn("border-0", pending ? "bg-amber-500/12 text-amber-400" : "bg-emerald-500/12 text-emerald-400")}>
+                  {pending ? "Pendente" : `${formatNumber(result?.count)} registros`}
                 </Badge>
               </div>
             );
           })}
         </div>
       </div>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -2653,41 +2719,67 @@ function AiContent() {
   return <AiAgentsContent />;
 }
 
-function NotificationDispatcherSettings({ rows, isLoading }: { rows: AdminRecord[]; isLoading: boolean }) {
+function NotificationDispatcherSettings({
+  settings,
+  isLoading,
+}: {
+  settings?: AdminNotificationDispatchSettings;
+  isLoading: boolean;
+}) {
   const { profile, organization } = useAuth();
   const queryClient = useQueryClient();
-  const settingsRow = rows.find((row) => getString(row, "key") === "platform") || rows[0];
-  const organizationId = profile?.organization_id || organization?.id || "";
+  const organizationId = organization?.id || profile?.organization_id || "";
   const userId = profile?.id || "";
-  const settingsForm = useMemo(() => getNotificationDispatchForm(settingsRow), [settingsRow]);
+  const settingsForm = useMemo(() => getNotificationDispatchForm(settings), [settings]);
   const [form, setForm] = useState<NotificationDispatchForm>(() => settingsForm);
+  const [isDirty, setIsDirty] = useState(false);
+  const timeoutIsValid = Number.isInteger(form.timeoutSeconds)
+    && form.timeoutSeconds >= 3
+    && form.timeoutSeconds <= 60;
 
   useEffect(() => {
+    if (isDirty) return;
     queueMicrotask(() => setForm(settingsForm));
-  }, [settingsForm]);
+  }, [isDirty, settingsForm]);
 
   const updateForm = <K extends keyof NotificationDispatchForm>(key: K, value: NotificationDispatchForm[K]) => {
+    setIsDirty(true);
     setForm((current) => ({ ...current, [key]: value }));
   };
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const value = buildNotificationDispatchValue(settingsRow, form);
-      if (settingsRow?.id) {
-        return adminAPI.updateTableRow("system_settings", String(settingsRow.id), {
-          value,
-          description: getString(settingsRow, "description", "Configurações globais da plataforma"),
-        });
+      if (!settings || !timeoutIsValid) {
+        throw new Error("Revise o timeout antes de salvar.");
       }
-      return adminAPI.createTableRow("system_settings", {
-        key: "platform",
-        description: "Configurações globais da plataforma",
-        value,
+      return adminAPI.updateNotificationDispatchSettings({
+        enabled: form.enabled,
+        mode: form.mode,
+        instanceName: form.instanceName,
+        senderNumber: form.senderNumber,
+        webhookUrl: form.webhookUrl,
+        headerName: form.headerName,
+        timeoutSeconds: form.timeoutSeconds,
+        instanceToken: form.clearInstanceToken
+          ? { action: "clear" }
+          : form.instanceToken.trim()
+            ? { action: "replace", value: form.instanceToken }
+            : { action: "unchanged" },
+        headerValue: form.clearHeaderValue
+          ? { action: "clear" }
+          : form.headerValue.trim()
+            ? { action: "replace", value: form.headerValue }
+            : { action: "unchanged" },
       });
     },
-    onSuccess: () => {
+    onSuccess: (updated) => {
       toast.success("Disparador de WhatsApp salvo");
-      queryClient.invalidateQueries({ queryKey: ["admin-rows", "system_settings"] });
+      queryClient.setQueryData(
+        ["admin-notification-dispatch-settings"],
+        { data: updated, errorMessage: null } satisfies SafeQueryResult<AdminNotificationDispatchSettings | undefined>,
+      );
+      setForm(getNotificationDispatchForm(updated));
+      setIsDirty(false);
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "Não foi possível salvar o disparador.");
@@ -2711,7 +2803,7 @@ function NotificationDispatcherSettings({ rows, isLoading }: { rows: AdminRecord
         return;
       }
       if (result.whatsapp?.enabled && result.whatsapp?.attempted && !result.whatsapp.ok) {
-        toast.warning(`Notificacao interna criada; WhatsApp retornou ${result.whatsapp.status || result.whatsapp.error || "erro"}.`);
+        toast.warning(`Notificação interna criada; WhatsApp retornou ${result.whatsapp.status || result.whatsapp.error || "erro"}.`);
         return;
       }
       toast.success("Teste enviado pelo backend");
@@ -2725,36 +2817,80 @@ function NotificationDispatcherSettings({ rows, isLoading }: { rows: AdminRecord
     <div className="app-card p-4">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-base font-semibold">Disparador WhatsApp</h2>
-          <p className="text-sm text-muted-foreground">Instancia global chamada pelo backend para avisos no WhatsApp.</p>
+          <h2 className="text-base font-medium">Disparador WhatsApp</h2>
+          <p className="text-sm text-muted-foreground">Instância global chamada pelo backend para avisos no WhatsApp.</p>
         </div>
-        <Badge className={cn("border-0", form.enabled ? "bg-emerald-500/12 text-emerald-400" : "bg-white/8 text-muted-foreground")}>
+        <Badge className={cn("border-0", form.enabled ? "bg-emerald-500/12 text-emerald-400" : "bg-[var(--app-surface-soft)] text-muted-foreground")}>
           {form.enabled ? "Ativo" : "Inativo"}
         </Badge>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-[1fr_1fr_180px]">
+      <div className="grid gap-3 lg:grid-cols-[180px_1fr_1fr_180px]">
         <label className="space-y-1.5">
-          <span className="text-xs font-medium text-muted-foreground">Nome da instancia</span>
+          <span className="text-xs font-light text-muted-foreground">Modo de entrega</span>
+          <select
+            value={form.mode}
+            onChange={(event) => updateForm("mode", event.target.value as NotificationDispatchForm["mode"])}
+            className="h-10 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-sm outline-none"
+          >
+            <option value="webhook">Webhook privado</option>
+            <option value="evolution_go_instance">Instância Evolution Go</option>
+          </select>
+        </label>
+        <label className="space-y-1.5">
+          <span className="text-xs font-light text-muted-foreground">Nome da instância</span>
           <Input
             value={form.instanceName}
             onChange={(event) => updateForm("instanceName", event.target.value)}
-            placeholder="Notificacao"
+            placeholder="Notificação"
             className="border-0 bg-[var(--app-surface-soft)]"
           />
         </label>
         <label className="space-y-1.5">
-          <span className="text-xs font-medium text-muted-foreground">Token da instancia</span>
-          <Input
-            type="password"
-            value={form.instanceToken}
-            onChange={(event) => updateForm("instanceToken", event.target.value)}
-            placeholder="Token Evolution Go"
-            className="border-0 bg-[var(--app-surface-soft)]"
-          />
+          <span className="text-xs font-light text-muted-foreground">Token da instância</span>
+          <div className="flex gap-2">
+            <Input
+              type="password"
+              value={form.instanceToken}
+              onChange={(event) => {
+                setIsDirty(true);
+                setForm((current) => ({
+                  ...current,
+                  instanceToken: event.target.value,
+                  clearInstanceToken: false,
+                }));
+              }}
+              placeholder={form.clearInstanceToken
+                ? "Será removido ao salvar"
+                : form.instanceTokenConfigured
+                  ? "Configurado - deixe vazio para manter"
+                  : "Novo token"}
+              disabled={form.clearInstanceToken}
+              autoComplete="new-password"
+              className="border-0 bg-[var(--app-surface-soft)]"
+            />
+            {form.instanceTokenConfigured ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-10 shrink-0 border-0 bg-[var(--app-surface-soft)]"
+                onClick={() => {
+                  setIsDirty(true);
+                  setForm((current) => ({
+                    ...current,
+                    instanceToken: "",
+                    clearInstanceToken: !current.clearInstanceToken,
+                  }));
+                }}
+              >
+                {form.clearInstanceToken ? "Manter" : "Remover"}
+              </Button>
+            ) : null}
+          </div>
         </label>
         <label className="space-y-1.5">
-          <span className="text-xs font-medium text-muted-foreground">Número</span>
+          <span className="text-xs font-light text-muted-foreground">Número</span>
           <Input
             value={form.senderNumber}
             onChange={(event) => updateForm("senderNumber", event.target.value)}
@@ -2766,7 +2902,7 @@ function NotificationDispatcherSettings({ rows, isLoading }: { rows: AdminRecord
 
       <div className="grid gap-3 lg:grid-cols-[1fr_180px]">
         <label className="space-y-1.5">
-          <span className="text-xs font-medium text-muted-foreground">URL de fallback</span>
+          <span className="text-xs font-light text-muted-foreground">URL de fallback</span>
           <Input
             value={form.webhookUrl}
             onChange={(event) => updateForm("webhookUrl", event.target.value)}
@@ -2775,7 +2911,7 @@ function NotificationDispatcherSettings({ rows, isLoading }: { rows: AdminRecord
           />
         </label>
         <label className="space-y-1.5">
-          <span className="text-xs font-medium text-muted-foreground">Timeout</span>
+          <span className="text-xs font-light text-muted-foreground">Timeout</span>
           <Input
             type="number"
             min={3}
@@ -2784,12 +2920,13 @@ function NotificationDispatcherSettings({ rows, isLoading }: { rows: AdminRecord
             onChange={(event) => updateForm("timeoutSeconds", Number(event.target.value))}
             className="border-0 bg-[var(--app-surface-soft)]"
           />
+          {!timeoutIsValid ? <span className="text-xs text-destructive">Use um número inteiro entre 3 e 60.</span> : null}
         </label>
       </div>
 
       <div className="mt-3 grid gap-3 md:grid-cols-2">
         <label className="space-y-1.5">
-          <span className="text-xs font-medium text-muted-foreground">Header</span>
+          <span className="text-xs font-light text-muted-foreground">Header</span>
           <Input
             value={form.headerName}
             onChange={(event) => updateForm("headerName", event.target.value)}
@@ -2798,18 +2935,51 @@ function NotificationDispatcherSettings({ rows, isLoading }: { rows: AdminRecord
           />
         </label>
         <label className="space-y-1.5">
-          <span className="text-xs font-medium text-muted-foreground">Valor</span>
-          <Input
-            type="password"
-            value={form.headerValue}
-            onChange={(event) => updateForm("headerValue", event.target.value)}
-            placeholder="Bearer ..."
-            className="border-0 bg-[var(--app-surface-soft)]"
-          />
+          <span className="text-xs font-light text-muted-foreground">Valor</span>
+          <div className="flex gap-2">
+            <Input
+              type="password"
+              value={form.headerValue}
+              onChange={(event) => {
+                setIsDirty(true);
+                setForm((current) => ({
+                  ...current,
+                  headerValue: event.target.value,
+                  clearHeaderValue: false,
+                }));
+              }}
+              placeholder={form.clearHeaderValue
+                ? "Será removido ao salvar"
+                : form.headerValueConfigured
+                  ? "Configurado - deixe vazio para manter"
+                  : "Novo valor"}
+              disabled={form.clearHeaderValue}
+              autoComplete="new-password"
+              className="border-0 bg-[var(--app-surface-soft)]"
+            />
+            {form.headerValueConfigured ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-10 shrink-0 border-0 bg-[var(--app-surface-soft)]"
+                onClick={() => {
+                  setIsDirty(true);
+                  setForm((current) => ({
+                    ...current,
+                    headerValue: "",
+                    clearHeaderValue: !current.clearHeaderValue,
+                  }));
+                }}
+              >
+                {form.clearHeaderValue ? "Manter" : "Remover"}
+              </Button>
+            ) : null}
+          </div>
         </label>
       </div>
 
-      <div className="mt-4 flex flex-col gap-3 border-t border-white/[0.045] pt-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mt-4 flex flex-col gap-3 border-t border-[var(--app-border)] pt-4 sm:flex-row sm:items-center sm:justify-between">
         <label className="flex items-center gap-3 text-sm">
           <Switch checked={form.enabled} onCheckedChange={(checked) => updateForm("enabled", checked)} />
           Enviar WhatsApp pelo backend
@@ -2819,15 +2989,15 @@ function NotificationDispatcherSettings({ rows, isLoading }: { rows: AdminRecord
             variant="outline"
             className="border-0 bg-[var(--app-surface-soft)]"
             onClick={() => testMutation.mutate()}
-            disabled={isLoading || saveMutation.isPending || testMutation.isPending || !settingsRow?.id || !organizationId || !userId}
+            disabled={isLoading || saveMutation.isPending || testMutation.isPending || !settings || !organizationId || !userId}
           >
             {testMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             Testar
           </Button>
           <Button
-            className="bg-[#FF4529] text-white hover:bg-[#FF4529]/90"
+            className="rounded-[6px] bg-primary text-primary-foreground shadow-none hover:bg-primary/90"
             onClick={() => saveMutation.mutate()}
-            disabled={isLoading || saveMutation.isPending || testMutation.isPending}
+            disabled={isLoading || !settings || !timeoutIsValid || saveMutation.isPending || testMutation.isPending}
           >
             {saveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             Salvar
@@ -2839,28 +3009,39 @@ function NotificationDispatcherSettings({ rows, isLoading }: { rows: AdminRecord
 }
 
 function SettingsContent({ technical = false }: { technical?: boolean }) {
-  const settings = useAdminRows("system_settings", 20);
-  const rows = settings.data?.data || [];
-  const first = rows[0];
-  const fields = technical
-    ? ["key", "description", "updated_at", "created_at"]
-    : ["key", "logo_url_light", "logo_url_dark", "maintenance_mode", "updated_at"];
+  const settingsQuery = useSafeAdminQuery<AdminNotificationDispatchSettings | undefined>(
+    ["admin-notification-dispatch-settings"],
+    () => adminAPI.getNotificationDispatchSettings(),
+    undefined,
+  );
+  const settings = settingsQuery.data?.data;
+  const settingsErrorMessage = settingsQuery.data?.errorMessage
+    || (!settingsQuery.isPending && !settings ? "A API não retornou as configurações administrativas." : null);
 
   return (
     <div className="space-y-4">
-      <AdminWarning message={settings.data?.errorMessage} />
+      <AdminWarning message={settingsErrorMessage} />
+      {settingsQuery.isPending ? (
+        <div className="flex min-h-[220px] items-center justify-center">
+          <VimobLoader label="Carregando configurações..." />
+        </div>
+      ) : null}
+      {!settingsQuery.isPending && !settingsErrorMessage && settings ? (
+        <>
       <div className="grid gap-3 md:grid-cols-3">
-        <KpiCard title="Registros" value={formatNumber(rows.length)} icon={Settings} />
-        <KpiCard title="Manutenção" value={getString(first, "maintenance_mode", "Não")} icon={AlertTriangle} />
-        <KpiCard title="Última atualização" value={formatDate(first?.updated_at)} icon={Activity} />
+        <KpiCard title="Entrega transacional" value={settings?.enabled ? "Ativa" : "Inativa"} icon={Settings} />
+        <KpiCard title="Token da instância" value={settings?.instanceTokenConfigured ? "Configurado" : "Ausente"} icon={KeyRound} />
+        <KpiCard title="Última atualização" value={formatDate(settings?.updatedAt)} icon={Activity} />
       </div>
-      {technical ? <NotificationDispatcherSettings rows={rows} isLoading={settings.isPending} /> : null}
-      <GenericRowsPreview
-        title={technical ? "Configurações técnicas" : "Configurações administrativas"}
-        rows={rows}
-        fields={fields}
-        empty="Nenhuma configuração global encontrada."
-      />
+      {technical ? (
+        <NotificationDispatcherSettings settings={settings} isLoading={settingsQuery.isPending} />
+      ) : (
+        <div className="app-card p-4 text-sm text-muted-foreground">
+          As configurações sensíveis ficam disponíveis apenas na área técnica e nunca são devolvidas pela API.
+        </div>
+      )}
+        </>
+      ) : null}
     </div>
   );
 }
@@ -2905,8 +3086,8 @@ function Toolbar({
 
 function MiniInfo({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[6px] bg-[var(--app-surface-soft)] p-3">
-      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
+    <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+      <p className="text-[10px] font-light text-muted-foreground">{label}</p>
       <p className="mt-1 truncate text-sm font-medium">{value}</p>
     </div>
   );
@@ -2914,9 +3095,9 @@ function MiniInfo({ label, value }: { label: string; value: string }) {
 
 function PlanInfoTile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 py-2">
-      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
-      <p className="mt-0.5 truncate text-sm font-semibold">{value}</p>
+    <div className="rounded-[8px] bg-[var(--app-surface-soft)] px-2.5 py-2">
+      <p className="text-[10px] font-light text-muted-foreground">{label}</p>
+      <p className="mt-0.5 truncate text-sm font-medium">{value}</p>
     </div>
   );
 }
@@ -2940,20 +3121,20 @@ function GenericRowsPreview({
 
   return (
     <div className="app-card overflow-hidden">
-      <div className="flex items-center justify-between gap-3 border-b border-white/[0.045] p-4">
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--app-border)] p-4">
         <div>
-          <h2 className="text-base font-semibold">{title}</h2>
+          <h2 className="text-base font-medium">{title}</h2>
           <p className="text-sm text-muted-foreground">{formatRecordsCount(rows.length)}</p>
         </div>
       </div>
-      <div className="divide-y divide-white/[0.045]">
+      <div className="divide-y divide-[var(--app-border)]">
         {rows.map((row, index) => {
           const id = getString(row, "id", String(index));
           const content = (
             <div className="grid gap-3 p-4 transition-colors hover:bg-[var(--app-surface-hover)] md:grid-cols-4">
               {fields.map((field) => (
                 <div key={field} className="min-w-0">
-                  <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{formatFieldLabel(field)}</p>
+                  <p className="text-[10px] font-light text-muted-foreground">{formatFieldLabel(field)}</p>
                   <div className="mt-1 truncate text-sm">{renderFieldValue(row, field)}</div>
                 </div>
               ))}
@@ -2993,6 +3174,8 @@ function renderAdminContent(section: AdminSection, organizationId?: string) {
       return <DatabaseContent />;
     case "error-logs":
       return <ErrorEventsContent />;
+    case "help":
+      return <HelpArticlesContent />;
     case "ai":
       return <AiContent />;
     case "settings":

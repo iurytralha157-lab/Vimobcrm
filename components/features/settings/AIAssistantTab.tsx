@@ -8,6 +8,7 @@ import {
   Bot,
   CheckCircle2,
   GitBranch,
+  Loader2,
   MessageCircle,
   Plus,
   PlugZap,
@@ -30,6 +31,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import {
   useAIOrganizationAgents,
@@ -166,12 +177,12 @@ export function AIAssistantTab() {
   const organizationId = organization?.id || profile?.organization_id;
   const { toast } = useToast();
   const { hasModule } = useOrganizationModules();
-  const { data: sessions = [], isLoading: sessionsLoading } = useWhatsAppSessions();
+  const { data: sessions = [], isLoading: sessionsLoading, isError: sessionsFailed, refetch: refetchSessions } = useWhatsAppSessions();
   const { data: metrics, isLoading: metricsLoading } = useAIMetrics();
-  const { data: settings } = useAISettings();
-  const { data: agents = [], isLoading: agentsLoading } = useAIOrganizationAgents();
-  const { data: rules = [], isLoading: rulesLoading } = useAIRoutingRules();
-  const { data: events = [], isLoading: eventsLoading } = useAIEvents();
+  const { data: settings, isLoading: settingsLoading, isError: settingsFailed, refetch: refetchSettings } = useAISettings();
+  const { data: agents = [], isLoading: agentsLoading, isError: agentsFailed, refetch: refetchAgents } = useAIOrganizationAgents();
+  const { data: rules = [], isLoading: rulesLoading, isError: rulesFailed, refetch: refetchRules } = useAIRoutingRules();
+  const { data: events = [], isLoading: eventsLoading, isError: eventsFailed, refetch: refetchEvents } = useAIEvents();
   const updateSettings = useUpdateAISettings();
   const createAgent = useCreateAIOrganizationAgent();
   const updateAgent = useUpdateAIOrganizationAgent();
@@ -203,6 +214,12 @@ export function AIAssistantTab() {
   const [testAgentId, setTestAgentId] = useState("auto");
   const [testSessionId, setTestSessionId] = useState("none");
   const [limitDraft, setLimitDraft] = useState({ maxAgents: "", maxSessions: "", monthlyTokenLimit: "" });
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{
+    kind: "agent" | "rule";
+    id: string;
+    name: string;
+  } | null>(null);
+  const [pauseOperationDialogOpen, setPauseOperationDialogOpen] = useState(false);
 
   const effectiveTriagePrompt = triagePromptTouched ? triagePrompt : settings?.triagePrompt || "";
   const effectiveRuleAgentId = ruleDraft.agentId || agents[0]?.id || "";
@@ -281,8 +298,45 @@ export function AIAssistantTab() {
     });
   };
 
+  const handleConfirmedDelete = async () => {
+    if (!deleteConfirmation) return;
+    try {
+      if (deleteConfirmation.kind === "agent") {
+        await deleteAgent.mutateAsync(deleteConfirmation.id);
+      } else {
+        await deleteRule.mutateAsync(deleteConfirmation.id);
+      }
+      setDeleteConfirmation(null);
+    } catch {
+      // Mutation hooks already expose the API error; keep confirmation open for retry.
+    }
+  };
+
+  const handlePauseOperation = async () => {
+    try {
+      await updateSettings.mutateAsync({ isEnabled: false });
+      setPauseOperationDialogOpen(false);
+    } catch {
+      // The mutation already shows the API error; keep the confirmation open for retry.
+    }
+  };
+
+  const criticalLoadFailed = settingsFailed || sessionsFailed || agentsFailed || rulesFailed;
+
   return (
     <div data-tour="ai-overview" className="space-y-5">
+      {criticalLoadFailed ? (
+        <div className="flex flex-col gap-3 rounded-[8px] bg-destructive/5 p-4 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between">
+          <span>Não foi possível carregar toda a configuração da IA. Nenhuma alteração foi aplicada.</span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void Promise.all([refetchSettings(), refetchSessions(), refetchAgents(), refetchRules()])}
+          >
+            Tentar novamente
+          </Button>
+        </div>
+      ) : null}
       <section data-tour="ai-metrics" className="grid gap-3 md:grid-cols-4">
         <MetricCard icon={MessageCircle} label="Leads recebidos" value={metricsLoading ? "..." : String(metrics?.leadsReceived ?? 0)} detail="últimos 30 dias" />
         <MetricCard icon={Bot} label="Atendidos pela IA" value={metricsLoading ? "..." : String(metrics?.leadsAttended ?? 0)} detail={`${activeSessions.length} conexão(ões) ligada(s)`} tone="success" />
@@ -296,8 +350,8 @@ export function AIAssistantTab() {
             <WandSparkles className="h-5 w-5" />
           </div>
           <div>
-            <p className="text-sm font-semibold">Central de IA da organização</p>
-            <p className="text-xs text-muted-foreground">Módulo, conexão e regra precisam estar liberados para a IA responder.</p>
+            <p className="text-[14px] font-normal">Central de IA da organização</p>
+            <p className="text-[12px] font-light text-muted-foreground">Módulo, conexão e regra precisam estar liberados para a IA responder.</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -307,8 +361,15 @@ export function AIAssistantTab() {
           <span className="text-xs text-muted-foreground">{settings?.isEnabled ? "Operação ligada" : "Operação pausada"}</span>
           <Switch
             checked={!!settings?.isEnabled}
-            disabled={!aiModuleEnabled || updateSettings.isPending}
-            onCheckedChange={(checked) => updateSettings.mutate({ isEnabled: checked })}
+            disabled={!aiModuleEnabled || !settings || settingsLoading || settingsFailed || updateSettings.isPending}
+            aria-label="Ativar ou pausar a operação da IA"
+            onCheckedChange={(checked) => {
+              if (!checked) {
+                setPauseOperationDialogOpen(true);
+                return;
+              }
+              updateSettings.mutate({ isEnabled: true });
+            }}
           />
         </div>
       </div>
@@ -353,7 +414,7 @@ export function AIAssistantTab() {
                 <p className="text-xs leading-5 text-muted-foreground">
                   A triagem deve descobrir interesse, urgência e contexto. Quando estiver claro, ela passa para o agente especialista.
                 </p>
-                <Button className="w-full gap-2" onClick={saveTriagePrompt} disabled={updateSettings.isPending}>
+                <Button className="w-full gap-2" onClick={saveTriagePrompt} disabled={!settings || settingsFailed || updateSettings.isPending}>
                   <Save className="h-4 w-4" />
                   Salvar triagem
                 </Button>
@@ -402,7 +463,7 @@ export function AIAssistantTab() {
             <div className="grid gap-3 lg:grid-cols-[1fr_0.9fr]">
               <div className="space-y-2">
                 {sessionsLoading && <p className="text-sm text-muted-foreground">Carregando conexões...</p>}
-                {!sessionsLoading && connectedSessions.length === 0 && <p className="text-sm text-muted-foreground">Nenhum WhatsApp conectado para delegar a IA.</p>}
+                {!sessionsLoading && !sessionsFailed && connectedSessions.length === 0 && <p className="text-sm text-muted-foreground">Nenhum WhatsApp conectado para delegar a IA.</p>}
                 {connectedSessions.map((session) => {
                   const sessionSettings = getSessionSettings(session);
                   const enabled = !!sessionSettings.ai_auto_reply_enabled;
@@ -424,7 +485,7 @@ export function AIAssistantTab() {
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold">{formatSessionName(session)}</p>
+                          <p className="truncate text-[14px] font-normal">{formatSessionName(session)}</p>
                           <p className="mt-1 text-xs text-muted-foreground">{normalizePhone(session.phone_number)}</p>
                         </div>
                         <div className="flex items-center gap-2">
@@ -493,7 +554,7 @@ export function AIAssistantTab() {
                     agent={agent}
                     active={agentDraft.id === agent.id}
                     onEdit={() => setAgentDraft(draftFromAgent(agent))}
-                    onDelete={() => deleteAgent.mutate(agent.id)}
+                    onDelete={() => setDeleteConfirmation({ kind: "agent", id: agent.id, name: agent.name })}
                   />
                 ))}
               </div>
@@ -573,13 +634,13 @@ export function AIAssistantTab() {
             <Panel title="Ordem de roteamento" icon={Route}>
               <div className="space-y-2">
                 {rulesLoading && <p className="text-sm text-muted-foreground">Carregando regras...</p>}
-                {!rulesLoading && rules.length === 0 && <p className="text-sm text-muted-foreground">Nenhuma regra criada. Sem regra, a conversa cai na triagem padrão.</p>}
+                {!rulesLoading && !rulesFailed && rules.length === 0 && <p className="text-sm text-muted-foreground">Nenhuma regra criada. Sem regra, a conversa cai na triagem padrão.</p>}
                 {rules.map((rule) => (
                   <RuleListItem
                     key={rule.id}
                     rule={rule}
                     onEdit={() => setRuleDraft(draftFromRule(rule))}
-                    onDelete={() => deleteRule.mutate(rule.id)}
+                    onDelete={() => setDeleteConfirmation({ kind: "rule", id: rule.id, name: rule.name })}
                   />
                 ))}
               </div>
@@ -647,7 +708,7 @@ export function AIAssistantTab() {
               </div>
               <div className="flex items-center justify-between rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                 <div>
-                  <p className="text-sm font-semibold">Regra ativa</p>
+                  <p className="text-[14px] font-normal">Regra ativa</p>
                   <p className="text-xs text-muted-foreground">Regras pausadas ficam salvas, mas não decidem atendimento.</p>
                 </div>
                 <Switch checked={ruleDraft.isEnabled} onCheckedChange={(checked) => setRuleDraft((draft) => ({ ...draft, isEnabled: checked }))} />
@@ -741,7 +802,12 @@ export function AIAssistantTab() {
         <TabsContent value="logs" className="space-y-4">
           <Panel title="Logs da IA" icon={Activity}>
             {eventsLoading && <p className="text-sm text-muted-foreground">Carregando logs...</p>}
-            {!eventsLoading && events.length === 0 && <p className="text-sm text-muted-foreground">Ainda não há eventos recentes da IA.</p>}
+            {eventsFailed && (
+              <Button variant="outline" size="sm" onClick={() => void refetchEvents()}>
+                Tentar carregar os logs novamente
+              </Button>
+            )}
+            {!eventsLoading && !eventsFailed && events.length === 0 && <p className="text-sm text-muted-foreground">Ainda não há eventos recentes da IA.</p>}
             <div className="space-y-2">
               {events.map((event) => (
                 <AIEventRow key={event.id} event={event} />
@@ -750,6 +816,69 @@ export function AIAssistantTab() {
           </Panel>
         </TabsContent>
       </Tabs>
+
+      <AlertDialog
+        open={!!deleteConfirmation}
+        onOpenChange={(open) => {
+          if (!open && (deleteAgent.isPending || deleteRule.isPending)) return;
+          if (!open) setDeleteConfirmation(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Excluir {deleteConfirmation?.kind === "agent" ? "agente" : "regra"}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              “{deleteConfirmation?.name}” será removido da configuração da IA. Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteAgent.isPending || deleteRule.isPending}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handleConfirmedDelete();
+              }}
+              disabled={deleteAgent.isPending || deleteRule.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={pauseOperationDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && updateSettings.isPending) return;
+          setPauseOperationDialogOpen(open);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Pausar a operação da IA?</AlertDialogTitle>
+            <AlertDialogDescription>
+              A IA deixará de responder em todas as conexões desta organização até ser ativada novamente.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={updateSettings.isPending}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handlePauseOperation();
+              }}
+              disabled={updateSettings.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {updateSettings.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Pausar IA
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -769,7 +898,7 @@ function FollowUpControls({
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold">Follow-up automático</p>
+          <p className="text-[14px] font-normal">Follow-up automático</p>
           <p className="text-xs text-muted-foreground">Fica preso à conexão selecionada.</p>
         </div>
         <Switch
@@ -779,7 +908,7 @@ function FollowUpControls({
         />
       </div>
       <div>
-        <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">Frequencia</p>
+        <p className="mb-2 text-[12px] font-light text-muted-foreground">Frequência</p>
         <div className="grid grid-cols-3 gap-2">
           {followUpIntervals.map((item) => {
             const active = (selectedSettings.ai_follow_up_interval_days || 3) === item.value;
@@ -810,7 +939,7 @@ function FollowUpControls({
                 active ? "bg-primary text-primary-foreground" : "bg-background/50 hover:bg-[var(--app-surface-hover)]"
               }`}
             >
-              <span className="flex items-center gap-2 text-sm font-semibold">
+              <span className="flex items-center gap-2 text-[14px] font-normal">
                 {active && <CheckCircle2 className="h-4 w-4" />}
                 {item.label}
               </span>
@@ -829,7 +958,7 @@ function Panel({ title, icon: Icon, children }: { title: string; icon: LucideIco
   return (
     <Card className="shadow-none">
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base">
+        <CardTitle className="flex items-center gap-2 text-[14px] font-normal">
           <Icon className="h-4 w-4 text-primary" />
           {title}
         </CardTitle>
@@ -842,7 +971,7 @@ function Panel({ title, icon: Icon, children }: { title: string; icon: LucideIco
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="space-y-2">
-      <Label className="text-xs font-medium uppercase text-muted-foreground">{label}</Label>
+      <Label className="text-[12px] font-light text-muted-foreground">{label}</Label>
       {children}
     </div>
   );
@@ -866,8 +995,8 @@ function MetricCard({
     <Card className="shadow-none">
       <CardContent className="flex items-center justify-between gap-4 p-4">
         <div>
-          <p className="text-xs uppercase text-muted-foreground">{label}</p>
-          <p className={`mt-2 text-2xl font-semibold ${color}`}>{value}</p>
+          <p className="text-[12px] font-light text-muted-foreground">{label}</p>
+          <p className={`mt-2 text-2xl font-normal ${color}`}>{value}</p>
           <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
         </div>
         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] bg-primary/12 text-primary">
@@ -882,7 +1011,7 @@ function HealthRow({ label, ok, detail }: { label: string; ok: boolean; detail: 
   return (
     <div className="flex items-start justify-between gap-3 rounded-[8px] bg-[var(--app-surface-soft)] p-3">
       <div>
-        <p className="text-sm font-semibold">{label}</p>
+        <p className="text-[14px] font-normal">{label}</p>
         <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
       </div>
       <Badge className={ok ? "border-0 bg-emerald-500/15 text-emerald-400" : "border-0 bg-muted text-muted-foreground"}>
@@ -898,7 +1027,7 @@ function AIEventRow({ event }: { event: AIEvent }) {
     <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold">{eventLabel(event.eventType)}</p>
+          <p className="truncate text-[14px] font-normal">{eventLabel(event.eventType)}</p>
           <p className="mt-1 text-xs text-muted-foreground">{payloadSummary(event.payload)}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -926,7 +1055,7 @@ function AgentListItem({ agent, active, onEdit, onDelete }: { agent: AIAgent; ac
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold">{agent.name}</p>
+            <p className="truncate text-[14px] font-normal">{agent.name}</p>
             <p className="mt-1 text-xs text-muted-foreground">{agent.description || typeLabel(agent.config.type)}</p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -962,7 +1091,7 @@ function RuleListItem({ rule, onEdit, onDelete }: { rule: AIRoutingRule; onEdit:
       >
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold">{rule.name}</p>
+            <p className="text-[14px] font-normal">{rule.name}</p>
             <p className="mt-1 text-xs text-muted-foreground">
               #{rule.priority} {"->"} {rule.agentName || "Agente"}
             </p>

@@ -98,7 +98,7 @@ export function FollowUpTemplates({ onSelectTemplate, canCreate = true, interact
                 <Badge className="mb-3 border-0 px-2 py-0.5 text-[10px] font-medium bg-primary/10 text-primary">
                   {template.industry === 'real_estate' ? 'Imobiliário' : 'Geral'}
                 </Badge>
-                <h3 className="truncate text-sm font-semibold text-foreground">{template.name}</h3>
+                <h3 className="truncate text-sm font-normal text-foreground">{template.name}</h3>
                 <span className="mt-1 block text-xs text-muted-foreground line-clamp-2">
                   {template.description}
                 </span>

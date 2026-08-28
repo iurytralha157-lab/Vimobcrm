@@ -20,20 +20,39 @@ type Config struct {
 	JWTSecret  string
 }
 
+const AuthenticationMethodRecovery = "recovery"
+
+type AuthenticationMethod struct {
+	Method    string `json:"method"`
+	Timestamp int64  `json:"timestamp"`
+}
+
 type User struct {
-	ID        string         `json:"id"`
-	Email     string         `json:"email,omitempty"`
-	Role      string         `json:"role,omitempty"`
-	SessionID string         `json:"sessionId,omitempty"`
-	Claims    map[string]any `json:"-"`
+	ID                    string                 `json:"id"`
+	Email                 string                 `json:"email,omitempty"`
+	Role                  string                 `json:"role,omitempty"`
+	SessionID             string                 `json:"sessionId,omitempty"`
+	AuthenticationMethods []AuthenticationMethod `json:"authenticationMethods,omitempty"`
+	Claims                map[string]any         `json:"-"`
 }
 
 type Claims struct {
-	Email       string         `json:"email,omitempty"`
-	Role        string         `json:"role,omitempty"`
-	SessionID   string         `json:"session_id,omitempty"`
-	AppMetadata map[string]any `json:"app_metadata,omitempty"`
+	Email                 string                 `json:"email,omitempty"`
+	Role                  string                 `json:"role,omitempty"`
+	SessionID             string                 `json:"session_id,omitempty"`
+	AppMetadata           map[string]any         `json:"app_metadata,omitempty"`
+	AuthenticationMethods []AuthenticationMethod `json:"amr,omitempty"`
 	jwt.RegisteredClaims
+}
+
+func (user User) IsPasswordRecovery() bool {
+	for _, method := range user.AuthenticationMethods {
+		if strings.EqualFold(strings.TrimSpace(method.Method), AuthenticationMethodRecovery) {
+			return true
+		}
+	}
+
+	return false
 }
 
 type Verifier struct {
@@ -47,6 +66,7 @@ func NewVerifier(ctx context.Context, cfg Config) (*Verifier, error) {
 	cfg.JWKSURL = strings.TrimSpace(cfg.JWKSURL)
 	cfg.Issuer = strings.TrimRight(strings.TrimSpace(cfg.Issuer), "/")
 	cfg.Audience = strings.TrimSpace(cfg.Audience)
+	cfg.JWTSecret = strings.TrimSpace(cfg.JWTSecret)
 
 	if cfg.ProjectURL == "" {
 		return nil, errors.New("supabase project url is required")
@@ -117,17 +137,19 @@ func (verifier *Verifier) Verify(ctx context.Context, rawToken string) (User, er
 	}
 
 	return User{
-		ID:        claims.Subject,
-		Email:     claims.Email,
-		Role:      claims.Role,
-		SessionID: claims.SessionID,
+		ID:                    claims.Subject,
+		Email:                 claims.Email,
+		Role:                  claims.Role,
+		SessionID:             claims.SessionID,
+		AuthenticationMethods: append([]AuthenticationMethod(nil), claims.AuthenticationMethods...),
 		Claims: map[string]any{
-			"issuer":       claims.Issuer,
-			"audience":     claims.Audience,
-			"expiresAt":    claims.ExpiresAt,
-			"issuedAt":     claims.IssuedAt,
-			"appMetadata":  claims.AppMetadata,
-			"authProvider": "supabase",
+			"issuer":                claims.Issuer,
+			"audience":              claims.Audience,
+			"expiresAt":             claims.ExpiresAt,
+			"issuedAt":              claims.IssuedAt,
+			"appMetadata":           claims.AppMetadata,
+			"authenticationMethods": append([]AuthenticationMethod(nil), claims.AuthenticationMethods...),
+			"authProvider":          "supabase",
 		},
 	}, nil
 }

@@ -27,7 +27,7 @@ function formatDateLabel(date: Date): string {
 
    return (
      <div className={cn("flex items-center justify-center py-3", className)}>
-       <div className="px-3 py-1 bg-white/[0.07] rounded-full text-xs text-muted-foreground font-medium shadow-sm">
+       <div className="rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-1 text-xs font-light text-[var(--app-text-tertiary)] shadow-none">
          {label}
        </div>
      </div>

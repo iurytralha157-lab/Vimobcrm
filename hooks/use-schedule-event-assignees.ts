@@ -24,7 +24,13 @@ export function useScheduleEventAssignees(eventId: string | undefined) {
       })
   }
 
-  const { data: assignees = [], isLoading } = useQuery({
+  const {
+    data: assignees = [],
+    isLoading,
+    isFetching,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: ['schedule_assignees', organizationId, eventId],
     queryFn: async () => {
       if (!eventId) return []
@@ -62,6 +68,9 @@ export function useScheduleEventAssignees(eventId: string | undefined) {
   return {
     assignees,
     isLoading,
+    isFetching,
+    isError,
+    refetch,
     addAssignee: addAssignee.mutateAsync,
     removeAssignee: removeAssignee.mutateAsync,
   }

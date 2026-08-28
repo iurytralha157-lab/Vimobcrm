@@ -53,6 +53,19 @@ Round-robin usa `POST /v1/leads/{id}/redistribute` via `leadsAPI.redistributeLea
 
 `use-dashboard-stats.ts` agora e um hook fino sobre esse cliente, sem consultas diretas a tabelas no browser.
 
+## Página inicial
+
+`home.ts` usa a Vimob API para:
+
+- listar publicações ativas já filtradas por período, organização, usuário ou perfil;
+- consultar a base ativa de artigos da ajuda;
+- permitir ao superadministrador criar, editar, ordenar e excluir publicações;
+- enviar e remover imagens pelo backend com `multipart/form-data`.
+
+O frontend não lê `home_publications` nem o Storage diretamente. A página monta
+o foco operacional com endpoints leves de atenção, próximas tarefas e agenda,
+respeitando as permissões de cada domínio.
+
 ## Pipelines, stages e filas
 
 `pipelines.ts` usa a Vimob API para:

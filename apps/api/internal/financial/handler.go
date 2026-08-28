@@ -196,8 +196,8 @@ func (handler Handler) UploadContractDocument(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 26<<20)
-	if err := r.ParseMultipartForm(26 << 20); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, maxContractDocumentBytes+(1<<20))
+	if err := r.ParseMultipartForm(maxContractDocumentBytes + (1 << 20)); err != nil {
 		writeFinancialError(w, r, ErrInvalidInput)
 		return
 	}
@@ -210,11 +210,15 @@ func (handler Handler) UploadContractDocument(w http.ResponseWriter, r *http.Req
 		return
 	}
 	defer file.Close()
-	if header.Size <= 0 || header.Size > 25*1024*1024 {
+	if header.Size <= 0 || header.Size > maxContractDocumentBytes {
 		writeFinancialError(w, r, ErrInvalidInput)
 		return
 	}
-	contentType := header.Header.Get("Content-Type")
+	contentType, err := validateContractDocumentUpload(header.Filename, header.Header.Get("Content-Type"), file)
+	if err != nil {
+		writeFinancialError(w, r, ErrInvalidInput)
+		return
+	}
 	item, err := handler.repo.UploadContractDocument(r.Context(), tenantContext, r.PathValue("id"), header.Filename, header.Size, contentType, file)
 	writeCreated(w, r, item, err)
 }
@@ -451,6 +455,8 @@ func writeFinancialError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_financial_input", "Financial input is invalid.")
 	case errors.Is(err, ErrNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "financial_resource_not_found", "Financial resource was not found.")
+	case errors.Is(err, ErrConflict):
+		httpserver.WriteError(w, r, http.StatusConflict, "financial_state_conflict", "Financial resource state does not allow this action.")
 	case errors.Is(err, ErrPermissionDenied), errors.Is(err, tenant.ErrOrganizationAccessDenied):
 		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
 	default:

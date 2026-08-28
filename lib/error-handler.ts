@@ -1,6 +1,11 @@
 /**
  * Utility to map technical Supabase error messages to user-friendly Portuguese messages.
  */
+import {
+  getPublicErrorMessage,
+  isTechnicalServiceError,
+} from '@/lib/api/vimob-error';
+
 const getErrorMessage = (error: unknown) => {
   if (error instanceof Error) return error.message;
   if (typeof error === 'string') return error;
@@ -21,6 +26,7 @@ const getErrorCode = (error: unknown) => {
 
 export function getFriendlyErrorMessage(error: unknown): string {
   if (!error) return 'Ocorreu um erro inesperado. Tente novamente.';
+  if (isTechnicalServiceError(error)) return getPublicErrorMessage(error);
 
   const message = getErrorMessage(error);
   const lowerMessage = message.toLowerCase();

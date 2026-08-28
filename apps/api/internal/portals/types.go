@@ -8,16 +8,25 @@ import (
 )
 
 const (
-	PortalGrupoOLX = "grupo_olx"
+	PortalGrupoOLX          = "grupo_olx"
+	maxGrupoOLXFeedListings = 50000
 )
 
 var (
-	ErrInvalidInput      = errors.New("invalid portal input")
-	ErrNotFound          = errors.New("portal integration not found")
-	ErrUnauthorized      = errors.New("portal webhook unauthorized")
-	ErrModuleUnavailable = errors.New("portal module unavailable")
-	ErrListingNotFound   = errors.New("portal listing not found")
-	ErrDuplicateWebhook  = errors.New("duplicate portal webhook")
+	ErrInvalidInput             = errors.New("invalid portal input")
+	ErrNotFound                 = errors.New("portal integration not found")
+	ErrUnauthorized             = errors.New("portal webhook unauthorized")
+	ErrModuleUnavailable        = errors.New("portal module unavailable")
+	ErrListingNotFound          = errors.New("portal listing not found")
+	ErrDuplicateWebhook         = errors.New("duplicate portal webhook")
+	ErrCanonicalManaged         = errors.New("portal listing is managed by the canonical publication center")
+	ErrCanonicalListingIDLocked = errors.New("canonical portal ListingID cannot change while published")
+	ErrCanonicalProductLocked   = errors.New("canonical portal product can change only while fully unpublished")
+	ErrDuplicateListingID       = errors.New("portal ListingID is already used by another property")
+	ErrFeedListingLimit         = errors.New("grupo olx feed listing limit exceeded")
+	ErrWebhookSecretUnavailable = errors.New("grupo olx CRM webhook secret is not configured")
+	ErrRateLimited              = errors.New("portal public ingress rate limit exceeded")
+	ErrFeedNotActivated         = errors.New("grupo olx feed is not activated")
 )
 
 type Envelope[T any] struct {
@@ -25,8 +34,6 @@ type Envelope[T any] struct {
 }
 
 type GrupoOLXSettingsRequest struct {
-	IsActive              *bool          `json:"isActive"`
-	LeadWebhookSecret     OptionalString `json:"leadWebhookSecret"`
 	DefaultPipelineID     OptionalString `json:"defaultPipelineId"`
 	DefaultStageID        OptionalString `json:"defaultStageId"`
 	DefaultAssignedUserID OptionalString `json:"defaultAssignedUserId"`

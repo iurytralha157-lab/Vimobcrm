@@ -95,6 +95,9 @@ export const whatsappQueryKeys = {
       sessionId?: string
       hideGroups: boolean
       showArchived: boolean
+      onlyLeads: boolean
+      withoutLead: boolean
+      pendingReply: boolean
       search?: string
       accessibleSessionKey: string
       limit: number
@@ -104,6 +107,9 @@ export const whatsappQueryKeys = {
     params.sessionId ?? 'all',
     params.hideGroups,
     params.showArchived,
+    params.onlyLeads,
+    params.withoutLead,
+    params.pendingReply,
     params.search ?? '',
     params.accessibleSessionKey,
     params.limit,
@@ -111,6 +117,11 @@ export const whatsappQueryKeys = {
   conversation: (scope: WhatsAppQueryScope, conversationId: string | null) => [
     ...scopedPrefix('whatsapp-conversation', scope),
     conversationId,
+  ] as const,
+  conversationForLead: (scope: WhatsAppQueryScope, leadId: string | null) => [
+    ...scopedPrefix('whatsapp-conversation', scope),
+    'lead',
+    leadId,
   ] as const,
   messagesScope: (scope: WhatsAppQueryScope) =>
     scopedPrefix('whatsapp-messages', scope),

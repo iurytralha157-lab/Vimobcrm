@@ -18,9 +18,10 @@ import (
 )
 
 type Repository struct {
-	db        *dbpkg.Postgres
-	functions functionsClient
-	storage   storageClient
+	db          *dbpkg.Postgres
+	functions   functionsClient
+	storage     storageClient
+	runtimeWake chan struct{}
 }
 
 type scanner interface {
@@ -47,9 +48,20 @@ func canManageAutomations(tenantContext tenant.Context) bool {
 
 func NewRepository(db *dbpkg.Postgres, functionsConfig FunctionsConfig, storageConfig StorageConfig) Repository {
 	return Repository{
-		db:        db,
-		functions: newFunctionsClient(functionsConfig),
-		storage:   newStorageClient(storageConfig),
+		db:          db,
+		functions:   newFunctionsClient(functionsConfig),
+		storage:     newStorageClient(storageConfig),
+		runtimeWake: make(chan struct{}, 1),
+	}
+}
+
+func (repo Repository) signalRuntimeWake() {
+	if repo.runtimeWake == nil {
+		return
+	}
+	select {
+	case repo.runtimeWake <- struct{}{}:
+	default:
 	}
 }
 
@@ -204,7 +216,7 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 			if _, err := tx.Exec(ctx, `
 				insert into public.automation_connections (
 					automation_id, source_node_id, target_node_id, source_handle, condition_branch
-				) values ($1::uuid, $2::uuid, $3::uuid, $4, $5)
+				) values ($1::uuid, $2::uuid, $3::uuid, $4, coalesce($5, 'default'))
 			`, automation.ID, sourceID, targetID, connection.SourceHandle, connection.ConditionBranch); err != nil {
 				return Automation{}, err
 			}
@@ -488,7 +500,7 @@ func (repo Repository) Duplicate(ctx context.Context, tenantContext tenant.Conte
 				source_handle,
 				condition_branch
 			)
-			values ($1::uuid, $2::uuid, $3::uuid, $4, $5)
+			values ($1::uuid, $2::uuid, $3::uuid, $4, coalesce($5, 'default'))
 		`, created.ID, sourceID, targetID, connection.SourceHandle, connection.ConditionBranch); err != nil {
 			return Automation{}, err
 		}
@@ -654,7 +666,7 @@ func (repo Repository) SaveFlow(ctx context.Context, tenantContext tenant.Contex
 				source_handle,
 				condition_branch
 			)
-			values ($1::uuid, $2::uuid, $3::uuid, $4, $5)
+			values ($1::uuid, $2::uuid, $3::uuid, $4, coalesce($5, 'default'))
 		`, automationID, sourceID, targetID, connection.SourceHandle, connection.ConditionBranch); err != nil {
 			return nil, err
 		}
@@ -1656,33 +1668,15 @@ func (repo Repository) Start(ctx context.Context, tenantContext tenant.Context, 
 		return StartResult{}, err
 	}
 
-	executorStarted := true
-	invokeErr := repo.functions.invoke(ctx, "automation-executor", map[string]any{"execution_id": executionID})
-	if invokeErr != nil {
-		executorStarted = false
-		_, _ = repo.db.Pool().Exec(ctx, `
-			update public.automation_executions
-			set execution_data = jsonb_set(execution_data, '{dispatch_pending}', 'true'::jsonb, true)
-			where id = $1::uuid and status = 'queued'
-		`, executionID)
-	}
-	executionStatus := "queued"
-	if err := repo.db.Pool().QueryRow(ctx, `
-		select status from public.automation_executions where id = $1::uuid
-	`, executionID).Scan(&executionStatus); err != nil {
-		return StartResult{}, err
-	}
-	if executionStatus == "failed" {
-		return StartResult{}, fmt.Errorf("%w: execution %s", ErrExecutionDispatchFailed, executionID)
-	}
+	repo.signalRuntimeWake()
 
 	return StartResult{
 		ExecutionID:     executionID,
 		AutomationID:    automationID,
 		AutomationName:  automationName,
-		ExecutorStarted: executorStarted,
-		Status:          executionStatus,
-		DispatchPending: invokeErr != nil && executionStatus == "queued",
+		ExecutorStarted: false,
+		Status:          "queued",
+		DispatchPending: true,
 	}, nil
 }
 

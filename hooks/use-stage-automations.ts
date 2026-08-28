@@ -1,6 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { stageConfigAPI, type StageAutomationRow } from "@/lib/api/stage-config";
+import {
+  getTenantEnabledModules,
+  getTenantPermissions,
+  isTenantContextForOrganization,
+} from "@/lib/access/tenant-navigation";
 import { toast } from "sonner";
 
 // UI type normalized from the current DB contract: trigger_type + config jsonb.
@@ -93,8 +98,20 @@ function normalizeAutomation(row: StageAutomationRow): StageAutomation {
 }
 
 export function useStageAutomations(stageId?: string) {
-  const { profile } = useAuth();
-  const organizationId = profile?.organization_id;
+  const { organization, profile, tenantContext } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
+  const hasCurrentTenantContext = isTenantContextForOrganization(organizationId, tenantContext);
+  const enabledModules = hasCurrentTenantContext && tenantContext
+    ? getTenantEnabledModules(tenantContext)
+    : [];
+  const permissions = hasCurrentTenantContext && tenantContext
+    ? getTenantPermissions(tenantContext)
+    : [];
+  const canViewStageAutomations =
+    enabledModules.includes("automations") &&
+    (permissions.includes("*") ||
+      permissions.includes("automations_view") ||
+      permissions.includes("automations_manage"));
 
   return useQuery({
     queryKey: ["stage-automations", stageId, organizationId],
@@ -103,9 +120,10 @@ export function useStageAutomations(stageId?: string) {
       const data = await stageConfigAPI.listStageAutomations({ stageId, organizationId });
       return data.map(normalizeAutomation);
     },
-    enabled: !!organizationId,
+    enabled: !!organizationId && canViewStageAutomations,
     staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 60,
+    retry: false,
   });
 }
 

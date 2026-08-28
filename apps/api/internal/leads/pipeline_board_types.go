@@ -46,6 +46,7 @@ type PipelineBoardStage struct {
 	Position       int                 `json:"position"`
 	IsWon          bool                `json:"is_won"`
 	IsLost         bool                `json:"is_lost"`
+	IsQualified    bool                `json:"is_qualified"`
 	SLAHours       *int                `json:"sla_hours"`
 	IsActive       bool                `json:"is_active"`
 	CreatedAt      time.Time           `json:"created_at"`

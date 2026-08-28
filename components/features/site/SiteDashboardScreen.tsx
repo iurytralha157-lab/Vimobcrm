@@ -5,8 +5,8 @@ import { SiteAnalyticsTab } from '@/components/features/site/SiteAnalyticsTab';
 
 export default function SiteDashboardScreen() {
   return (
-    <AppLayout title="Dashboard do Site">
-      <div className="dashboard-site min-w-0">
+    <AppLayout title="Dashboard do Site" borderless>
+      <div className="dashboard-site min-w-0 w-full pb-8 sm:pt-1">
         <SiteAnalyticsTab />
       </div>
     </AppLayout>

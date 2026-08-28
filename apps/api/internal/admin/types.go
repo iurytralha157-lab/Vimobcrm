@@ -3,15 +3,23 @@ package admin
 import "errors"
 
 var (
-	ErrInvalidInput                = errors.New("invalid admin input")
-	ErrNotFound                    = errors.New("admin resource not found")
-	ErrInvitationEmailFailed       = errors.New("invitation email failed")
-	ErrInvitationEmailMissing      = errors.New("invitation email is missing")
-	ErrInvitationUserAlreadyMember = errors.New("invitation user already belongs to organization")
-	ErrInvitationAlreadyPending    = errors.New("invitation already pending for organization and email")
-	ErrOrganizationDeleteConfirm   = errors.New("organization deletion confirmation does not match")
-	ErrOrganizationExternalCleanup = errors.New("organization external cleanup failed")
-	ErrOrganizationPurgeUnsafe     = errors.New("organization purge could not determine a safe deletion order")
+	ErrInvalidInput                    = errors.New("invalid admin input")
+	ErrNotFound                        = errors.New("admin resource not found")
+	ErrInvitationEmailFailed           = errors.New("invitation email failed")
+	ErrInvitationEmailMissing          = errors.New("invitation email is missing")
+	ErrInvitationUserAlreadyMember     = errors.New("invitation user already belongs to organization")
+	ErrInvitationAlreadyPending        = errors.New("invitation already pending for organization and email")
+	ErrPasswordRecoveryEmailFailed     = errors.New("password recovery email failed")
+	ErrOrganizationDeleteConfirm       = errors.New("organization deletion confirmation does not match")
+	ErrOrganizationExternalCleanup     = errors.New("organization external cleanup failed")
+	ErrOrganizationPurgeUnsafe         = errors.New("organization purge could not determine a safe deletion order")
+	ErrPublicSignupRateLimited         = errors.New("public onboarding signup rate limited")
+	ErrSignupAttemptConflict           = errors.New("public onboarding signup attempt belongs to another email")
+	ErrPublicSignupEmailExists         = errors.New("public onboarding email already exists")
+	ErrPublicSignupDocumentExists      = errors.New("public onboarding document already exists")
+	ErrPublicSignupConfirmationFailed  = errors.New("public onboarding signup confirmation failed")
+	ErrPublicSignupRecoveryUnavailable = errors.New("public onboarding signup recovery is unavailable")
+	ErrCheckoutPlanConflict            = errors.New("checkout already has an active payment attempt")
 )
 
 type Envelope[T any] struct {
@@ -76,6 +84,10 @@ type AcceptInvitationRequest struct {
 	Whatsapp        *string `json:"whatsapp"`
 	TermsAccepted   bool    `json:"termsAccepted"`
 	PrivacyAccepted bool    `json:"privacyAccepted"`
+	TermsVersion    string  `json:"termsVersion"`
+	PrivacyVersion  string  `json:"privacyVersion"`
+	IPAddress       string  `json:"ipAddress"`
+	UserAgent       string  `json:"userAgent"`
 }
 
 type AcceptInvitationResult struct {
@@ -89,6 +101,7 @@ type AcceptInvitationResult struct {
 }
 
 type OnboardingSignupRequest struct {
+	AttemptID        string `json:"attemptId"`
 	CompanyName      string `json:"companyName"`
 	DocumentNumber   string `json:"documentNumber"`
 	BrokersCount     int    `json:"brokersCount"`
@@ -107,26 +120,53 @@ type OnboardingSignupRequest struct {
 	UserAgent        string `json:"userAgent"`
 }
 
+type PublicOnboardingStepValidationRequest struct {
+	Step           string `json:"step"`
+	CompanyName    string `json:"companyName,omitempty"`
+	DocumentNumber string `json:"documentNumber,omitempty"`
+	Email          string `json:"email,omitempty"`
+	ipAddress      string
+}
+
+type PublicOnboardingStepValidationResult struct {
+	OK    bool   `json:"ok"`
+	Valid bool   `json:"valid"`
+	Step  string `json:"step"`
+}
+
+type ResendOnboardingEmailConfirmationRequest struct {
+	Email     string `json:"email"`
+	IPAddress string `json:"ipAddress"`
+	UserAgent string `json:"userAgent"`
+}
+
+type PublicSignupRecoveryRequest struct {
+	Capability   string `json:"capability"`
+	Action       string `json:"action"`
+	CurrentEmail string `json:"currentEmail"`
+	NewEmail     string `json:"newEmail,omitempty"`
+	IPAddress    string `json:"ipAddress"`
+	UserAgent    string `json:"userAgent"`
+}
+
 type CheckoutPlanRequest struct {
 	CheckoutToken string `json:"checkoutToken"`
 	PlanSlug      string `json:"planSlug"`
 }
 
 type CreateOrganizationRequest struct {
-	Name          string  `json:"name"`
-	Segment       *string `json:"segment"`
-	AdminEmail    string  `json:"adminEmail"`
-	AdminName     string  `json:"adminName"`
-	AdminPassword string  `json:"adminPassword"`
-	Whatsapp      *string `json:"whatsapp"`
-	Phone         *string `json:"phone"`
-	CNPJ          *string `json:"cnpj"`
-	Creci         *string `json:"creci"`
-	PlanID        *string `json:"planId"`
-	Address       *string `json:"address"`
-	City          *string `json:"city"`
-	Neighborhood  *string `json:"neighborhood"`
-	Number        *string `json:"number"`
-	Complement    *string `json:"complement"`
-	CPF           *string `json:"cpf"`
+	Name         string  `json:"name"`
+	Segment      *string `json:"segment"`
+	AdminEmail   string  `json:"adminEmail"`
+	AdminName    string  `json:"adminName"`
+	Whatsapp     *string `json:"whatsapp"`
+	Phone        *string `json:"phone"`
+	CNPJ         *string `json:"cnpj"`
+	Creci        *string `json:"creci"`
+	PlanID       *string `json:"planId"`
+	Address      *string `json:"address"`
+	City         *string `json:"city"`
+	Neighborhood *string `json:"neighborhood"`
+	Number       *string `json:"number"`
+	Complement   *string `json:"complement"`
 }

@@ -2,7 +2,13 @@ import { z } from 'zod'
 import { apiEnvelopeSchema, nonNegativeIntegerSchema, timestampSchema, uuidSchema } from './common'
 
 const nameSchema = z.string().trim().min(2).max(120)
-const colorSchema = z.string().trim().max(20)
+
+export const stageHexColorInputSchema = z
+  .string()
+  .trim()
+  .regex(/^#[0-9a-fA-F]{6}$/, 'Use uma cor hexadecimal no formato #RRGGBB')
+
+const colorSchema = stageHexColorInputSchema
 
 export const pipelineCreateInputSchema = z.object({
   name: nameSchema,
@@ -28,10 +34,19 @@ export const stageUpdateInputSchema = z.object({
   stageKey: z.string().trim().max(80).nullable().optional(),
   isWon: z.boolean().optional(),
   isLost: z.boolean().optional(),
+  isQualified: z.boolean().optional(),
   isActive: z.boolean().optional(),
 }).strict().refine(
   (input) => Object.values(input).some((value) => value !== undefined),
   'Informe ao menos uma alteracao',
+).refine(
+  (input) => input.isQualified !== true || (
+    input.isWon !== true && input.isLost !== true && input.isActive !== false
+  ),
+  {
+    path: ['isQualified'],
+    message: 'Uma etapa qualificada deve estar ativa e nao pode ser terminal',
+  },
 )
 
 export const stageOrderItemInputSchema = z.object({
@@ -83,6 +98,7 @@ export const apiStageSchema = z.object({
   position: nonNegativeIntegerSchema,
   isWon: z.boolean(),
   isLost: z.boolean(),
+  isQualified: z.boolean(),
   isActive: z.boolean(),
   slaHours: nonNegativeIntegerSchema.optional(),
   createdAt: timestampSchema,
@@ -101,6 +117,7 @@ export const pipelineBoardLeadSchema = z.object({
 }).passthrough()
 export const pipelineBoardStageSchema = z.object({
   id: uuidSchema,
+  is_qualified: z.boolean(),
   leads: z.array(pipelineBoardLeadSchema),
   total_lead_count: nonNegativeIntegerSchema,
   total_value: z.number().finite().min(0).optional(),

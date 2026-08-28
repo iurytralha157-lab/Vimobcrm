@@ -302,12 +302,25 @@ func (handler Handler) ListNotifications(w http.ResponseWriter, r *http.Request)
 	if limit == 0 {
 		limit = 50
 	}
-	notifications, err := handler.repo.ListNotifications(r.Context(), tenantContext, r.URL.Query().Get("userId"), limit)
+	cursor, err := decodeNotificationCursor(r.URL.Query().Get("cursor"))
 	if err != nil {
 		writeLeadError(w, r, err)
 		return
 	}
-	httpserver.WriteJSON(w, http.StatusOK, map[string][]Notification{"data": notifications})
+	notifications, nextCursor, err := handler.repo.ListNotifications(r.Context(), tenantContext, r.URL.Query().Get("userId"), cursor, limit)
+	if err != nil {
+		writeLeadError(w, r, err)
+		return
+	}
+	var encodedNextCursor *string
+	if nextCursor != nil {
+		value := encodeNotificationCursor(*nextCursor)
+		encodedNextCursor = &value
+	}
+	httpserver.WriteJSON(w, http.StatusOK, NotificationListResponse{
+		Data:       notifications,
+		NextCursor: encodedNextCursor,
+	})
 }
 
 func (handler Handler) CountUnreadNotifications(w http.ResponseWriter, r *http.Request) {

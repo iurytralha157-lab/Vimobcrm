@@ -87,7 +87,7 @@ export const telemetryAPI = {
     return response
   },
 
-  async getErrorEvents(filters: ErrorEventFilters = {}) {
+  async getErrorEvents(filters: ErrorEventFilters = {}, signal?: AbortSignal) {
     const input = parseDomainInput(errorEventFiltersSchema, filters, 'telemetry.list')
     const response = await vimobAPIRequest<ErrorEventsResponse>('/v1/admin/error-events', {
       query: {
@@ -100,10 +100,14 @@ export const telemetryAPI = {
         fingerprint: input.fingerprint,
         unresolved: input.unresolved,
       },
+      signal,
       skipTelemetry: true,
     })
-    validateDomainResponse(apiErrorEventListResponseSchema, response, 'telemetry.list')
-    return response
+    return validateDomainResponse(
+      apiErrorEventListResponseSchema,
+      response,
+      'telemetry.list',
+    ) as ErrorEventsResponse
   },
 
   async resolveErrorEvent(id: string, note?: string) {
@@ -113,8 +117,11 @@ export const telemetryAPI = {
       body: { note: note || '' },
       skipTelemetry: true,
     })
-    validateDomainResponse(apiErrorEventResponseSchema, response, 'telemetry.resolve')
-    return response
+    return validateDomainResponse(
+      apiErrorEventResponseSchema,
+      response,
+      'telemetry.resolve',
+    ) as { data: ErrorEvent }
   },
 }
 

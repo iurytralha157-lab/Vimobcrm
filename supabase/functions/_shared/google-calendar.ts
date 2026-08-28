@@ -15,6 +15,7 @@ export const corsHeaders = {
 };
 
 const GOOGLE_CALENDAR_BASE_URL = "https://www.googleapis.com/calendar/v3";
+const GOOGLE_CALENDAR_PATH_PREFIX = "/calendar/v3";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo";
 const GOOGLE_SCOPES = [
@@ -499,9 +500,29 @@ export async function refreshAccessToken(connection: JsonRecord) {
   return { connection: updated as JsonRecord, token: nextToken };
 }
 
+export function buildGoogleCalendarApiUrl(path: string) {
+  let relativePath = path;
+
+  if (relativePath === GOOGLE_CALENDAR_PATH_PREFIX) {
+    relativePath = "";
+  } else if (
+    relativePath.startsWith(`${GOOGLE_CALENDAR_PATH_PREFIX}/`) ||
+    relativePath.startsWith(`${GOOGLE_CALENDAR_PATH_PREFIX}?`)
+  ) {
+    relativePath = relativePath.slice(GOOGLE_CALENDAR_PATH_PREFIX.length);
+  }
+
+  if (relativePath && !relativePath.startsWith("/") && !relativePath.startsWith("?")) {
+    relativePath = `/${relativePath}`;
+  }
+
+  return `${GOOGLE_CALENDAR_BASE_URL}${relativePath}`;
+}
+
 export async function googleFetch(connection: JsonRecord, path: string, init: RequestInit = {}) {
+  const requestUrl = buildGoogleCalendarApiUrl(path);
   let refreshed = await refreshAccessToken(connection);
-  let response = await fetch(`${GOOGLE_CALENDAR_BASE_URL}${path}`, {
+  let response = await fetch(requestUrl, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -520,7 +541,7 @@ export async function googleFetch(connection: JsonRecord, path: string, init: Re
       token,
     });
     refreshed = await refreshAccessToken(refreshed.connection);
-    response = await fetch(`${GOOGLE_CALENDAR_BASE_URL}${path}`, {
+    response = await fetch(requestUrl, {
       ...init,
       headers: {
         "Content-Type": "application/json",

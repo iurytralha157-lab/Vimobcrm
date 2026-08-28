@@ -108,6 +108,7 @@ type QueueMemberInput = {
   id?: string
   type?: 'user' | 'team'
   entityId?: string
+  teamId?: string
   user_id?: string
   team_id?: string
   weight?: number
@@ -304,12 +305,13 @@ function toAPIRoundRobinBody(input: RoundRobinAPIInput, includeRequired: boolean
   if (input.members !== undefined) {
     body.members = input.members
       .map((member) => {
-        const type = member.type || (member.team_id ? 'team' : 'user')
-        const entityId = member.entityId || member.user_id || member.team_id
+        const type = member.type || (member.user_id ? 'user' : 'team')
+        const entityId = member.entityId || (type === 'user' ? member.user_id : member.team_id)
         return {
           id: member.id,
           type,
           entityId,
+          teamId: type === 'user' ? member.teamId || member.team_id || undefined : undefined,
           weight: member.weight,
         }
       })

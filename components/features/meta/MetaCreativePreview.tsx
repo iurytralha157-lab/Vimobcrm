@@ -40,7 +40,7 @@ export function MetaCreativePreview({
 
   return (
     <div className={cn("flex items-center gap-2", className)}>
-      <div className={cn("relative shrink-0 overflow-hidden rounded-md bg-white/[0.045]", sizeClasses[size])}>
+      <div className={cn("relative shrink-0 overflow-hidden rounded-[6px] bg-[var(--app-surface-soft)]", sizeClasses[size])}>
         {hasImage ? (
           <Image
             src={src}
@@ -56,12 +56,12 @@ export function MetaCreativePreview({
           </div>
         )}
         {creative.type === "video" && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/35">
-            <Play className="h-4 w-4 fill-white text-white" />
+          <div className="absolute inset-0 flex items-center justify-center bg-[var(--app-overlay)]">
+            <Play className="h-4 w-4 fill-[var(--app-on-media)] text-[var(--app-on-media)]" />
           </div>
         )}
         {creative.type === "carousel" && (
-          <div className="absolute bottom-1 right-1 rounded bg-black/55 px-1 text-[9px] font-medium text-white">
+          <div className="absolute bottom-1 right-1 rounded-[4px] bg-[var(--app-media-scrim)] px-1 text-[9px] font-light text-[var(--app-on-media)]">
             carrossel
           </div>
         )}

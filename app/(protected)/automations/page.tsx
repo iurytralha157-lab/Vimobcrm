@@ -3,7 +3,7 @@ import { PermissionBoundary } from "@/components/shared/access/PermissionBoundar
 
 export default function AutomationsPage() {
   return (
-    <PermissionBoundary title="Automacoes" anyOf={["automations_view", "automations_manage"]}>
+    <PermissionBoundary module="automations" title="Automacoes" anyOf={["automations_view", "automations_manage"]}>
       <AutomationsScreen />
     </PermissionBoundary>
   );

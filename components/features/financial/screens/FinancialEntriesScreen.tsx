@@ -38,11 +38,13 @@ import { Badge } from '@/components/ui/badge';
 import { EntryStatusBadge } from '@/components/features/financial/EntryStatusBadge';
 import { FinancialEntryForm } from '@/components/features/financial/FinancialEntryForm';
 import { FinancialDrawer } from '@/components/features/financial/FinancialDrawer';
+import { FinancialConfirmationDialog } from '@/components/features/financial/FinancialConfirmationDialog';
 
 import { useFinancialEntries, useMarkEntryAsPaid, useDeleteFinancialEntry, type FinancialEntry } from '@/hooks/use-financial';
 import { formatCurrency, formatDate, exportToExcel, prepareFinancialEntriesExport } from '@/lib/export-financial';
 import { searchTextIncludes } from '@/lib/search-text';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useUserPermissions } from '@/hooks/use-user-permissions';
 import {
   Plus,
   Search,
@@ -54,7 +56,8 @@ import {
   TrendingUp,
   TrendingDown,
   Calendar,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Loader2,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
@@ -63,13 +66,27 @@ type FinancialEntryListItem = FinancialEntry & {
   related_person_name?: string | null;
 };
 
+function canEditOrDeleteEntry(entry: FinancialEntryListItem) {
+  const status = entry.status?.trim().toLowerCase();
+  const category = entry.category?.trim().toLowerCase();
+  return status !== 'paid' &&
+    status !== 'paga' &&
+    status !== 'partial' &&
+    status !== 'parcial' &&
+    Number(entry.paid_amount || entry.paid_value || 0) === 0 &&
+    category !== 'comissão' &&
+    category !== 'comissao';
+}
+
 // Mobile Entry Card Component - Melhorado para mobile
-function EntryCard({ entry, onPay, onEdit, onDelete }: {
+function EntryCard({ entry, onPay, onEdit, onDelete, canManage }: {
   entry: FinancialEntryListItem;
   onPay: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  canManage: boolean;
 }) {
+  const canMutate = canEditOrDeleteEntry(entry);
   return (
     <Card className="app-card-soft mb-2 sm:mb-3">
       <CardContent className="p-3 sm:p-4">
@@ -99,7 +116,7 @@ function EntryCard({ entry, onPay, onEdit, onDelete }: {
             </div>
           </div>
           <div className="text-right shrink-0">
-            <p className={`font-bold text-sm sm:text-base ${entry.type === 'receivable' ? 'text-success' : 'text-destructive'}`}>
+            <p className={`text-sm font-normal sm:text-base ${entry.type === 'receivable' ? 'text-success' : 'text-destructive'}`}>
               {formatCurrency(entry.amount)}
             </p>
             <p className="text-[10px] sm:text-xs text-muted-foreground flex items-center justify-end gap-1 mt-0.5">
@@ -108,20 +125,26 @@ function EntryCard({ entry, onPay, onEdit, onDelete }: {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-1.5 mt-2 sm:mt-3 pt-2 sm:pt-3 border-t border-white/[0.055]">
+        {canManage && (entry.status === 'pending' || canMutate) && <div className="mt-2 flex items-center gap-1.5 border-t border-border/60 pt-2 sm:mt-3 sm:pt-3">
           {entry.status === 'pending' && (
             <Button variant="outline" size="sm" className="flex-1 h-8 text-xs" onClick={onPay}>
               <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
               Pagar
             </Button>
           )}
-          <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={onEdit}>
-            <Pencil className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive" onClick={onDelete}>
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        </div>
+          {canMutate && (
+            <>
+              <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={onEdit}>
+                <Pencil className="h-4 w-4" />
+                <span className="sr-only">Editar {entry.description}</span>
+              </Button>
+              <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive" onClick={onDelete}>
+                <Trash2 className="h-4 w-4" />
+                <span className="sr-only">Excluir {entry.description}</span>
+              </Button>
+            </>
+          )}
+        </div>}
       </CardContent>
     </Card>
   );
@@ -129,22 +152,36 @@ function EntryCard({ entry, onPay, onEdit, onDelete }: {
 
 export default function FinancialEntries() {
   const isMobile = useIsMobile();
+  const { hasPermission } = useUserPermissions();
+  const canManage = hasPermission('financial_manage');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<FinancialEntry | null>(null);
   const [payDialog, setPayDialog] = useState<{ open: boolean; entry: FinancialEntry | null }>({ open: false, entry: null });
+  const [entryToDelete, setEntryToDelete] = useState<FinancialEntry | null>(null);
   const [paidValue, setPaidValue] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+  const [formPending, setFormPending] = useState(false);
 
-  const { data: entries, isLoading } = useFinancialEntries({
+  const { data: entries, isLoading, error, refetch } = useFinancialEntries({
     type: typeFilter !== 'all' ? typeFilter : undefined,
     status: statusFilter !== 'all' ? statusFilter : undefined,
   });
 
   const markAsPaid = useMarkEntryAsPaid();
   const deleteEntry = useDeleteFinancialEntry();
+  const parsedPaidValue = Number(paidValue);
+  const paidValueError = !payDialog.open
+    ? null
+    : paidValue.trim() === '' || !Number.isFinite(parsedPaidValue) || parsedPaidValue <= 0
+      ? 'Informe um valor pago maior que zero.'
+      : payDialog.entry &&
+          Math.round(parsedPaidValue * 100) !==
+            Math.round(payDialog.entry.amount * 100)
+        ? 'Para marcar como pago, informe o valor total do lançamento.'
+        : null;
 
   const filteredEntries = entries?.filter(entry =>
     searchTextIncludes(entry.description, searchQuery) ||
@@ -161,21 +198,23 @@ export default function FinancialEntries() {
     toast.success('Arquivo exportado com sucesso');
   };
 
-  const handlePay = async () => {
-    if (!payDialog.entry) return;
-    await markAsPaid.mutateAsync({
-      id: payDialog.entry.id,
-      paid_value: parseFloat(paidValue) || payDialog.entry.amount,
-    });
+  const closePayDialog = () => {
     setPayDialog({ open: false, entry: null });
     setPaidValue('');
   };
 
-  const handleDelete = async (id: string) => {
-    if (confirm('Tem certeza que deseja excluir este lançamento?')) {
-      await deleteEntry.mutateAsync(id);
-    }
+  const handlePay = () => {
+    if (!payDialog.entry || paidValueError) return;
+    markAsPaid.mutate(
+      {
+        id: payDialog.entry.id,
+        paid_value: parsedPaidValue,
+      },
+      { onSuccess: closePayDialog },
+    );
   };
+
+  const handleDelete = (entry: FinancialEntry) => setEntryToDelete(entry);
 
   const handleEdit = (entry: FinancialEntry) => {
     setEditingEntry(entry);
@@ -183,6 +222,7 @@ export default function FinancialEntries() {
   };
 
   const handleFormSuccess = () => {
+    setFormPending(false);
     setIsFormOpen(false);
     setEditingEntry(null);
   };
@@ -200,11 +240,11 @@ export default function FinancialEntries() {
               <Download className="h-4 w-4 mr-1 md:mr-2" />
               <span className="hidden sm:inline">Exportar</span>
             </Button>
-            <Button size={isMobile ? "sm" : "default"} onClick={() => setIsFormOpen(true)}>
+            {canManage && <Button size={isMobile ? "sm" : "default"} onClick={() => setIsFormOpen(true)}>
               <Plus className="h-4 w-4 mr-1 md:mr-2" />
               <span className="hidden sm:inline">Novo Lançamento</span>
               <span className="sm:hidden">Novo</span>
-            </Button>
+            </Button>}
           </div>
         </div>
 
@@ -265,7 +305,7 @@ export default function FinancialEntries() {
 
             {/* Mobile Filters Expanded */}
             {isMobile && showFilters && (
-              <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-white/[0.055]">
+              <div className="mt-3 grid grid-cols-2 gap-3 border-t border-border/60 pt-3">
                 <Select value={typeFilter} onValueChange={setTypeFilter}>
                   <SelectTrigger>
                     <SelectValue placeholder="Tipo" />
@@ -294,10 +334,26 @@ export default function FinancialEntries() {
           </CardContent>
         </Card>
 
+        {error && entries && (
+          <div className="app-card-soft flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm text-muted-foreground" role="alert">
+            <span>Os lançamentos podem estar desatualizados.</span>
+            <Button type="button" size="sm" variant="outline" onClick={() => void refetch()}>
+              Atualizar novamente
+            </Button>
+          </div>
+        )}
+
         {/* Content */}
         {isLoading ? (
           <div className="space-y-3">
             {[1, 2, 3].map(i => <Skeleton key={i} className="h-24 md:h-12" />)}
+          </div>
+        ) : error && !entries ? (
+          <div className="app-card flex min-h-[220px] flex-col items-center justify-center gap-3 px-6 text-center" role="alert">
+            <p className="text-sm text-destructive">Não foi possível carregar os lançamentos.</p>
+            <Button type="button" size="sm" variant="outline" onClick={() => void refetch()}>
+              Tentar novamente
+            </Button>
           </div>
         ) : isMobile ? (
           // Mobile Cards
@@ -313,12 +369,13 @@ export default function FinancialEntries() {
                 <EntryCard
                   key={entry.id}
                   entry={entry}
+                  canManage={canManage}
                   onPay={() => {
                     setPaidValue(entry.amount.toString());
                     setPayDialog({ open: true, entry });
                   }}
                   onEdit={() => handleEdit(entry)}
-                  onDelete={() => handleDelete(entry.id)}
+                  onDelete={() => handleDelete(entry)}
                 />
               ))
             )}
@@ -337,13 +394,13 @@ export default function FinancialEntries() {
                     <TableHead>Vencimento</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Parcela</TableHead>
-                    <TableHead className="w-10"></TableHead>
+                    {canManage && <TableHead className="w-10"></TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredEntries.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={canManage ? 8 : 7} className="text-center py-8 text-muted-foreground">
                         Nenhum lançamento encontrado
                       </TableCell>
                     </TableRow>
@@ -372,37 +429,43 @@ export default function FinancialEntries() {
                           <EntryStatusBadge status={entry.status} />
                         </TableCell>
                         <TableCell>-</TableCell>
-                        <TableCell>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon">
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="bg-popover">
-                              {entry.status === 'pending' && (
-                                <DropdownMenuItem onClick={() => {
-                                  setPaidValue(entry.amount.toString());
-                                  setPayDialog({ open: true, entry });
-                                }}>
-                                  <CheckCircle2 className="h-4 w-4 mr-2" />
-                                  Marcar como Pago
-                                </DropdownMenuItem>
-                              )}
-                              <DropdownMenuItem onClick={() => handleEdit(entry)}>
-                                <Pencil className="h-4 w-4 mr-2" />
-                                Editar
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                className="text-destructive"
-                                onClick={() => handleDelete(entry.id)}
-                              >
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                Excluir
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </TableCell>
+                        {canManage && (
+                          <TableCell>
+                            {(entry.status === 'pending' || canEditOrDeleteEntry(entry)) && <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" aria-label={`Ações de ${entry.description}`}>
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="bg-popover">
+                                {entry.status === 'pending' && (
+                                  <DropdownMenuItem onClick={() => {
+                                    setPaidValue(entry.amount.toString());
+                                    setPayDialog({ open: true, entry });
+                                  }}>
+                                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                                    Marcar como Pago
+                                  </DropdownMenuItem>
+                                )}
+                                {canEditOrDeleteEntry(entry) && (
+                                  <>
+                                    <DropdownMenuItem onClick={() => handleEdit(entry)}>
+                                      <Pencil className="h-4 w-4 mr-2" />
+                                      Editar
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      className="text-destructive"
+                                      onClick={() => handleDelete(entry)}
+                                    >
+                                      <Trash2 className="h-4 w-4 mr-2" />
+                                      Excluir
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>}
+                          </TableCell>
+                        )}
                       </TableRow>
                     ))
                   )}
@@ -421,12 +484,15 @@ export default function FinancialEntries() {
           }}
           title={editingEntry ? 'Editar Lançamento' : 'Novo Lançamento'}
           description={editingEntry ? 'Altere os dados do lançamento' : 'Preencha os dados do novo lançamento'}
+          pending={formPending}
         >
           <FinancialEntryForm
             entry={editingEntry ?? undefined}
             onSuccess={handleFormSuccess}
+            onPendingChange={setFormPending}
             onCancel={() => {
               setIsFormOpen(false);
+              setFormPending(false);
               setEditingEntry(null);
             }}
           />
@@ -434,35 +500,89 @@ export default function FinancialEntries() {
 
 
         {/* Pay Dialog */}
-        <Dialog open={payDialog.open} onOpenChange={(open) => setPayDialog({ open, entry: null })}>
-          <DialogContent className="w-[95vw] max-w-md">
+        <Dialog
+          open={payDialog.open}
+          onOpenChange={(open) => {
+            if (!open && !markAsPaid.isPending) closePayDialog();
+          }}
+        >
+          <DialogContent
+            className="w-[95vw] max-w-md"
+            onEscapeKeyDown={(event) => {
+              if (markAsPaid.isPending) event.preventDefault();
+            }}
+            onPointerDownOutside={(event) => {
+              if (markAsPaid.isPending) event.preventDefault();
+            }}
+          >
             <DialogHeader>
               <DialogTitle>Confirmar Pagamento</DialogTitle>
               <DialogDescription>
                 Informe o valor pago para: {payDialog.entry?.description}
               </DialogDescription>
             </DialogHeader>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                handlePay();
+              }}
+            >
             <div className="space-y-4 py-4">
               <div>
-                <label className="text-sm font-medium">Valor Pago (R$)</label>
+                <label htmlFor="financial-paid-value" className="text-sm font-medium">Valor Pago (R$)</label>
                 <Input
+                  id="financial-paid-value"
                   type="number"
                   step="0.01"
+                  min="0.01"
+                  max={payDialog.entry?.amount}
                   value={paidValue}
+                  disabled={markAsPaid.isPending}
+                  aria-invalid={Boolean(paidValueError)}
+                  aria-describedby={paidValueError ? 'financial-paid-value-error' : undefined}
                   onChange={(e) => setPaidValue(e.target.value)}
                 />
+                {paidValueError && (
+                  <p id="financial-paid-value-error" className="mt-1 text-xs text-destructive" role="alert">
+                    {paidValueError}
+                  </p>
+                )}
               </div>
             </div>
             <div className="flex justify-end gap-3">
-              <Button variant="outline" onClick={() => setPayDialog({ open: false, entry: null })}>
+              <Button variant="outline" onClick={closePayDialog} disabled={markAsPaid.isPending}>
                 Cancelar
               </Button>
-              <Button onClick={handlePay} disabled={markAsPaid.isPending}>
-                Confirmar Pagamento
+              <Button type="submit" disabled={markAsPaid.isPending || Boolean(paidValueError)}>
+                {markAsPaid.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                {markAsPaid.isPending ? 'Processando...' : 'Confirmar Pagamento'}
               </Button>
             </div>
+            </form>
           </DialogContent>
         </Dialog>
+
+        <FinancialConfirmationDialog
+          open={entryToDelete !== null}
+          onOpenChange={(open) => {
+            if (!open) setEntryToDelete(null);
+          }}
+          title="Excluir lançamento?"
+          description={
+            entryToDelete
+              ? `“${entryToDelete.description || 'Lançamento sem descrição'}”, no valor de ${formatCurrency(entryToDelete.amount)}, será excluído permanentemente.`
+              : 'Esta ação não pode ser desfeita.'
+          }
+          confirmLabel="Excluir lançamento"
+          destructive
+          isPending={deleteEntry.isPending}
+          onConfirm={() => {
+            if (!entryToDelete) return;
+            deleteEntry.mutate(entryToDelete.id, {
+              onSuccess: () => setEntryToDelete(null),
+            });
+          }}
+        />
       </div>
     </AppLayout>
   );

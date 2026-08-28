@@ -5,6 +5,7 @@ import { AlertTriangle, RefreshCcw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { reportErrorEvent } from "@/lib/api/telemetry";
+import { getTechnicalErrorMessage } from "@/lib/api/vimob-error";
 
 export default function Error({
   error,
@@ -19,7 +20,7 @@ export default function Error({
       source: "frontend",
       severity: "error",
       category: "react_error_boundary",
-      message: error.message || "Application error boundary triggered",
+      message: getTechnicalErrorMessage(error, "Application error boundary triggered"),
       stack: error.stack,
       component: "app/error",
       fingerprint: error.digest || undefined,
@@ -36,13 +37,13 @@ export default function Error({
   }, [error]);
 
   return (
-    <main className="min-h-screen bg-background text-foreground flex items-center justify-center px-4 py-10">
-      <section className="w-full max-w-md rounded-lg border border-white/10 bg-white/[0.03] p-6 text-center shadow-2xl">
-        <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+    <main className="flex min-h-screen items-center justify-center bg-background px-4 py-10 text-foreground">
+      <section className="w-full max-w-md rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-6 text-center shadow-none">
+        <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
           <AlertTriangle className="h-6 w-6" aria-hidden="true" />
         </div>
 
-        <h1 className="text-2xl font-semibold tracking-tight">Algo deu errado</h1>
+        <h1 className="text-[14px] font-normal">Algo deu errado</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
           Não foi possível carregar esta parte do Vimob. Tente novamente em alguns instantes.
         </p>

@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/supabasehttp"
 )
 
 type AuthAdminConfig struct {
@@ -62,8 +64,7 @@ func (client authAdminClient) createUser(ctx context.Context, input authAdminCre
 	if err != nil {
 		return "", err
 	}
-	request.Header.Set("apikey", client.apiKey)
-	request.Header.Set("Authorization", "Bearer "+client.apiKey)
+	supabasehttp.SetServiceAuth(request, client.apiKey)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 
@@ -95,6 +96,38 @@ func (client authAdminClient) createUser(ctx context.Context, input authAdminCre
 	}
 
 	return parsed.ID, nil
+}
+
+func (client authAdminClient) deleteUser(ctx context.Context, userID string) error {
+	if client.projectURL == "" || client.apiKey == "" {
+		return ErrAuthAdminNotConfigured
+	}
+	if strings.TrimSpace(userID) == "" {
+		return ErrInvalidInput
+	}
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, client.userURL(userID), nil)
+	if err != nil {
+		return err
+	}
+	supabasehttp.SetServiceAuth(request, client.apiKey)
+	request.Header.Set("Accept", "application/json")
+
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return authAdminStatusError(response.Status, raw)
+	}
+
+	return nil
 }
 
 func (client authAdminClient) userURL(userID string) string {

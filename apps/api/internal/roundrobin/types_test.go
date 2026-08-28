@@ -151,6 +151,64 @@ func TestCreateRequestValidatePreservesTeamMember(t *testing.T) {
 	}
 }
 
+func TestCreateRequestValidatePreservesDirectUserTeamContext(t *testing.T) {
+	userID := "11111111-1111-4111-8111-111111111111"
+	teamID := "22222222-2222-4222-8222-222222222222"
+	weight := 27
+	request := CreateRequest{
+		Name: "Fila com corretor contextualizado",
+		Members: []MemberInput{
+			{
+				Type:     "user",
+				EntityID: userID,
+				TeamID:   teamID,
+				Weight:   &weight,
+			},
+		},
+	}
+
+	input, err := request.Validate()
+	if err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if len(input.Members) != 1 {
+		t.Fatalf("expected 1 member, got %d", len(input.Members))
+	}
+	member := input.Members[0]
+	if member.UserID == nil || *member.UserID != userID {
+		t.Fatalf("expected user id %q, got %#v", userID, member.UserID)
+	}
+	if member.TeamID == nil || *member.TeamID != teamID {
+		t.Fatalf("expected team context %q, got %#v", teamID, member.TeamID)
+	}
+	if member.Weight != weight {
+		t.Fatalf("expected weight %d, got %d", weight, member.Weight)
+	}
+}
+
+func TestCreateRequestValidatePrioritizesLegacyUserWhenBothIDsExist(t *testing.T) {
+	userID := "11111111-1111-4111-8111-111111111111"
+	teamID := "22222222-2222-4222-8222-222222222222"
+	request := CreateRequest{
+		Name: "Fila legada",
+		Members: []MemberInput{
+			{UserID: userID, TeamID: teamID},
+		},
+	}
+
+	input, err := request.Validate()
+	if err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	member := input.Members[0]
+	if member.Type != "user" || member.UserID == nil || *member.UserID != userID {
+		t.Fatalf("expected direct user member, got %#v", member)
+	}
+	if member.TeamID == nil || *member.TeamID != teamID {
+		t.Fatalf("expected preserved team context, got %#v", member.TeamID)
+	}
+}
+
 func assertMatchList(t *testing.T, match map[string]any, key string, expected []string) {
 	t.Helper()
 	if expected == nil {

@@ -62,6 +62,8 @@ export function QueryProvider({ children }: { children: ReactNode }) {
     ledPipelineIds: tenantContext?.ledPipelineIds,
     isSuperAdmin: tenantContext?.isSuperAdmin ?? isSuperAdmin,
     impersonatedOrganizationId: impersonating?.orgId,
+    propertyEditPolicy: organization?.property_edit_policy,
+    propertyOwnerContactVisibility: organization?.property_owner_contact_visibility,
   })
   const queryClient = useMemo(
     () => createTenantQueryClient(accessSignature),

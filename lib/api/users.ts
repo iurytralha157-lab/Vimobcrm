@@ -23,7 +23,7 @@ export type User = {
   organization_id: string | null;
   name: string;
   email: string;
-  role: 'super_admin' | 'admin' | 'user' | string;
+  role: 'super_admin' | 'admin' | 'manager' | 'user' | string;
   avatar_url: string | null;
   is_active: boolean;
   whatsapp: string | null;
@@ -37,7 +37,7 @@ export type CreateUserInput = {
   phone?: string | null;
   whatsapp?: string | null;
   endereco?: string | null;
-  role: 'admin' | 'user';
+  role: 'admin' | 'manager' | 'user';
 };
 
 export type CreateUserResult = {

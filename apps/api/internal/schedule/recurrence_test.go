@@ -1,6 +1,7 @@
 package schedule
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -21,6 +22,53 @@ func TestCreateRequestAcceptsDailyRecurrence(t *testing.T) {
 	}
 	if input.RecurrenceRule == nil || *input.RecurrenceRule != "daily" {
 		t.Fatalf("unexpected recurrence rule: %#v", input.RecurrenceRule)
+	}
+}
+
+func TestUpdateRequestNormalizesAssigneeDraft(t *testing.T) {
+	t.Parallel()
+
+	const assigneeID = "30e33931-3ef5-4e32-aeb8-410b8e833b48"
+	var request UpdateRequest
+	if err := json.Unmarshal([]byte(`{"assignee_ids":["`+assigneeID+`","`+assigneeID+`"]}`), &request); err != nil {
+		t.Fatalf("decode update request: %v", err)
+	}
+
+	input, err := request.Validate()
+	if err != nil {
+		t.Fatalf("expected assignee draft to be valid: %v", err)
+	}
+	if !input.AssigneeIDs.Set || len(input.AssigneeIDs.Value) != 1 || input.AssigneeIDs.Value[0] != assigneeID {
+		t.Fatalf("unexpected normalized assignees: %#v", input.AssigneeIDs)
+	}
+}
+
+func TestUpdateRequestAcceptsEmptyAssigneeDraftAsChange(t *testing.T) {
+	t.Parallel()
+
+	var request UpdateRequest
+	if err := json.Unmarshal([]byte(`{"assignee_ids":[]}`), &request); err != nil {
+		t.Fatalf("decode update request: %v", err)
+	}
+
+	input, err := request.Validate()
+	if err != nil {
+		t.Fatalf("expected empty assignee draft to clear assignees: %v", err)
+	}
+	if !input.AssigneeIDs.Set || len(input.AssigneeIDs.Value) != 0 {
+		t.Fatalf("unexpected empty assignee draft: %#v", input.AssigneeIDs)
+	}
+}
+
+func TestUpdateRequestRejectsInvalidAssigneeDraft(t *testing.T) {
+	t.Parallel()
+
+	var request UpdateRequest
+	if err := json.Unmarshal([]byte(`{"assignee_ids":["outside-tenant"]}`), &request); err != nil {
+		t.Fatalf("decode update request: %v", err)
+	}
+	if _, err := request.Validate(); err == nil {
+		t.Fatal("expected invalid assignee UUID to be rejected")
 	}
 }
 

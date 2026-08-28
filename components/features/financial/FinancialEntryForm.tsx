@@ -25,24 +25,57 @@ import {
 import { useCreateFinancialEntry, useUpdateFinancialEntry, useFinancialCategories } from '@/hooks/use-financial';
 import type { FinancialEntry } from '@/hooks/use-financial';
 import { useContracts } from '@/hooks/use-contracts';
+import {
+  addMonthsToFinancialCalendarDate,
+  financialCalendarDateSchema,
+  splitFinancialAmountIntoInstallments,
+} from '@/lib/validation';
 import { Loader2, Repeat } from 'lucide-react';
 
-const formSchema = z.object({
-  type: z.enum(['receivable', 'payable']),
-  category: z.string().min(1, 'Categoria é obrigatória'),
-  description: z.string().min(1, 'Descrição é obrigatória'),
-  amount: z.coerce.number().min(0.01, 'Valor deve ser maior que zero'),
-  due_date: z.string().min(1, 'Data de vencimento é obrigatória'),
-  payment_method: z.string().optional(),
-  contract_id: z.string().optional(),
-  notes: z.string().optional(),
-  // Installments
-  has_installments: z.boolean().optional(),
-  total_installments: z.coerce.number().min(2).max(120).optional(),
-  // Recurring
-  is_recurring: z.boolean().optional(),
-  recurring_type: z.enum(['monthly', 'weekly', 'yearly']).optional(),
-});
+const formSchema = z
+  .object({
+    type: z.enum(['receivable', 'payable']),
+    category: z.string().trim().min(1, 'Categoria é obrigatória').max(180),
+    description: z.string().trim().min(1, 'Descrição é obrigatória').max(2_000),
+    amount: z.number().finite().min(0.01, 'Valor deve ser maior que zero'),
+    due_date: financialCalendarDateSchema,
+    payment_method: z.string().trim().max(180).optional(),
+    contract_id: z.string().optional(),
+    notes: z.string().trim().max(4_000).optional(),
+    // Installments
+    has_installments: z.boolean().optional(),
+    total_installments: z.number().int().min(2).max(120).optional(),
+    // Recurring
+    is_recurring: z.boolean().optional(),
+    recurring_type: z.enum(['monthly', 'weekly', 'yearly']).optional(),
+  })
+  .superRefine((values, context) => {
+    if (values.has_installments && !values.total_installments) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['total_installments'],
+        message: 'Informe o número de parcelas',
+      });
+    }
+    if (
+      values.has_installments &&
+      values.total_installments &&
+      Math.round(values.amount * 100) < values.total_installments
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['amount'],
+        message: 'O total deve permitir ao menos R$ 0,01 por parcela',
+      });
+    }
+    if (values.is_recurring && !values.recurring_type) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['recurring_type'],
+        message: 'Informe a frequência da recorrência',
+      });
+    }
+  });
 
 type FormValues = z.infer<typeof formSchema>;
 
@@ -50,13 +83,33 @@ interface FinancialEntryFormProps {
   entry?: FinancialEntry;
   onSuccess: () => void;
   onCancel: () => void;
+  onPendingChange?: (pending: boolean) => void;
 }
 
-export function FinancialEntryForm({ entry, onSuccess, onCancel }: FinancialEntryFormProps) {
-  const { data: contracts } = useContracts();
+export function FinancialEntryForm({
+  entry,
+  onSuccess,
+  onCancel,
+  onPendingChange,
+}: FinancialEntryFormProps) {
+  const [contractsOpen, setContractsOpen] = React.useState(false);
+  const {
+    data: contracts,
+    isFetching: contractsLoading,
+    error: contractsError,
+    refetch: refetchContracts,
+  } = useContracts(undefined, {
+    enabled: contractsOpen || Boolean(entry?.contract_id),
+  });
   const { data: financialCategories } = useFinancialCategories();
   const createEntry = useCreateFinancialEntry();
   const updateEntry = useUpdateFinancialEntry();
+  const isLoading = createEntry.isPending || updateEntry.isPending;
+
+  React.useEffect(() => {
+    onPendingChange?.(isLoading);
+    return () => onPendingChange?.(false);
+  }, [isLoading, onPendingChange]);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -120,41 +173,62 @@ export function FinancialEntryForm({ entry, onSuccess, onCancel }: FinancialEntr
       payment_method: values.payment_method || null,
       contract_id: values.contract_id || null,
       notes: values.notes || null,
-      status: 'pending',
       is_recurring: values.is_recurring || false,
       recurring_type: values.is_recurring ? values.recurring_type : null,
       total_installments: values.has_installments ? values.total_installments : null,
       installment_number: values.has_installments ? 1 : null,
     };
 
-    if (entry) {
-      await updateEntry.mutateAsync({ id: entry.id, ...basePayload });
-    } else {
-      // If has installments, create multiple entries
-      if (values.has_installments && values.total_installments && values.total_installments > 1) {
-        const baseDate = new Date(values.due_date);
-        for (let i = 0; i < values.total_installments; i++) {
-          const dueDate = new Date(baseDate);
-          dueDate.setMonth(dueDate.getMonth() + i);
-          await createEntry.mutateAsync({
+    let createdInstallments = 0;
+    try {
+      if (entry) {
+        await updateEntry.mutateAsync({ id: entry.id, ...basePayload });
+      } else if (
+        values.has_installments &&
+        values.total_installments &&
+        values.total_installments > 1
+      ) {
+        const installmentAmounts = splitFinancialAmountIntoInstallments(
+          values.amount,
+          values.total_installments,
+        );
+        let parentEntryId: string | null = null;
+
+        for (let index = 0; index < values.total_installments; index += 1) {
+          const createdEntry = await createEntry.mutateAsync({
             ...basePayload,
-            due_date: dueDate.toISOString().split('T')[0],
-            installment_number: i + 1,
-            description: `${values.description} (${i + 1}/${values.total_installments})`,
+            amount: installmentAmounts[index],
+            due_date: addMonthsToFinancialCalendarDate(values.due_date, index),
+            installment_number: index + 1,
+            parent_entry_id: parentEntryId,
+            description: `${values.description} (${index + 1}/${values.total_installments})`,
           });
+          parentEntryId ??= createdEntry.id;
+          createdInstallments += 1;
         }
       } else {
         await createEntry.mutateAsync(basePayload);
       }
+      onSuccess();
+    } catch (error) {
+      const message =
+        createdInstallments > 0
+          ? `${createdInstallments} parcela(s) foram criadas antes da falha. Revise a lista antes de tentar novamente.`
+          : error instanceof Error
+            ? error.message
+            : 'Não foi possível salvar o lançamento.';
+      form.setError('root', { message });
     }
-    onSuccess();
   };
-
-  const isLoading = createEntry.isPending || updateEntry.isPending;
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+      <form
+        onSubmit={form.handleSubmit(onSubmit)}
+        className="space-y-4"
+        aria-busy={isLoading}
+      >
+        <fieldset disabled={isLoading} className="space-y-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <FormField
             control={form.control}
@@ -291,7 +365,11 @@ export function FinancialEntryForm({ entry, onSuccess, onCancel }: FinancialEntr
             render={({ field }) => (
               <FormItem>
                 <FormLabel>Contrato (opcional)</FormLabel>
-                <Select onValueChange={(val) => field.onChange(val === 'none' ? '' : val)} value={field.value || 'none'}>
+                <Select
+                  onOpenChange={setContractsOpen}
+                  onValueChange={(val) => field.onChange(val === 'none' ? '' : val)}
+                  value={field.value || 'none'}
+                >
                   <FormControl>
                     <SelectTrigger>
                       <SelectValue placeholder="Selecione..." />
@@ -299,6 +377,11 @@ export function FinancialEntryForm({ entry, onSuccess, onCancel }: FinancialEntr
                   </FormControl>
                   <SelectContent>
                     <SelectItem value="none">Nenhum</SelectItem>
+                    {contractsLoading && (
+                      <SelectItem value="loading" disabled>
+                        Carregando contratos...
+                      </SelectItem>
+                    )}
                     {contracts?.map((c) => (
                       <SelectItem key={c.id} value={c.id}>
                         {c.contract_number || c.id}
@@ -306,6 +389,19 @@ export function FinancialEntryForm({ entry, onSuccess, onCancel }: FinancialEntr
                     ))}
                   </SelectContent>
                 </Select>
+                {contractsError && (
+                  <div className="flex items-center justify-between gap-2 text-xs text-destructive" role="alert">
+                    <span>Não foi possível carregar os contratos.</span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void refetchContracts()}
+                    >
+                      Tentar novamente
+                    </Button>
+                  </div>
+                )}
                 <FormMessage />
               </FormItem>
             )}
@@ -313,7 +409,7 @@ export function FinancialEntryForm({ entry, onSuccess, onCancel }: FinancialEntr
         </div>
 
         {/* Installments & Recurring Section */}
-        <div className="border border-white/[0.055] rounded-lg p-4 space-y-4 bg-white/[0.035]">
+        <div className="space-y-4 rounded-lg border border-border/60 bg-muted/30 p-4">
           <div className="flex items-center gap-2 text-sm font-medium">
             <Repeat className="h-4 w-4" />
             <span>Parcelamento e Recorrência</span>
@@ -336,7 +432,7 @@ export function FinancialEntryForm({ entry, onSuccess, onCancel }: FinancialEntr
                     <Switch
                       checked={field.value}
                       onCheckedChange={field.onChange}
-                      disabled={watchIsRecurring}
+                      disabled={watchIsRecurring || Boolean(entry)}
                     />
                   </FormControl>
                 </FormItem>
@@ -357,6 +453,7 @@ export function FinancialEntryForm({ entry, onSuccess, onCancel }: FinancialEntr
                         max={120}
                         placeholder="Ex: 12"
                         value={field.value ?? ''}
+                        disabled={Boolean(entry)}
                         onChange={e => field.onChange(e.target.value ? parseInt(e.target.value) : undefined)}
                       />
                     </FormControl>
@@ -432,15 +529,22 @@ export function FinancialEntryForm({ entry, onSuccess, onCancel }: FinancialEntr
           )}
         />
 
+        {form.formState.errors.root?.message && (
+          <p className="text-sm text-destructive" role="alert">
+            {form.formState.errors.root.message}
+          </p>
+        )}
+
         <div className="flex gap-2 pt-4">
-          <Button type="button" variant="outline" onClick={onCancel} className="w-[40%] rounded-xl">
+          <Button type="button" variant="outline" onClick={onCancel} disabled={isLoading} className="w-[40%] rounded-lg">
             Cancelar
           </Button>
-          <Button type="submit" disabled={isLoading} className="w-[60%] rounded-xl">
+          <Button type="submit" disabled={isLoading} className="w-[60%] rounded-lg">
             {isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             {entry ? 'Salvar' : 'Criar Lançamento'}
           </Button>
         </div>
+        </fieldset>
       </form>
     </Form>
   );

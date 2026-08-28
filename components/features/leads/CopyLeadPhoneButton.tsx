@@ -20,7 +20,7 @@ export function CopyLeadPhoneButton({ phone, className }: CopyLeadPhoneButtonPro
       return;
     }
 
-    toast.error('Nao foi possivel copiar o telefone');
+    toast.error('Não foi possível copiar o telefone');
   };
 
   if (!phone?.trim()) return null;

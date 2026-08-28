@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, ReactNode, useCallback, useEffect } from "react";
 import { WhatsAppConversation } from "@/hooks/use-whatsapp-conversations";
 import { useAuth } from "@/contexts/AuthContext";
+import { normalizePhoneToE164 } from "@/lib/phone-utils";
 
 interface FloatingChatState {
   isOpen: boolean;
@@ -105,14 +106,13 @@ export function FloatingChatProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const openNewChat = useCallback((phone: string, leadName?: string, leadId?: string) => {
-    // Limpa o telefone para formato numérico
-    const cleanPhone = phone.replace(/\D/g, "");
+    const pendingPhone = normalizePhoneToE164(phone) || phone.trim();
     setState((prev) => ({
       ...prev,
       isOpen: true,
       isMinimized: false,
       activeConversation: null,
-      pendingPhone: cleanPhone,
+      pendingPhone,
       pendingLeadName: leadName || null,
       pendingMessage: null,
       pendingLeadId: leadId || null,
@@ -120,13 +120,13 @@ export function FloatingChatProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const openNewChatWithMessage = useCallback((phone: string, message: string, leadId?: string, leadName?: string) => {
-    const cleanPhone = phone.replace(/\D/g, "");
+    const pendingPhone = normalizePhoneToE164(phone) || phone.trim();
     setState((prev) => ({
       ...prev,
       isOpen: true,
       isMinimized: false,
       activeConversation: null,
-      pendingPhone: cleanPhone,
+      pendingPhone,
       pendingLeadName: leadName || null,
       pendingMessage: message,
       pendingLeadId: leadId || null,

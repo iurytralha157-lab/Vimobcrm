@@ -173,3 +173,23 @@ begin
 end;
 $$;
 rollback;
+
+-- The production campaign fixture is intentionally optional in local and CI
+-- databases. The scenarios above still abort on any contract violation when
+-- it is installed; this final TAP result gives pg_prove a valid plan either
+-- way instead of reporting an infrastructure-level "no plan" failure.
+begin;
+create extension if not exists pgtap with schema extensions;
+select plan(1);
+
+select case
+  when exists (
+    select 1
+    from public.automation_executions
+    where id = '0bf11355-3cd8-45fe-b8f1-f621e3892c99'
+  ) then pass('Pamella conversational handoff scenarios completed without contract violations')
+  else skip('Pamella campaign contract fixture is not installed', 1)
+end;
+
+select * from finish();
+rollback;

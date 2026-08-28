@@ -25,17 +25,18 @@ export function useOrganizationSite() {
 
 export function useCreateOrganizationSite() {
   const queryClient = useQueryClient()
-  const { organization } = useAuth()
+  const { organization, profile } = useAuth()
+  const organizationId = organization?.id || profile?.organization_id
 
   return useMutation({
     mutationFn: async (data: Partial<OrganizationSite>) => {
-      if (!organization?.id) throw new Error('Organização não encontrada.')
-      return siteAPI.createSite(data, organization.id)
+      if (!organizationId) throw new Error('Organização não encontrada.')
+      return siteAPI.createSite(data, organizationId)
     },
     onSuccess: async () => {
-      queryClient.invalidateQueries({ queryKey: ['organization-site'] })
-      queryClient.invalidateQueries({ queryKey: ['site-menu-items'] })
-      queryClient.invalidateQueries({ queryKey: ['site-search-filters'] })
+      queryClient.invalidateQueries({ queryKey: ['organization-site', organizationId] })
+      queryClient.invalidateQueries({ queryKey: ['site-menu-items', organizationId] })
+      queryClient.invalidateQueries({ queryKey: ['site-search-filters', organizationId] })
       toast.success('Site criado com sucesso!')
     },
     onError: (error) => {
@@ -47,15 +48,16 @@ export function useCreateOrganizationSite() {
 
 export function useUpdateOrganizationSite() {
   const queryClient = useQueryClient()
-  const { organization } = useAuth()
+  const { organization, profile } = useAuth()
+  const organizationId = organization?.id || profile?.organization_id
 
   return useMutation({
     mutationFn: async (data: Partial<OrganizationSite>) => {
-      if (!organization?.id) throw new Error('Organização não encontrada.')
-      return siteAPI.updateSite(data, organization.id)
+      if (!organizationId) throw new Error('Organização não encontrada.')
+      return siteAPI.updateSite(data, organizationId)
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['organization-site'] })
+      queryClient.invalidateQueries({ queryKey: ['organization-site', organizationId] })
       toast.success('Site atualizado com sucesso!')
     },
     onError: (error) => {
@@ -67,11 +69,12 @@ export function useUpdateOrganizationSite() {
 
 export function useUploadSiteAsset() {
   const queryClient = useQueryClient()
-  const { organization } = useAuth()
+  const { organization, profile } = useAuth()
+  const organizationId = organization?.id || profile?.organization_id
 
   return useMutation({
     mutationFn: async ({ file, type }: { file: File; type: SiteAssetType }) => {
-      if (!organization?.id) throw new Error('Organização não encontrada.')
+      if (!organizationId) throw new Error('Organização não encontrada.')
 
       const maxSize = type === 'favicon' ? 1 : 10
       if (file.size > maxSize * 1024 * 1024) {
@@ -83,10 +86,10 @@ export function useUploadSiteAsset() {
         throw new Error(`Tipo de arquivo nao permitido: ${file.type}`)
       }
 
-      return siteAPI.uploadAsset({ file, type }, organization.id)
+      return siteAPI.uploadAsset({ file, type }, organizationId)
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['organization-site'] })
+      queryClient.invalidateQueries({ queryKey: ['organization-site', organizationId] })
     },
     onError: (error: unknown) => {
       console.error('Error uploading asset:', error)

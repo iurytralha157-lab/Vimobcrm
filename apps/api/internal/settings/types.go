@@ -6,15 +6,23 @@ import (
 )
 
 var (
-	ErrInvalidInput         = errors.New("invalid settings input")
-	ErrPushVAPIDMismatch    = errors.New("push VAPID key mismatch")
-	ErrAPIKeyNotFound       = errors.New("api key not found")
-	ErrStorageNotConfigured = errors.New("settings storage is not configured")
-	ErrStorageOperation     = errors.New("settings storage operation failed")
-	ErrAuthNotConfigured    = errors.New("settings auth admin is not configured")
-	ErrAuthOperation        = errors.New("settings auth admin operation failed")
-	ErrEmailOperation       = errors.New("settings email notification failed")
-	ErrPermissionStorage    = errors.New("user permission storage is not available")
+	ErrInvalidInput             = errors.New("invalid settings input")
+	ErrPushVAPIDMismatch        = errors.New("push VAPID key mismatch")
+	ErrAPIKeyNotFound           = errors.New("api key not found")
+	ErrStorageNotConfigured     = errors.New("settings storage is not configured")
+	ErrStorageOperation         = errors.New("settings storage operation failed")
+	ErrAuthNotConfigured        = errors.New("settings auth admin is not configured")
+	ErrAuthOperation            = errors.New("settings auth admin operation failed")
+	ErrEmailOperation           = errors.New("settings email notification failed")
+	ErrPermissionStorage        = errors.New("user permission storage is not available")
+	ErrCheckoutInProgress       = errors.New("a billing checkout is already in progress")
+	ErrPlanChangeInProgress     = errors.New("another managed billing plan change is already in progress")
+	ErrPlanChangeRequiresActive = errors.New("the current provider subscription must be active before changing plans")
+	ErrAsaasNotConfigured       = errors.New("Asaas subscription management is not configured")
+	ErrAsaasOperation           = errors.New("Asaas subscription update failed")
+	ErrAsaasAmbiguous           = errors.New("Asaas subscription update outcome is ambiguous")
+	ErrPaymentNotFound          = errors.New("billing payment was not found")
+	ErrPaymentProviderMismatch  = errors.New("billing payment provider identity mismatch")
 )
 
 type UserPermissionItem struct {
@@ -153,10 +161,41 @@ type PasswordStatus struct {
 }
 
 type SubscriptionOverview struct {
-	Org            map[string]any   `json:"org"`
-	Plan           map[string]any   `json:"plan"`
-	AvailablePlans []map[string]any `json:"availablePlans"`
-	History        []map[string]any `json:"history"`
+	Org                  map[string]any       `json:"org"`
+	Plan                 map[string]any       `json:"plan"`
+	PendingPlan          map[string]any       `json:"pendingPlan"`
+	PlanChange           map[string]any       `json:"planChange"`
+	AvailablePlans       []map[string]any     `json:"availablePlans"`
+	History              []PaymentHistoryItem `json:"history"`
+	BillingCheckoutReady bool                 `json:"billingCheckoutReady"`
+}
+
+const (
+	PaymentSyncStateCached              = "cached"
+	PaymentSyncStateCurrent             = "current"
+	PaymentSyncStateProviderUnavailable = "provider_unavailable"
+)
+
+// PaymentHistoryItem is the client-safe billing history projection. Provider
+// settlement fees and hosted invoice URLs intentionally never cross the BFF.
+type PaymentHistoryItem struct {
+	ID                            string   `json:"id"`
+	AsaasPaymentID                string   `json:"asaas_payment_id"`
+	AsaasSubscriptionID           *string  `json:"asaas_subscription_id"`
+	BillingIntentID               *string  `json:"billing_intent_id"`
+	PlanID                        *string  `json:"plan_id"`
+	PlanName                      *string  `json:"plan_name"`
+	BillingType                   *string  `json:"billing_type"`
+	Status                        string   `json:"status"`
+	Value                         *float64 `json:"value"`
+	DueDate                       *string  `json:"due_date"`
+	PaymentDate                   *string  `json:"payment_date"`
+	BankSlipRegistrationCancelled bool     `json:"bank_slip_registration_cancelled"`
+	CheckoutURL                   *string  `json:"checkout_url"`
+	ReceiptPath                   *string  `json:"receipt_path"`
+	SyncState                     string   `json:"sync_state"`
+	CreatedAt                     string   `json:"created_at"`
+	UpdatedAt                     string   `json:"updated_at"`
 }
 
 type UpdateBillingRequest struct {

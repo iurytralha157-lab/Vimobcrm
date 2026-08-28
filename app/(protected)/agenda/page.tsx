@@ -3,7 +3,7 @@ import { PermissionBoundary } from "@/components/shared/access/PermissionBoundar
 
 export default function AgendaPage() {
   return (
-    <PermissionBoundary title="Agenda" permission="schedule_view">
+    <PermissionBoundary module="agenda" title="Agenda" permission="schedule_view">
       <AgendaScreen />
     </PermissionBoundary>
   );

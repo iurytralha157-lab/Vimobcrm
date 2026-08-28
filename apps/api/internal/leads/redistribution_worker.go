@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -664,12 +665,17 @@ func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Conte
 				tm.id as team_member_id,
 				tm.created_at as team_member_created_at
 			from entries
+			left join public.teams direct_team
+			  on direct_team.id = entries.team_id
+			 and direct_team.organization_id = entries.organization_id
+			 and coalesce(direct_team.is_active, true) = true
 			left join public.team_members tm
 			  on tm.organization_id = entries.organization_id
 			 and tm.team_id = entries.team_id
 			 and tm.user_id = entries.user_id
 			 and coalesce(tm.is_active, true) = true
 			where entries.user_id is not null
+			  and (entries.team_id is null or (direct_team.id is not null and tm.id is not null))
 
 			union all
 
@@ -723,34 +729,7 @@ func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Conte
 		        and coalesce(required_member.is_active, true) = true
 		    )
 		  )
-		  and (
-		    candidates.team_member_id is null
-		    or not exists (
-		      select 1
-		      from public.member_availability ma_any
-		      where ma_any.organization_id = candidates.organization_id
-		        and ma_any.team_member_id = candidates.team_member_id
-		    )
-		    or exists (
-		      select 1
-		      from public.member_availability ma
-		      where ma.organization_id = candidates.organization_id
-		        and ma.team_member_id = candidates.team_member_id
-		        and ma.day_of_week = extract(dow from now() at time zone 'America/Sao_Paulo')::int
-		        and coalesce(ma.is_active, true) = true
-		        and (
-		          coalesce(ma.is_all_day, false) = true
-		          or (
-		            ma.start_time is not null
-		            and ma.end_time is not null
-		            and (
-		              (ma.start_time <= ma.end_time and (now() at time zone 'America/Sao_Paulo')::time >= ma.start_time and (now() at time zone 'America/Sao_Paulo')::time <= ma.end_time)
-		              or (ma.start_time > ma.end_time and ((now() at time zone 'America/Sao_Paulo')::time >= ma.start_time or (now() at time zone 'America/Sao_Paulo')::time <= ma.end_time))
-		            )
-		          )
-		        )
-		    )
-		  )
+		  and `+distribution.RoundRobinAvailabilityPredicateSQL+`
 		order by candidates.entry_total asc, candidates.position asc, candidates.created_at asc, coalesce(user_logs.total, 0) asc, candidates.team_member_created_at asc nulls last, candidates.user_id asc
 		limit 1
 	`, organizationID, roundRobinID, excludedUserID, requiredTeamID).Scan(&selection.MemberID, &selection.UserID)
@@ -799,12 +778,17 @@ func (repo Repository) nextRoundRobinMemberAvailability(
 				entries.user_id,
 				tm.id as team_member_id
 			from entries
+			left join public.teams direct_team
+			  on direct_team.id = entries.team_id
+			 and direct_team.organization_id = entries.organization_id
+			 and coalesce(direct_team.is_active, true) = true
 			left join public.team_members tm
 			  on tm.organization_id = entries.organization_id
 			 and tm.team_id = entries.team_id
 			 and tm.user_id = entries.user_id
 			 and coalesce(tm.is_active, true) = true
 			where entries.user_id is not null
+			  and (entries.team_id is null or (direct_team.id is not null and tm.id is not null))
 
 			union all
 
@@ -850,6 +834,23 @@ func (repo Repository) nextRoundRobinMemberAvailability(
 			    )
 			  )
 		),
+		availability_members as (
+			select distinct
+				eligible.organization_id,
+				eligible.user_id,
+				availability_member.id as team_member_id
+			from eligible
+			join public.team_members availability_member
+			  on availability_member.organization_id = eligible.organization_id
+			 and availability_member.user_id = eligible.user_id
+			 and coalesce(availability_member.is_active, true) = true
+			join public.teams availability_team
+			  on availability_team.id = availability_member.team_id
+			 and availability_team.organization_id = availability_member.organization_id
+			 and coalesce(availability_team.is_active, true) = true
+			where eligible.team_member_id is null
+			   or availability_member.id = eligible.team_member_id
+		),
 		clock as (
 			select now() at time zone 'America/Sao_Paulo' as local_now
 		),
@@ -864,7 +865,7 @@ func (repo Repository) nextRoundRobinMemberAvailability(
 						  end
 					) at time zone 'America/Sao_Paulo'
 				) as starts_at
-			from eligible
+			from availability_members eligible
 			join public.member_availability ma
 			  on ma.organization_id = eligible.organization_id
 			 and ma.team_member_id = eligible.team_member_id

@@ -8,6 +8,7 @@ export const nonEmptyDynamicRecordSchema = dynamicRecordSchema.refine(
 )
 export const safePathSegmentSchema = z.string().trim().min(1).max(120).regex(/^[a-zA-Z0-9_-]+$/)
 export const opaqueTokenSchema = z.string().trim().min(8).max(2_000)
+export const invitationTokenSchema = z.string().length(64).regex(/^[a-f0-9]{64}$/)
 export const apiDynamicRecordResponseSchema = apiEnvelopeSchema(dynamicRecordSchema)
 export const apiDynamicRecordListResponseSchema = apiEnvelopeSchema(z.array(dynamicRecordSchema))
 export const apiOptionalDynamicRecordResponseSchema = apiEnvelopeSchema(dynamicRecordSchema.nullable())
@@ -26,7 +27,7 @@ export const adminFeatureRequestInputSchema = z.object({
 }).passthrough()
 export const adminInvitationInputSchema = z.object({
   email: z.string().trim().email(),
-  role: z.string().trim().min(1).max(80),
+  role: z.enum(['admin', 'manager', 'user']),
   organizationId: uuidSchema.optional(),
 }).passthrough()
 export const adminModuleAccessInputSchema = z.object({
@@ -45,6 +46,37 @@ export const adminPeriodSchema = z.number().int().min(1).max(3650)
 export const adminListLimitSchema = z.number().int().min(1).max(500)
 export const adminOrganizationMutationInputSchema = nonEmptyDynamicRecordSchema
 export const adminUserMutationInputSchema = nonEmptyDynamicRecordSchema
+const adminWriteOnlySecretSchema = z.object({
+  action: z.enum(['unchanged', 'replace', 'clear']),
+  value: z.string().max(4_096).optional(),
+}).strict().superRefine((secret, context) => {
+  if (secret.action === 'replace' && !secret.value?.trim()) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['value'], message: 'Informe o novo segredo' })
+  }
+  if (secret.action !== 'replace' && secret.value) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['value'], message: 'O valor e permitido apenas em replace' })
+  }
+})
+export const adminNotificationDispatchSettingsSchema = z.object({
+  enabled: z.boolean(),
+  mode: z.enum(['webhook', 'evolution_go_instance']),
+  instanceName: z.string().max(160),
+  senderNumber: z.string().max(40),
+  webhookUrl: z.string().max(2_048),
+  headerName: z.string().max(120),
+  timeoutSeconds: z.number().int().min(3).max(60),
+  instanceTokenConfigured: z.boolean(),
+  headerValueConfigured: z.boolean(),
+  updatedAt: z.string().optional(),
+}).strict()
+export const adminNotificationDispatchSettingsInputSchema = adminNotificationDispatchSettingsSchema
+  .omit({ instanceTokenConfigured: true, headerValueConfigured: true, updatedAt: true })
+  .extend({
+    instanceToken: adminWriteOnlySecretSchema,
+    headerValue: adminWriteOnlySecretSchema,
+  })
+  .strict()
+export const apiAdminNotificationDispatchSettingsResponseSchema = apiEnvelopeSchema(adminNotificationDispatchSettingsSchema)
 export const apiAdminOrganizationMutationResponseSchema = z.object({
   organization: dynamicRecordSchema,
 }).passthrough()
@@ -394,11 +426,45 @@ function emptyToNull(value: unknown) {
 }
 
 const dashboardNumberSchema = z.number().finite()
+const dashboardNonNegativeNumberSchema = dashboardNumberSchema.min(0)
+const dashboardPercentageSchema = dashboardNumberSchema.min(0).max(100)
+const dashboardTrendSchema = z.number().int().finite()
+const dashboardTextSchema = (max: number) => z.string().trim().min(1).max(max)
+const dashboardNullableTextSchema = (max: number) => dashboardTextSchema(max).nullable()
+const dashboardTimestampSchema = z.string().trim().datetime({ offset: true })
 const dashboardOptionalUuidFilterSchema = z.preprocess(emptyOrAllToNull, uuidSchema.nullish())
 const dashboardOptionalTextFilterSchema = (max: number) => z.preprocess(emptyOrAllToNull, z.string().trim().max(max).nullish())
 const dashboardSearchSchema = z.preprocess(emptyToNull, z.string().trim().max(180).nullish())
+const dashboardDealStatusSchema = z.preprocess(
+  emptyOrAllToNull,
+  z.enum(['open', 'won', 'lost']).nullish(),
+)
+const dashboardMaxDateRangeMs = 5 * 366 * 24 * 60 * 60 * 1_000
+
+export const dashboardDateRangeSchema = z.object({
+  from: z.date(),
+  to: z.date(),
+}).strict().superRefine((range, context) => {
+  const durationMs = range.to.getTime() - range.from.getTime()
+  if (durationMs <= 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['to'],
+      message: 'A data final deve ser posterior a data inicial',
+    })
+    return
+  }
+  if (durationMs > dashboardMaxDateRangeMs) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['to'],
+      message: 'O periodo do dashboard nao pode exceder cinco anos',
+    })
+  }
+})
+
 export const dashboardFiltersSchema = z.object({
-  dateRange: z.object({ from: z.date(), to: z.date() }).nullable().optional(),
+  dateRange: dashboardDateRangeSchema.nullable().optional(),
   granularity: z.enum(['hour', 'day', 'week', 'month']).nullable().optional(),
   teamId: dashboardOptionalUuidFilterSchema,
   userId: dashboardOptionalUuidFilterSchema,
@@ -407,44 +473,117 @@ export const dashboardFiltersSchema = z.object({
   adSetId: dashboardOptionalTextFilterSchema(255),
   adId: dashboardOptionalTextFilterSchema(255),
   tagId: dashboardOptionalUuidFilterSchema,
-  dealStatus: dashboardOptionalTextFilterSchema(80),
+  dealStatus: dashboardDealStatusSchema,
   searchQuery: dashboardSearchSchema,
 }).strict()
 export const dashboardOptionalIdSchema = dashboardOptionalUuidFilterSchema
-export const dashboardLimitSchema = z.number().int().min(1).max(500).optional()
+export const dashboardLimitSchema = z.number().int().min(1).max(50).optional()
+
+export const apiDashboardWonConversionBucketSchema = z.object({
+  key: dashboardTextSchema(80),
+  label: dashboardTextSchema(160),
+  count: nonNegativeIntegerSchema,
+  percentage: dashboardPercentageSchema,
+  value: dashboardNonNegativeNumberSchema,
+  color: dashboardTextSchema(64),
+}).passthrough()
+
+export const apiDashboardWonDealSchema = z.object({
+  id: uuidSchema,
+  name: dashboardTextSchema(300),
+  phone: dashboardNullableTextSchema(80),
+  source: dashboardNullableTextSchema(180),
+  value: dashboardNonNegativeNumberSchema,
+  createdAt: dashboardTimestampSchema.nullable(),
+  wonAt: dashboardTimestampSchema.nullable(),
+  conversionDays: nonNegativeIntegerSchema.nullable(),
+  assignedUserName: dashboardTextSchema(300),
+}).passthrough()
+
+export const apiDashboardLostReasonBucketSchema = z.object({
+  key: dashboardTextSchema(180),
+  label: dashboardTextSchema(300),
+  count: nonNegativeIntegerSchema,
+  percentage: dashboardPercentageSchema,
+  color: dashboardTextSchema(64),
+}).passthrough()
+
+export const apiDashboardLostDealSchema = z.object({
+  id: uuidSchema,
+  name: dashboardTextSchema(300),
+  phone: dashboardNullableTextSchema(80),
+  source: dashboardNullableTextSchema(180),
+  lostReason: dashboardTextSchema(500),
+  lostReasonGroup: dashboardTextSchema(300),
+  createdAt: dashboardTimestampSchema.nullable(),
+  lostAt: dashboardTimestampSchema.nullable(),
+  assignedUserName: dashboardTextSchema(300),
+}).passthrough()
+
 export const apiDashboardStatsSchema = z.object({
   totalLeads: nonNegativeIntegerSchema,
   leadsInProgress: nonNegativeIntegerSchema,
   leadsClosed: nonNegativeIntegerSchema,
   leadsLost: nonNegativeIntegerSchema,
-  conversionRate: dashboardNumberSchema,
-  totalSalesValue: dashboardNumberSchema,
-  pendingCommissions: dashboardNumberSchema,
-  wonConversionBuckets: z.array(z.record(z.unknown())),
-  wonDeals: z.array(z.record(z.unknown())),
-  lostReasonBuckets: z.array(z.record(z.unknown())),
-  lostDeals: z.array(z.record(z.unknown())),
+  openLeads: nonNegativeIntegerSchema,
+  lostLeads: nonNegativeIntegerSchema,
+  conversionRate: dashboardPercentageSchema,
+  closedLeads: nonNegativeIntegerSchema,
+  wonAverageConversionDays: nonNegativeIntegerSchema.nullable(),
+  wonConversionBuckets: z.array(apiDashboardWonConversionBucketSchema),
+  wonDeals: z.array(apiDashboardWonDealSchema),
+  lostReasonBuckets: z.array(apiDashboardLostReasonBucketSchema),
+  lostDeals: z.array(apiDashboardLostDealSchema),
+  avgResponseTime: dashboardTextSchema(32),
+  totalSalesValue: dashboardNonNegativeNumberSchema,
+  pendingCommissions: dashboardNonNegativeNumberSchema,
+  leadsTrend: dashboardTrendSchema,
+  openTrend: dashboardTrendSchema,
+  lostTrend: dashboardTrendSchema,
+  conversionTrend: dashboardTrendSchema,
+  closedTrend: dashboardTrendSchema,
+  totalReceivables: dashboardNonNegativeNumberSchema,
+  totalPayables: dashboardNonNegativeNumberSchema,
+  overdueReceivables: dashboardNonNegativeNumberSchema,
+  overduePayables: dashboardNonNegativeNumberSchema,
+  paidCommissions: dashboardNonNegativeNumberSchema,
 }).passthrough()
 export const apiDashboardFunnelSchema = z.array(z.object({
-  name: z.string(), value: dashboardNumberSchema, percentage: dashboardNumberSchema, stage_key: z.string(),
+  name: dashboardTextSchema(300),
+  value: nonNegativeIntegerSchema,
+  percentage: dashboardPercentageSchema,
+  stage_key: dashboardTextSchema(180),
 }).passthrough())
 export const apiDashboardSourceSchema = z.array(z.object({
-  name: z.string(), value: dashboardNumberSchema, rawSource: z.string(),
+  name: dashboardTextSchema(300),
+  value: nonNegativeIntegerSchema,
+  rawSource: z.string().trim().max(180),
 }).passthrough())
+export const apiDashboardTopBrokerSchema = z.object({
+  id: uuidSchema,
+  name: dashboardTextSchema(300),
+  avatar_url: z.string().trim().max(2_048).nullable(),
+  closedLeads: nonNegativeIntegerSchema,
+  salesValue: dashboardNonNegativeNumberSchema,
+  totalCommissions: dashboardNonNegativeNumberSchema,
+}).passthrough()
 export const apiDashboardTopBrokersSchema = z.object({
-  brokers: z.array(z.record(z.unknown())),
+  brokers: z.array(apiDashboardTopBrokerSchema),
   isFallbackMode: z.boolean(),
 }).passthrough()
 export const apiDashboardUpcomingTasksSchema = z.array(z.object({
   id: uuidSchema,
-  title: z.string(),
+  title: dashboardTextSchema(500),
   type: z.enum(['call', 'email', 'meeting', 'message', 'task']),
-  due_date: timestampSchema,
-  lead_name: z.string(),
+  due_date: dashboardTimestampSchema,
+  lead_name: dashboardTextSchema(300),
   lead_id: uuidSchema,
 }).passthrough())
 export const apiDashboardDealsEvolutionSchema = z.array(z.object({
-  date: z.string(), ganhos: dashboardNumberSchema, perdas: dashboardNumberSchema, abertos: dashboardNumberSchema,
+  date: dashboardTextSchema(80),
+  ganhos: nonNegativeIntegerSchema,
+  perdas: nonNegativeIntegerSchema,
+  abertos: nonNegativeIntegerSchema,
 }).passthrough())
 export const apiDashboardExtraCountsSchema = z.object({
   propertyCount: nonNegativeIntegerSchema,
@@ -452,11 +591,12 @@ export const apiDashboardExtraCountsSchema = z.object({
   scheduledVisits: nonNegativeIntegerSchema,
 }).passthrough()
 export const apiDashboardRecentActivitiesSchema = z.array(z.object({
-  id: z.string().min(1),
-  type: z.string(),
-  content: z.string().nullable(),
-  created_at: timestampSchema,
-  lead_name: z.string(),
+  id: uuidSchema,
+  type: dashboardTextSchema(120),
+  content: z.string().max(10_000).nullable(),
+  created_at: dashboardTimestampSchema,
+  lead_name: dashboardTextSchema(300),
+  user_name: z.string().trim().max(300).nullable().optional(),
 }).passthrough())
 export const apiDashboardStatsResponseSchema = apiEnvelopeSchema(apiDashboardStatsSchema)
 export const apiDashboardFunnelResponseSchema = apiEnvelopeSchema(apiDashboardFunnelSchema)

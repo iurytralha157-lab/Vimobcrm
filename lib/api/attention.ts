@@ -115,9 +115,19 @@ export const attentionAPI = {
     return response.data
   },
 
-  async resolveItem(id: string, reason: string, note?: string, organizationId?: string | null): Promise<AttentionItem> {
+  async resolveItem(
+    id: string,
+    reason: string,
+    note?: string,
+    organizationId?: string | null,
+    administrativeOverride = false,
+  ): Promise<AttentionItem> {
     const itemId = parseDomainInput(uuidSchema, id, 'attention.items.resolve.id')
-    const body = parseDomainInput(resolveAttentionItemInputSchema, { reason, note }, 'attention.items.resolve')
+    const body = parseDomainInput(
+      resolveAttentionItemInputSchema,
+      { reason, note, administrativeOverride },
+      'attention.items.resolve',
+    )
     const response = await vimobAPIRequest<Envelope<AttentionItem>>(`/v1/attention/items/${itemId}/resolve`, {
       method: 'POST',
       organizationId,

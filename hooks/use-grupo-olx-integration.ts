@@ -7,6 +7,11 @@ import {
   type IntegrationJSON,
 } from '@/lib/api'
 import { getAPIBaseURL } from '@/lib/api/vimob-client'
+import type {
+  GrupoOLXImportReport,
+  PropertyPublicationDesiredState,
+  PropertyPublicationObservedState,
+} from '@/lib/validation'
 import { useAuth } from '@/contexts/AuthContext'
 
 export type GrupoOLXIntegration = IntegrationJSON & {
@@ -17,7 +22,6 @@ export type GrupoOLXIntegration = IntegrationJSON & {
   is_active?: boolean | null
   feed_token?: string | null
   webhook_token?: string | null
-  lead_webhook_secret_configured?: boolean | null
   default_pipeline_id?: string | null
   default_stage_id?: string | null
   default_assigned_user_id?: string | null
@@ -44,6 +48,11 @@ export type GrupoOLXPublication = IntegrationJSON & {
   last_exported_at?: string | null
   last_seen_in_feed_at?: string | null
   last_error?: string | null
+  canonical_managed?: boolean
+  canonical_desired_state?: PropertyPublicationDesiredState | null
+  canonical_observed_state?: PropertyPublicationObservedState | null
+  canonical_published_version?: number | null
+  canonical_updated_at?: string | null
   property?: Record<string, unknown> | null
 }
 
@@ -68,6 +77,7 @@ function getErrorMessage(error: unknown) {
 function invalidateGrupoOLX(queryClient: ReturnType<typeof useQueryClient>) {
   queryClient.invalidateQueries({ queryKey: ['grupo-olx-integration'] })
   queryClient.invalidateQueries({ queryKey: ['grupo-olx-publications'] })
+  queryClient.invalidateQueries({ queryKey: ['grupo-olx-import-reports'] })
 }
 
 export function useGrupoOLXIntegration(options: { enabled?: boolean } = {}) {
@@ -89,6 +99,38 @@ export function useGrupoOLXPublications(options: { enabled?: boolean } = {}) {
     queryKey: ['grupo-olx-publications', organizationId],
     queryFn: () => integrationsAPI.listGrupoOLXPublications(organizationId) as Promise<GrupoOLXPublication[]>,
     enabled: !!organizationId && enabled,
+  })
+}
+
+export function useGrupoOLXImportReports(options: { enabled?: boolean } = {}) {
+  const organizationId = useOrganizationId()
+  const enabled = options.enabled ?? true
+
+  return useQuery({
+    queryKey: ['grupo-olx-import-reports', organizationId],
+    queryFn: () => integrationsAPI.listGrupoOLXImportReports(organizationId),
+    enabled: !!organizationId && enabled,
+    refetchInterval: (query) => query.state.data?.some((report) => (
+      report.annotation_status === 'pending' || report.annotation_status === 'retry'
+    )) ? 5_000 : 60_000,
+    refetchIntervalInBackground: false,
+  })
+}
+
+export function useReplayGrupoOLXImportReport() {
+  const organizationId = useOrganizationId()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (reportId: string) => {
+      if (!organizationId) throw new Error('Organização não encontrada')
+      return integrationsAPI.replayGrupoOLXImportReport(reportId, organizationId)
+    },
+    onSuccess: () => {
+      invalidateGrupoOLX(queryClient)
+      toast.success('Relatório reenviado para processamento.')
+    },
+    onError: (error) => toast.error(`Erro ao reprocessar relatório: ${getErrorMessage(error)}`),
   })
 }
 
@@ -123,6 +165,23 @@ export function useActivateGrupoOLXIntegration() {
       toast.success('Integração Grupo OLX ativada.')
     },
     onError: (error) => toast.error(`Erro ao ativar Grupo OLX: ${getErrorMessage(error)}`),
+  })
+}
+
+export function usePauseGrupoOLXIntegration() {
+  const organizationId = useOrganizationId()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: () => {
+      if (!organizationId) throw new Error('Organização não encontrada')
+      return integrationsAPI.pauseGrupoOLX(organizationId) as Promise<GrupoOLXIntegration>
+    },
+    onSuccess: () => {
+      invalidateGrupoOLX(queryClient)
+      toast.success('Integração Grupo OLX pausada. O XML foi colocado em drenagem.')
+    },
+    onError: (error) => toast.error(`Erro ao pausar Grupo OLX: ${getErrorMessage(error)}`),
   })
 }
 
@@ -178,7 +237,7 @@ export function useSaveGrupoOLXPublications() {
 }
 
 export function getGrupoOLXPublicURLs(integration?: GrupoOLXIntegration | null): GrupoOLXPublicURLs | null {
-  if (!integration?.feed_token || !integration.webhook_token) return null
+  if (!integration?.feed_token || !integration.webhook_token || integration.status === 'draft') return null
   const baseURL = getAPIBaseURL()
 
   return {
@@ -187,3 +246,5 @@ export function getGrupoOLXPublicURLs(integration?: GrupoOLXIntegration | null):
     importReportURL: `${baseURL}/v1/public/integrations/portals/grupo-olx/import-reports/${integration.webhook_token}`,
   }
 }
+
+export type { GrupoOLXImportReport }

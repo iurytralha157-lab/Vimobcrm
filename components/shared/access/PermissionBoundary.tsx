@@ -4,11 +4,14 @@ import type { ReactNode } from 'react';
 import { Loader2, ShieldX } from 'lucide-react';
 
 import { AppLayout } from '@/components/shared/layout/AppLayout';
+import type { SystemModuleKey } from '@/config/constants';
+import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 
 interface PermissionBoundaryProps {
   children: ReactNode;
   title: string;
+  module?: SystemModuleKey;
   permission?: string;
   anyOf?: readonly string[];
 }
@@ -16,13 +19,18 @@ interface PermissionBoundaryProps {
 export function PermissionBoundary({
   children,
   title,
+  module,
   permission,
   anyOf = [],
 }: PermissionBoundaryProps) {
-  const { hasPermission, isLoading } = useUserPermissions();
-  const allowed = permission
+  const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
+  const { hasModule, isLoading: modulesLoading } = useOrganizationModules();
+  const permissionAllowed = permission
     ? hasPermission(permission)
-    : anyOf.some((key) => hasPermission(key));
+    : anyOf.length === 0 || anyOf.some((key) => hasPermission(key));
+  const moduleAllowed = !module || hasModule(module);
+  const isLoading = permissionsLoading || Boolean(module && modulesLoading);
+  const allowed = permissionAllowed && moduleAllowed;
 
   if (isLoading) {
     return (
@@ -42,9 +50,9 @@ export function PermissionBoundary({
             <ShieldX className="h-5 w-5" />
           </span>
           <div>
-            <p className="text-sm font-semibold text-foreground">Acesso nao disponivel</p>
+            <p className="text-sm font-normal text-foreground">Acesso nao disponivel</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Seu perfil nao possui permissao para acessar esta pagina.
+              Seu perfil ou plano nao possui acesso a esta pagina.
             </p>
           </div>
         </div>

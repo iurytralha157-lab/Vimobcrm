@@ -7,6 +7,10 @@ export type TenantContext = {
   organizationId?: string
   organizationName?: string
   organizationLogo?: string
+  subscriptionStatus?: string
+  subscriptionType?: string
+  trialEndsAt?: string
+  billingGraceUntil?: string
   memberRole?: string
   permissions: string[]
   enabledModules: string[]
@@ -47,6 +51,9 @@ export type MeOrganization = {
   accent_color: string
   is_active?: boolean
   subscription_status?: string
+  subscription_type?: string | null
+  trial_ends_at?: string | null
+  billing_grace_until?: string | null
   segment?: 'imobiliario' | 'telecom' | 'servicos' | null
   cnpj?: string | null
   creci?: string | null

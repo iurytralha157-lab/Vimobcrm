@@ -17,7 +17,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/numericinput"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/publicingress"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
@@ -763,14 +766,6 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Lead intake is explicit in this API path because older schemas do not
-	// always have an insert trigger for public site leads. The API uses a direct
-	// Postgres connection, so there is no PostgREST JWT claim unless we set the
-	// trusted server role for this transaction explicitly.
-	if _, err := tx.Exec(ctx, `select set_config('request.jwt.claim.role', 'service_role', true)`); err != nil {
-		return nil, err
-	}
-
 	var submissionRowID string
 	err = tx.QueryRow(ctx, `
 		insert into public.site_lead_submissions (organization_id, submission_id, session_id)
@@ -795,6 +790,21 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 		return nil, err
 	}
 
+	allowed, err := publicingress.Allow(
+		ctx,
+		tx,
+		"site_contact",
+		[]string{organizationID, request.ClientIP},
+		30,
+		time.Minute,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, ErrPublicRateLimited
+	}
+
 	if request.SessionID != nil && strings.TrimSpace(*request.SessionID) != "" {
 		var recent int
 		if err := tx.QueryRow(ctx, `
@@ -812,10 +822,10 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 	if propertyID != nil {
 		var valid bool
 		if err := tx.QueryRow(ctx, `
-			select exists(select 1 from public.properties
-			  where id = $1::uuid and organization_id = $2::uuid
-			    and coalesce(published_on_site, false) = true
-			    and coalesce(status, 'active') not in ('sold', 'rented', 'inactive'))
+			select exists(select 1 from public.properties as p
+			  where p.id = $1::uuid and p.organization_id = $2::uuid
+			    and `+publicPropertyStandaloneEligibilitySQL("p")+`
+			    and coalesce(p.status, 'active') not in ('sold', 'rented', 'inactive'))
 		`, propertyID, organizationID).Scan(&valid); err != nil {
 			return nil, err
 		}
@@ -831,13 +841,15 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 
 	var leadID string
 	var reentry bool
-	if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended($1 || ':' || normalize_phone($2), 0))`, organizationID, phone); err != nil {
-		return nil, err
-	}
 	err = tx.QueryRow(ctx, `
 		select id::text from public.leads
-		where organization_id=$1::uuid and normalize_phone(phone)=normalize_phone($2)
-		order by created_at asc, id asc limit 1 for update
+		where organization_id=$1::uuid
+		  and phone is not null
+		  and btrim(phone) <> ''
+		  and normalize_phone(phone) is not null
+		  and normalize_phone(phone) <> ''
+		  and normalize_phone(phone)=normalize_phone($2)
+		limit 1
 	`, organizationID, phone).Scan(&leadID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = tx.QueryRow(ctx, `
@@ -856,30 +868,32 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 					'property_code', $8, 'best_time', $11, 'privacy_accepted', $12::boolean,
 					'privacy_url', $13, 'landing_page', $17, 'referrer', $18,
 					'utm_term', $19, 'utm_content', $20, 'gclid', $21, 'fbclid', $22,
-					'submission_id', $23
+					'submission_id', $23, 'distribution_deferred', true
 				)
-			) returning id::text
+			)
+			on conflict do nothing
+			returning id::text
 		`, organizationID, optionalText(destination.PipelineID), optionalText(destination.StageID), propertyID, name, optionalText(request.Email), phone, optionalText(request.PropertyCode), message, optionalText(request.SessionID), optionalText(request.BestTime), request.PrivacyAccepted, optionalText(request.PrivacyURL), optionalText(request.UTMSource), optionalText(request.UTMMedium), optionalText(request.UTMCampaign), optionalText(request.LandingPage), optionalText(request.Referrer), optionalText(request.UTMTerm), optionalText(request.UTMContent), optionalText(request.GCLID), optionalText(request.FBCLID), submissionID).Scan(&leadID)
-		reentry = false
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Another transaction won the normalized-phone unique index. The
+			// INSERT waits for that transaction to finish, so this new statement
+			// can safely observe the committed canonical lead.
+			err = tx.QueryRow(ctx, `
+				select id::text from public.leads
+				where organization_id=$1::uuid
+				  and phone is not null
+				  and btrim(phone) <> ''
+				  and normalize_phone(phone) is not null
+				  and normalize_phone(phone) <> ''
+				  and normalize_phone(phone)=normalize_phone($2)
+				limit 1
+			`, organizationID, phone).Scan(&leadID)
+			reentry = true
+		} else {
+			reentry = false
+		}
 	} else if err == nil {
 		reentry = true
-		_, err = tx.Exec(ctx, `
-			update public.leads set
-				board_order_at=now(), property_id=coalesce($3::uuid, property_id),
-				interest_property_id=coalesce($3::uuid, interest_property_id),
-				email=coalesce(nullif($4,''), email), phone=$5,
-				property_code=coalesce(nullif($6,''), property_code), message=$7, initial_message=$7,
-				visitor_session_id=coalesce(nullif($8,''), visitor_session_id),
-				utm_source=coalesce(utm_source, $9), utm_medium=coalesce(utm_medium, $10),
-				utm_campaign=coalesce(utm_campaign, $11), last_entry_at=now(),
-				reentry_count=coalesce(reentry_count,0)+1, updated_at=now(),
-				metadata=coalesce(metadata,'{}'::jsonb) || jsonb_build_object(
-					'property_code',$6,'best_time',$12,'privacy_accepted',$13::boolean,
-					'privacy_url',$14,'landing_page',$15,'referrer',$16,'utm_term',$17,
-					'utm_content',$18,'gclid',$19,'fbclid',$20,'submission_id',$21,
-					'latest_utm_source',$9,'latest_utm_medium',$10,'latest_utm_campaign',$11,'reentry',true)
-			where id=$2::uuid and organization_id=$1::uuid
-		`, organizationID, leadID, propertyID, optionalText(request.Email), phone, optionalText(request.PropertyCode), message, optionalText(request.SessionID), optionalText(request.UTMSource), optionalText(request.UTMMedium), optionalText(request.UTMCampaign), optionalText(request.BestTime), request.PrivacyAccepted, optionalText(request.PrivacyURL), optionalText(request.LandingPage), optionalText(request.Referrer), optionalText(request.UTMTerm), optionalText(request.UTMContent), optionalText(request.GCLID), optionalText(request.FBCLID), submissionID)
 	}
 	if err != nil {
 		return nil, err
@@ -948,37 +962,6 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 		}
 	}
 
-	var assigned bool
-	if err := tx.QueryRow(ctx, `select assigned_user_id is not null from public.leads where id = $1::uuid`, leadID).Scan(&assigned); err != nil {
-		return nil, err
-	}
-	if !assigned {
-		var distributionResult []byte
-		if err := tx.QueryRow(ctx, `select public.handle_lead_intake($1::uuid)`, leadID).Scan(&distributionResult); err != nil {
-			return nil, err
-		}
-	}
-
-	var teamID pgtype.Text
-	err = tx.QueryRow(ctx, `
-		select rrm.team_id::text
-		from public.round_robin_logs rrl
-		join public.round_robin_members rrm
-		  on rrm.id = rrl.member_id
-		 and rrm.round_robin_id = rrl.round_robin_id
-		 and rrm.organization_id = rrl.organization_id
-		where rrl.lead_id = $1::uuid and rrm.team_id is not null
-		order by rrl.created_at desc limit 1
-	`, leadID).Scan(&teamID)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return nil, err
-	}
-	if teamID.Valid {
-		if _, err := tx.Exec(ctx, `update public.leads set team_id = $2::uuid where id = $1::uuid and team_id is null`, leadID, teamID.String); err != nil {
-			return nil, err
-		}
-	}
-
 	if _, err := tx.Exec(ctx, `update public.site_lead_submissions set lead_id = $1::uuid where id = $2::uuid`, leadID, submissionRowID); err != nil {
 		return nil, err
 	}
@@ -990,6 +973,53 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 			$5::uuid, $6::uuid, $7, $8, $9,
 			jsonb_build_object('reentry', $10::boolean, 'utm_term', $11, 'utm_content', $12, 'gclid', $13, 'fbclid', $14))
 	`, organizationID, optionalText(request.SessionID), optionalText(request.LandingPage), optionalText(request.Referrer), propertyID, leadID, optionalText(request.UTMSource), optionalText(request.UTMMedium), optionalText(request.UTMCampaign), reentry, optionalText(request.UTMTerm), optionalText(request.UTMContent), optionalText(request.GCLID), optionalText(request.FBCLID)); err != nil {
+		return nil, err
+	}
+
+	if reentry {
+		// Append-only attribution, submission and analytics writes intentionally
+		// happen before this update. The row lock is then held only through the
+		// canonical distribution call and commit, preventing a same-phone convoy
+		// from serializing the entire intake transaction.
+		tag, err := tx.Exec(ctx, `
+			update public.leads set
+				board_order_at=now(), property_id=coalesce($3::uuid, property_id),
+				interest_property_id=coalesce($3::uuid, interest_property_id),
+				email=coalesce(nullif($4,''), email), phone=$5,
+				property_code=coalesce(nullif($6,''), property_code), message=$7, initial_message=$7,
+				visitor_session_id=coalesce(nullif($8,''), visitor_session_id),
+				utm_source=coalesce(utm_source, $9), utm_medium=coalesce(utm_medium, $10),
+				utm_campaign=coalesce(utm_campaign, $11), last_entry_at=now(),
+				reentry_count=coalesce(reentry_count,0)+1, updated_at=now(),
+				metadata=coalesce(metadata,'{}'::jsonb) || jsonb_build_object(
+					'property_code',$6,'best_time',$12,'privacy_accepted',$13::boolean,
+					'privacy_url',$14,'landing_page',$15,'referrer',$16,'utm_term',$17,
+					'utm_content',$18,'gclid',$19,'fbclid',$20,'submission_id',$21,
+					'latest_utm_source',$9,'latest_utm_medium',$10,'latest_utm_campaign',$11,
+					'reentry',true,'distribution_deferred',true)
+			where id=$2::uuid and organization_id=$1::uuid
+		`, organizationID, leadID, propertyID, optionalText(request.Email), phone, optionalText(request.PropertyCode), message, optionalText(request.SessionID), optionalText(request.UTMSource), optionalText(request.UTMMedium), optionalText(request.UTMCampaign), optionalText(request.BestTime), request.PrivacyAccepted, optionalText(request.PrivacyURL), optionalText(request.LandingPage), optionalText(request.Referrer), optionalText(request.UTMTerm), optionalText(request.UTMContent), optionalText(request.GCLID), optionalText(request.FBCLID), submissionID)
+		if err != nil {
+			return nil, err
+		}
+		if tag.RowsAffected() != 1 {
+			return nil, fmt.Errorf("site contact lead changed concurrently before reentry update")
+		}
+	}
+
+	// Keep canonical distribution as the final operation before commit. The
+	// queue row is intentionally locked while its counters and assignment side
+	// effects advance; doing unrelated submission/analytics writes first keeps
+	// that critical section as short as possible under concurrent site intake.
+	distributionSource := "site"
+	if _, err := distribution.Distribute(ctx, tx, distribution.Request{
+		OrganizationID:   organizationID,
+		LeadID:           leadID,
+		IdempotencyKey:   "site:" + submissionID,
+		PreserveAssignee: true,
+		Source:           &distributionSource,
+		OccurredAt:       time.Now().UTC(),
+	}); err != nil {
 		return nil, err
 	}
 
@@ -1079,6 +1109,21 @@ func (repo Repository) CreatePublicTrackingEvent(ctx context.Context, request Pu
 		return ErrInvalidInput
 	}
 
+	allowed, err := publicingress.Allow(
+		ctx,
+		repo.db.Pool(),
+		"site_tracking",
+		[]string{organizationID, request.ClientIP},
+		240,
+		time.Minute,
+	)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrPublicRateLimited
+	}
+
 	var propertyID any
 	if request.PropertyID != nil && strings.TrimSpace(*request.PropertyID) != "" {
 		normalizedPropertyID, ok := normalizeUUID(*request.PropertyID)
@@ -1087,10 +1132,10 @@ func (repo Repository) CreatePublicTrackingEvent(ctx context.Context, request Pu
 		}
 		var valid bool
 		if err := repo.db.Pool().QueryRow(ctx, `
-			select exists(select 1 from public.properties
-			  where id = $1::uuid and organization_id = $2::uuid
-			    and coalesce(published_on_site, false) = true
-			    and coalesce(status, 'active') not in ('sold', 'rented', 'inactive'))
+			select exists(select 1 from public.properties as p
+			  where p.id = $1::uuid and p.organization_id = $2::uuid
+			    and `+publicPropertyStandaloneEligibilitySQL("p")+`
+			    and coalesce(p.status, 'active') not in ('sold', 'rented', 'inactive'))
 		`, normalizedPropertyID, organizationID).Scan(&valid); err != nil {
 			return err
 		}
@@ -1112,7 +1157,7 @@ func (repo Repository) CreatePublicTrackingEvent(ctx context.Context, request Pu
 		return ErrPublicRateLimited
 	}
 
-	_, err := repo.db.Pool().Exec(ctx, `
+	_, err = repo.db.Pool().Exec(ctx, `
 		insert into public.site_analytics_events (
 			organization_id,
 			event_type,
@@ -1226,7 +1271,7 @@ func (repo Repository) listPublicProperties(ctx context.Context, organizationID 
 	var total int64
 	if err := repo.db.Pool().QueryRow(ctx, `
 		select count(*)
-		from public.properties p
+		from `+publicPropertySnapshotJoinSQL()+`
 		where `+whereSQL, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
@@ -1237,10 +1282,10 @@ func (repo Repository) listPublicProperties(ctx context.Context, organizationID 
 	limitIndex := len(rowArgs) - 1
 	offsetIndex := len(rowArgs)
 	properties, err := repo.queryJSONRows(ctx, `
-		select `+publicPropertyJSONSQL()+`
-		from public.properties p
+		select `+publicPropertyOutputSQL()+`
+		from `+publicPropertySnapshotJoinSQL()+`
 		where `+whereSQL+`
-		order by p.is_featured desc, p.created_at desc, p.id desc
+		order by `+publicPropertyBooleanSQL("destaque", "p.is_featured")+` desc, p.created_at desc, p.id desc
 		limit $`+strconv.Itoa(limitIndex)+` offset $`+strconv.Itoa(offsetIndex), rowArgs...)
 	if err != nil {
 		return nil, 0, err
@@ -1255,14 +1300,14 @@ func (repo Repository) getPublicProperty(ctx context.Context, organizationID str
 	}
 	args := []any{organizationID, code}
 	item, err := repo.queryJSONObject(ctx, `
-		select `+publicPropertyJSONSQL()+`
-		from public.properties p
+		select `+publicPropertyOutputSQL()+`
+		from `+publicPropertySnapshotJoinSQL()+`
 		where p.organization_id = $1::uuid
-		  and p.published_on_site = true
+		  and `+publicPropertyEligibilitySQL()+`
 		  and `+publicPropertyActiveSQL()+`
 		  and (
-		  	lower(trim(coalesce(p.code, ''))) = lower(trim($2::text))
-		  	or p.id::text = trim($2::text)
+		    lower(trim(coalesce(`+publicPropertyTextSQL("codigo", "p.code")+`, ''))) = lower(trim($2::text))
+		    or p.id::text = trim($2::text)
 		  )
 		limit 1
 	`, args...)
@@ -1276,10 +1321,10 @@ func (repo Repository) listPublicPropertyTypes(ctx context.Context, organization
 	return repo.queryStringArray(ctx, `
 		select coalesce(jsonb_agg(value order by value), '[]'::jsonb)
 		from (
-			select distinct nullif(trim(p.tipo), '') as value
-			from public.properties p
+			select distinct nullif(trim(`+publicPropertyTextSQL("tipo_imovel", "p.tipo")+`), '') as value
+			from `+publicPropertySnapshotJoinSQL()+`
 			where p.organization_id = $1::uuid
-			  and p.published_on_site = true
+			  and `+publicPropertyEligibilitySQL()+`
 			  and `+publicPropertyActiveSQL()+`
 		) items
 		where value is not null
@@ -1290,10 +1335,10 @@ func (repo Repository) listPublicCities(ctx context.Context, organizationID stri
 	return repo.queryStringArray(ctx, `
 		select coalesce(jsonb_agg(value order by value), '[]'::jsonb)
 		from (
-			select distinct nullif(trim(p.cidade), '') as value
-			from public.properties p
+			select distinct nullif(trim(`+publicPropertyTextSQL("cidade", "p.cidade")+`), '') as value
+			from `+publicPropertySnapshotJoinSQL()+`
 			where p.organization_id = $1::uuid
-			  and p.published_on_site = true
+			  and `+publicPropertyEligibilitySQL()+`
 			  and `+publicPropertyActiveSQL()+`
 		) items
 		where value is not null
@@ -1306,15 +1351,15 @@ func (repo Repository) listPublicNeighborhoods(ctx context.Context, organization
 	cityFilter := ""
 	if city != "" {
 		args = append(args, city)
-		cityFilter = " and lower(trim(coalesce(p.cidade, ''))) = lower(trim($2::text))"
+		cityFilter = " and lower(trim(coalesce(" + publicPropertyTextSQL("cidade", "p.cidade") + ", ''))) = lower(trim($2::text))"
 	}
 	return repo.queryStringArray(ctx, `
 		select coalesce(jsonb_agg(value order by value), '[]'::jsonb)
 		from (
-			select distinct nullif(trim(p.bairro), '') as value
-			from public.properties p
+			select distinct nullif(trim(`+publicPropertyTextSQL("bairro", "p.bairro")+`), '') as value
+			from `+publicPropertySnapshotJoinSQL()+`
 			where p.organization_id = $1::uuid
-			  and p.published_on_site = true
+			  and `+publicPropertyEligibilitySQL()+`
 			  and `+publicPropertyActiveSQL()+cityFilter+`
 		) items
 		where value is not null
@@ -1328,21 +1373,21 @@ func (repo Repository) listPublicCondominiums(ctx context.Context, organizationI
 	neighborhood = strings.TrimSpace(neighborhood)
 	if city != "" {
 		args = append(args, city)
-		filters += fmt.Sprintf(" and lower(trim(coalesce(p.cidade, ''))) = lower(trim($%d::text))", len(args))
+		filters += fmt.Sprintf(" and lower(trim(coalesce("+publicPropertyTextSQL("cidade", "p.cidade")+", ''))) = lower(trim($%d::text))", len(args))
 	}
 	if neighborhood != "" {
 		args = append(args, neighborhood)
-		filters += fmt.Sprintf(" and lower(trim(coalesce(p.bairro, ''))) = lower(trim($%d::text))", len(args))
+		filters += fmt.Sprintf(" and lower(trim(coalesce("+publicPropertyTextSQL("bairro", "p.bairro")+", ''))) = lower(trim($%d::text))", len(args))
 	}
 
 	return repo.queryStringArray(ctx, `
 		select coalesce(jsonb_agg(value order by value), '[]'::jsonb)
 		from (
 			select distinct nullif(trim(co.name), '') as value
-			from public.properties p
+			from `+publicPropertySnapshotJoinSQL()+`
 			join public.property_condominiums co on co.id = p.condominium_id
 			where p.organization_id = $1::uuid
-			  and p.published_on_site = true
+			  and `+publicPropertyEligibilitySQL()+`
 			  and `+publicPropertyActiveSQL()+filters+`
 		) items
 		where value is not null
@@ -1353,10 +1398,10 @@ func (repo Repository) listPublicPropertyPurposes(ctx context.Context, organizat
 	return repo.queryStringArray(ctx, `
 		select coalesce(jsonb_agg(value order by value), '[]'::jsonb)
 		from (
-			select distinct nullif(trim(p.finalidade), '') as value
-			from public.properties p
+			select distinct nullif(trim(`+publicPropertyTextSQL("finalidade", "p.finalidade")+`), '') as value
+			from `+publicPropertySnapshotJoinSQL()+`
 			where p.organization_id = $1::uuid
-			  and p.published_on_site = true
+			  and `+publicPropertyEligibilitySQL()+`
 			  and `+publicPropertyActiveSQL()+`
 		) items
 		where value is not null
@@ -1379,13 +1424,13 @@ func (repo Repository) listPublicPropertyFilterOptions(ctx context.Context, orga
 	cityFilter := ""
 	if city != "" {
 		args = append(args, city)
-		cityFilter = fmt.Sprintf(" and lower(trim(coalesce(p.cidade, ''))) = lower(trim($%d::text))", len(args))
+		cityFilter = fmt.Sprintf(" and lower(trim(coalesce(p.public_cidade, ''))) = lower(trim($%d::text))", len(args))
 	}
 
 	neighborhoodFilter := ""
 	if neighborhood != "" {
 		args = append(args, neighborhood)
-		neighborhoodFilter = fmt.Sprintf(" and lower(trim(coalesce(p.bairro, ''))) = lower(trim($%d::text))", len(args))
+		neighborhoodFilter = fmt.Sprintf(" and lower(trim(coalesce(p.public_bairro, ''))) = lower(trim($%d::text))", len(args))
 	}
 
 	var rawTypes []byte
@@ -1395,39 +1440,43 @@ func (repo Repository) listPublicPropertyFilterOptions(ctx context.Context, orga
 	var rawPurposes []byte
 	err := repo.db.Pool().QueryRow(ctx, `
 		with public_props as (
-			select p.*
-			from public.properties p
+			select p.*,
+			       `+publicPropertyTextSQL("tipo_imovel", "p.tipo")+` as public_tipo,
+			       `+publicPropertyTextSQL("cidade", "p.cidade")+` as public_cidade,
+			       `+publicPropertyTextSQL("bairro", "p.bairro")+` as public_bairro,
+			       `+publicPropertyTextSQL("finalidade", "p.finalidade")+` as public_finalidade
+			from `+publicPropertySnapshotJoinSQL()+`
 			where p.organization_id = $1::uuid
-			  and p.published_on_site = true
+			  and `+publicPropertyEligibilitySQL()+`
 			  and `+publicPropertyActiveSQL()+`
 		)
 		select
 			coalesce((
 				select jsonb_agg(value order by lower(value), value)
 				from (
-					select distinct on (lower(trim(p.tipo))) nullif(trim(p.tipo), '') as value
+					select distinct on (lower(trim(p.public_tipo))) nullif(trim(p.public_tipo), '') as value
 					from public_props p
-					where nullif(trim(p.tipo), '') is not null
-					order by lower(trim(p.tipo)), trim(p.tipo)
+					where nullif(trim(p.public_tipo), '') is not null
+					order by lower(trim(p.public_tipo)), trim(p.public_tipo)
 				) items
 			), '[]'::jsonb) as types,
 			coalesce((
 				select jsonb_agg(value order by lower(value), value)
 				from (
-					select distinct on (lower(trim(p.cidade))) nullif(trim(p.cidade), '') as value
+					select distinct on (lower(trim(p.public_cidade))) nullif(trim(p.public_cidade), '') as value
 					from public_props p
-					where nullif(trim(p.cidade), '') is not null
-					order by lower(trim(p.cidade)), trim(p.cidade)
+					where nullif(trim(p.public_cidade), '') is not null
+					order by lower(trim(p.public_cidade)), trim(p.public_cidade)
 				) items
 			), '[]'::jsonb) as cities,
 			coalesce((
 				select jsonb_agg(value order by lower(value), value)
 				from (
-					select distinct on (lower(trim(p.bairro))) nullif(trim(p.bairro), '') as value
+					select distinct on (lower(trim(p.public_bairro))) nullif(trim(p.public_bairro), '') as value
 					from public_props p
-					where nullif(trim(p.bairro), '') is not null
+					where nullif(trim(p.public_bairro), '') is not null
 					`+cityFilter+`
-					order by lower(trim(p.bairro)), trim(p.bairro)
+					order by lower(trim(p.public_bairro)), trim(p.public_bairro)
 				) items
 			), '[]'::jsonb) as neighborhoods,
 			coalesce((
@@ -1444,10 +1493,10 @@ func (repo Repository) listPublicPropertyFilterOptions(ctx context.Context, orga
 			coalesce((
 				select jsonb_agg(value order by lower(value), value)
 				from (
-					select distinct on (lower(trim(p.finalidade))) nullif(trim(p.finalidade), '') as value
+					select distinct on (lower(trim(p.public_finalidade))) nullif(trim(p.public_finalidade), '') as value
 					from public_props p
-					where nullif(trim(p.finalidade), '') is not null
-					order by lower(trim(p.finalidade)), trim(p.finalidade)
+					where nullif(trim(p.public_finalidade), '') is not null
+					order by lower(trim(p.public_finalidade)), trim(p.public_finalidade)
 				) items
 			), '[]'::jsonb) as purposes
 	`, args...).Scan(&rawTypes, &rawCities, &rawNeighborhoods, &rawCondominiums, &rawPurposes)
@@ -1538,7 +1587,7 @@ func decodePublicStringArray(raw []byte) ([]string, error) {
 func publicPropertyWhereClauses(values url.Values, mode string, args *[]any) []string {
 	where := []string{
 		"p.organization_id = $1::uuid",
-		"p.published_on_site = true",
+		publicPropertyEligibilitySQL(),
 		publicPropertyActiveSQL(),
 	}
 	add := func(value any, clause string) {
@@ -1550,45 +1599,45 @@ func publicPropertyWhereClauses(values url.Values, mode string, args *[]any) []s
 		*args = append(*args, searchtext.Pattern(search))
 		placeholder := len(*args)
 		where = append(where, searchtext.AnySQL(
-			[]string{"p.title", "p.code", "p.bairro", "p.cidade"},
+			[]string{
+				publicPropertyTextSQL("titulo", "p.title"),
+				publicPropertyTextSQL("codigo", "p.code"),
+				publicPropertyTextSQL("bairro", "p.bairro"),
+				publicPropertyTextSQL("cidade", "p.cidade"),
+			},
 			fmt.Sprintf("$%d", placeholder),
 		))
 	}
 	if tipo := strings.TrimSpace(values.Get("tipo")); tipo != "" {
-		add(searchtext.Normalize(tipo), searchtext.SQL("trim(p.tipo)")+" = $%d::text")
+		add(searchtext.Normalize(tipo), searchtext.SQL("trim("+publicPropertyTextSQL("tipo_imovel", "p.tipo")+")")+" = $%d::text")
 	}
 	if finalidade := strings.TrimSpace(values.Get("finalidade")); finalidade != "" {
 		aliases := publicDealTypeAliases(finalidade)
 		if len(aliases) > 0 {
-			add(aliases, "(lower(trim(coalesce(p.finalidade, ''))) = any($%[1]d::text[]) or lower(trim(coalesce(p.tipo_de_negocio, ''))) = any($%[1]d::text[]))")
+			add(aliases, "(lower(trim(coalesce("+publicPropertyTextSQL("finalidade", "p.finalidade")+", ''))) = any($%[1]d::text[]) or lower(trim(coalesce(p.tipo_de_negocio, ''))) = any($%[1]d::text[]))")
 		}
 	}
 	if cidade := strings.TrimSpace(values.Get("cidade")); cidade != "" {
-		add(searchtext.Normalize(cidade), searchtext.SQL("trim(p.cidade)")+" = $%d::text")
+		add(searchtext.Normalize(cidade), searchtext.SQL("trim("+publicPropertyTextSQL("cidade", "p.cidade")+")")+" = $%d::text")
 	}
 	if bairro := strings.TrimSpace(values.Get("bairro")); bairro != "" {
-		add(searchtext.Normalize(bairro), searchtext.SQL("trim(p.bairro)")+" = $%d::text")
+		add(searchtext.Normalize(bairro), searchtext.SQL("trim("+publicPropertyTextSQL("bairro", "p.bairro")+")")+" = $%d::text")
 	}
 	if ids := parsePublicUUIDList(values.Get("ids"), 60); len(ids) > 0 {
 		add(ids, "p.id::text = any($%d::text[])")
 	}
-	if minPrice, ok := parsePublicDecimal(values.Get("min_price")); ok {
-		add(minPrice, "coalesce(p.preco, p.valor_locacao, 0) >= $%d")
-	}
-	if maxPrice, ok := parsePublicDecimal(values.Get("max_price")); ok {
-		add(maxPrice, "coalesce(p.preco, p.valor_locacao, 0) <= $%d")
-	}
+	where = addPublicPriceRangeFilter(where, values, args)
 	if minUsableArea, ok := parsePublicDecimal(values.Get("area_util_min")); ok {
-		add(minUsableArea, "coalesce(p.area_util, 0) >= $%d")
+		add(minUsableArea, "coalesce("+publicPropertyNumberSQL("area_construida", "p.area_util")+", 0) >= $%d")
 	}
 	if maxUsableArea, ok := parsePublicDecimal(values.Get("area_util_max")); ok {
-		add(maxUsableArea, "coalesce(p.area_util, 0) <= $%d")
+		add(maxUsableArea, "coalesce("+publicPropertyNumberSQL("area_construida", "p.area_util")+", 0) <= $%d")
 	}
 	if minTotalArea, ok := parsePublicDecimal(values.Get("area_total_min")); ok {
-		add(minTotalArea, "coalesce(p.area_total, 0) >= $%d")
+		add(minTotalArea, "coalesce("+publicPropertyNumberSQL("area_total", "p.area_total")+", 0) >= $%d")
 	}
 	if maxTotalArea, ok := parsePublicDecimal(values.Get("area_total_max")); ok {
-		add(maxTotalArea, "coalesce(p.area_total, 0) <= $%d")
+		add(maxTotalArea, "coalesce("+publicPropertyNumberSQL("area_total", "p.area_total")+", 0) <= $%d")
 	}
 	for _, item := range []struct {
 		param  string
@@ -1600,28 +1649,28 @@ func publicPropertyWhereClauses(values url.Values, mode string, args *[]any) []s
 		{"vagas", "vagas"},
 	} {
 		if value, ok := parsePublicInt(values.Get(item.param)); ok {
-			add(value, "coalesce(p."+item.column+", 0) >= $%d")
+			add(value, "coalesce("+publicPropertyNumberSQL(item.column, "p."+item.column)+", 0) >= $%d")
 		}
 	}
 	if acceptsFinancing, ok := parsePublicBool(values.Get("aceita_financiamento")); ok {
-		add(acceptsFinancing, "coalesce(p.aceita_financiamento, false) = $%d::boolean")
+		add(acceptsFinancing, "coalesce("+publicPropertyBooleanSQL("aceita_financiamento", "p.aceita_financiamento")+", false) = $%d::boolean")
 	}
 	if acceptsExchange, ok := parsePublicBool(values.Get("aceita_permuta")); ok {
-		add(acceptsExchange, "coalesce(p.aceita_permuta, false) = $%d::boolean")
+		add(acceptsExchange, "coalesce("+publicPropertyBooleanSQL("aceita_permuta", "p.aceita_permuta")+", false) = $%d::boolean")
 	}
 	if mobilia := strings.ToLower(strings.TrimSpace(values.Get("mobilia"))); mobilia != "" && mobilia != "all" {
 		if mobilia == "mobiliado" || mobilia == "true" || mobilia == "sim" || mobilia == "1" {
-			where = append(where, "p.mobiliado = true")
+			where = append(where, publicPropertyBooleanSQL("mobiliado", "p.mobiliado")+" = true")
 		} else if mobilia == "nao" || mobilia == "não" || mobilia == "false" || mobilia == "0" {
-			where = append(where, "p.mobiliado = false")
+			where = append(where, publicPropertyBooleanSQL("mobiliado", "p.mobiliado")+" = false")
 		}
 	}
 
 	switch mode {
 	case "featured":
-		where = append(where, "p.is_featured = true")
+		where = append(where, publicPropertyBooleanSQL("destaque", "p.is_featured")+" = true")
 	case "exclusive":
-		where = append(where, "lower(coalesce(p.metadata->>'exclusive', p.metadata->>'exclusivo', 'false')) in ('true', '1', 'yes', 'sim')")
+		where = append(where, publicPropertyBooleanSQL("exclusividade", "p.exclusividade")+" = true")
 	}
 
 	return where
@@ -1647,6 +1696,59 @@ func parsePublicUUIDList(raw string, maxItems int) []string {
 	return items
 }
 
+func addPublicPriceRangeFilter(where []string, values url.Values, args *[]any) []string {
+	minPrice, hasMin := parsePublicDecimal(values.Get("min_price"))
+	maxPrice, hasMax := parsePublicDecimal(values.Get("max_price"))
+	if !hasMin && !hasMax {
+		return where
+	}
+
+	minPlaceholder := 0
+	maxPlaceholder := 0
+	if hasMin {
+		*args = append(*args, minPrice)
+		minPlaceholder = len(*args)
+	}
+	if hasMax {
+		*args = append(*args, maxPrice)
+		maxPlaceholder = len(*args)
+	}
+
+	columnRange := func(expression string) string {
+		clauses := make([]string, 0, 2)
+		if minPlaceholder > 0 {
+			clauses = append(clauses, fmt.Sprintf("(%s) >= $%d::numeric", expression, minPlaceholder))
+		}
+		if maxPlaceholder > 0 {
+			clauses = append(clauses, fmt.Sprintf("(%s) <= $%d::numeric", expression, maxPlaceholder))
+		}
+		return "(" + strings.Join(clauses, " and ") + ")"
+	}
+
+	saleRange := columnRange(publicPropertyNumberSQL("valor_venda", "p.preco"))
+	rentalRange := columnRange(publicPropertyNumberSQL("valor_aluguel", "p.valor_locacao"))
+	switch publicPriceFilterMode(values.Get("finalidade")) {
+	case "sale":
+		where = append(where, saleRange)
+	case "rental":
+		where = append(where, rentalRange)
+	default:
+		where = append(where, "("+saleRange+" or "+rentalRange+")")
+	}
+
+	return where
+}
+
+func publicPriceFilterMode(value string) string {
+	switch searchtext.Normalize(value) {
+	case "venda", "sale", "lancamento", "launch", "release":
+		return "sale"
+	case "locacao", "locacao anual", "aluguel", "rent", "temporada", "season":
+		return "rental"
+	default:
+		return "any"
+	}
+}
 func publicDealTypeAliases(dealType string) []string {
 	switch strings.ToLower(strings.TrimSpace(dealType)) {
 	case "venda", "sale":
@@ -1709,6 +1811,114 @@ func publicPropertyActiveSQL() string {
 	return "lower(trim(coalesce(p.status, ''))) in ('active', 'ativo')"
 }
 
+func publicPropertySnapshotJoinSQL() string {
+	return `public.properties p
+	left join lateral (
+		select version.payload->'property' as payload
+		from public.property_channel_publications as publication
+		join public.property_channel_publication_versions as version
+		  on version.publication_id = publication.id
+		 and version.organization_id = publication.organization_id
+		 and version.property_id = publication.property_id
+		 and version.channel = publication.channel
+		 and version.channel_account_key = publication.channel_account_key
+		 and version.version = publication.published_version
+		where publication.organization_id = p.organization_id
+		  and publication.property_id = p.id
+		  and publication.channel = 'site'
+		  and publication.channel_account_key = 'default'
+		  and publication.desired_state = 'published'
+		  and publication.published_version is not null
+		limit 1
+	) as publication_snapshot on true`
+}
+
+func publicPropertyEligibilitySQL() string {
+	return `(publication_snapshot.payload is not null or (
+		coalesce(p.published_on_site, false) = true
+		and not exists (
+			select 1
+			from public.property_channel_publications as publication_state
+			where publication_state.organization_id = p.organization_id
+			  and publication_state.property_id = p.id
+			  and publication_state.channel = 'site'
+			  and publication_state.channel_account_key = 'default'
+		)
+	))`
+}
+
+func publicPropertyStandaloneEligibilitySQL(alias string) string {
+	return `(exists (
+		select 1
+		from public.property_channel_publications as publication
+		join public.property_channel_publication_versions as version
+		  on version.publication_id = publication.id
+		 and version.organization_id = publication.organization_id
+		 and version.property_id = publication.property_id
+		 and version.channel = publication.channel
+		 and version.channel_account_key = publication.channel_account_key
+		 and version.version = publication.published_version
+		where publication.organization_id = ` + alias + `.organization_id
+		  and publication.property_id = ` + alias + `.id
+		  and publication.channel = 'site'
+		  and publication.channel_account_key = 'default'
+		  and publication.desired_state = 'published'
+		  and publication.published_version is not null
+	) or (
+		coalesce(` + alias + `.published_on_site, false) = true
+		and not exists (
+			select 1
+			from public.property_channel_publications as publication_state
+			where publication_state.organization_id = ` + alias + `.organization_id
+			  and publication_state.property_id = ` + alias + `.id
+			  and publication_state.channel = 'site'
+			  and publication_state.channel_account_key = 'default'
+		)
+	))`
+}
+
+func publicPropertyOutputSQL() string {
+	return `coalesce(publication_snapshot.payload, ` + publicPropertyJSONSQL() + `)`
+}
+
+func publicPropertyTextSQL(snapshotKey string, legacySQL string) string {
+	if snapshotKey == "bairro" {
+		legacySQL = `(case when ` + publicAddressVisibilitySQL("p") + ` = 'minimo' then null else ` + legacySQL + ` end)`
+	}
+	return `case when publication_snapshot.payload is not null
+		then nullif(publication_snapshot.payload->>'` + snapshotKey + `', '')
+		else ` + legacySQL + ` end`
+}
+
+func publicPropertyNumberSQL(snapshotKey string, legacySQL string) string {
+	return `case when publication_snapshot.payload is not null
+		then nullif(publication_snapshot.payload->>'` + snapshotKey + `', '')::numeric
+		else ` + legacySQL + ` end`
+}
+
+func publicPropertyBooleanSQL(snapshotKey string, legacySQL string) string {
+	return `case when publication_snapshot.payload is not null
+		then nullif(publication_snapshot.payload->>'` + snapshotKey + `', '')::boolean
+		else ` + legacySQL + ` end`
+}
+
+func publicAddressVisibilitySQL(alias string) string {
+	return `case lower(trim(coalesce(
+		nullif(` + alias + `.address_visibility, ''),
+		nullif(` + alias + `.public_address_visibility, ''),
+		'parcial'
+	)))
+		when 'completo' then 'completo'
+		when 'complete' then 'completo'
+		when 'full' then 'completo'
+		when 'minimo' then 'minimo'
+		when 'minimum' then 'minimo'
+		when 'city' then 'minimo'
+		when 'cidade' then 'minimo'
+		else 'parcial'
+	end`
+}
+
 func publicPropertyJSONSQL() string {
 	return `jsonb_build_object(
 		'id', p.id::text,
@@ -1733,9 +1943,17 @@ func publicPropertyJSONSQL() string {
 		'area_total', p.area_total,
 		'area_construida', p.area_util,
 		'andar', p.andar,
-		'bairro', p.bairro,
+		'public_address_visibility', ` + publicAddressVisibilitySQL("p") + `,
+		'bairro', case when ` + publicAddressVisibilitySQL("p") + ` = 'minimo' then null else p.bairro end,
 		'cidade', p.cidade,
 		'estado', p.uf,
+		'pais', case when ` + publicAddressVisibilitySQL("p") + ` = 'completo' then coalesce(nullif(p.pais, ''), 'Brasil') else null end,
+		'endereco', case when ` + publicAddressVisibilitySQL("p") + ` = 'completo' then p.endereco else null end,
+		'numero', case when ` + publicAddressVisibilitySQL("p") + ` = 'completo' then p.numero else null end,
+		'complemento', case when ` + publicAddressVisibilitySQL("p") + ` = 'completo' then p.complemento else null end,
+		'cep', case when ` + publicAddressVisibilitySQL("p") + ` = 'completo' then p.cep else null end,
+		'latitude', case when ` + publicAddressVisibilitySQL("p") + ` = 'completo' then p.latitude else null end,
+		'longitude', case when ` + publicAddressVisibilitySQL("p") + ` = 'completo' then p.longitude else null end,
 		'imagem_principal', (
 			select img.url
 			from unnest(array_remove(array_prepend(nullif(p.imagem_principal, ''), array_cat(
@@ -2445,11 +2663,7 @@ func parsePublicInt(value string) (int, bool) {
 }
 
 func parsePublicDecimal(value string) (float64, bool) {
-	parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-	if err != nil {
-		return 0, false
-	}
-	return parsed, true
+	return numericinput.ParseNonNegativeDecimal(value)
 }
 
 func parsePublicBool(value string) (bool, bool) {

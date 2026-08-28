@@ -50,7 +50,6 @@ export function useSuperAdmin() {
       segment?: 'imobiliario' | 'servicos';
       adminEmail: string;
       adminName: string;
-      adminPassword: string;
       whatsapp?: string;
       phone?: string;
       cnpj?: string;
@@ -61,11 +60,21 @@ export function useSuperAdmin() {
       neighborhood?: string;
       number?: string;
       complement?: string;
-      cpf?: string;
     }) => adminAPI.createOrganization(data),
     onSuccess: (data) => {
       const orgName = String(data.organization?.name || 'Organização');
-      toast.success(`Organização "${orgName}" criada com sucesso!`);
+      const rawInvitation = data.organization?.admin_invitation;
+      const invitation = rawInvitation && typeof rawInvitation === 'object'
+        ? rawInvitation as Record<string, unknown>
+        : null;
+
+      if (invitation?.email_sent === false) {
+        toast.warning(
+          `Organização "${orgName}" criada. O convite do administrador ficou pendente e pode ser reenviado.`,
+        );
+      } else {
+        toast.success(`Organização "${orgName}" criada e convite do administrador enviado!`);
+      }
       queryClient.invalidateQueries({ queryKey: ['super-admin-organizations'] });
       queryClient.invalidateQueries({ queryKey: ['super-admin-users'] });
     },

@@ -453,13 +453,14 @@ func (repo Repository) listPipelineBoardStages(ctx context.Context, tenantContex
 			position,
 			is_won,
 			is_lost,
+			coalesce((to_jsonb(s)->>'is_qualified')::boolean, false),
 			sla_hours,
 			is_active,
 			created_at,
 			updated_at
-		from public.stages
-		where organization_id = $1::uuid
-		  and pipeline_id = $2::uuid
+		from public.stages as s
+		where s.organization_id = $1::uuid
+		  and s.pipeline_id = $2::uuid
 		order by position asc, created_at asc
 	`, tenantContext.OrganizationID, pipelineID)
 	if err != nil {
@@ -482,6 +483,7 @@ func (repo Repository) listPipelineBoardStages(ctx context.Context, tenantContex
 			&stage.Position,
 			&stage.IsWon,
 			&stage.IsLost,
+			&stage.IsQualified,
 			&slaHours,
 			&stage.IsActive,
 			&stage.CreatedAt,

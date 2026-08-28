@@ -40,16 +40,12 @@ select results_eq(
 );
 
 select ok(
-  exists (
+  not exists (
     select 1 from pg_policies
     where schemaname = 'storage' and tablename = 'objects'
-      and policyname in (
-        'Org members manage whatsapp-media',
-        'org members read private whatsapp media'
-      )
-      and 'authenticated' = any(roles)
+      and policyname = 'org members read private whatsapp media'
   ),
-  'tenant-scoped WhatsApp compatibility policy remains'
+  'private WhatsApp media cannot be enumerated outside the authorized backend flow'
 );
 
 select ok(
@@ -87,9 +83,9 @@ select ok(
 );
 
 select results_eq(
-  $$select count(*)::bigint from pg_policies where schemaname = 'storage' and tablename = 'objects' and policyname in ('property managers manage property images', 'org members read private whatsapp media', 'org members upload private whatsapp media', 'org members remove own whatsapp media', 'automation admins manage media') and 'authenticated' = any(roles)$$,
-  array[5::bigint],
-  'canonical permission-aware Storage policies are installed'
+  $$select count(*)::bigint from pg_policies where schemaname = 'storage' and tablename = 'objects' and policyname in ('property managers manage property images', 'org members upload private whatsapp media', 'org members remove own whatsapp media', 'automation admins manage media') and 'authenticated' = any(roles)$$,
+  array[4::bigint],
+  'canonical mutation-only Storage policies are installed'
 );
 
 select * from finish();

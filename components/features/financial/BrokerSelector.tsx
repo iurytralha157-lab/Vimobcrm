@@ -14,26 +14,41 @@ import { Plus, Trash2 } from 'lucide-react';
 export interface BrokerEntry {
   user_id: string;
   commission_percentage: number;
-  role?: string;
 }
 
 interface BrokerSelectorProps {
   brokers: BrokerEntry[];
   onChange: (brokers: BrokerEntry[]) => void;
+  disabled?: boolean;
+  error?: string;
 }
 
-export function BrokerSelector({ brokers, onChange }: BrokerSelectorProps) {
-  const { data: users } = useUsers();
+export function BrokerSelector({
+  brokers,
+  onChange,
+  disabled = false,
+  error,
+}: BrokerSelectorProps) {
+  const {
+    data: users,
+    isLoading: usersLoading,
+    error: usersError,
+    refetch: refetchUsers,
+  } = useUsers();
 
   const addBroker = () => {
-    onChange([...brokers, { user_id: '', commission_percentage: 0, role: 'broker' }]);
+    onChange([...brokers, { user_id: '', commission_percentage: 0 }]);
   };
 
   const removeBroker = (index: number) => {
     onChange(brokers.filter((_, i) => i !== index));
   };
 
-  const updateBroker = (index: number, field: keyof BrokerEntry, value: string | number) => {
+  const updateBroker = <K extends keyof BrokerEntry>(
+    index: number,
+    field: K,
+    value: BrokerEntry[K],
+  ) => {
     const updated = [...brokers];
     updated[index] = { ...updated[index], [field]: value };
     onChange(updated);
@@ -44,8 +59,14 @@ export function BrokerSelector({ brokers, onChange }: BrokerSelectorProps) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <Label>Corretores Participantes</Label>
-        <Button type="button" variant="outline" size="sm" onClick={addBroker}>
+        <Label>Corretores participantes</Label>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={addBroker}
+          disabled={disabled || usersLoading || Boolean(usersError)}
+        >
           <Plus className="h-4 w-4 mr-1" />
           Adicionar
         </Button>
@@ -57,21 +78,50 @@ export function BrokerSelector({ brokers, onChange }: BrokerSelectorProps) {
         </p>
       )}
 
+      {usersError && (
+        <div
+          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive"
+          role="alert"
+        >
+          <span>Não foi possível carregar os usuários.</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void refetchUsers()}
+            disabled={disabled}
+          >
+            Tentar novamente
+          </Button>
+        </div>
+      )}
+
       <div className="space-y-3">
         {brokers.map((broker, index) => (
-          <div key={index} className="flex items-end gap-3 p-3 bg-white/[0.045] rounded-lg">
-            <div className="flex-1 space-y-2">
-              <Label className="text-xs">Corretor</Label>
+          <div
+            key={`${broker.user_id || 'novo'}-${index}`}
+            className="grid grid-cols-1 gap-3 rounded-lg bg-muted/45 p-3 sm:grid-cols-[minmax(0,1fr)_7rem_auto] sm:items-end"
+          >
+            <div className="min-w-0 space-y-2">
+              <Label className="text-xs" htmlFor={`broker-user-${index}`}>Corretor</Label>
               <Select
                 value={broker.user_id}
+                disabled={disabled || usersLoading || Boolean(usersError)}
                 onValueChange={(value) => updateBroker(index, 'user_id', value)}
               >
-                <SelectTrigger>
+                <SelectTrigger id={`broker-user-${index}`}>
                   <SelectValue placeholder="Selecione..." />
                 </SelectTrigger>
                 <SelectContent>
                   {users?.map((user) => (
-                    <SelectItem key={user.id} value={user.id}>
+                    <SelectItem
+                      key={user.id}
+                      value={user.id}
+                      disabled={brokers.some(
+                        (candidate, candidateIndex) =>
+                          candidateIndex !== index && candidate.user_id === user.id,
+                      )}
+                    >
                       {user.name}
                     </SelectItem>
                   ))}
@@ -79,33 +129,18 @@ export function BrokerSelector({ brokers, onChange }: BrokerSelectorProps) {
               </Select>
             </div>
 
-            <div className="w-24 space-y-2">
-              <Label className="text-xs">Comissão %</Label>
+            <div className="space-y-2">
+              <Label className="text-xs" htmlFor={`broker-percentage-${index}`}>Comissão %</Label>
               <Input
+                id={`broker-percentage-${index}`}
                 type="number"
                 min={0}
                 max={100}
                 step={0.5}
                 value={broker.commission_percentage}
+                disabled={disabled}
                 onChange={(e) => updateBroker(index, 'commission_percentage', parseFloat(e.target.value) || 0)}
               />
-            </div>
-
-            <div className="w-28 space-y-2">
-              <Label className="text-xs">Papel</Label>
-              <Select
-                value={broker.role || 'broker'}
-                onValueChange={(value) => updateBroker(index, 'role', value)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="broker">Corretor</SelectItem>
-                  <SelectItem value="captador">Captador</SelectItem>
-                  <SelectItem value="closer">Closer</SelectItem>
-                </SelectContent>
-              </Select>
             </div>
 
             <Button
@@ -114,6 +149,8 @@ export function BrokerSelector({ brokers, onChange }: BrokerSelectorProps) {
               size="icon"
               className="text-destructive hover:text-destructive"
               onClick={() => removeBroker(index)}
+              disabled={disabled}
+              aria-label={`Remover corretor ${index + 1}`}
             >
               <Trash2 className="h-4 w-4" />
             </Button>
@@ -126,6 +163,11 @@ export function BrokerSelector({ brokers, onChange }: BrokerSelectorProps) {
           Total: {totalPercentage}%
           {totalPercentage > 100 && ' (excede 100%)'}
         </div>
+      )}
+      {error && (
+        <p className="text-sm text-destructive" role="alert">
+          {error}
+        </p>
       )}
     </div>
   );

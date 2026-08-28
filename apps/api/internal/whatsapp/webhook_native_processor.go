@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
 )
 
 const (
@@ -1399,16 +1400,21 @@ func createVerifiedNativeCampaignLead(ctx context.Context, tx pgx.Tx, session na
 			"headline":             message.CampaignHeadline,
 		},
 	}
-	metadata := jsonb(map[string]any{
+	targetRoundRobinID := nativeTargetRoundRobinID(rule, assignment)
+	metadataValues := map[string]any{
 		"source":                                "whatsapp",
 		"whatsapp_session_id":                   session.ID,
 		"remote_jid":                            message.RemoteJID,
 		"matched_rule_id":                       rule.ID,
 		"managed_whatsapp_message_distribution": rule.ManagedMessageDistribution,
 		"target_team_id":                        assignment.TeamID,
-		"target_round_robin_id":                 nativeTargetRoundRobinID(rule, assignment),
+		"target_round_robin_id":                 targetRoundRobinID,
 		"whatsapp_attribution":                  attribution,
-	})
+	}
+	if !rule.ManagedMessageDistribution {
+		metadataValues["distribution_deferred"] = true
+	}
+	metadata := jsonb(metadataValues)
 
 	var lead nativeEvolutionLead
 	err = tx.QueryRow(ctx, `
@@ -1460,32 +1466,30 @@ func createVerifiedNativeCampaignLead(ctx context.Context, tx pgx.Tx, session na
 			return nativeEvolutionLead{}, err
 		}
 	}
-	if lead.IsNew && assignment.RoundRobinID != "" {
-		if _, err := tx.Exec(ctx, `
-			update public.round_robins
-			set current_position = $3, updated_at = now()
-			where organization_id = $1::uuid and id = $2::uuid
-		`, session.OrganizationID, assignment.RoundRobinID, assignment.RoundRobinPosition); err != nil {
-			return nativeEvolutionLead{}, err
-		}
-		if _, err := tx.Exec(ctx, `
-			insert into public.round_robin_logs (
-			  organization_id, round_robin_id, lead_id, assigned_user_id, reason, metadata
-			)
-			select $1::uuid, $2::uuid, $3::uuid, $4::uuid, 'whatsapp_inbound_rule', $5::jsonb
-			where not exists (
-			  select 1 from public.round_robin_logs log
-			  where log.organization_id = $1::uuid and log.round_robin_id = $2::uuid
-			    and log.lead_id = $3::uuid and log.metadata->>'message_id' = $6
-			)
-		`, session.OrganizationID, assignment.RoundRobinID, lead.ID, assignment.UserID,
-			jsonb(map[string]any{
-				"whatsapp_session_id": session.ID,
-				"matched_rule_id":     rule.ID,
-				"message_id":          message.ProviderMessageID,
-			}), message.ProviderMessageID); err != nil {
-			return nativeEvolutionLead{}, err
-		}
+	if rule.ManagedMessageDistribution {
+		return lead, nil
+	}
+	var roundRobinID *string
+	if targetRoundRobinID != "" {
+		roundRobinID = &targetRoundRobinID
+	}
+	distributionSource := "whatsapp"
+	distributionResult, err := distribution.Distribute(ctx, tx, distribution.Request{
+		OrganizationID:   session.OrganizationID,
+		LeadID:           lead.ID,
+		IdempotencyKey:   distribution.StableKey("whatsapp-native", session.ID, message.ProviderMessageID),
+		RoundRobinID:     roundRobinID,
+		PreserveAssignee: true,
+		Source:           &distributionSource,
+		OccurredAt:       message.SentAt,
+	})
+	if err != nil {
+		return nativeEvolutionLead{}, err
+	}
+	if distributionResult.AssignedUserID != nil {
+		lead.AssignedUserID = *distributionResult.AssignedUserID
+	} else {
+		lead.AssignedUserID = ""
 	}
 	return lead, nil
 }
@@ -1929,6 +1933,28 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 			}
 		}
 
+		notificationReceipt := receipt
+		notificationReceipt.MessageIDs = make([]string, 0, len(receipt.MessageIDs))
+		for _, id := range receipt.MessageIDs {
+			if !matched[id] {
+				notificationReceipt.MessageIDs = append(notificationReceipt.MessageIDs, id)
+			}
+		}
+		if len(notificationReceipt.MessageIDs) > 0 {
+			notificationMatches, err := reconcileNativeNotificationWhatsAppReceipt(
+				ctx,
+				tx,
+				session.OrganizationID,
+				notificationReceipt,
+			)
+			if err != nil {
+				return err
+			}
+			for id := range notificationMatches {
+				matched[id] = true
+			}
+		}
+
 		missing := []string{}
 		for _, id := range receipt.MessageIDs {
 			if !matched[id] {
@@ -1945,6 +1971,63 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+func reconcileNativeNotificationWhatsAppReceipt(
+	ctx context.Context,
+	tx pgx.Tx,
+	organizationID string,
+	receipt nativeEvolutionStatus,
+) (map[string]bool, error) {
+	matched := map[string]bool{}
+	status := strings.ToLower(strings.TrimSpace(receipt.Status))
+	if status != "delivered" && status != "read" && status != "failed" {
+		return matched, nil
+	}
+
+	for _, messageID := range receipt.MessageIDs {
+		messageID = strings.TrimSpace(messageID)
+		if messageID == "" {
+			continue
+		}
+		var rawOutcome string
+		if err := tx.QueryRow(ctx, `
+			select private.reconcile_notification_whatsapp_delivery(
+				$1::uuid,
+				$2,
+				$3,
+				$4::timestamptz
+			)::text
+		`, organizationID, messageID, status, receipt.OccurredAt).Scan(&rawOutcome); err != nil {
+			return nil, err
+		}
+
+		var result struct {
+			Outcome string `json:"outcome"`
+		}
+		if err := json.Unmarshal([]byte(rawOutcome), &result); err != nil {
+			return nil, fmt.Errorf("decode notification WhatsApp receipt outcome: %w", err)
+		}
+		reconciled, err := nativeNotificationReceiptOutcomeMatched(result.Outcome)
+		if err != nil {
+			return nil, fmt.Errorf("notification WhatsApp receipt %s: %w", messageID, err)
+		}
+		if reconciled {
+			matched[messageID] = true
+		}
+	}
+	return matched, nil
+}
+
+func nativeNotificationReceiptOutcomeMatched(outcome string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(outcome)) {
+	case "applied", "already_applied", "stale":
+		return true, nil
+	case "not_found", "ambiguous", "invalid_status":
+		return false, fmt.Errorf("reconciliation rejected outcome %q", outcome)
+	default:
+		return false, fmt.Errorf("unexpected reconciliation outcome %q", outcome)
+	}
 }
 
 func markNativeMatchedIDs(matched map[string]bool, expected []string, actual ...string) {

@@ -15,6 +15,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { DatePreset } from "@/hooks/use-dashboard-filters";
 import { DateFilterPopover } from "@/components/ui/date-filter-popover";
+import { BRAND_COLORS } from "@/config/brand-colors";
 import { normalizeSearchText, searchTextIncludes } from "@/lib/search-text";
 
 interface SharedFiltersProps {
@@ -27,6 +28,13 @@ interface SharedFiltersProps {
   onTeamChange: (teamId: string | null) => void;
   userId: string | null;
   onUserChange: (userId: string | null) => void;
+
+  pipelineId?: string | null;
+  onPipelineChange?: (pipelineId: string | null) => void;
+  pipelines?: { id: string; name: string }[];
+  stageId?: string | null;
+  onStageChange?: (stageId: string | null) => void;
+  stages?: { id: string; name: string }[];
 
   source: string | null;
   onSourceChange: (source: string | null) => void;
@@ -76,6 +84,12 @@ export function SharedFilters({
   onTeamChange,
   userId,
   onUserChange,
+  pipelineId = null,
+  onPipelineChange,
+  pipelines = [],
+  stageId = null,
+  onStageChange,
+  stages = [],
   source,
   onSourceChange,
   campaignId,
@@ -267,6 +281,8 @@ export function SharedFilters({
   const hasExtraFilters =
     teamId !== null ||
     (userId !== null && userId !== "all") ||
+    pipelineId !== null ||
+    stageId !== null ||
     source !== null ||
     campaignId !== null ||
     adSetId !== null ||
@@ -275,9 +291,12 @@ export function SharedFilters({
     dealStatus !== null ||
     searchQuery !== "";
 
-  const filterSelectContentClass = "z-[130]";
+  const filterSelectContentClass =
+    "app-header-popover z-[130] rounded-[8px] border-0 p-1 [&_[role=option]]:rounded-[6px] [&_[role=option]]:text-[12px] [&_[role=option]]:font-light";
   const dashboardTriggerClass =
-    "h-8 gap-2 rounded-[6px] border-0 bg-[var(--app-surface)] px-3 text-[11px] font-semibold uppercase tracking-wider text-[var(--app-text-primary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] focus-visible:ring-1 focus-visible:ring-primary/30";
+    "h-8 gap-1.5 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2.5 text-[10px] font-light normal-case tracking-normal text-[var(--app-text-secondary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] focus-visible:ring-1 focus-visible:ring-primary/30";
+  const filterControlClass =
+    "h-8 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2.5 text-[12px] font-light text-[var(--app-text-primary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] focus:ring-1 focus:ring-primary/30";
   const isFilterFloatingLayer = (target: EventTarget | null) => {
     const element = target instanceof Element ? target : null;
     return Boolean(
@@ -309,9 +328,9 @@ export function SharedFilters({
           triggerDataTour={tourPrefix ? `${tourPrefix}-date-filter` : undefined}
           triggerClassName={cn(
             dashboardTriggerClass,
-            isMobile ? "px-2 text-xs font-medium normal-case tracking-normal" : "",
+            isMobile && "px-2",
             useMobileIcons && "w-8 px-0",
-            (datePreset !== "last30days" || customDateRange) && "bg-primary/10 text-primary hover:bg-primary/15",
+            (datePreset !== "last30days" || customDateRange) && "bg-primary/50 text-white hover:bg-primary hover:text-white",
             triggerClassName,
           )}
           iconOnly={useMobileIcons}
@@ -330,9 +349,9 @@ export function SharedFilters({
               data-tour={tourPrefix ? `${tourPrefix}-advanced-filters` : undefined}
               className={cn(
                 dashboardTriggerClass,
-                isMobile ? "px-2.5 text-xs font-medium normal-case tracking-normal" : "",
+                isMobile && "px-2",
                 useMobileIcons && "w-8 px-0",
-                hasExtraFilters && "bg-primary/10 text-primary hover:bg-primary/15",
+                hasExtraFilters && "bg-primary/50 text-white hover:bg-primary hover:text-white",
                 triggerClassName,
               )}
             >
@@ -371,16 +390,16 @@ export function SharedFilters({
             }}
             onDoubleClick={(e) => e.stopPropagation()}
             className={cn(
-              "z-[100] w-72 p-3 border-white/[0.055] shadow-2xl",
-              isMobile && "w-[280px] max-h-[80vh] overflow-y-auto",
+              "app-header-popover z-[100] w-72 rounded-[8px] border-0 p-2.5",
+              isMobile && "max-h-[80dvh] w-[280px] overflow-y-auto",
             )}
           >
             {/* ✅ FIX: Conteúdo do filtro como JSX direto, não como sub-componente
                 Sub-componentes definidos dentro do pai são recriados a cada render,
                 causando desmontagem do <Input> e perda de foco a cada keystroke */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between border-b border-white/[0.055] pb-2">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between pb-1">
+                <span className="text-[12px] font-light text-[var(--app-text-secondary)]">
                   Filtros Avançados
                 </span>
                 {hasActiveFilters && (
@@ -388,7 +407,7 @@ export function SharedFilters({
                     variant="ghost"
                     size="sm"
                     onClick={handleClearFilters}
-                    className="h-5 px-1.5 text-[9px] uppercase font-bold text-primary hover:bg-primary/10"
+                    className="h-7 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2 text-[10px] font-light text-primary shadow-none hover:bg-[var(--app-surface-hover)]"
                   >
                     Limpar
                   </Button>
@@ -416,9 +435,60 @@ export function SharedFilters({
                         e.stopPropagation();
                       }}
                       autoComplete="off"
-                      className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] pl-8 text-xs text-[var(--app-text-primary)] placeholder:text-muted-foreground focus:bg-[var(--app-surface-hover)]"
+                      className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] pl-8 text-[12px] font-light text-[var(--app-text-primary)] shadow-none placeholder:text-[var(--app-text-tertiary)] focus:bg-[var(--app-surface-hover)] focus-visible:ring-1 focus-visible:ring-primary/30"
                     />
                   </div>
+                )}
+
+                {onPipelineChange && pipelines.length > 0 && (
+                  <Select
+                    value={pipelineId || "all"}
+                    onOpenChange={markInternalSelectInteraction}
+                    onValueChange={(value) => {
+                      onPipelineChange(value === "all" ? null : value);
+                      onStageChange?.(null);
+                    }}
+                  >
+                    <SelectTrigger
+                      aria-label="Filtrar por pipeline"
+                      onPointerDown={markInternalSelectInteraction}
+                      className={cn(filterControlClass, pipelineId && "text-primary")}
+                    >
+                      <SelectValue placeholder="Pipeline" />
+                    </SelectTrigger>
+                    <SelectContent className={filterSelectContentClass}>
+                      <SelectItem value="all">Todas pipelines</SelectItem>
+                      {pipelines.map((pipeline) => (
+                        <SelectItem key={pipeline.id} value={pipeline.id}>
+                          {pipeline.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+
+                {onStageChange && pipelineId && stages.length > 0 && (
+                  <Select
+                    value={stageId || "all"}
+                    onOpenChange={markInternalSelectInteraction}
+                    onValueChange={(value) => onStageChange(value === "all" ? null : value)}
+                  >
+                    <SelectTrigger
+                      aria-label="Filtrar por estágio"
+                      onPointerDown={markInternalSelectInteraction}
+                      className={cn(filterControlClass, stageId && "text-primary")}
+                    >
+                      <SelectValue placeholder="Estágio" />
+                    </SelectTrigger>
+                    <SelectContent className={filterSelectContentClass}>
+                      <SelectItem value="all">Todos estágios</SelectItem>
+                      {stages.map((stage) => (
+                        <SelectItem key={stage.id} value={stage.id}>
+                          {stage.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 )}
 
                 {/* Team Filter */}
@@ -433,7 +503,7 @@ export function SharedFilters({
                   >
                     <SelectTrigger
                       onPointerDown={markInternalSelectInteraction}
-                      className={cn("h-9 w-full text-xs", teamId && "border-primary text-primary")}
+                      className={cn(filterControlClass, teamId && "text-primary")}
                     >
                       <Users className="h-3.5 w-3.5 mr-1.5 flex-shrink-0" />
                       <SelectValue placeholder="Equipe" />
@@ -459,7 +529,8 @@ export function SharedFilters({
                         aria-expanded={userFilterOpen}
                         onPointerDown={markInternalSelectInteraction}
                         className={cn(
-                          "h-9 w-full justify-between rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-xs font-normal text-[var(--app-text-primary)] shadow-none outline-none ring-0 transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=open]:bg-[var(--app-surface-hover)]",
+                          filterControlClass,
+                          "justify-between outline-none ring-0 focus-visible:ring-1 focus-visible:ring-primary/30 focus-visible:ring-offset-0 data-[state=open]:bg-[var(--app-surface-hover)]",
                           userId && userId !== "all" && "text-primary",
                         )}
                       >
@@ -481,16 +552,17 @@ export function SharedFilters({
                     </PopoverTrigger>
                     <PopoverContent
                       align="start"
-                      className="z-[140] w-[260px] p-0"
+                      className="app-header-popover z-[140] w-[260px] rounded-[8px] border-0 p-1"
                       onOpenAutoFocus={(event) => event.preventDefault()}
                       onPointerDownCapture={markInternalSelectInteraction}
                       onDoubleClick={(event) => event.stopPropagation()}
                     >
-                      <Command shouldFilter={false} className="[&_[cmdk-input-wrapper]]:border-b-0">
+                      <Command shouldFilter={false} className="rounded-[6px] bg-transparent text-[12px] font-light [&_[cmdk-input-wrapper]]:border-b-0">
                         <CommandInput
                           placeholder="Buscar corretor..."
                           value={userSearch}
                           onValueChange={setUserSearch}
+                          className="h-9 text-[12px] font-light"
                         />
                         <CommandList className="max-h-[260px]">
                           {matchingUsers.length === 0 ? (
@@ -499,7 +571,7 @@ export function SharedFilters({
                             <CommandGroup>
                               <CommandItem
                                 value="all"
-                                className="rounded-[6px] border-0 outline-none focus-visible:ring-0 data-[selected=true]:bg-[var(--app-surface-hover)]"
+                                className="rounded-[6px] border-0 text-[12px] font-light outline-none focus-visible:ring-0 data-[selected=true]:bg-[var(--app-surface-hover)]"
                                 onSelect={() => {
                                   onUserChange(null);
                                   setUserSearch("");
@@ -518,7 +590,7 @@ export function SharedFilters({
                                 <CommandItem
                                   key={availableUser.id}
                                   value={`${availableUser.name || ""} ${availableUser.email || ""}`}
-                                  className="rounded-[6px] border-0 outline-none focus-visible:ring-0 data-[selected=true]:bg-[var(--app-surface-hover)]"
+                                  className="rounded-[6px] border-0 text-[12px] font-light outline-none focus-visible:ring-0 data-[selected=true]:bg-[var(--app-surface-hover)]"
                                   onSelect={() => {
                                     onUserChange(availableUser.id);
                                     setUserSearch("");
@@ -564,7 +636,7 @@ export function SharedFilters({
                     disabled={isLoadingSources}
                     aria-busy={isLoadingSources}
                     onPointerDown={markInternalSelectInteraction}
-                    className={cn("h-9 w-full text-xs", source && "border-primary text-primary")}
+                    className={cn(filterControlClass, source && "text-primary")}
                   >
                     <Globe className="h-3.5 w-3.5 mr-1.5 flex-shrink-0" />
                     <SelectValue placeholder={isLoadingSources ? "Carregando..." : "Origem"} />
@@ -587,7 +659,7 @@ export function SharedFilters({
                 >
                   <SelectTrigger
                     onPointerDown={markInternalSelectInteraction}
-                    className={cn("h-9 w-full text-xs", tagId && "border-primary text-primary")}
+                    className={cn(filterControlClass, tagId && "text-primary")}
                   >
                     <TagIcon className="h-3.5 w-3.5 mr-1.5 flex-shrink-0" />
                     <SelectValue placeholder="Tag" />
@@ -613,7 +685,7 @@ export function SharedFilters({
                 >
                   <SelectTrigger
                     onPointerDown={markInternalSelectInteraction}
-                    className={cn("h-9 w-full text-xs", dealStatus && "border-primary text-primary")}
+                    className={cn(filterControlClass, dealStatus && "text-primary")}
                   >
                     <CircleDot className="h-3.5 w-3.5 mr-1.5 flex-shrink-0" />
                     <SelectValue placeholder="Status" />
@@ -627,10 +699,10 @@ export function SharedFilters({
                 </Select>
 
                 {/* Meta Filters */}
-                <div className="space-y-2 pt-2 border-t border-white/[0.055]">
-                  <div className="flex items-center gap-1.5 px-1 mb-1">
-                    <Globe className="h-3 w-3 text-[#1877F2]" />
-                    <span className="text-[10px] font-bold text-muted-foreground">CAMPANHAS META</span>
+                <div className="space-y-2 border-t border-[var(--app-border)] pt-2">
+                  <div className="mb-1 flex items-center gap-1.5 px-1">
+                    <Globe className="h-3 w-3" style={{ color: BRAND_COLORS.meta }} />
+                    <span className="text-[10px] font-light text-[var(--app-text-tertiary)]">Campanhas Meta</span>
                   </div>
 
                   <div className="space-y-2">
@@ -646,14 +718,14 @@ export function SharedFilters({
                           disabled={isLoadingCampaigns}
                           aria-busy={isLoadingCampaigns}
                           onPointerDown={markInternalSelectInteraction}
-                          className="h-8 text-xs bg-white/[0.035] border-white/[0.055]"
+                          className={filterControlClass}
                         >
                           <SelectValue placeholder={isLoadingCampaigns ? "Carregando campanhas..." : "Todas campanhas"} />
                         </SelectTrigger>
                         <SelectContent className={filterSelectContentClass}>
                           <SelectItem value="all">Todas campanhas</SelectItem>
                           {isLoadingCampaigns && (
-                            <div className="p-2 text-[10px] text-center text-muted-foreground">
+                            <div className="p-2 text-center text-[12px] font-light text-[var(--app-text-tertiary)]">
                               Carregando campanhas...
                             </div>
                           )}
@@ -663,7 +735,7 @@ export function SharedFilters({
                             </SelectItem>
                           ))}
                           {!isLoadingCampaigns && campaigns.length === 0 && (
-                            <div className="p-2 text-[10px] text-center text-muted-foreground">
+                            <div className="p-2 text-center text-[12px] font-light text-[var(--app-text-tertiary)]">
                               Nenhuma campanha no período
                             </div>
                           )}
@@ -684,7 +756,7 @@ export function SharedFilters({
                             disabled={isLoadingAdSets}
                             aria-busy={isLoadingAdSets}
                             onPointerDown={markInternalSelectInteraction}
-                            className="h-8 text-xs bg-white/[0.035] border-white/[0.055] animate-in fade-in slide-in-from-top-1"
+                            className={cn(filterControlClass, "animate-in fade-in slide-in-from-top-1")}
                           >
                             <SelectValue placeholder={isLoadingAdSets ? "Carregando..." : "Todos conjuntos"} />
                           </SelectTrigger>
@@ -713,7 +785,7 @@ export function SharedFilters({
                             disabled={isLoadingAds}
                             aria-busy={isLoadingAds}
                             onPointerDown={markInternalSelectInteraction}
-                            className="h-8 text-xs bg-white/[0.035] border-white/[0.055] animate-in fade-in slide-in-from-top-1"
+                            className={cn(filterControlClass, "animate-in fade-in slide-in-from-top-1")}
                           >
                             <SelectValue placeholder={isLoadingAds ? "Carregando..." : "Todos criativos"} />
                           </SelectTrigger>
@@ -740,7 +812,7 @@ export function SharedFilters({
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 px-2 text-muted-foreground hover:text-destructive transition-colors"
+            className="h-8 w-8 rounded-[6px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-secondary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
             onClick={handleClearFilters}
             title="Limpar todos os filtros"
           >
@@ -758,9 +830,9 @@ export function SharedFilters({
           onCustomDateRangeChange={onCustomDateRangeChange}
           triggerDataTour={tourPrefix ? `${tourPrefix}-date-filter` : undefined}
           triggerClassName={cn(
-            "h-8 gap-2 text-[11px] font-semibold uppercase tracking-wider px-3 border-white/[0.08] hover:border-primary/50 transition-colors",
-            isMobile ? "px-2 text-xs font-medium normal-case tracking-normal" : "",
-            (datePreset !== "last30days" || customDateRange) && "border-primary/50 bg-primary/5 text-primary",
+            dashboardTriggerClass,
+            isMobile && "px-2",
+            (datePreset !== "last30days" || customDateRange) && "bg-primary/50 text-white hover:bg-primary hover:text-white",
             triggerClassName,
           )}
           iconOnly={useMobileIcons}

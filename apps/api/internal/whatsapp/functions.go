@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/supabasehttp"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
@@ -120,8 +121,7 @@ func (client functionsClient) invoke(ctx context.Context, functionName string, b
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("apikey", client.apiKey)
-	request.Header.Set("Authorization", "Bearer "+client.apiKey)
+	supabasehttp.SetServiceAuth(request, client.apiKey)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 

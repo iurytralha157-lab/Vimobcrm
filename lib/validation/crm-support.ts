@@ -36,20 +36,14 @@ export const apiContactSchema = z.object({
 }).passthrough()
 export const apiContactListResponseSchema = apiEnvelopeSchema(z.array(apiContactSchema))
 
-const tagShape = {
-  name: z.string().trim().min(1).max(120).optional(),
-  color: z.string().trim().min(1).max(30).optional(),
-  description: z.string().trim().max(500).optional(),
+export const tagHexColorSchema = z.string().trim().regex(/^#[\da-f]{6}$/i, 'Use uma cor hexadecimal #RRGGBB')
+const tagMutationShape = {
+  name: z.string().trim().min(1).max(80),
+  color: tagHexColorSchema,
+  description: z.string().trim().max(300).optional(),
 }
-export const createTagInputSchema = z.object(tagShape).strict().superRefine((input, ctx) => {
-  for (const key of ['name', 'color'] as const) {
-    if (!input[key]) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: 'Campo obrigatorio' })
-  }
-})
-export const updateTagInputSchema = z.object(tagShape).strict().refine(
-  (input) => Object.keys(input).length > 0,
-  'Informe ao menos uma alteracao',
-)
+export const createTagInputSchema = z.object(tagMutationShape).strict()
+export const updateTagInputSchema = z.object(tagMutationShape).strict()
 export const apiTagSchema = z.object({
   id: uuidSchema,
   name: z.string(),
@@ -85,9 +79,79 @@ export const apiActivitySchema = z.object({
 export const apiActivityListResponseSchema = apiEnvelopeSchema(z.array(apiActivitySchema))
 export const apiActivityResponseSchema = apiEnvelopeSchema(apiActivitySchema)
 
+const availabilityDayInputShape = {
+  day_of_week: z.number().int().min(0).max(6),
+  start_time: z.string().trim().max(20).nullish(),
+  end_time: z.string().trim().max(20).nullish(),
+  is_all_day: z.boolean().optional(),
+  is_active: z.boolean().optional(),
+}
+
+function validateAvailabilityTimeRange(
+  input: {
+    start_time?: string | null
+    end_time?: string | null
+    is_all_day?: boolean
+    is_active?: boolean
+  },
+  ctx: z.RefinementCtx,
+) {
+  if (input.is_active === false || input.is_all_day) return
+
+  const start = input.start_time?.slice(0, 5)
+  const end = input.end_time?.slice(0, 5)
+  const clockPattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/
+  if (!start || !clockPattern.test(start)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['start_time'],
+      message: 'Horario inicial invalido',
+    })
+  }
+  if (!end || !clockPattern.test(end)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['end_time'],
+      message: 'Horario final invalido',
+    })
+  }
+  if (start && end && clockPattern.test(start) && clockPattern.test(end) && start >= end) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['end_time'],
+      message: 'Horario final deve ser posterior ao horario inicial',
+    })
+  }
+}
+
+const availabilityDayInputSchema = z
+  .object(availabilityDayInputShape)
+  .strict()
+  .superRefine(validateAvailabilityTimeRange)
+
+export const memberAvailabilityWeekInputSchema = z
+  .array(availabilityDayInputSchema)
+  .length(7)
+  .superRefine((availability, ctx) => {
+    const days = new Set(availability.map((entry) => entry.day_of_week))
+    if (days.size !== 7 || [...Array(7)].some((_, day) => !days.has(day))) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'A escala deve conter exatamente os sete dias da semana',
+      })
+    }
+    if (!availability.some((entry) => entry.is_active !== false)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'A escala deve ter ao menos um dia ativo',
+      })
+    }
+  })
+
 const teamMemberInputSchema = z.object({
   userId: uuidSchema,
   isLeader: z.boolean().optional(),
+  availability: memberAvailabilityWeekInputSchema.optional(),
 }).strict()
 const teamMutationShape = {
   name: z.string().trim().min(1).max(120).optional(),
@@ -97,9 +161,32 @@ const teamMutationShape = {
   is_active: z.boolean().optional(),
   preserveLeadership: z.boolean().optional(),
 }
-export const createTeamInputSchema = z.object(teamMutationShape).strict().refine(
-  (input) => Boolean(input.name),
-  { path: ['name'], message: 'Nome e obrigatorio' },
+export const createTeamInputSchema = z.object(teamMutationShape).strict().superRefine(
+  (input, ctx) => {
+    if (!input.name) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['name'],
+        message: 'Nome e obrigatorio',
+      })
+    }
+    if (input.memberIds?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['memberIds'],
+        message: 'Use members para informar a escala de cada membro',
+      })
+    }
+    input.members?.forEach((member, index) => {
+      if (!member.availability) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['members', index, 'availability'],
+          message: 'A escala completa e obrigatoria ao criar uma equipe',
+        })
+      }
+    })
+  },
 )
 export const updateTeamBodySchema = z.object(teamMutationShape).strict().refine(
   (input) => Object.values(input).some((value) => value !== undefined),
@@ -111,16 +198,15 @@ export const teamLeaderInputSchema = z.object({
   userId: uuidSchema,
   isLeader: z.boolean(),
 }).strict()
-export const availabilityInputSchema = z.object({
-  team_member_id: uuidSchema,
-  day_of_week: z.number().int().min(0).max(6),
-  start_time: z.string().trim().max(20).nullish(),
-  end_time: z.string().trim().max(20).nullish(),
-  is_all_day: z.boolean().optional(),
-  is_active: z.boolean().optional(),
-}).strict()
+export const availabilityInputSchema = z
+  .object({
+    team_member_id: uuidSchema,
+    ...availabilityDayInputShape,
+  })
+  .strict()
+  .superRefine(validateAvailabilityTimeRange)
 export const bulkAvailabilityInputSchema = z.object({
-  availability: z.array(availabilityInputSchema.omit({ team_member_id: true })).max(50),
+  availability: memberAvailabilityWeekInputSchema,
 }).strict()
 
 const apiTeamUserSchema = z.object({
@@ -184,6 +270,7 @@ const roundRobinMemberInputSchema = z.object({
   id: uuidSchema.optional(),
   type: z.enum(['user', 'team']),
   entityId: uuidSchema,
+  teamId: uuidSchema.optional(),
   weight: z.number().int().min(1).max(1_000).optional(),
 }).strict()
 const roundRobinShape = {
@@ -299,10 +386,13 @@ export const apiNotificationSchema = z.object({
   type: z.string(),
   is_read: z.boolean(),
   lead_id: uuidSchema.nullable(),
+  target_url: z.string().nullable().optional(),
   metadata: z.record(z.unknown()).nullable().optional(),
   created_at: timestampSchema,
 }).passthrough()
-export const apiNotificationListResponseSchema = apiEnvelopeSchema(z.array(apiNotificationSchema))
+export const apiNotificationListResponseSchema = apiEnvelopeSchema(z.array(apiNotificationSchema)).extend({
+  next_cursor: z.string().trim().min(1).max(512).nullable().optional(),
+})
 export const apiNotificationResponseSchema = apiEnvelopeSchema(apiNotificationSchema)
 export const apiUnreadCountResponseSchema = z.object({ count: nonNegativeIntegerSchema }).passthrough()
 export const apiDispatchNotificationResponseSchema = z.object({

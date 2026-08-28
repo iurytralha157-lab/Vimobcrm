@@ -7,6 +7,7 @@ import (
 var (
 	ErrInvalidInput     = errors.New("invalid financial input")
 	ErrNotFound         = errors.New("financial resource not found")
+	ErrConflict         = errors.New("financial state conflict")
 	ErrPermissionDenied = errors.New("financial permission denied")
 	ErrStorageFailed    = errors.New("financial storage operation failed")
 	ErrStorageMissing   = errors.New("financial storage is not configured")

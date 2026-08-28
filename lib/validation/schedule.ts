@@ -5,6 +5,10 @@ export const scheduleEventTypeSchema = z.enum(['call', 'email', 'meeting', 'task
 export const scheduleVisibilitySchema = z.enum(['default', 'public', 'private'])
 export const scheduleRecurrenceSchema = z.enum(['none', 'daily', 'weekly', 'monthly', 'yearly'])
 export const scheduleStatusSchema = z.enum(['scheduled', 'completed', 'cancelled', 'canceled', 'no_show'])
+export const scheduleClockInputSchema = z.string().trim().regex(
+  /^(?:[01]\d|2[0-3]):[0-5]\d$/,
+  'Horario invalido',
+)
 
 const eventDateSchema = z.string().trim().refine(
   (value) => Number.isFinite(Date.parse(value)),
@@ -54,6 +58,7 @@ export const updateScheduleEventInputSchema = z.object({
   visibility: scheduleVisibilitySchema.optional(),
   reminder_minutes: nonNegativeIntegerSchema.nullish(),
   recurrence_rule: scheduleRecurrenceSchema.nullish(),
+  assignee_ids: z.array(uuidSchema).max(100).optional(),
 }).strict().refine(
   (input) => Object.values(input).some((value) => value !== undefined),
   'Informe ao menos uma alteracao',

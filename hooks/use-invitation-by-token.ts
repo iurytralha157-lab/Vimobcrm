@@ -1,5 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { adminAPI } from '@/lib/api/admin';
+import {
+  getInvitationLookupState,
+  isInvitationLookupRetryable,
+  normalizeInvitationToken,
+} from '@/lib/auth/invitation';
 
 interface InvitationByToken {
   id: string;
@@ -11,16 +16,30 @@ interface InvitationByToken {
   existing_account?: boolean;
 }
 
-export function useInvitationByToken(token: string | null) {
-  return useQuery({
-    queryKey: ['invitation-by-token', token],
+export function useInvitationByToken(token: string | null | undefined) {
+  const canonicalToken = normalizeInvitationToken(token);
+  const query = useQuery({
+    queryKey: ['invitation-by-token', canonicalToken],
     queryFn: async (): Promise<InvitationByToken | null> => {
-      if (!token) return null;
+      if (!canonicalToken) return null;
 
-      return adminAPI.invitationByToken<InvitationByToken>(token);
+      return adminAPI.invitationByToken<InvitationByToken>(canonicalToken);
     },
-    enabled: !!token,
+    enabled: canonicalToken !== null,
     staleTime: 1000 * 60 * 5,
-    retry: false,
+    retry: (failureCount, error) => failureCount < 2 && isInvitationLookupRetryable(error),
+    retryDelay: (attempt) => Math.min(500 * (2 ** attempt), 1_500),
   });
+
+  return {
+    ...query,
+    canonicalToken,
+    invitationState: getInvitationLookupState({
+      token,
+      hasInvitation: Boolean(query.data),
+      isPending: query.isPending,
+      error: query.error,
+    }),
+    retryLookup: query.refetch,
+  };
 }

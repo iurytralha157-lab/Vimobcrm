@@ -172,7 +172,15 @@ export interface WhatsAppMessage {
 export interface ConversationFilters {
   hideGroups?: boolean
   showArchived?: boolean
+  onlyLeads?: boolean
+  withoutLead?: boolean
+  pendingReply?: boolean
   search?: string
+}
+
+export type WhatsAppConversationsPage = {
+  conversations: WhatsAppConversation[]
+  nextCursor: string | null
 }
 
 export type WhatsAppMessagesPage = {
@@ -386,6 +394,38 @@ export const whatsappAPI = {
     })
   },
 
+  async getConversationsPage(params: {
+    organizationId?: string | null
+    sessionId?: string
+    filters?: ConversationFilters
+    accessibleSessionIds?: string[]
+    limit?: number
+    cursor?: string | null
+  }) {
+    const response = await vimobAPIRequest<Envelope<WhatsAppConversation[]> & {
+      meta?: { nextCursor?: string | null }
+    }>('/v1/whatsapp/conversations', {
+      organizationId: params.organizationId,
+      query: {
+        sessionId: params.sessionId,
+        hideGroups: params.filters?.hideGroups,
+        showArchived: params.filters?.showArchived,
+        onlyLeads: params.filters?.onlyLeads,
+        withoutLead: params.filters?.withoutLead,
+        pendingReply: params.filters?.pendingReply,
+        search: params.filters?.search,
+        sessionIds: params.accessibleSessionIds?.join(','),
+        limit: params.limit,
+        cursor: params.cursor,
+      },
+    })
+    validateDomainResponse(whatsAppConversationsResponseSchema, response, 'whatsapp.conversations.list')
+    return {
+      conversations: response.data,
+      nextCursor: response.meta?.nextCursor ?? null,
+    } satisfies WhatsAppConversationsPage
+  },
+
   async getConversations(params: {
     organizationId?: string | null
     sessionId?: string
@@ -393,19 +433,8 @@ export const whatsappAPI = {
     accessibleSessionIds?: string[]
     limit?: number
   }) {
-    const response = await vimobAPIRequest<Envelope<WhatsAppConversation[]>>('/v1/whatsapp/conversations', {
-      organizationId: params.organizationId,
-      query: {
-        sessionId: params.sessionId,
-        hideGroups: params.filters?.hideGroups,
-        showArchived: params.filters?.showArchived,
-        search: params.filters?.search,
-        sessionIds: params.accessibleSessionIds?.join(','),
-        limit: params.limit,
-      },
-    })
-    validateDomainResponse(whatsAppConversationsResponseSchema, response, 'whatsapp.conversations.list')
-    return response.data
+    const page = await this.getConversationsPage(params)
+    return page.conversations
   },
 
   async startConversation(input: {

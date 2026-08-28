@@ -5,7 +5,17 @@ import Link from "next/link";
 import { Heart, Mail, MapPin, Menu, MessageCircle, Phone } from "lucide-react";
 
 import type { PublicSiteConfig, SiteMenuItem } from "@/lib/api/public-site-server";
-import { buildSiteHref, defaultMenuItems, getSiteDescription, getSiteTitle, getThemeTokens } from "./public-site-utils";
+import {
+  buildSiteHref,
+  defaultMenuItems,
+  getPublicEmailHref,
+  getPublicPhoneHref,
+  getSiteDescription,
+  getSiteTitle,
+  getThemeTokens,
+  normalizePublicExternalUrl,
+  normalizePublicImageUrl,
+} from "./public-site-utils";
 import { PublicSiteTracker } from "./PublicSiteTracker";
 import { PublicContactLeadDialog } from "./PublicContactLeadDialog";
 import { PublicCookieConsent } from "./PublicCookieConsent";
@@ -37,19 +47,43 @@ export function PublicSiteShell({
   const navItems = menuItems.length > 0 ? menuItems : defaultMenuItems;
   const desktopNavItems = buildDesktopNavItems(navItems);
   const title = getSiteTitle(site);
+  const logoUrl = normalizePublicImageUrl(site.logo_url);
+  const logoWidth = normalizeLogoDimension(site.logo_width, 176);
+  const logoHeight = normalizeLogoDimension(site.logo_height, 48);
+  const phoneHref = getPublicPhoneHref(site.phone);
+  const emailHref = getPublicEmailHref(site.email);
   const isPlenusSite = /plenus/i.test(`${site.organization_name || ""} ${site.custom_domain || ""} ${site.subdomain || ""}`);
   const whatsAppDefaultMessage = buildWhatsAppDefaultMessage(propertyTitle, propertyCode);
   const style = {
     "--site-bg": tokens.background,
     "--site-fg": tokens.foreground,
     "--site-card": tokens.card,
+    "--site-card-fg": tokens.cardForeground,
     "--site-primary": tokens.primary,
+    "--site-primary-fg": tokens.primaryForeground,
     "--site-secondary": tokens.secondary,
+    "--site-secondary-fg": tokens.secondaryForeground,
     "--site-accent": tokens.accent,
+    "--site-header": tokens.header,
+    "--site-header-hover": tokens.headerHover,
+    "--site-header-fg": tokens.headerText,
+    "--site-inverse": tokens.inverse,
+    "--site-inverse-fg": tokens.inverseForeground,
+    "--site-inverse-hover": tokens.inverseHover,
+    "--site-modal-overlay": tokens.modalOverlay,
+    "--site-on-dark": tokens.onDark,
+    "--site-on-dark-muted": tokens.onDarkMuted,
+    "--site-on-dark-soft": tokens.onDarkSoft,
+    "--site-on-dark-soft-hover": tokens.onDarkSoftHover,
+    "--site-overlay": tokens.overlay,
+    "--site-overlay-soft": tokens.overlaySoft,
+    "--site-overlay-strong": tokens.overlayStrong,
+    "--site-whatsapp": tokens.whatsapp,
+    "--site-whatsapp-fg": tokens.whatsappForeground,
   } as CSSProperties;
 
   return (
-    <div className="min-h-screen bg-[var(--site-bg)] text-[var(--site-fg)]" style={style}>
+    <div className="min-h-screen bg-[var(--site-bg)] text-[var(--site-fg)] font-light" style={style}>
       <PublicSiteStructuredData basePath={basePath} isHome={isHome} site={site} />
       <PublicTrackingScripts
         bodyScripts={site.body_scripts}
@@ -61,44 +95,43 @@ export function PublicSiteShell({
       />
       <PublicSiteTracker organizationId={site.organization_id} pageTitle={pageTitle} propertyId={propertyId} />
 
-      <header className="fixed inset-x-0 top-3 z-50 px-3 text-white sm:top-4 sm:px-4">
-        <div className="mx-auto flex min-h-[72px] w-full max-w-7xl items-center justify-between gap-5 rounded-[14px] bg-[#30332f]/78 px-5 backdrop-blur-xl sm:px-8 lg:min-h-[86px] lg:px-12">
-          <Link href={buildSiteHref(basePath, "/")} className="flex min-w-0 items-center gap-3">
-            {site.logo_url ? (
+      <a
+        href="#public-site-content"
+        className="fixed left-3 top-3 z-[100] -translate-y-24 rounded-[6px] bg-[var(--site-card)] px-3 py-2 text-[12px] font-light text-[var(--site-card-fg)] outline-none focus:translate-y-0 focus:ring-2 focus:ring-[var(--site-primary)]"
+      >
+        Ir para o conteúdo
+      </a>
+
+      <header className="fixed inset-x-0 top-3 z-50 px-3 text-[var(--site-header-fg)] sm:top-4 sm:px-4">
+        <div className="mx-auto flex min-h-[72px] w-full max-w-7xl items-center justify-between gap-5 rounded-[8px] bg-[var(--site-header)] px-5 sm:px-8 lg:min-h-[86px] lg:px-12">
+          <Link href={buildSiteHref(basePath, "/")} className="flex min-w-0 items-center gap-3 rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--site-header-fg)]" aria-label={`${title}, página inicial`}>
+            {logoUrl ? (
               <img
-                src={site.logo_url}
-                alt={title}
+                src={logoUrl}
+                alt={`${title}, página inicial`}
+                width={logoWidth}
+                height={logoHeight}
                 className={[
                   "h-10 w-auto object-contain lg:h-12",
                   isPlenusSite ? "-ml-2 max-w-36 lg:-ml-4 lg:max-w-40" : "max-w-44",
                 ].join(" ")}
-                style={{ width: site.logo_width || undefined }}
+                decoding="async"
+                fetchPriority="high"
               />
             ) : (
-              <span className="truncate text-lg font-light tracking-wide">{title}</span>
+              <span className="truncate text-[14px] font-normal">{title}</span>
             )}
           </Link>
 
           <nav className="hidden items-center justify-center gap-7 lg:flex" aria-label="Menu principal">
             {desktopNavItems.map((item) => {
-              const href = buildSiteHref(basePath, item.href);
-              const isExternal = item.link_type === "external" || /^https?:\/\//i.test(item.href);
-              const className = "text-sm font-light uppercase text-white/76 transition hover:text-white";
-
-              return isExternal ? (
-                <a
+              return (
+                <SiteMenuLink
+                  basePath={basePath}
+                  className="rounded-[6px] text-[12px] font-light text-[var(--site-on-dark-muted)] outline-none hover:text-[var(--site-header-fg)] focus-visible:ring-2 focus-visible:ring-[var(--site-header-fg)]"
+                  item={item}
                   key={item.id || item.href}
-                  href={href}
-                  target={item.open_in_new_tab ? "_blank" : undefined}
-                  rel={item.open_in_new_tab ? "noreferrer" : undefined}
-                  className={className}
-                >
-                  {item.label}
-                </a>
-              ) : (
-                <Link key={item.id || item.href} href={href} className={className}>
-                  {item.label}
-                </Link>
+                />
               );
             })}
           </nav>
@@ -106,44 +139,41 @@ export function PublicSiteShell({
           <div className="hidden items-center gap-4 lg:flex">
             <Link
               href={buildSiteHref(basePath, "/favoritos")}
-              className="inline-flex h-11 w-11 items-center justify-center rounded-full text-white/88 transition hover:bg-white/10 hover:text-white"
+              className="inline-flex h-11 w-11 items-center justify-center rounded-full text-[var(--site-header-fg)] opacity-90 outline-none hover:bg-[var(--site-header-hover)] hover:opacity-100 focus-visible:ring-2 focus-visible:ring-[var(--site-header-fg)]"
               aria-label="Favoritos"
             >
               <Heart className="h-5 w-5" strokeWidth={1.9} />
             </Link>
             <Link
               href={buildSiteHref(basePath, "/contato")}
-              className="inline-flex h-11 items-center justify-center rounded-[10px] px-7 text-sm font-light uppercase text-white transition hover:brightness-110"
-              style={{ backgroundColor: tokens.primary }}
+              className="inline-flex h-11 items-center justify-center rounded-[6px] bg-[var(--site-primary)] px-7 text-[12px] font-light text-[var(--site-primary-fg)] outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[var(--site-header-fg)]"
             >
               Contato
             </Link>
           </div>
 
           <details className="relative lg:hidden">
-            <summary className="flex h-10 w-11 cursor-pointer list-none items-center justify-center rounded-[10px] bg-white/10">
+            <summary className="flex h-10 w-11 cursor-pointer list-none items-center justify-center rounded-[6px] bg-[var(--site-header-hover)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--site-header-fg)]" aria-label="Abrir menu principal">
               <Menu className="h-5 w-5" strokeWidth={1.7} />
             </summary>
-            <div className="absolute right-0 top-12 w-64 rounded-[14px] bg-[#30332f]/98 p-2">
+            <div className="absolute right-0 top-12 w-64 rounded-[8px] bg-[var(--site-header)] p-2">
               {navItems.map((item) => (
-                <Link
+                <SiteMenuLink
+                  basePath={basePath}
+                  className="block rounded-[6px] px-3 py-3 text-[12px] font-light text-[var(--site-on-dark-muted)] outline-none hover:bg-[var(--site-header-hover)] hover:text-[var(--site-header-fg)] focus-visible:ring-2 focus-visible:ring-[var(--site-header-fg)]"
+                  item={item}
                   key={item.id || item.href}
-                  href={buildSiteHref(basePath, item.href)}
-                  className="block rounded-md px-3 py-3 text-sm font-extralight text-white/80 hover:bg-white/10"
-                >
-                  {item.label}
-                </Link>
+                />
               ))}
               <Link
                 href={buildSiteHref(basePath, "/favoritos")}
-                className="block rounded-md px-3 py-3 text-sm font-extralight text-white/80 hover:bg-white/10"
+                className="block rounded-[6px] px-3 py-3 text-[12px] font-light text-[var(--site-on-dark-muted)] outline-none hover:bg-[var(--site-header-hover)] hover:text-[var(--site-header-fg)] focus-visible:ring-2 focus-visible:ring-[var(--site-header-fg)]"
               >
                 Favoritos
               </Link>
               <Link
                 href={buildSiteHref(basePath, "/contato")}
-                className="mt-1 flex items-center gap-2 rounded-md px-3 py-3 text-sm font-extralight text-white"
-                style={{ backgroundColor: tokens.primary }}
+                className="mt-1 flex items-center gap-2 rounded-[6px] bg-[var(--site-primary)] px-3 py-3 text-[12px] font-light text-[var(--site-primary-fg)] outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[var(--site-header-fg)]"
               >
                 <MessageCircle className="h-4 w-4" />
                 Contato
@@ -153,7 +183,7 @@ export function PublicSiteShell({
         </div>
       </header>
 
-      <main>{children}</main>
+      <main id="public-site-content" tabIndex={-1}>{children}</main>
 
       {site.whatsapp ? (
         <PublicContactLeadDialog
@@ -169,29 +199,35 @@ export function PublicSiteShell({
         />
       ) : null}
 
-      <footer className="bg-[var(--site-secondary)] text-white">
+      <footer className="bg-[var(--site-secondary)] text-[var(--site-secondary-fg)]">
         <div className="mx-auto grid w-full max-w-7xl gap-8 px-4 py-10 sm:px-6 md:grid-cols-2 lg:grid-cols-4 lg:px-8">
           <section>
-            {site.logo_url ? (
-              <img src={site.logo_url} alt={title} className="mb-4 h-10 w-auto max-w-48 object-contain" />
+            {logoUrl ? (
+              <img
+                src={logoUrl}
+                alt={title}
+                width={logoWidth}
+                height={logoHeight}
+                className="mb-4 h-10 w-auto max-w-48 object-contain"
+                decoding="async"
+                loading="lazy"
+              />
             ) : (
-              <h2 className="mb-3 text-lg font-semibold">{title}</h2>
+              <h2 className="mb-3 text-[14px] font-normal">{title}</h2>
             )}
-            <p className="text-sm leading-6 text-white/64">{getSiteDescription(site)}</p>
+            <p className="text-[12px] font-light leading-6 opacity-70">{getSiteDescription(site)}</p>
           </section>
 
           <section>
-            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-white/90">Menu</h3>
-            <ul className="space-y-2 text-sm text-white/64">
+            <h3 className="mb-3 text-[14px] font-normal">Menu</h3>
+            <ul className="space-y-2 text-[12px] font-light opacity-70">
               {navItems.map((item) => (
                 <li key={item.id || item.href}>
-                  <Link href={buildSiteHref(basePath, item.href)} className="hover:text-white">
-                    {item.label}
-                  </Link>
+                  <SiteMenuLink basePath={basePath} className="rounded-[4px] outline-none hover:opacity-100 focus-visible:ring-2 focus-visible:ring-current" item={item} />
                 </li>
               ))}
               <li>
-                <Link href={buildSiteHref(basePath, "/politica-de-privacidade")} className="hover:text-white">
+                <Link href={buildSiteHref(basePath, "/politica-de-privacidade")} className="rounded-[4px] outline-none hover:opacity-100 focus-visible:ring-2 focus-visible:ring-current">
                   Política de Privacidade
                 </Link>
               </li>
@@ -199,11 +235,11 @@ export function PublicSiteShell({
           </section>
 
           <section>
-            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-white/90">Contato</h3>
-            <ul className="space-y-3 text-sm text-white/64">
-              {site.phone ? (
+            <h3 className="mb-3 text-[14px] font-normal">Contato</h3>
+            <ul className="space-y-3 text-[12px] font-light opacity-70">
+              {site.phone && phoneHref ? (
                 <li>
-                  <a href={`tel:${site.phone}`} className="flex items-center gap-2 hover:text-white">
+                  <a href={phoneHref} className="flex items-center gap-2 rounded-[4px] outline-none hover:opacity-100 focus-visible:ring-2 focus-visible:ring-current">
                     <Phone className="h-4 w-4" />
                     {site.phone}
                   </a>
@@ -224,9 +260,9 @@ export function PublicSiteShell({
                   />
                 </li>
               ) : null}
-              {site.email ? (
+              {site.email && emailHref ? (
                 <li>
-                  <a href={`mailto:${site.email}`} className="flex items-center gap-2 hover:text-white">
+                  <a href={emailHref} className="flex items-center gap-2 rounded-[4px] outline-none hover:opacity-100 focus-visible:ring-2 focus-visible:ring-current">
                     <Mail className="h-4 w-4" />
                     {site.email}
                   </a>
@@ -242,7 +278,7 @@ export function PublicSiteShell({
           </section>
 
           <section>
-            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-white/90">Redes sociais</h3>
+            <h3 className="mb-3 text-[14px] font-normal">Redes sociais</h3>
             <div className="flex flex-wrap gap-3">
               <SocialLink href={site.instagram} label="Instagram" icon={<InstagramIcon />} />
               <SocialLink href={site.facebook} label="Facebook" icon={<FacebookIcon />} />
@@ -252,8 +288,8 @@ export function PublicSiteShell({
           </section>
         </div>
 
-        <div className="border-t border-white/10 px-4 py-5 text-center text-xs text-white/44">
-          © {new Date().getFullYear()} {site.organization_name || title}. Todos os direitos reservados.
+        <div className="border-t border-current/10 px-4 py-5 text-center text-[12px] font-light opacity-60">
+          © {new Date().getUTCFullYear()} {site.organization_name || title}. Todos os direitos reservados.
         </div>
       </footer>
 
@@ -284,9 +320,9 @@ function buildDesktopNavItems(items: SiteMenuItem[]) {
     })
     .map((item) => ({ ...item, label: formatDesktopMenuLabel(item.label) }));
 
-  const hasApartments = baseItems.some((item) => item.label.includes("APART"));
-  const hasHouses = baseItems.some((item) => item.label.includes("CASA"));
-  const hasRent = baseItems.some((item) => item.label.includes("ALUGUEL"));
+  const hasApartments = baseItems.some((item) => item.label.toLowerCase().includes("apart"));
+  const hasHouses = baseItems.some((item) => item.label.toLowerCase().includes("casa"));
+  const hasRent = baseItems.some((item) => item.label.toLowerCase().includes("aluguel"));
 
   return [
     ...baseItems,
@@ -295,7 +331,7 @@ function buildDesktopNavItems(items: SiteMenuItem[]) {
           {
             id: "apartments",
             organization_id: "",
-            label: "APARTAMENTOS",
+            label: "Apartamentos",
             link_type: "internal" as const,
             href: "/imoveis?tipo=Apartamento",
             position: 20,
@@ -309,7 +345,7 @@ function buildDesktopNavItems(items: SiteMenuItem[]) {
           {
             id: "houses",
             organization_id: "",
-            label: "CASAS",
+            label: "Casas",
             link_type: "internal" as const,
             href: "/imoveis?tipo=Casa",
             position: 21,
@@ -323,7 +359,7 @@ function buildDesktopNavItems(items: SiteMenuItem[]) {
           {
             id: "rent",
             organization_id: "",
-            label: "ALUGUEL",
+            label: "Aluguel",
             link_type: "internal" as const,
             href: "/imoveis?finalidade=locacao",
             position: 22,
@@ -337,8 +373,44 @@ function buildDesktopNavItems(items: SiteMenuItem[]) {
 
 function formatDesktopMenuLabel(label: string) {
   const normalized = label.trim().toLowerCase();
-  if (normalized === "imoveis" || normalized === "imóveis" || normalized.startsWith("imÃ")) return "IMÓVEIS";
-  return label.toUpperCase();
+  if (normalized === "imoveis" || normalized === "imóveis" || normalized.startsWith("imÃ")) return "Imóveis";
+  return label.trim();
+}
+
+function SiteMenuLink({
+  basePath,
+  className,
+  item,
+}: Readonly<{
+  basePath: string;
+  className: string;
+  item: SiteMenuItem;
+}>) {
+  const shouldOpenAsExternal = item.link_type === "external" || /^https?:\/\//i.test(item.href);
+  const externalHref = shouldOpenAsExternal
+    ? normalizePublicExternalUrl(item.href)
+    : null;
+
+  if (externalHref) {
+    return (
+      <a
+        className={className}
+        href={externalHref}
+        rel={item.open_in_new_tab ? "noopener noreferrer" : undefined}
+        target={item.open_in_new_tab ? "_blank" : undefined}
+      >
+        {item.label}
+      </a>
+    );
+  }
+
+  if (shouldOpenAsExternal) return null;
+
+  return (
+    <Link className={className} href={buildSiteHref(basePath, item.href)}>
+      {item.label}
+    </Link>
+  );
 }
 
 function FacebookIcon() {
@@ -382,17 +454,23 @@ function SocialLink({
   icon: ReactNode;
   label: string;
 }>) {
-  if (!href) return null;
+  const safeHref = normalizePublicExternalUrl(href);
+  if (!safeHref) return null;
 
   return (
     <a
-      href={href}
+      href={safeHref}
       target="_blank"
-      rel="noreferrer"
-      className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
+      rel="noopener noreferrer"
+      className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[var(--site-on-dark-soft)] text-[var(--site-secondary-fg)] outline-none hover:bg-[var(--site-on-dark-soft-hover)] focus-visible:ring-2 focus-visible:ring-current"
       aria-label={label}
     >
       {icon}
     </a>
   );
+}
+
+function normalizeLogoDimension(value: number | null | undefined, fallback: number) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return fallback;
+  return Math.min(Math.max(Math.round(value), 24), 320);
 }

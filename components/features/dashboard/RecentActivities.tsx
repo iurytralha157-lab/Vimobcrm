@@ -8,15 +8,18 @@ import {
   PhoneCall,
   FileText,
   Activity,
+  AlertCircle,
   Clock,
+  RefreshCw,
   type LucideIcon,
 } from 'lucide-react';
 
-import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { getDashboardRecentActivities } from '@/lib/api/dashboard';
+import { useDashboardQueryScope } from '@/hooks/use-dashboard-stats';
 
 interface ActivityItem {
   id: string;
@@ -41,26 +44,36 @@ const activityConfig: Record<string, { icon: LucideIcon; color: string; label: s
 const defaultConfig = { icon: Activity, color: 'text-muted-foreground', label: 'Atividade' };
 
 export function RecentActivities() {
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id ?? profile?.organization_id;
+  const { organizationId, currentUserId, accessSignature, isReady } =
+    useDashboardQueryScope();
 
-  const { data: activities = [], isLoading } = useQuery({
-    queryKey: ['dashboard-recent-activities', organizationId],
-    queryFn: async () => {
-      if (!organizationId) return [];
-      return getDashboardRecentActivities({ organizationId, limit: 8 });
-    },
-    enabled: !!organizationId,
+  const {
+    data: activities = [],
+    isLoading,
+    isError,
+    isFetching,
+    refetch,
+  } = useQuery({
+    queryKey: [
+      'dashboard-recent-activities',
+      organizationId,
+      currentUserId,
+      accessSignature,
+      8,
+    ],
+    queryFn: ({ signal }) =>
+      getDashboardRecentActivities({ organizationId, limit: 8, signal }),
+    enabled: isReady,
     refetchInterval: 30000,
   });
 
   if (isLoading) {
     return (
-      <Card className="app-card h-full flex flex-col">
-        <CardHeader className="pb-2 pt-3 px-4">
-          <CardTitle className="text-sm font-medium">Atividades Recentes</CardTitle>
+      <Card className="app-card flex h-full flex-col">
+        <CardHeader className="px-4 pb-2 pt-3">
+          <CardTitle className="text-[14px] font-normal">Atividades recentes</CardTitle>
         </CardHeader>
-        <CardContent className="flex-1 px-4 pb-3 space-y-3">
+        <CardContent className="flex-1 space-y-3 px-4 pb-3">
           {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="flex items-start gap-2">
               <Skeleton className="h-6 w-6 rounded-full flex-shrink-0" />
@@ -70,6 +83,36 @@ export function RecentActivities() {
               </div>
             </div>
           ))}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (isError && activities.length === 0) {
+    return (
+      <Card className="app-card flex h-full flex-col">
+        <CardContent className="flex flex-1 flex-col items-center justify-center px-4 py-6 text-center">
+          <span className="grid h-9 w-9 place-items-center rounded-[6px] bg-destructive/10 text-destructive">
+            <AlertCircle className="h-4 w-4" aria-hidden="true" />
+          </span>
+          <p className="mt-3 text-[14px] font-normal text-[var(--app-text-primary)]">
+            Não foi possível carregar as atividades
+          </p>
+          <p className="mt-1 text-[12px] font-light text-[var(--app-text-secondary)]">
+            Tente novamente para atualizar esta lista.
+          </p>
+          <Button
+            type="button"
+            className="mt-3 h-8 rounded-[6px] bg-primary/50 px-2.5 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
+            disabled={isFetching}
+            onClick={() => void refetch()}
+          >
+            <RefreshCw
+              className={cn('mr-1.5 h-3.5 w-3.5', isFetching && 'animate-spin')}
+              aria-hidden="true"
+            />
+            Tentar novamente
+          </Button>
         </CardContent>
       </Card>
     );
@@ -105,16 +148,32 @@ export function RecentActivities() {
   }
 
   return (
-    <Card className="app-card h-full flex flex-col">
-      <CardHeader className="pb-2 pt-3 px-4">
+    <Card className="app-card flex h-full flex-col">
+      <CardHeader className="px-4 pb-2 pt-3">
         <div className="flex items-center gap-2">
           <Clock className="h-4 w-4 text-muted-foreground" />
-          <CardTitle className="text-sm font-medium">Atividades Recentes</CardTitle>
+          <CardTitle className="text-[14px] font-normal">Atividades recentes</CardTitle>
+          {isError && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="ml-auto h-7 w-7 rounded-[6px]"
+              aria-label="Tentar atualizar atividades novamente"
+              disabled={isFetching}
+              onClick={() => void refetch()}
+            >
+              <RefreshCw
+                className={cn('h-3.5 w-3.5', isFetching && 'animate-spin')}
+                aria-hidden="true"
+              />
+            </Button>
+          )}
         </div>
       </CardHeader>
-      <CardContent className="flex-1 px-4 pb-3 overflow-y-auto">
+      <CardContent className="flex-1 overflow-y-auto px-4 pb-3">
         {activities.length === 0 ? (
-          <p className="text-xs text-muted-foreground text-center py-4">Nenhuma atividade recente</p>
+          <p className="py-4 text-center text-[12px] font-light text-muted-foreground">Nenhuma atividade recente</p>
         ) : (
           <div className="space-y-2">
             {activities.map((activity) => {
@@ -122,22 +181,19 @@ export function RecentActivities() {
               const Icon = config.icon;
 
               return (
-                <div key={activity.id} className="flex items-start gap-2 py-1.5 border-b border-white/[0.045] last:border-0">
+                <div key={activity.id} className="flex items-start gap-2 border-b border-[var(--app-border)] py-1.5 last:border-0">
                   <div
                     className={cn(
-                      'h-6 w-6 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5',
-                      'bg-white/[0.055]',
+                      'mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-[6px]',
+                      'bg-[var(--app-surface-soft)]',
                     )}
                   >
                     <Icon className={cn('h-3 w-3', config.color)} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs leading-relaxed text-foreground line-clamp-2">{getDescription(activity)}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">
-                      {formatDistanceToNow(new Date(activity.created_at), {
-                        addSuffix: true,
-                        locale: ptBR,
-                      })}
+                    <p className="line-clamp-2 text-[12px] font-light leading-relaxed text-foreground">{getDescription(activity)}</p>
+                    <p className="mt-0.5 text-[10px] font-light text-muted-foreground">
+                      {formatActivityTime(activity.created_at)}
                     </p>
                   </div>
                 </div>
@@ -148,4 +204,14 @@ export function RecentActivities() {
       </CardContent>
     </Card>
   );
+}
+
+function formatActivityTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Data indisponível';
+
+  return formatDistanceToNow(date, {
+    addSuffix: true,
+    locale: ptBR,
+  });
 }

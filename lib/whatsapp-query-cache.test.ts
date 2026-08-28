@@ -71,6 +71,40 @@ test('segrega sessoes e acesso por organizacao, usuario e permissoes', () => {
   assert.equal(isWhatsAppQueryKeyForScope(accessA, scopeA), true)
 })
 
+test('segrega paginas de conversa por tenant e por filtros aplicados no servidor', () => {
+  const baseParams = {
+    hideGroups: false,
+    showArchived: false,
+    onlyLeads: true,
+    withoutLead: false,
+    pendingReply: true,
+    search: 'maria',
+    accessibleSessionKey: 'all',
+    limit: 80,
+  }
+  const keyA = whatsappQueryKeys.conversations(scopeA, baseParams)
+  const keyOtherTenant = whatsappQueryKeys.conversations(scopeB, baseParams)
+  const keyOtherFilter = whatsappQueryKeys.conversations(scopeA, {
+    ...baseParams,
+    onlyLeads: false,
+    withoutLead: true,
+  })
+
+  assert.notDeepEqual(keyA, keyOtherTenant)
+  assert.notDeepEqual(keyA, keyOtherFilter)
+  assert.equal(isWhatsAppQueryKeyForScope(keyA, scopeA), true)
+  assert.equal(isWhatsAppQueryKeyForScope(keyA, scopeB), false)
+})
+
+test('segrega deep link de lead por tenant ativo', () => {
+  const keyA = whatsappQueryKeys.conversationForLead(scopeA, 'lead-a')
+  const keyB = whatsappQueryKeys.conversationForLead(scopeB, 'lead-a')
+
+  assert.notDeepEqual(keyA, keyB)
+  assert.equal(isWhatsAppQueryKeyForScope(keyA, scopeA), true)
+  assert.equal(isWhatsAppQueryKeyForScope(keyA, scopeB), false)
+})
+
 test('modo todos deixa o backend aplicar acesso por lead sem exigir sessao propria', () => {
   assert.deepEqual(resolveWhatsAppConversationSessionFilter('all', []), {})
   assert.deepEqual(

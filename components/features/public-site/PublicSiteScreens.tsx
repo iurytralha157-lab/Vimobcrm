@@ -37,12 +37,16 @@ import {
   DEFAULT_HERO_IMAGE,
   buildSiteHref,
   formatPrice,
+  getPublicEmailHref,
+  getPublicMediaEmbedUrl,
+  getPublicPhoneHref,
   getPropertyCode,
   getPropertyLocation,
   getPropertyPrice,
   getPropertyTitle,
   getSiteTitle,
   getThemeTokens,
+  normalizePublicImageUrl,
 } from "./public-site-utils";
 import { PublicContactLeadDialog } from "./PublicContactLeadDialog";
 
@@ -119,8 +123,10 @@ export function PublicHomeScreen({
   searchFilters: SiteSearchFilter[];
   site: PublicSiteConfig;
 }>) {
-  const tokens = getThemeTokens(site);
-  const heroImage = site.hero_image_url || data.featured[0]?.imagem_principal || DEFAULT_HERO_IMAGE;
+  const heroImage = normalizePublicImageUrl(
+    site.hero_image_url || data.featured[0]?.imagem_principal,
+    DEFAULT_HERO_IMAGE,
+  );
   const title = "Encontre o imóvel dos seus sonhos com exclusividade";
   const activeFilters = searchFilters.length > 0
     ? searchFilters
@@ -136,15 +142,15 @@ export function PublicHomeScreen({
     <>
       <section className="relative min-h-[720px] overflow-hidden lg:min-h-[760px]">
         <img src={heroImage} alt="" className="absolute inset-0 h-full w-full object-cover" loading="eager" />
-        <div className="absolute inset-0 bg-black/56" />
-        <div className="relative z-10 mx-auto flex min-h-[720px] w-full max-w-7xl flex-col items-center justify-center px-4 pb-20 pt-36 text-center text-white sm:px-6 lg:min-h-[760px] lg:px-8">
-          <h1 className="mx-auto max-w-3xl text-[30px] font-extralight leading-[1.12] tracking-normal text-white/95 sm:text-[40px] lg:text-[46px]">
+        <div className="absolute inset-0 bg-[var(--site-overlay)]" />
+        <div className="relative z-10 mx-auto flex min-h-[720px] w-full max-w-7xl flex-col items-center justify-center px-4 pb-20 pt-36 text-center text-[var(--site-on-dark)] sm:px-6 lg:min-h-[760px] lg:px-8">
+          <h1 className="mx-auto max-w-3xl text-[30px] font-light leading-[1.12] sm:text-[40px] lg:text-[46px]">
             {title}
           </h1>
 
           <form
             action={buildSiteHref(basePath, "/imoveis")}
-            className="mt-10 grid w-full max-w-5xl gap-3 rounded-[14px] bg-[#30332f]/78 p-3 text-left backdrop-blur-xl sm:p-4 md:grid-cols-4"
+            className="mt-10 grid w-full max-w-5xl gap-3 rounded-[8px] bg-[var(--site-header)] p-3 text-left sm:p-4 md:grid-cols-4"
           >
             {activeFilters.map((filter) => (
               <SearchFilterField
@@ -156,8 +162,7 @@ export function PublicHomeScreen({
             ))}
             <button
               type="submit"
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] px-4 text-sm font-semibold text-white transition hover:brightness-110"
-              style={{ backgroundColor: tokens.primary }}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-[6px] bg-[var(--site-primary)] px-4 text-[12px] font-light text-[var(--site-primary-fg)] outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[var(--site-on-dark)]"
             >
               <Search className="h-4 w-4" />
               Buscar
@@ -207,7 +212,7 @@ export function PublicPropertiesScreen({
   site: PublicSiteConfig;
 }>) {
   const tokens = getThemeTokens(site);
-  const banner = site.page_banner_url || site.hero_image_url || DEFAULT_HERO_IMAGE;
+  const banner = normalizePublicImageUrl(site.page_banner_url || site.hero_image_url, DEFAULT_HERO_IMAGE);
   const properties = sortFeaturedFirst(data.properties);
   const hasFilters = Boolean(
     stringQuery(query.search) ||
@@ -240,15 +245,15 @@ export function PublicPropertiesScreen({
         <div className="min-w-0">
           <div className="mb-5 flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
             <div>
-              <p className="text-sm font-medium opacity-70" style={{ color: tokens.foreground }}>
+              <p className="text-[12px] font-light opacity-70" style={{ color: tokens.foreground }}>
                 {data.total} imóveis encontrados
               </p>
-              <h2 className="text-2xl font-normal" style={{ color: tokens.foreground }}>
+              <h2 className="text-[14px] font-normal" style={{ color: tokens.foreground }}>
                 Resultado da busca
               </h2>
             </div>
             {hasFilters ? (
-              <Link href={buildSiteHref(basePath, "/imoveis")} className="text-sm font-semibold" style={{ color: tokens.primary }}>
+              <Link href={buildSiteHref(basePath, "/imoveis")} className="rounded-[4px] text-[12px] font-light outline-none focus-visible:ring-2 focus-visible:ring-[var(--site-primary)]" style={{ color: tokens.primary }}>
                 Limpar filtros
               </Link>
             ) : null}
@@ -285,13 +290,13 @@ function PublicPropertiesFilterSidebar({
   site: PublicSiteConfig;
 }>) {
   const tokens = getThemeTokens(site);
-  const inputClass = "public-site-filter-field h-11 w-full rounded-[10px] border-0 px-3 text-sm font-light outline-none transition";
+  const inputClass = "public-site-filter-field h-11 w-full rounded-[6px] border border-transparent px-3 text-[12px] font-light outline-none focus:border-[var(--site-primary)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--site-primary)_18%,transparent)]";
   const selectClass = `${inputClass} appearance-none pr-9`;
 
   return (
-    <aside className="h-fit rounded-[14px] p-5 lg:sticky lg:top-32" style={{ backgroundColor: tokens.card, color: tokens.foreground }}>
+    <aside className="h-fit rounded-[8px] p-5 lg:sticky lg:top-32" style={{ backgroundColor: tokens.card, color: tokens.cardForeground }}>
       <div className="mb-5">
-        <h2 className="text-lg font-light">Filtros</h2>
+        <h2 className="text-[14px] font-normal">Filtros</h2>
       </div>
 
       <form action={buildSiteHref(basePath, "/imoveis")} className="space-y-3">
@@ -299,6 +304,8 @@ function PublicPropertiesFilterSidebar({
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 opacity-52" />
             <input
+              aria-label="Buscar imóveis"
+              maxLength={180}
               name="search"
               defaultValue={stringQuery(query.search)}
               placeholder="Código, condomínio, bairro ou cidade"
@@ -313,19 +320,19 @@ function PublicPropertiesFilterSidebar({
         <FilterSelect className={selectClass} label="Finalidade" name="finalidade" options={buildPurposeOptions(data.purposes)} placeholder="Finalidade" value={stringQuery(query.finalidade)} />
 
         <div className="grid grid-cols-2 gap-3">
-          <input name="min_price" defaultValue={stringQuery(query.min_price)} placeholder="Valor mínimo" className={inputClass} inputMode="numeric" />
-          <input name="max_price" defaultValue={stringQuery(query.max_price)} placeholder="Valor máximo" className={inputClass} inputMode="numeric" />
+          <input aria-label="Valor mínimo" name="min_price" defaultValue={stringQuery(query.min_price)} placeholder="Valor mínimo" className={inputClass} inputMode="numeric" min="0" step="1" type="number" />
+          <input aria-label="Valor máximo" name="max_price" defaultValue={stringQuery(query.max_price)} placeholder="Valor máximo" className={inputClass} inputMode="numeric" min="0" step="1" type="number" />
         </div>
 
         <details className="group">
-          <summary className="public-site-filter-field flex h-11 cursor-pointer list-none items-center gap-2 rounded-[10px] px-3 text-sm font-light transition hover:brightness-105">
+          <summary className="public-site-filter-field flex h-11 cursor-pointer list-none items-center gap-2 rounded-[6px] px-3 text-[12px] font-light outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[var(--site-primary)]">
             Mais filtros
             <ChevronDown className="ml-auto h-4 w-4 opacity-55 transition group-open:rotate-180" />
           </summary>
           <div className="mt-3 space-y-3">
             <FilterSelect className={selectClass} label="Condomínio" name="condominio" options={data.condominiums || []} placeholder="Condomínio" value={stringQuery(query.condominio)} />
             <FilterSelect className={selectClass} label="Quartos" name="quartos" options={numericOptions} placeholder="Quartos" value={stringQuery(query.quartos)} />
-            <FilterSelect className={selectClass} label="Suites" name="suites" options={numericOptions} placeholder="Suites" value={stringQuery(query.suites)} />
+            <FilterSelect className={selectClass} label="Suítes" name="suites" options={numericOptions} placeholder="Suítes" value={stringQuery(query.suites)} />
             <FilterSelect className={selectClass} label="Banheiros" name="banheiros" options={numericOptions} placeholder="Banheiros" value={stringQuery(query.banheiros)} />
             <FilterSelect className={selectClass} label="Vagas" name="vagas" options={numericOptions} placeholder="Vagas" value={stringQuery(query.vagas)} />
             <FilterSelect
@@ -340,12 +347,12 @@ function PublicPropertiesFilterSidebar({
               value={stringQuery(query.mobilia)}
             />
             <div className="grid grid-cols-2 gap-3">
-              <input name="area_util_min" defaultValue={stringQuery(query.area_util_min)} placeholder="Área útil mín." className={inputClass} inputMode="numeric" />
-              <input name="area_util_max" defaultValue={stringQuery(query.area_util_max)} placeholder="Área útil máx." className={inputClass} inputMode="numeric" />
+              <input aria-label="Área útil mínima" name="area_util_min" defaultValue={stringQuery(query.area_util_min)} placeholder="Área útil mín." className={inputClass} inputMode="decimal" min="0" step="0.01" type="number" />
+              <input aria-label="Área útil máxima" name="area_util_max" defaultValue={stringQuery(query.area_util_max)} placeholder="Área útil máx." className={inputClass} inputMode="decimal" min="0" step="0.01" type="number" />
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <input name="area_total_min" defaultValue={stringQuery(query.area_total_min)} placeholder="Área total mín." className={inputClass} inputMode="numeric" />
-              <input name="area_total_max" defaultValue={stringQuery(query.area_total_max)} placeholder="Área total máx." className={inputClass} inputMode="numeric" />
+              <input aria-label="Área total mínima" name="area_total_min" defaultValue={stringQuery(query.area_total_min)} placeholder="Área total mín." className={inputClass} inputMode="decimal" min="0" step="0.01" type="number" />
+              <input aria-label="Área total máxima" name="area_total_max" defaultValue={stringQuery(query.area_total_max)} placeholder="Área total máx." className={inputClass} inputMode="decimal" min="0" step="0.01" type="number" />
             </div>
             <FilterSelect
               className={selectClass}
@@ -374,8 +381,7 @@ function PublicPropertiesFilterSidebar({
 
         <button
           type="submit"
-          className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-[10px] text-sm font-semibold text-white transition hover:brightness-110"
-          style={{ backgroundColor: tokens.primary }}
+          className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-[6px] bg-[var(--site-primary)] text-[12px] font-light text-[var(--site-primary-fg)] outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[var(--site-primary)]"
         >
           <Search className="h-4 w-4" />
           Buscar imóveis
@@ -383,14 +389,14 @@ function PublicPropertiesFilterSidebar({
       </form>
       <style>{`
         .public-site-filter-field {
-          background: color-mix(in srgb, var(--site-fg) 7%, transparent);
-          color: var(--site-fg);
+          background: color-mix(in srgb, var(--site-card-fg) 7%, transparent);
+          color: var(--site-card-fg);
         }
         .public-site-filter-field::placeholder {
-          color: color-mix(in srgb, var(--site-fg) 52%, transparent);
+          color: color-mix(in srgb, var(--site-card-fg) 52%, transparent);
         }
         .public-site-filter-field:focus {
-          background: color-mix(in srgb, var(--site-fg) 10%, transparent);
+          background: color-mix(in srgb, var(--site-card-fg) 10%, transparent);
         }
       `}</style>
     </aside>
@@ -416,13 +422,13 @@ function FilterSelect({
     <label className="block">
       <div className="relative">
         <select name={name} defaultValue={value} className={className} aria-label={label}>
-          <option className="text-slate-900" value="">
+          <option className="bg-[var(--site-card)] text-[var(--site-card-fg)]" value="">
             {placeholder}
           </option>
           {options.map((option) => {
             const item = typeof option === "string" ? { value: option, label: option } : option;
             return (
-              <option className="text-slate-900" key={item.value} value={item.value}>
+              <option className="bg-[var(--site-card)] text-[var(--site-card-fg)]" key={item.value} value={item.value}>
                 {item.label}
               </option>
             );
@@ -471,7 +477,7 @@ function buildPurposeOptions(rawPurposes: string[]) {
 
 function normalizePurposeValue(value: string) {
   const normalized = value.trim().toLowerCase();
-  if (["aluguel", "locacao", "locaÃ§Ã£o", "rent"].includes(normalized)) return "locacao";
+  if (["aluguel", "locacao", "locação", "rent"].includes(normalized)) return "locacao";
   if (["venda e aluguel", "venda locacao", "venda/locacao", "venda/aluguel", "venda_locacao"].includes(normalized)) return "venda_locacao";
   if (["temporada", "season"].includes(normalized)) return "temporada";
   if (["venda", "sale"].includes(normalized)) return "venda";
@@ -494,19 +500,19 @@ export function PublicPropertyDetailScreen({
   const code = getPropertyCode(property);
   const location = getPropertyLocation(property);
   const mapSrc = location ? `https://www.google.com/maps?q=${encodeURIComponent(location)}&output=embed` : "";
-  const videoEmbedUrl = getYouTubeEmbedUrl(property.video_imovel || property.tour_virtual || "");
+  const videoEmbedUrl = getPublicMediaEmbedUrl(property.video_imovel, property.tour_virtual);
   const valueItems = buildPropertyValueItems(property);
   const extraDetails = buildPropertyExtraDetails(property);
   const propertyStats = buildPropertyStats(property);
   const proximities = normalizeStringList(property.proximidades);
   const relatedSearches = buildRelatedSearches(property, basePath);
   const images = Array.from(
-    new Set([
-      property.imagem_principal,
-      ...(property.fotos || []),
-      ...(property.image_urls || []),
-    ].filter(Boolean)),
-  ) as string[];
+    new Set(
+      [property.imagem_principal, ...(property.fotos || []), ...(property.image_urls || [])]
+        .map((image) => normalizePublicImageUrl(image))
+        .filter(Boolean),
+    ),
+  );
   const contactMessage = `Olá, vim pelo site e tenho interesse no imóvel ${title}${code ? ` (ref. ${code})` : ""}. Gostaria de receber mais informações.`;
   const privacyHref = buildSiteHref(basePath, "/politica-de-privacidade");
 
@@ -516,23 +522,23 @@ export function PublicPropertyDetailScreen({
 
       <section className="mx-auto grid w-full max-w-7xl gap-8 px-4 py-9 sm:px-6 lg:grid-cols-[1fr_380px] lg:px-8">
         <div className="space-y-6">
-          <div className="rounded-[14px] p-6" style={{ backgroundColor: tokens.card }}>
-            <p className="inline-flex rounded-[8px] px-3 py-1 text-xs font-medium uppercase tracking-wide text-white" style={{ backgroundColor: tokens.primary }}>
+          <div className="rounded-[8px] p-6" style={{ backgroundColor: tokens.card, color: tokens.cardForeground }}>
+            <p className="inline-flex rounded-[6px] px-3 py-1 text-[12px] font-light" style={{ backgroundColor: tokens.primary, color: tokens.primaryForeground }}>
               Ref: {code}
             </p>
-            <h1 className="mt-4 text-2xl font-normal leading-snug sm:text-[28px] lg:text-[30px]" style={{ color: tokens.foreground }}>
+            <h1 className="mt-4 text-2xl font-normal leading-snug sm:text-[28px] lg:text-[30px]">
               {title}
             </h1>
             {location ? (
-              <p className="mt-3 flex items-center gap-2 text-sm opacity-68" style={{ color: tokens.foreground }}>
+              <p className="mt-3 flex items-center gap-2 text-[12px] font-light opacity-70">
                 <MapPin className="h-5 w-5" />
                 {location}
               </p>
             ) : null}
           </div>
 
-          <div className="rounded-[14px] p-6" style={{ backgroundColor: tokens.card }}>
-            <h2 className="text-xl font-normal" style={{ color: tokens.foreground }}>
+          <div className="rounded-[8px] p-6" style={{ backgroundColor: tokens.card, color: tokens.cardForeground }}>
+            <h2 className="text-[14px] font-normal">
               Detalhes do imóvel
             </h2>
             <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -549,25 +555,25 @@ export function PublicPropertyDetailScreen({
 
             {extraDetails.length > 0 ? (
               <div className="mt-6">
-                <h3 className="text-sm font-normal opacity-70" style={{ color: tokens.foreground }}>
+                <h3 className="text-[12px] font-light opacity-70">
                   Detalhes extras do imóvel
                 </h3>
-                <TagList items={extraDetails} primaryColor={tokens.primary} />
+                <TagList items={extraDetails} primaryColor={tokens.primary} primaryForeground={tokens.primaryForeground} />
               </div>
             ) : null}
           </div>
 
-          <div className="rounded-[14px] p-6" style={{ backgroundColor: tokens.card }}>
-            <h2 className="text-xl font-normal" style={{ color: tokens.foreground }}>
+          <div className="rounded-[8px] p-6" style={{ backgroundColor: tokens.card, color: tokens.cardForeground }}>
+            <h2 className="text-[14px] font-normal">
               Descrição
             </h2>
-            <p className="mt-4 whitespace-pre-wrap leading-7 opacity-75" style={{ color: tokens.foreground }}>
+            <p className="mt-4 whitespace-pre-wrap text-[12px] font-light leading-6 opacity-75">
               {property.descricao || "Entre em contato para saber mais detalhes sobre este imóvel."}
             </p>
           </div>
 
           {videoEmbedUrl ? (
-            <div className="overflow-hidden rounded-[14px]" style={{ backgroundColor: tokens.card }}>
+            <div className="overflow-hidden rounded-[8px]" style={{ backgroundColor: tokens.card }}>
               <iframe
                 src={videoEmbedUrl}
                 title={`Vídeo do imóvel ${title}`}
@@ -575,17 +581,19 @@ export function PublicPropertyDetailScreen({
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                 allowFullScreen
                 loading="lazy"
+                referrerPolicy="strict-origin-when-cross-origin"
+                sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"
               />
             </div>
           ) : null}
 
           {mapSrc ? (
-            <div className="overflow-hidden rounded-[14px]" style={{ backgroundColor: tokens.card }}>
+            <div className="overflow-hidden rounded-[8px]" style={{ backgroundColor: tokens.card, color: tokens.cardForeground }}>
               <div className="px-6 py-5">
-                <h2 className="text-xl font-normal" style={{ color: tokens.foreground }}>
+                <h2 className="text-[14px] font-normal">
                   Localização
                 </h2>
-                <p className="mt-2 flex items-center gap-2 text-sm opacity-68" style={{ color: tokens.foreground }}>
+                <p className="mt-2 flex items-center gap-2 text-[12px] font-light opacity-70">
                   <MapPin className="h-4 w-4" />
                   {location}
                 </p>
@@ -601,26 +609,26 @@ export function PublicPropertyDetailScreen({
           ) : null}
 
           {proximities.length > 0 ? (
-            <div className="rounded-[14px] p-6" style={{ backgroundColor: tokens.card }}>
-              <h2 className="text-xl font-normal" style={{ color: tokens.foreground }}>
+            <div className="rounded-[8px] p-6" style={{ backgroundColor: tokens.card, color: tokens.cardForeground }}>
+              <h2 className="text-[14px] font-normal">
                 Proximidades
               </h2>
-              <TagList items={proximities} primaryColor={tokens.primary} />
+              <TagList items={proximities} primaryColor={tokens.primary} primaryForeground={tokens.primaryForeground} />
             </div>
           ) : null}
         </div>
 
-        <aside className="h-fit rounded-[14px] p-6 lg:sticky lg:top-28" style={{ backgroundColor: tokens.card }}>
-          <p className="text-sm font-medium opacity-70" style={{ color: tokens.foreground }}>
+        <aside className="h-fit rounded-[8px] p-6 lg:sticky lg:top-28" style={{ backgroundColor: tokens.card, color: tokens.cardForeground }}>
+          <p className="text-[12px] font-light opacity-70">
             Valor
           </p>
-          <p className="mt-1 text-3xl font-light" style={{ color: tokens.primary }}>
+          <p className="mt-1 text-[14px] font-normal" style={{ color: tokens.primary }}>
             {formatPrice(getPropertyPrice(property))}
           </p>
           {valueItems.length > 0 ? (
-            <dl className="mt-5 space-y-3 border-t pt-4" style={{ borderColor: `${tokens.foreground}18`, color: tokens.foreground }}>
+            <dl className="mt-5 space-y-3 border-t pt-4" style={{ borderColor: `color-mix(in srgb, ${tokens.cardForeground} 10%, transparent)` }}>
               {valueItems.map((item) => (
-                <div key={item.label} className="flex items-center justify-between gap-4 text-sm">
+                <div key={item.label} className="flex items-center justify-between gap-4 text-[12px] font-light">
                   <dt className="opacity-62">{item.label}</dt>
                   <dd className="font-normal">{item.value}</dd>
                 </div>
@@ -653,7 +661,7 @@ export function PublicPropertyDetailScreen({
 
       {relatedSearches.length > 0 ? (
         <section className="mx-auto w-full max-w-7xl px-4 pb-16 text-center sm:px-6 lg:px-8">
-          <h2 className="text-2xl font-normal" style={{ color: tokens.foreground }}>
+          <h2 className="text-[14px] font-normal" style={{ color: tokens.foreground }}>
             Buscas relacionadas
           </h2>
           <div className="mt-6 flex flex-wrap justify-center gap-3">
@@ -661,7 +669,7 @@ export function PublicPropertyDetailScreen({
               <Link
                 key={item.label}
                 href={item.href}
-                className="rounded-full border px-4 py-2 text-sm font-light transition hover:brightness-105"
+                className="rounded-full border px-4 py-2 text-[12px] font-light outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[var(--site-primary)]"
                 style={{ borderColor: `${tokens.foreground}42`, color: tokens.foreground }}
               >
                 {item.label}
@@ -674,16 +682,20 @@ export function PublicPropertyDetailScreen({
   );
 }
 
-function TagList({ items, primaryColor }: Readonly<{ items: string[]; primaryColor: string }>) {
+function TagList({
+  items,
+  primaryColor,
+  primaryForeground,
+}: Readonly<{ items: string[]; primaryColor: string; primaryForeground: string }>) {
   return (
     <div className="mt-4 flex flex-wrap gap-2">
       {items.map((item, index) => (
         <span
           key={`${item}-${index}`}
-          className="rounded-[8px] px-3 py-1.5 text-xs font-light"
+          className="rounded-[6px] px-3 py-1.5 text-xs font-light"
           style={{
-            backgroundColor: index % 3 === 0 ? primaryColor : "color-mix(in srgb, var(--site-fg) 8%, transparent)",
-            color: index % 3 === 0 ? "#fff" : "var(--site-fg)",
+            backgroundColor: index % 3 === 0 ? primaryColor : "color-mix(in srgb, var(--site-card-fg) 8%, transparent)",
+            color: index % 3 === 0 ? primaryForeground : "var(--site-card-fg)",
           }}
         >
           {item}
@@ -714,7 +726,7 @@ function buildPropertyStats(property: PublicProperty) {
   };
 
   addNumber(property.quartos, "Quartos", <BedDouble className="h-5 w-5" />);
-  addNumber(property.suites, "Suites", <KeyRound className="h-5 w-5" />);
+  addNumber(property.suites, "Suítes", <KeyRound className="h-5 w-5" />);
   addNumber(property.banheiros, "Banheiros", <Bath className="h-5 w-5" />);
   addNumber(property.vagas, "Vagas", <Car className="h-5 w-5" />);
   addArea(property.area_construida, "Área útil", <Maximize2 className="h-5 w-5" />);
@@ -744,8 +756,8 @@ function buildPropertyValueItems(property: PublicProperty) {
     { label: "Condomínio", value: property.valor_condominio },
     { label: "IPTU", value: property.iptu },
     { label: "ITR", value: property.valor_itr },
-    { label: "Seguro incendio", value: property.seguro_incendio },
-    { label: "Taxa de servico", value: property.taxa_de_servico },
+    { label: "Seguro incêndio", value: property.seguro_incendio },
+    { label: "Taxa de serviço", value: property.taxa_de_servico },
     { label: "Venda avaliada", value: property.valor_venda_avaliado },
     { label: "Locação avaliada", value: property.valor_locacao_avaliado },
   ];
@@ -787,34 +799,14 @@ function getRelatedPurposeLabel(property: PublicProperty) {
   const purpose = normalizePurposeValue(property.finalidade || "");
   if (purpose === "locacao") return "para alugar";
   if (purpose === "temporada") return "para temporada";
-  if (purpose === "venda_locacao") return "a venda ou locacao";
-  return "a venda";
+  if (purpose === "venda_locacao") return "à venda ou para locação";
+  return "à venda";
 }
 
 function normalizeStringList(value?: string[] | null) {
   return Array.isArray(value)
     ? value.map((item) => item.trim()).filter(Boolean)
     : [];
-}
-
-function getYouTubeEmbedUrl(value: string) {
-  const url = value.trim();
-  if (!url) return "";
-
-  try {
-    const parsed = new URL(url);
-    const host = parsed.hostname.replace(/^www\./, "");
-    let videoId = "";
-    if (host === "youtu.be") videoId = parsed.pathname.replace("/", "");
-    if (host.endsWith("youtube.com")) {
-      if (parsed.pathname.startsWith("/embed/")) videoId = parsed.pathname.split("/")[2] || "";
-      if (!videoId) videoId = parsed.searchParams.get("v") || "";
-      if (!videoId && parsed.pathname.startsWith("/shorts/")) videoId = parsed.pathname.split("/")[2] || "";
-    }
-    return videoId ? `https://www.youtube.com/embed/${videoId}` : url;
-  } catch {
-    return "";
-  }
 }
 
 export function PublicAboutScreen({
@@ -835,21 +827,23 @@ export function PublicContactScreen({
   site: PublicSiteConfig;
 }>) {
   const tokens = getThemeTokens(site);
-  const banner = site.page_banner_url || site.hero_image_url || DEFAULT_HERO_IMAGE;
+  const banner = normalizePublicImageUrl(site.page_banner_url || site.hero_image_url, DEFAULT_HERO_IMAGE);
   const privacyHref = buildSiteHref(basePath, "/politica-de-privacidade");
+  const phoneHref = getPublicPhoneHref(site.phone);
+  const emailHref = getPublicEmailHref(site.email);
 
   return (
     <>
       <PageHero backgroundImage={banner} eyebrow="Contato" title="Fale com a equipe" />
       <section className="mx-auto grid w-full max-w-7xl gap-8 px-4 py-12 sm:px-6 lg:grid-cols-[0.8fr_1.2fr] lg:px-8">
         <div className="space-y-4">
-          <h2 className="text-3xl font-semibold" style={{ color: tokens.foreground }}>
+          <h2 className="text-[14px] font-normal" style={{ color: tokens.foreground }}>
             Vamos encontrar o melhor caminho para você.
           </h2>
-          <p className="leading-7 opacity-75" style={{ color: tokens.foreground }}>
+          <p className="text-[12px] font-light leading-6 opacity-75" style={{ color: tokens.foreground }}>
             Envie seus dados e conte o que procura. A equipe recebe o lead no CRM e retorna pelo canal informado.
           </p>
-          <ContactLine icon={<Phone className="h-5 w-5" />} label="Telefone" site={site} value={site.phone} href={site.phone ? `tel:${site.phone}` : undefined} />
+          <ContactLine icon={<Phone className="h-5 w-5" />} label="Telefone" site={site} value={site.phone} href={phoneHref || undefined} />
           {site.whatsapp ? (
             <PublicContactLeadDialog
               className="text-[var(--site-fg)]"
@@ -861,11 +855,11 @@ export function PublicContactScreen({
               variant="contact-line"
             />
           ) : null}
-          <ContactLine icon={<Mail className="h-5 w-5" />} label="E-mail" site={site} value={site.email} href={site.email ? `mailto:${site.email}` : undefined} />
+          <ContactLine icon={<Mail className="h-5 w-5" />} label="E-mail" site={site} value={site.email} href={emailHref || undefined} />
           <ContactLine icon={<MapPin className="h-5 w-5" />} label="Endereço" site={site} value={[site.address, site.city, site.state].filter(Boolean).join(", ")} />
         </div>
 
-        <div className="rounded-[14px] p-6" style={{ backgroundColor: tokens.card, color: tokens.foreground }}>
+        <div className="rounded-[8px] p-6" style={{ backgroundColor: tokens.card, color: tokens.cardForeground }}>
           <PublicContactForm organizationId={site.organization_id} primaryColor={tokens.primary} privacyHref={privacyHref} siteTitle={getSiteTitle(site)} />
         </div>
       </section>
@@ -879,7 +873,7 @@ export function PublicPrivacyPolicyScreen({
   site: PublicSiteConfig;
 }>) {
   const tokens = getThemeTokens(site);
-  const banner = site.page_banner_url || site.hero_image_url || DEFAULT_HERO_IMAGE;
+  const banner = normalizePublicImageUrl(site.page_banner_url || site.hero_image_url, DEFAULT_HERO_IMAGE);
   const siteTitle = getSiteTitle(site);
   const contact = [site.email, site.phone || site.whatsapp].filter(Boolean).join(" | ");
   const address = [site.address, site.city, site.state].filter(Boolean).join(", ");
@@ -888,8 +882,8 @@ export function PublicPrivacyPolicyScreen({
     <>
       <PageHero backgroundImage={banner} eyebrow="Privacidade" title="Política de privacidade" />
       <section className="mx-auto w-full max-w-4xl px-4 py-12 sm:px-6 lg:px-8">
-        <div className="rounded-[14px] p-6 leading-7 sm:p-8" style={{ backgroundColor: tokens.card, color: tokens.foreground }}>
-          <p className="text-sm opacity-70">
+        <div className="rounded-[8px] p-6 sm:p-8" style={{ backgroundColor: tokens.card, color: tokens.cardForeground }}>
+          <p className="text-[12px] font-light leading-6 opacity-70">
             Esta política explica como a {siteTitle} trata os dados enviados pelos formulários deste site.
           </p>
 
@@ -923,7 +917,7 @@ export function PublicPrivacyPolicyScreen({
           </div>
 
           <p className="mt-8 text-xs opacity-55">
-            Última atualização: julho de 2026.
+            Última revisão do conteúdo padrão: agosto de 2026.
           </p>
         </div>
       </section>
@@ -934,8 +928,8 @@ export function PublicPrivacyPolicyScreen({
 function PolicyBlock({ children, title }: Readonly<{ children: React.ReactNode; title: string }>) {
   return (
     <section>
-      <h2 className="text-lg font-normal">{title}</h2>
-      <div className="mt-2 text-sm leading-7 opacity-72">{children}</div>
+      <h2 className="text-[14px] font-normal">{title}</h2>
+      <div className="mt-2 text-[12px] font-light leading-6 opacity-75">{children}</div>
     </section>
   );
 }
@@ -949,7 +943,7 @@ export function PublicFavoritesScreen({
 }>) {
   return (
     <>
-      <PageHero backgroundImage={site.page_banner_url || site.hero_image_url || DEFAULT_HERO_IMAGE} eyebrow="Favoritos" title="Seus imóveis salvos" />
+      <PageHero backgroundImage={normalizePublicImageUrl(site.page_banner_url || site.hero_image_url, DEFAULT_HERO_IMAGE)} eyebrow="Favoritos" title="Seus imóveis salvos" />
       <section className="mx-auto w-full max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
         <PublicFavoritesClient basePath={basePath} site={site} />
       </section>
@@ -964,25 +958,23 @@ export function PublicNotFoundScreen({
   basePath: string;
   site: PublicSiteConfig;
 }>) {
-  const tokens = getThemeTokens(site);
-  const backgroundImage = site.page_banner_url || site.hero_image_url || DEFAULT_HERO_IMAGE;
+  const backgroundImage = normalizePublicImageUrl(site.page_banner_url || site.hero_image_url, DEFAULT_HERO_IMAGE);
 
   return (
-    <section className="relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-32 text-center text-white sm:px-6">
+    <section className="relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-32 text-center text-[var(--site-on-dark)] sm:px-6">
       <img src={backgroundImage} alt="" className="absolute inset-0 h-full w-full object-cover" />
-      <div className="absolute inset-0 bg-black/68" />
+      <div className="absolute inset-0 bg-[var(--site-overlay)]" />
       <div className="relative z-10 mx-auto max-w-2xl">
-        <p className="text-sm font-light uppercase tracking-[0.24em] text-white/72">Ops, algo deu errado</p>
-        <h1 className="mt-5 text-[88px] font-extralight leading-none tracking-normal text-white sm:text-[128px]">
+        <p className="text-[12px] font-light text-[var(--site-on-dark-muted)]">Ops, algo deu errado</p>
+        <h1 className="mt-5 text-[88px] font-light leading-none sm:text-[128px]">
           404
         </h1>
-        <p className="mx-auto mt-5 max-w-lg text-base font-light leading-7 text-white/76 sm:text-lg">
+        <p className="mx-auto mt-5 max-w-lg text-[12px] font-light leading-6 text-[var(--site-on-dark-muted)] sm:text-[14px]">
           Não encontramos essa página. O imóvel pode ter sido atualizado, removido ou o link pode estar incompleto.
         </p>
         <Link
           href={buildSiteHref(basePath, "/")}
-          className="mt-8 inline-flex h-11 items-center justify-center rounded-[10px] px-6 text-sm font-light text-white transition hover:brightness-110"
-          style={{ backgroundColor: tokens.primary }}
+          className="mt-8 inline-flex h-11 items-center justify-center rounded-[6px] bg-[var(--site-primary)] px-6 text-[12px] font-light text-[var(--site-primary-fg)] outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[var(--site-on-dark)]"
         >
           Voltar à página principal
         </Link>
@@ -1013,14 +1005,14 @@ function PropertySection({
     <section className="mx-auto w-full max-w-7xl px-4 py-14 sm:px-6 lg:px-8">
       <div className="mb-8 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.18em]" style={{ color: tokens.primary }}>
+          <p className="text-[12px] font-light" style={{ color: tokens.primary }}>
             {eyebrow}
           </p>
-          <h2 className="mt-2 text-3xl font-semibold" style={{ color: tokens.foreground }}>
+          <h2 className="mt-2 text-[14px] font-normal" style={{ color: tokens.foreground }}>
             {title}
           </h2>
         </div>
-        <Link href={buildSiteHref(basePath, "/imoveis")} className="text-sm font-semibold" style={{ color: tokens.primary }}>
+        <Link href={buildSiteHref(basePath, "/imoveis")} className="rounded-[4px] text-[12px] font-light outline-none focus-visible:ring-2 focus-visible:ring-[var(--site-primary)]" style={{ color: tokens.primary }}>
           Ver todos os imóveis
         </Link>
       </div>
@@ -1047,21 +1039,21 @@ function HomeCategoryShowcase({
       <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
         {homeCategoryShortcuts.map((item) => {
           const Icon = item.icon;
-          const image = findCategoryImage(properties, item.match) || heroImage;
+          const image = normalizePublicImageUrl(findCategoryImage(properties, item.match), heroImage);
 
           return (
             <Link
               key={item.href}
               href={buildSiteHref(basePath, item.href)}
-              className="group relative min-h-[230px] overflow-hidden rounded-[14px] bg-zinc-900 text-white"
+              className="relative min-h-[230px] overflow-hidden rounded-[8px] bg-[var(--site-overlay-strong)] text-[var(--site-on-dark)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--site-primary)]"
             >
-              <img src={image} alt="" className="absolute inset-0 h-full w-full object-cover transition duration-500 group-hover:scale-105" loading="lazy" />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/76 via-black/22 to-black/8" />
+              <img src={image} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
+              <div className="absolute inset-0 bg-gradient-to-t from-[var(--site-overlay)] via-[var(--site-overlay-soft)] to-transparent" />
               <div className="absolute inset-x-0 bottom-0 p-5">
-                <span className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-[10px] bg-white/14 backdrop-blur-md">
+                <span className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-[6px] bg-[var(--site-on-dark-soft)]">
                   <Icon className="h-5 w-5" />
                 </span>
-                <h3 className="text-2xl font-light uppercase tracking-wide">{item.label}</h3>
+                <h3 className="text-[14px] font-normal">{item.label}</h3>
               </div>
             </Link>
           );
@@ -1100,14 +1092,14 @@ function SearchFilterField({
   propertyTypes: string[];
 }>) {
   const commonClass =
-    "h-11 rounded-[10px] border-0 bg-white/12 px-3 text-sm text-white outline-none transition placeholder:text-white/58 hover:bg-white/16 focus:bg-white/18 focus:ring-2 focus:ring-white/22";
+    "h-11 rounded-[6px] border border-transparent bg-[var(--site-on-dark-soft)] px-3 text-[12px] font-light text-[var(--site-on-dark)] outline-none placeholder:text-[var(--site-on-dark-muted)] hover:bg-[var(--site-on-dark-soft-hover)] focus:border-[var(--site-primary)] focus:ring-2 focus:ring-[var(--site-primary)]";
 
   if (filter.filter_key === "tipo") {
     return (
-      <select name="tipo" className={commonClass} defaultValue="">
-        <option className="text-slate-900" value="">{filter.label || "Tipo"}</option>
+      <select name="tipo" className={commonClass} defaultValue="" aria-label={filter.label || "Tipo de imóvel"}>
+        <option className="bg-[var(--site-card)] text-[var(--site-card-fg)]" value="">{filter.label || "Tipo"}</option>
         {propertyTypes.map((type) => (
-          <option className="text-slate-900" key={type} value={type}>
+          <option className="bg-[var(--site-card)] text-[var(--site-card-fg)]" key={type} value={type}>
             {type}
           </option>
         ))}
@@ -1117,20 +1109,20 @@ function SearchFilterField({
 
   if (filter.filter_key === "finalidade") {
     return (
-      <select name="finalidade" className={commonClass} defaultValue="">
-        <option className="text-slate-900" value="">{filter.label || "Finalidade"}</option>
-        <option className="text-slate-900" value="venda">Venda</option>
-        <option className="text-slate-900" value="locacao">Aluguel</option>
+      <select name="finalidade" className={commonClass} defaultValue="" aria-label={filter.label || "Finalidade"}>
+        <option className="bg-[var(--site-card)] text-[var(--site-card-fg)]" value="">{filter.label || "Finalidade"}</option>
+        <option className="bg-[var(--site-card)] text-[var(--site-card-fg)]" value="venda">Venda</option>
+        <option className="bg-[var(--site-card)] text-[var(--site-card-fg)]" value="locacao">Aluguel</option>
       </select>
     );
   }
 
   if (filter.filter_key === "cidade") {
     return (
-      <select name="cidade" className={commonClass} defaultValue="">
-        <option className="text-slate-900" value="">{filter.label || "Cidade"}</option>
+      <select name="cidade" className={commonClass} defaultValue="" aria-label={filter.label || "Cidade"}>
+        <option className="bg-[var(--site-card)] text-[var(--site-card-fg)]" value="">{filter.label || "Cidade"}</option>
         {cities.map((city) => (
-          <option className="text-slate-900" key={city} value={city}>
+          <option className="bg-[var(--site-card)] text-[var(--site-card-fg)]" key={city} value={city}>
             {city}
           </option>
         ))}
@@ -1141,6 +1133,8 @@ function SearchFilterField({
   return (
     <input
       name={filter.filter_key === "search" ? "search" : filter.filter_key}
+      aria-label={filter.label || "Buscar imóveis"}
+      maxLength={180}
       placeholder={filter.label || "Buscar"}
       className={commonClass}
     />
@@ -1160,25 +1154,26 @@ function AboutContent({
   const stats = site.about_stats?.length ? site.about_stats : defaultStats;
   const checkmarks = site.about_checkmarks?.length ? site.about_checkmarks : defaultCheckmarks;
   const features = site.about_features?.length ? site.about_features : defaultFeatures;
+  const aboutImageUrl = normalizePublicImageUrl(site.about_image_url);
 
   return (
     <>
       {!compact ? (
         <PageHero
-          backgroundImage={site.page_banner_url || site.hero_image_url || DEFAULT_HERO_IMAGE}
+          backgroundImage={normalizePublicImageUrl(site.page_banner_url || site.hero_image_url, DEFAULT_HERO_IMAGE)}
           eyebrow="Sobre"
           title={site.about_title || `Sobre a ${getSiteTitle(site)}`}
         />
       ) : null}
 
-      <section className="border-y px-4 py-10 sm:px-6 lg:px-8" style={{ borderColor: `${tokens.foreground}12`, backgroundColor: tokens.card }}>
+      <section className="border-y px-4 py-10 sm:px-6 lg:px-8" style={{ borderColor: `color-mix(in srgb, ${tokens.cardForeground} 8%, transparent)`, backgroundColor: tokens.card, color: tokens.cardForeground }}>
         <div className="mx-auto grid max-w-7xl grid-cols-2 gap-6 md:grid-cols-4">
           {stats.map((stat) => (
             <div key={`${stat.value}-${stat.label}`} className="text-center">
-              <p className="text-3xl font-bold sm:text-4xl" style={{ color: tokens.primary }}>
+              <p className="text-[14px] font-normal" style={{ color: tokens.primary }}>
                 {stat.value}
               </p>
-              <p className="mt-1 text-sm opacity-70" style={{ color: tokens.foreground }}>
+              <p className="mt-1 text-[12px] font-light opacity-70">
                 {stat.label}
               </p>
             </div>
@@ -1188,27 +1183,27 @@ function AboutContent({
 
       <section className="mx-auto grid w-full max-w-7xl gap-10 px-4 py-14 sm:px-6 lg:grid-cols-2 lg:px-8">
         <div>
-          {site.about_image_url ? (
-            <img src={site.about_image_url} alt="" className="h-full max-h-[520px] w-full rounded-lg object-cover" />
+          {aboutImageUrl ? (
+            <img src={aboutImageUrl} alt={`Equipe da ${getSiteTitle(site)}`} className="h-full max-h-[520px] w-full rounded-[8px] object-cover" loading="lazy" />
           ) : (
-            <div className="flex min-h-[360px] items-center justify-center rounded-lg" style={{ backgroundColor: `${tokens.primary}18` }}>
+            <div className="flex min-h-[360px] items-center justify-center rounded-[8px]" style={{ backgroundColor: `color-mix(in srgb, ${tokens.primary} 10%, transparent)` }}>
               <Building2 className="h-20 w-20" style={{ color: tokens.primary }} />
             </div>
           )}
         </div>
         <div className="flex flex-col justify-center">
-          <p className="text-sm font-semibold uppercase tracking-[0.18em]" style={{ color: tokens.primary }}>
+          <p className="text-[12px] font-light" style={{ color: tokens.primary }}>
             Nossa história
           </p>
-          <h2 className="mt-3 text-3xl font-semibold leading-tight sm:text-4xl" style={{ color: tokens.foreground }}>
+          <h2 className="mt-3 text-[14px] font-normal leading-tight" style={{ color: tokens.foreground }}>
             {site.about_subtitle || "Transformando planos em bons negócios imobiliários"}
           </h2>
-          <p className="mt-5 whitespace-pre-wrap leading-7 opacity-75" style={{ color: tokens.foreground }}>
+          <p className="mt-5 whitespace-pre-wrap text-[12px] font-light leading-6 opacity-75" style={{ color: tokens.foreground }}>
             {site.about_text || `${getSiteTitle(site)} nasceu para simplificar a jornada imobiliária com atendimento próximo, informação clara e bons imóveis.`}
           </p>
           <div className="mt-6 space-y-3">
             {checkmarks.map((item) => (
-              <p key={item} className="flex items-center gap-3 font-medium" style={{ color: tokens.foreground }}>
+              <p key={item} className="flex items-center gap-3 text-[12px] font-light" style={{ color: tokens.foreground }}>
                 <CheckCircle2 className="h-5 w-5 shrink-0" style={{ color: tokens.primary }} />
                 {item}
               </p>
@@ -1222,19 +1217,19 @@ function AboutContent({
           {features.map((feature) => {
             const Icon = iconMap[feature.icon as keyof typeof iconMap] || Building2;
             return (
-              <div key={feature.title} className="rounded-lg border p-5" style={{ backgroundColor: tokens.card, borderColor: `${tokens.foreground}18` }}>
-                <div className="mb-4 inline-flex h-11 w-11 items-center justify-center rounded-lg" style={{ backgroundColor: `${tokens.primary}18`, color: tokens.primary }}>
+              <div key={feature.title} className="rounded-[8px] border p-5" style={{ backgroundColor: tokens.card, borderColor: `color-mix(in srgb, ${tokens.cardForeground} 10%, transparent)`, color: tokens.cardForeground }}>
+                <div className="mb-4 inline-flex h-11 w-11 items-center justify-center rounded-[8px]" style={{ backgroundColor: `color-mix(in srgb, ${tokens.primary} 10%, transparent)`, color: tokens.primary }}>
                   <Icon className="h-5 w-5" />
                 </div>
-                <h3 className="font-semibold" style={{ color: tokens.foreground }}>{feature.title}</h3>
-                <p className="mt-2 text-sm leading-6 opacity-70" style={{ color: tokens.foreground }}>{feature.description}</p>
+                <h3 className="text-[14px] font-normal">{feature.title}</h3>
+                <p className="mt-2 text-[12px] font-light leading-6 opacity-70">{feature.description}</p>
               </div>
             );
           })}
         </div>
         {compact ? (
           <div className="mt-8 text-center">
-            <Link href={buildSiteHref(basePath, "/sobre")} className="text-sm font-semibold" style={{ color: tokens.primary }}>
+            <Link href={buildSiteHref(basePath, "/sobre")} className="rounded-[4px] text-[12px] font-light outline-none focus-visible:ring-2 focus-visible:ring-[var(--site-primary)]" style={{ color: tokens.primary }}>
               Conheça nossa história
             </Link>
           </div>
@@ -1253,12 +1248,14 @@ function PageHero({
   eyebrow: string;
   title: string;
 }>) {
+  const imageUrl = normalizePublicImageUrl(backgroundImage, DEFAULT_HERO_IMAGE);
+
   return (
     <section className="relative overflow-hidden">
-      <img src={backgroundImage} alt="" className="absolute inset-0 h-full w-full object-cover" />
-      <div className="absolute inset-0 bg-black/62" />
-      <div className="relative mx-auto flex min-h-72 w-full max-w-7xl flex-col items-center justify-center px-4 py-20 text-center text-white sm:px-6 lg:px-8">
-        <p className="text-sm font-medium uppercase tracking-[0.2em] text-white/62">{eyebrow}</p>
+      <img src={imageUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
+      <div className="absolute inset-0 bg-[var(--site-overlay)]" />
+      <div className="relative mx-auto flex min-h-72 w-full max-w-7xl flex-col items-center justify-center px-4 py-20 text-center text-[var(--site-on-dark)] sm:px-6 lg:px-8">
+        <p className="text-[12px] font-light text-[var(--site-on-dark-muted)]">{eyebrow}</p>
         <h1 className="mt-3 text-4xl font-light sm:text-5xl">{title}</h1>
       </div>
     </section>
@@ -1277,9 +1274,9 @@ function EmptyState({
   const tokens = getThemeTokens(site);
 
   return (
-    <div className="rounded-[14px] p-8 text-center" style={{ backgroundColor: tokens.card, color: tokens.foreground }}>
-      <h2 className="text-xl font-semibold">{title}</h2>
-      <p className="mt-2 text-sm opacity-68">{description}</p>
+    <div className="rounded-[8px] p-8 text-center" style={{ backgroundColor: tokens.card, color: tokens.cardForeground }}>
+      <h2 className="text-[14px] font-normal">{title}</h2>
+      <p className="mt-2 text-[12px] font-light opacity-70">{description}</p>
     </div>
   );
 }
@@ -1313,15 +1310,15 @@ function Pagination({
   return (
     <nav className="mt-10 flex items-center justify-center gap-3" aria-label="Paginação">
       {currentPage > 1 ? (
-        <Link href={makeHref(currentPage - 1)} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium text-slate-700">
+        <Link href={makeHref(currentPage - 1)} className="rounded-[6px] border border-[color-mix(in_srgb,var(--site-fg)_18%,transparent)] bg-[var(--site-card)] px-4 py-2 text-[12px] font-light text-[var(--site-card-fg)] outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[var(--site-primary)]">
           Anterior
         </Link>
       ) : null}
-      <span className="text-sm opacity-70">
+      <span className="text-[12px] font-light opacity-70">
         Página {currentPage} de {totalPages}
       </span>
       {currentPage < totalPages ? (
-        <Link href={makeHref(currentPage + 1)} className="rounded-lg border bg-white px-4 py-2 text-sm font-medium text-slate-700">
+        <Link href={makeHref(currentPage + 1)} className="rounded-[6px] border border-[color-mix(in_srgb,var(--site-fg)_18%,transparent)] bg-[var(--site-card)] px-4 py-2 text-[12px] font-light text-[var(--site-card-fg)] outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[var(--site-primary)]">
           Próxima
         </Link>
       ) : null}
@@ -1344,19 +1341,19 @@ function FeatureStat({
 
   return (
     <div
-      className="rounded-[10px] p-4"
+      className="rounded-[8px] p-4"
       style={{
-        backgroundColor: "color-mix(in srgb, var(--site-fg) 5%, transparent)",
-        color: tokens.foreground,
+        backgroundColor: "color-mix(in srgb, var(--site-card-fg) 5%, transparent)",
+        color: tokens.cardForeground,
       }}
     >
       <div className="flex items-center gap-2" style={{ color: tokens.primary }}>
         {icon}
-        <p className="text-2xl font-normal leading-none" style={{ color: tokens.foreground }}>
+        <p className="text-[14px] font-normal leading-none">
           {value}
         </p>
       </div>
-      <p className="text-sm opacity-65">{label}</p>
+      <p className="mt-1 text-[12px] font-light opacity-70">{label}</p>
     </div>
   );
 }
@@ -1380,18 +1377,18 @@ function ContactLine({
     <>
       <span style={{ color: tokens.primary }}>{icon}</span>
       <span>
-        <span className="block text-xs font-semibold uppercase tracking-wide opacity-55">{label}</span>
-        <span className="font-medium">{value}</span>
+        <span className="block text-[12px] font-light opacity-60">{label}</span>
+        <span className="text-[12px] font-light">{value}</span>
       </span>
     </>
   );
 
   return href ? (
-    <a href={href} className="flex items-start gap-3 rounded-[12px] p-4 text-left transition hover:brightness-105" style={{ backgroundColor: tokens.card, color: tokens.foreground }}>
+    <a href={href} className="flex items-start gap-3 rounded-[8px] p-4 text-left outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[var(--site-primary)]" style={{ backgroundColor: tokens.card, color: tokens.cardForeground }}>
       {content}
     </a>
   ) : (
-    <div className="flex items-start gap-3 rounded-[12px] p-4 text-left" style={{ backgroundColor: tokens.card, color: tokens.foreground }}>{content}</div>
+    <div className="flex items-start gap-3 rounded-[8px] p-4 text-left" style={{ backgroundColor: tokens.card, color: tokens.cardForeground }}>{content}</div>
   );
 }
 

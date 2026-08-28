@@ -38,6 +38,19 @@ func (handler Handler) List(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]Team]{Data: items})
 }
 
+func (handler Handler) Get(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+	team, err := handler.repo.Get(r.Context(), tenantContext, r.PathValue("id"))
+	if err != nil {
+		writeTeamError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[Team]{Data: team})
+}
+
 func (handler Handler) Create(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := organizationContext(w, r)
 	if !ok {

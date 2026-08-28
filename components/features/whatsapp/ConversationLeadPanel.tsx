@@ -4,15 +4,29 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { LostReasonDialog } from "@/components/features/leads/LostReasonDialog";
 import { PropertyPickerDialog } from "@/components/features/properties/PropertyPickerDialog";
-import { EventForm } from "@/components/features/schedule/EventForm";
+import { EventSheet } from "@/components/features/schedule/EventSheet";
 import { CopyLeadPhoneButton } from "@/components/features/leads/CopyLeadPhoneButton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
 import {
   Command,
   CommandEmpty,
@@ -24,6 +38,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import {
   Building2,
+  AlertCircle,
   Calendar,
   Check,
   ChevronDown,
@@ -41,13 +56,15 @@ import {
   Paperclip,
   Phone,
   Plus,
+  RefreshCw,
   User,
   UserPlus,
   X,
 } from "lucide-react";
-import { formatPhoneForDisplay } from "@/lib/phone-utils";
+import { formatPhoneForDisplay, normalizePhoneToE164 } from "@/lib/phone-utils";
 import { cn } from "@/lib/utils";
 import { commandSearchFilter } from "@/lib/search-text";
+import { getTagColorStyle } from "@/lib/tag-color";
 import { format, type Locale } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useConversationLeadDetail } from "@/hooks/use-conversation-lead-detail";
@@ -56,10 +73,19 @@ import { useUpdateLead } from "@/hooks/use-leads";
 import { useAddLeadTag, useRemoveLeadTag } from "@/hooks/use-leads";
 import { useProperties } from "@/hooks/use-properties";
 import { useUsers } from "@/hooks/use-users";
-import { useLeadAttachments, useUploadLeadAttachment, type LeadAttachment } from "@/hooks/use-lead-attachments";
-import { useScheduleEvents, type EventType, type ScheduleEvent } from "@/hooks/use-schedule-events";
+import {
+  useLeadAttachments,
+  useUploadLeadAttachment,
+  type LeadAttachment,
+} from "@/hooks/use-lead-attachments";
+import {
+  useScheduleEvents,
+  type EventType,
+  type ScheduleEvent,
+} from "@/hooks/use-schedule-events";
 import { useDealStatusChange } from "@/hooks/use-deal-status-change";
 import { useAuth } from "@/contexts/AuthContext";
+import { useOrganizationModules } from "@/hooks/use-organization-modules";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { leadsAPI } from "@/lib/api/leads";
 import type { ConversationLeadDetail } from "@/lib/api/conversation-lead-detail";
@@ -73,7 +99,7 @@ interface ConversationLeadPanelProps {
 
 const DEAL_STATUS_OPTIONS = [
   { value: "open", label: "Aberto", color: "hsl(var(--muted-foreground))" },
-  { value: "won", label: "Ganho", color: "#16a34a" },
+  { value: "won", label: "Ganho", color: "var(--success)" },
   { value: "lost", label: "Perdido", color: "hsl(var(--destructive))" },
 ];
 
@@ -94,7 +120,8 @@ const sectionTitleStyle = {
   fontWeight: 400,
   letterSpacing: 0,
 };
-const panelSectionClassName = "min-w-0 rounded-[8px] bg-[var(--app-surface-soft)] p-3";
+const panelSectionClassName =
+  "min-w-0 rounded-[8px] bg-[var(--app-surface-soft)] p-3";
 
 const scheduleEventTypeLabels: Record<EventType, string> = {
   call: "Ligacao",
@@ -126,7 +153,9 @@ function InfoLine({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex min-w-0 items-start justify-between gap-3 text-xs">
       <span className="shrink-0 text-[var(--app-text-tertiary)]">{label}</span>
-      <span className="flex min-w-0 flex-1 justify-end break-words text-right font-medium text-[var(--app-text-primary)]">{value}</span>
+      <span className="flex min-w-0 flex-1 justify-end break-words text-right font-medium text-[var(--app-text-primary)]">
+        {value}
+      </span>
     </div>
   );
 }
@@ -138,7 +167,23 @@ function metaText(value: unknown) {
   return String(value).trim();
 }
 
-function hasLeadTrackingData(leadMeta: ConversationLeadMeta | null | undefined) {
+function safeExternalURL(value: unknown) {
+  const text = metaText(value);
+  if (!text) return "";
+
+  try {
+    const url = new URL(text);
+    return url.protocol === "https:" || url.protocol === "http:"
+      ? url.toString()
+      : "";
+  } catch {
+    return "";
+  }
+}
+
+function hasLeadTrackingData(
+  leadMeta: ConversationLeadMeta | null | undefined,
+) {
   if (!leadMeta) return false;
   return [
     leadMeta.campaign_name,
@@ -192,12 +237,14 @@ function CampaignTrackingHover({
     return (
       <div className="grid grid-cols-[100px_minmax(0,1fr)] gap-2 text-left text-[11px] leading-snug">
         <span className="text-[var(--app-text-tertiary)]">{label}</span>
-        <span className="break-words text-left font-medium text-[var(--app-text-primary)]">{text}</span>
+        <span className="break-words text-left font-medium text-[var(--app-text-primary)]">
+          {text}
+        </span>
       </div>
     );
   };
   const hasUtms = utmRows.some(([, value]) => Boolean(metaText(value)));
-  const hasLinks = links.some(([, value]) => Boolean(metaText(value)));
+  const hasLinks = links.some(([, value]) => Boolean(safeExternalURL(value)));
 
   return (
     <HoverCard openDelay={100} closeDelay={420}>
@@ -217,10 +264,12 @@ function CampaignTrackingHover({
         side="left"
         align="center"
         sideOffset={4}
-        className="vimob-popover-content z-[100] w-[min(420px,calc(100vw-2rem))] rounded-[8px] border-0 p-0 text-left text-[var(--app-text-primary)] shadow-[0_22px_70px_rgba(0,0,0,0.28)] dark:shadow-[0_22px_70px_rgba(0,0,0,0.58)]"
+        className="vimob-popover-content z-[100] w-[min(420px,calc(100vw-2rem))] rounded-[8px] border-0 p-0 text-left text-[var(--app-text-primary)] shadow-none"
       >
         <div className="border-b border-[var(--app-border)] px-3 py-2 text-left">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-primary">Rastreamento de Campanha</p>
+          <p className="text-[12px] font-light text-primary">
+            Rastreamento de Campanha
+          </p>
         </div>
 
         <div className="max-h-[420px] space-y-3 overflow-y-auto p-3 text-left">
@@ -232,7 +281,9 @@ function CampaignTrackingHover({
 
           {hasUtms && (
             <div className="space-y-1.5 border-t border-[var(--app-border)] pt-3 text-left">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--app-text-tertiary)]">UTMs</p>
+              <p className="text-[12px] font-light text-[var(--app-text-tertiary)]">
+                UTMs
+              </p>
               {utmRows.map(([label, value]) => (
                 <DetailRow key={label} label={label} value={value} />
               ))}
@@ -241,7 +292,9 @@ function CampaignTrackingHover({
 
           {leadMeta?.contact_notes && (
             <div className="border-t border-[var(--app-border)] pt-3 text-left">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--app-text-tertiary)]">Observações</p>
+              <p className="text-[12px] font-light text-[var(--app-text-tertiary)]">
+                Observações
+              </p>
               <p className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-snug text-[var(--app-text-secondary)]">
                 {leadMeta.contact_notes}
               </p>
@@ -251,7 +304,7 @@ function CampaignTrackingHover({
           {hasLinks && (
             <div className="flex flex-wrap gap-2 border-t border-[var(--app-border)] pt-3 text-left">
               {links.map(([label, value]) => {
-                const href = metaText(value);
+                const href = safeExternalURL(value);
                 if (!href) return null;
                 return (
                   <a
@@ -294,7 +347,8 @@ function getScheduleStatusLabel(status?: string | null, isLate = false) {
 
 function getScheduleStatusClass(status?: string | null, isLate = false) {
   if (status === "completed") return "bg-emerald-500/12 text-emerald-500";
-  if (status === "cancelled" || status === "canceled") return "bg-red-500/12 text-red-500";
+  if (status === "cancelled" || status === "canceled")
+    return "bg-red-500/12 text-red-500";
   if (status === "no_show") return "bg-amber-500/12 text-amber-500";
   if (isLate) return "bg-red-500/12 text-red-500";
   return "bg-primary/12 text-primary";
@@ -308,7 +362,8 @@ function getScheduleDateLabel(event: ScheduleEvent, locale: Locale) {
   const endTime = format(endDate, "HH:mm", { locale });
 
   if (event.is_all_day) return `${dateLabel} - dia todo`;
-  if (event.end_time && startTime !== endTime) return `${dateLabel} ${startTime}-${endTime}`;
+  if (event.end_time && startTime !== endTime)
+    return `${dateLabel} ${startTime}-${endTime}`;
   return `${dateLabel} ${startTime}`;
 }
 
@@ -326,7 +381,9 @@ function CompactScheduleEventsList({
     const leftCompleted = left.status === "completed";
     const rightCompleted = right.status === "completed";
     if (leftCompleted !== rightCompleted) return leftCompleted ? 1 : -1;
-    return new Date(left.start_time).getTime() - new Date(right.start_time).getTime();
+    return (
+      new Date(left.start_time).getTime() - new Date(right.start_time).getTime()
+    );
   });
 
   if (sortedEvents.length === 0) {
@@ -348,7 +405,8 @@ function CompactScheduleEventsList({
         const eventType = getScheduleEventType(event.event_type);
         const EventIcon = scheduleEventTypeIcons[eventType] || Calendar;
         const isCompleted = event.status === "completed";
-        const isLate = !isCompleted && new Date(event.start_time).getTime() < currentTime;
+        const isLate =
+          !isCompleted && new Date(event.start_time).getTime() < currentTime;
 
         return (
           <button
@@ -364,21 +422,39 @@ function CompactScheduleEventsList({
             <span
               className={cn(
                 "flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px]",
-                isCompleted ? "bg-emerald-500/18 text-emerald-500" : "bg-primary/12 text-primary",
+                isCompleted
+                  ? "bg-emerald-500/18 text-emerald-500"
+                  : "bg-primary/12 text-primary",
               )}
             >
-              {isCompleted ? <Check className="h-3 w-3" /> : <EventIcon className="h-3 w-3" />}
+              {isCompleted ? (
+                <Check className="h-3 w-3" />
+              ) : (
+                <EventIcon className="h-3 w-3" />
+              )}
             </span>
             <span className="min-w-0 flex-1">
-              <span className={cn("block truncate text-[11px] font-medium leading-tight", isCompleted && "line-through")}>
+              <span
+                className={cn(
+                  "block truncate text-[11px] font-medium leading-tight",
+                  isCompleted && "line-through",
+                )}
+              >
                 {event.title || scheduleEventTypeLabels[eventType]}
               </span>
               <span className="mt-px flex min-w-0 flex-wrap items-center gap-1 text-[10.5px] font-medium leading-tight text-[var(--app-text-secondary)]">
-                <span className="font-semibold text-[var(--app-text-primary)]">{scheduleEventTypeLabels[eventType]}</span>
+                <span className="font-normal text-[var(--app-text-primary)]">
+                  {scheduleEventTypeLabels[eventType]}
+                </span>
                 <span>-</span>
                 <span>{getScheduleDateLabel(event, locale)}</span>
                 {!isCompleted && (
-                  <span className={cn("rounded-[4px] px-1.5 py-0.5 font-medium", getScheduleStatusClass(event.status, isLate))}>
+                  <span
+                    className={cn(
+                      "rounded-[4px] px-1.5 py-0.5 font-medium",
+                      getScheduleStatusClass(event.status, isLate),
+                    )}
+                  >
                     {getScheduleStatusLabel(event.status, isLate)}
                   </span>
                 )}
@@ -408,35 +484,66 @@ function formatSource(source?: string | null) {
   return SOURCE_LABELS[source.toLowerCase()] || source;
 }
 
-function formatPropertyLabel(property?: { code?: string | null; title?: string | null } | null) {
+function formatPropertyLabel(
+  property?: { code?: string | null; title?: string | null } | null,
+) {
   if (!property) return "Nenhum";
 
   const code = property.code || "";
   const title = property.title || "Sem título";
   const full = code ? `${code} - ${title}` : title;
 
-  return full.length > code.length + 13 ? `${full.slice(0, code.length + 13)}...` : full;
+  return full.length > code.length + 13
+    ? `${full.slice(0, code.length + 13)}...`
+    : full;
 }
 
 function getAttachmentLabel(attachment: LeadAttachment) {
   return attachment.file_name || "Documento";
 }
 
-export function ConversationLeadPanel({ leadId, className, contactPicture }: ConversationLeadPanelProps) {
+export function ConversationLeadPanel({
+  leadId,
+  onClose,
+  className,
+  contactPicture,
+}: ConversationLeadPanelProps) {
   const queryClient = useQueryClient();
   const { profile, organization } = useAuth();
   const { hasPermission } = useUserPermissions();
+  const { hasModule } = useOrganizationModules();
   const canOperateLead = hasPermission("lead_operate");
-  const canViewProperties = hasPermission("property_view") || hasPermission("property_manage");
+  const hasPropertiesModule = hasModule("properties");
+  const canViewProperties =
+    hasPropertiesModule &&
+    (hasPermission("property_view") || hasPermission("property_manage"));
   const canViewSchedule = hasPermission("schedule_view");
   const canManageSchedule = canOperateLead && hasPermission("schedule_manage");
-  const organizationId = profile?.organization_id || organization?.id || undefined;
-  const { data: lead, isLoading } = useConversationLeadDetail(leadId);
+  const organizationId =
+    organization?.id || profile?.organization_id || undefined;
+  const {
+    data: lead,
+    isLoading,
+    isError: leadFailed,
+    refetch: refetchLead,
+  } = useConversationLeadDetail(leadId);
   const { data: allTags } = useTags();
-  const { data: properties = [] } = useProperties(undefined, {}, { enabled: canViewProperties });
+  const { data: properties = [] } = useProperties(
+    undefined,
+    {},
+    { enabled: canViewProperties },
+  );
   const { data: users = [] } = useUsers();
-  const { data: attachments = [] } = useLeadAttachments(leadId);
-  const { data: scheduleEvents = [] } = useScheduleEvents({ leadId, enabled: canViewSchedule });
+  const {
+    data: attachments = [],
+    isLoading: attachmentsLoading,
+    isError: attachmentsFailed,
+    refetch: refetchAttachments,
+  } = useLeadAttachments(leadId);
+  const { data: scheduleEvents = [] } = useScheduleEvents({
+    leadId,
+    enabled: canViewSchedule,
+  });
   const uploadAttachment = useUploadLeadAttachment();
   const updateLead = useUpdateLead();
   const addTag = useAddLeadTag();
@@ -450,13 +557,39 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
   const [feedback, setFeedback] = useState("");
   const [lostReasonDialogOpen, setLostReasonDialogOpen] = useState(false);
   const [scheduleFormOpen, setScheduleFormOpen] = useState(false);
-  const [editingScheduleEvent, setEditingScheduleEvent] = useState<ScheduleEvent | null>(null);
-  const [scheduleDefaultType, setScheduleDefaultType] = useState<EventType>("visit");
+  const [editingScheduleEvent, setEditingScheduleEvent] =
+    useState<ScheduleEvent | null>(null);
+  const [scheduleDefaultType, setScheduleDefaultType] =
+    useState<EventType>("visit");
 
   if (isLoading) {
     return (
-      <div className={cn("flex items-center justify-center", className)}>
+      <div className={cn("flex items-center justify-center", className)} role="status" aria-live="polite">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        <span className="sr-only">Carregando dados do lead</span>
+      </div>
+    );
+  }
+
+  if (leadFailed) {
+    return (
+      <div
+        className={cn(
+          "flex h-full min-h-0 flex-col items-center justify-center rounded-[8px] bg-[var(--app-surface-solid)] p-5 text-center",
+          className,
+        )}
+        role="alert"
+      >
+        <AlertCircle className="h-5 w-5 text-destructive" aria-hidden="true" />
+        <p className="mt-2 text-sm font-medium">Não foi possível carregar os dados do lead</p>
+        <p className="mt-1 text-xs text-[var(--app-text-tertiary)]">A conversa continua disponível. Tente abrir os dados novamente.</p>
+        <div className="mt-3 flex items-center gap-2">
+          <Button type="button" size="sm" variant="secondary" onClick={() => void refetchLead()}>
+            <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+            Tentar novamente
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={onClose}>Fechar</Button>
+        </div>
       </div>
     );
   }
@@ -465,31 +598,58 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
 
   const leadTags = (lead.tags || []) as LeadTagRelation[];
   const leadTagIds = leadTags.map((lt) => lt.tag.id);
-  const availableTagsToAdd = (allTags || []).filter((tag) => !leadTagIds.includes(tag.id));
-  const selectedPropertyId = lead.interest_property_id || lead.property_id || null;
-  const selectedProperty = properties.find((property) => property.id === selectedPropertyId);
-  const currentAssignee = users.find((user) => user.id === lead.assigned_user_id);
-  const assigneeName = currentAssignee?.name || currentAssignee?.email || "Sem responsável";
+  const availableTagsToAdd = (allTags || []).filter(
+    (tag) => !leadTagIds.includes(tag.id),
+  );
+  const selectedPropertyId =
+    lead.interest_property_id || lead.property_id || null;
+  const selectedProperty = properties.find(
+    (property) => property.id === selectedPropertyId,
+  );
+  const currentAssignee = users.find(
+    (user) => user.id === lead.assigned_user_id,
+  );
+  const assigneeName =
+    currentAssignee?.name || currentAssignee?.email || "Sem responsável";
   const canAssignAnyLead = canOperateLead;
   const canAssignCurrentLead = canOperateLead;
   const dealStatus = lead.deal_status || "open";
-  const dealStatusLabel = dealStatus === "won" ? "Ganho" : dealStatus === "lost" ? "Perdido" : "Aberto";
-  const phoneDigits = lead.phone?.replace(/\D/g, "") || "";
+  const dealStatusLabel =
+    dealStatus === "won"
+      ? "Ganho"
+      : dealStatus === "lost"
+        ? "Perdido"
+        : "Aberto";
+  const phoneHref = normalizePhoneToE164(lead.phone);
   const sourceLabel = formatSource(lead.source);
   const sourceValue = hasLeadTrackingData(lead.meta) ? (
     <CampaignTrackingHover leadMeta={lead.meta} fallbackLabel={sourceLabel} />
-  ) : sourceLabel;
+  ) : (
+    sourceLabel
+  );
   const contactRows = [
     { label: "Nome", value: lead.name },
-    { label: "Telefone", value: lead.phone ? formatPhoneForDisplay(lead.phone) : null },
+    {
+      label: "Telefone",
+      value: lead.phone ? formatPhoneForDisplay(lead.phone) : null,
+    },
     { label: "E-mail", value: lead.email },
     { label: "Origem", value: sourceValue },
-    { label: "Criado em", value: lead.created_at ? format(new Date(lead.created_at), "dd/MM/yy HH:mm") : null },
+    {
+      label: "Criado em",
+      value: lead.created_at
+        ? format(new Date(lead.created_at), "dd/MM/yy HH:mm")
+        : null,
+    },
   ].filter((row) => Boolean(row.value));
 
   const refreshLeadData = () => {
-    void queryClient.invalidateQueries({ queryKey: ["conversation-lead-detail"] });
-    void queryClient.invalidateQueries({ queryKey: ["whatsapp-conversations"] });
+    void queryClient.invalidateQueries({
+      queryKey: ["conversation-lead-detail"],
+    });
+    void queryClient.invalidateQueries({
+      queryKey: ["whatsapp-conversations"],
+    });
     void queryClient.invalidateQueries({ queryKey: ["leads"] });
     void queryClient.invalidateQueries({ queryKey: ["stages-with-leads"] });
   };
@@ -557,19 +717,28 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
     setAssigneePopoverOpen(false);
 
     try {
-      const { error } = await leadsAPI.assignLead(lead.id, userId, organizationId);
+      const { error } = await leadsAPI.assignLead(
+        lead.id,
+        userId,
+        organizationId,
+      );
       if (error) throw error;
       refreshLeadData();
       toast.success("Responsável atualizado");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Erro desconhecido";
+      const message =
+        error instanceof Error ? error.message : "Erro desconhecido";
       toast.error(`Erro ao atualizar responsável: ${message}`);
     } finally {
       setIsAssigning(false);
     }
   };
 
-  const handlePropertySelect = async (property: { id: string; preco?: number | null; commission_percentage?: number | null }) => {
+  const handlePropertySelect = async (property: {
+    id: string;
+    preco?: number | null;
+    commission_percentage?: number | null;
+  }) => {
     if (!canOperateLead || !canViewProperties) return;
     const nextUpdate: {
       id: string;
@@ -595,7 +764,9 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
     refreshLeadData();
   };
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
     if (!canOperateLead) return;
     const file = event.target.files?.[0];
     if (!file) return;
@@ -606,7 +777,8 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
       await uploadAttachment.mutateAsync({ leadId: lead.id, file });
       toast.success("Documento enviado com sucesso!");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Erro desconhecido";
+      const message =
+        error instanceof Error ? error.message : "Erro desconhecido";
       toast.error(`Erro ao enviar: ${message}`);
     } finally {
       setIsUploading(false);
@@ -624,7 +796,8 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
       setFeedback("");
       toast.success("Feedback registrado com sucesso!");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Erro desconhecido";
+      const message =
+        error instanceof Error ? error.message : "Erro desconhecido";
       toast.error(`Erro ao registrar feedback: ${message}`);
     }
   };
@@ -650,25 +823,45 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
   return (
     <div
       className={cn(
-        "lead-detail-dialog lead-detail-v2 flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]",
+        "lead-detail-dialog lead-detail-v2 flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]",
         className,
       )}
     >
       <div className="relative min-w-0 shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] px-4 pb-3 pt-4">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="absolute right-2 top-2 h-7 w-7 rounded-[6px]"
+          onClick={onClose}
+          aria-label="Fechar painel do lead"
+        >
+          <X className="h-3.5 w-3.5" aria-hidden="true" />
+        </Button>
         <div className="flex items-start gap-2.5">
           <Avatar className="h-12 w-12 shrink-0 border-0">
-            <AvatarImage src={contactPicture || undefined} alt={lead.name || "Lead"} />
-            <AvatarFallback className="bg-primary text-base font-semibold text-white">
+            <AvatarImage
+              src={contactPicture || undefined}
+              alt={lead.name || "Lead"}
+            />
+            <AvatarFallback className="bg-primary/50 text-[14px] font-normal text-primary-foreground">
               {lead.name?.[0]?.toUpperCase() || <User className="h-5 w-5" />}
             </AvatarFallback>
           </Avatar>
 
           <div className="min-w-0 flex-1 overflow-hidden">
-            <h2 className="truncate text-base font-semibold leading-tight">{lead.name || "Lead"}</h2>
+            <h2 className="truncate text-[14px] font-normal leading-tight">
+              {lead.name || "Lead"}
+            </h2>
             {lead.phone && (
               <div className="mt-1 flex min-w-0 items-center gap-1.5">
-                <p className="truncate text-xs text-[var(--app-text-tertiary)]">{formatPhoneForDisplay(lead.phone)}</p>
-                <CopyLeadPhoneButton phone={lead.phone} className="h-6 w-6 bg-transparent hover:bg-[var(--app-surface-soft)] md:hidden" />
+                <p className="truncate text-xs text-[var(--app-text-tertiary)]">
+                  {formatPhoneForDisplay(lead.phone)}
+                </p>
+                <CopyLeadPhoneButton
+                  phone={lead.phone}
+                  className="h-6 w-6 bg-transparent hover:bg-[var(--app-surface-soft)] md:hidden"
+                />
               </div>
             )}
 
@@ -677,21 +870,29 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
                 <Badge
                   key={leadTag.tag.id}
                   className="flex h-5 items-center gap-1 rounded-[4px] border-0 px-1.5 text-[10px]"
-                  style={{ backgroundColor: leadTag.tag.color, color: "#fff" }}
+                  style={getTagColorStyle(leadTag.tag.color)}
                 >
-                  <span className="max-w-[82px] truncate">{leadTag.tag.name || "Tag"}</span>
+                  <span className="max-w-[82px] truncate">
+                    {leadTag.tag.name || "Tag"}
+                  </span>
                   <button
                     type="button"
                     disabled={!canOperateLead}
-                    className="rounded-[3px] p-0.5 hover:bg-black/10 disabled:hidden"
-                    onClick={() => removeTag.mutate({ leadId, tagId: leadTag.tag.id })}
+                    className="rounded-[3px] p-0.5 hover:bg-[var(--app-surface-hover)] disabled:hidden"
+                    onClick={() =>
+                      removeTag.mutate({ leadId, tagId: leadTag.tag.id })
+                    }
+                    aria-label={`Remover tag ${leadTag.tag.name || "Tag"}`}
                   >
                     <X className="h-2.5 w-2.5" />
                   </button>
                 </Badge>
               ))}
               {leadTags.length > 4 && (
-                <Badge variant="secondary" className="h-5 rounded-[4px] border-0 px-1.5 text-[10px]">
+                <Badge
+                  variant="secondary"
+                  className="h-5 rounded-[4px] border-0 px-1.5 text-[10px]"
+                >
                   +{leadTags.length - 4}
                 </Badge>
               )}
@@ -715,9 +916,14 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
                           key={tag.id}
                           type="button"
                           className="flex w-full items-center gap-2 rounded-[6px] px-2 py-2 text-left text-xs hover:bg-accent"
-                          onClick={() => addTag.mutate({ leadId, tagId: tag.id })}
+                          onClick={() =>
+                            addTag.mutate({ leadId, tagId: tag.id })
+                          }
                         >
-                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: tag.color }} />
+                          <span
+                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                            style={getTagColorStyle(tag.color)}
+                          />
                           <span className="truncate">{tag.name}</span>
                         </button>
                       ))}
@@ -730,7 +936,10 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
         </div>
 
         <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-          <Popover open={assigneePopoverOpen} onOpenChange={setAssigneePopoverOpen}>
+          <Popover
+            open={assigneePopoverOpen}
+            onOpenChange={setAssigneePopoverOpen}
+          >
             <PopoverTrigger asChild>
               <Button
                 type="button"
@@ -740,28 +949,55 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
               >
                 <User className="mr-1.5 h-3.5 w-3.5 shrink-0" />
                 <span className="truncate">{assigneeName}</span>
-                {isAssigning ? <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin" /> : <ChevronDown className="ml-auto h-3.5 w-3.5" />}
+                {isAssigning ? (
+                  <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <ChevronDown className="ml-auto h-3.5 w-3.5" />
+                )}
               </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-[300px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-1 shadow-2xl" align="start" collisionPadding={12}>
-              <Command filter={commandSearchFilter} className="max-h-[min(72vh,430px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2">
-                <CommandInput placeholder="Buscar responsável..." className="h-10 border-none focus:ring-0" />
+            <PopoverContent
+              className="w-[300px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-1 shadow-none"
+              align="start"
+              collisionPadding={12}
+            >
+              <Command
+                filter={commandSearchFilter}
+                className="max-h-[min(72vh,430px)] border-none bg-transparent [&_[cmdk-input-wrapper]]:border-b-0 [&_[cmdk-input-wrapper]]:px-2"
+              >
+                <CommandInput
+                  placeholder="Buscar responsável..."
+                  className="h-10 border-none focus:ring-0"
+                />
                 <CommandList className="max-h-[min(58vh,340px)] overflow-y-auto overscroll-contain p-1 touch-pan-y scrollbar-thin">
-                  <CommandEmpty className="py-4 text-center text-sm text-muted-foreground">Nenhum encontrado.</CommandEmpty>
+                  <CommandEmpty className="py-4 text-center text-sm text-muted-foreground">
+                    Nenhum encontrado.
+                  </CommandEmpty>
                   <CommandGroup>
                     {canAssignAnyLead && (
-                    <CommandItem onSelect={() => void handleAssignUser(null)} className="cursor-pointer rounded-[6px] px-3 py-2">
-                      Sem responsável
-                    </CommandItem>
+                      <CommandItem
+                        onSelect={() => void handleAssignUser(null)}
+                        className="cursor-pointer rounded-[6px] px-3 py-2"
+                      >
+                        Sem responsável
+                      </CommandItem>
                     )}
                     {users.map((user) => (
-                      <CommandItem key={user.id} onSelect={() => void handleAssignUser(user.id)} className="cursor-pointer rounded-[6px] px-3 py-2">
+                      <CommandItem
+                        key={user.id}
+                        onSelect={() => void handleAssignUser(user.id)}
+                        className="cursor-pointer rounded-[6px] px-3 py-2"
+                      >
                         <div className="flex min-w-0 items-center gap-2">
                           <Avatar className="h-7 w-7">
                             <AvatarImage src={user.avatar_url || undefined} />
-                            <AvatarFallback className="text-[10px]">{(user.name || user.email || "U")[0]}</AvatarFallback>
+                            <AvatarFallback className="text-[10px]">
+                              {(user.name || user.email || "U")[0]}
+                            </AvatarFallback>
                           </Avatar>
-                          <span className="truncate">{user.name || user.email}</span>
+                          <span className="truncate">
+                            {user.name || user.email}
+                          </span>
                         </div>
                       </CommandItem>
                     ))}
@@ -771,15 +1007,27 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
             </PopoverContent>
           </Popover>
 
-          <Select value={dealStatus} onValueChange={handleDealStatusChange} disabled={!canOperateLead}>
-            <SelectTrigger className={cn("h-8 w-[92px] gap-1 rounded-[6px] px-2 text-xs font-medium", getDealStatusTriggerClass(dealStatus))}>
+          <Select
+            value={dealStatus}
+            onValueChange={handleDealStatusChange}
+            disabled={!canOperateLead}
+          >
+            <SelectTrigger
+              className={cn(
+                "h-8 w-[92px] gap-1 rounded-[6px] px-2 text-xs font-medium",
+                getDealStatusTriggerClass(dealStatus),
+              )}
+            >
               <SelectValue>{dealStatusLabel}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               {DEAL_STATUS_OPTIONS.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
                   <span className="flex items-center gap-2">
-                    <CircleDot className="h-3.5 w-3.5" style={{ color: option.color }} />
+                    <CircleDot
+                      className="h-3.5 w-3.5"
+                      style={{ color: option.color }}
+                    />
                     {option.label}
                   </span>
                 </SelectItem>
@@ -793,21 +1041,27 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
             type="button"
             variant="outline"
             size="sm"
-            disabled={!phoneDigits}
-            onClick={() => window.open(`tel:${phoneDigits}`, "_blank")}
+            disabled={!phoneHref}
+            onClick={() => {
+              if (phoneHref) window.location.href = `tel:${phoneHref}`;
+            }}
             className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]"
+            aria-label={lead.phone ? `Ligar para ${lead.name}` : "Telefone indisponível"}
           >
-            <Phone className="h-3.5 w-3.5" />
+            <Phone className="h-3.5 w-3.5" aria-hidden="true" />
           </Button>
           <Button
             type="button"
             variant="outline"
             size="sm"
             disabled={!lead.email}
-            onClick={() => lead.email && window.open(`mailto:${lead.email}`, "_blank")}
+            onClick={() => {
+              if (lead.email) window.location.href = `mailto:${lead.email}`;
+            }}
             className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]"
+            aria-label={lead.email ? `Enviar e-mail para ${lead.name}` : "E-mail indisponível"}
           >
-            <Mail className="h-3.5 w-3.5" />
+            <Mail className="h-3.5 w-3.5" aria-hidden="true" />
           </Button>
         </div>
       </div>
@@ -816,8 +1070,15 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
         <div className="min-w-0 space-y-3 p-3 pb-4">
           <section className={panelSectionClassName}>
             <div className="mb-3 flex items-center justify-between">
-              <h3 className={sectionTitleClassName} style={sectionTitleStyle}>Dados do contato</h3>
-              <Button variant="ghost" size="sm" className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]" asChild>
+              <h3 className={sectionTitleClassName} style={sectionTitleStyle}>
+                Dados do contato
+              </h3>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]"
+                asChild
+              >
                 <Link href={`/crm/pipelines?lead=${lead.id}`}>
                   <FileEdit className="h-3 w-3" />
                   Editar
@@ -832,69 +1093,115 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
             </div>
           </section>
 
-          <PropertyPickerDialog
-            properties={properties}
-            selectedPropertyId={selectedPropertyId}
-            onSelect={(property) => void handlePropertySelect(property)}
-            disabled={!canOperateLead || !canViewProperties}
-            trigger={
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={!canOperateLead || !canViewProperties}
-                className="h-10 w-full min-w-0 justify-between rounded-[8px] border-0 bg-[var(--app-surface-soft)] px-3 text-xs text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
-              >
-                <div className="flex min-w-0 items-center gap-2">
-                  <Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  <span className="truncate">{formatPropertyLabel(selectedProperty)}</span>
-                </div>
-                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              </Button>
-            }
-          />
+          {hasPropertiesModule && (
+            <PropertyPickerDialog
+              properties={properties}
+              selectedPropertyId={selectedPropertyId}
+              onSelect={(property) => void handlePropertySelect(property)}
+              disabled={!canOperateLead || !canViewProperties}
+              trigger={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={!canOperateLead || !canViewProperties}
+                  className="h-10 w-full min-w-0 justify-between rounded-[8px] border-0 bg-[var(--app-surface-soft)] px-3 text-xs text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
+                >
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate">
+                      {formatPropertyLabel(selectedProperty)}
+                    </span>
+                  </div>
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                </Button>
+              }
+            />
+          )}
 
           <section className={panelSectionClassName}>
             <div className="mb-3 flex items-center justify-between">
-              <h3 className={sectionTitleClassName} style={sectionTitleStyle}>Documentação</h3>
+              <h3 className={sectionTitleClassName} style={sectionTitleStyle}>
+                Documentação
+              </h3>
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
                 className="lead-detail-subtle-action h-7 rounded-[5px] px-2 text-[10px]"
-                disabled={!canOperateLead || isUploading || uploadAttachment.isPending}
+                disabled={
+                  !canOperateLead || isUploading || uploadAttachment.isPending
+                }
                 onClick={() => fileInputRef.current?.click()}
               >
-                {isUploading || uploadAttachment.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />}
+                {isUploading || uploadAttachment.isPending ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Paperclip className="h-3 w-3" />
+                )}
                 Anexar
               </Button>
-              <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileUpload} />
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                onChange={handleFileUpload}
+              />
             </div>
 
-            {attachments.length > 0 && (
+            {attachmentsLoading ? (
+              <div className="flex items-center gap-2 py-2 text-xs text-[var(--app-text-tertiary)]" role="status">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                Carregando documentos...
+              </div>
+            ) : attachmentsFailed ? (
+              <div className="rounded-[6px] bg-destructive/8 p-2 text-xs" role="alert">
+                <p>Não foi possível carregar os documentos.</p>
+                <Button type="button" variant="ghost" size="sm" className="mt-1 h-7 px-2" onClick={() => void refetchAttachments()}>
+                  <RefreshCw className="mr-1.5 h-3 w-3" aria-hidden="true" />
+                  Tentar novamente
+                </Button>
+              </div>
+            ) : attachments.length > 0 ? (
               <div className="space-y-2">
                 {attachments.slice(0, 4).map((attachment) => (
-                  <button
-                    key={attachment.id}
-                    type="button"
-                    className="flex w-full items-center gap-2 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2 py-2 text-left text-xs outline-none ring-0 hover:bg-[var(--app-surface-hover)] focus:outline-none focus-visible:outline-none focus-visible:ring-0"
-                    onClick={() => window.open(attachment.file_url, "_blank")}
-                  >
-                    <FileText className="h-3.5 w-3.5 shrink-0 text-primary" />
-                    <span className="truncate">{getAttachmentLabel(attachment)}</span>
-                  </button>
+                  (() => {
+                    const attachmentURL = safeExternalURL(attachment.file_url);
+                    const attachmentLabel = getAttachmentLabel(attachment);
+                    return (
+                      <button
+                        key={attachment.id}
+                        type="button"
+                        disabled={!attachmentURL}
+                        className="flex w-full items-center gap-2 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2 py-2 text-left text-xs outline-none ring-0 hover:bg-[var(--app-surface-hover)] focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={() => window.open(attachmentURL, "_blank", "noopener,noreferrer")}
+                        aria-label={attachmentURL ? `Abrir documento ${attachmentLabel}` : `Documento ${attachmentLabel} indisponível`}
+                      >
+                        <FileText className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
+                        <span className="truncate">{attachmentLabel}</span>
+                      </button>
+                    );
+                  })()
                 ))}
                 {attachments.length > 4 && (
-                  <p className="px-1 text-[10px] text-[var(--app-text-tertiary)]">+{attachments.length - 4} documento(s)</p>
+                  <p className="px-1 text-[10px] text-[var(--app-text-tertiary)]">
+                    +{attachments.length - 4} documento(s)
+                  </p>
                 )}
               </div>
+            ) : (
+              <p className="py-1 text-xs text-[var(--app-text-tertiary)]">Nenhum documento anexado.</p>
             )}
           </section>
 
           <section className={cn("lead-agenda-card", panelSectionClassName)}>
             <div className="flex items-center justify-between gap-3">
               <div className="lead-agenda-summary min-w-0">
-                <h3 className={sectionTitleClassName} style={sectionTitleStyle}>Agenda</h3>
-                <p className="text-[10px] text-[var(--app-text-tertiary)]">{scheduleEvents.length} compromisso(s)</p>
+                <h3 className={sectionTitleClassName} style={sectionTitleStyle}>
+                  Agenda
+                </h3>
+                <p className="text-[10px] text-[var(--app-text-tertiary)]">
+                  {scheduleEvents.length} compromisso(s)
+                </p>
               </div>
               <Button
                 size="sm"
@@ -909,7 +1216,9 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
             <CompactScheduleEventsList
               events={scheduleEvents}
               locale={ptBR}
-              onEditEvent={canManageSchedule ? handleEditScheduleEvent : undefined}
+              onEditEvent={
+                canManageSchedule ? handleEditScheduleEvent : undefined
+              }
             />
           </section>
 
@@ -922,7 +1231,13 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
               className="min-h-[92px] resize-none rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-xs"
             />
             <div className="mt-2 flex justify-end">
-              <Button className="lead-detail-primary-action h-8 rounded-[6px] px-3" disabled={!canOperateLead || !feedback.trim() || updateLead.isPending} onClick={handleSaveFeedback}>
+              <Button
+                className="lead-detail-primary-action h-8 rounded-[6px] px-3"
+                disabled={
+                  !canOperateLead || !feedback.trim() || updateLead.isPending
+                }
+                onClick={handleSaveFeedback}
+              >
                 Registrar feedback
               </Button>
             </div>
@@ -930,18 +1245,20 @@ export function ConversationLeadPanel({ leadId, className, contactPicture }: Con
         </div>
       </ScrollArea>
 
-      {canManageSchedule && <EventForm
-        open={scheduleFormOpen}
-        onOpenChange={(open) => {
-          if (!open) handleCloseScheduleForm();
-          else setScheduleFormOpen(true);
-        }}
-        event={editingScheduleEvent}
-        leadId={lead.id}
-        leadName={lead.name}
-        defaultUserId={lead.assigned_user_id || profile?.id || undefined}
-        defaultType={scheduleDefaultType}
-      />}
+      {canManageSchedule && (
+        <EventSheet
+          open={scheduleFormOpen}
+          onOpenChange={(open) => {
+            if (!open) handleCloseScheduleForm();
+            else setScheduleFormOpen(true);
+          }}
+          event={editingScheduleEvent}
+          leadId={lead.id}
+          leadName={lead.name}
+          defaultUserId={lead.assigned_user_id || profile?.id || undefined}
+          defaultType={scheduleDefaultType}
+        />
+      )}
 
       <LostReasonDialog
         open={lostReasonDialogOpen}
@@ -960,6 +1277,7 @@ interface ConversationUnregisteredPanelProps {
   contactPicture?: string | null;
   isGroup?: boolean;
   onCreateLead: () => void;
+  onClose?: () => void;
   className?: string;
 }
 
@@ -969,6 +1287,7 @@ export function ConversationUnregisteredPanel({
   contactPicture,
   isGroup,
   onCreateLead,
+  onClose,
   className,
 }: ConversationUnregisteredPanelProps) {
   const displayName =
@@ -979,20 +1298,40 @@ export function ConversationUnregisteredPanel({
   return (
     <aside
       className={cn(
-        "lead-detail-dialog lead-detail-v2 flex h-full min-h-0 flex-col overflow-hidden rounded-2xl bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]",
+        "lead-detail-dialog lead-detail-v2 flex h-full min-h-0 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]",
         className,
       )}
     >
-      <div className="flex shrink-0 flex-col items-center border-b border-[var(--app-border)] px-4 py-5 text-center">
+      <div className="relative flex shrink-0 flex-col items-center border-b border-[var(--app-border)] px-4 py-5 text-center">
+        {onClose && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="absolute right-2 top-2 h-7 w-7 rounded-[6px]"
+            onClick={onClose}
+            aria-label="Fechar painel do contato"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
+        )}
         <Avatar className="h-14 w-14 border-0">
           <AvatarImage src={contactPicture || undefined} alt={displayName} />
           <AvatarFallback className="bg-[var(--app-surface-soft)] text-base font-medium text-[var(--app-text-secondary)]">
-            {isGroup ? <User className="h-5 w-5" /> : displayName[0]?.toUpperCase() || "?"}
+            {isGroup ? (
+              <User className="h-5 w-5" />
+            ) : (
+              displayName[0]?.toUpperCase() || "?"
+            )}
           </AvatarFallback>
         </Avatar>
-        <h2 className="mt-3 max-w-full truncate text-sm font-medium">{displayName}</h2>
+        <h2 className="mt-3 max-w-full truncate text-sm font-medium">
+          {displayName}
+        </h2>
         {contactPhone && (
-          <p className="mt-1 text-xs text-[var(--app-text-tertiary)]">{formatPhoneForDisplay(contactPhone)}</p>
+          <p className="mt-1 text-xs text-[var(--app-text-tertiary)]">
+            {formatPhoneForDisplay(contactPhone)}
+          </p>
         )}
         <Badge className="mt-3 rounded-[5px] border-0 bg-amber-500/14 px-2 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-300">
           Não cadastrado
@@ -1001,13 +1340,19 @@ export function ConversationUnregisteredPanel({
 
       <div className="flex flex-1 flex-col justify-center gap-4 px-4 py-5 text-center">
         <div className="rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-4">
-          <p className="text-sm font-medium text-[var(--app-text-primary)]">Criar lead para esta conversa</p>
+          <p className="text-sm font-medium text-[var(--app-text-primary)]">
+            Criar lead para esta conversa
+          </p>
           <p className="mt-1 text-xs leading-relaxed text-[var(--app-text-tertiary)]">
-            Vincule este contato para acompanhar etapa, responsavel, agenda, documentacao e historico comercial.
+            Vincule este contato para acompanhar etapa, responsavel, agenda,
+            documentacao e historico comercial.
           </p>
         </div>
 
-        <Button className="lead-detail-primary-action h-8 rounded-[6px] px-3" onClick={onCreateLead}>
+        <Button
+          className="lead-detail-primary-action h-8 rounded-[6px] px-3"
+          onClick={onCreateLead}
+        >
           <UserPlus className="h-3.5 w-3.5" />
           Cadastrar lead
         </Button>

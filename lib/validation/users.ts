@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { apiEnvelopeSchema, nonNegativeIntegerSchema, timestampSchema, uuidSchema } from './common'
 
-export const userRoleSchema = z.enum(['super_admin', 'admin', 'user'])
+export const userRoleSchema = z.enum(['super_admin', 'admin', 'manager', 'user'])
 
 export const createUserInputSchema = z.object({
   name: z.string().trim().min(2).max(180),
@@ -9,13 +9,13 @@ export const createUserInputSchema = z.object({
   phone: z.string().trim().max(40).nullish(),
   whatsapp: z.string().trim().max(40).nullish(),
   endereco: z.string().trim().max(200).nullish(),
-  role: z.enum(['admin', 'user']),
+  role: z.enum(['admin', 'manager', 'user']),
 }).strict()
 
 export const updateUserInputSchema = z.object({
   id: uuidSchema,
   name: z.string().trim().min(2).max(180).optional(),
-  role: z.enum(['admin', 'user']).optional(),
+  role: z.enum(['admin', 'manager', 'user']).optional(),
   is_active: z.boolean().optional(),
   avatar_url: z.string().trim().url().nullable().optional(),
   whatsapp: z.string().trim().max(40).nullable().optional(),

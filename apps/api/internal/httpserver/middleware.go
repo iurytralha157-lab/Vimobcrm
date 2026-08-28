@@ -50,7 +50,7 @@ func LogRequests(logger *slog.Logger) Middleware {
 
 			logger.Info("http request",
 				"method", r.Method,
-				"path", r.URL.Path,
+				"path", safeRequestPath(r),
 				"status", recorder.status,
 				"duration_ms", time.Since(start).Milliseconds(),
 				"request_id", RequestIDFromContext(r.Context()),
@@ -58,6 +58,39 @@ func LogRequests(logger *slog.Logger) Middleware {
 			)
 		})
 	}
+}
+
+func safeRequestPath(r *http.Request) string {
+	if r == nil || r.URL == nil {
+		return ""
+	}
+	// Go 1.22+ fills Pattern after ServeMux dispatch. Prefer that stable route
+	// template so path credentials never reach logs.
+	if pattern := strings.TrimSpace(r.Pattern); pattern != "" {
+		if _, route, found := strings.Cut(pattern, " "); found && strings.HasPrefix(route, "/") {
+			return route
+		}
+		return pattern
+	}
+
+	// Preserve the safety property for requests that do not pass through a
+	// ServeMux (including 404s and isolated handlers).
+	segments := strings.Split(r.URL.Path, "/")
+	grupoOLX := false
+	for index, segment := range segments {
+		if segment == "grupo-olx" {
+			grupoOLX = true
+			continue
+		}
+		if !grupoOLX || index+1 >= len(segments) {
+			continue
+		}
+		switch segment {
+		case "feed", "leads", "import-reports":
+			segments[index+1] = "{token}"
+		}
+	}
+	return strings.Join(segments, "/")
 }
 
 func CORS(allowedOrigins []string) Middleware {
@@ -91,7 +124,7 @@ func CORS(allowedOrigins []string) Middleware {
 			}
 
 			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PATCH,PUT,DELETE,OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization,Content-Type,X-Organization-ID,X-Request-ID,X-Webhook-Token")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization,Content-Type,Idempotency-Key,Last-Event-ID,X-Organization-ID,X-Request-ID,X-Webhook-Token")
 			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
 			w.Header().Set("Access-Control-Max-Age", "600")
 
@@ -137,6 +170,16 @@ func isPrivateDevOrigin(origin string) bool {
 }
 
 func RequireAuth(verifier *authpkg.Verifier, next http.Handler) http.Handler {
+	return requireAuth(verifier, false, next)
+}
+
+// RequirePasswordChangeAuth permits a recovery session only for the exact
+// password-change endpoint. All other authenticated routes must use RequireAuth.
+func RequirePasswordChangeAuth(verifier *authpkg.Verifier, next http.Handler) http.Handler {
+	return requireAuth(verifier, true, next)
+}
+
+func requireAuth(verifier *authpkg.Verifier, allowPasswordRecovery bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := bearerToken(r.Header.Get("Authorization"))
 		if token == "" {
@@ -147,6 +190,13 @@ func RequireAuth(verifier *authpkg.Verifier, next http.Handler) http.Handler {
 		user, err := verifier.Verify(r.Context(), token)
 		if err != nil {
 			WriteError(w, r, http.StatusUnauthorized, "unauthorized", "Invalid or expired bearer token.")
+			return
+		}
+		passwordRecoveryAllowed := allowPasswordRecovery &&
+			r.Method == http.MethodPost &&
+			r.URL.Path == "/v1/settings/password"
+		if user.IsPasswordRecovery() && !passwordRecoveryAllowed {
+			WriteError(w, r, http.StatusForbidden, "recovery_session_restricted", "Password recovery sessions cannot access this resource.")
 			return
 		}
 

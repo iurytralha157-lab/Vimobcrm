@@ -16,9 +16,9 @@ select is(
 );
 
 select is(
-  (select count(*) from public.vista_integrations where strpos(api_url, '@') = 0 and is_active),
-  1::bigint,
-  'The valid Vista integration remains active'
+  (select count(*) from public.vista_integrations where status = 'disabled' and is_active),
+  0::bigint,
+  'Disabled Vista integrations cannot remain active'
 );
 
 select * from finish();

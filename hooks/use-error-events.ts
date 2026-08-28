@@ -7,7 +7,7 @@ import { telemetryAPI, type ErrorEventFilters } from '@/lib/api/telemetry'
 export function useErrorEvents(filters: ErrorEventFilters) {
   return useQuery({
     queryKey: ['admin-error-events', filters],
-    queryFn: () => telemetryAPI.getErrorEvents(filters),
+    queryFn: ({ signal }) => telemetryAPI.getErrorEvents(filters, signal),
     staleTime: 30_000,
     gcTime: 1000 * 60 * 5,
   })

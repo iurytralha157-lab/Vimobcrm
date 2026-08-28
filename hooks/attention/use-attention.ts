@@ -13,7 +13,7 @@ import {
   type UpdateAttentionSettingsInput,
 } from '@/lib/api/attention'
 
-const ATTENTION_PAGE_SIZE = 50
+const ATTENTION_PAGE_SIZE = 20
 const ATTENTION_REFETCH_INTERVAL_MS = 60_000
 
 function useOrganizationId() {
@@ -87,6 +87,7 @@ function useAttentionMutationInvalidation() {
   return () => {
     queryClient.invalidateQueries({ queryKey: ['attention', 'items'] })
     queryClient.invalidateQueries({ queryKey: ['attention', 'summary'] })
+    queryClient.invalidateQueries({ queryKey: ['home'] })
   }
 }
 
@@ -125,8 +126,24 @@ export function useResolveAttentionItem() {
   const invalidate = useAttentionMutationInvalidation()
 
   return useMutation({
-    mutationFn: ({ id, reason, note }: { id: string; reason: string; note?: string }) => (
-      attentionAPI.resolveItem(id, reason, note, organizationId)
+    mutationFn: ({
+      id,
+      reason,
+      note,
+      administrativeOverride = false,
+    }: {
+      id: string
+      reason: string
+      note?: string
+      administrativeOverride?: boolean
+    }) => (
+      attentionAPI.resolveItem(
+        id,
+        reason,
+        note,
+        organizationId,
+        administrativeOverride,
+      )
     ),
     onSuccess: () => {
       invalidate()
@@ -162,6 +179,7 @@ export function useUpdateAttentionPolicy() {
       queryClient.invalidateQueries({ queryKey: ['attention', 'policies'] })
       queryClient.invalidateQueries({ queryKey: ['attention', 'items'] })
       queryClient.invalidateQueries({ queryKey: ['attention', 'summary'] })
+      queryClient.invalidateQueries({ queryKey: ['home'] })
       toast.success('Regra atualizada. Ciclos existentes mantêm a versão original.')
     },
     onError: (error: Error) => toast.error(error.message || 'Não foi possível atualizar a regra.'),
@@ -178,6 +196,7 @@ export function useUpdateAttentionSettings() {
       queryClient.invalidateQueries({ queryKey: ['attention', 'settings'] })
       queryClient.invalidateQueries({ queryKey: ['attention', 'items'] })
       queryClient.invalidateQueries({ queryKey: ['attention', 'summary'] })
+      queryClient.invalidateQueries({ queryKey: ['home'] })
       toast.success('Configurações globais do motor atualizadas.')
     },
     onError: (error: Error) => toast.error(error.message || 'Não foi possível atualizar a segurança global.'),

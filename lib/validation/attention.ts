@@ -7,6 +7,7 @@ export const attentionScopeSchema = z.enum(['mine', 'team', 'organization'])
 export const attentionPolicyTypeSchema = z.enum([
   'unassigned',
   'first_contact',
+  'first_effective_contact',
   'stage_inactivity',
   'stage_age',
   'cadence_task',
@@ -45,10 +46,11 @@ export const apiAttentionPolicySchema = z.object({
   stageName: nullableTextSchema,
   thresholdMinutes: nonNegativeIntegerSchema,
   warningMinutes: nonNegativeIntegerSchema,
-  repeatMinutes: nonNegativeIntegerSchema,
+  repeatMinutes: nonNegativeIntegerSchema.nullish(),
   escalationMinutes: optionalMinutesSchema,
   redistributionMinutes: optionalMinutesSchema,
   businessHoursOnly: z.boolean(),
+  redistributeBeforeContactOnly: z.boolean().optional(),
   config: z.record(z.unknown()).nullish(),
   createdBy: nullableUUIDSchema,
   createdAt: timestampSchema,
@@ -65,6 +67,7 @@ export const apiAttentionItemSchema = z.object({
   policyStatus: attentionPolicyStatusSchema,
   policyVersion: z.number().int().positive(),
   status: attentionItemStatusSchema,
+  shadow: z.boolean(),
   assignedUserId: nullableUUIDSchema,
   assignedUserName: nullableTextSchema,
   pipelineId: nullableUUIDSchema,
@@ -99,6 +102,7 @@ export const apiAttentionSummarySchema = z.object({
   overdue: nonNegativeIntegerSchema,
   unassigned: nonNegativeIntegerSchema,
   firstContact: nonNegativeIntegerSchema,
+  firstEffectiveContact: nonNegativeIntegerSchema,
   stageInactivity: nonNegativeIntegerSchema,
   stageAge: nonNegativeIntegerSchema,
   cadenceTasks: nonNegativeIntegerSchema,
@@ -137,6 +141,7 @@ const attentionPolicyMutationBodySchema = z.object({
   escalationMinutes: z.number().int().min(1).max(525_600).nullable().optional(),
   redistributionMinutes: z.number().int().min(1).max(525_600).nullable().optional(),
   businessHoursOnly: z.boolean(),
+  redistributeBeforeContactOnly: z.boolean().optional(),
   config: z.record(z.unknown()).nullable().optional(),
 }).strict()
 
@@ -193,9 +198,18 @@ export const snoozeAttentionItemInputSchema = z.object({
 }).strict()
 
 export const resolveAttentionItemInputSchema = z.object({
-  reason: z.string().trim().min(1).max(120),
+  reason: z.string().trim().min(3).max(160),
   note: z.string().trim().max(1_000).optional(),
-}).strict()
+  administrativeOverride: z.boolean().optional(),
+}).strict().superRefine((value, context) => {
+  if (value.administrativeOverride && (!value.note || value.note.trim().length < 10)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['note'],
+      message: 'Informe uma justificativa com pelo menos 10 caracteres.',
+    })
+  }
+})
 
 export type AttentionScope = z.infer<typeof attentionScopeSchema>
 export type AttentionPolicyType = z.infer<typeof attentionPolicyTypeSchema>

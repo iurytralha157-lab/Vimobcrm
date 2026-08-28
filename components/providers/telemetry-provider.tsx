@@ -3,11 +3,10 @@
 import { useEffect, useRef } from 'react'
 
 import { reportErrorEvent } from '@/lib/api/telemetry'
+import { getTechnicalErrorMessage } from '@/lib/api/vimob-error'
 
 function getReasonMessage(reason: unknown) {
-  if (reason instanceof Error) return reason.message
-  if (typeof reason === 'string') return reason
-  return 'Unhandled promise rejection'
+  return getTechnicalErrorMessage(reason, 'Unhandled promise rejection')
 }
 
 function getReasonStack(reason: unknown) {

@@ -78,7 +78,7 @@ interface TaskOutcomeDialogProps {
   onOpenChange: (open: boolean) => void;
   taskType: 'call' | 'message' | 'email' | 'note';
   taskTitle: string;
-  onConfirm: (outcome: TaskOutcome, notes: string) => void;
+  onConfirm: (outcome: TaskOutcome, notes: string) => void | Promise<void>;
   isLoading?: boolean;
 }
 
@@ -96,15 +96,19 @@ export function TaskOutcomeDialog({
   const typeLabel = typeLabels[taskType] || 'tarefa';
   const TypeIcon = typeIcons[taskType] || Phone;
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (!selectedOutcome) return;
-    onConfirm(selectedOutcome, notes);
-    // Reset state
-    setSelectedOutcome('');
-    setNotes('');
+    try {
+      await onConfirm(selectedOutcome, notes);
+      setSelectedOutcome('');
+      setNotes('');
+    } catch {
+      // The owning mutation reports the error; keep the selection so the user can retry.
+    }
   };
 
   const handleClose = () => {
+    if (isLoading) return;
     onOpenChange(false);
     setSelectedOutcome('');
     setNotes('');
@@ -116,10 +120,12 @@ export function TaskOutcomeDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && handleClose()}>
       <DialogContent
-        className="w-[92vw] max-w-[92vw] max-h-[85vh] overflow-y-auto rounded-xl sm:max-w-xl p-5"
-        onEscapeKeyDown={(event) => event.preventDefault()}
+        className="max-h-[85vh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4 text-[var(--app-text-primary)] shadow-none sm:max-w-xl"
+        onEscapeKeyDown={(event) => {
+          if (isLoading) event.preventDefault();
+        }}
         onInteractOutside={(event) => {
           const target = event.target as HTMLElement | null;
           if (target?.closest('[data-radix-popper-content-wrapper], [role="listbox"]')) {
@@ -128,8 +134,8 @@ export function TaskOutcomeDialog({
         }}
       >
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-base font-extralight">
-            <div className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center">
+          <DialogTitle className="flex items-center gap-2 text-base font-normal">
+            <div className="flex h-7 w-7 items-center justify-center rounded-[6px] bg-primary/10">
               <TypeIcon className="h-3.5 w-3.5 text-primary" />
             </div>
             <span>Como foi essa {typeLabel}?</span>
@@ -146,7 +152,7 @@ export function TaskOutcomeDialog({
               <label
                 key={option.value}
                 className={cn(
-                  "flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all",
+                  "flex cursor-pointer items-start gap-2.5 rounded-[6px] border p-2.5 font-light transition-colors",
                   selectedOutcome === option.value
                     ? "border-transparent bg-primary/10 dark:bg-primary/20 text-primary"
                     : "border-[var(--app-border)] bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)]"
@@ -164,7 +170,7 @@ export function TaskOutcomeDialog({
                 <div className="flex-1">
                   <p className="font-light text-xs leading-tight">{option.label}</p>
                   {option.description && (
-                    <p className="text-[10px] font-extralight text-muted-foreground/75 mt-0.5 leading-normal">
+                      <p className="mt-0.5 text-[10px] font-light leading-normal text-muted-foreground/75">
                       {option.description}
                     </p>
                   )}
@@ -186,12 +192,12 @@ export function TaskOutcomeDialog({
         </div>
 
         <div className="flex gap-2 pt-0.5">
-          <Button variant="outline" className="w-[40%] rounded-xl text-xs font-light" onClick={handleClose} disabled={isLoading}>
+          <Button variant="outline" className="h-8 w-[40%] rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-xs font-light shadow-none hover:bg-[var(--app-surface-hover)]" onClick={handleClose} disabled={isLoading}>
             Cancelar
           </Button>
           <Button
-            className="w-[60%] rounded-xl text-xs font-light"
-            onClick={handleConfirm}
+            className="h-8 w-[60%] rounded-[6px] text-xs font-light shadow-none"
+            onClick={() => void handleConfirm()}
             disabled={!selectedOutcome || isLoading}
           >
             {isLoading ? (

@@ -20,7 +20,6 @@ var (
 	ErrExecutionNotFound        = errors.New("automation execution not found")
 	ErrExecutionNotCancellable  = errors.New("automation execution is not cancellable")
 	ErrExecutionAlreadyActive   = errors.New("automation already has an active execution for this lead")
-	ErrExecutionDispatchFailed  = errors.New("automation execution failed during initial dispatch")
 	ErrFlowInUse                = errors.New("automation flow is used by a legacy active execution")
 	ErrAutomationMediaNotFound  = errors.New("automation media not found")
 	ErrAutomationMediaInUse     = errors.New("automation media is referenced by an active flow")

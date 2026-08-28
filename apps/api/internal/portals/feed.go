@@ -7,14 +7,32 @@ import (
 	"html"
 	"math"
 	"net/url"
+	"path"
+	"regexp"
 	"strings"
+	"time"
+
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/grupoolx"
 )
 
 type feedListing struct {
-	PublicationID   string         `json:"publication_id"`
-	ClientListingID string         `json:"client_listing_id"`
-	PublicationType string         `json:"publication_type"`
-	Property        map[string]any `json:"property"`
+	PublicationID    string           `json:"publication_id"`
+	PropertyID       string           `json:"property_id"`
+	Source           string           `json:"source"`
+	VersionID        string           `json:"version_id"`
+	PublishedVersion int64            `json:"published_version"`
+	PayloadHash      string           `json:"payload_hash"`
+	ClientListingID  string           `json:"client_listing_id"`
+	PublicationType  string           `json:"publication_type"`
+	Property         map[string]any   `json:"property"`
+	Media            []feedMediaProof `json:"media"`
+}
+
+type feedMediaProof struct {
+	Kind           string `json:"kind"`
+	MIMEType       string `json:"mime_type"`
+	FileSizeBytes  *int64 `json:"file_size_bytes"`
+	ServerVerified bool   `json:"server_verified"`
 }
 
 type vrSyncFeed struct {
@@ -116,6 +134,10 @@ type vrSyncContactInfo struct {
 }
 
 func buildVRSyncFeed(integration publicIntegration, items []feedListing) ([]byte, error) {
+	publishDate := integration.FeedPublishedAt.UTC().Format(time.RFC3339)
+	if integration.FeedPublishedAt.IsZero() {
+		publishDate = nowISO()
+	}
 	feed := vrSyncFeed{
 		XMLNS:          "http://www.vivareal.com/schemas/1.0/VRSync",
 		XMLNSXSI:       "http://www.w3.org/2001/XMLSchema-instance",
@@ -124,7 +146,7 @@ func buildVRSyncFeed(integration publicIntegration, items []feedListing) ([]byte
 			Provider:    "Vimob CRM",
 			Email:       textFromSettings(integration.Settings, "contact_email"),
 			ContactName: textFromSettings(integration.Settings, "contact_name"),
-			PublishDate: nowISO(),
+			PublishDate: publishDate,
 			Telephone:   onlyDigits(textFromSettings(integration.Settings, "contact_phone")),
 		},
 		Listings: vrSyncListings{Listing: []vrSyncListing{}},
@@ -152,8 +174,8 @@ func buildVRSyncFeed(integration publicIntegration, items []feedListing) ([]byte
 
 func mapToVRSyncListing(integration publicIntegration, item feedListing) (vrSyncListing, bool) {
 	property := item.Property
-	title := trimMax(firstPropertyText(property, "title"), 100)
-	description := firstPropertyText(property, "descricao_site", "status_descritivo")
+	title := trimMax(firstPropertyText(property, "title", "titulo"), 100)
+	description := firstPropertyText(property, "descricao_site", "status_descritivo", "descricao")
 	if description == "" {
 		description = title
 	}
@@ -177,13 +199,13 @@ func mapToVRSyncListing(integration publicIntegration, item feedListing) (vrSync
 	}
 
 	details := vrSyncDetails{
-		PropertyType:              normalizePropertyType(firstPropertyText(property, "tipo_de_imovel", "tipo")),
+		PropertyType:              normalizePropertyType(firstPropertyText(property, "tipo_de_imovel", "tipo", "tipo_imovel")),
 		Description:               html.UnescapeString(description),
 		ListPrice:                 moneyValue(priceForSale(property, transactionType), ""),
 		RentalPrice:               moneyValue(priceForRent(property, transactionType), rentalPeriod(property)),
-		PropertyAdministrationFee: moneyValue(positiveFloatPointer(firstPropertyNumber(property, "condominio")), ""),
+		PropertyAdministrationFee: moneyValue(positiveFloatPointer(firstPropertyNumber(property, "condominio", "valor_condominio")), ""),
 		Iptu:                      moneyValue(positiveFloatPointer(firstPropertyNumber(property, "iptu", "valor_itr")), iptuPeriod(property)),
-		LivingArea:                areaValue(firstPropertyNumber(property, "area_util")),
+		LivingArea:                areaValue(firstPropertyNumber(property, "area_util", "area_construida")),
 		LotArea:                   areaValue(firstPropertyNumber(property, "area_total")),
 		Bedrooms:                  positiveIntPointer(firstPropertyNumber(property, "quartos")),
 		Bathrooms:                 positiveIntPointer(firstPropertyNumber(property, "banheiros")),
@@ -191,9 +213,10 @@ func mapToVRSyncListing(integration publicIntegration, item feedListing) (vrSync
 		Garage:                    positiveIntPointer(firstPropertyNumber(property, "vagas")),
 		Features:                  normalizedFeatures(propertyStringSlice(property, "detalhes_extras", "proximidades", "marcadores")),
 	}
-	stateAbbreviation := strings.ToUpper(firstPropertyText(property, "uf"))
+	stateAbbreviation := strings.ToUpper(firstPropertyText(property, "uf", "estado"))
+	addressVisibility := firstPropertyText(property, "address_visibility", "public_address_visibility")
 	location := vrSyncLocation{
-		DisplayAddress: normalizeDisplayAddress(firstPropertyText(property, "public_address_visibility", "address_visibility")),
+		DisplayAddress: normalizeDisplayAddress(addressVisibility),
 		Country:        vrSyncRegionName{Abbreviation: "BR", Value: "Brasil"},
 		State:          vrSyncRegionName{Abbreviation: stateAbbreviation, Value: brazilianStateName(stateAbbreviation)},
 		City:           firstPropertyText(property, "cidade"),
@@ -205,6 +228,7 @@ func mapToVRSyncListing(integration publicIntegration, item feedListing) (vrSync
 		Latitude:       coordinatePointer(firstPropertyNumber(property, "latitude")),
 		Longitude:      coordinatePointer(firstPropertyNumber(property, "longitude")),
 	}
+	applyPublicAddressVisibility(&location, addressVisibility)
 	website := textFromSettings(integration.Settings, "detail_base_url")
 	contact := vrSyncContactInfo{
 		Name:      textFromSettings(integration.Settings, "contact_name"),
@@ -214,7 +238,7 @@ func mapToVRSyncListing(integration publicIntegration, item feedListing) (vrSync
 	}
 	detailURL := textFromSettings(integration.Settings, "detail_base_url")
 	if detailURL != "" {
-		detailURL = strings.TrimRight(detailURL, "/") + "/" + url.PathEscape(firstPropertyText(property, "code"))
+		detailURL = strings.TrimRight(detailURL, "/") + "/" + url.PathEscape(firstPropertyText(property, "code", "codigo"))
 	}
 
 	var media *vrSyncMedia
@@ -239,33 +263,75 @@ func mapToVRSyncListing(integration publicIntegration, item feedListing) (vrSync
 func validateFeedListing(integration publicIntegration, item feedListing) []string {
 	property := item.Property
 	errors := []string{}
-	title := firstPropertyText(property, "title")
+	title := firstPropertyText(property, "title", "titulo")
 	if len([]rune(title)) < 10 || len([]rune(title)) > 100 {
 		errors = append(errors, "Titulo precisa ter entre 10 e 100 caracteres.")
+	}
+	if feedTitleHasMarkup(title) {
+		errors = append(errors, "Titulo nao pode conter HTML.")
 	}
 	if normalizeTransactionType(firstPropertyText(property, "tipo_de_negocio", "finalidade")) == "" {
 		errors = append(errors, "Tipo de negocio e obrigatorio.")
 	}
-	if normalizePropertyType(firstPropertyText(property, "tipo_de_imovel", "tipo")) == "" {
+	if normalizePropertyType(firstPropertyText(property, "tipo_de_imovel", "tipo", "tipo_imovel")) == "" {
 		errors = append(errors, "Tipo de imovel e obrigatorio.")
 	}
 	status := normalizeText(firstPropertyText(property, "status"))
-	if status == "draft" || status == "sold" || status == "rented" || status == "inactive" || status == "archived" ||
-		status == "vendido" || status == "alugado" || status == "inativo" || status == "arquivado" {
+	if isUnavailablePortalPropertyStatus(status) {
 		errors = append(errors, "Imovel nao esta ativo para publicacao.")
 	}
-	description := firstPropertyText(property, "descricao_site", "status_descritivo")
+	description := firstPropertyText(property, "descricao_site", "status_descritivo", "descricao")
 	if len([]rune(strings.TrimSpace(description))) < 50 || len([]rune(strings.TrimSpace(description))) > 3000 {
 		errors = append(errors, "Descricao precisa ter entre 50 e 3000 caracteres.")
 	}
-	if firstPropertyText(property, "cidade") == "" || firstPropertyText(property, "uf") == "" || firstPropertyText(property, "bairro") == "" {
+	if feedDescriptionHasDisallowedMarkup(description) {
+		errors = append(errors, "Descricao nao pode conter HTML.")
+	}
+	if firstPropertyText(property, "cidade") == "" || firstPropertyText(property, "uf", "estado") == "" || firstPropertyText(property, "bairro") == "" {
 		errors = append(errors, "Cidade, UF e bairro sao obrigatorios.")
 	}
 	if len(onlyDigits(firstPropertyText(property, "cep"))) != 8 {
 		errors = append(errors, "CEP com 8 digitos e obrigatorio.")
 	}
+	if minimumFeedAddressVisibility(firstPropertyText(property, "address_visibility", "public_address_visibility")) {
+		errors = append(errors, "Grupo OLX exige bairro e CEP; selecione endereco parcial ou completo.")
+	}
 	if len(propertyImages(property)) == 0 {
 		errors = append(errors, "Pelo menos uma foto e obrigatoria.")
+	}
+	if item.Source == "legacy" {
+		for _, imageURL := range propertyImages(property) {
+			parsed, parseErr := url.Parse(imageURL)
+			extension := ""
+			if parseErr == nil {
+				extension = strings.ToLower(path.Ext(parsed.Path))
+			}
+			if parseErr != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || (extension != ".jpg" && extension != ".jpeg") {
+				errors = append(errors, "Fotos legadas precisam usar HTTP(S) e extensao JPG/JPEG.")
+				break
+			}
+		}
+	}
+	if item.Source == "canonical" {
+		photoProofs := 0
+		for _, media := range item.Media {
+			if media.Kind != "photo" {
+				continue
+			}
+			photoProofs++
+			if !media.ServerVerified {
+				errors = append(errors, "Fotos canonicas precisam de verificacao server-side do objeto.")
+			}
+			if !strings.EqualFold(media.MIMEType, "image/jpeg") && !strings.EqualFold(media.MIMEType, "image/jpg") {
+				errors = append(errors, "Fotos precisam ter MIME JPEG comprovado.")
+			}
+			if media.FileSizeBytes == nil || *media.FileSizeBytes <= 0 || *media.FileSizeBytes > 7*1024*1024 {
+				errors = append(errors, "Fotos precisam ter tamanho comprovado de ate 7 MB.")
+			}
+		}
+		if photoProofs == 0 {
+			errors = append(errors, "Fotos canonicas precisam de prova imutavel de MIME e tamanho.")
+		}
 	}
 	transactionType := normalizeTransactionType(firstPropertyText(property, "tipo_de_negocio", "finalidade"))
 	if (transactionType == "For Sale" || transactionType == "Sale/Rent") && priceForSale(property, transactionType) == nil {
@@ -274,12 +340,19 @@ func validateFeedListing(integration publicIntegration, item feedListing) []stri
 	if (transactionType == "For Rent" || transactionType == "Sale/Rent") && priceForRent(property, transactionType) == nil {
 		errors = append(errors, "Valor de locacao e obrigatorio.")
 	}
-	propertyType := normalizePropertyType(firstPropertyText(property, "tipo_de_imovel", "tipo"))
+	propertyType := normalizePropertyType(firstPropertyText(property, "tipo_de_imovel", "tipo", "tipo_imovel"))
+	roomRequirements := grupoolx.RoomRequirementsFor(propertyType)
+	if roomRequirements.MinimumBedrooms > 0 && firstPropertyNumber(property, "quartos") < float64(roomRequirements.MinimumBedrooms) {
+		errors = append(errors, "Quartos sao obrigatorios para este tipo de imovel.")
+	}
+	if roomRequirements.MinimumBathrooms > 0 && firstPropertyNumber(property, "banheiros") < float64(roomRequirements.MinimumBathrooms) {
+		errors = append(errors, "Banheiros sao obrigatorios para este tipo de imovel.")
+	}
 	if requiresLotArea(propertyType) {
 		if firstPropertyNumber(property, "area_total") <= 0 {
 			errors = append(errors, "Area total e obrigatoria para este tipo de imovel.")
 		}
-	} else if firstPropertyNumber(property, "area_util") <= 0 {
+	} else if firstPropertyNumber(property, "area_util", "area_construida") <= 0 {
 		errors = append(errors, "Area util e obrigatoria.")
 	}
 	if strings.TrimSpace(textFromSettings(integration.Settings, "contact_name")) == "" || strings.TrimSpace(textFromSettings(integration.Settings, "contact_email")) == "" {
@@ -288,19 +361,48 @@ func validateFeedListing(integration publicIntegration, item feedListing) []stri
 	if !validPublicationType(item.PublicationType) {
 		errors = append(errors, "Tipo de publicacao invalido.")
 	}
+	if listingLength := len([]rune(strings.TrimSpace(item.ClientListingID))); listingLength < 1 || listingLength > 50 {
+		errors = append(errors, "ListingID precisa ter entre 1 e 50 caracteres.")
+	}
 	return errors
+}
+
+var allowedFeedDescriptionTag = regexp.MustCompile(`(?i)</?(?:b|i)>|<br\s*/?>`)
+
+func feedTitleHasMarkup(value string) bool {
+	return strings.ContainsAny(html.UnescapeString(value), "<>")
+}
+
+func feedDescriptionHasDisallowedMarkup(value string) bool {
+	if strings.ContainsAny(value, "<>") {
+		return true
+	}
+	decoded := html.UnescapeString(value)
+	withoutAllowedTags := allowedFeedDescriptionTag.ReplaceAllString(decoded, "")
+	return strings.ContainsAny(withoutAllowedTags, "<>")
+}
+
+func isUnavailablePortalPropertyStatus(status string) bool {
+	switch normalizeText(status) {
+	case "draft", "reserved", "sold", "rented", "inactive", "archived",
+		"rascunho", "reservado", "vendido", "alugado", "locado", "inativo", "arquivado":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeTransactionType(value string) string {
 	normalized := normalizeText(value)
+	hasSale := strings.Contains(normalized, "venda") || strings.Contains(normalized, "sale")
+	hasRent := strings.Contains(normalized, "locacao") || strings.Contains(normalized, "aluguel") ||
+		strings.Contains(normalized, "rent") || strings.Contains(normalized, "temporada") || strings.Contains(normalized, "seasonal")
 	switch {
-	case strings.Contains(normalized, "venda") && strings.Contains(normalized, "locacao"):
+	case hasSale && hasRent:
 		return "Sale/Rent"
-	case strings.Contains(normalized, "venda") && strings.Contains(normalized, "aluguel"):
-		return "Sale/Rent"
-	case strings.Contains(normalized, "venda"):
+	case hasSale:
 		return "For Sale"
-	case strings.Contains(normalized, "locacao"), strings.Contains(normalized, "aluguel"):
+	case hasRent:
 		return "For Rent"
 	default:
 		return ""
@@ -308,10 +410,16 @@ func normalizeTransactionType(value string) string {
 }
 
 func normalizePropertyType(value string) string {
+	return grupoolx.NormalizePropertyType(value)
+}
+
+func legacyNormalizePropertyType(value string) string {
 	normalized := normalizeText(value)
 	switch {
 	case strings.Contains(normalized, "condominio") && strings.Contains(normalized, "casa"):
 		return "Residential / Condo"
+	case strings.Contains(normalized, "casa de vila"), strings.Contains(normalized, "village house"):
+		return "Residential / Village House"
 	case strings.Contains(normalized, "sobrado"):
 		return "Residential / Sobrado"
 	case strings.Contains(normalized, "casa"):
@@ -328,16 +436,34 @@ func normalizePropertyType(value string) string {
 		return "Residential / Loft"
 	case strings.Contains(normalized, "apart"):
 		return "Residential / Apartment"
+	case strings.Contains(normalized, "edificio residencial"), strings.Contains(normalized, "predio residencial"):
+		return "Commercial / Edificio Residencial"
+	case (strings.Contains(normalized, "terreno") || strings.Contains(normalized, "lote")) && strings.Contains(normalized, "comercial"):
+		return "Commercial / Land Lot"
 	case strings.Contains(normalized, "terreno"), strings.Contains(normalized, "lote"):
 		return "Residential / Land Lot"
+	case strings.Contains(normalized, "consultorio"):
+		return "Commercial / Consultorio"
+	case strings.Contains(normalized, "laje corporativa"), strings.Contains(normalized, "andar corporativo"), strings.Contains(normalized, "corporate floor"):
+		return "Commercial / Corporate Floor"
+	case strings.Contains(normalized, "edificio comercial"), strings.Contains(normalized, "predio comercial"):
+		return "Commercial / Edificio Comercial"
+	case strings.Contains(normalized, "garagem"), strings.Contains(normalized, "garage"):
+		return "Commercial / Garage"
+	case strings.Contains(normalized, "hotel"), strings.Contains(normalized, "pousada"):
+		return "Commercial / Hotel"
 	case strings.Contains(normalized, "sala"), strings.Contains(normalized, "conjunto"):
 		return "Commercial / Office"
-	case strings.Contains(normalized, "comercial"), strings.Contains(normalized, "loja"):
+	case strings.Contains(normalized, "loja"), strings.Contains(normalized, "ponto comercial"), strings.Contains(normalized, "box"):
 		return "Commercial / Business"
 	case strings.Contains(normalized, "galpao"):
 		return "Commercial / Industrial"
-	case strings.Contains(normalized, "fazenda"), strings.Contains(normalized, "sitio"), strings.Contains(normalized, "chacara"):
-		return "Residential / Agricultural"
+	case strings.Contains(normalized, "fazenda"), strings.Contains(normalized, "sitio"), strings.Contains(normalized, "chacara"), strings.Contains(normalized, "farm"), strings.Contains(normalized, "ranch"):
+		return "Residential / Farm Ranch"
+	case strings.Contains(normalized, "imovel comercial"):
+		return "Commercial / Building"
+	case strings.Contains(normalized, "edificio"), strings.Contains(normalized, "predio"), strings.Contains(normalized, "building"):
+		return "Commercial / Building"
 	default:
 		return ""
 	}
@@ -355,6 +481,45 @@ func normalizeDisplayAddress(value string) string {
 	}
 }
 
+func applyPublicAddressVisibility(location *vrSyncLocation, value string) {
+	if location == nil {
+		return
+	}
+	normalized := normalizeText(value)
+	if normalized == "completo" || normalized == "complete" || normalized == "all" {
+		return
+	}
+	if minimumFeedAddressVisibility(normalized) {
+		location.DisplayAddress = "City"
+		location.Neighborhood = ""
+		location.PostalCode = ""
+		location.Address = ""
+		location.StreetNumber = ""
+		location.Complement = ""
+		location.Latitude = nil
+		location.Longitude = nil
+		return
+	}
+	// Partial/minimum visibility never sends the street-level fields to the
+	// provider. PostalCode remains because VRSync requires it for ingestion;
+	// displayAddress instructs the portal to expose only the neighborhood.
+	location.DisplayAddress = "Neighborhood"
+	location.Address = ""
+	location.StreetNumber = ""
+	location.Complement = ""
+	location.Latitude = nil
+	location.Longitude = nil
+}
+
+func minimumFeedAddressVisibility(value string) bool {
+	switch normalizeText(value) {
+	case "minimo", "minimum", "city", "cidade":
+		return true
+	default:
+		return false
+	}
+}
+
 func validPublicationType(value string) bool {
 	switch normalizePublicationType(value) {
 	case "STANDARD", "PREMIUM", "SUPER_PREMIUM", "PREMIERE_1", "PREMIERE_2", "TRIPLE":
@@ -365,8 +530,12 @@ func validPublicationType(value string) bool {
 }
 
 func requiresLotArea(propertyType string) bool {
+	return grupoolx.RequiresLotArea(propertyType)
+}
+
+func legacyRequiresLotArea(propertyType string) bool {
 	return strings.Contains(propertyType, "Land Lot") ||
-		strings.Contains(propertyType, "Agricultural") ||
+		strings.Contains(propertyType, "Farm Ranch") ||
 		strings.Contains(propertyType, "Industrial")
 }
 
@@ -389,7 +558,10 @@ func areaValue(value float64) *vrSyncArea {
 }
 
 func rentalPeriod(property map[string]any) string {
-	value := normalizeText(metadataText(property, "rental_period"))
+	value := normalizeText(firstPropertyText(property, "rental_period"))
+	if value == "" {
+		value = normalizeText(metadataText(property, "rental_period"))
+	}
 	switch value {
 	case "diario", "diaria", "daily":
 		return "Daily"
@@ -405,7 +577,10 @@ func rentalPeriod(property map[string]any) string {
 }
 
 func iptuPeriod(property map[string]any) string {
-	value := normalizeText(metadataText(property, "iptu_period"))
+	value := normalizeText(firstPropertyText(property, "iptu_period"))
+	if value == "" {
+		value = normalizeText(metadataText(property, "iptu_period"))
+	}
 	if value == "mensal" || value == "monthly" {
 		return "Monthly"
 	}
@@ -461,14 +636,17 @@ func priceForSale(property map[string]any, transactionType string) *float64 {
 	if transactionType != "For Sale" && transactionType != "Sale/Rent" {
 		return nil
 	}
-	return positiveFloatPointer(firstPropertyNumber(property, "preco", "valor_venda_avaliado"))
+	return positiveFloatPointer(firstPropertyNumber(property, "preco", "valor_venda"))
 }
 
 func priceForRent(property map[string]any, transactionType string) *float64 {
 	if transactionType != "For Rent" && transactionType != "Sale/Rent" {
 		return nil
 	}
-	return positiveFloatPointer(firstPropertyNumber(property, "valor_locacao", "preco"))
+	if transactionType == "For Rent" {
+		return positiveFloatPointer(firstPropertyNumber(property, "valor_locacao", "valor_aluguel", "preco"))
+	}
+	return positiveFloatPointer(firstPropertyNumber(property, "valor_locacao", "valor_aluguel"))
 }
 
 func propertyImages(property map[string]any) []string {

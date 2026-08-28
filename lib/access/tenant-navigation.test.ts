@@ -26,6 +26,7 @@ test('reaproveita apenas o contexto da organizacao ativa', () => {
 test('preserva modulos validos, inclusive os que nao sao padrao', () => {
   assert.deepEqual(getTenantEnabledModules(context), ['crm', 'properties', 'automations'])
   assert.equal(hasDefaultModule('agenda'), true)
+  assert.equal(hasDefaultModule('properties'), false)
   assert.equal(hasDefaultModule('automations'), false)
 })
 

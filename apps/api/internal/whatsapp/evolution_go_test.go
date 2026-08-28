@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestEvolutionSendTextBodyPreservesIdempotencyID(t *testing.T) {
@@ -179,6 +181,455 @@ func TestEvolutionAdvancedSettingsProviderFailureIsReturned(t *testing.T) {
 	})
 	if !errors.Is(err, ErrProviderFailed) {
 		t.Fatalf("invokeEvolution() error = %v, want ErrProviderFailed", err)
+	}
+}
+
+func TestEvolutionQRCodeRequestIsInstanceScoped(t *testing.T) {
+	const (
+		instanceKey = "instance-1"
+		token       = "session-token"
+		qrCode      = "data:image/png;base64,cXItY29kZQ=="
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %q, want GET", r.Method)
+		}
+		if r.URL.Path != "/instance/qr" {
+			t.Errorf("path = %q, want /instance/qr", r.URL.Path)
+		}
+		if r.URL.Query().Get("instanceId") != instanceKey {
+			t.Errorf("instanceId query = %q, want %q", r.URL.Query().Get("instanceId"), instanceKey)
+		}
+		if r.Header.Get("instanceId") != instanceKey {
+			t.Errorf("instanceId header = %q, want %q", r.Header.Get("instanceId"), instanceKey)
+		}
+		if r.Header.Get("apikey") != token {
+			t.Errorf("apikey = %q, want session token", r.Header.Get("apikey"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"qrcode":"` + qrCode + `"}}`))
+	}))
+	defer server.Close()
+
+	client := functionsClient{
+		evolutionGoAPIURL: server.URL,
+		evolutionGoAPIKey: "global-key",
+		httpClient:        server.Client(),
+	}
+	result, err := client.invokeEvolutionDirect(context.Background(), "instance.qr", map[string]any{
+		"instance_id": instanceKey,
+		"token":       token,
+	})
+	if err != nil {
+		t.Fatalf("invokeEvolutionDirect() error: %v", err)
+	}
+	if !providerResultOK(result) {
+		t.Fatalf("expected provider success, got %#v", result)
+	}
+	if got := firstString(result, "data.qrcode"); got != qrCode {
+		t.Fatalf("qrcode = %q, want %q", got, qrCode)
+	}
+	if got := firstString(result, "data.sourceEndpoint"); got != "/instance/qr" {
+		t.Fatalf("sourceEndpoint = %q, want /instance/qr", got)
+	}
+}
+
+func TestEvolutionQRCodeRecoversStaleDisconnectedClient(t *testing.T) {
+	const (
+		instanceKey = "10baa7ac-6b37-4531-a3c2-ec9f36965bbb"
+		token       = "session-token"
+		qrCode      = "data:image/png;base64,cXItY29kZQ=="
+	)
+	qrRequests := 0
+	statusRequests := 0
+	restartRequests := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/instance/qr":
+			qrRequests++
+			if r.URL.Query().Get("instanceId") != instanceKey || r.Header.Get("instanceId") != instanceKey {
+				t.Errorf("QR request was not scoped to %q", instanceKey)
+			}
+			if r.Header.Get("apikey") != token {
+				t.Errorf("QR apikey = %q, want session token", r.Header.Get("apikey"))
+			}
+			if qrRequests < 3 {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"no QR code available. Please wait a moment and try again"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"qrcode":"` + qrCode + `"}`))
+		case "/instance/status":
+			statusRequests++
+			if r.Header.Get("apikey") != token {
+				t.Errorf("status apikey = %q, want session token", r.Header.Get("apikey"))
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"client disconnected"}`))
+		case "/instance/forcereconnect/" + instanceKey:
+			restartRequests++
+			if r.Method != http.MethodPost {
+				t.Errorf("restart method = %q, want POST", r.Method)
+			}
+			if r.Header.Get("apikey") != "global-key" {
+				t.Errorf("restart apikey = %q, want global provider key", r.Header.Get("apikey"))
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode force reconnect body: %v", err)
+			}
+			if body["number"] != instanceKey {
+				t.Errorf("restart number = %#v, want %q", body["number"], instanceKey)
+			}
+			// Evolution Go can report this after it has already started an
+			// unpaired client. The following QR read is authoritative.
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"failed to login"}`))
+		default:
+			t.Errorf("unexpected provider request to %s", r.URL.String())
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := functionsClient{
+		evolutionGoAPIURL: server.URL,
+		evolutionGoAPIKey: "global-key",
+		httpClient:        server.Client(),
+	}
+	result, err := client.invokeEvolutionDirect(context.Background(), "instance.qr", map[string]any{
+		"instance_id": instanceKey,
+		"token":       token,
+	})
+	if err != nil {
+		t.Fatalf("invokeEvolutionDirect() error: %v", err)
+	}
+	if qrRequests != 3 || statusRequests != 2 || restartRequests != 1 {
+		t.Fatalf(
+			"requests = qr:%d status:%d restart:%d, want qr:3 status:2 restart:1",
+			qrRequests,
+			statusRequests,
+			restartRequests,
+		)
+	}
+	if !providerResultOK(result) {
+		t.Fatalf("expected QR after stale-client restart, got %#v", result)
+	}
+	if got := firstString(result, "data.qrcode"); got != qrCode {
+		t.Fatalf("qrcode = %q, want %q", got, qrCode)
+	}
+}
+
+func TestEvolutionQRCodeDoesNotRestartActivePairing(t *testing.T) {
+	const (
+		instanceKey = "5b50538e-a693-48d5-b72f-f956b8c88187"
+		token       = "session-token"
+	)
+	qrRequests := 0
+	statusRequests := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/instance/qr":
+			qrRequests++
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"no QR code available. Please wait a moment and try again"}`))
+		case "/instance/status":
+			statusRequests++
+			_, _ = w.Write([]byte(`{"Connected":true,"LoggedIn":false}`))
+		case "/instance/forcereconnect/" + instanceKey:
+			t.Error("active pairing client must not be restarted")
+		default:
+			t.Errorf("unexpected provider request to %s", r.URL.String())
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := functionsClient{
+		evolutionGoAPIURL: server.URL,
+		evolutionGoAPIKey: "global-key",
+		httpClient:        server.Client(),
+	}
+	result, err := client.invokeEvolutionDirect(context.Background(), "instance.qr", map[string]any{
+		"instance_id": instanceKey,
+		"token":       token,
+	})
+	if err != nil {
+		t.Fatalf("invokeEvolutionDirect() error: %v", err)
+	}
+	if qrRequests != 1 || statusRequests != 1 {
+		t.Fatalf("requests = qr:%d status:%d, want qr:1 status:1", qrRequests, statusRequests)
+	}
+	if providerResultOK(result) {
+		t.Fatalf("QR unexpectedly ready: %#v", result)
+	}
+}
+
+func TestEvolutionQRCodeDoesNotRestartMissingClient(t *testing.T) {
+	const (
+		instanceKey = "80c3e834-aec2-4830-b018-043ba2624320"
+		token       = "session-token"
+	)
+	restartRequests := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/instance/qr":
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"no QR code available. Please wait a moment and try again"}`))
+		case "/instance/status":
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"no active session found"}`))
+		case "/instance/forcereconnect/" + instanceKey:
+			restartRequests++
+			t.Error("missing provider client must not be force restarted")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := functionsClient{
+		evolutionGoAPIURL: server.URL,
+		evolutionGoAPIKey: "global-key",
+		httpClient:        server.Client(),
+	}
+	result, err := client.invokeEvolutionDirect(context.Background(), "instance.qr", map[string]any{
+		"instance_id": instanceKey,
+		"token":       token,
+	})
+	if err != nil {
+		t.Fatalf("invokeEvolutionDirect() error: %v", err)
+	}
+	if restartRequests != 0 {
+		t.Fatalf("restart requests = %d, want 0", restartRequests)
+	}
+	if providerResultOK(result) {
+		t.Fatalf("QR unexpectedly ready: %#v", result)
+	}
+}
+
+func TestEvolutionQRCodeRejectsFailedRecovery(t *testing.T) {
+	const (
+		instanceKey = "8513bf79-f466-4ba4-a945-f794516d4e87"
+		token       = "session-token"
+	)
+	qrRequests := 0
+	restartRequests := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/instance/qr":
+			qrRequests++
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"no QR code available. Please wait a moment and try again"}`))
+		case "/instance/status":
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"client disconnected"}`))
+		case "/instance/forcereconnect/" + instanceKey:
+			restartRequests++
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := functionsClient{
+		evolutionGoAPIURL: server.URL,
+		evolutionGoAPIKey: "invalid-global-key",
+		httpClient:        server.Client(),
+	}
+	_, err := client.invokeEvolutionDirect(context.Background(), "instance.qr", map[string]any{
+		"instance_id": instanceKey,
+		"token":       token,
+	})
+	if !errors.Is(err, ErrProviderFailed) {
+		t.Fatalf("invokeEvolutionDirect() error = %v, want ErrProviderFailed", err)
+	}
+	if restartRequests != 1 {
+		t.Fatalf("restart requests = %d, want 1", restartRequests)
+	}
+	if qrRequests != 2 {
+		t.Fatalf("QR requests = %d, want 2 (no read after rejected recovery)", qrRequests)
+	}
+}
+
+func TestEvolutionQRCodeSerializesConcurrentRecovery(t *testing.T) {
+	const (
+		instanceKey = "5df7654d-444a-42ff-b60d-05eaf18b9542"
+		token       = "session-token"
+		qrCode      = "data:image/png;base64,cXItY29kZQ=="
+	)
+	var stateMu sync.Mutex
+	qrReady := false
+	restartRequests := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/instance/qr":
+			stateMu.Lock()
+			ready := qrReady
+			stateMu.Unlock()
+			if ready {
+				_, _ = w.Write([]byte(`{"qrcode":"` + qrCode + `"}`))
+				return
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"no QR code available. Please wait a moment and try again"}`))
+		case "/instance/status":
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"client disconnected"}`))
+		case "/instance/forcereconnect/" + instanceKey:
+			stateMu.Lock()
+			restartRequests++
+			stateMu.Unlock()
+			time.Sleep(100 * time.Millisecond)
+			stateMu.Lock()
+			qrReady = true
+			stateMu.Unlock()
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"failed to login"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := functionsClient{
+		evolutionGoAPIURL: server.URL,
+		evolutionGoAPIKey: "global-key",
+		httpClient:        server.Client(),
+	}
+	results := make(chan map[string]any, 2)
+	errs := make(chan error, 2)
+	var callers sync.WaitGroup
+	callers.Add(2)
+	for range 2 {
+		go func() {
+			defer callers.Done()
+			result, err := client.invokeEvolutionDirect(context.Background(), "instance.qr", map[string]any{
+				"instance_id": instanceKey,
+				"token":       token,
+			})
+			results <- result
+			errs <- err
+		}()
+	}
+	callers.Wait()
+	close(results)
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent QR request failed: %v", err)
+		}
+	}
+	for result := range results {
+		if got := firstString(result, "data.qrcode"); got != qrCode {
+			t.Fatalf("concurrent QR = %q, want %q", got, qrCode)
+		}
+	}
+	stateMu.Lock()
+	gotRestarts := restartRequests
+	stateMu.Unlock()
+	if gotRestarts != 1 {
+		t.Fatalf("restart requests = %d, want 1", gotRestarts)
+	}
+}
+
+func TestEvolutionQRCodeRecoveryHonorsCallerDeadline(t *testing.T) {
+	const (
+		instanceKey = "14ea5e48-f47b-4f83-8eca-3bf847131049"
+		token       = "session-token"
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/instance/qr":
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"no QR code available. Please wait a moment and try again"}`))
+		case "/instance/status":
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"client disconnected"}`))
+		case "/instance/forcereconnect/" + instanceKey:
+			select {
+			case <-r.Context().Done():
+			case <-time.After(250 * time.Millisecond):
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := functionsClient{
+		evolutionGoAPIURL: server.URL,
+		evolutionGoAPIKey: "global-key",
+		httpClient:        server.Client(),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	startedAt := time.Now()
+	_, err := client.invokeEvolutionDirect(ctx, "instance.qr", map[string]any{
+		"instance_id": instanceKey,
+		"token":       token,
+	})
+	if !errors.Is(err, ErrProviderFailed) {
+		t.Fatalf("invokeEvolutionDirect() error = %v, want ErrProviderFailed", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed > time.Second {
+		t.Fatalf("QR recovery ignored caller deadline: %s", elapsed)
+	}
+}
+
+func TestNormalizeEvolutionQRSupportsNestedPayloads(t *testing.T) {
+	const qrCode = "data:image/png;base64,cXItY29kZQ=="
+
+	tests := map[string]any{
+		"qrcode base64": map[string]any{
+			"qrcode": map[string]any{"base64": qrCode},
+		},
+		"data qrcode base64": map[string]any{
+			"data": map[string]any{
+				"qrcode": map[string]any{"base64": qrCode},
+			},
+		},
+		"response qrcode base64": map[string]any{
+			"response": map[string]any{
+				"qrcode": map[string]any{"base64": qrCode},
+			},
+		},
+	}
+
+	for name, payload := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := normalizeEvolutionQR(payload); got != qrCode {
+				t.Fatalf("normalizeEvolutionQR() = %q, want %q", got, qrCode)
+			}
+		})
+	}
+}
+
+func TestNormalizeEvolutionQRIgnoresRawPairingCode(t *testing.T) {
+	payload := map[string]any{
+		"qrcode": map[string]any{
+			"code": "2@raw-whatsapp-pairing-payload",
+		},
+	}
+
+	if got := normalizeEvolutionQR(payload); got != "" {
+		t.Fatalf("normalizeEvolutionQR() = %q, want an empty image value", got)
 	}
 }
 

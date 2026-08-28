@@ -28,10 +28,6 @@ func NewRepository(db *dbpkg.Postgres) Repository {
 }
 
 func (repo Repository) ListTemplates(ctx context.Context, tenantContext tenant.Context) ([]Template, error) {
-	if err := repo.ensureTemplatesForStages(ctx, tenantContext); err != nil {
-		return nil, err
-	}
-
 	rows, err := repo.db.Pool().Query(ctx, `
 		select
 			id::text,
@@ -109,6 +105,9 @@ func (repo Repository) CreateTask(ctx context.Context, tenantContext tenant.Cont
 	if err != nil {
 		return TaskTemplate{}, err
 	}
+	if err := repo.ensureLegacyTemplateMutable(ctx, tenantContext.OrganizationID, input.CadenceTemplateID); err != nil {
+		return TaskTemplate{}, err
+	}
 
 	metadata := taskMetadata(input)
 	task, err := scanTask(repo.db.Pool().QueryRow(ctx, `
@@ -116,10 +115,17 @@ func (repo Repository) CreateTask(ctx context.Context, tenantContext tenant.Cont
 			organization_id,
 			cadence_template_id,
 			title,
+			description,
 			type,
+			day_offset,
 			delay_days,
+			due_minutes,
 			position,
+			observation,
+			recommended_message,
 			message_template,
+			is_required,
+			outcome_required,
 			metadata
 		)
 		select
@@ -128,14 +134,23 @@ func (repo Repository) CreateTask(ctx context.Context, tenantContext tenant.Cont
 			$3,
 			$4,
 			$5,
-			$5,
 			$6,
-			$7::jsonb
+			$6,
+			$6 * 1440,
+			$6,
+			$7,
+			$8,
+			$8,
+			true,
+			false,
+			$9::jsonb
 		from public.cadence_templates ct
 		where ct.organization_id = $1::uuid
 		  and ct.id = $2::uuid
 		returning `+taskSelectFields()+`
-	`, tenantContext.OrganizationID, input.CadenceTemplateID, input.Title, input.Type, input.DayOffset, textOrNil(input.RecommendedMessage), jsonb(metadata)))
+	`, tenantContext.OrganizationID, input.CadenceTemplateID,
+		input.Title, textOrNil(input.Description), input.Type, input.DayOffset,
+		textOrNil(input.Observation), textOrNil(input.RecommendedMessage), jsonb(metadata)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TaskTemplate{}, ErrCadenceNotFound
 	}
@@ -161,20 +176,30 @@ func (repo Repository) UpdateTask(ctx context.Context, tenantContext tenant.Cont
 	if err != nil {
 		return TaskTemplate{}, err
 	}
+	if err := repo.ensureLegacyTaskMutable(ctx, tenantContext.OrganizationID, taskID); err != nil {
+		return TaskTemplate{}, err
+	}
 
 	task, err := scanTask(repo.db.Pool().QueryRow(ctx, `
 		update public.cadence_tasks_template
 		set title = $3,
-		    type = $4,
-		    delay_days = $5,
-		    position = $5,
-		    message_template = $6,
-		    metadata = $7::jsonb,
+		    description = $4,
+		    type = $5,
+		    day_offset = $6,
+		    delay_days = $6,
+		    due_minutes = $6 * 1440,
+		    position = $6,
+		    observation = $7,
+		    recommended_message = $8,
+		    message_template = $8,
+		    metadata = $9::jsonb,
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and id = $2::uuid
 		returning `+taskSelectFields()+`
-	`, tenantContext.OrganizationID, taskID, input.Title, input.Type, input.DayOffset, textOrNil(input.RecommendedMessage), jsonb(taskMetadata(input))))
+	`, tenantContext.OrganizationID, taskID,
+		input.Title, textOrNil(input.Description), input.Type, input.DayOffset,
+		textOrNil(input.Observation), textOrNil(input.RecommendedMessage), jsonb(taskMetadata(input))))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TaskTemplate{}, ErrCadenceNotFound
 	}
@@ -188,6 +213,9 @@ func (repo Repository) DeleteTask(ctx context.Context, tenantContext tenant.Cont
 	taskID, ok := normalizeUUID(taskID)
 	if !ok {
 		return ErrInvalidInput
+	}
+	if err := repo.ensureLegacyTaskMutable(ctx, tenantContext.OrganizationID, taskID); err != nil {
+		return err
 	}
 	tag, err := repo.db.Pool().Exec(ctx, `
 		delete from public.cadence_tasks_template
@@ -203,6 +231,60 @@ func (repo Repository) DeleteTask(ctx context.Context, tenantContext tenant.Cont
 	return nil
 }
 
+func (repo Repository) ensureLegacyTemplateMutable(
+	ctx context.Context,
+	organizationID string,
+	templateID string,
+) error {
+	var exists, managed bool
+	if err := repo.db.Pool().QueryRow(ctx, `
+		select
+		  exists (
+		    select 1
+		    from public.cadence_templates template
+		    where template.organization_id = $1::uuid
+		      and template.id = $2::uuid
+		  ),
+		  exists (
+		    select 1
+		    from public.stage_operational_configs rule
+		    where rule.organization_id = $1::uuid
+		      and coalesce(rule.config->>'operational_rules_version', '') = '1'
+		      and nullif(rule.config->>'cadence_template_id', '') = $2
+		  )
+	`, organizationID, templateID).Scan(&exists, &managed); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrCadenceNotFound
+	}
+	if managed {
+		return ErrOperationalTemplateManaged
+	}
+	return nil
+}
+
+func (repo Repository) ensureLegacyTaskMutable(
+	ctx context.Context,
+	organizationID string,
+	taskID string,
+) error {
+	var templateID string
+	err := repo.db.Pool().QueryRow(ctx, `
+		select task.cadence_template_id::text
+		from public.cadence_tasks_template task
+		where task.organization_id = $1::uuid
+		  and task.id = $2::uuid
+	`, organizationID, taskID).Scan(&templateID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrCadenceNotFound
+	}
+	if err != nil {
+		return err
+	}
+	return repo.ensureLegacyTemplateMutable(ctx, organizationID, templateID)
+}
+
 func (repo Repository) SwitchLeadCadence(ctx context.Context, tenantContext tenant.Context, leadID string, request SwitchCadenceRequest) (SwitchCadenceResult, error) {
 	leadID, ok := normalizeUUID(leadID)
 	if !ok {
@@ -213,11 +295,21 @@ func (repo Repository) SwitchLeadCadence(ctx context.Context, tenantContext tena
 		return SwitchCadenceResult{}, ErrInvalidInput
 	}
 
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return SwitchCadenceResult{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	// Authorization and mutation share the same locked lead snapshot. Without
+	// this lock, a reassignment between the permission check and the private
+	// cadence switch could let the previous owner mutate the lead.
 	var assignedUserID, teamID pgtype.Text
-	err := repo.db.Pool().QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		select assigned_user_id::text, team_id::text
 		from public.leads
 		where organization_id = $1::uuid and id = $2::uuid
+		for update
 	`, tenantContext.OrganizationID, leadID).Scan(&assignedUserID, &teamID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SwitchCadenceResult{}, ErrCadenceNotFound
@@ -233,53 +325,29 @@ func (repo Repository) SwitchLeadCadence(ctx context.Context, tenantContext tena
 	}
 
 	var enrollmentID string
-	err = repo.db.Pool().QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		select private.switch_lead_cadence($1::uuid, $2::uuid, $3::uuid, $4::uuid)::text
 	`, tenantContext.OrganizationID, leadID, templateID, tenantContext.UserID).Scan(&enrollmentID)
 	if err != nil {
-		if strings.Contains(err.Error(), "cadence_template_not_found") || strings.Contains(err.Error(), "cadence_lead_not_found") {
+		message := err.Error()
+		if strings.Contains(message, "cadence_template_not_found") ||
+			strings.Contains(message, "cadence_lead_not_found") {
 			return SwitchCadenceResult{}, ErrCadenceNotFound
+		}
+		if strings.Contains(message, "cadence_lead_not_open") ||
+			strings.Contains(message, "cadence_stage_cycle_not_found") ||
+			strings.Contains(message, "cadence_stage_rule_disabled") ||
+			strings.Contains(message, "cadence_historical_cycle") ||
+			strings.Contains(message, "cadence_template_incompatible") ||
+			strings.Contains(message, "cadence_template_empty") {
+			return SwitchCadenceResult{}, ErrInvalidInput
 		}
 		return SwitchCadenceResult{}, err
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return SwitchCadenceResult{}, err
+	}
 	return SwitchCadenceResult{EnrollmentID: enrollmentID, LeadID: leadID, CadenceTemplateID: templateID}, nil
-}
-
-func (repo Repository) ensureTemplatesForStages(ctx context.Context, tenantContext tenant.Context) error {
-	_, err := repo.db.Pool().Exec(ctx, `
-		insert into public.cadence_templates (
-			organization_id,
-			stage_key,
-			stage_id,
-			pipeline_id,
-			name,
-			created_by
-		)
-		select
-			s.organization_id,
-			s.stage_key,
-			s.id,
-			s.pipeline_id,
-			s.name,
-			$2::uuid
-		from public.stages s
-		where s.organization_id = $1::uuid
-		  and not exists (
-		    select 1
-		    from public.cadence_templates ct
-		    where ct.organization_id = s.organization_id
-		      and ct.stage_id = s.id
-		  )
-		  and not exists (
-		    select 1
-		    from public.cadence_templates ct
-		    where ct.organization_id = s.organization_id
-		      and ct.pipeline_id = s.pipeline_id
-		      and coalesce(ct.stage_key, '') = coalesce(s.stage_key, '')
-		      and (ct.pipeline_id is not null or ct.stage_key is not null)
-		  )
-	`, tenantContext.OrganizationID, tenantContext.UserID)
-	return err
 }
 
 func (repo Repository) tasksByTemplate(ctx context.Context, organizationID string, templateIDs []string) (map[string][]TaskTemplate, error) {

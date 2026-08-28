@@ -1,7 +1,11 @@
 .git
 .github
 .codex
+.codex-tmp
+.codex-worktrees
+.cache
 .next
+.next-*
 .tmp
 node_modules
 coverage

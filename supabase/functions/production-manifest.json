@@ -1,0 +1,574 @@
+{
+  "source_project_ref": "iemalzlfnbouobyjwlwi",
+  "captured_at": "2026-08-09T12:39:15.763Z",
+  "purpose": "Preserve production Edge Function deployment metadata for self-hosted migration.",
+  "functions": [
+    {
+      "slug": "ai-agent-responder",
+      "status": "ACTIVE",
+      "version": 590,
+      "verify_jwt": false,
+      "sha256": "1ab1210ad5212f4e9accdefb87a2262d4e419d25afed0e31263e86aa84eacd41"
+    },
+    {
+      "slug": "approve-onboarding-request",
+      "status": "ACTIVE",
+      "version": 124,
+      "verify_jwt": true,
+      "sha256": "530703985ffd2fb74b32ff91a03ae01f845f8bb06814a590987aaa3b2c086942"
+    },
+    {
+      "slug": "asaas-cancel-payment",
+      "status": "ACTIVE",
+      "version": 7,
+      "verify_jwt": false,
+      "sha256": "f384454a1383542a7577fed93f7840242248162ae30d3be9668de0c9a5099533"
+    },
+    {
+      "slug": "asaas-checkout-info",
+      "status": "ACTIVE",
+      "version": 482,
+      "verify_jwt": false,
+      "sha256": "2bee94a5191c95359b5582c13a4788dcb86e2d2c4b170e3b80215718046521be"
+    },
+    {
+      "slug": "asaas-create-charge",
+      "status": "ACTIVE",
+      "version": 484,
+      "verify_jwt": false,
+      "sha256": "76f06138f26f922fa4bcc0c7761e43ccf891c96632b9471012cf57e12581b720"
+    },
+    {
+      "slug": "asaas-create-payment-link",
+      "status": "ACTIVE",
+      "version": 477,
+      "verify_jwt": true,
+      "sha256": "d0f866550e904cad1fe9c1bb0e25ec623e8b4fd52c8bab1e1d968b1c16841f5f"
+    },
+    {
+      "slug": "asaas-payment-status",
+      "status": "ACTIVE",
+      "version": 481,
+      "verify_jwt": false,
+      "sha256": "7c98bb10cfb44c94b5de106991af02b503559c9a1e135a9f6efd8975443e3034"
+    },
+    {
+      "slug": "asaas-webhook",
+      "status": "ACTIVE",
+      "version": 484,
+      "verify_jwt": false,
+      "sha256": "ee09f2f0e50a038b17925fe4a046fba3919c3ac414d79bf0b17742429c392ee3"
+    },
+    {
+      "slug": "auto-migrate-wp-images",
+      "status": "ACTIVE",
+      "version": 559,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "automation-delay-processor",
+      "status": "ACTIVE",
+      "version": 611,
+      "verify_jwt": false,
+      "sha256": "d86b8ce025607fb95dac974e0920ef3adabf08a80e5a83419caf6a3016d15c99"
+    },
+    {
+      "slug": "automation-executor",
+      "status": "ACTIVE",
+      "version": 687,
+      "verify_jwt": false,
+      "sha256": "cd74c1e540076a1aac8cae0438774bfe6a210d7c33a0e24113ac55b0fea66078"
+    },
+    {
+      "slug": "automation-inactivity",
+      "status": "ACTIVE",
+      "version": 8,
+      "verify_jwt": false,
+      "sha256": "c8868521210e30fb0795b0379cd450888b52b3874d36ac4a7f483f61393c73fb"
+    },
+    {
+      "slug": "automation-runner",
+      "status": "ACTIVE",
+      "version": 22,
+      "verify_jwt": false,
+      "sha256": "8f3b37302881dedb97c8cb88c55385d12343a876d873cea6b0cb6a34601299b6"
+    },
+    {
+      "slug": "automation-trigger",
+      "status": "ACTIVE",
+      "version": 676,
+      "verify_jwt": false,
+      "sha256": "3c5c11c34f7ff2d2b63653870dde43567c0b9aa45f99b5036db0da169a569d34"
+    },
+    {
+      "slug": "calculate-first-response",
+      "status": "ACTIVE",
+      "version": 663,
+      "verify_jwt": false,
+      "sha256": "947ea76cd45cc2586310a111ccec02981a5be73e14bb3b370c0a719bc8a1d466"
+    },
+    {
+      "slug": "change-password",
+      "status": "ACTIVE",
+      "version": 16,
+      "verify_jwt": true,
+      "sha256": "a62239fc30fcbe2ffbcedb0d5d170413b98ce4038d539c7f13bb0d405ec6663d"
+    },
+    {
+      "slug": "cleanup-notifications",
+      "status": "ACTIVE",
+      "version": 344,
+      "verify_jwt": true,
+      "sha256": "8aff8fdf094860e981fca5298976b605268ce973c70ddeacc984bd3dcecbb920"
+    },
+    {
+      "slug": "cleanup-orphan-members",
+      "status": "ACTIVE",
+      "version": 602,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "create-organization-admin",
+      "status": "ACTIVE",
+      "version": 672,
+      "verify_jwt": true,
+      "sha256": "d7a83f6ffd6b0ee7e8ca799d2d8f816896d725055d971b3c66d4221413d7c72f"
+    },
+    {
+      "slug": "create-super-admin",
+      "status": "ACTIVE",
+      "version": 659,
+      "verify_jwt": true,
+      "sha256": "e99124b0bee543410e438b9d22625196951883644855d2bc6ae26f0b01e22d69"
+    },
+    {
+      "slug": "create-user",
+      "status": "ACTIVE",
+      "version": 667,
+      "verify_jwt": true,
+      "sha256": "5f0479692db19133f10e8b47d825b0f300d0fa3a5650c01092af13ab366af974"
+    },
+    {
+      "slug": "delete-organization",
+      "status": "ACTIVE",
+      "version": 660,
+      "verify_jwt": true,
+      "sha256": "0fa5f23c26a87bfcc81349492be68eb41985d4408ad3efc8ea7b9e666974e4f4"
+    },
+    {
+      "slug": "delete-user",
+      "status": "ACTIVE",
+      "version": 652,
+      "verify_jwt": true,
+      "sha256": "23a40ea915163ec81c716cbb3ab5b8790e8a280973695641ff45bdd10bd7475e"
+    },
+    {
+      "slug": "evolution-go-proxy",
+      "status": "ACTIVE",
+      "version": 150,
+      "verify_jwt": true,
+      "sha256": "4c3089aa3000f0db994226862540638cf57b4ce5e945826915484e4bec998a53"
+    },
+    {
+      "slug": "evolution-go-webhook",
+      "status": "ACTIVE",
+      "version": 186,
+      "verify_jwt": false,
+      "sha256": "6aed1133e54b46c80cd6cc084d459dfce5cf580bab7825674701149586af05fa"
+    },
+    {
+      "slug": "evolution-proxy",
+      "status": "ACTIVE",
+      "version": 670,
+      "verify_jwt": false,
+      "sha256": "1828b71cb273c012c31954db8e098bf44ffaa1b370a49bf1101c650682b7b6b9"
+    },
+    {
+      "slug": "evolution-webhook",
+      "status": "ACTIVE",
+      "version": 694,
+      "verify_jwt": false,
+      "sha256": "82e151f2056a55f0cdb0130fb84c1ded3ba1dbb2a7e59897cecd0dcfe8b26e3c"
+    },
+    {
+      "slug": "financial-engine",
+      "status": "ACTIVE",
+      "version": 206,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "firecrawl-scrape",
+      "status": "ACTIVE",
+      "version": 632,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "generic-webhook",
+      "status": "ACTIVE",
+      "version": 680,
+      "verify_jwt": false,
+      "sha256": "3a8c3ad734f3845a397ced4d712ef3c45807b96da884d2e2a8ea968901e92d64"
+    },
+    {
+      "slug": "get-worker-config",
+      "status": "ACTIVE",
+      "version": 570,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "global-whatsapp-status",
+      "status": "ACTIVE",
+      "version": 343,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "google-calendar-auth",
+      "status": "ACTIVE",
+      "version": 657,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "google-calendar-oauth",
+      "status": "ACTIVE",
+      "version": 9,
+      "verify_jwt": false,
+      "sha256": "ec69b85a6b484dfd828ba862a5b57825c7985425470143744a6282f7c5f22f91"
+    },
+    {
+      "slug": "google-calendar-sync",
+      "status": "ACTIVE",
+      "version": 664,
+      "verify_jwt": false,
+      "sha256": "85b4225ce1cad31dd7d6d60507f676145e253a4ed4060e6d4f7c13d9b392212f"
+    },
+    {
+      "slug": "google-calendar-webhook",
+      "status": "ACTIVE",
+      "version": 9,
+      "verify_jwt": false,
+      "sha256": "4b33914033b8911d6da1b80d1da4bb44bca464798b3c24a5fbd2fd7909672de0"
+    },
+    {
+      "slug": "imoview-scheduled-sync",
+      "status": "ACTIVE",
+      "version": 490,
+      "verify_jwt": false,
+      "sha256": "fe1f25d88aa7b50ccc0291e8ac860085bf4ed77e2d73b2d0ac585f8fae0a4c4d"
+    },
+    {
+      "slug": "imoview-sync",
+      "status": "ACTIVE",
+      "version": 562,
+      "verify_jwt": false,
+      "sha256": "43aea42a04cf016933d049df00ce38e760697d3d554e520b7ebbce1dc99148b1"
+    },
+    {
+      "slug": "import-wordpress-properties",
+      "status": "ACTIVE",
+      "version": 564,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "instagram-oauth",
+      "status": "ACTIVE",
+      "version": 312,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "lead-notification-dispatcher",
+      "status": "ACTIVE",
+      "version": 11,
+      "verify_jwt": false,
+      "sha256": "f0f58b87b198a278c8457f8c028e4c05557a148c871e622a03bcbecbf4ef01fb"
+    },
+    {
+      "slug": "manage-user",
+      "status": "ACTIVE",
+      "version": 659,
+      "verify_jwt": true,
+      "sha256": "fd6c96b69df53e52289db0242e356807afa6bb15e6b9615c9b1e0b8b888736af"
+    },
+    {
+      "slug": "media-worker",
+      "status": "ACTIVE",
+      "version": 671,
+      "verify_jwt": false,
+      "sha256": "5182ec5e45423a0d844581781a406b9ef04df7a81f4b6f63d99b37251b786260"
+    },
+    {
+      "slug": "message-sender",
+      "status": "ACTIVE",
+      "version": 663,
+      "verify_jwt": false,
+      "sha256": "0a890d0ba966bcd0cb1f49df69ad36d84b87d2bfd8430e72f3e45d3ab8c339fa"
+    },
+    {
+      "slug": "meta-campaign-insights",
+      "status": "ACTIVE",
+      "version": 537,
+      "verify_jwt": false,
+      "sha256": "9887ae98e004279c0effc42820170d2541f46d23aa5425c61d0d0cb5e49c7c74"
+    },
+    {
+      "slug": "meta-messenger-proxy",
+      "status": "ACTIVE",
+      "version": 321,
+      "verify_jwt": true,
+      "sha256": "a880f48e4204758f5bd5959943fbefeb4e868953dfdcc8f8afc6da2a3a1f58f8"
+    },
+    {
+      "slug": "meta-oauth",
+      "status": "ACTIVE",
+      "version": 682,
+      "verify_jwt": false,
+      "sha256": "675c062fab1648a3bd324d32d30610f206ed36e4a64e4ef31af99c0cf506f361"
+    },
+    {
+      "slug": "meta-token-healthcheck",
+      "status": "ACTIVE",
+      "version": 126,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "meta-webhook",
+      "status": "ACTIVE",
+      "version": 684,
+      "verify_jwt": false,
+      "sha256": "705b3ba8636801e38593a761c32dd2e68e65a8878bfaa345180d9afb3989d34f"
+    },
+    {
+      "slug": "meta-webhook-replay",
+      "status": "ACTIVE",
+      "version": 126,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "notification-dispatcher",
+      "status": "ACTIVE",
+      "version": 325,
+      "verify_jwt": true,
+      "sha256": "1aaf8786a4fb10a03f5ee16bc4230df02d5cf5f7b7dfe03c9ffe32f9ea9af82c"
+    },
+    {
+      "slug": "notification-evolution-failover",
+      "status": "ACTIVE",
+      "version": 6,
+      "verify_jwt": true,
+      "sha256": "85b4f054922c2e4341d8ec6458e6be1e6cebd131845235b43636798ac0a9eaf2"
+    },
+    {
+      "slug": "notification-scheduler",
+      "status": "ACTIVE",
+      "version": 352,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "notification-service",
+      "status": "ACTIVE",
+      "version": 184,
+      "verify_jwt": true,
+      "sha256": null
+    },
+    {
+      "slug": "notify-onboarding-received",
+      "status": "ACTIVE",
+      "version": 344,
+      "verify_jwt": true,
+      "sha256": "3122d7cfd615a485c4a4b35ab2dc970f5b6c307ae3e4a7e26a876b1a69ba9200"
+    },
+    {
+      "slug": "pool-checker",
+      "status": "ACTIVE",
+      "version": 653,
+      "verify_jwt": false,
+      "sha256": "77cf0683bbb6ec43304a75fc33086d46341fedc69cd124b1b5bf5cc92159f4d6"
+    },
+    {
+      "slug": "public-api",
+      "status": "ACTIVE",
+      "version": 476,
+      "verify_jwt": false,
+      "sha256": "5981af2b31120a0127fb35869d16f4ed92b08699f2dceca3d17967f03ebc27cb"
+    },
+    {
+      "slug": "public-signup",
+      "status": "ACTIVE",
+      "version": 530,
+      "verify_jwt": true,
+      "sha256": "c32bb1e4b0270c094a57b95ac6e4094f2f19bd5763ea24f4aed37f8ed894f0f3"
+    },
+    {
+      "slug": "public-site-contact",
+      "status": "ACTIVE",
+      "version": 648,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "public-site-data",
+      "status": "ACTIVE",
+      "version": 654,
+      "verify_jwt": false,
+      "sha256": "b7650f0d30d27694bad1aaea2b1827deeabe34ab07e5bb9750063fd702d35c91"
+    },
+    {
+      "slug": "public-site-ssr",
+      "status": "ACTIVE",
+      "version": 503,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "recurring-entries-generator",
+      "status": "ACTIVE",
+      "version": 649,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "resolve-site-domain",
+      "status": "ACTIVE",
+      "version": 647,
+      "verify_jwt": false,
+      "sha256": "678f743a5d0406eaf236959632c630ea093ab213833cd55da977466b7e19b520"
+    },
+    {
+      "slug": "seed-organization-data",
+      "status": "ACTIVE",
+      "version": 642,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "send-email",
+      "status": "ACTIVE",
+      "version": 165,
+      "verify_jwt": true,
+      "sha256": "c7b9549a567775550cb0020e2a055f8feef96748e0734c16927e44e436497802"
+    },
+    {
+      "slug": "send-notification",
+      "status": "ACTIVE",
+      "version": 349,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "send-push-notification",
+      "status": "ACTIVE",
+      "version": 350,
+      "verify_jwt": true,
+      "sha256": "012f2984944e2b2723b7b6bfb112f325e98c836a1cee2d8b5614f1ab11924947"
+    },
+    {
+      "slug": "session-health-check",
+      "status": "ACTIVE",
+      "version": 660,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "sla-checker",
+      "status": "ACTIVE",
+      "version": 658,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "smart-recurring-generator",
+      "status": "ACTIVE",
+      "version": 582,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "submit-onboarding",
+      "status": "ACTIVE",
+      "version": 499,
+      "verify_jwt": true,
+      "sha256": "0accf144c4e53425ee69f7b251fc75f57531135017e0d3e65bbacec01da3a723"
+    },
+    {
+      "slug": "subscription-automation",
+      "status": "ACTIVE",
+      "version": 306,
+      "verify_jwt": true,
+      "sha256": "1fd99478dc91b1ad31908926ebec7748099414cc4c43a44f2af13a334ede8b70"
+    },
+    {
+      "slug": "sync-whatsapp-contacts",
+      "status": "ACTIVE",
+      "version": 134,
+      "verify_jwt": true,
+      "sha256": "19b41a83f60d6a2534b6aa113d871965222804cb05bf606646df6ad568b6e0df"
+    },
+    {
+      "slug": "telephony-recording-proxy",
+      "status": "ACTIVE",
+      "version": 657,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "threecplus-webhook",
+      "status": "ACTIVE",
+      "version": 657,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "update-organization-user",
+      "status": "ACTIVE",
+      "version": 19,
+      "verify_jwt": true,
+      "sha256": "f98e56979f5f8fff6c49e9a4f0abdc9f04f0fb42ee8cc5a53d5081e82fffc6f2"
+    },
+    {
+      "slug": "verify-domain-dns",
+      "status": "ACTIVE",
+      "version": 638,
+      "verify_jwt": false,
+      "sha256": null
+    },
+    {
+      "slug": "vista-scheduled-sync",
+      "status": "ACTIVE",
+      "version": 491,
+      "verify_jwt": false,
+      "sha256": "c0fa5176e825e95eda04d338d18cdb24fddc7e6cfa02a8cb1b88263339b915ee"
+    },
+    {
+      "slug": "vista-sync",
+      "status": "ACTIVE",
+      "version": 588,
+      "verify_jwt": false,
+      "sha256": "8725993627bd2a99d5de72452d98138d9e647e74f6d2fbc5054ea92f02497d4e"
+    },
+    {
+      "slug": "whatsapp-history-access",
+      "status": "ACTIVE",
+      "version": 526,
+      "verify_jwt": true,
+      "sha256": "a71963543669d80338cd1820df4716b2ea18f5c2fb0d9e78058d22d032b3805d"
+    },
+    {
+      "slug": "whatsapp-notifier",
+      "status": "ACTIVE",
+      "version": 363,
+      "verify_jwt": true,
+      "sha256": "02d9b246a1a8819d1dd8f6501131d5d28b9fe8ad425e359765e22396e84f0741"
+    }
+  ]
+}

@@ -11,6 +11,16 @@ import { financialAPI } from '@/lib/api/financial';
 import { toast } from 'sonner';
 import { Plus, Trash2, RefreshCw, Loader2, Settings2, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 const GROUP_TYPE_LABELS: Record<string, string> = {
   revenue: 'Receita',
@@ -33,26 +43,40 @@ const GROUP_TYPE_COLORS: Record<string, string> = {
 };
 
 export function DREAccountConfig() {
-  const { profile } = useAuth();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
   const queryClient = useQueryClient();
-  const { data: groups, isLoading: groupsLoading } = useDREGroups();
-  const { data: mappings, isLoading: mappingsLoading } = useDREMappings();
+  const {
+    data: groups,
+    isLoading: groupsLoading,
+    error: groupsError,
+    refetch: refetchGroups,
+  } = useDREGroups();
+  const {
+    data: mappings,
+    isLoading: mappingsLoading,
+    error: mappingsError,
+    refetch: refetchMappings,
+  } = useDREMappings();
   const { initializeGroups } = useInitializeDREGroups();
 
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [selectedType, setSelectedType] = useState<string>('');
   const [selectedGroup, setSelectedGroup] = useState<string>('');
+  const [mappingToDelete, setMappingToDelete] = useState<{ id: string; category: string } | null>(null);
+  const [isInitializing, setIsInitializing] = useState(false);
 
   const addMappingMutation = useMutation({
     mutationFn: async ({ category, entryType, groupId }: { category: string; entryType: string; groupId: string }) => {
+      if (!organizationId) throw new Error('Organização não encontrada.');
       await financialAPI.createDREMapping({
         category,
         entry_type: entryType,
         group_id: groupId
-      }, profile?.organization_id);
+      }, organizationId);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['dre-mappings'] });
+      queryClient.invalidateQueries({ queryKey: ['dre-mappings', organizationId] });
       toast.success('Mapeamento adicionado!');
       setSelectedCategory('');
       setSelectedType('');
@@ -65,10 +89,11 @@ export function DREAccountConfig() {
 
   const removeMappingMutation = useMutation({
     mutationFn: async (mappingId: string) => {
-      await financialAPI.deleteDREMapping(mappingId, profile?.organization_id);
+      if (!organizationId) throw new Error('Organização não encontrada.');
+      await financialAPI.deleteDREMapping(mappingId, organizationId);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['dre-mappings'] });
+      queryClient.invalidateQueries({ queryKey: ['dre-mappings', organizationId] });
       toast.success('Mapeamento removido!');
     },
     onError: () => {
@@ -77,12 +102,15 @@ export function DREAccountConfig() {
   });
 
   const handleInitialize = async () => {
+    setIsInitializing(true);
     try {
       await initializeGroups();
-      queryClient.invalidateQueries({ queryKey: ['dre-groups'] });
+      await queryClient.invalidateQueries({ queryKey: ['dre-groups', organizationId] });
       toast.success('Grupos inicializados com sucesso!');
     } catch {
       toast.error('Erro ao inicializar grupos');
+    } finally {
+      setIsInitializing(false);
     }
   };
 
@@ -108,6 +136,28 @@ export function DREAccountConfig() {
     );
   }
 
+  if (groupsError || mappingsError) {
+    return (
+      <Card className="app-card">
+        <CardContent className="flex flex-col items-center py-12 text-center">
+          <span className="grid h-10 w-10 place-items-center rounded-[6px] bg-destructive/10 text-destructive">
+            <RefreshCw className="h-4 w-4" aria-hidden="true" />
+          </span>
+          <h3 className="mt-3 text-[14px] font-normal">Não foi possível carregar a configuração</h3>
+          <p className="mt-1 text-[12px] font-light text-[var(--app-text-secondary)]">
+            Verifique sua conexão e tente novamente.
+          </p>
+          <Button
+            className="mt-4 h-8 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
+            onClick={() => void Promise.all([refetchGroups(), refetchMappings()])}
+          >
+            Tentar novamente
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
   const hasGroups = groups && groups.length > 0;
 
   return (
@@ -123,9 +173,9 @@ export function DREAccountConfig() {
               </CardDescription>
             </div>
             {!hasGroups && (
-              <Button onClick={handleInitialize}>
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Inicializar Grupos Padrão
+              <Button onClick={() => void handleInitialize()} disabled={isInitializing}>
+                {isInitializing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                {isInitializing ? 'Inicializando...' : 'Inicializar Grupos Padrão'}
               </Button>
             )}
           </div>
@@ -136,7 +186,7 @@ export function DREAccountConfig() {
               {groups.map(group => (
                 <div
                   key={group.id}
-                  className="app-card-soft p-3 transition-colors hover:bg-white/[0.055]"
+                  className="app-card-soft p-3 transition-colors hover:bg-[var(--app-surface-hover)]"
                 >
                   <Badge
                     variant="secondary"
@@ -272,7 +322,8 @@ export function DREAccountConfig() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => removeMappingMutation.mutate(mapping.id)}
+                        aria-label={`Remover mapeamento de ${mapping.category}`}
+                        onClick={() => setMappingToDelete({ id: mapping.id, category: mapping.category })}
                         disabled={removeMappingMutation.isPending}
                       >
                         <Trash2 className="h-4 w-4 text-destructive" />
@@ -290,6 +341,41 @@ export function DREAccountConfig() {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog
+        open={mappingToDelete !== null}
+        onOpenChange={(open) => {
+          if (!open && !removeMappingMutation.isPending) setMappingToDelete(null);
+        }}
+      >
+        <AlertDialogContent className="rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-5 shadow-none">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-[14px] font-normal">Remover mapeamento</AlertDialogTitle>
+            <AlertDialogDescription className="text-[12px] font-light leading-[18px]">
+              A categoria “{mappingToDelete?.category ?? ''}” deixará de compor automaticamente o grupo atual do DRE.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removeMappingMutation.isPending} className="h-9 rounded-[6px] text-[12px] font-light">
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={!mappingToDelete || removeMappingMutation.isPending}
+              className="h-9 rounded-[6px] bg-destructive text-[12px] font-light text-destructive-foreground hover:bg-destructive/90"
+              onClick={(event) => {
+                event.preventDefault();
+                if (!mappingToDelete) return;
+                removeMappingMutation.mutate(mappingToDelete.id, {
+                  onSuccess: () => setMappingToDelete(null),
+                });
+              }}
+            >
+              {removeMappingMutation.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+              Remover
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

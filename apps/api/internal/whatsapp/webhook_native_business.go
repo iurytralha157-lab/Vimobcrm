@@ -25,26 +25,12 @@ type nativeInboundRule struct {
 	Conditions                 map[string]any
 }
 
-const nativeLegacyRoundRobinMembersQuery = `
-	select member.user_id::text
-	from public.round_robin_members member
-	join public.users app_user
-	  on app_user.organization_id = member.organization_id
-	 and app_user.id = member.user_id
-	 and coalesce(app_user.is_active, true) = true
-	where member.organization_id = $1::uuid
-	  and member.round_robin_id = $2::uuid
-	  and coalesce(member.is_active, true) = true
-	order by member.position asc, member.created_at asc, member.id asc
-`
-
 type nativeLeadAssignment struct {
-	UserID             string
-	PipelineID         string
-	StageID            string
-	TeamID             string
-	RoundRobinID       string
-	RoundRobinPosition int
+	UserID       string
+	PipelineID   string
+	StageID      string
+	TeamID       string
+	RoundRobinID string
 }
 
 func findNativeInboundRule(ctx context.Context, tx pgx.Tx, session nativeEvolutionSession, message nativeEvolutionMessage) (nativeInboundRule, error) {
@@ -177,6 +163,7 @@ func nativeInboundRuleMatches(rule nativeInboundRule, message nativeEvolutionMes
 func resolveNativeLeadAssignment(ctx context.Context, tx pgx.Tx, session nativeEvolutionSession, rule nativeInboundRule) (nativeLeadAssignment, error) {
 	assignment := nativeLeadAssignment{}
 	if rule.ManagedMessageDistribution {
+		assignment.RoundRobinID = rule.TargetRoundRobinID
 		return assignment, nil
 	}
 	if rule.TargetUserID != "" {
@@ -190,48 +177,21 @@ func resolveNativeLeadAssignment(ctx context.Context, tx pgx.Tx, session nativeE
 	}
 
 	if assignment.UserID == "" && rule.TargetRoundRobinID != "" {
-		var currentPosition int
+		var roundRobinID string
 		err := tx.QueryRow(ctx, `
-			select current_position
+			select id::text
 			from public.round_robins
 			where organization_id = $1::uuid and id = $2::uuid and coalesce(is_active, true) = true
-			for update
-		`, session.OrganizationID, rule.TargetRoundRobinID).Scan(&currentPosition)
+		`, session.OrganizationID, rule.TargetRoundRobinID).Scan(&roundRobinID)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nativeLeadAssignment{}, err
 		}
 		if err == nil {
-			rows, err := tx.Query(ctx, nativeLegacyRoundRobinMembersQuery, session.OrganizationID, rule.TargetRoundRobinID)
-			if err != nil {
-				return nativeLeadAssignment{}, err
-			}
-			members := []string{}
-			for rows.Next() {
-				var userID string
-				if err := rows.Scan(&userID); err != nil {
-					rows.Close()
-					return nativeLeadAssignment{}, err
-				}
-				members = append(members, userID)
-			}
-			if err := rows.Err(); err != nil {
-				rows.Close()
-				return nativeLeadAssignment{}, err
-			}
-			rows.Close()
-			if len(members) > 0 {
-				index := currentPosition % len(members)
-				if index < 0 {
-					index = -index
-				}
-				assignment.UserID = members[index]
-				assignment.RoundRobinID = rule.TargetRoundRobinID
-				assignment.RoundRobinPosition = currentPosition + 1
-			}
+			assignment.RoundRobinID = roundRobinID
 		}
 	}
 
-	if assignment.UserID == "" {
+	if assignment.UserID == "" && assignment.RoundRobinID == "" {
 		for _, candidate := range []string{session.OwnerUserID, session.CreatedBy} {
 			if candidate == "" {
 				continue

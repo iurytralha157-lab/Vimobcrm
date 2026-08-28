@@ -54,8 +54,25 @@ func (repo Repository) GetPropertyCaptor(ctx context.Context, tenantContext tena
 		where u.id = $2::uuid
 		  and coalesce(u.is_active, false) = true
 		  and coalesce(om.is_active, false) = true
+		  and (
+			$3::boolean
+			or u.id = $4::uuid
+			or exists (
+				select 1
+				from public.properties p
+				where p.organization_id = $1::uuid
+				  and (p.created_by = u.id or p.responsible_user_id = u.id)
+				  and `+propertyVisibilitySQL("$3", "$4", "$5", "p")+`
+			)
+		  )
 		limit 1
-	`, tenantContext.OrganizationID, userID).Scan(&captor.ID, &name, &email, &whatsapp, &avatarURL)
+	`,
+		tenantContext.OrganizationID,
+		userID,
+		canViewAllProperties(tenantContext),
+		tenantContext.UserID,
+		canViewTeamProperties(tenantContext),
+	).Scan(&captor.ID, &name, &email, &whatsapp, &avatarURL)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -106,7 +123,7 @@ func (repo Repository) ListPropertySummaries(ctx context.Context, tenantContext 
 		return []PropertySummary{}, nil
 	}
 
-	args := make([]any, 0, len(propertyIDs)+1)
+	args := make([]any, 0, len(propertyIDs)+4)
 	args = append(args, tenantContext.OrganizationID)
 	placeholders := make([]string, 0, len(propertyIDs))
 	for index, id := range propertyIDs {
@@ -114,15 +131,20 @@ func (repo Repository) ListPropertySummaries(ctx context.Context, tenantContext 
 		placeholders = append(placeholders, fmt.Sprintf("$%d::uuid", index+2))
 	}
 
+	where := []string{
+		"p.organization_id = $1::uuid",
+		"p.id in (" + strings.Join(placeholders, ", ") + ")",
+	}
+	args, where = addScopedPropertyVisibility(args, where, tenantContext, "p", "")
+
 	rows, err := repo.db.Pool().Query(ctx, `
 		select
-			id::text,
-			code,
-			title,
-			preco::double precision
-		from public.properties
-		where organization_id = $1::uuid
-		  and id in (`+strings.Join(placeholders, ", ")+`)
+			p.id::text,
+			p.code,
+			p.title,
+			p.preco::double precision
+		from public.properties p
+		where `+strings.Join(where, " and ")+`
 	`, args...)
 	if err != nil {
 		return nil, err

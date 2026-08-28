@@ -1,7 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
-import { leadTasksAPI } from '@/lib/api/lead-tasks';
+import {
+  leadTasksAPI,
+  type CompleteCadenceTaskInput,
+} from '@/lib/api/lead-tasks';
+import type { LeadCadenceState } from '@/lib/validation';
 import type { UnifiedHistoryEvent } from '@/hooks/use-lead-history';
 import { appendOptimisticHistoryEvent, invalidateLeadHistorySoon } from '@/hooks/use-optimistic-lead-history';
 
@@ -23,8 +27,11 @@ export type LeadTask = {
 
 function invalidateLeadTaskCaches(queryClient: ReturnType<typeof useQueryClient>, leadId?: string | null) {
   queryClient.invalidateQueries({ queryKey: ['lead-tasks'] });
+  queryClient.invalidateQueries({ queryKey: ['lead-cadence-state'] });
   queryClient.invalidateQueries({ queryKey: ['activities'] });
   queryClient.invalidateQueries({ queryKey: ['recent-activities'] });
+  queryClient.invalidateQueries({ queryKey: ['home'] });
+  queryClient.invalidateQueries({ queryKey: ['upcoming-tasks'] });
   if (leadId) {
     invalidateLeadHistorySoon(queryClient, leadId);
     queryClient.invalidateQueries({ queryKey: ['lead-timeline', leadId] });
@@ -83,30 +90,24 @@ export function useCompleteCadenceTask() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (input: {
-      leadId: string;
-      templateTaskId: string;
-      dayOffset: number;
-      type: 'call' | 'message' | 'email' | 'note';
-      title: string;
-      description?: string;
-      outcome?: string;
-      outcomeNotes?: string;
-    }) => leadTasksAPI.completeCadence(input),
+    mutationFn: (input: CompleteCadenceTaskInput) => leadTasksAPI.completeCadence(input),
     onMutate: async (input) => {
       const queryKey = ['lead-tasks', input.leadId] as const;
       const historyQueryKey = ['lead-history-v2', input.leadId] as const;
+      const cadenceQueryKey = ['lead-cadence-state'] as const;
       await Promise.all([
         queryClient.cancelQueries({ queryKey }),
         queryClient.cancelQueries({ queryKey: historyQueryKey }),
+        queryClient.cancelQueries({ queryKey: cadenceQueryKey }),
       ]);
       const previous = queryClient.getQueryData<LeadTask[]>(queryKey) || [];
       const previousHistory = queryClient.getQueryData<UnifiedHistoryEvent[]>(historyQueryKey);
+      const previousCadenceStates = queryClient.getQueriesData<LeadCadenceState>({
+        queryKey: cadenceQueryKey,
+      });
       const now = new Date().toISOString();
-      let matched = false;
       const optimistic = previous.map((task) => {
-        if (task.title !== input.title || task.day_offset !== input.dayOffset || task.type !== input.type) return task;
-        matched = true;
+        if (!input.taskId || task.id !== input.taskId) return task;
         return {
           ...task,
           is_done: true,
@@ -115,44 +116,70 @@ export function useCompleteCadenceTask() {
           outcome_notes: input.outcomeNotes || null,
         };
       });
-      if (!matched) {
-        optimistic.push({
-          id: `optimistic-${input.templateTaskId}`,
-          lead_id: input.leadId,
-          day_offset: input.dayOffset,
-          type: input.type,
-          title: input.title,
-          description: input.description || null,
-          due_date: null,
-          is_done: true,
-          done_at: now,
-          done_by: null,
-          outcome: input.outcome || null,
-          outcome_notes: input.outcomeNotes || null,
-          created_at: now,
+      queryClient.setQueryData(queryKey, optimistic);
+
+      if (input.taskId) {
+        previousCadenceStates.forEach(([stateQueryKey, current]) => {
+          if (!current || current.lead_id !== input.leadId) return;
+
+          const tasks = current.tasks.map((task) => (
+            task.id === input.taskId
+              ? {
+                  ...task,
+                  is_done: true,
+                  status: 'completed',
+                  done_at: now,
+                  outcome: input.outcome || null,
+                  outcome_notes: input.outcomeNotes || null,
+                }
+              : task
+          ));
+          const pendingTasks = tasks.filter((task) => task.status === 'pending' && !task.is_done);
+          const overdue = pendingTasks.filter((task) => (
+            task.due_at ? new Date(task.due_at).getTime() < Date.now() : false
+          )).length;
+
+          queryClient.setQueryData<LeadCadenceState>(stateQueryKey, {
+            ...current,
+            tasks,
+            summary: {
+              ...current.summary,
+              completed: tasks.filter((task) => task.status === 'completed' || task.is_done).length,
+              pending: pendingTasks.length,
+              overdue,
+              next_task_id: pendingTasks[0]?.id || null,
+            },
+          });
         });
       }
-      queryClient.setQueryData(queryKey, optimistic);
+
+      const taskReference = input.taskId || input.templateTaskId || 'unknown';
       queryClient.setQueryData<UnifiedHistoryEvent[]>(historyQueryKey, (current) =>
         appendOptimisticHistoryEvent(current, {
-          id: `optimistic-cadence-${input.leadId}-${input.templateTaskId}-${now}`,
+          id: `optimistic-cadence-${input.leadId}-${taskReference}-${now}`,
           type: 'task_completed',
           label: 'Tarefa concluida',
-          content: `Cadencia concluida: ${input.title}`,
+          content: input.title ? `Cadencia concluida: ${input.title}` : 'Tarefa da cadencia concluida',
           timestamp: now,
           actor: null,
           source: 'activity',
           metadata: {
-            task_id: `optimistic-${input.templateTaskId}`,
-            template_task_id: input.templateTaskId,
-            task_type: input.type,
-            day_offset: input.dayOffset,
+            task_id: input.taskId || null,
+            template_task_id: input.templateTaskId || null,
+            task_type: input.type || null,
+            day_offset: input.dayOffset ?? 0,
             outcome: input.outcome || null,
             outcome_notes: input.outcomeNotes || null,
           },
         }),
       );
-      return { previous, queryKey, previousHistory, historyQueryKey };
+      return {
+        previous,
+        queryKey,
+        previousHistory,
+        historyQueryKey,
+        previousCadenceStates,
+      };
     },
     onSuccess: (data) => {
       invalidateLeadTaskCaches(queryClient, data?.lead_id);
@@ -161,6 +188,9 @@ export function useCompleteCadenceTask() {
       if (context) {
         queryClient.setQueryData(context.queryKey, context.previous);
         queryClient.setQueryData(context.historyQueryKey, context.previousHistory);
+        context.previousCadenceStates.forEach(([queryKey, state]) => {
+          queryClient.setQueryData(queryKey, state);
+        });
       }
       toast.error('Erro ao completar tarefa: ' + error.message);
     },

@@ -303,7 +303,7 @@ export function CampaignPerformanceWidget({ filters }: Props) {
           <KpiCard icon={Users} label="Leads" value={formatNumber(summary.totalLeads)} iconColor="bg-primary" />
           <KpiCard icon={Trophy} label="Vendas" value={String(summary.totalWon)} iconColor="bg-emerald-600" />
           {summary.totalRevenue > 0 && (
-            <KpiCard icon={Banknote} label="Receita" value={formatCurrency(summary.totalRevenue)} iconColor="bg-emerald-700" />
+            <KpiCard icon={Banknote} label="Valor ganho" value={formatCurrency(summary.totalRevenue)} iconColor="bg-emerald-700" />
           )}
           {hasSpendData && summary.totalSpend != null && (
             <KpiCard icon={DollarSign} label="Investimento" value={formatCurrency(summary.totalSpend)} iconColor="bg-chart-5" />
@@ -336,7 +336,7 @@ export function CampaignPerformanceWidget({ filters }: Props) {
                 <span className="flex-1">Campanha</span>
                 <span className="w-14 text-right">Leads</span>
                 <span className="w-14 text-right">Vendas</span>
-                <span className="w-20 text-right">Receita</span>
+                <span className="w-20 text-right">Valor ganho</span>
                 {hasSpendData && (
                   <>
                     <span className="w-20 text-right">Gasto</span>

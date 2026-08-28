@@ -16,6 +16,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/phonenumber"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
@@ -45,6 +47,9 @@ func NewRepository(db *dbpkg.Postgres, config Config) Repository {
 		config: config,
 		client: &http.Client{
 			Timeout: 15 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 	}
 }
@@ -58,10 +63,14 @@ const metaVideoDetailsFields = "id,source,permalink_url,picture,thumbnails"
 const metaStoryDetailsFields = "id,permalink_url,full_picture,attachments{media,type,target,subattachments}"
 
 func (repo Repository) InsertWebhookEvent(ctx context.Context, eventContext webhookEventContext, payload map[string]any, signatureValid bool) (string, error) {
-	payloadJSON := jsonb(payload)
+	storagePayload, err := repo.webhookPayloadForStorage(ctx, payload)
+	if err != nil {
+		return "", err
+	}
+	payloadJSON := jsonb(storagePayload)
 
 	var eventID string
-	err := repo.db.Pool().QueryRow(ctx, `
+	err = repo.db.Pool().QueryRow(ctx, `
 		insert into public.meta_webhook_events (
 			object,
 			page_id,
@@ -92,8 +101,99 @@ func (repo Repository) InsertWebhookEvent(ctx context.Context, eventContext webh
 		)
 		values ($1, $2, $3, $4::jsonb, now())
 		returning id::text
-	`, nullableString(eventContext.Object), nullableString(eventContext.EventType), nullableString(eventContext.LeadgenID), payloadJSON).Scan(&eventID)
+	`, nullableString(eventContext.Object), nullableString(eventContext.EventType), nullableString(firstNonEmpty(eventContext.LeadgenID, eventContext.ProviderEventID)), payloadJSON).Scan(&eventID)
 	return eventID, err
+}
+
+// webhookPayloadForStorage strips message bodies and sender data before the
+// durable event log is written when the destination organization does not
+// have the advanced Marketing module. Leadgen changes are intentionally kept:
+// lead intake is a base Meta capability available to every organization.
+func (repo Repository) webhookPayloadForStorage(ctx context.Context, payload map[string]any) (map[string]any, error) {
+	return filterMessagingPayload(payload, func(routeID string, platform string) (bool, error) {
+		var matchCount int64
+		var enabled bool
+		err := repo.db.Pool().QueryRow(ctx, `
+			select
+			  count(*)::bigint,
+			  coalesce(bool_and(
+			    coalesce(marketing_access.is_enabled, false)
+			    and coalesce(conversations_access.is_enabled, false)
+			  ), false)
+			from public.meta_integrations as integration
+			left join public.organization_modules as marketing_access
+			  on marketing_access.organization_id = integration.organization_id
+			 and lower(btrim(marketing_access.module_name)) = 'campaigns'
+			left join public.organization_modules as conversations_access
+			  on conversations_access.organization_id = integration.organization_id
+			 and lower(btrim(conversations_access.module_name)) = 'whatsapp'
+			where coalesce(integration.is_connected, false) = true
+			  and (
+			    ($2 = 'messenger' and integration.page_id = $1)
+			    or (
+			      $2 = 'instagram'
+			      and (
+			        integration.instagram_business_account_id = $1
+			        or integration.page_id = $1
+			      )
+			    )
+			  )
+		`, routeID, platform).Scan(&matchCount, &enabled)
+		if err != nil {
+			return false, err
+		}
+		// Ambiguous provider destinations fail closed. They must never make one
+		// tenant's entitlement authorize storage for another tenant.
+		return matchCount == 1 && enabled, nil
+	})
+}
+
+func filterMessagingPayload(
+	payload map[string]any,
+	isEnabled func(routeID string, platform string) (bool, error),
+) (map[string]any, error) {
+	platform := messagingPlatform(textFromAny(payload["object"]))
+	if platform == "" {
+		return payload, nil
+	}
+	rawEntries, ok := payload["entry"].([]any)
+	if !ok || len(rawEntries) == 0 {
+		return payload, nil
+	}
+
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	var filtered map[string]any
+	if err := json.Unmarshal(encoded, &filtered); err != nil {
+		return nil, err
+	}
+	entries, _ := filtered["entry"].([]any)
+	for _, rawEntry := range entries {
+		entry, ok := rawEntry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, hasMessaging := entry["messaging"]; !hasMessaging {
+			continue
+		}
+		routeID := safeMessagingIdentifier(textFromAny(entry["id"]), maxMessagingRouteIDLength)
+		enabled := false
+		if routeID != "" {
+			enabled, err = isEnabled(routeID, platform)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if enabled {
+			continue
+		}
+		delete(entry, "messaging")
+		entry["messaging_redacted"] = true
+		entry["storage_decision"] = "skipped_module_disabled"
+	}
+	return filtered, nil
 }
 
 func (repo Repository) FinishWebhookEvent(ctx context.Context, eventID string, organizationID string, status string, errorMessage string) error {
@@ -221,13 +321,14 @@ func (repo Repository) ClaimPendingWebhookEvents(ctx context.Context, limit int,
 
 func (repo Repository) ProcessWebhookPayload(ctx context.Context, eventID string, payload map[string]any) (WebhookResponse, error) {
 	changes := extractLeadgenChanges(payload)
-	if len(changes) == 0 {
-		_ = repo.FinishWebhookEvent(ctx, eventID, "", "skipped", "No leadgen changes found")
+	messagingEvents := extractMessagingEvents(payload)
+	if len(changes) == 0 && len(messagingEvents) == 0 {
+		_ = repo.FinishWebhookEvent(ctx, eventID, "", "skipped", "No supported Meta changes found")
 		return WebhookResponse{
 			OK:        true,
 			EventID:   eventID,
 			Processed: 0,
-			Warnings:  []string{"no_leadgen_changes"},
+			Warnings:  []string{"no_supported_changes"},
 		}, nil
 	}
 
@@ -235,17 +336,22 @@ func (repo Repository) ProcessWebhookPayload(ctx context.Context, eventID string
 	for _, change := range changes {
 		results = append(results, repo.processLeadgenChange(ctx, payload, change))
 	}
+	messagingResults := make([]MessagingResult, 0, len(messagingEvents))
+	for _, event := range messagingEvents {
+		messagingResults = append(messagingResults, repo.processMessagingEvent(ctx, event))
+	}
 
-	status, organizationID, errorMessage, processed := aggregateResults(results)
+	status, organizationID, errorMessage, processed := aggregateWebhookResults(results, messagingResults)
 	if err := repo.FinishWebhookEvent(ctx, eventID, organizationID, status, errorMessage); err != nil {
 		return WebhookResponse{}, err
 	}
 
 	return WebhookResponse{
-		OK:        true,
-		EventID:   eventID,
-		Processed: processed,
-		Results:   results,
+		OK:               true,
+		EventID:          eventID,
+		Processed:        processed,
+		Results:          results,
+		MessagingResults: messagingResults,
 	}, nil
 }
 
@@ -325,17 +431,31 @@ func (repo Repository) processLeadgenChange(ctx context.Context, webhookPayload 
 	return result
 }
 
-func (repo Repository) findIntegrationByPage(ctx context.Context, pageID string) (metaIntegration, error) {
-	var raw []byte
-	err := repo.db.Pool().QueryRow(ctx, `
-		select to_jsonb(mi)
+const findIntegrationByPageQuery = `
+		select count(*) over () as matching_integrations,
+		       to_jsonb(mi) || jsonb_build_object(
+		         'access_token',
+		         coalesce(nullif(mi.access_token, ''), secret.decrypted_secret)
+		       )
 		from public.meta_integrations mi
+		left join vault.decrypted_secrets secret
+		  on secret.id = mi.access_token_secret_ref
 		where mi.page_id = $1
 		  and coalesce(mi.is_connected, true) = true
 		order by mi.updated_at desc nulls last, mi.created_at desc nulls last
 		limit 1
-	`, pageID).Scan(&raw)
+	`
+
+func (repo Repository) findIntegrationByPage(ctx context.Context, pageID string) (metaIntegration, error) {
+	var (
+		matchCount int64
+		raw        []byte
+	)
+	err := repo.db.Pool().QueryRow(ctx, findIntegrationByPageQuery, pageID).Scan(&matchCount, &raw)
 	if err != nil {
+		return metaIntegration{}, err
+	}
+	if err := requireUniquePageIntegration(pageID, matchCount); err != nil {
 		return metaIntegration{}, err
 	}
 
@@ -344,23 +464,30 @@ func (repo Repository) findIntegrationByPage(ctx context.Context, pageID string)
 		return metaIntegration{}, err
 	}
 
-	accessToken := cleanAnyString(item["access_token"])
-	if accessToken == nil {
-		accessToken = plainSecret(cleanAnyString(item["access_token_secret_ref"]))
-	}
-
 	return metaIntegration{
 		ID:             stringFromMap(item, "id"),
 		OrganizationID: stringFromMap(item, "organization_id"),
 		PageID:         cleanAnyString(item["page_id"]),
 		PageName:       cleanAnyString(item["page_name"]),
-		AccessToken:    accessToken,
+		AccessToken:    cleanAnyString(item["access_token"]),
 		PipelineID:     uuidPointer(item["pipeline_id"]),
 		StageID:        uuidPointer(item["stage_id"]),
 		AssignedUserID: uuidPointer(item["assigned_user_id"]),
 		DefaultStatus:  cleanAnyString(item["default_status"]),
 		FieldMapping:   stringMap(item["field_mapping"]),
 	}, nil
+}
+
+func requireUniquePageIntegration(pageID string, matchCount int64) error {
+	if matchCount <= 1 {
+		return nil
+	}
+	return fmt.Errorf(
+		"%w: page_id %q matches %d active integrations",
+		ErrAmbiguousPageIntegration,
+		pageID,
+		matchCount,
+	)
 }
 
 func (repo Repository) findFormConfig(ctx context.Context, integration metaIntegration, formID string) (metaFormConfig, error) {
@@ -447,9 +574,11 @@ func (repo Repository) metaGraphGet(ctx context.Context, objectID string, access
 	}
 
 	query := endpoint.Query()
-	query.Set("access_token", accessToken)
 	if strings.TrimSpace(fields) != "" {
 		query.Set("fields", fields)
+	}
+	if strings.TrimSpace(repo.config.AppSecret) != "" {
+		query.Set("appsecret_proof", oauthAppSecretProof(repo.config.AppSecret, accessToken))
 	}
 	endpoint.RawQuery = query.Encode()
 
@@ -457,6 +586,8 @@ func (repo Repository) metaGraphGet(ctx context.Context, objectID string, access
 	if err != nil {
 		return nil, err
 	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Authorization", "Bearer "+accessToken)
 
 	response, err := repo.client.Do(request)
 	if err != nil {
@@ -781,6 +912,7 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 	status := coalesceText(formConfig.DefaultStatus, coalesceText(integration.DefaultStatus, "new"))
 	metadata := buildLeadMetadata(webhookPayload, details, change, integration, formConfig, lead)
 	metadata["source_detail"] = sourceDetail
+	metadata["distribution_deferred"] = true
 	payloadJSON := jsonb(map[string]any{
 		"webhook_payload": webhookPayload,
 		"lead_details":    details,
@@ -789,6 +921,16 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 
 	leadID := existingLeadID
 	reentry := existingLeadID != ""
+	entryInserted := false
+	if reentry {
+		// Persist the new Meta entry before moving the existing lead. The funnel
+		// trigger can then attribute a qualification caused by this reentry to
+		// the new leadgen_id instead of the previous Meta submission.
+		if err := repo.insertLeadEntry(ctx, tx, integration.OrganizationID, leadID, details, change, propertyID, interestValue, metadata, true); err != nil {
+			return "", false, err
+		}
+		entryInserted = true
+	}
 	if reentry {
 		_, err = tx.Exec(ctx, `
 			update public.leads
@@ -824,10 +966,11 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 			    valor_interesse = coalesce($23::numeric, valor_interesse),
 			    last_entry_at = now(),
 			    reentry_count = coalesce(reentry_count, 0) + 1,
+			    metadata = coalesce(metadata, '{}'::jsonb) || $24::jsonb,
 			    updated_at = now()
 			where organization_id = $1::uuid
 			  and id = $2::uuid
-		`, integration.OrganizationID, leadID, lead.Name, nullablePointer(lead.Email), nullablePointer(lead.Phone), source, nullablePointer(lead.Message), nullablePointer(lead.Cargo), nullablePointer(lead.Empresa), nullablePointer(lead.Cidade), nullablePointer(lead.Bairro), change.LeadgenID, change.FormID, nullableString(metaText(details, change.Raw, "campaign_id")), nullableString(metaText(details, change.Raw, "adset_id")), nullableString(metaText(details, change.Raw, "ad_id")), "facebook", "lead_ads", nullableString(metaText(details, change.Raw, "campaign_name")), nullablePointer(destination.PipelineID), nullablePointer(destination.StageID), nullablePointer(propertyID), nullablePointer(interestValue))
+		`, integration.OrganizationID, leadID, lead.Name, nullablePointer(lead.Email), nullablePointer(lead.Phone), source, nullablePointer(lead.Message), nullablePointer(lead.Cargo), nullablePointer(lead.Empresa), nullablePointer(lead.Cidade), nullablePointer(lead.Bairro), change.LeadgenID, change.FormID, nullableString(metaText(details, change.Raw, "campaign_id")), nullableString(metaText(details, change.Raw, "adset_id")), nullableString(metaText(details, change.Raw, "ad_id")), "facebook", "lead_ads", nullableString(metaText(details, change.Raw, "campaign_name")), nullablePointer(destination.PipelineID), nullablePointer(destination.StageID), nullablePointer(propertyID), nullablePointer(interestValue), jsonb(metadata))
 	} else {
 		err = tx.QueryRow(ctx, `
 			insert into public.leads (
@@ -861,7 +1004,8 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 				team_id,
 				stage_entered_at,
 				board_order_at,
-				last_entry_at
+				last_entry_at,
+				metadata
 			)
 			values (
 				$1::uuid,
@@ -894,10 +1038,11 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 				$24::uuid,
 				case when $3::uuid is null then null else now() end,
 				case when $3::uuid is null then null else now() end,
-				now()
+				now(),
+				$25::jsonb
 			)
 			returning id::text
-		`, integration.OrganizationID, nullablePointer(destination.PipelineID), nullablePointer(destination.StageID), nullablePointer(destination.AssignedUserID), nullablePointer(propertyID), lead.Name, nullablePointer(lead.Email), nullablePointer(lead.Phone), source, nullablePointer(lead.Message), status, nullablePointer(lead.Cargo), nullablePointer(lead.Empresa), nullablePointer(lead.Cidade), nullablePointer(lead.Bairro), nullablePointer(formConfig.Purpose), change.LeadgenID, change.FormID, nullableString(metaText(details, change.Raw, "campaign_id")), nullableString(metaText(details, change.Raw, "adset_id")), nullableString(metaText(details, change.Raw, "ad_id")), nullableString(metaText(details, change.Raw, "campaign_name")), nullablePointer(interestValue), nullablePointer(destination.TeamID)).Scan(&leadID)
+		`, integration.OrganizationID, nullablePointer(destination.PipelineID), nullablePointer(destination.StageID), nullablePointer(destination.AssignedUserID), nullablePointer(propertyID), lead.Name, nullablePointer(lead.Email), nullablePointer(lead.Phone), source, nullablePointer(lead.Message), status, nullablePointer(lead.Cargo), nullablePointer(lead.Empresa), nullablePointer(lead.Cidade), nullablePointer(lead.Bairro), nullablePointer(formConfig.Purpose), change.LeadgenID, change.FormID, nullableString(metaText(details, change.Raw, "campaign_id")), nullableString(metaText(details, change.Raw, "adset_id")), nullableString(metaText(details, change.Raw, "ad_id")), nullableString(metaText(details, change.Raw, "campaign_name")), nullablePointer(interestValue), nullablePointer(destination.TeamID), jsonb(metadata)).Scan(&leadID)
 	}
 	if err != nil {
 		return "", false, err
@@ -909,13 +1054,30 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 	if err := repo.insertLeadTags(ctx, tx, integration.OrganizationID, leadID, tagIDs(formConfig)); err != nil {
 		return "", false, err
 	}
-	if err := repo.insertLeadEntry(ctx, tx, integration.OrganizationID, leadID, details, change, propertyID, interestValue, metadata, reentry); err != nil {
-		return "", false, err
-	}
-	if !reentry && destination.RoundRobinID != nil && destination.AssignedUserID != nil {
-		if err := repo.insertRoundRobinLog(ctx, tx, integration.OrganizationID, leadID, destination, change); err != nil {
+	if !entryInserted {
+		if err := repo.insertLeadEntry(ctx, tx, integration.OrganizationID, leadID, details, change, propertyID, interestValue, metadata, false); err != nil {
 			return "", false, err
 		}
+	}
+	distributionResult, err := distribution.Distribute(ctx, tx, distribution.Request{
+		OrganizationID:   integration.OrganizationID,
+		LeadID:           leadID,
+		IdempotencyKey:   distribution.StableKey("meta", integration.ID, change.LeadgenID),
+		RoundRobinID:     destination.RoundRobinID,
+		PreserveAssignee: true,
+		Source:           &source,
+		OccurredAt:       metaLeadOccurredAt(change.CreatedTime),
+	})
+	if err != nil {
+		return "", false, err
+	}
+	destination.AssignedUserID = distributionResult.AssignedUserID
+	destination.TeamID = distributionResult.TeamID
+	destination.PipelineID = distributionResult.PipelineID
+	destination.StageID = distributionResult.StageID
+	destination.RoundRobinID = distributionResult.RoundRobinID
+	destination.RoundRobinMemberID = distributionResult.MemberID
+	if !reentry && destination.RoundRobinID != nil && destination.AssignedUserID != nil {
 		if err := repo.insertLeadRedistributionJob(ctx, tx, integration.OrganizationID, leadID, destination, change); err != nil {
 			return "", false, err
 		}
@@ -923,12 +1085,9 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 	if err := repo.insertActivity(ctx, tx, integration.OrganizationID, leadID, lead.Name, reentry, metadata); err != nil {
 		return "", false, err
 	}
-	assignedUserID := destination.AssignedUserID
-	if reentry || assignedUserID == nil {
-		assignedUserID, err = repo.findLeadAssignedUser(ctx, tx, integration.OrganizationID, leadID)
-		if err != nil {
-			return "", false, err
-		}
+	assignedUserID, err := repo.findLeadAssignedUser(ctx, tx, integration.OrganizationID, leadID)
+	if err != nil {
+		return "", false, err
 	}
 	notificationRecipients := []string{}
 	if assignedUserID != nil {
@@ -972,6 +1131,28 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 			notificationMetadata["dedupe_key"] = metaNotificationDedupeKey(eventKey, leadID, recipientID, change.LeadgenID)
 		} else if !reentry {
 			notificationMetadata["dedupe_key"] = metaNotificationDedupeKey(eventKey, leadID, recipientID)
+		}
+		notificationMetadata = prepareMetaLeadNotificationMetadata(notificationMetadata, eventKey)
+		if !reentry &&
+			distributionResult.Reason == "assigned" &&
+			distributionResult.DistributionEventID != nil {
+			updated, err := repo.enrichCanonicalLeadNotification(
+				ctx,
+				tx,
+				integration.OrganizationID,
+				recipientID,
+				leadID,
+				*distributionResult.DistributionEventID,
+				title,
+				content,
+				notificationMetadata,
+			)
+			if err != nil {
+				return "", false, err
+			}
+			if updated {
+				continue
+			}
 		}
 		if err := repo.insertLeadNotification(ctx, tx, integration.OrganizationID, recipientID, leadID, title, content, eventKey, notificationMetadata); err != nil {
 			return "", false, err
@@ -1110,13 +1291,6 @@ func (repo Repository) resolveRoundRobin(ctx context.Context, tx pgx.Tx, organiz
 		destination.StageID = stageID
 	}
 
-	memberID, userID, teamID, err := repo.selectRoundRobinMember(ctx, tx, organizationID, roundRobinID)
-	if err != nil {
-		return resolvedDestination{}, err
-	}
-	destination.RoundRobinMemberID = memberID
-	destination.AssignedUserID = userID
-	destination.TeamID = teamID
 	return destination, nil
 }
 
@@ -1242,12 +1416,17 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 				tm.id as team_member_id,
 				tm.created_at as team_member_created_at
 			from entries
+			left join public.teams direct_team
+			  on direct_team.id = entries.team_id
+			 and direct_team.organization_id = entries.organization_id
+			 and coalesce(direct_team.is_active, true) = true
 			left join public.team_members tm
 			  on tm.organization_id = entries.organization_id
 			 and tm.team_id = entries.team_id
 			 and tm.user_id = entries.user_id
 			 and coalesce(tm.is_active, true) = true
 			where entries.user_id is not null
+			  and (entries.team_id is null or (direct_team.id is not null and tm.id is not null))
 
 			union all
 
@@ -1290,34 +1469,7 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 			  and rrl.round_robin_id = candidates.round_robin_id
 			  and rrl.assigned_user_id = candidates.user_id
 		) user_logs on true
-		where (
-		    candidates.team_member_id is null
-		    or not exists (
-		      select 1
-		      from public.member_availability ma_any
-		      where ma_any.organization_id = candidates.organization_id
-		        and ma_any.team_member_id = candidates.team_member_id
-		    )
-		    or exists (
-		      select 1
-		      from public.member_availability ma
-		      where ma.organization_id = candidates.organization_id
-		        and ma.team_member_id = candidates.team_member_id
-		        and ma.day_of_week = extract(dow from now() at time zone 'America/Sao_Paulo')::int
-		        and coalesce(ma.is_active, true) = true
-		        and (
-		          coalesce(ma.is_all_day, false) = true
-		          or (
-		            ma.start_time is not null
-		            and ma.end_time is not null
-		            and (
-		              (ma.start_time <= ma.end_time and (now() at time zone 'America/Sao_Paulo')::time >= ma.start_time and (now() at time zone 'America/Sao_Paulo')::time <= ma.end_time)
-		              or (ma.start_time > ma.end_time and ((now() at time zone 'America/Sao_Paulo')::time >= ma.start_time or (now() at time zone 'America/Sao_Paulo')::time <= ma.end_time))
-		            )
-		          )
-		        )
-		    )
-		  )
+		where `+distribution.RoundRobinAvailabilityPredicateSQL+`
 		order by candidates.entry_total asc, candidates.position asc, candidates.created_at asc, coalesce(user_logs.total, 0) asc, candidates.team_member_created_at asc nulls last, candidates.user_id asc
 		limit 1
 	`, organizationID, roundRobinID).Scan(&memberID, &userID, &teamID)
@@ -1882,28 +2034,7 @@ func (repo Repository) insertLeadNotification(ctx context.Context, tx pgx.Tx, or
 	if strings.TrimSpace(userID) == "" {
 		return nil
 	}
-	if metadata == nil {
-		metadata = map[string]any{}
-	}
-	metadata["event_key"] = eventKey
-	metadata["whatsapp_dispatch_required"] = true
-	if _, exists := metadata["whatsapp_dispatch"]; !exists {
-		metadata["whatsapp_dispatch"] = map[string]any{
-			"status": "pending",
-		}
-	}
-	if _, exists := metadata["dispatch"]; !exists {
-		metadata["dispatch"] = map[string]any{
-			"whatsapp": map[string]any{
-				"required": true,
-				"status":   "pending",
-			},
-			"push": map[string]any{
-				"required": true,
-				"status":   "pending",
-			},
-		}
-	}
+	metadata = prepareMetaLeadNotificationMetadata(metadata, eventKey)
 	dedupeKey := metaStringFromMap(metadata, "dedupe_key")
 
 	_, err := tx.Exec(ctx, `
@@ -1949,6 +2080,70 @@ func (repo Repository) insertLeadNotification(ctx context.Context, tx pgx.Tx, or
 	return err
 }
 
+func prepareMetaLeadNotificationMetadata(metadata map[string]any, eventKey string) map[string]any {
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	metadata["event_key"] = eventKey
+	metadata["whatsapp_dispatch_required"] = true
+	if _, exists := metadata["whatsapp_dispatch"]; !exists {
+		metadata["whatsapp_dispatch"] = map[string]any{
+			"status": "pending",
+		}
+	}
+	if _, exists := metadata["dispatch"]; !exists {
+		metadata["dispatch"] = map[string]any{
+			"whatsapp": map[string]any{
+				"required": true,
+				"status":   "pending",
+			},
+			"push": map[string]any{
+				"required": true,
+				"status":   "pending",
+			},
+		}
+	}
+	return metadata
+}
+
+func (repo Repository) enrichCanonicalLeadNotification(
+	ctx context.Context,
+	tx pgx.Tx,
+	organizationID string,
+	userID string,
+	leadID string,
+	distributionEventID string,
+	title string,
+	content string,
+	metadata map[string]any,
+) (bool, error) {
+	if strings.TrimSpace(userID) == "" || strings.TrimSpace(distributionEventID) == "" {
+		return false, nil
+	}
+	command, err := tx.Exec(ctx, `
+		update public.notifications notification
+		set title = $5,
+		    content = $6,
+		    body = $6,
+		    type = 'lead',
+		    metadata = coalesce(notification.metadata, '{}'::jsonb) || $7::jsonb
+		where notification.id = (
+			select candidate.id
+			from public.notifications candidate
+			where candidate.organization_id = $1::uuid
+			  and candidate.user_id = $2::uuid
+			  and candidate.lead_id = $3::uuid
+			  and candidate.metadata->>'distribution_event_id' = $4
+			order by candidate.created_at desc, candidate.id desc
+			limit 1
+		)
+	`, organizationID, userID, leadID, distributionEventID, title, content, jsonb(metadata))
+	if err != nil {
+		return false, err
+	}
+	return command.RowsAffected() == 1, nil
+}
+
 func (repo Repository) incrementStats(ctx context.Context, tx pgx.Tx, integrationID string, formConfigID string) error {
 	if _, err := tx.Exec(ctx, `
 		update public.meta_integrations
@@ -1981,6 +2176,12 @@ func extractWebhookEventContext(payload map[string]any) webhookEventContext {
 		context.PageID = change.PageID
 		context.FormID = change.FormID
 		context.LeadgenID = change.LeadgenID
+		return context
+	}
+	for _, event := range extractMessagingEvents(payload) {
+		context.EventType = "messages"
+		context.PageID = event.EntryID
+		context.ProviderEventID = event.ExternalMessageID
 		return context
 	}
 	return context
@@ -2089,7 +2290,9 @@ func mapLeadData(details map[string]any, change leadgenChange, integration metaI
 		case "email":
 			lead.Email = &value
 		case "phone":
-			lead.Phone = &value
+			if canonical, err := phonenumber.Canonicalize(value); err == nil && canonical != "" {
+				lead.Phone = &canonical
+			}
 		case "message":
 			lead.Message = &value
 		case "cargo":
@@ -2491,18 +2694,6 @@ func uuidPointer(value any) *string {
 		return nil
 	}
 	return &normalized
-}
-
-func plainSecret(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	text := strings.TrimSpace(*value)
-	text = strings.TrimPrefix(text, "plain:")
-	if text == "" {
-		return nil
-	}
-	return &text
 }
 
 func firstUUID(values ...*string) *string {

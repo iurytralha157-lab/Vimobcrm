@@ -158,21 +158,27 @@ type patchTime struct {
 	Value *time.Time
 }
 
+type patchStringSlice struct {
+	Set   bool
+	Value []string
+}
+
 type UpdateRequest struct {
-	Title           patchString `json:"title,omitempty"`
-	Description     patchString `json:"description,omitempty"`
-	EventType       patchString `json:"event_type,omitempty"`
-	StartTime       patchTime   `json:"start_time,omitempty"`
-	EndTime         patchTime   `json:"end_time,omitempty"`
-	IsAllDay        patchBool   `json:"is_all_day,omitempty"`
-	UserID          patchString `json:"user_id,omitempty"`
-	LeadID          patchString `json:"lead_id,omitempty"`
-	PropertyID      patchString `json:"property_id,omitempty"`
-	Location        patchString `json:"location,omitempty"`
-	Status          patchString `json:"status,omitempty"`
-	Visibility      patchString `json:"visibility,omitempty"`
-	ReminderMinutes patchInt    `json:"reminder_minutes,omitempty"`
-	RecurrenceRule  patchString `json:"recurrence_rule,omitempty"`
+	Title           patchString      `json:"title,omitempty"`
+	Description     patchString      `json:"description,omitempty"`
+	EventType       patchString      `json:"event_type,omitempty"`
+	StartTime       patchTime        `json:"start_time,omitempty"`
+	EndTime         patchTime        `json:"end_time,omitempty"`
+	IsAllDay        patchBool        `json:"is_all_day,omitempty"`
+	UserID          patchString      `json:"user_id,omitempty"`
+	LeadID          patchString      `json:"lead_id,omitempty"`
+	PropertyID      patchString      `json:"property_id,omitempty"`
+	Location        patchString      `json:"location,omitempty"`
+	Status          patchString      `json:"status,omitempty"`
+	Visibility      patchString      `json:"visibility,omitempty"`
+	ReminderMinutes patchInt         `json:"reminder_minutes,omitempty"`
+	RecurrenceRule  patchString      `json:"recurrence_rule,omitempty"`
+	AssigneeIDs     patchStringSlice `json:"assignee_ids,omitempty"`
 }
 
 type updateInput UpdateRequest
@@ -338,6 +344,7 @@ func (request UpdateRequest) Validate() (updateInput, error) {
 		Visibility:      validatePatchString(request.Visibility, 40),
 		ReminderMinutes: request.ReminderMinutes,
 		RecurrenceRule:  validatePatchString(request.RecurrenceRule, 40),
+		AssigneeIDs:     request.AssigneeIDs,
 	}
 
 	if !input.hasChanges() {
@@ -381,6 +388,25 @@ func (request UpdateRequest) Validate() (updateInput, error) {
 	}
 	if input.ReminderMinutes.Set && input.ReminderMinutes.Value != nil && *input.ReminderMinutes.Value < 0 {
 		return updateInput{}, fmt.Errorf("%w: reminder_minutes is invalid", ErrInvalidInput)
+	}
+	if input.AssigneeIDs.Set {
+		if len(input.AssigneeIDs.Value) > 100 {
+			return updateInput{}, fmt.Errorf("%w: assignee_ids exceeds limit", ErrInvalidInput)
+		}
+		seen := map[string]struct{}{}
+		normalized := make([]string, 0, len(input.AssigneeIDs.Value))
+		for _, rawID := range input.AssigneeIDs.Value {
+			value, ok := normalizeUUID(rawID)
+			if !ok {
+				return updateInput{}, fmt.Errorf("%w: assignee_ids contains invalid uuid", ErrInvalidInput)
+			}
+			if _, exists := seen[value]; exists {
+				continue
+			}
+			seen[value] = struct{}{}
+			normalized = append(normalized, value)
+		}
+		input.AssigneeIDs.Value = normalized
 	}
 
 	for _, item := range []struct {
@@ -479,6 +505,21 @@ func (field *patchTime) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func (field *patchStringSlice) UnmarshalJSON(data []byte) error {
+	field.Set = true
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		field.Value = []string{}
+		return nil
+	}
+
+	var value []string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return fmt.Errorf("%w: expected string array or null", ErrInvalidInput)
+	}
+	field.Value = value
+	return nil
+}
+
 func (input updateInput) hasChanges() bool {
 	for _, field := range []patchString{
 		input.Title,
@@ -497,7 +538,7 @@ func (input updateInput) hasChanges() bool {
 		}
 	}
 
-	return input.StartTime.Set || input.EndTime.Set || input.IsAllDay.Set || input.ReminderMinutes.Set
+	return input.StartTime.Set || input.EndTime.Set || input.IsAllDay.Set || input.ReminderMinutes.Set || input.AssigneeIDs.Set
 }
 
 func validatePatchString(field patchString, maxLength int) patchString {

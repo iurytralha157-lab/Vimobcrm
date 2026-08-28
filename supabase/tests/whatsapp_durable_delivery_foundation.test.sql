@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(83);
+select plan(85);
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -185,6 +185,36 @@ select ok(
   and not has_table_privilege('authenticated', 'public.whatsapp_messages', 'delete'),
   'authenticated cannot bypass the durable outbox to mutate messages'
 );
+select ok(
+  not has_table_privilege('anon', 'public.whatsapp_sessions', 'select')
+  and not has_table_privilege('anon', 'public.whatsapp_sessions', 'insert')
+  and not has_table_privilege('anon', 'public.whatsapp_sessions', 'update')
+  and not has_table_privilege('anon', 'public.whatsapp_sessions', 'delete')
+  and not has_table_privilege('anon', 'public.whatsapp_conversations', 'select')
+  and not has_table_privilege('anon', 'public.whatsapp_conversations', 'insert')
+  and not has_table_privilege('anon', 'public.whatsapp_conversations', 'update')
+  and not has_table_privilege('anon', 'public.whatsapp_conversations', 'delete')
+  and not has_table_privilege('anon', 'public.whatsapp_messages', 'select')
+  and not has_table_privilege('anon', 'public.whatsapp_messages', 'insert')
+  and not has_table_privilege('anon', 'public.whatsapp_messages', 'update')
+  and not has_table_privilege('anon', 'public.whatsapp_messages', 'delete'),
+  'anonymous clients have no direct access to raw WhatsApp aggregates'
+);
+select ok(
+  has_table_privilege('service_role', 'public.whatsapp_sessions', 'select')
+  and has_table_privilege('service_role', 'public.whatsapp_sessions', 'insert')
+  and has_table_privilege('service_role', 'public.whatsapp_sessions', 'update')
+  and has_table_privilege('service_role', 'public.whatsapp_sessions', 'delete')
+  and has_table_privilege('service_role', 'public.whatsapp_conversations', 'select')
+  and has_table_privilege('service_role', 'public.whatsapp_conversations', 'insert')
+  and has_table_privilege('service_role', 'public.whatsapp_conversations', 'update')
+  and has_table_privilege('service_role', 'public.whatsapp_conversations', 'delete')
+  and has_table_privilege('service_role', 'public.whatsapp_messages', 'select')
+  and has_table_privilege('service_role', 'public.whatsapp_messages', 'insert')
+  and has_table_privilege('service_role', 'public.whatsapp_messages', 'update')
+  and has_table_privilege('service_role', 'public.whatsapp_messages', 'delete'),
+  'service role retains raw WhatsApp CRUD for the Go API'
+);
 select is(
   has_table_privilege('authenticated', 'public.whatsapp_sessions', 'select'),
   false,
@@ -194,7 +224,7 @@ select ok(
   not has_column_privilege('authenticated', 'public.whatsapp_sessions', 'advanced_settings', 'select')
   and not has_column_privilege('authenticated', 'public.whatsapp_sessions', 'qr_code', 'select')
   and not has_column_privilege('authenticated', 'public.whatsapp_sessions', 'last_error', 'select')
-  and not has_column_privilege('authenticated', 'public.whatsapp_sessions', 'metadata', 'select')
+  and not has_column_privilege('authenticated', 'public.whatsapp_sessions', 'instance_id', 'select')
   and not has_column_privilege('authenticated', 'public.whatsapp_conversations', 'metadata', 'select')
   and not has_column_privilege('authenticated', 'public.whatsapp_messages', 'metadata', 'select')
   and not has_column_privilege('authenticated', 'public.whatsapp_messages', 'media_storage_path', 'select')
@@ -313,7 +343,7 @@ set session_id = 'c4000000-0000-4000-8000-000000000001'
 where id = 'c5000000-0000-4000-8000-000000000001';
 
 select throws_ok(
-  $$insert into public.whatsapp_messages (organization_id, conversation_id, session_id, lead_id, client_message_id, from_me, direction, message_type, content, status) values ('c2000000-0000-4000-8000-000000000001', 'c5000000-0000-4000-8000-000000000001', 'c4000000-0000-4000-8000-000000000001', 'c3000000-0000-4000-8000-000000000001', 'canonical-client-a', true, 'outbound', 'text', 'duplicate', 'pending')$$,
+  $$insert into public.whatsapp_messages (organization_id, conversation_id, session_id, lead_id, message_id, client_message_id, from_me, direction, message_type, content, status) values ('c2000000-0000-4000-8000-000000000001', 'c5000000-0000-4000-8000-000000000001', 'c4000000-0000-4000-8000-000000000001', 'c3000000-0000-4000-8000-000000000001', 'duplicate-client-message-id', 'canonical-client-a', true, 'outbound', 'text', 'duplicate', 'pending')$$,
   '23505',
   null,
   'canonical message history rejects duplicate client ids in one organization/session'

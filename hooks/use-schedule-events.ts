@@ -144,12 +144,16 @@ export function useUpdateScheduleEvent() {
       id: string
       visibility?: ScheduleEventVisibility
       user_id?: string
+      assignee_ids?: string[]
     }) => {
       if (!organizationId) throw new Error('Organização não encontrada')
       return scheduleAPI.updateScheduleEvent(id, toScheduleUpdateBody(updates), organizationId)
     },
     onSuccess: (data) => {
       invalidateScheduleCaches(queryClient, data?.lead_id)
+      queryClient.invalidateQueries({
+        queryKey: ['schedule_assignees', organizationId, data?.id],
+      })
       syncGoogleCalendarEventInBackground(queryClient, 'push_upsert', data?.id, organizationId)
       toast.success('Atividade atualizada!')
     },
@@ -221,6 +225,7 @@ function toScheduleUpdateBody(updates: Record<string, unknown>): UpdateScheduleE
     'visibility',
     'reminder_minutes',
     'recurrence_rule',
+    'assignee_ids',
   ])
 
   return Object.fromEntries(

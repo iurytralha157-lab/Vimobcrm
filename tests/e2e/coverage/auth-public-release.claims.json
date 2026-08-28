@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 2,
+  "inventorySchemaVersion": 3,
+  "inventoryDigestSha256": "d70d8932aac65155d36e9c39e656a281d312114dc0c45efa2989c95d5ae2bc6c",
+  "tests": [
+    {
+      "caseId": "auth-public-release.public-routes.desktop",
+      "file": "tests/e2e/auth-public-release.spec.ts",
+      "titlePath": [
+        "contratos públicos de autenticação e onboarding",
+        "rotas públicas críticas renderizam sem sessão e sem overflow horizontal"
+      ],
+      "projectName": "chromium",
+      "testKind": "ui",
+      "claims": [
+        {
+          "claimId": "claim:646bc647389e9bf10075",
+          "category": "routeViewport",
+          "inventoryId": "route:301cff6e74c7200d7307",
+          "route": "/login",
+          "viewport": "desktop",
+          "ready": {
+            "role": "heading",
+            "name": "Entrar no Vimob crm"
+          }
+        },
+        {
+          "claimId": "claim:b63a084acaedfe34b5ae",
+          "category": "routeViewport",
+          "inventoryId": "route:b9b7c81e53d271e49ea9",
+          "route": "/cadastro",
+          "viewport": "desktop",
+          "ready": {
+            "role": "heading",
+            "name": "Criar conta no Vimob CRM"
+          }
+        },
+        {
+          "claimId": "claim:18f85230bb2779b25af9",
+          "category": "routeViewport",
+          "inventoryId": "route:3f82c429bbe72257ff3c",
+          "route": "/confirmar-email",
+          "viewport": "desktop",
+          "ready": {
+            "role": "heading",
+            "name": "Confirmar e-mail"
+          }
+        },
+        {
+          "claimId": "claim:37feb011e22b690dd6a6",
+          "category": "routeViewport",
+          "inventoryId": "route:6bcb6e971c4cdde6ebf4",
+          "route": "/reset-password",
+          "viewport": "desktop",
+          "ready": {
+            "role": "heading",
+            "name": "Recuperar senha"
+          }
+        }
+      ]
+    }
+  ]
+}

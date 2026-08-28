@@ -211,14 +211,15 @@ with reaction_message as (
   insert into public.whatsapp_messages (
     organization_id, conversation_id, session_id, lead_id,
     message_id, client_message_id, from_me, direction,
-    message_type, content, status, sent_at
+    message_type, content, status, sent_at, metadata
   ) values (
     'ca000000-0000-4000-8000-000000000001',
     'ca300000-0000-4000-8000-000000000001',
     'ca200000-0000-4000-8000-000000000001',
     'ca100000-0000-4000-8000-000000000001',
     'queued:canonical-reaction', 'canonical-reaction-client', true, 'outbound',
-    'reaction', '👍', 'queued', now()
+    'reaction', '👍', 'queued', now(),
+    '{"origin":"automation"}'::jsonb
   ) returning id
 )
 insert into public.whatsapp_outbox (

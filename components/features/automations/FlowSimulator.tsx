@@ -645,7 +645,7 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
                 {msg.content}
               </div>
             ) : msg.type === 'bot' ? (
-              <div className="rounded-[8px] rounded-tl-sm border border-[var(--app-border)] bg-[var(--app-surface)] px-3.5 py-2.5 shadow-sm">
+              <div className="rounded-[8px] rounded-tl-sm border border-[var(--app-border)] bg-[var(--app-surface)] px-3.5 py-2.5 shadow-none">
                 {msg.mediaType === 'image' && msg.mediaUrl && (
                   <div className="mb-2 overflow-hidden rounded-[8px] bg-[var(--app-surface-muted)]">
                     <NextImage
@@ -690,7 +690,7 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
                 <p className="text-sm text-foreground whitespace-pre-wrap">{msg.content}</p>
               </div>
             ) : (
-              <div className="rounded-[8px] rounded-tr-sm bg-primary px-3.5 py-2.5 text-primary-foreground shadow-sm">
+              <div className="rounded-[8px] rounded-tr-sm bg-primary px-3.5 py-2.5 text-primary-foreground shadow-none">
                 <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
               </div>
             )}
@@ -699,7 +699,7 @@ export function FlowSimulator({ nodes, edges, onClose, onHighlightNode }: FlowSi
 
         {isTyping && (
           <div className="max-w-[85%] animate-in fade-in">
-            <div className="inline-flex items-center gap-1 rounded-[8px] rounded-tl-sm border border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-3 shadow-sm">
+            <div className="inline-flex items-center gap-1 rounded-[8px] rounded-tl-sm border border-[var(--app-border)] bg-[var(--app-surface)] px-4 py-3 shadow-none">
               <span className="w-2 h-2 bg-muted-foreground/40 rounded-full animate-bounce [animation-delay:0ms]" />
               <span className="w-2 h-2 bg-muted-foreground/40 rounded-full animate-bounce [animation-delay:150ms]" />
               <span className="w-2 h-2 bg-muted-foreground/40 rounded-full animate-bounce [animation-delay:300ms]" />

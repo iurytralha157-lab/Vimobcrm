@@ -7,11 +7,16 @@ type Envelope<T> = {
 }
 
 export const contactsAPI = {
-  async list(filters: ContactListFilters, organizationId?: string | null) {
+  async list(
+    filters: ContactListFilters,
+    organizationId?: string | null,
+    options?: { signal?: AbortSignal },
+  ) {
     const query = parseDomainInput(contactListQuerySchema, { ...filters, mode: filters.mode || 'compact' }, 'contacts.list')
     const response = await vimobAPIRequest<Envelope<Contact[]>>('/v1/contacts', {
       organizationId,
       query,
+      signal: options?.signal,
     })
     validateDomainResponse(apiContactListResponseSchema, response, 'contacts.list')
 

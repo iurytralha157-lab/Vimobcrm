@@ -3,33 +3,19 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
-import { AuthLogo } from "./auth-logo";
 import { useAuth } from "@/contexts/AuthContext";
+import { DEFAULT_AUTHENTICATED_ROUTE } from "@/config/constants";
+import {
+  getPostLoginPathFromSearchParams,
+  getSafePostLoginPath,
+} from "@/lib/auth/post-login-redirect";
+import { shouldWaitForPostLoginRouting } from "@/lib/auth/frontend-auth-reliability";
+import { authAPI } from "@/lib/api/auth";
 
 type FormMode = "login" | "recover";
-type AuthTheme = "dark" | "light";
 
-const defaultPostLoginPath = "/dashboard";
-const blockedPostLoginPrefixes = [
-  "/login",
-  "/cadastro",
-  "/reset-password",
-  "/onboarding",
-  "/select-organization",
-];
+const defaultPostLoginPath = DEFAULT_AUTHENTICATED_ROUTE;
 const sensitiveLoginParams = ["email", "password", "senha", "pass", "pwd"];
-
-function getSafeRedirectPath(value?: string | null) {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) {
-    return defaultPostLoginPath;
-  }
-
-  if (blockedPostLoginPrefixes.some((prefix) => value.startsWith(prefix))) {
-    return defaultPostLoginPath;
-  }
-
-  return value;
-}
 
 function getCurrentRedirectPath() {
   if (typeof window === "undefined") {
@@ -37,7 +23,7 @@ function getCurrentRedirectPath() {
   }
 
   const params = new URLSearchParams(window.location.search);
-  return getSafeRedirectPath(params.get("redirectTo"));
+  return getPostLoginPathFromSearchParams(params, defaultPostLoginPath);
 }
 
 function sanitizeLoginUrl() {
@@ -59,7 +45,7 @@ function sanitizeLoginUrl() {
 }
 
 function getSelectOrganizationPath(redirectTo: string) {
-  const safeRedirectTo = getSafeRedirectPath(redirectTo);
+  const safeRedirectTo = getSafePostLoginPath(redirectTo, defaultPostLoginPath);
   const params = new URLSearchParams({ redirectTo: safeRedirectTo });
   return `/select-organization?${params.toString()}`;
 }
@@ -134,7 +120,7 @@ function ArrowLeftIcon() {
   );
 }
 
-export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
+export function LoginForm() {
   const router = useRouter();
   const {
     signIn,
@@ -157,28 +143,27 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [isSubmittingLogin, setIsSubmittingLogin] = useState(false);
   const [isSubmittingRecovery, setIsSubmittingRecovery] = useState(false);
+  const [emailConfirmationPending, setEmailConfirmationPending] = useState(false);
+  const [isResendingConfirmation, setIsResendingConfirmation] = useState(false);
+  const [confirmationResendMessage, setConfirmationResendMessage] = useState<string | null>(null);
+  const [confirmationResendError, setConfirmationResendError] = useState<string | null>(null);
   const [pendingPostLoginPath, setPendingPostLoginPath] = useState<string | null>(null);
+  const [routeAfterEmailConfirmation, setRouteAfterEmailConfirmation] = useState(false);
 
   const isRecoveringPassword = formMode === "recover";
-  const isLightTheme = theme === "light";
-  const textClass = isLightTheme ? "text-[#151515]" : "text-white";
-  const mutedTextClass = isLightTheme ? "text-[#626872]" : "text-white/50";
-  const paragraphTextClass = isLightTheme ? "text-[#4f5660]" : "text-white/72";
-  const subtleTextClass = isLightTheme ? "text-[#626872]" : "text-white/70";
-  const separatorClass = isLightTheme ? "text-[#a4aab2]" : "text-white/30";
-  const iconClass = isLightTheme ? "text-[#626872]/75" : "text-white/40";
-  const iconButtonClass = isLightTheme
-    ? "text-[#626872] hover:text-[#151515] focus-visible:text-[#151515]"
-    : "text-white/65 hover:text-white/90 focus-visible:text-white";
-  const labelClass = `block text-sm font-extralight tracking-wide ${textClass}`;
-  const inputClass = `h-12 w-full rounded-[6px] border px-4 text-sm font-extralight tracking-wide outline-none transition-colors ${
-    isLightTheme
-      ? "border-[#e5e7eb] bg-white text-[#151515] placeholder:text-[#626872]/45 focus:border-[#FF4529]/60 focus:bg-white"
-      : "border-transparent bg-[#121212] text-white placeholder:text-white/30 focus:border-transparent focus:bg-[#121212]"
-  }`;
-  const checkboxBorderClass = isLightTheme
-    ? "border-[#cfd4dc] peer-checked:border-[#FF4529] peer-focus-visible:border-[#FF4529]"
-    : "border-white/10 peer-checked:border-[#FF4529] peer-focus-visible:border-[#FF4529]";
+  const textClass = "text-[var(--app-text-primary)]";
+  const mutedTextClass = "text-[var(--app-text-tertiary)]";
+  const paragraphTextClass = "text-[var(--app-text-secondary)]";
+  const successTextClass = "text-emerald-600 dark:text-emerald-400";
+  const separatorClass = "text-[var(--app-text-tertiary)]";
+  const iconClass = "text-[var(--app-text-tertiary)]";
+  const iconButtonClass =
+    "text-[var(--app-text-tertiary)] hover:text-[var(--app-text-primary)] focus-visible:text-[var(--app-text-primary)]";
+  const labelClass = `block text-[13px] font-light ${textClass}`;
+  const inputClass =
+    "auth-login-field h-12 w-full rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-4 text-base text-[var(--app-text-primary)] shadow-none outline-none ring-0 transition-colors placeholder:text-[var(--app-text-secondary)] sm:text-sm focus:bg-[var(--app-surface-solid)] focus:ring-1 focus:ring-primary/40";
+  const checkboxBorderClass =
+    "border-[var(--app-border-strong)] peer-checked:border-primary peer-focus-visible:border-primary";
 
   useEffect(() => {
     sanitizeLoginUrl();
@@ -208,6 +193,24 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
       }, 0);
     }
 
+    const emailConfirmation = url.searchParams.get("emailConfirmation");
+    if (emailConfirmation === "required" || emailConfirmation === "success") {
+      url.searchParams.delete("emailConfirmation");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+    if (emailConfirmation === "required") {
+      messageTimer = window.setTimeout(() => {
+        setEmailConfirmationPending(true);
+        setRecoveryMessage("Confirme o link enviado ao seu e-mail antes de entrar.");
+      }, 0);
+    } else if (emailConfirmation === "success") {
+      messageTimer = window.setTimeout(() => {
+        setEmailConfirmationPending(false);
+        setRecoveryMessage("Confirmação recebida. Estamos validando seu acesso.");
+        setRouteAfterEmailConfirmation(true);
+      }, 0);
+    }
+
     return () => {
       if (messageTimer) window.clearTimeout(messageTimer);
       if (rememberedEmailTimer) window.clearTimeout(rememberedEmailTimer);
@@ -215,14 +218,35 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
   }, []);
 
   useEffect(() => {
+    if (!routeAfterEmailConfirmation || loading || !authInitialized || user) return;
+    const messageTimer = window.setTimeout(() => {
+      setRecoveryMessage("Confirmação processada. Entre para continuar.");
+    }, 0);
+    return () => window.clearTimeout(messageTimer);
+  }, [authInitialized, loading, routeAfterEmailConfirmation, user]);
+
+  useEffect(() => {
+    if (!routeAfterEmailConfirmation || !user || loading || !authInitialized) return;
+    const routeTimer = window.setTimeout(() => {
+      setPendingPostLoginPath(getCurrentRedirectPath());
+    }, 0);
+    return () => window.clearTimeout(routeTimer);
+  }, [authInitialized, loading, routeAfterEmailConfirmation, user]);
+
+  useEffect(() => {
     if (!pendingPostLoginPath) return;
     if (!user) return;
-    if (loading || !authInitialized) return;
+    if (shouldWaitForPostLoginRouting({
+      authInitialized,
+      authLoading: loading,
+      isInitializingOrganization: isInitializingOrg,
+      organizationsLoaded,
+    })) return;
 
     const activeOrganizations = userOrganizations.filter((org) => org.is_active);
 
     if (isSuperAdmin) {
-      router.replace(pendingPostLoginPath.startsWith("/admin") ? pendingPostLoginPath : "/admin");
+      router.replace(pendingPostLoginPath);
       return;
     }
 
@@ -256,6 +280,8 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
     setLoginError(null);
     setRecoveryError(null);
     setRecoveryMessage(null);
+    setConfirmationResendMessage(null);
+    setConfirmationResendError(null);
     setFormMode("recover");
   }
 
@@ -287,9 +313,20 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
       const { error } = await signIn(email, password);
 
       if (error) {
-        setLoginError("E-mail ou senha invalidos. Confira os dados e tente novamente.");
+        const code = "code" in error ? String(error.code) : "";
+        const requiresEmailConfirmation = code === "email_not_confirmed";
+        setEmailConfirmationPending(requiresEmailConfirmation);
+        setConfirmationResendMessage(null);
+        setConfirmationResendError(null);
+        setLoginError(
+          requiresEmailConfirmation
+            ? "Confirme o link enviado ao seu e-mail antes de entrar."
+            : "E-mail ou senha inválidos. Confira os dados e tente novamente.",
+        );
         return;
       }
+
+      setEmailConfirmationPending(false);
 
       if (rememberMe) {
         try {
@@ -317,6 +354,33 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
     }
   }
 
+  async function handleResendEmailConfirmation() {
+    const normalizedEmail = email.trim().toLowerCase();
+    setConfirmationResendMessage(null);
+    setConfirmationResendError(null);
+
+    if (!normalizedEmail) {
+      setConfirmationResendError("Informe o e-mail do cadastro para receber um novo link.");
+      return;
+    }
+
+    setIsResendingConfirmation(true);
+    try {
+      const result = await authAPI.resendSignupEmailConfirmation(normalizedEmail);
+
+      if (result.status < 200 || result.status >= 300 || !result.ok) {
+        setConfirmationResendError(result.message);
+        return;
+      }
+
+      setConfirmationResendMessage(result.message);
+    } catch {
+      setConfirmationResendError("Não foi possível solicitar outro e-mail agora.");
+    } finally {
+      setIsResendingConfirmation(false);
+    }
+  }
+
   async function handleRecoverySubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -341,7 +405,7 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
         return;
       }
 
-      setRecoveryMessage("Enviamos um link de recuperacao para o seu e-mail.");
+      setRecoveryMessage("Enviamos um link de recuperação para o seu e-mail.");
     } catch {
       setRecoveryError("Não foi possível enviar o link agora. Tente novamente em instantes.");
     } finally {
@@ -350,18 +414,17 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
   }
 
   return (
-    <div className="w-full max-w-sm">
-      <header className="mb-4 text-center">
-        <AuthLogo theme={theme} />
-        <h1 className="sr-only">
-          {isRecoveringPassword ? "Recuperar acesso" : "Entrar no Vimob CRM"}
-        </h1>
-        <p className={`mt-4 text-sm font-extralight tracking-wide ${mutedTextClass}`}>
-          {isRecoveringPassword
-            ? "Recupere o acesso à sua conta"
-            : "Acesse seu sistema de gestão imobiliária"}
-        </p>
-      </header>
+    <div className="w-full max-w-[400px]">
+      {!isRecoveringPassword ? (
+        <header className="mb-8 text-left lg:mb-10">
+          <h1 className={`text-[20px] font-normal ${textClass}`}>
+            Entrar no Vimob crm
+          </h1>
+          <p className={`mt-1.5 text-[12px] font-light ${mutedTextClass}`}>
+            Acesse seu sistema de gestão imobiliária
+          </p>
+        </header>
+      ) : null}
 
       {isRecoveringPassword ? (
         <form
@@ -374,14 +437,14 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
           <button
             type="button"
             onClick={showLoginForm}
-            className={`flex cursor-pointer items-center gap-3 text-sm font-semibold outline-none transition-colors hover:text-[#FF4529] focus-visible:text-[#FF4529] ${textClass}`}
+            className={`flex cursor-pointer items-center gap-3 text-sm font-light outline-none transition-colors hover:text-primary focus-visible:text-primary ${textClass}`}
             aria-label="Voltar para o login"
           >
             <ArrowLeftIcon />
             Recuperar senha
           </button>
 
-          <p className={`text-sm font-extralight leading-6 tracking-wide ${paragraphTextClass}`}>
+          <p className={`text-[12px] font-light leading-[18px] ${paragraphTextClass}`}>
             Digite seu e-mail e enviaremos um link para redefinir sua senha.
           </p>
 
@@ -418,7 +481,7 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
           <button
             type="submit"
             disabled={isSubmittingRecovery}
-            className="auth-primary-action h-12 w-full cursor-pointer rounded-[6px] text-[12px] font-extralight uppercase tracking-[0.08em] outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-55"
+            className="auth-primary-action h-12 w-full cursor-pointer rounded-[6px] text-[12px] font-light shadow-none outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-55"
           >
             {isSubmittingRecovery ? "Enviando..." : "Enviar link de recuperação"}
           </button>
@@ -426,7 +489,7 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
           {recoveryError ? (
             <p
               id="recovery-error"
-              className="text-center text-sm font-extralight leading-5 text-[#FF4529]"
+              className="text-center text-sm font-light leading-5 text-primary"
               role="alert"
             >
               {recoveryError}
@@ -434,7 +497,7 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
           ) : null}
 
           {recoveryMessage ? (
-            <p className={`text-center text-sm font-extralight leading-5 ${subtleTextClass}`} aria-live="polite">
+            <p className={`text-center text-sm font-light leading-5 ${successTextClass}`} aria-live="polite">
               {recoveryMessage}
             </p>
           ) : null}
@@ -472,7 +535,11 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
                   required
                   placeholder="seu@email.com"
                   value={email}
-                  onChange={(event) => setEmail(event.target.value)}
+                  onChange={(event) => {
+                    setEmail(event.target.value);
+                    setConfirmationResendMessage(null);
+                    setConfirmationResendError(null);
+                  }}
                   aria-invalid={Boolean(loginError)}
                   aria-describedby={loginError ? "login-error" : undefined}
                   className={`${inputClass} pl-11`}
@@ -510,7 +577,7 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
               </div>
             </div>
 
-            <label className="flex cursor-pointer items-center gap-3">
+            <label className="flex min-h-11 cursor-pointer items-center gap-3">
               <span className="relative flex h-4 w-4 items-center justify-center">
                 <input
                   id="remember-email"
@@ -520,18 +587,18 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
                   onChange={(event) => setRememberMe(event.target.checked)}
                   className="peer sr-only"
                 />
-                <span className={`h-4 w-4 rounded-full border transition-colors ${checkboxBorderClass}`} />
-                <span className="pointer-events-none absolute hidden h-2 w-2 rounded-full bg-[#FF4529] peer-checked:block" />
+                <span className={`h-4 w-4 rounded-[4px] border transition-colors ${checkboxBorderClass}`} />
+                <span className="pointer-events-none absolute hidden h-2 w-2 rounded-[2px] bg-primary peer-checked:block" />
               </span>
-              <span className={`text-sm font-extralight tracking-wide ${textClass}`}>
-                Lembrar-me
+              <span className={`text-[13px] font-light ${textClass}`}>
+                Lembrar e-mail
               </span>
             </label>
 
             <button
               type="submit"
               disabled={isSubmittingLogin}
-              className="auth-primary-action h-12 w-full cursor-pointer rounded-[6px] text-[12px] font-extralight uppercase tracking-[0.08em] outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-55"
+              className="auth-primary-action h-12 w-full cursor-pointer rounded-[6px] text-[12px] font-light shadow-none outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-55"
             >
               {isSubmittingLogin ? "Entrando..." : "Entrar"}
             </button>
@@ -539,25 +606,48 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
             {loginError ? (
               <p
                 id="login-error"
-                className="text-center text-sm font-extralight leading-5 text-[#FF4529]"
+                className="text-center text-sm font-light leading-5 text-primary"
                 role="alert"
               >
                 {loginError}
               </p>
             ) : null}
 
+            {emailConfirmationPending ? (
+              <div className="space-y-2 text-center">
+                <button
+                  type="button"
+                  onClick={() => void handleResendEmailConfirmation()}
+                  disabled={isResendingConfirmation || !email.trim()}
+                  className="cursor-pointer text-[12px] font-light text-primary outline-none transition-opacity hover:opacity-75 focus-visible:opacity-75 disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  {isResendingConfirmation ? "Enviando novo link..." : "Reenviar e-mail de confirmação"}
+                </button>
+                {confirmationResendMessage ? (
+                  <p className={`text-[12px] font-light leading-5 ${successTextClass}`} aria-live="polite">
+                    {confirmationResendMessage}
+                  </p>
+                ) : null}
+                {confirmationResendError ? (
+                  <p className="text-[12px] font-light leading-5 text-primary" role="alert">
+                    {confirmationResendError}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
             {!loginError && recoveryMessage ? (
-              <p className={`text-center text-sm font-extralight leading-5 ${subtleTextClass}`} aria-live="polite">
+              <p className={`text-center text-sm font-light leading-5 ${successTextClass}`} aria-live="polite">
                 {recoveryMessage}
               </p>
             ) : null}
           </form>
 
-          <footer className="mt-5 flex items-center justify-center gap-3 text-sm font-extralight tracking-wide">
+          <footer className="mt-5 flex items-center justify-center gap-3 text-[13px] font-light">
             <button
               type="button"
               onClick={showRecoveryForm}
-              className="cursor-pointer text-[#FF4529] outline-none transition-opacity hover:opacity-80"
+              className="-my-2 inline-flex min-h-11 cursor-pointer items-center py-2 text-primary outline-none transition-opacity hover:opacity-80"
             >
               Esqueceu sua senha?
             </button>
@@ -566,29 +656,12 @@ export function LoginForm({ theme = "dark" }: { theme?: AuthTheme }) {
             </span>
             <Link
               href="/cadastro"
-              className="cursor-pointer text-[#FF4529] outline-none transition-opacity hover:opacity-80"
+              className="-my-2 inline-flex min-h-11 cursor-pointer items-center py-2 text-primary outline-none transition-opacity hover:opacity-80"
             >
               Cadastre-se
             </Link>
           </footer>
 
-          <p className={`mx-auto mt-3 max-w-[320px] text-center text-xs font-extralight leading-5 tracking-wide ${mutedTextClass}`}>
-            Ao continuar, você concorda com os{" "}
-            <Link
-              href="/termos-de-uso"
-              className="text-[#FF4529] outline-none transition-opacity hover:opacity-80"
-            >
-              Termos de Uso
-            </Link>{" "}
-            e a{" "}
-            <Link
-              href="/politica-de-privacidade"
-              className="text-[#FF4529] outline-none transition-opacity hover:opacity-80"
-            >
-                Política de Privacidade
-            </Link>
-            .
-          </p>
         </>
       )}
     </div>

@@ -26,6 +26,15 @@ test('rejeita email e papel invalidos', () => {
   }).success, false)
 })
 
+test('preserva o papel de gestor no cadastro e na atualizacao', () => {
+  assert.equal(createUserInputSchema.safeParse({
+    name: 'Gestora Maria',
+    email: 'maria@example.com',
+    role: 'manager',
+  }).success, true)
+  assert.equal(updateUserInputSchema.safeParse({ id: ID, role: 'manager' }).success, true)
+})
+
 test('rejeita atualizacao vazia e transferencia invalida', () => {
   assert.equal(updateUserInputSchema.safeParse({ id: ID }).success, false)
   assert.equal(deleteUserInputSchema.safeParse({ userId: ID, transferLeadsToUserId: 'invalido' }).success, false)

@@ -17,6 +17,11 @@ func TestImportModeUsesLeadImportPermission(t *testing.T) {
 	if canCreateLeadInput(context, createInput{}) {
 		t.Fatal("lead_import must not authorize manual creation")
 	}
+
+	createOnlyContext := tenant.Context{UserID: "user-1", OrganizationID: "org-1", Permissions: []string{permissions.LeadCreate}}
+	if canCreateLeadInput(createOnlyContext, createInput{ImportMode: true}) {
+		t.Fatal("lead_create must not authorize import rows without lead_import")
+	}
 }
 
 func TestContactExportModeRequiresLeadExport(t *testing.T) {

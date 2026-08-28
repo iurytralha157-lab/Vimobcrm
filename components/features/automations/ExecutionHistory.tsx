@@ -200,7 +200,7 @@ export function ExecutionHistory({ automationId: initialAutomationId, canManage 
     return (
       <div className="flex min-h-[320px] flex-col items-center justify-center rounded-[8px] bg-[var(--app-surface)] px-6 text-center" role="alert">
         <AlertTriangle className="mb-3 h-9 w-9 text-destructive" aria-hidden="true" />
-        <h3 className="text-base font-semibold">Não foi possível carregar o histórico</h3>
+        <h3 className="text-[14px] font-normal">Não foi possível carregar o histórico</h3>
         <p className="mt-2 max-w-md text-sm text-muted-foreground">{message}</p>
         <Button
           type="button"
@@ -246,10 +246,10 @@ export function ExecutionHistory({ automationId: initialAutomationId, canManage 
       <div className="space-y-4 animate-in">
         {filterSelect}
         <div className="flex flex-col items-center justify-center py-16 text-center">
-          <div className="mb-4 rounded-xl bg-white/[0.055] p-4">
+          <div className="mb-4 rounded-[8px] bg-[var(--app-surface-soft)] p-4">
             <Clock className="h-10 w-10 text-muted-foreground" />
           </div>
-          <h3 className="text-lg font-semibold mb-2">Nenhuma execução ainda</h3>
+          <h3 className="mb-2 text-[14px] font-normal">Nenhuma execução ainda</h3>
           <p className="text-muted-foreground text-sm">
             As execuções aparecerão aqui quando as automações forem disparadas
           </p>
@@ -314,25 +314,25 @@ export function ExecutionHistory({ automationId: initialAutomationId, canManage 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-none">
           <CardContent className="p-4 text-center">
-            <p className="text-2xl font-bold text-foreground">{runningExecutions.length}</p>
+            <p className="text-[20px] font-normal text-foreground">{runningExecutions.length}</p>
             <p className="text-xs text-muted-foreground">Em andamento</p>
           </CardContent>
         </Card>
         <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-none">
           <CardContent className="p-4 text-center">
-            <p className="text-2xl font-bold text-primary">{completedExecutions.length}</p>
+            <p className="text-[20px] font-normal text-primary">{completedExecutions.length}</p>
             <p className="text-xs text-muted-foreground">Concluídas</p>
           </CardContent>
         </Card>
         <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-none">
           <CardContent className="p-4 text-center">
-            <p className="text-2xl font-bold text-destructive">{failedOnlyExecutions.length}</p>
+            <p className="text-[20px] font-normal text-destructive">{failedOnlyExecutions.length}</p>
             <p className="text-xs text-muted-foreground">Falhas</p>
           </CardContent>
         </Card>
         <Card className="overflow-hidden rounded-[8px] border border-transparent bg-[var(--app-surface)] shadow-none">
           <CardContent className="p-4 text-center">
-            <p className="text-2xl font-bold text-muted-foreground">{cancelledExecutions.length}</p>
+            <p className="text-[20px] font-normal text-muted-foreground">{cancelledExecutions.length}</p>
             <p className="text-xs text-muted-foreground">Canceladas</p>
           </CardContent>
         </Card>
@@ -458,7 +458,7 @@ function ExecutionTimelineItem({ execution, canManage }: { execution: Automation
               <CollapsibleTrigger asChild>
                 <button
                   type="button"
-                  className="rounded p-1 hover:bg-white/[0.055]"
+                  className="rounded p-1 hover:bg-[var(--app-surface-hover)]"
                   aria-label={`${isOpen ? 'Ocultar' : 'Mostrar'} passos da execução de ${leadName}`}
                   aria-expanded={isOpen}
                 >
@@ -471,7 +471,7 @@ function ExecutionTimelineItem({ execution, canManage }: { execution: Automation
           <CollapsibleContent>
             <div className="mt-2 rounded-[8px] border border-[var(--app-border)] bg-[var(--app-surface-soft)] p-3">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-xs font-semibold">Passos executados</p>
+                <p className="text-[12px] font-normal">Passos executados</p>
                 {stepsQuery.isFetching && !stepsQuery.isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-label="Atualizando passos" />}
               </div>
               {stepsQuery.isLoading ? (

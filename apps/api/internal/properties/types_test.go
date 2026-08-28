@@ -9,7 +9,6 @@ func TestSanitizePayloadWritesCanonicalPropertyColumns(t *testing.T) {
 	input := propertyRequest{
 		"title":                     "Apartamento teste",
 		"fotos":                     []any{"https://example.com/foto-1.jpg", "https://example.com/foto-2.jpg"},
-		"anunciar":                  true,
 		"cadastrado_por":            "11111111-1111-1111-1111-111111111111",
 		"tipo_de_imovel":            "Apartamento",
 		"tipo_de_negocio":           "Venda",
@@ -25,9 +24,6 @@ func TestSanitizePayloadWritesCanonicalPropertyColumns(t *testing.T) {
 
 	if _, exists := out["fotos"]; exists {
 		t.Fatalf("legacy fotos key should not be written: %#v", out)
-	}
-	if _, exists := out["anunciar"]; exists {
-		t.Fatalf("legacy anunciar key should not be written: %#v", out)
 	}
 	if _, exists := out["cadastrado_por"]; exists {
 		t.Fatalf("legacy cadastrado_por key should not be written: %#v", out)
@@ -47,9 +43,6 @@ func TestSanitizePayloadWritesCanonicalPropertyColumns(t *testing.T) {
 	if got := out["image_urls"]; len(got.([]string)) != 2 {
 		t.Fatalf("photos should be normalized to image_urls, got %#v", got)
 	}
-	if got := out["published_on_site"]; got != true {
-		t.Fatalf("anunciar should be normalized to published_on_site, got %#v", got)
-	}
 	if got := out["responsible_user_id"]; got != "11111111-1111-1111-1111-111111111111" {
 		t.Fatalf("cadastrado_por should be normalized to responsible_user_id, got %#v", got)
 	}
@@ -63,9 +56,8 @@ func TestSanitizePayloadWritesCanonicalPropertyColumns(t *testing.T) {
 
 func TestSanitizePayloadReservedStatusUnpublishesCanonicalColumn(t *testing.T) {
 	out, err := sanitizePayload(propertyRequest{
-		"title":    "Apartamento teste",
-		"status":   "reservado",
-		"anunciar": true,
+		"title":  "Apartamento teste",
+		"status": "reservado",
 	})
 	if err != nil {
 		t.Fatalf("sanitizePayload returned error: %v", err)
@@ -78,6 +70,51 @@ func TestSanitizePayloadReservedStatusUnpublishesCanonicalColumn(t *testing.T) {
 	}
 }
 
+func TestSanitizePayloadRejectsDirectPublicationFields(t *testing.T) {
+	for _, field := range []string{"anunciar", "published_on_site"} {
+		t.Run(field, func(t *testing.T) {
+			_, err := sanitizePayload(propertyRequest{field: true})
+			if err == nil || !strings.Contains(err.Error(), "Property Publication Center") {
+				t.Fatalf("sanitizePayload(%s) error = %v, want publication center guidance", field, err)
+			}
+		})
+	}
+}
+
+func TestValidatePropertyBusinessRulesRejectsInvalidValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		input propertyRequest
+	}{
+		{name: "negative price", input: propertyRequest{"preco": float64(-1)}},
+		{name: "negative bedrooms", input: propertyRequest{"quartos": int64(-1)}},
+		{name: "invalid latitude", input: propertyRequest{"latitude": float64(91)}},
+		{name: "invalid longitude", input: propertyRequest{"longitude": float64(-181)}},
+		{name: "invalid commission", input: propertyRequest{"commission_percentage": float64(101)}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validatePropertyBusinessRules(test.input); err == nil {
+				t.Fatalf("validatePropertyBusinessRules(%#v) returned nil", test.input)
+			}
+		})
+	}
+}
+
+func TestValidatePropertyBusinessRulesAllowsZeroAndCoordinateBounds(t *testing.T) {
+	err := validatePropertyBusinessRules(propertyRequest{
+		"preco":                 float64(0),
+		"quartos":               int64(0),
+		"latitude":              float64(-90),
+		"longitude":             float64(180),
+		"commission_percentage": float64(100),
+	})
+	if err != nil {
+		t.Fatalf("valid boundary values returned error: %v", err)
+	}
+}
+
 func TestNormalizePropertyOutputUsesCanonicalTypeWhenLegacyIsBlank(t *testing.T) {
 	out := normalizePropertyOutput(Property{
 		"tipo":           "Ch\u00e1cara",
@@ -86,6 +123,75 @@ func TestNormalizePropertyOutputUsesCanonicalTypeWhenLegacyIsBlank(t *testing.T)
 
 	if got := out["tipo_de_imovel"]; got != "Ch\u00e1cara" {
 		t.Fatalf("tipo_de_imovel fallback = %#v, want Ch\u00e1cara", got)
+	}
+}
+
+func TestNormalizePropertyOutputKeepsResponsibleAliasTyped(t *testing.T) {
+	const (
+		canonicalID = "11111111-1111-4111-8111-111111111111"
+		createdByID = "22222222-2222-4222-8222-222222222222"
+		legacyID    = "33333333-3333-4333-8333-333333333333"
+	)
+
+	tests := []struct {
+		name   string
+		input  Property
+		wanted any
+	}{
+		{
+			name: "canonical responsible wins",
+			input: Property{
+				"responsible_user_id": canonicalID,
+				"created_by":          createdByID,
+				"cadastrado_por":      legacyID,
+			},
+			wanted: canonicalID,
+		},
+		{
+			name: "creator is the canonical fallback",
+			input: Property{
+				"responsible_user_id": nil,
+				"created_by":          createdByID,
+				"cadastrado_por":      legacyID,
+			},
+			wanted: createdByID,
+		},
+		{
+			name: "legacy uuid remains compatible",
+			input: Property{
+				"responsible_user_id": nil,
+				"created_by":          nil,
+				"cadastrado_por":      legacyID,
+			},
+			wanted: legacyID,
+		},
+		{
+			name: "legacy label is not exposed as an identifier",
+			input: Property{
+				"responsible_user_id": nil,
+				"created_by":          nil,
+				"cadastrado_por":      "captador legado",
+			},
+			wanted: nil,
+		},
+		{
+			name: "missing reference is null instead of empty text",
+			input: Property{
+				"responsible_user_id": nil,
+				"created_by":          nil,
+				"cadastrado_por":      "",
+			},
+			wanted: nil,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			out := normalizePropertyOutput(test.input)
+			if got := out["cadastrado_por"]; got != test.wanted {
+				t.Fatalf("cadastrado_por = %#v, want %#v", got, test.wanted)
+			}
+		})
 	}
 }
 

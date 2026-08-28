@@ -46,6 +46,7 @@ type APIStage = {
   position: number
   isWon: boolean
   isLost: boolean
+  isQualified: boolean
   isActive: boolean
   slaHours?: number
   createdAt: string
@@ -135,7 +136,7 @@ export const pipelinesAPI = {
     return toLegacyStage(response.data)
   },
 
-  async updateStage(id: string, input: { name?: string; color?: string; stageKey?: string; isWon?: boolean; isLost?: boolean; isActive?: boolean }, organizationId?: string) {
+  async updateStage(id: string, input: { name?: string; color?: string; stageKey?: string; isWon?: boolean; isLost?: boolean; isQualified?: boolean; isActive?: boolean }, organizationId?: string) {
     const body = parseDomainInput(stageUpdateInputSchema, input, 'stages.update')
     const response = await vimobAPIRequest<APIItemResponse<APIStage>>(`/v1/stages/${id}`, {
       method: 'PATCH',
@@ -215,6 +216,7 @@ function toLegacyStage(stage: APIStage): StageRow {
     is_active: stage.isActive,
     is_lost: stage.isLost,
     is_won: stage.isWon,
+    is_qualified: stage.isQualified,
     name: stage.name,
     organization_id: stage.organizationId,
     pipeline_id: stage.pipelineId,

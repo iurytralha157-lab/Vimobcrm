@@ -1,4 +1,11 @@
-import type { Notification } from "@/hooks/use-notifications";
+import type { Notification } from "@/lib/api/notifications";
+import { getSafeProtectedAppPath } from "@/lib/auth/post-login-redirect";
+
+export type NotificationRouteAccess = {
+  canViewWhatsApp?: boolean;
+};
+
+export type PushNotificationData = Record<string, unknown>;
 
 function normalizeText(value: string | null | undefined) {
   return (value || "")
@@ -14,10 +21,78 @@ function metadataString(metadata: Record<string, unknown> | null | undefined, ke
   return null;
 }
 
-export function getNotificationRoute(notification: Pick<Notification, "title" | "content" | "type" | "lead_id" | "metadata">) {
+function pushDataString(data: PushNotificationData, ...keys: string[]) {
+  for (const key of keys) {
+    const value = data[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return null;
+}
+
+/**
+ * Resolves an OS push click to a protected in-app route. Payload URLs are
+ * untrusted input: external/public/auth routes always fall back to the
+ * notification center, and WhatsApp remains behind the active tenant access.
+ */
+export function getPushNotificationRoute(
+  data: PushNotificationData,
+  access: NotificationRouteAccess = {},
+) {
+  const explicitTarget = getSafeProtectedAppPath(
+    pushDataString(data, "target_url", "targetUrl", "url"),
+  );
+  const type = normalizeText(pushDataString(data, "type", "event_type", "eventType"));
+  const isWhatsAppTarget = explicitTarget === "/crm/conversas"
+    || explicitTarget?.startsWith("/crm/conversas/")
+    || explicitTarget?.startsWith("/crm/conversas?")
+    || explicitTarget?.startsWith("/crm/conversas#");
+  const isWhatsAppNotification = isWhatsAppTarget
+    || type === "whatsapp"
+    || type === "message"
+    || type.startsWith("whatsapp_");
+
+  if (isWhatsAppNotification) {
+    if (!access.canViewWhatsApp) return "/notifications";
+    return isWhatsAppTarget && explicitTarget ? explicitTarget : "/crm/conversas";
+  }
+
+  if (explicitTarget) return explicitTarget;
+
+  const leadId = pushDataString(data, "lead_id", "leadId");
+  if (leadId) {
+    return `/crm/pipelines?lead=${encodeURIComponent(leadId)}`;
+  }
+
+  if (type === "commission" || type === "financial") {
+    return "/financeiro";
+  }
+
+  if (type === "task" || type === "schedule" || type === "reminder") {
+    const eventId = pushDataString(
+      data,
+      "schedule_event_id",
+      "scheduleEventId",
+      "event_id",
+      "eventId",
+      "task_id",
+      "taskId",
+    );
+    return eventId ? `/agenda?event=${encodeURIComponent(eventId)}` : "/agenda";
+  }
+
+  return "/notifications";
+}
+
+export function getNotificationRoute(
+  notification: Pick<Notification, "title" | "content" | "type" | "lead_id" | "target_url" | "metadata">,
+  access: NotificationRouteAccess = {},
+) {
+  const explicitTarget = getSafeProtectedAppPath(notification.target_url);
   const title = normalizeText(notification.title);
   const content = normalizeText(notification.content);
   const text = `${title} ${content}`.trim();
+  const notificationType = notification.type.toLowerCase();
   const scheduleEventId =
     metadataString(notification.metadata, "schedule_event_id") ||
     metadataString(notification.metadata, "event_id") ||
@@ -28,6 +103,22 @@ export function getNotificationRoute(notification: Pick<Notification, "title" | 
   if (title.includes("atualize seu telefone")) {
     return "/settings?tab=account";
   }
+
+  const isWhatsAppNotification =
+    notificationType === "whatsapp" ||
+    notificationType === "message" ||
+    text.includes("whatsapp") ||
+    text.includes("conexao desconect") ||
+    text.includes("desconectado");
+
+  if (isWhatsAppNotification) {
+    if (!access.canViewWhatsApp) return null;
+    return explicitTarget?.startsWith("/crm/conversas")
+      ? explicitTarget
+      : "/crm/conversas";
+  }
+
+  if (explicitTarget) return explicitTarget;
 
   if (notification.lead_id) {
     return `/crm/pipelines?lead=${notification.lead_id}`;
@@ -55,16 +146,6 @@ export function getNotificationRoute(notification: Pick<Notification, "title" | 
     text.includes("tarefa")
   ) {
     return scheduleEventId ? `/agenda?event=${scheduleEventId}` : "/agenda";
-  }
-
-  if (
-    notification.type === "whatsapp" ||
-    notification.type === "message" ||
-    text.includes("whatsapp") ||
-    text.includes("conexao desconect") ||
-    text.includes("desconectado")
-  ) {
-    return "/settings?tab=whatsapp";
   }
 
   if (

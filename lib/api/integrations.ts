@@ -1,17 +1,26 @@
 import {
+  apiGrupoOLXImportReportListResponseSchema,
+  apiGrupoOLXImportReportResponseSchema,
+  apiGrupoOLXIntegrationResponseSchema,
+  apiGrupoOLXPublicationListResponseSchema,
   apiIntegrationListResponseSchema,
   apiIntegrationResponseSchema,
   apiMetaWebhookHealthResponseSchema,
+  apiOptionalGrupoOLXIntegrationResponseSchema,
   apiOptionalIntegrationResponseSchema,
   deleteMetaFormConfigInputSchema,
   grupoOLXIntegrationInputSchema,
   grupoOLXPublicationsInputSchema,
   imoviewIntegrationInputSchema,
+  metaMarketingSyncInputSchema,
+  metaMarketingSyncResponseSchema,
   parseDomainInput,
   toggleMetaFormConfigInputSchema,
   validateDomainResponse,
   vistaIntegrationInputSchema,
   metaFormConfigInputSchema,
+  metaConversionFeedbackInputSchema,
+  sendMetaMessageInputSchema,
 } from '@/lib/validation';
 import { vimobAPIRequest } from './vimob-client';
 
@@ -22,8 +31,6 @@ type Envelope<T> = {
 export type IntegrationJSON = Record<string, unknown>;
 
 export type GrupoOLXIntegrationInput = {
-  isActive?: boolean;
-  leadWebhookSecret?: string;
   defaultPipelineId?: string | null;
   defaultStageId?: string | null;
   defaultAssignedUserId?: string | null;
@@ -35,7 +42,6 @@ export type GrupoOLXPublicationInput = {
   propertyId: string;
   clientListingId?: string;
   publicationType?: string;
-  isEnabled?: boolean;
 };
 
 export const integrationsAPI = {
@@ -45,6 +51,32 @@ export const integrationsAPI = {
       organizationId,
       body,
     });
+  },
+
+  async metaOAuthAction<T>(body: Record<string, unknown>, organizationId?: string | null) {
+    return vimobAPIRequest<T>('/v1/integrations/meta/oauth/actions', {
+      method: 'POST',
+      organizationId,
+      body,
+    });
+  },
+
+  async syncMetaMarketing(input: unknown, organizationId?: string | null) {
+    const body = parseDomainInput(
+      metaMarketingSyncInputSchema,
+      input,
+      'integrations.meta.marketing.sync',
+    );
+    const response = await vimobAPIRequest<unknown>('/v1/integrations/meta/marketing/sync', {
+      method: 'POST',
+      organizationId,
+      body,
+    });
+    return validateDomainResponse(
+      metaMarketingSyncResponseSchema,
+      response,
+      'integrations.meta.marketing.sync',
+    );
   },
 
   async getVista(organizationId?: string | null) {
@@ -100,68 +132,97 @@ export const integrationsAPI = {
   },
 
   async getGrupoOLX(organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<IntegrationJSON | null>>('/v1/integrations/portals/grupo-olx', {
+    const response = await vimobAPIRequest<unknown>('/v1/integrations/portals/grupo-olx', {
       organizationId,
     });
-    validateDomainResponse(apiOptionalIntegrationResponseSchema, response, 'integrations.grupo-olx.get');
-    return response.data;
+    return validateDomainResponse(
+      apiOptionalGrupoOLXIntegrationResponseSchema,
+      response,
+      'integrations.grupo-olx.get',
+    ).data;
   },
 
   async saveGrupoOLX(input: GrupoOLXIntegrationInput, organizationId?: string | null) {
     const body = parseDomainInput(grupoOLXIntegrationInputSchema, input, 'integrations.grupo-olx.save');
-    const response = await vimobAPIRequest<Envelope<IntegrationJSON>>('/v1/integrations/portals/grupo-olx', {
+    const response = await vimobAPIRequest<unknown>('/v1/integrations/portals/grupo-olx', {
       method: 'PUT',
       organizationId,
       body,
     });
-    validateDomainResponse(apiIntegrationResponseSchema, response, 'integrations.grupo-olx.save');
-    return response.data;
+    return validateDomainResponse(apiGrupoOLXIntegrationResponseSchema, response, 'integrations.grupo-olx.save').data;
   },
 
   async activateGrupoOLX(organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<IntegrationJSON>>('/v1/integrations/portals/grupo-olx/activate', {
+    const response = await vimobAPIRequest<unknown>('/v1/integrations/portals/grupo-olx/activate', {
       method: 'POST',
       organizationId,
     });
-    validateDomainResponse(apiIntegrationResponseSchema, response, 'integrations.grupo-olx.activate');
-    return response.data;
+    return validateDomainResponse(apiGrupoOLXIntegrationResponseSchema, response, 'integrations.grupo-olx.activate').data;
+  },
+
+  async pauseGrupoOLX(organizationId?: string | null) {
+    const response = await vimobAPIRequest<unknown>('/v1/integrations/portals/grupo-olx/pause', {
+      method: 'POST',
+      organizationId,
+    });
+    return validateDomainResponse(apiGrupoOLXIntegrationResponseSchema, response, 'integrations.grupo-olx.pause').data;
   },
 
   async regenerateGrupoOLXFeedToken(organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<IntegrationJSON>>('/v1/integrations/portals/grupo-olx/regenerate-feed-token', {
+    const response = await vimobAPIRequest<unknown>('/v1/integrations/portals/grupo-olx/regenerate-feed-token', {
       method: 'POST',
       organizationId,
     });
-    validateDomainResponse(apiIntegrationResponseSchema, response, 'integrations.grupo-olx.regenerate-feed-token');
-    return response.data;
+    return validateDomainResponse(apiGrupoOLXIntegrationResponseSchema, response, 'integrations.grupo-olx.regenerate-feed-token').data;
   },
 
   async regenerateGrupoOLXWebhookToken(organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<IntegrationJSON>>('/v1/integrations/portals/grupo-olx/regenerate-webhook-token', {
+    const response = await vimobAPIRequest<unknown>('/v1/integrations/portals/grupo-olx/regenerate-webhook-token', {
       method: 'POST',
       organizationId,
     });
-    validateDomainResponse(apiIntegrationResponseSchema, response, 'integrations.grupo-olx.regenerate-webhook-token');
-    return response.data;
+    return validateDomainResponse(apiGrupoOLXIntegrationResponseSchema, response, 'integrations.grupo-olx.regenerate-webhook-token').data;
   },
 
   async listGrupoOLXPublications(organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<IntegrationJSON[]>>('/v1/integrations/portals/grupo-olx/publications', {
+    const response = await vimobAPIRequest<unknown>('/v1/integrations/portals/grupo-olx/publications', {
       organizationId,
     });
-    validateDomainResponse(apiIntegrationListResponseSchema, response, 'integrations.grupo-olx.publications.list');
-    return response.data;
+    return validateDomainResponse(apiGrupoOLXPublicationListResponseSchema, response, 'integrations.grupo-olx.publications.list').data;
   },
 
   async saveGrupoOLXPublications(input: { publications: GrupoOLXPublicationInput[] }, organizationId?: string | null) {
     const body = parseDomainInput(grupoOLXPublicationsInputSchema, input, 'integrations.grupo-olx.publications.save');
-    const response = await vimobAPIRequest<Envelope<IntegrationJSON[]>>('/v1/integrations/portals/grupo-olx/publications', {
+    const response = await vimobAPIRequest<unknown>('/v1/integrations/portals/grupo-olx/publications', {
       method: 'PUT',
       organizationId,
       body,
     });
-    validateDomainResponse(apiIntegrationListResponseSchema, response, 'integrations.grupo-olx.publications.save');
-    return response.data;
+    return validateDomainResponse(apiGrupoOLXPublicationListResponseSchema, response, 'integrations.grupo-olx.publications.save').data;
+  },
+
+  async listGrupoOLXImportReports(organizationId?: string | null) {
+    const response = await vimobAPIRequest<unknown>(
+      '/v1/integrations/portals/grupo-olx/import-reports',
+      { organizationId },
+    );
+    return validateDomainResponse(
+      apiGrupoOLXImportReportListResponseSchema,
+      response,
+      'integrations.grupo-olx.import-reports.list',
+    ).data;
+  },
+
+  async replayGrupoOLXImportReport(reportId: string, organizationId?: string | null) {
+    const response = await vimobAPIRequest<unknown>(
+      `/v1/integrations/portals/grupo-olx/import-reports/${encodeURIComponent(reportId)}/replay`,
+      { method: 'POST', organizationId },
+    );
+    return validateDomainResponse(
+      apiGrupoOLXImportReportResponseSchema,
+      response,
+      'integrations.grupo-olx.import-reports.replay',
+    ).data;
   },
 
   async listMetaIntegrations(organizationId?: string | null) {
@@ -172,12 +233,52 @@ export const integrationsAPI = {
     return response.data;
   },
 
+  async saveMetaConversionFeedback(
+    input: {
+      integrationId: string;
+      datasetId?: string | null;
+      datasetName?: string | null;
+      datasetAccessToken?: string | null;
+      enabled: boolean;
+      replayRecentFacts: boolean;
+      testEventCode?: string;
+    },
+    organizationId?: string | null,
+  ) {
+    const body = parseDomainInput(
+      metaConversionFeedbackInputSchema,
+      input,
+      'integrations.meta.conversion-feedback.save',
+    );
+    const response = await vimobAPIRequest<Envelope<IntegrationJSON>>(
+      '/v1/integrations/meta/conversion-feedback',
+      {
+        method: 'PUT',
+        organizationId,
+        body,
+      },
+    );
+    validateDomainResponse(
+      apiIntegrationResponseSchema,
+      response,
+      'integrations.meta.conversion-feedback.save',
+    );
+    return response.data;
+  },
+
   async getMetaOAuthFlow(flowId: string, organizationId?: string | null) {
     const response = await vimobAPIRequest<Envelope<IntegrationJSON>>(`/v1/integrations/meta/oauth-flows/${flowId}`, {
       organizationId,
     });
     validateDomainResponse(apiIntegrationResponseSchema, response, 'integrations.meta.oauth-flow');
     return response.data;
+  },
+
+  async listMetaPageForms<T = IntegrationJSON>(pageId: string, organizationId?: string | null) {
+    return vimobAPIRequest<{ forms: T[] }>(
+      `/v1/integrations/meta/pages/${encodeURIComponent(pageId)}/forms`,
+      { organizationId },
+    );
   },
 
   async listMetaFormConfigs(integrationId?: string, organizationId?: string | null) {
@@ -239,6 +340,23 @@ export const integrationsAPI = {
     const response = await vimobAPIRequest<Envelope<T[]>>(`/v1/integrations/meta/conversations/${conversationId}/messages`, {
       organizationId,
     });
+    return response.data;
+  },
+
+  async sendMetaMessage<T = IntegrationJSON>(
+    conversationId: string,
+    input: { text: string; idempotencyKey: string },
+    organizationId?: string | null,
+  ) {
+    const body = parseDomainInput(sendMetaMessageInputSchema, input, 'integrations.meta.messages.send');
+    const response = await vimobAPIRequest<Envelope<T>>(
+      `/v1/integrations/meta/conversations/${encodeURIComponent(conversationId)}/messages`,
+      {
+        method: 'POST',
+        organizationId,
+        body,
+      },
+    );
     return response.data;
   },
 };

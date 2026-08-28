@@ -6,6 +6,16 @@ import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, RotateCcw, ShieldAlert
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   useAutomationRuntimeIssues,
   useRetryAutomationRuntimeIssue,
 } from '@/hooks/use-automations';
@@ -42,13 +52,14 @@ function summaryValue(label: string, value: number, tone: 'default' | 'warning' 
   return (
     <div className="rounded-lg border border-border/60 bg-[var(--app-surface)] p-4">
       <p className="text-xs font-medium text-muted-foreground">{label}</p>
-      <p className={`mt-2 text-2xl font-bold ${toneClass}`}>{value}</p>
+      <p className={`mt-2 text-[20px] font-normal ${toneClass}`}>{value}</p>
     </div>
   );
 }
 
 export function AutomationRuntimeHealth({ canManage }: { canManage: boolean }) {
   const [page, setPage] = useState(0);
+  const [retryTarget, setRetryTarget] = useState<AutomationRuntimeIssue | null>(null);
   const issuesQuery = useAutomationRuntimeIssues(page * PAGE_SIZE, PAGE_SIZE);
   const retryIssue = useRetryAutomationRuntimeIssue();
   const data = issuesQuery.data;
@@ -56,11 +67,18 @@ export function AutomationRuntimeHealth({ canManage }: { canManage: boolean }) {
   const summary = data?.summary;
 
   const handleRetry = (issue: AutomationRuntimeIssue) => {
-    const confirmed = window.confirm(
-      'Reprocessar este item pode executar ações do fluxo e enviar mensagens. Deseja continuar?',
-    );
-    if (!confirmed) return;
-    retryIssue.mutate({ kind: issue.kind, id: issue.id });
+    if (!canManage || retryIssue.isPending) return;
+    setRetryTarget(issue);
+  };
+
+  const confirmRetry = async () => {
+    if (!retryTarget || retryIssue.isPending || !canManage) return;
+    try {
+      await retryIssue.mutateAsync({ kind: retryTarget.kind, id: retryTarget.id });
+      setRetryTarget(null);
+    } catch {
+      // The mutation reports the error. Keep the dialog open for retry/cancel.
+    }
   };
 
   if (issuesQuery.isLoading) {
@@ -76,6 +94,11 @@ export function AutomationRuntimeHealth({ canManage }: { canManage: boolean }) {
       <div className="app-card flex min-h-[260px] flex-col items-center justify-center gap-3 px-5 text-center" role="alert">
         <ShieldAlert className="h-8 w-8 text-destructive" aria-hidden="true" />
         <p className="text-sm font-medium">Não foi possível consultar os alertas operacionais.</p>
+        <p className="max-w-md text-xs text-muted-foreground">
+          {issuesQuery.error instanceof Error
+            ? issuesQuery.error.message
+            : 'Tente novamente em alguns instantes.'}
+        </p>
         <Button type="button" size="sm" variant="outline" onClick={() => void issuesQuery.refetch()}>
           <RefreshCw className="h-4 w-4" /> Tentar novamente
         </Button>
@@ -101,7 +124,7 @@ export function AutomationRuntimeHealth({ canManage }: { canManage: boolean }) {
       <section className="app-card overflow-hidden">
         <div className="flex flex-col gap-3 border-b border-border/60 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="font-semibold">Alertas do runtime</h2>
+            <h2 className="text-[14px] font-normal">Alertas do runtime</h2>
             <p className="mt-1 text-xs text-muted-foreground">
               Reprocessamento automático fica bloqueado quando existe risco de duplicar um envio externo.
             </p>
@@ -124,7 +147,7 @@ export function AutomationRuntimeHealth({ canManage }: { canManage: boolean }) {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <AlertTriangle className={issue.severity === 'error' ? 'h-4 w-4 text-destructive' : 'h-4 w-4 text-amber-500'} aria-hidden="true" />
-                    <p className="text-sm font-semibold">{ISSUE_LABELS[issue.kind]}</p>
+                    <p className="text-[12px] font-normal">{ISSUE_LABELS[issue.kind]}</p>
                     <Badge variant={issue.severity === 'error' ? 'destructive' : 'secondary'}>{issue.status}</Badge>
                     {!issue.retryable && <Badge variant="outline">Revisão manual</Badge>}
                   </div>
@@ -145,8 +168,12 @@ export function AutomationRuntimeHealth({ canManage }: { canManage: boolean }) {
                     disabled={retryIssue.isPending}
                     className="shrink-0"
                   >
-                    {retryIssue.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
-                    Reprocessar
+                    {retryIssue.isPending && retryIssue.variables?.kind === issue.kind && retryIssue.variables.id === issue.id
+                      ? <Loader2 className="h-4 w-4 animate-spin" />
+                      : <RotateCcw className="h-4 w-4" />}
+                    {retryIssue.isPending && retryIssue.variables?.kind === issue.kind && retryIssue.variables.id === issue.id
+                      ? 'Reprocessando...'
+                      : 'Reprocessar'}
                   </Button>
                 )}
               </article>
@@ -166,6 +193,42 @@ export function AutomationRuntimeHealth({ canManage }: { canManage: boolean }) {
           </div>
         )}
       </section>
+
+      <AlertDialog
+        open={retryTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !retryIssue.isPending) setRetryTarget(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-[440px] rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-5 shadow-none">
+          <AlertDialogHeader className="space-y-1.5 text-left">
+            <AlertDialogTitle className="text-[14px] font-medium text-[var(--app-text-primary)]">
+              Reprocessar alerta?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-[12px] font-light leading-5 text-[var(--app-text-tertiary)]">
+              {retryTarget
+                ? `${ISSUE_LABELS[retryTarget.kind]}. O reprocessamento pode executar ações do fluxo e enviar mensagens. Continue somente após conferir o contexto.`
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="mt-4 gap-2 sm:gap-2">
+            <AlertDialogCancel disabled={retryIssue.isPending} className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]">
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={retryIssue.isPending}
+              className="h-9 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
+              onClick={(event) => {
+                event.preventDefault();
+                void confirmRetry();
+              }}
+            >
+              {retryIssue.isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+              {retryIssue.isPending ? 'Reprocessando...' : 'Reprocessar item'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -7,8 +7,8 @@ export interface CommissionRule {
   id: string;
   organization_id: string;
   name: string;
-  business_type: 'sale' | 'rental' | 'service' | 'all';
-  commission_type: 'percentage' | 'fixed';
+  business_type: "sale" | "rental" | "service" | "all";
+  commission_type: "percentage" | "fixed";
   commission_value: number;
   is_active: boolean;
   created_at: string;
@@ -25,7 +25,7 @@ export interface Commission {
   base_value: number;
   percentage?: number;
   calculated_value: number;
-  status: 'forecast' | 'pending' | 'approved' | 'paid' | 'cancelled';
+  status: "forecast" | "pending" | "approved" | "paid" | "cancelled";
   forecast_date?: string;
   approved_at?: string;
   approved_by?: string;
@@ -40,14 +40,15 @@ export interface Commission {
   property?: { code: string; title: string };
 }
 
-export function useCommissionRules() {
+export function useCommissionRules(options?: { enabled?: boolean }) {
   const { profile, organization } = useAuth();
   const organizationId = organization?.id || profile?.organization_id;
 
   return useQuery({
-    queryKey: ['commission-rules', organizationId],
-    queryFn: () => financialAPI.listCommissionRules<CommissionRule[]>(organizationId),
-    enabled: !!organizationId,
+    queryKey: ["commission-rules", organizationId],
+    queryFn: () =>
+      financialAPI.listCommissionRules<CommissionRule[]>(organizationId),
+    enabled: !!organizationId && (options?.enabled ?? true),
   });
 }
 
@@ -60,14 +61,21 @@ export function useCreateCommissionRule() {
     mutationFn: (data: Partial<CommissionRule>) => {
       const organizationId = organization?.id || profile?.organization_id;
       if (!organizationId) throw new Error("Organização não encontrada");
-      return financialAPI.createCommissionRule<CommissionRule>(data, organizationId);
+      return financialAPI.createCommissionRule<CommissionRule>(
+        data,
+        organizationId,
+      );
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['commission-rules'] });
+      queryClient.invalidateQueries({ queryKey: ["commission-rules"] });
       toast({ title: "Regra de comissao criada com sucesso" });
     },
     onError: (error: Error) => {
-      toast({ title: "Erro ao criar regra", description: error.message, variant: "destructive" });
+      toast({
+        title: "Erro ao criar regra",
+        description: error.message,
+        variant: "destructive",
+      });
     },
   });
 }
@@ -80,14 +88,23 @@ export function useUpdateCommissionRule() {
   return useMutation({
     mutationFn: ({ id, ...data }: Partial<CommissionRule> & { id: string }) => {
       const organizationId = organization?.id || profile?.organization_id;
-      return financialAPI.updateCommissionRule<CommissionRule>(id, data, organizationId);
+      if (!organizationId) throw new Error("Organização não encontrada");
+      return financialAPI.updateCommissionRule<CommissionRule>(
+        id,
+        data,
+        organizationId,
+      );
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['commission-rules'] });
+      queryClient.invalidateQueries({ queryKey: ["commission-rules"] });
       toast({ title: "Regra atualizada com sucesso" });
     },
     onError: (error: Error) => {
-      toast({ title: "Erro ao atualizar regra", description: error.message, variant: "destructive" });
+      toast({
+        title: "Erro ao atualizar regra",
+        description: error.message,
+        variant: "destructive",
+      });
     },
   });
 }
@@ -100,26 +117,35 @@ export function useDeleteCommissionRule() {
   return useMutation({
     mutationFn: (id: string) => {
       const organizationId = organization?.id || profile?.organization_id;
+      if (!organizationId) throw new Error("Organização não encontrada");
       return financialAPI.deleteCommissionRule(id, organizationId);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['commission-rules'] });
+      queryClient.invalidateQueries({ queryKey: ["commission-rules"] });
       toast({ title: "Regra excluida com sucesso" });
     },
     onError: (error: Error) => {
-      toast({ title: "Erro ao excluir regra", description: error.message, variant: "destructive" });
+      toast({
+        title: "Erro ao excluir regra",
+        description: error.message,
+        variant: "destructive",
+      });
     },
   });
 }
 
-export function useCommissions(filters?: { status?: string; userId?: string }) {
+export function useCommissions(
+  filters?: { status?: string; userId?: string; limit?: number; offset?: number },
+  options?: { enabled?: boolean },
+) {
   const { profile, organization } = useAuth();
   const organizationId = organization?.id || profile?.organization_id;
 
   return useQuery({
-    queryKey: ['commissions', organizationId, filters],
-    queryFn: () => financialAPI.listCommissions<Commission[]>(filters, organizationId),
-    enabled: !!organizationId,
+    queryKey: ["commissions", organizationId, filters],
+    queryFn: () =>
+      financialAPI.listCommissions<Commission[]>(filters, organizationId),
+    enabled: !!organizationId && (options?.enabled ?? true),
   });
 }
 
@@ -131,15 +157,25 @@ export function useApproveCommission() {
   return useMutation({
     mutationFn: (id: string) => {
       const organizationId = organization?.id || profile?.organization_id;
-      return financialAPI.commissionAction<Commission>(id, 'approve', {}, organizationId);
+      if (!organizationId) throw new Error("Organização não encontrada");
+      return financialAPI.commissionAction<Commission>(
+        id,
+        "approve",
+        {},
+        organizationId,
+      );
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['commissions'] });
-      queryClient.invalidateQueries({ queryKey: ['financial-dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ["commissions"] });
+      queryClient.invalidateQueries({ queryKey: ["financial-dashboard"] });
       toast({ title: "Comissao aprovada com sucesso" });
     },
     onError: (error: Error) => {
-      toast({ title: "Erro ao aprovar comissao", description: error.message, variant: "destructive" });
+      toast({
+        title: "Erro ao aprovar comissao",
+        description: error.message,
+        variant: "destructive",
+      });
     },
   });
 }
@@ -150,17 +186,33 @@ export function usePayCommission() {
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: ({ id, payment_proof }: { id: string; payment_proof?: string }) => {
+    mutationFn: ({
+      id,
+      payment_proof,
+    }: {
+      id: string;
+      payment_proof?: string;
+    }) => {
       const organizationId = organization?.id || profile?.organization_id;
-      return financialAPI.commissionAction<Commission>(id, 'pay', { payment_proof }, organizationId);
+      if (!organizationId) throw new Error("Organização não encontrada");
+      return financialAPI.commissionAction<Commission>(
+        id,
+        "pay",
+        { payment_proof },
+        organizationId,
+      );
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['commissions'] });
-      queryClient.invalidateQueries({ queryKey: ['financial-dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ["commissions"] });
+      queryClient.invalidateQueries({ queryKey: ["financial-dashboard"] });
       toast({ title: "Pagamento de comissao registrado" });
     },
     onError: (error: Error) => {
-      toast({ title: "Erro ao registrar pagamento", description: error.message, variant: "destructive" });
+      toast({
+        title: "Erro ao registrar pagamento",
+        description: error.message,
+        variant: "destructive",
+      });
     },
   });
 }
@@ -173,15 +225,25 @@ export function useCancelCommission() {
   return useMutation({
     mutationFn: ({ id, notes }: { id: string; notes?: string }) => {
       const organizationId = organization?.id || profile?.organization_id;
-      return financialAPI.commissionAction<Commission>(id, 'cancel', { notes }, organizationId);
+      if (!organizationId) throw new Error("Organização não encontrada");
+      return financialAPI.commissionAction<Commission>(
+        id,
+        "cancel",
+        { notes },
+        organizationId,
+      );
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['commissions'] });
-      queryClient.invalidateQueries({ queryKey: ['financial-dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ["commissions"] });
+      queryClient.invalidateQueries({ queryKey: ["financial-dashboard"] });
       toast({ title: "Comissao cancelada" });
     },
     onError: (error: Error) => {
-      toast({ title: "Erro ao cancelar comissao", description: error.message, variant: "destructive" });
+      toast({
+        title: "Erro ao cancelar comissao",
+        description: error.message,
+        variant: "destructive",
+      });
     },
   });
 }
@@ -191,14 +253,17 @@ export function useCommissionsByBroker() {
   const organizationId = organization?.id || profile?.organization_id;
 
   return useQuery({
-    queryKey: ['commissions-by-broker', organizationId],
-    queryFn: () => financialAPI.commissionsByBroker<Array<{
-      user: { id: string; name: string; email: string };
-      forecast: number;
-      approved: number;
-      paid: number;
-      total: number;
-    }>>(organizationId),
+    queryKey: ["commissions-by-broker", organizationId],
+    queryFn: () =>
+      financialAPI.commissionsByBroker<
+        Array<{
+          user: { id: string; name: string | null; email: string | null };
+          forecast: number;
+          approved: number;
+          paid: number;
+          total: number;
+        }>
+      >(organizationId),
     enabled: !!organizationId,
   });
 }

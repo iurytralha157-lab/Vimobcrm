@@ -129,6 +129,10 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	if request.IsActive != nil {
 		isActive = *request.IsActive
 	}
+	members := normalizeMembers(normalizeMemberInputs(request))
+	if err := validateMemberAvailabilityWeeks(members, true); err != nil {
+		return Team{}, err
+	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
@@ -149,7 +153,10 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		return Team{}, err
 	}
 
-	if err := replaceMembers(ctx, tx, tenantContext.OrganizationID, teamID, normalizeMemberInputs(request)); err != nil {
+	if err := replaceMembers(ctx, tx, tenantContext.OrganizationID, teamID, members); err != nil {
+		return Team{}, err
+	}
+	if err := repo.replaceMemberAvailabilityWeeks(ctx, tx, tenantContext.OrganizationID, teamID, members); err != nil {
 		return Team{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -220,7 +227,17 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	}
 
 	if hasMemberUpdate(request) {
-		memberInputs := normalizeMemberInputsFromUpdate(request)
+		memberInputs := normalizeMembers(normalizeMemberInputsFromUpdate(request))
+		if err := validateMemberAvailabilityWeeks(memberInputs, false); err != nil {
+			return Team{}, err
+		}
+		currentMemberIDs, err := repo.currentMemberIDSet(ctx, tx, tenantContext.OrganizationID, teamID)
+		if err != nil {
+			return Team{}, err
+		}
+		if err := validateNewMemberAvailabilityWeeks(memberInputs, currentMemberIDs); err != nil {
+			return Team{}, err
+		}
 		if request.PreserveLeadership {
 			current, err := repo.currentLeaderMap(ctx, tx, teamID)
 			if err != nil {
@@ -234,6 +251,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 			}
 		}
 		if err := replaceMembers(ctx, tx, tenantContext.OrganizationID, teamID, memberInputs); err != nil {
+			return Team{}, err
+		}
+		if err := repo.replaceMemberAvailabilityWeeks(ctx, tx, tenantContext.OrganizationID, teamID, memberInputs); err != nil {
 			return Team{}, err
 		}
 		roundRobinMemberIDs = memberUserIDs(memberInputs)
@@ -655,9 +675,29 @@ func (repo Repository) UpsertAvailability(ctx context.Context, tenantContext ten
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
 		return MemberAvailability{}, err
 	}
+	if err := lockTeamMemberAvailability(ctx, tx, tenantContext.OrganizationID, input.TeamMemberID); err != nil {
+		return MemberAvailability{}, err
+	}
 	item, err := repo.upsertAvailability(ctx, tx, tenantContext.OrganizationID, input)
 	if err != nil {
 		return MemberAvailability{}, err
+	}
+	if !input.IsActive {
+		var hasActiveDay bool
+		if err := tx.QueryRow(ctx, `
+			select exists (
+				select 1
+				from public.member_availability
+				where organization_id = $1::uuid
+				  and team_member_id = $2::uuid
+				  and coalesce(is_active, true) = true
+			)
+		`, tenantContext.OrganizationID, input.TeamMemberID).Scan(&hasActiveDay); err != nil {
+			return MemberAvailability{}, err
+		}
+		if !hasActiveDay {
+			return MemberAvailability{}, ErrInvalidInput
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return MemberAvailability{}, err
@@ -669,6 +709,10 @@ func (repo Repository) ReplaceAvailability(ctx context.Context, tenantContext te
 	teamMemberID, ok := normalizeUUID(teamMemberID)
 	if !ok {
 		return nil, ErrInvalidInput
+	}
+	normalized, err := normalizeCompleteAvailabilityWeek(teamMemberID, requests)
+	if err != nil {
+		return nil, err
 	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
@@ -686,6 +730,9 @@ func (repo Repository) ReplaceAvailability(ctx context.Context, tenantContext te
 	if err := repo.ensureCanManageAvailability(ctx, tx, tenantContext, teamMemberID); err != nil {
 		return nil, err
 	}
+	if err := lockTeamMemberAvailability(ctx, tx, tenantContext.OrganizationID, teamMemberID); err != nil {
+		return nil, err
+	}
 
 	if _, err := tx.Exec(ctx, `
 		delete from public.member_availability
@@ -695,12 +742,7 @@ func (repo Repository) ReplaceAvailability(ctx context.Context, tenantContext te
 		return nil, err
 	}
 
-	for _, request := range requests {
-		request.TeamMemberID = teamMemberID
-		input, err := normalizeAvailabilityRequest(request)
-		if err != nil {
-			return nil, err
-		}
+	for _, input := range normalized {
 		if _, err := repo.upsertAvailability(ctx, tx, tenantContext.OrganizationID, input); err != nil {
 			return nil, err
 		}
@@ -711,6 +753,84 @@ func (repo Repository) ReplaceAvailability(ctx context.Context, tenantContext te
 	}
 
 	return repo.ListAvailability(ctx, tenantContext, []string{teamMemberID})
+}
+
+func validateMemberAvailabilityWeeks(members []TeamMemberInput, required bool) error {
+	for _, member := range members {
+		if member.Availability == nil {
+			if required {
+				return ErrInvalidInput
+			}
+			continue
+		}
+		if _, err := normalizeCompleteAvailabilityWeek(member.UserID, member.Availability); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateNewMemberAvailabilityWeeks(members []TeamMemberInput, currentMemberIDs map[string]struct{}) error {
+	for _, member := range members {
+		if member.Availability != nil {
+			continue
+		}
+		if _, exists := currentMemberIDs[member.UserID]; !exists {
+			return ErrInvalidInput
+		}
+	}
+	return nil
+}
+
+func (repo Repository) replaceMemberAvailabilityWeeks(
+	ctx context.Context,
+	tx pgx.Tx,
+	organizationID string,
+	teamID string,
+	members []TeamMemberInput,
+) error {
+	for _, member := range members {
+		if member.Availability == nil {
+			continue
+		}
+
+		var teamMemberID string
+		err := tx.QueryRow(ctx, `
+			select id::text
+			from public.team_members
+			where organization_id = $1::uuid
+			  and team_id = $2::uuid
+			  and user_id = $3::uuid
+			  and coalesce(is_active, true) = true
+		`, organizationID, teamID, member.UserID).Scan(&teamMemberID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrTeamMemberNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if err := lockTeamMemberAvailability(ctx, tx, organizationID, teamMemberID); err != nil {
+			return err
+		}
+
+		normalized, err := normalizeCompleteAvailabilityWeek(teamMemberID, member.Availability)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			delete from public.member_availability
+			where organization_id = $1::uuid
+			  and team_member_id = $2::uuid
+		`, organizationID, teamMemberID); err != nil {
+			return err
+		}
+		for _, input := range normalized {
+			if _, err := repo.upsertAvailability(ctx, tx, organizationID, input); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (repo Repository) membersByTeam(ctx context.Context, organizationID string) (map[string][]TeamMember, error) {
@@ -768,6 +888,56 @@ func (repo Repository) currentLeaderMap(ctx context.Context, tx pgx.Tx, teamID s
 		result[userID] = isLeader
 	}
 	return result, rows.Err()
+}
+
+func (repo Repository) currentMemberIDSet(
+	ctx context.Context,
+	tx pgx.Tx,
+	organizationID string,
+	teamID string,
+) (map[string]struct{}, error) {
+	rows, err := tx.Query(ctx, `
+		select user_id::text
+		from public.team_members
+		where organization_id = $1::uuid
+		  and team_id = $2::uuid
+		  and coalesce(is_active, true) = true
+	`, organizationID, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := map[string]struct{}{}
+	for rows.Next() {
+		var userID string
+		if err := rows.Scan(&userID); err != nil {
+			return nil, err
+		}
+		result[userID] = struct{}{}
+	}
+	return result, rows.Err()
+}
+
+func lockTeamMemberAvailability(
+	ctx context.Context,
+	tx pgx.Tx,
+	organizationID string,
+	teamMemberID string,
+) error {
+	var lockedID string
+	err := tx.QueryRow(ctx, `
+		select id::text
+		from public.team_members
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		  and coalesce(is_active, true) = true
+		for update
+	`, organizationID, teamMemberID).Scan(&lockedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrTeamMemberNotFound
+	}
+	return err
 }
 
 func replaceMembers(ctx context.Context, tx pgx.Tx, organizationID string, teamID string, members []TeamMemberInput) error {
@@ -1131,6 +1301,61 @@ func normalizeAvailabilityRequest(request AvailabilityRequest) (availabilityInpu
 	}, nil
 }
 
+func normalizeCompleteAvailabilityWeek(teamMemberID string, requests []AvailabilityRequest) ([]availabilityInput, error) {
+	teamMemberID, ok := normalizeUUID(teamMemberID)
+	if !ok || len(requests) != 7 {
+		return nil, ErrInvalidInput
+	}
+
+	normalized := make([]availabilityInput, 0, 7)
+	seenDays := make(map[int]struct{}, 7)
+	hasActiveDay := false
+	for _, request := range requests {
+		request.TeamMemberID = teamMemberID
+		input, err := normalizeAvailabilityRequest(request)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := seenDays[input.DayOfWeek]; exists {
+			return nil, ErrInvalidInput
+		}
+		seenDays[input.DayOfWeek] = struct{}{}
+
+		if input.IsActive && !input.IsAllDay {
+			start, startOK := parseAvailabilityClock(input.StartTime)
+			end, endOK := parseAvailabilityClock(input.EndTime)
+			if !startOK || !endOK || !start.Before(end) {
+				return nil, ErrInvalidInput
+			}
+		}
+		hasActiveDay = hasActiveDay || input.IsActive
+		normalized = append(normalized, input)
+	}
+	for day := 0; day < 7; day++ {
+		if _, exists := seenDays[day]; !exists {
+			return nil, ErrInvalidInput
+		}
+	}
+	if !hasActiveDay {
+		return nil, ErrInvalidInput
+	}
+	return normalized, nil
+}
+
+func parseAvailabilityClock(value *string) (time.Time, bool) {
+	if value == nil {
+		return time.Time{}, false
+	}
+	cleaned := strings.TrimSpace(*value)
+	for _, layout := range []string{"15:04", "15:04:05"} {
+		parsed, err := time.Parse(layout, cleaned)
+		if err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
+}
+
 func (repo Repository) upsertAvailability(ctx context.Context, q queryRowExecutor, organizationID string, input availabilityInput) (MemberAvailability, error) {
 	item, err := scanMemberAvailability(q.QueryRow(ctx, `
 		insert into public.member_availability (
@@ -1247,7 +1472,11 @@ func normalizeMembers(members []TeamMemberInput) []TeamMemberInput {
 			continue
 		}
 		seen[userID] = struct{}{}
-		out = append(out, TeamMemberInput{UserID: userID, IsLeader: member.IsLeader})
+		out = append(out, TeamMemberInput{
+			UserID:       userID,
+			IsLeader:     member.IsLeader,
+			Availability: member.Availability,
+		})
 	}
 	return out
 }

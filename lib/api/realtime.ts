@@ -1,6 +1,7 @@
 import { supabase } from '@/integrations/supabase/client'
 import { buildAPIURL } from './vimob-client'
 import { organizationIdSchema, parseDomainInput, realtimeEventSchema } from '@/lib/validation'
+import { nextRealtimeCursor, realtimeReconnectDelay } from '@/lib/realtime-cursor'
 
 export type BackendRealtimeEvent = {
   id: string
@@ -23,10 +24,11 @@ export function connectBackendRealtime(options: ConnectRealtimeOptions) {
   let retryAttempt = 0
   let retryTimer: ReturnType<typeof setTimeout> | null = null
   let controller: AbortController | null = null
+  let lastEventId: string | null = null
 
   const scheduleReconnect = () => {
     if (!active) return
-    const delay = Math.min(1000 * 2 ** retryAttempt, 15000)
+    const delay = realtimeReconnectDelay(retryAttempt)
     retryAttempt += 1
     retryTimer = setTimeout(() => {
       retryTimer = null
@@ -46,13 +48,18 @@ export function connectBackendRealtime(options: ConnectRealtimeOptions) {
         throw error || new Error('Missing session for realtime stream.')
       }
 
+      const headers: Record<string, string> = {
+        Accept: 'text/event-stream',
+        Authorization: `Bearer ${token}`,
+        'X-Organization-ID': organizationId,
+      }
+      if (lastEventId) {
+        headers['Last-Event-ID'] = lastEventId
+      }
+
       const response = await fetch(buildAPIURL('/v1/realtime/events'), {
         method: 'GET',
-        headers: {
-          Accept: 'text/event-stream',
-          Authorization: `Bearer ${token}`,
-          'X-Organization-ID': organizationId,
-        },
+        headers,
         signal: controller.signal,
       })
 
@@ -61,7 +68,10 @@ export function connectBackendRealtime(options: ConnectRealtimeOptions) {
       }
 
       retryAttempt = 0
-      await readSSEStream(response.body, options.onEvent, controller.signal)
+      await readSSEStream(response.body, (event) => {
+        lastEventId = nextRealtimeCursor(lastEventId, event.id)
+        options.onEvent(event)
+      }, controller.signal)
       if (active && !controller.signal.aborted) {
         scheduleReconnect()
       }

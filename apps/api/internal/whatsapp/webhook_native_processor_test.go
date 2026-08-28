@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -149,6 +150,40 @@ func TestNativeMessageStatusIsMonotonic(t *testing.T) {
 	}
 }
 
+func TestNativeNotificationReceiptOutcomesFailClosed(t *testing.T) {
+	for _, outcome := range []string{"applied", "already_applied", "stale"} {
+		matched, err := nativeNotificationReceiptOutcomeMatched(outcome)
+		if err != nil || !matched {
+			t.Fatalf("outcome %q = matched:%v error:%v, want recognized", outcome, matched, err)
+		}
+	}
+
+	for _, outcome := range []string{"not_found", "ambiguous", "invalid_status", "unexpected"} {
+		if matched, err := nativeNotificationReceiptOutcomeMatched(outcome); err == nil || matched {
+			t.Fatalf("outcome %q = matched:%v error:%v, want fail-closed error", outcome, matched, err)
+		}
+	}
+}
+
+func TestNativeNotificationReceiptUsesExactServiceRPC(t *testing.T) {
+	raw, err := os.ReadFile("webhook_native_processor.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	for _, required := range []string{
+		"private.reconcile_notification_whatsapp_delivery(",
+		"session.OrganizationID",
+		"receipt.OccurredAt",
+		"if !matched[id]",
+		"nativeNotificationReceiptOutcomeMatched(result.Outcome)",
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("notification WhatsApp receipt RPC contract is missing %q", required)
+		}
+	}
+}
+
 func TestNativeLIDPromotionFailsClosedOnLeadConflict(t *testing.T) {
 	if _, err := safeNativeMergedLeadID("lead-a", "lead-b", "lead-a"); err == nil {
 		t.Fatal("conflicting canonical and LID lead ownership was accepted")
@@ -253,7 +288,8 @@ func TestNativeFallbackNeverForwardsUnsupportedMessageOrCampaignToEdge(t *testin
 	var edgeCalls atomic.Int32
 	edge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		edgeCalls.Add(1)
-		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer edge.Close()
 
@@ -328,7 +364,8 @@ func TestNativeFallbackStillForwardsNonMessageLifecycleEvent(t *testing.T) {
 				t.Errorf("forwarded webhook leaked %s in its URL", credential)
 			}
 		}
-		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer edge.Close()
 

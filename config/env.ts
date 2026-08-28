@@ -3,7 +3,7 @@ import { z } from 'zod'
 const envSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url('Invalid Supabase URL'),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1, 'Missing Supabase Anon Key'),
-  NEXT_PUBLIC_VIMOB_API_URL: z.string().url('Invalid Vimob API URL').optional().default('http://localhost:8080'),
+  NEXT_PUBLIC_VIMOB_API_URL: z.string().url('Invalid Vimob API URL').optional().default('http://localhost:8081'),
   NODE_ENV: z.enum(['development', 'production', 'test']).optional().default('development'),
 })
 

@@ -189,7 +189,7 @@ export function CadencesTab() {
                     return (
                       <div
                         key={task.id}
-                        className="flex items-center gap-3 p-3 rounded-lg border border-white/[0.055] bg-white/[0.035] group"
+                        className="group flex items-center gap-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-soft)] p-3"
                       >
                         <GripVertical className="h-4 w-4 text-muted-foreground/50 cursor-grab" />
                         <Badge variant="outline" className="shrink-0 font-mono text-xs">

@@ -36,11 +36,20 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts",
     ".next-e2e/types/**/*.ts",
-    ".next-e2e/dev/types/**/*.ts"
+    ".next-e2e/dev/types/**/*.ts",
+    ".next-e2e-preview/types/**/*.ts",
+    ".next-e2e-preview/dev/types/**/*.ts",
+    ".next-real-data/types/**/*.ts",
+    ".next-real-data/dev/types/**/*.ts",
+    ".next-real-data-v2/types/**/*.ts",
+    ".next-real-data-v2/dev/types/**/*.ts",
+    ".next-visual/types/**/*.ts",
+    ".next-visual/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",
     "supabase/functions",
-    "deploy/edge-retirement"
+    "deploy/edge-retirement",
+    "deploy/supabase-self-hosted/functions-main"
   ]
 }

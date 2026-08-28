@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
+	"golang.org/x/sync/singleflight"
 )
 
 var (
@@ -25,7 +26,10 @@ var (
 	ErrTenantResolutionUnhealthy = errors.New("tenant resolution failed")
 )
 
-const resolveCacheTTL = 5 * time.Second
+const (
+	resolveCacheTTL      = 5 * time.Second
+	resolveFlightTimeout = 10 * time.Second
+)
 
 type Repository struct {
 	db    *dbpkg.Postgres
@@ -41,6 +45,7 @@ type userProfile struct {
 
 type resolveCache struct {
 	values sync.Map
+	group  singleflight.Group
 }
 
 type resolveCacheEntry struct {
@@ -72,8 +77,23 @@ func (repo Repository) Resolve(ctx context.Context, userID string, requestedOrga
 		if cached, ok := repo.getCachedContext(ctx, cacheKey); ok {
 			return cached, nil
 		}
+		if repo.cache != nil {
+			return repo.cache.doResolve(ctx, cacheKey, func(resolveCtx context.Context) (Context, error) {
+				// A request can observe the miss immediately before another flight
+				// populates the cache. Recheck inside the keyed flight so that the
+				// late request only performs the mandatory membership/billing refresh.
+				if cached, ok := repo.getCachedContext(resolveCtx, cacheKey); ok {
+					return cached, nil
+				}
+				return repo.resolveFull(resolveCtx, userID, requestedOrganizationID, cacheKey)
+			})
+		}
 	}
 
+	return repo.resolveFull(ctx, userID, requestedOrganizationID, cacheKey)
+}
+
+func (repo Repository) resolveFull(ctx context.Context, userID string, requestedOrganizationID string, cacheKey string) (Context, error) {
 	profile, err := repo.getUserProfile(ctx, userID)
 	if err != nil {
 		return Context{}, err
@@ -141,6 +161,50 @@ func (repo Repository) Resolve(ctx context.Context, userID string, requestedOrga
 	return resolved, nil
 }
 
+func (cache *resolveCache) doResolve(
+	ctx context.Context,
+	key string,
+	resolve func(context.Context) (Context, error),
+) (Context, error) {
+	if resolve == nil {
+		return Context{}, ErrTenantResolutionUnhealthy
+	}
+	if cache == nil || key == "" {
+		return resolve(ctx)
+	}
+	if err := ctx.Err(); err != nil {
+		return Context{}, err
+	}
+
+	result := cache.group.DoChan(key, func() (any, error) {
+		// The caller that starts the flight may disconnect while other requests
+		// still need the same tenant. Keep its values for tracing, detach its
+		// cancellation, and bound the shared database work independently.
+		resolveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resolveFlightTimeout)
+		defer cancel()
+
+		resolved, err := resolve(resolveCtx)
+		if err != nil {
+			return Context{}, err
+		}
+		return cloneContext(resolved), nil
+	})
+
+	select {
+	case <-ctx.Done():
+		return Context{}, ctx.Err()
+	case shared := <-result:
+		if shared.Err != nil {
+			return Context{}, shared.Err
+		}
+		resolved, ok := shared.Val.(Context)
+		if !ok {
+			return Context{}, ErrTenantResolutionUnhealthy
+		}
+		return cloneContext(resolved), nil
+	}
+}
+
 func (repo Repository) getCachedContext(ctx context.Context, key string) (Context, bool) {
 	if repo.cache == nil || key == "" {
 		return Context{}, false
@@ -158,7 +222,7 @@ func (repo Repository) getCachedContext(ctx context.Context, key string) (Contex
 	}
 
 	cached := cloneContext(entry.context)
-	if !repo.contextIsStillActive(ctx, cached) {
+	if !repo.refreshCachedContext(ctx, &cached) {
 		repo.cache.values.Delete(key)
 		return Context{}, false
 	}
@@ -166,7 +230,11 @@ func (repo Repository) getCachedContext(ctx context.Context, key string) (Contex
 	return cached, true
 }
 
-func (repo Repository) contextIsStillActive(ctx context.Context, tenantContext Context) bool {
+func (repo Repository) refreshCachedContext(ctx context.Context, tenantContext *Context) bool {
+	if tenantContext == nil {
+		return false
+	}
+
 	if tenantContext.IsSuperAdmin {
 		var active bool
 		err := repo.db.Pool().QueryRow(ctx, `
@@ -182,8 +250,14 @@ func (repo Repository) contextIsStillActive(ctx context.Context, tenantContext C
 	}
 
 	var memberRole string
+	var billing billingSnapshot
 	err := repo.db.Pool().QueryRow(ctx, `
-		select coalesce(nullif(om.role, ''), 'user')
+		select
+			coalesce(nullif(om.role, ''), 'user'),
+			coalesce(nullif(trim(o.subscription_status), ''), ''),
+			coalesce(nullif(trim(o.subscription_type), ''), ''),
+			o.trial_ends_at,
+			o.billing_grace_until
 		from public.organization_members om
 		join public.users u on u.id = om.user_id
 		join public.organizations o on o.id = om.organization_id
@@ -193,8 +267,19 @@ func (repo Repository) contextIsStillActive(ctx context.Context, tenantContext C
 		  and coalesce(u.is_active, false) = true
 		  and coalesce(o.is_active, true) = true
 		limit 1
-	`, tenantContext.UserID, tenantContext.OrganizationID).Scan(&memberRole)
-	return err == nil && normalizeRole(memberRole) == normalizeRole(tenantContext.MemberRole)
+	`, tenantContext.UserID, tenantContext.OrganizationID).Scan(
+		&memberRole,
+		&billing.Status,
+		&billing.Type,
+		&billing.TrialEndsAt,
+		&billing.GraceUntil,
+	)
+	if err != nil || normalizeRole(memberRole) != normalizeRole(tenantContext.MemberRole) {
+		return false
+	}
+
+	billing.applyToContext(tenantContext)
+	return true
 }
 
 func (repo Repository) storeCachedContext(key string, tenantContext Context) {
@@ -222,7 +307,17 @@ func cloneContext(source Context) Context {
 	if source.LedPipelineIDs != nil {
 		clone.LedPipelineIDs = append([]string(nil), source.LedPipelineIDs...)
 	}
+	clone.TrialEndsAt = cloneTimePointer(source.TrialEndsAt)
+	clone.BillingGraceUntil = cloneTimePointer(source.BillingGraceUntil)
 	return clone
+}
+
+func cloneTimePointer(source *time.Time) *time.Time {
+	if source == nil {
+		return nil
+	}
+	cloned := *source
+	return &cloned
 }
 
 func (repo Repository) getUserProfile(ctx context.Context, userID string) (userProfile, error) {
@@ -270,6 +365,7 @@ func (repo Repository) resolveSuperAdmin(ctx context.Context, profile userProfil
 	resolved.OrganizationID = org.ID
 	resolved.OrganizationName = org.Name
 	resolved.OrganizationLogo = org.LogoURL
+	org.Billing.applyToContext(&resolved)
 	resolved.EnabledModules, err = repo.getEnabledModules(ctx, organizationID)
 	if err != nil {
 		return Context{}, fmt.Errorf("%w: %v", ErrTenantResolutionUnhealthy, err)
@@ -313,6 +409,33 @@ type organization struct {
 	ID      string
 	Name    string
 	LogoURL string
+	Billing billingSnapshot
+}
+
+type billingSnapshot struct {
+	Status      string
+	Type        string
+	TrialEndsAt pgtype.Timestamptz
+	GraceUntil  pgtype.Timestamptz
+}
+
+func (billing billingSnapshot) applyToContext(tenantContext *Context) {
+	if tenantContext == nil {
+		return
+	}
+
+	tenantContext.SubscriptionStatus = strings.TrimSpace(billing.Status)
+	tenantContext.SubscriptionType = strings.TrimSpace(billing.Type)
+	tenantContext.TrialEndsAt = timestamptzPointer(billing.TrialEndsAt)
+	tenantContext.BillingGraceUntil = timestamptzPointer(billing.GraceUntil)
+}
+
+func timestamptzPointer(value pgtype.Timestamptz) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	timestamp := value.Time
+	return &timestamp
 }
 
 func (repo Repository) getOrganization(ctx context.Context, organizationID string) (organization, error) {
@@ -320,10 +443,25 @@ func (repo Repository) getOrganization(ctx context.Context, organizationID strin
 	var logoURL pgtype.Text
 
 	err := repo.db.Pool().QueryRow(ctx, `
-		select id::text, name, logo_url
-		from public.organizations
-		where id = $1::uuid
-	`, organizationID).Scan(&org.ID, &org.Name, &logoURL)
+		select
+			o.id::text,
+			o.name,
+			o.logo_url,
+			coalesce(nullif(trim(o.subscription_status), ''), ''),
+			coalesce(nullif(trim(o.subscription_type), ''), ''),
+			o.trial_ends_at,
+			o.billing_grace_until
+		from public.organizations o
+		where o.id = $1::uuid
+	`, organizationID).Scan(
+		&org.ID,
+		&org.Name,
+		&logoURL,
+		&org.Billing.Status,
+		&org.Billing.Type,
+		&org.Billing.TrialEndsAt,
+		&org.Billing.GraceUntil,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return organization{}, ErrOrganizationNotFound
 	}
@@ -341,6 +479,7 @@ func (repo Repository) getOrganization(ctx context.Context, organizationID strin
 func (repo Repository) getActiveMembership(ctx context.Context, userID string, organizationID string) (Context, error) {
 	var resolved Context
 	var logoURL pgtype.Text
+	var billing billingSnapshot
 
 	err := repo.db.Pool().QueryRow(ctx, `
 		select
@@ -348,7 +487,11 @@ func (repo Repository) getActiveMembership(ctx context.Context, userID string, o
 			o.id::text,
 			o.name,
 			o.logo_url,
-			coalesce(nullif(om.role, ''), 'user')
+			coalesce(nullif(om.role, ''), 'user'),
+			coalesce(nullif(trim(o.subscription_status), ''), ''),
+			coalesce(nullif(trim(o.subscription_type), ''), ''),
+			o.trial_ends_at,
+			o.billing_grace_until
 		from public.users u
 		join public.organizations o on o.id = $2::uuid
 		join public.organization_members om
@@ -365,6 +508,10 @@ func (repo Repository) getActiveMembership(ctx context.Context, userID string, o
 		&resolved.OrganizationName,
 		&logoURL,
 		&resolved.MemberRole,
+		&billing.Status,
+		&billing.Type,
+		&billing.TrialEndsAt,
+		&billing.GraceUntil,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Context{}, ErrOrganizationAccessDenied
@@ -376,6 +523,7 @@ func (repo Repository) getActiveMembership(ctx context.Context, userID string, o
 	if logoURL.Valid {
 		resolved.OrganizationLogo = logoURL.String
 	}
+	billing.applyToContext(&resolved)
 
 	return resolved, nil
 }

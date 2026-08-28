@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -26,25 +26,56 @@ import { BrokerSelector, BrokerEntry } from './BrokerSelector';
 import { useCreateContract, useUpdateContract, type Contract } from '@/hooks/use-contracts';
 import { useProperties } from '@/hooks/use-properties';
 import { useLeads } from '@/hooks/use-leads';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { financialCalendarDateSchema } from '@/lib/validation';
 import { Loader2 } from 'lucide-react';
 
-const formSchema = z.object({
-  type: z.enum(['sale', 'rental', 'service']),
-  client_name: z.string().min(1, 'Nome do cliente é obrigatório'),
-  client_email: z.string().email().optional().or(z.literal('')),
-  client_phone: z.string().optional(),
-  client_document: z.string().optional(),
-  property_id: z.string().optional(),
-  lead_id: z.string().optional(),
-  total_value: z.number().min(0, 'Valor deve ser maior que zero'),
-  down_payment: z.number().min(0).optional(),
-  installments: z.number().min(1).max(360).optional(),
-  payment_conditions: z.string().optional(),
-  start_date: z.string().optional(),
-  end_date: z.string().optional(),
-  signing_date: z.string().optional(),
-  notes: z.string().optional(),
-});
+const optionalCalendarDateSchema = z.union([
+  financialCalendarDateSchema,
+  z.literal(''),
+]);
+
+const formSchema = z
+  .object({
+    type: z.enum(['sale', 'rental', 'service']),
+    client_name: z.string().trim().min(1, 'Nome do cliente é obrigatório').max(180),
+    client_email: z.string().trim().email('Email inválido').max(320).optional().or(z.literal('')),
+    client_phone: z.string().trim().max(40).optional(),
+    client_document: z.string().trim().max(40).optional(),
+    property_id: z.string().optional(),
+    lead_id: z.string().optional(),
+    total_value: z.number().finite().positive('Valor deve ser maior que zero'),
+    down_payment: z.number().finite().min(0).optional(),
+    installments: z.number().int().min(1).max(360).optional(),
+    payment_conditions: z.string().trim().max(4_000).optional(),
+    start_date: optionalCalendarDateSchema.optional(),
+    end_date: optionalCalendarDateSchema.optional(),
+    signing_date: optionalCalendarDateSchema.optional(),
+    notes: z.string().trim().max(4_000).optional(),
+  })
+  .superRefine((values, context) => {
+    if (
+      values.down_payment !== undefined &&
+      values.down_payment > values.total_value
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['down_payment'],
+        message: 'A entrada não pode exceder o valor total',
+      });
+    }
+    if (
+      values.start_date &&
+      values.end_date &&
+      values.end_date < values.start_date
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['end_date'],
+        message: 'A data final deve ser igual ou posterior à inicial',
+      });
+    }
+  });
 
 type FormValues = z.infer<typeof formSchema>;
 
@@ -54,6 +85,7 @@ interface ContractFormProps {
   contract?: ContractFormRecord;
   onSuccess: () => void;
   onCancel: () => void;
+  onPendingChange?: (pending: boolean) => void;
 }
 
 function normalizeContractType(type: string | null | undefined): FormValues['type'] {
@@ -62,17 +94,44 @@ function normalizeContractType(type: string | null | undefined): FormValues['typ
   return 'sale';
 }
 
-export function ContractForm({ contract, onSuccess, onCancel }: ContractFormProps) {
-  const { data: properties } = useProperties();
-  const { data: leads } = useLeads();
+export function ContractForm({
+  contract,
+  onSuccess,
+  onCancel,
+  onPendingChange,
+}: ContractFormProps) {
+  const isMobile = useIsMobile();
+  const [activeTab, setActiveTab] = useState('general');
+  const shouldLoadRelations =
+    activeTab === 'property' ||
+    Boolean(contract?.property_id) ||
+    Boolean(contract?.lead_id);
+  const {
+    data: properties,
+    isFetching: propertiesLoading,
+    error: propertiesError,
+    refetch: refetchProperties,
+  } = useProperties(undefined, {}, { enabled: shouldLoadRelations });
+  const {
+    data: leads,
+    isFetching: leadsLoading,
+    error: leadsError,
+    refetch: refetchLeads,
+  } = useLeads(undefined, { enabled: shouldLoadRelations });
   const createContract = useCreateContract();
   const updateContract = useUpdateContract();
+  const isLoading = createContract.isPending || updateContract.isPending;
+  const [brokerError, setBrokerError] = useState<string | null>(null);
+
+  useEffect(() => {
+    onPendingChange?.(isLoading);
+    return () => onPendingChange?.(false);
+  }, [isLoading, onPendingChange]);
 
   const [brokers, setBrokers] = useState<BrokerEntry[]>(
     contract?.brokers?.map((b) => ({
       user_id: b.user_id,
       commission_percentage: b.commission_percentage,
-      role: b.role,
     })) || []
   );
 
@@ -98,6 +157,41 @@ export function ContractForm({ contract, onSuccess, onCancel }: ContractFormProp
   });
 
   const onSubmit = async (values: FormValues) => {
+    setBrokerError(null);
+    if (brokers.some((broker) => !broker.user_id)) {
+      setBrokerError('Selecione um usuário em todos os corretores adicionados.');
+      setActiveTab(isMobile ? 'general' : 'brokers');
+      return;
+    }
+    if (
+      brokers.some(
+        (broker) =>
+          !Number.isFinite(broker.commission_percentage) ||
+          broker.commission_percentage < 0 ||
+          broker.commission_percentage > 100,
+      )
+    ) {
+      setBrokerError('Informe percentuais entre 0% e 100%.');
+      setActiveTab(isMobile ? 'general' : 'brokers');
+      return;
+    }
+    const brokerIds = brokers.map((broker) => broker.user_id);
+    if (new Set(brokerIds).size !== brokerIds.length) {
+      setBrokerError('O mesmo corretor não pode ser adicionado mais de uma vez.');
+      setActiveTab(isMobile ? 'general' : 'brokers');
+      return;
+    }
+    if (
+      brokers.reduce(
+        (total, broker) => total + broker.commission_percentage,
+        0,
+      ) > 100
+    ) {
+      setBrokerError('A soma das comissões não pode exceder 100%.');
+      setActiveTab(isMobile ? 'general' : 'brokers');
+      return;
+    }
+
     const contractData = {
       contract_type: values.type, // Mapeia 'type' do form para 'contract_type' no banco
       client_name: values.client_name,
@@ -116,25 +210,57 @@ export function ContractForm({ contract, onSuccess, onCancel }: ContractFormProp
       notes: values.notes || null,
     };
 
-    const brokerData = brokers.filter(b => b.user_id).map(b => ({
+    const brokerData = brokers.map(b => ({
       user_id: b.user_id,
       commission_percentage: b.commission_percentage,
     }));
 
-    if (contract) {
-      await updateContract.mutateAsync({ ...contractData, id: contract.id, brokers: brokerData });
-    } else {
-      await createContract.mutateAsync({ ...contractData, brokers: brokerData });
+    try {
+      if (contract) {
+        await updateContract.mutateAsync({ ...contractData, id: contract.id, brokers: brokerData });
+      } else {
+        await createContract.mutateAsync({ ...contractData, brokers: brokerData });
+      }
+      onSuccess();
+    } catch (error) {
+      form.setError('root', {
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Não foi possível salvar o contrato.',
+      });
     }
-    onSuccess();
   };
-
-  const isLoading = createContract.isPending || updateContract.isPending;
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-        <Tabs defaultValue="general" className="w-full">
+      <form
+        onSubmit={form.handleSubmit(onSubmit, (errors) => {
+          const fields = Object.keys(errors);
+          if (fields.some((field) => ['property_id', 'lead_id'].includes(field))) {
+            setActiveTab('property');
+          } else if (
+            fields.some((field) =>
+              ['total_value', 'down_payment', 'installments', 'payment_conditions'].includes(field),
+            )
+          ) {
+            setActiveTab('values');
+          } else if (
+            !isMobile &&
+            fields.some((field) =>
+              ['start_date', 'end_date', 'signing_date', 'notes'].includes(field),
+            )
+          ) {
+            setActiveTab('dates');
+          } else {
+            setActiveTab('general');
+          }
+        })}
+        className="space-y-4"
+        aria-busy={isLoading}
+      >
+        <fieldset disabled={isLoading} className="space-y-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <ScrollArea className="w-full">
             <TabsList className="grid w-full grid-cols-3 sm:grid-cols-5 mb-2">
               <TabsTrigger value="general" className="text-xs sm:text-sm">Geral</TabsTrigger>
@@ -228,12 +354,20 @@ export function ContractForm({ contract, onSuccess, onCancel }: ContractFormProp
             />
 
             {/* Mobile only: show brokers and dates here */}
-            <div className="sm:hidden space-y-4 pt-4 border-t">
+            {isMobile && <div className="space-y-4 border-t pt-4">
               <h4 className="font-medium text-sm">Corretores</h4>
-              <BrokerSelector brokers={brokers} onChange={setBrokers} />
-            </div>
+              <BrokerSelector
+                brokers={brokers}
+                onChange={(nextBrokers) => {
+                  setBrokers(nextBrokers);
+                  setBrokerError(null);
+                }}
+                disabled={isLoading}
+                error={brokerError || undefined}
+              />
+            </div>}
 
-            <div className="sm:hidden space-y-4 pt-4 border-t">
+            {isMobile && <div className="space-y-4 border-t pt-4">
               <h4 className="font-medium text-sm">Datas</h4>
               <div className="grid grid-cols-2 gap-4">
                 <FormField
@@ -292,10 +426,34 @@ export function ContractForm({ contract, onSuccess, onCancel }: ContractFormProp
                   </FormItem>
                 )}
               />
-            </div>
+            </div>}
           </TabsContent>
 
           <TabsContent value="property" className="space-y-4 pt-2">
+            {(propertiesLoading || leadsLoading) && (
+              <p className="text-xs text-muted-foreground" role="status">
+                Carregando imóveis e leads...
+              </p>
+            )}
+            {(propertiesError || leadsError) && (
+              <div
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive"
+                role="alert"
+              >
+                <span>Não foi possível carregar todos os vínculos.</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    if (propertiesError) void refetchProperties();
+                    if (leadsError) void refetchLeads();
+                  }}
+                >
+                  Tentar novamente
+                </Button>
+              </div>
+            )}
             <FormField
               control={form.control}
               name="property_id"
@@ -360,9 +518,16 @@ export function ContractForm({ contract, onSuccess, onCancel }: ContractFormProp
                     <Input
                       type="number"
                       step="0.01"
-                      min="0"
-                      {...field}
-                      onChange={e => field.onChange(parseFloat(e.target.value) || 0)}
+                      min="0.01"
+                      value={field.value || ''}
+                      onBlur={field.onBlur}
+                      name={field.name}
+                      ref={field.ref}
+                      onChange={e =>
+                        field.onChange(
+                          e.target.value === '' ? 0 : Number(e.target.value),
+                        )
+                      }
                     />
                   </FormControl>
                   <FormMessage />
@@ -428,7 +593,15 @@ export function ContractForm({ contract, onSuccess, onCancel }: ContractFormProp
           </TabsContent>
 
           <TabsContent value="brokers" className="pt-2 hidden sm:block">
-            <BrokerSelector brokers={brokers} onChange={setBrokers} />
+            <BrokerSelector
+              brokers={brokers}
+              onChange={(nextBrokers) => {
+                setBrokers(nextBrokers);
+                setBrokerError(null);
+              }}
+              disabled={isLoading}
+              error={brokerError || undefined}
+            />
           </TabsContent>
 
           <TabsContent value="dates" className="space-y-4 pt-2 hidden sm:block">
@@ -492,15 +665,22 @@ export function ContractForm({ contract, onSuccess, onCancel }: ContractFormProp
           </TabsContent>
         </Tabs>
 
+        {form.formState.errors.root?.message && (
+          <p className="text-sm text-destructive" role="alert">
+            {form.formState.errors.root.message}
+          </p>
+        )}
+
         <div className="flex gap-2 pt-4 border-t">
-          <Button type="button" variant="outline" onClick={onCancel} className="w-[40%] rounded-xl">
+          <Button type="button" variant="outline" onClick={onCancel} disabled={isLoading} className="w-[40%] rounded-lg">
             Cancelar
           </Button>
-          <Button type="submit" disabled={isLoading} className="w-[60%] rounded-xl">
+          <Button type="submit" disabled={isLoading} className="w-[60%] rounded-lg">
             {isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             {contract ? 'Salvar Alterações' : 'Criar Contrato'}
           </Button>
         </div>
+        </fieldset>
       </form>
     </Form>
   );

@@ -77,8 +77,8 @@ export function useCreateReceivableOnWon() {
       return financialAPI.createEntry<FinancialEntry>({
         lead_id: leadId,
         type: 'receivable',
+        category: 'Venda',
         amount: valorInteresse,
-        status: 'pending',
         due_date: dueDate.toISOString().split('T')[0],
         description: description || 'Venda - negócio fechado',
         notes: 'Gerado automaticamente ao marcar lead como ganho',

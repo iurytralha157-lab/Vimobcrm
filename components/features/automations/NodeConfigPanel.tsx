@@ -7,6 +7,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   Trash2, Play, MessageSquare, Timer, Image, Headphones, Video,
   GitBranch, Webhook, Tag, ArrowRightLeft, UserCheck, X, GripHorizontal,
   Home, CircleDot,
@@ -22,6 +32,8 @@ import { Plus } from 'lucide-react';
 import { useLeads } from '@/hooks/use-leads';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { useStages } from '@/hooks/use-stages';
+import { getTagColorStyle } from '@/lib/tag-color';
+import { getPipelineStageColorStyle } from '@/config/pipeline-stage-colors';
 import {
   AUTOMATION_CUSTOM_VARIABLES,
   DEFAULT_NEGATIVE_REPLY_KEYWORDS,
@@ -131,6 +143,7 @@ export function NodeConfigPanel({
   const [newTagName, setNewTagName] = useState('');
   const [isCreatingTag, setIsCreatingTag] = useState(false);
   const [leadSearch, setLeadSearch] = useState('');
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [minimumScheduledAt] = useState(() => toLocalDateTimeInput(new Date(Date.now() + 60_000).toISOString()));
   const debouncedLeadSearch = useDebouncedValue(leadSearch.trim(), 300);
   const { data: scheduledLeads = [], isLoading: scheduledLeadsLoading } = useLeads({ search: debouncedLeadSearch, limit: 10 });
@@ -173,17 +186,17 @@ export function NodeConfigPanel({
   return (
     <div
       ref={panelRef}
-      className="absolute w-[300px] bg-[var(--app-surface)] border border-white/[0.055] rounded-2xl flex flex-col max-h-[70vh] z-[100] shadow-lg"
+      className="absolute z-[100] flex max-h-[70vh] w-[300px] flex-col rounded-[8px] border border-[var(--app-border)] bg-[var(--app-surface-solid)] shadow-none"
       style={{ left: panelPos.x, top: panelPos.y, isolation: 'isolate' }}
     >
       <div
-        className="flex items-center justify-between px-4 py-2.5 border-b border-white/[0.055] bg-white/[0.045] shrink-0 cursor-grab active:cursor-grabbing select-none"
+        className="flex shrink-0 cursor-grab select-none items-center justify-between border-b border-[var(--app-border)] bg-[var(--app-surface-soft)] px-4 py-2.5 active:cursor-grabbing"
         onMouseDown={handleMouseDown}
       >
         <div className="flex items-center gap-2">
           <GripHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
           <Icon className={`h-4 w-4 ${nodeInfo.color}`} />
-          <span className="text-sm font-semibold text-foreground">{nodeInfo.label}</span>
+          <span className="text-[14px] font-normal text-foreground">{nodeInfo.label}</span>
         </div>
         <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClose} aria-label="Fechar configuração do nó">
           <X className="h-3.5 w-3.5" />
@@ -245,7 +258,7 @@ export function NodeConfigPanel({
                   <Select value={tagId} onValueChange={setTagId}>
                     <SelectTrigger className="h-9"><SelectValue placeholder="Selecione..." /></SelectTrigger>
                     <SelectContent className="z-[200]">{tags.map((t) => (
-                      <SelectItem key={t.id} value={t.id}><div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: t.color || '#888' }} />{t.name}</div></SelectItem>
+                      <SelectItem key={t.id} value={t.id}><div className="flex items-center gap-2"><div className="h-2.5 w-2.5 rounded-full" style={getTagColorStyle(t.color)} />{t.name}</div></SelectItem>
                     ))}</SelectContent>
                   </Select>
                 </div>
@@ -265,7 +278,7 @@ export function NodeConfigPanel({
                       <Select value={stageId} onValueChange={setStageId}>
                         <SelectTrigger className="h-9"><SelectValue placeholder="Selecione..." /></SelectTrigger>
                         <SelectContent className="z-[200]">{stages.map((s) => (
-                          <SelectItem key={s.id} value={s.id}><div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: s.color || '#888' }} />{s.name}</div></SelectItem>
+                          <SelectItem key={s.id} value={s.id}><div className="flex items-center gap-2"><div className="h-2.5 w-2.5 rounded-full" style={getPipelineStageColorStyle(s.color)} />{s.name}</div></SelectItem>
                         ))}</SelectContent>
                       </Select>
                     </div>
@@ -366,7 +379,7 @@ export function NodeConfigPanel({
 
               {/* Session WhatsApp - moved from sidebar */}
               {connectedSessions.length > 0 && setSessionId && (
-                <div className="space-y-1.5 pt-2 border-t border-white/[0.055]">
+                <div className="space-y-1.5 border-t border-[var(--app-border)] pt-2">
                   <Label className="text-xs">Sessão WhatsApp</Label>
                   <Select value={sessionId || ''} onValueChange={setSessionId}>
                     <SelectTrigger className="h-9"><SelectValue placeholder="Selecione..." /></SelectTrigger>
@@ -418,7 +431,7 @@ export function NodeConfigPanel({
               </div>
 
               {/* Stop on reply - moved here from sidebar */}
-              <div className="space-y-2 pt-2 border-t border-white/[0.055]">
+              <div className="space-y-2 border-t border-[var(--app-border)] pt-2">
                 <div className="flex items-center gap-2">
                   <Checkbox
                     id={`stop-reply-${selectedNode.id}`}
@@ -619,7 +632,7 @@ export function NodeConfigPanel({
                     {(tags || []).map((t) => (
                       <SelectItem key={t.id} value={t.id}>
                         <div className="flex items-center gap-2">
-                          <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: t.color || '#888' }} />
+                          <div className="h-2.5 w-2.5 rounded-full" style={getTagColorStyle(t.color)} />
                           {t.name}
                         </div>
                       </SelectItem>
@@ -634,7 +647,7 @@ export function NodeConfigPanel({
                   Criar nova tag
                 </Button>
               ) : (
-                <div className="space-y-2 p-2 rounded-lg border border-white/[0.055] bg-white/[0.035]">
+                <div className="space-y-2 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-soft)] p-2">
                   <Input
                     value={newTagName}
                     onChange={(e) => setNewTagName(e.target.value)}
@@ -706,7 +719,7 @@ export function NodeConfigPanel({
                       {moveStages.map((s) => (
                         <SelectItem key={s.id} value={s.id}>
                           <div className="flex items-center gap-2">
-                            <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: s.color || '#888' }} />
+                            <div className="h-2.5 w-2.5 rounded-full" style={getPipelineStageColorStyle(s.color)} />
                             {s.name}
                           </div>
                         </SelectItem>
@@ -866,15 +879,13 @@ export function NodeConfigPanel({
             </div>
           )}
 
-          <div className="pt-3 border-t border-white/[0.055] space-y-2">
+          <div className="space-y-2 border-t border-[var(--app-border)] pt-3">
             {canDeleteNode ? (
               <Button
                 variant="destructive"
                 size="sm"
                 className="w-full h-8 text-xs"
-                onClick={() => {
-                  if (window.confirm(`Remover o bloco ${nodeInfo.label} deste rascunho?`)) onDeleteNode(selectedNode.id);
-                }}
+                onClick={() => setDeleteDialogOpen(true)}
               >
                 <Trash2 className="h-3.5 w-3.5 mr-1.5" />
                 Remover nó
@@ -887,6 +898,36 @@ export function NodeConfigPanel({
           </div>
         </div>
       </ScrollArea>
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent className="max-w-[440px] rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-5 shadow-none">
+          <AlertDialogHeader className="space-y-1.5 text-left">
+            <AlertDialogTitle className="text-[14px] font-medium text-[var(--app-text-primary)]">
+              Remover bloco?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-[12px] font-light leading-5 text-[var(--app-text-tertiary)]">
+              O bloco “{nodeInfo.label}” será removido deste rascunho, junto com
+              as conexões ligadas a ele.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="mt-4 gap-2 sm:gap-2">
+            <AlertDialogCancel className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]">
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="h-9 rounded-[6px] bg-destructive px-3 text-[12px] font-light text-destructive-foreground shadow-none hover:bg-destructive/90"
+              onClick={(event) => {
+                event.preventDefault();
+                if (!canDeleteNode) return;
+                onDeleteNode(selectedNode.id);
+                setDeleteDialogOpen(false);
+              }}
+            >
+              Remover bloco
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

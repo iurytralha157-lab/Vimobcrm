@@ -59,35 +59,47 @@ function checkDismissed() {
   return false;
 }
 
-function getInitialState(): InstallPromptState {
-  const isStandalone = checkStandalone();
-  const isIOS = checkIOS();
-  const promptDismissed = checkDismissed();
-
-  return {
-    isInstallable: isIOS && !isStandalone && !promptDismissed,
-    isIOS,
-    isStandalone,
-    showPrompt: isIOS && !isStandalone && !promptDismissed,
-    promptDismissed,
-  };
-}
+const INITIAL_INSTALL_PROMPT_STATE: InstallPromptState = {
+  isInstallable: false,
+  isIOS: false,
+  isStandalone: false,
+  showPrompt: false,
+  promptDismissed: false,
+};
 
 export function useInstallPrompt() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-  const [state, setState] = useState<InstallPromptState>(getInitialState);
+  const [state, setState] = useState<InstallPromptState>(INITIAL_INSTALL_PROMPT_STATE);
 
   useEffect(() => {
+    let cancelled = false;
+    const isStandalone = checkStandalone();
+    const isIOS = checkIOS();
+    const promptDismissed = checkDismissed();
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setState({
+        isInstallable: isIOS && !isStandalone && !promptDismissed,
+        isIOS,
+        isStandalone,
+        showPrompt: isIOS && !isStandalone && !promptDismissed,
+        promptDismissed,
+      });
+    });
+
     // If already standalone, don't show anything
-    if (state.isStandalone) return;
-    if (state.isIOS) return;
+    if (isStandalone || isIOS) {
+      return () => {
+        cancelled = true;
+      };
+    }
 
     // For Android/Desktop, listen for beforeinstallprompt
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e as BeforeInstallPromptEvent);
 
-      if (!state.promptDismissed) {
+      if (!checkDismissed()) {
         setState(prev => ({
           ...prev,
           isInstallable: true,
@@ -110,10 +122,11 @@ export function useInstallPrompt() {
     window.addEventListener('appinstalled', handleAppInstalled);
 
     return () => {
+      cancelled = true;
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('appinstalled', handleAppInstalled);
     };
-  }, [state.isIOS, state.isStandalone, state.promptDismissed]);
+  }, []);
 
   const install = useCallback(async () => {
     if (!deferredPrompt) {
@@ -133,6 +146,19 @@ export function useInstallPrompt() {
           showPrompt: false,
         }));
         return true;
+      }
+
+      if (outcome === 'dismissed') {
+        try {
+          localStorage.setItem(STORAGE_KEY, Date.now().toString());
+        } catch {
+          // localStorage not available
+        }
+        setState(prev => ({
+          ...prev,
+          showPrompt: false,
+          promptDismissed: true,
+        }));
       }
     } catch (error) {
       console.error('Install prompt error:', error);

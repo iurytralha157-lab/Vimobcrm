@@ -28,10 +28,16 @@ export const AnimatedIcon: React.FC<AnimatedIconProps> = ({
   const { resolvedTheme } = useTheme();
 
   const colors = useMemo(() => {
-    const isDark = resolvedTheme === 'dark';
+    const rootStyles =
+      typeof window !== 'undefined' && resolvedTheme
+        ? window.getComputedStyle(document.documentElement)
+        : null;
+    const tokenColor = (token: string) =>
+      rootStyles?.getPropertyValue(token).trim() || 'currentColor';
+
     return {
-      primary: customColors.primary || (isDark ? '#f8fafc' : '#121212'),
-      secondary: customColors.secondary || '#ed492f'
+      primary: customColors.primary || tokenColor('--app-text-primary'),
+      secondary: customColors.secondary || tokenColor('--vimob-accent')
     };
   }, [resolvedTheme, customColors]);
 

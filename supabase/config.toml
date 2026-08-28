@@ -1,4 +1,71 @@
+project_id = "vimob-crm"
+
+[api]
+enabled = true
+port = 56321
+schemas = ["public", "storage", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 56322
+shadow_port = 56320
+major_version = 17
+
+[db.pooler]
+enabled = false
+port = 56329
+
+[studio]
+enabled = true
+port = 56323
+api_url = "http://127.0.0.1"
+
+[inbucket]
+enabled = true
+port = 56324
+smtp_port = 56325
+pop3_port = 56326
+
+[auth]
+enabled = true
+# Organization accounts are provisioned only by the audited Vimob onboarding
+# and invitation services. Direct GoTrue signups would create orphan profiles.
+enable_signup = false
+site_url = "http://127.0.0.1:3000"
+additional_redirect_urls = [
+  "http://127.0.0.1:3000/**",
+  "http://localhost:3000/**",
+  "http://192.168.*.*:3000/**",
+]
+
+[realtime]
+enabled = true
+ip_version = "IPv4"
+
+[storage]
+enabled = true
+file_size_limit = "50MiB"
+
+[analytics]
+enabled = false
+port = 56327
+vector_port = 56328
+
 [functions.evolution-go-webhook]
+verify_jwt = false
+
+# Evolution callbacks and private worker events are authenticated inside the
+# handler with their callback secret or constant-time private worker secret.
+[functions.evolution-webhook]
+verify_jwt = false
+
+# Private message workers receive service-role `apikey` requests and enforce
+# their own constant-time private authentication before any database access.
+[functions.message-sender]
+verify_jwt = false
+
+[functions.evolution-go-proxy]
 verify_jwt = false
 
 # OAuth callback is public; POST requests validate the Supabase bearer token
@@ -15,3 +82,79 @@ verify_jwt = false
 # token, so the platform JWT gateway must not reject them first.
 [functions.google-calendar-webhook]
 verify_jwt = false
+
+# Asaas authenticates payment webhooks with the private asaas-access-token
+# header. The handler validates it before any database access.
+[functions.asaas-webhook]
+verify_jwt = false
+
+# Checkout endpoints support either an authenticated billing manager or a
+# high-entropy checkout token. Each handler performs that authorization before
+# reading or mutating provider resources.
+[functions.asaas-checkout-info]
+verify_jwt = false
+
+[functions.asaas-create-charge]
+verify_jwt = false
+
+[functions.asaas-payment-status]
+verify_jwt = false
+
+[functions.asaas-cancel-payment]
+verify_jwt = false
+
+# Private recurrence worker. The gateway must allow an apikey-only sb_secret
+# request to reach the handler; the handler validates all current named secret
+# keys (plus local/legacy fallbacks) in constant time before any database work.
+[functions.asaas-card-recurrence-worker]
+verify_jwt = false
+
+# Retired legacy relay. JWT verification remains enabled at the gateway and
+# the handler itself always returns 410, so it cannot consume the Resend key.
+[functions.send-email]
+verify_jwt = true
+
+# Legacy user and organization mutation functions were replaced by the
+# tenant-aware Go API. Keep gateway JWT verification enabled in addition to
+# the 410 tombstone so these old routes cannot bypass current provisioning.
+[functions.submit-onboarding]
+verify_jwt = true
+
+[functions.public-signup]
+verify_jwt = true
+
+[functions.notify-onboarding-received]
+verify_jwt = true
+
+[functions.approve-onboarding-request]
+verify_jwt = true
+
+[functions.create-organization-admin]
+verify_jwt = true
+
+[functions.create-super-admin]
+verify_jwt = true
+
+[functions.create-user]
+verify_jwt = true
+
+[functions.manage-user]
+verify_jwt = true
+
+[functions.delete-user]
+verify_jwt = true
+
+[functions.update-organization-user]
+verify_jwt = true
+
+[functions.change-password]
+verify_jwt = true
+
+[functions.delete-organization]
+verify_jwt = true
+
+[functions.asaas-create-payment-link]
+verify_jwt = true
+
+[functions.subscription-automation]
+verify_jwt = true

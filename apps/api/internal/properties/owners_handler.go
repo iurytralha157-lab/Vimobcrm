@@ -26,13 +26,27 @@ func (handler Handler) ListOwners(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items, err := handler.repo.ListOwners(r.Context(), tenantContext)
+	filter, err := parseOwnerListFilter(r.URL.Query())
 	if err != nil {
 		writePropertyError(w, r, err)
 		return
 	}
 
-	httpserver.WriteJSON(w, http.StatusOK, map[string][]Owner{"data": items})
+	page, err := handler.repo.ListOwnersPage(r.Context(), tenantContext, filter)
+	if err != nil {
+		writePropertyError(w, r, err)
+		return
+	}
+
+	httpserver.WriteJSON(w, http.StatusOK, struct {
+		Data       []Owner `json:"data"`
+		NextCursor *string `json:"next_cursor"`
+		TotalCount int     `json:"total_count"`
+	}{
+		Data:       page.Items,
+		NextCursor: page.NextCursor,
+		TotalCount: page.TotalCount,
+	})
 }
 
 func (handler Handler) CreateOwner(w http.ResponseWriter, r *http.Request) {

@@ -1,19 +1,31 @@
 package meta
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 var (
-	ErrInvalidInput       = errors.New("invalid meta webhook input")
-	ErrInvalidSignature   = errors.New("invalid meta webhook signature")
-	ErrMissingAppSecret   = errors.New("missing meta app secret")
-	ErrMissingVerifyToken = errors.New("missing meta webhook verify token")
+	ErrInvalidInput                  = errors.New("invalid meta webhook input")
+	ErrInvalidSignature              = errors.New("invalid meta webhook signature")
+	ErrMissingAppSecret              = errors.New("missing meta app secret")
+	ErrMissingVerifyToken            = errors.New("missing meta webhook verify token")
+	ErrAmbiguousPageIntegration      = errors.New("ambiguous connected Meta integration for page")
+	ErrAmbiguousMessagingIntegration = errors.New("ambiguous connected Meta integration for messaging destination")
 )
 
 type Config struct {
-	AppSecret          string
-	WebhookVerifyToken string
-	GraphVersion       string
-	GraphBaseURL       string
+	AppSecret                               string
+	WebhookVerifyToken                      string
+	GraphVersion                            string
+	GraphBaseURL                            string
+	ConversionFeedbackWorkerEnabled         bool
+	ConversionFeedbackWorkerInterval        time.Duration
+	ConversionFeedbackWorkerBatch           int
+	ConversionFeedbackWorkerLease           time.Duration
+	ConversionFeedbackRequestTimeout        time.Duration
+	ConversionFeedbackPartnerAgent          string
+	ConversionFeedbackAppSecretProofEnabled bool
 }
 
 type Envelope[T any] struct {
@@ -21,11 +33,12 @@ type Envelope[T any] struct {
 }
 
 type WebhookResponse struct {
-	OK        bool            `json:"ok"`
-	EventID   string          `json:"eventId,omitempty"`
-	Processed int             `json:"processed"`
-	Results   []LeadgenResult `json:"results,omitempty"`
-	Warnings  []string        `json:"warnings,omitempty"`
+	OK               bool              `json:"ok"`
+	EventID          string            `json:"eventId,omitempty"`
+	Processed        int               `json:"processed"`
+	Results          []LeadgenResult   `json:"results,omitempty"`
+	MessagingResults []MessagingResult `json:"messagingResults,omitempty"`
+	Warnings         []string          `json:"warnings,omitempty"`
 }
 
 type LeadgenResult struct {
@@ -39,12 +52,24 @@ type LeadgenResult struct {
 	Error          string `json:"error,omitempty"`
 }
 
+type MessagingResult struct {
+	Status            string `json:"status"`
+	OrganizationID    string `json:"organizationId,omitempty"`
+	ConversationID    string `json:"conversationId,omitempty"`
+	MessageID         string `json:"messageId,omitempty"`
+	ExternalMessageID string `json:"externalMessageId,omitempty"`
+	PageID            string `json:"pageId,omitempty"`
+	Platform          string `json:"platform,omitempty"`
+	Error             string `json:"error,omitempty"`
+}
+
 type webhookEventContext struct {
-	Object    string
-	PageID    string
-	FormID    string
-	LeadgenID string
-	EventType string
+	Object          string
+	PageID          string
+	FormID          string
+	LeadgenID       string
+	ProviderEventID string
+	EventType       string
 }
 
 type webhookEventJob struct {

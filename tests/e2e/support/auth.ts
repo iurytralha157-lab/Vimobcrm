@@ -39,8 +39,12 @@ export async function signInAs(page: Page, userKey: E2EUserKey) {
   expect(tokenPayload.access_token, 'Supabase should return an access token after login').toBeTruthy();
   accessTokens.set(page, tokenPayload.access_token!);
 
-  await expect(page).toHaveURL(/\/dashboard/, { timeout: 30_000 });
-  await expect(page.locator('aside.app-sidebar')).toBeVisible({ timeout: 30_000 });
+  await expect(page).toHaveURL(/\/inicio/, { timeout: 30_000 });
+  const viewport = page.viewportSize();
+  const applicationNavigation = viewport && viewport.width < 768
+    ? page.locator('nav.app-mobile-bottom-nav')
+    : page.locator('aside.app-sidebar');
+  await expect(applicationNavigation).toBeVisible({ timeout: 30_000 });
 }
 
 export async function fetchTenantContext(page: Page): Promise<TenantContext> {

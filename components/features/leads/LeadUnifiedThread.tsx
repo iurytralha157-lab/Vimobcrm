@@ -14,7 +14,7 @@ import {
   useSendWhatsAppMessage,
   useReactToWhatsAppMessage,
   useWhatsAppConversations,
-  useWhatsAppRealtimeConversations,
+  useWhatsAppLeadRealtime,
   type WhatsAppConversation,
   type WhatsAppMessage,
 } from '@/hooks/use-whatsapp-conversations';
@@ -22,6 +22,7 @@ import { useLeadMessages } from '@/hooks/use-lead-messages';
 import { useStartConversation } from '@/hooks/use-start-conversation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
+import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { toast } from 'sonner';
 import { whatsappAPI } from '@/lib/api/whatsapp';
 import { getWhatsAppMessageInputState } from '@/lib/whatsapp-message-input';
@@ -165,6 +166,30 @@ function metadataText(value: unknown): string | null {
   }
   if (value === null || value === undefined || value === false) return null;
   return String(value);
+}
+
+function safeExternalUrl(value: unknown): string | null {
+  const candidate = metadataText(value);
+  if (!candidate) return null;
+  if (candidate.startsWith('/') && !candidate.startsWith('//')) return candidate;
+
+  try {
+    const url = new URL(candidate);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function safeEventDate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatEventTime(value: string | null | undefined) {
+  const date = safeEventDate(value);
+  return date ? format(date, 'HH:mm', { locale: ptBR }) : '--:--';
 }
 
 function isInternalNotificationMessage(message: WhatsAppMessage) {
@@ -540,15 +565,15 @@ function getEventTone(event: UnifiedHistoryEvent) {
   }
 
   if (event.type === 'meta_form_answer') {
-    return 'bg-[#1877F2] !text-white';
+    return 'bg-blue-600 !text-white';
   }
 
   if (event.type === 'webhook_form_answer') {
-    return 'bg-[#FF4529] !text-white';
+    return 'bg-primary !text-primary-foreground';
   }
 
   if (event.type === 'property_selected' || event.type === 'property_linked') {
-    return 'bg-[color-mix(in_srgb,#FF4529_14%,var(--app-surface-solid))] !text-[color-mix(in_srgb,#FF4529_72%,var(--app-text-primary))]';
+    return 'bg-primary/10 !text-primary';
   }
 
   if (
@@ -559,11 +584,11 @@ function getEventTone(event: UnifiedHistoryEvent) {
     event.type === 'meeting_scheduled' ||
     event.type === 'meeting_held'
   ) {
-    return 'bg-[color-mix(in_srgb,#3b82f6_14%,var(--app-surface-solid))] !text-[color-mix(in_srgb,#3b82f6_72%,var(--app-text-primary))]';
+    return 'bg-blue-500/10 !text-blue-600 dark:!text-blue-300';
   }
 
   if (event.type === 'proposal_sent') {
-    return 'bg-[color-mix(in_srgb,#f59e0b_16%,var(--app-surface-solid))] !text-[color-mix(in_srgb,#f59e0b_72%,var(--app-text-primary))]';
+    return 'bg-amber-500/10 !text-amber-700 dark:!text-amber-300';
   }
 
   if (toStatus === 'won') {
@@ -575,7 +600,7 @@ function getEventTone(event: UnifiedHistoryEvent) {
   }
 
   if (toStatus === 'open') {
-    return 'bg-[color-mix(in_srgb,#f59e0b_16%,var(--app-surface-solid))] !text-[color-mix(in_srgb,#f59e0b_72%,var(--app-text-primary))]';
+    return 'bg-amber-500/10 !text-amber-700 dark:!text-amber-300';
   }
 
   if (text.includes('ganho') || text.includes('venda conclu')) {
@@ -587,7 +612,7 @@ function getEventTone(event: UnifiedHistoryEvent) {
   }
 
   if (text.includes('reaberto')) {
-    return 'bg-[color-mix(in_srgb,#f59e0b_16%,var(--app-surface-solid))] !text-[color-mix(in_srgb,#f59e0b_72%,var(--app-text-primary))]';
+    return 'bg-amber-500/10 !text-amber-700 dark:!text-amber-300';
   }
 
   const outcomeVariant = getOutcomeVariant(event);
@@ -609,7 +634,7 @@ function getEventTone(event: UnifiedHistoryEvent) {
 function DatePill({ date }: { date: Date }) {
   return (
     <div className="my-2 flex justify-center">
-      <span className="rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-1 text-[10px] font-medium text-[var(--app-text-tertiary)]">
+      <span className="rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-1 text-[10px] font-light text-[var(--app-text-tertiary)]">
         {isSameDay(date, new Date()) ? 'Hoje' : format(date, "dd/MM/yyyy", { locale: ptBR })}
       </span>
     </div>
@@ -621,8 +646,8 @@ function EventActor({ event }: { event: UnifiedHistoryEvent }) {
 
   return (
     <Avatar className="h-5 w-5 shrink-0 border-0" title={event.actor.name}>
-      <AvatarImage src={event.actor.avatar_url || undefined} />
-      <AvatarFallback className="bg-[#FF4529] text-[9px] text-white">
+      <AvatarImage src={event.actor.avatar_url || undefined} alt={event.actor.name || 'Responsável'} />
+      <AvatarFallback className="bg-primary text-[9px] text-primary-foreground">
         {event.actor.name?.[0]?.toUpperCase() || 'U'}
       </AvatarFallback>
     </Avatar>
@@ -651,22 +676,22 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
     return (
       <div className="flex justify-end px-2">
         <div className={cn(
-          "min-w-0 max-w-[88%] overflow-hidden rounded-[8px] px-3 py-2 text-right text-white shadow-sm",
-          isWebhookAnswer ? "bg-[#FF4529]" : "bg-[#1877F2]",
+          "min-w-0 max-w-[88%] overflow-hidden rounded-[8px] px-3 py-2 text-right text-primary-foreground shadow-none",
+          isWebhookAnswer ? "bg-primary" : "bg-blue-600",
         )}>
-          <div className="text-[9px] font-medium uppercase tracking-wide text-white/70">
+          <div className="text-[9px] font-light text-primary-foreground/70">
             {isWebhookAnswer ? 'Webhook' : 'Meta Lead Ads'}
           </div>
-          <div className="mt-0.5 break-words text-[10px] font-medium uppercase leading-snug text-white/90">
+          <div className="mt-0.5 break-words text-[10px] font-normal leading-snug text-primary-foreground/90">
             {question}
           </div>
           {answer && (
-            <div className="mt-2 max-w-full overflow-hidden rounded-[6px] bg-white/[0.16] px-2.5 py-1.5 text-[11px] font-semibold leading-snug text-white [overflow-wrap:anywhere]">
+            <div className="mt-2 max-w-full overflow-hidden rounded-[6px] bg-primary-foreground/15 px-2.5 py-1.5 text-[11px] font-normal leading-snug text-primary-foreground [overflow-wrap:anywhere]">
               {answer}
             </div>
           )}
-          <div className="mt-1.5 text-[9px] text-white/65">
-            {format(new Date(event.timestamp), 'HH:mm', { locale: ptBR })}
+          <div className="mt-1.5 text-[9px] text-primary-foreground/65">
+            {formatEventTime(event.timestamp)}
           </div>
         </div>
       </div>
@@ -675,25 +700,25 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
 
   if (event.type === 'meta_creative') {
     const metadata = event.metadata || {};
-    const imageUrl = metadataText(metadata.creative_url);
-    const videoUrl = metadataText(metadata.creative_video_url);
+    const imageUrl = safeExternalUrl(metadata.creative_url);
+    const videoUrl = safeExternalUrl(metadata.creative_video_url);
     const linkUrl =
-      metadataText(metadata.creative_link_url) ||
-      metadataText(metadata.creative_destination_url) ||
-      metadataText(metadata.creative_instagram_url);
+      safeExternalUrl(metadata.creative_link_url) ||
+      safeExternalUrl(metadata.creative_destination_url) ||
+      safeExternalUrl(metadata.creative_instagram_url);
 
     return (
       <div className="flex justify-end px-2">
-        <div className="max-w-[88%] overflow-hidden rounded-[8px] bg-[#1877F2] text-right text-white shadow-sm">
+        <div className="max-w-[88%] overflow-hidden rounded-[8px] bg-blue-600 text-right text-primary-foreground shadow-none">
           {(videoUrl || imageUrl) && (
-            <div className="flex max-h-[260px] items-center justify-center bg-black/15">
+            <div className="flex max-h-[260px] items-center justify-center bg-[var(--app-surface-soft)]">
               {videoUrl ? (
                 <video
                   src={videoUrl}
                   poster={imageUrl || undefined}
                   controls
                   preload="metadata"
-                  className="max-h-[260px] w-full bg-black object-contain"
+                  className="max-h-[260px] w-full bg-[var(--app-surface-soft)] object-contain"
                 />
               ) : imageUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element -- Meta creative URLs are external, signed and not part of Next image config.
@@ -706,18 +731,18 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
             </div>
           )}
 
-          <div className="flex items-center justify-end gap-2 px-3 py-2 text-[9px] text-white/65">
+          <div className="flex items-center justify-end gap-2 px-3 py-2 text-[9px] text-primary-foreground/65">
             {linkUrl && (
               <a
                 href={linkUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="rounded-[5px] bg-white/15 px-2 py-1 text-[9px] font-medium text-white/85 hover:bg-white/20"
+                className="rounded-[5px] bg-primary-foreground/15 px-2 py-1 text-[9px] font-light text-primary-foreground/85 hover:bg-primary-foreground/20"
               >
                 Abrir
               </a>
             )}
-            <span>{format(new Date(event.timestamp), 'HH:mm', { locale: ptBR })}</span>
+            <span>{formatEventTime(event.timestamp)}</span>
           </div>
         </div>
       </div>
@@ -733,11 +758,11 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
       )}
       title={alignment !== 'center' && event.actor ? `${event.actor.name} fez esta acao` : undefined}
     >
-      <div className={cn('uppercase tracking-wide', isFirstResponse && 'inline-flex items-center justify-end gap-1.5')}>
+      <div className={cn(isFirstResponse && 'inline-flex items-center justify-end gap-1.5')}>
         {isFirstResponse && <Timer className="h-3 w-3" />}
         <span>{normalizeEventLabel(event)}</span>
         <span className={cn('ml-2', isFirstResponse ? 'text-amber-950/65' : isSolidTone ? 'text-white/70' : 'text-[var(--app-text-tertiary)]')}>
-          {format(new Date(event.timestamp), 'HH:mm', { locale: ptBR })}
+          {formatEventTime(event.timestamp)}
         </span>
         {event.isAutomation && <Bot className="ml-1 inline h-3 w-3 align-[-2px]" />}
       </div>
@@ -773,15 +798,15 @@ function FeedbackBubble({ event }: { event: UnifiedHistoryEvent }) {
   return (
     <div className="flex items-end justify-end gap-2 px-2">
       <div className="max-w-[82%] rounded-[8px] bg-primary/12 px-3 py-2 text-[11px] leading-relaxed text-[var(--app-text-primary)]">
-        <div className="mb-1 flex items-center justify-between gap-3 text-[10px] font-medium text-[var(--app-text-tertiary)]">
+        <div className="mb-1 flex items-center justify-between gap-3 text-[10px] font-light text-[var(--app-text-tertiary)]">
           <span>Feedback</span>
-          <span>{format(new Date(event.timestamp), 'HH:mm', { locale: ptBR })}</span>
+          <span>{formatEventTime(event.timestamp)}</span>
         </div>
         <div className="whitespace-pre-wrap break-words">{event.content}</div>
       </div>
       <Avatar className="h-6 w-6 shrink-0 border-0" title={actorName}>
-        <AvatarImage src={event.actor?.avatar_url || undefined} />
-        <AvatarFallback className="bg-[#FF4529] text-[10px] text-white">
+        <AvatarImage src={event.actor?.avatar_url || undefined} alt={actorName} />
+        <AvatarFallback className="bg-primary text-[10px] text-primary-foreground">
           {actorName[0]?.toUpperCase() || 'F'}
         </AvatarFallback>
       </Avatar>
@@ -800,8 +825,10 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   const lastThreadItemIdRef = useRef<string | null>(null);
   const { profile } = useAuth();
   const { hasPermission } = useUserPermissions();
-  const canViewWhatsApp = hasPermission('whatsapp_view') || hasPermission('whatsapp_operate');
-  const canOperateWhatsApp = hasPermission('whatsapp_operate');
+  const { hasModule } = useOrganizationModules();
+  const hasWhatsAppModule = hasModule('whatsapp');
+  const canViewWhatsApp = hasWhatsAppModule && (hasPermission('whatsapp_view') || hasPermission('whatsapp_operate'));
+  const canOperateWhatsApp = hasWhatsAppModule && hasPermission('whatsapp_operate');
   const { data: history = [], isLoading: loadingHistory } = useLeadHistory(leadId);
   const { data: sessions = [], isLoading: loadingSessions } = useAccessibleSessions({ enabled: canViewWhatsApp });
   const accessibleSessionIds = useMemo(() => sessions.map((session) => session.id), [sessions]);
@@ -810,7 +837,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     { hideGroups: true },
     !canViewWhatsApp ? [] : loadingSessions ? undefined : accessibleSessionIds,
   );
-  useWhatsAppRealtimeConversations(canViewWhatsApp, loadingSessions ? undefined : accessibleSessionIds, [leadId]);
+  useWhatsAppLeadRealtime(canViewWhatsApp, [leadId]);
 
   const conversation = useMemo<WhatsAppConversation | null>(() => {
     return conversations.find((item) => item.lead_id === leadId || item.lead?.id === leadId) || null;
@@ -868,17 +895,28 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       !whatsappMessageInputState.disabled,
   );
   const isSendingMessage = sendMessage.isPending || startConversation.isPending;
-  const inputPlaceholder = !hasLeadPhone
-    ? 'Lead sem telefone cadastrado'
-    : leadHasNoWhatsApp
-      ? 'Este lead nao tem WhatsApp'
-      : !conversation && !whatsappMessageInputState.disabled
-        ? 'Digite para iniciar a conversa com este lead'
-        : whatsappMessageInputState.placeholder;
+  const inputPlaceholder = !hasWhatsAppModule
+    ? 'Módulo de WhatsApp indisponível'
+    : !canOperateWhatsApp
+      ? 'Você não tem permissão para enviar mensagens'
+    : !hasLeadPhone
+      ? 'Lead sem telefone cadastrado'
+      : leadHasNoWhatsApp
+        ? 'Este lead não tem WhatsApp'
+        : !conversation && !whatsappMessageInputState.disabled
+          ? 'Digite para iniciar a conversa com este lead'
+          : whatsappMessageInputState.placeholder;
 
   useEffect(() => {
     if (!composerRequest || loadingSessions || lastHandledComposerRequestRef.current === composerRequest.id) return;
     lastHandledComposerRequestRef.current = composerRequest.id;
+
+    if (!canOperateWhatsApp) {
+      toast.error(
+        hasWhatsAppModule ? 'Sem permissão para enviar mensagens' : 'Módulo de WhatsApp indisponível',
+      );
+      return;
+    }
 
     if (!hasLeadPhone) {
       toast.error('Lead sem telefone', {
@@ -913,7 +951,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       window.cancelAnimationFrame(frame);
       window.clearTimeout(timeout);
     };
-  }, [composerRequest, hasLeadPhone, leadHasNoWhatsApp, loadingSessions, whatsappMessageInputState.disabled, whatsappMessageInputState.placeholder]);
+  }, [canOperateWhatsApp, composerRequest, hasLeadPhone, hasWhatsAppModule, leadHasNoWhatsApp, loadingSessions, whatsappMessageInputState.disabled, whatsappMessageInputState.placeholder]);
 
   const items = useMemo<ThreadItem[]>(() => {
     const visibleEvents = removeRedundantEvents(history.filter(shouldShowEvent));
@@ -956,7 +994,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
 
     const sorted = [...finalEventItems, ...messageItems]
       .filter((item) => item.timestamp)
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      .sort((a, b) => (safeEventDate(a.timestamp)?.getTime() ?? 0) - (safeEventDate(b.timestamp)?.getTime() ?? 0));
 
     const createdIndex = sorted.findIndex(
       (item) =>
@@ -1093,7 +1131,14 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     const previousScrollHeight = scrollElement?.scrollHeight ?? 0;
     const previousScrollTop = scrollElement?.scrollTop ?? 0;
 
-    await loadOlderMessages();
+    try {
+      await loadOlderMessages();
+    } catch {
+      toast.error('Histórico não carregado', {
+        description: 'Não foi possível buscar as mensagens anteriores agora.',
+      });
+      return;
+    }
 
     window.requestAnimationFrame(() => {
       if (!scrollElement) return;
@@ -1118,7 +1163,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
             <div className="flex justify-center px-2 pb-1">
               <button
                 type="button"
-                className="inline-flex h-8 items-center gap-2 rounded-md border border-[var(--app-border)] bg-[var(--app-surface)] px-3 text-[11px] font-medium text-[var(--app-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex h-8 items-center gap-2 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-3 text-[11px] font-light text-[var(--app-text-secondary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={() => void handleLoadOlderMessages()}
                 disabled={isLoadingOlder}
               >
@@ -1137,11 +1182,13 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
 
           {!isLoading && items.map((item, index) => {
             const previous = index > 0 ? items[index - 1] : null;
-            const showDate = !previous || !isSameDay(new Date(previous.timestamp), new Date(item.timestamp));
+            const itemDate = safeEventDate(item.timestamp);
+            const previousDate = safeEventDate(previous?.timestamp);
+            const showDate = Boolean(itemDate && (!previousDate || !isSameDay(previousDate, itemDate)));
 
             return (
               <div key={item.id} className="space-y-3">
-                {showDate && <DatePill date={new Date(item.timestamp)} />}
+                {showDate && itemDate && <DatePill date={itemDate} />}
                 {item.kind === 'event' ? (
                   isFeedbackEvent(item.event) ? (
                     <FeedbackBubble event={item.event} />
@@ -1228,7 +1275,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={!canSendMessage || isSendingMessage}
-                  title="Anexar midia"
+                  title="Anexar mídia"
                 >
                   <Paperclip className="h-4 w-4" />
                 </button>

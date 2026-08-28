@@ -1,151 +1,100 @@
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
 import { analyticsAPI } from '@/lib/api/analytics';
+import { VimobAPIError } from '@/lib/api/vimob-error';
+import { DomainValidationError, formatSiteAnalyticsDate } from '@/lib/validation';
 
-export interface LeadJourney {
-  session_id: string;
-  path_sequence: string[];
-  event_sequence: string[];
-  first_event: string;
-  last_event: string;
-  total_events: number;
-  converted: boolean;
-  device_type: string | null;
-  browser: string | null;
-  os: string | null;
-  city: string | null;
-  region: string | null;
-  country: string | null;
-  utm_source: string | null;
-  referrer: string | null;
+export type {
+  DailyView,
+  DeviceBreakdown,
+  FunnelStep,
+  LeadAnalyticsData,
+  LeadJourney,
+  LocationData,
+  SiteAnalyticsDetailed,
+  SiteAnalyticsSummary,
+  TopPage,
+} from '@/lib/validation';
+
+class MissingAnalyticsTenantError extends Error {
+  constructor() {
+    super('Selecione uma organização ativa para consultar o dashboard do site.');
+    this.name = 'MissingAnalyticsTenantError';
+  }
 }
 
-export interface FunnelStep {
-  event_type: string;
-  total: number;
-}
-
-export interface TopPage {
-  page_path: string;
-  views: number;
-}
-
-export interface DailyView {
-  date: string;
-  views: number;
-}
-
-export interface DeviceBreakdown {
-  device_type: string;
-  total: number;
-}
-
-export interface LocationData {
-  city: string;
-  region: string | null;
-  country: string | null;
-  lat: number | null;
-  lng: number | null;
-  sessions: number;
-}
-
-export interface LeadAnalyticsData {
-  journeys: LeadJourney[];
-  funnel: FunnelStep[];
-  top_pages: TopPage[];
-  daily_views: DailyView[];
-  total_sessions: number;
-  total_conversions: number;
-  device_breakdown: DeviceBreakdown[];
-  locations: LocationData[];
-}
-
-export interface SiteAnalyticsSummary {
-  totalViews: number;
-  totalPages: number;
-  uniquePages: number;
-  uniqueSessions: number;
-  avgDuration: number;
-  desktopPct: number;
-  mobilePct: number;
-  tabletPct: number;
-  directPct: number;
-  searchPct: number;
-  socialPct: number;
-  campaignPct: number;
-  referralPct: number;
-  conversions: number;
-  prevSessions: number;
-  prevViews: number;
-  prevPages: number;
-  prevUniquePages: number;
-  prevAvgDuration: number;
-  prevDesktopPct: number;
-  prevMobilePct: number;
-  prevConversions: number;
-	prevConversionRate: number;
-}
-
-export interface SiteAnalyticsDetailed {
-  topProperties: { property_id: string; title: string; code: string; views: number; favorites: number }[];
-  topPages: { page_path: string; views: number }[];
-  dailyViews: { date: string; views: number }[];
-  conversionRate: number;
-  totalSessions: number;
-  totalConversions: number;
-  siteLeads: number;
-  campaigns: { source: string; campaign: string; sessions: number; conversions: number }[];
-  searchTerms: { term: string; searches: number }[];
-	pagesPerSession: number;
-	bounceRate: number;
-	liveVisitors: number;
-}
-
-function rangeQuery(dateFrom?: Date, dateTo?: Date) {
+export function siteAnalyticsRangeQuery(dateFrom?: Date, dateTo?: Date) {
   return {
-    dateFrom: dateFrom?.toISOString(),
-    dateTo: dateTo?.toISOString(),
+    dateFrom: formatSiteAnalyticsDate(dateFrom),
+    dateTo: formatSiteAnalyticsDate(dateTo),
   };
 }
 
-export function useLeadAnalytics(dateFrom?: Date, dateTo?: Date) {
-  const { organization } = useAuth();
+function shouldRetryAnalyticsRequest(failureCount: number, error: unknown) {
+  if (
+    error instanceof DomainValidationError ||
+    error instanceof MissingAnalyticsTenantError ||
+    (error instanceof VimobAPIError && error.status >= 400 && error.status < 500)
+  ) {
+    return false;
+  }
+  return failureCount < 2;
+}
+
+function analyticsRefetchInterval(query: { state: { error: unknown } }) {
+  return query.state.error ? false : 30_000;
+}
+
+export function useLeadAnalytics(dateFrom: Date, dateTo: Date) {
+  const { loading, organization, profile } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
+  const range = siteAnalyticsRangeQuery(dateFrom, dateTo);
 
   return useQuery({
-    queryKey: ['lead-analytics', organization?.id, dateFrom?.toISOString(), dateTo?.toISOString()],
-    queryFn: async (): Promise<LeadAnalyticsData> => {
-      if (!organization?.id) {
-        return analyticsAPI.leadAnalytics<LeadAnalyticsData>({});
-      }
-      return analyticsAPI.leadAnalytics<LeadAnalyticsData>(rangeQuery(dateFrom, dateTo));
+    queryKey: ['lead-analytics', organizationId, range.dateFrom, range.dateTo],
+    queryFn: ({ signal }) => {
+      if (!organizationId) throw new MissingAnalyticsTenantError();
+      return analyticsAPI.leadAnalytics(range, { organizationId, signal });
     },
-    enabled: !!organization?.id,
-    refetchInterval: 30_000,
+    enabled: !loading,
+    retry: shouldRetryAnalyticsRequest,
+    refetchInterval: analyticsRefetchInterval,
+    staleTime: 20_000,
   });
 }
 
-export function useSiteAnalytics(dateFrom?: Date, dateTo?: Date) {
-  const { organization } = useAuth();
+export function useSiteAnalytics(dateFrom: Date, dateTo: Date) {
+  const { loading, organization, profile } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
+  const range = siteAnalyticsRangeQuery(dateFrom, dateTo);
 
   return useQuery({
-    queryKey: ['site-analytics', organization?.id, dateFrom?.toISOString(), dateTo?.toISOString()],
-    queryFn: async (): Promise<SiteAnalyticsSummary> => {
-      return analyticsAPI.siteSummary<SiteAnalyticsSummary>(rangeQuery(dateFrom, dateTo));
+    queryKey: ['site-analytics', organizationId, range.dateFrom, range.dateTo],
+    queryFn: ({ signal }) => {
+      if (!organizationId) throw new MissingAnalyticsTenantError();
+      return analyticsAPI.siteSummary(range, { organizationId, signal });
     },
-    enabled: !!organization?.id,
-    refetchInterval: 30_000,
+    enabled: !loading,
+    retry: shouldRetryAnalyticsRequest,
+    refetchInterval: analyticsRefetchInterval,
+    staleTime: 20_000,
   });
 }
 
-export function useSiteAnalyticsDetailed(dateFrom?: Date, dateTo?: Date) {
-  const { organization } = useAuth();
+export function useSiteAnalyticsDetailed(dateFrom: Date, dateTo: Date) {
+  const { loading, organization, profile } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
+  const range = siteAnalyticsRangeQuery(dateFrom, dateTo);
 
   return useQuery({
-    queryKey: ['site-analytics-detailed', organization?.id, dateFrom?.toISOString(), dateTo?.toISOString()],
-    queryFn: async (): Promise<SiteAnalyticsDetailed> => {
-      return analyticsAPI.siteDetailed<SiteAnalyticsDetailed>(rangeQuery(dateFrom, dateTo));
+    queryKey: ['site-analytics-detailed', organizationId, range.dateFrom, range.dateTo],
+    queryFn: ({ signal }) => {
+      if (!organizationId) throw new MissingAnalyticsTenantError();
+      return analyticsAPI.siteDetailed(range, { organizationId, signal });
     },
-    enabled: !!organization?.id,
-    refetchInterval: 30_000,
+    enabled: !loading,
+    retry: shouldRetryAnalyticsRequest,
+    refetchInterval: analyticsRefetchInterval,
+    staleTime: 20_000,
   });
 }

@@ -782,7 +782,7 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="h-9 min-w-[220px] rounded-[8px] border-0 bg-[var(--app-background)] px-3 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus-visible:ring-1"
+              className="h-9 min-w-[220px] rounded-[8px] border-0 bg-[var(--app-background)] px-3 text-[14px] font-normal text-foreground placeholder:text-muted-foreground focus-visible:ring-1"
               placeholder="Nome do follow-up"
             />
           </div>
@@ -901,7 +901,7 @@ function FollowUpBuilderInner({ onBack, onComplete, initialTemplate }: FollowUpB
           >
             <Controls />
             <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="hsl(var(--muted-foreground) / 0.15)" />
-            <Panel position="bottom-center" className="rounded-[8px] border-0 !bg-[var(--app-surface)] px-4 py-2.5 text-xs text-muted-foreground shadow-sm">
+            <Panel position="bottom-center" className="rounded-[8px] border-0 !bg-[var(--app-surface)] px-4 py-2.5 text-xs text-muted-foreground shadow-none">
               Arraste para conectar • Clique para editar • Ctrl+C/V para copiar/colar
             </Panel>
           </ReactFlow>

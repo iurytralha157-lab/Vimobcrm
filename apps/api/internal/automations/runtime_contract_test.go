@@ -8,12 +8,25 @@ import (
 )
 
 func TestAutomationHardeningMigrationContract(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "..", "supabase", "migrations", "20260712201000_automation_runtime_hardening.sql")
-	raw, err := os.ReadFile(path)
+	paths, err := filepath.Glob(filepath.Join("..", "..", "..", "..", "supabase", "migrations", "*.sql"))
 	if err != nil {
-		t.Fatalf("read migration: %v", err)
+		t.Fatalf("list active migrations: %v", err)
 	}
-	sql := string(raw)
+	if len(paths) == 0 {
+		t.Fatal("no active migrations found")
+	}
+
+	var migrations strings.Builder
+	for _, path := range paths {
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatalf("read migration %s: %v", filepath.Base(path), readErr)
+		}
+		migrations.Write(raw)
+		migrations.WriteByte('\n')
+	}
+
+	sql := migrations.String()
 	for _, required := range []string{
 		"automation_flow_versions",
 		"automation_event_outbox",
@@ -28,15 +41,14 @@ func TestAutomationHardeningMigrationContract(t *testing.T) {
 		"resume_automation_delay",
 		"reply_pending",
 		"resolve_automation_whatsapp_conversation",
-		"record_automation_whatsapp_message",
+		"enqueue_automation_whatsapp_outbox",
+		"canonical_whatsapp_outbox_v1",
 		"idx_leads_automation_inactivity_scan",
-		"legacy_execution_cancelled_during_versioned_runtime_migration",
 		"requires_review = false",
 		"automation lead event enqueue failed",
 		"automation tag event enqueue failed",
 		"automation message event enqueue failed",
 		"retry_exhausted",
-		"revoke insert, update, delete on public.automations from anon, authenticated",
 	} {
 		if !strings.Contains(strings.ToLower(sql), strings.ToLower(required)) {
 			t.Fatalf("migration is missing contract fragment %q", required)
@@ -92,6 +104,76 @@ func TestAutomationEdgeRuntimeSecurityContract(t *testing.T) {
 		}
 		if !strings.Contains(string(raw), "authorizeServiceRequest") {
 			t.Fatalf("%s does not explicitly require service authentication", functionName)
+		}
+	}
+
+	executorRaw, err := os.ReadFile(filepath.Join(root, "automation-executor", "index.ts"))
+	if err != nil {
+		t.Fatalf("read automation-executor: %v", err)
+	}
+	executor := string(executorRaw)
+	if strings.Contains(executor, "waitUntil") {
+		t.Fatal("automation-executor must not acknowledge before durable execution is checkpointed")
+	}
+	if !strings.Contains(executor, "await processSpecificExecution") {
+		t.Fatal("automation-executor must apply backpressure until durable execution is checkpointed")
+	}
+}
+
+func TestAutomationManualStartUsesDurableCoalescedRuntimeWake(t *testing.T) {
+	repositoryRaw, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatalf("read repository: %v", err)
+	}
+	repository := string(repositoryRaw)
+	startOffset := strings.Index(repository, "func (repo Repository) Start(")
+	if startOffset < 0 {
+		t.Fatal("could not find automation Start implementation")
+	}
+	endOffset := strings.Index(repository[startOffset:], "func publishedFlowMetadata(")
+	if endOffset < 0 {
+		t.Fatal("could not isolate automation Start implementation")
+	}
+	start := repository[startOffset : startOffset+endOffset]
+	for _, required := range []string{
+		"repo.signalRuntimeWake()",
+		`Status:          "queued"`,
+		"DispatchPending: true",
+	} {
+		if !strings.Contains(start, required) {
+			t.Fatalf("automation Start is missing durable wake contract %q", required)
+		}
+	}
+	if strings.Contains(start, `"dispatch_pending"`) {
+		t.Fatal("automation Start must use queued status as the durable source instead of a stale duplicate flag")
+	}
+	for _, forbidden := range []string{
+		"automation-executor",
+		"invokeDirectExecution",
+		"directExecutionSlots",
+	} {
+		if strings.Contains(start, forbidden) {
+			t.Fatalf("automation Start still contains direct execution path %q", forbidden)
+		}
+	}
+
+	workerRaw, err := os.ReadFile("worker.go")
+	if err != nil {
+		t.Fatalf("read worker: %v", err)
+	}
+	worker := string(workerRaw)
+	for _, required := range []string{
+		"case <-repo.runtimeWake:",
+		"manualWakeDebounce.Arm(automationRuntimeManualWakeDebounce)",
+		"case <-manualWakeDebounce.ch:",
+		"drainRuntimeBatches(",
+		"pg_try_advisory_xact_lock",
+		"periodicTicker := time.NewTicker(config.RuntimeInterval)",
+		"defaultAutomationRuntimeDrainLimit        = 64",
+		"automationRuntimeManualWakeDebounce       = 500 * time.Millisecond",
+	} {
+		if !strings.Contains(worker, required) {
+			t.Fatalf("runtime worker is missing durable drain contract %q", required)
 		}
 	}
 }

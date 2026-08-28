@@ -12,13 +12,15 @@ import (
 	"strings"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/publicingress"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 type Handler struct {
-	repo      Repository
-	publisher realtime.Publisher
+	repo                   Repository
+	publisher              realtime.Publisher
+	publicClientIPResolver publicingress.ClientIPResolver
 }
 
 const maxSiteAssetBytes = 10 << 20
@@ -29,6 +31,13 @@ func NewHandler(repo Repository, publishers ...realtime.Publisher) Handler {
 		publisher = publishers[0]
 	}
 	return Handler{repo: repo, publisher: publisher}
+}
+
+func (handler Handler) WithPublicClientIPResolver(
+	resolver publicingress.ClientIPResolver,
+) Handler {
+	handler.publicClientIPResolver = resolver
+	return handler
 }
 
 func (handler Handler) ShowSite(w http.ResponseWriter, r *http.Request) {
@@ -314,6 +323,7 @@ func (handler Handler) SubmitPublicContact(w http.ResponseWriter, r *http.Reques
 	if !decodeJSON(w, r, &request) {
 		return
 	}
+	request.ClientIP = handler.publicClientIPResolver.Resolve(r)
 	result, err := handler.repo.CreatePublicContact(r.Context(), request)
 	if err != nil {
 		writeSiteError(w, r, err)
@@ -328,9 +338,8 @@ func (handler Handler) SubmitPublicContact(w http.ResponseWriter, r *http.Reques
 			eventType = "lead.reentered"
 		}
 		handler.publishSiteEvent(eventType, request.OrganizationID, map[string]any{
-			"leadId":    leadID,
-			"source":    "site",
-			"sessionId": optionalStringValue(request.SessionID),
+			"leadId": leadID,
+			"source": "site",
 		})
 	}
 	status := http.StatusCreated
@@ -345,17 +354,15 @@ func (handler Handler) TrackPublicEvent(w http.ResponseWriter, r *http.Request) 
 	if !decodeJSON(w, r, &request) {
 		return
 	}
+	request.ClientIP = handler.publicClientIPResolver.Resolve(r)
 	enrichTrackingLocation(&request, r.Header)
 	if err := handler.repo.CreatePublicTrackingEvent(r.Context(), request); err != nil {
 		writeSiteError(w, r, err)
 		return
 	}
-	handler.publishSiteEvent("site.analytics_event.created", request.OrganizationID, map[string]any{
-		"eventType":  request.EventType,
-		"pagePath":   request.PagePath,
-		"propertyId": optionalStringValue(request.PropertyID),
-		"sessionId":  optionalStringValue(request.SessionID),
-	})
+	// Site analytics already refresh every 30 seconds. Broadcasting every
+	// pageview/click would fan out private visitor identifiers and trigger a
+	// dashboard refetch storm under normal public traffic.
 	httpserver.WriteJSON(w, http.StatusCreated, map[string]bool{"ok": true})
 }
 

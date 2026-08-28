@@ -354,6 +354,19 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 			return Event{}, err
 		}
 	}
+	if input.AssigneeIDs.Set {
+		nextPrimaryUserID := current.UserID
+		if input.UserID.Set && input.UserID.Value != nil {
+			nextPrimaryUserID = *input.UserID.Value
+		}
+		nextAssigneeIDs := make([]string, 0, len(input.AssigneeIDs.Value))
+		for _, userID := range input.AssigneeIDs.Value {
+			if userID != nextPrimaryUserID {
+				nextAssigneeIDs = append(nextAssigneeIDs, userID)
+			}
+		}
+		input.AssigneeIDs.Value = nextAssigneeIDs
+	}
 
 	nextStart := current.StartTime
 	if input.StartTime.Set && input.StartTime.Value != nil {
@@ -452,6 +465,33 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	updated, err := repo.getSnapshotForUpdate(ctx, tx, tenantContext.OrganizationID, updatedID)
 	if err != nil {
 		return Event{}, err
+	}
+	if input.AssigneeIDs.Set {
+		addedAssigneeIDs, err := repo.replaceAssignees(
+			ctx,
+			tx,
+			tenantContext,
+			updatedID,
+			input.AssigneeIDs.Value,
+		)
+		if err != nil {
+			return Event{}, err
+		}
+		if err := repo.insertScheduleNotifications(
+			ctx,
+			tx,
+			tenantContext.OrganizationID,
+			tenantContext.UserID,
+			addedAssigneeIDs,
+			"Voce foi adicionado a uma atividade",
+			updated.Title,
+			map[string]any{
+				"schedule_event_id": updatedID,
+				"event_type":        updated.EventType,
+			},
+		); err != nil {
+			return Event{}, err
+		}
 	}
 
 	if updated.LeadID != "" {
@@ -924,6 +964,68 @@ func (repo Repository) insertAssignees(ctx context.Context, tx pgx.Tx, organizat
 	}
 
 	return results.Close()
+}
+
+func (repo Repository) replaceAssignees(
+	ctx context.Context,
+	tx pgx.Tx,
+	tenantContext tenant.Context,
+	eventID string,
+	assigneeIDs []string,
+) ([]string, error) {
+	rows, err := tx.Query(ctx, `
+		select user_id::text
+		from public.schedule_event_assignees
+		where organization_id = $1::uuid
+		  and event_id = $2::uuid
+	`, tenantContext.OrganizationID, eventID)
+	if err != nil {
+		return nil, err
+	}
+
+	existing := map[string]struct{}{}
+	for rows.Next() {
+		var userID string
+		if err := rows.Scan(&userID); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		existing[userID] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	next := make(map[string]struct{}, len(assigneeIDs))
+	added := make([]string, 0, len(assigneeIDs))
+	for _, userID := range assigneeIDs {
+		next[userID] = struct{}{}
+		if _, wasAssigned := existing[userID]; !wasAssigned {
+			added = append(added, userID)
+		}
+	}
+	if err := repo.validateAssignees(ctx, tx, tenantContext, added); err != nil {
+		return nil, err
+	}
+	for userID := range existing {
+		if _, remainsAssigned := next[userID]; remainsAssigned {
+			continue
+		}
+		if _, err := tx.Exec(ctx, `
+			delete from public.schedule_event_assignees
+			where organization_id = $1::uuid
+			  and event_id = $2::uuid
+			  and user_id = $3::uuid
+		`, tenantContext.OrganizationID, eventID, userID); err != nil {
+			return nil, err
+		}
+	}
+	if err := repo.insertAssignees(ctx, tx, tenantContext.OrganizationID, []string{eventID}, added); err != nil {
+		return nil, err
+	}
+	return added, nil
 }
 
 func (repo Repository) validateUser(ctx context.Context, querier queryRower, organizationID string, userID string) error {

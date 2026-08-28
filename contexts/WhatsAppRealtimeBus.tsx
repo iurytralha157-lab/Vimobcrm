@@ -1,6 +1,9 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
+import {
+  useWhatsAppInboxRealtime,
+  type WhatsAppMessage,
+} from "@/hooks/use-whatsapp-conversations";
 import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
 import {
   whatsappQueryKeys,
@@ -21,13 +24,15 @@ const MESSAGE_EVENTS = [
 /**
  * Local WhatsApp cache bus.
  *
- * Backend data is fetched through HTTP APIs. Cross-user realtime should be
- * added through our backend with SSE/WebSocket when we decide to enable it.
+ * Backend data is fetched through HTTP APIs. This component is also the single
+ * app-shell owner of the organization inbox wake-up channel.
  */
 export function WhatsAppRealtimeBus() {
   const queryClient = useQueryClient();
   const scope = useWhatsAppQueryScope();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useWhatsAppInboxRealtime(true);
 
   useEffect(() => {
     if (!scope.organizationId || !scope.userId) return;

@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -17,12 +19,65 @@ import (
 
 const (
 	notificationDispatchWorkerInterval = 15 * time.Second
-	notificationDispatchBatchLimit     = 25
-	notificationDispatchMaxAttempts    = 5
-	notificationDispatchClaimTimeout   = 5 * time.Minute
-	notificationDispatchLockKey        = int64(860421705)
-	scheduleReminderLockKey            = int64(860421706)
+	// One notification can fan out to three provider calls. Claiming one row at
+	// a time ensures no later item sits idle until its lease expires.
+	notificationDispatchBatchLimit   = 1
+	notificationDispatchDrainLimit   = 25
+	notificationDispatchConcurrency  = 3
+	notificationDispatchDrainTimeout = 45 * time.Second
+	notificationDispatchMaxAttempts  = 24
+	notificationDispatchClaimTimeout = 15 * time.Minute
+	scheduleReminderLockKey          = int64(860421706)
 )
+
+var billingNotificationDispatchAuthorizationQuery = "select " + billingNotificationAuthorizationSQL("$1", "$2")
+var errNotificationDeliveryClaimLost = errors.New("notification delivery claim lost")
+
+func billingNotificationAuthorizationSQL(organizationParameter string, userParameter string) string {
+	return `exists (
+	select 1
+	from public.organization_members membership
+	join public.users account
+	  on account.id = membership.user_id
+	where membership.organization_id = ` + organizationParameter + `::uuid
+	  and membership.user_id = ` + userParameter + `::uuid
+	  and membership.is_active = true
+	  and coalesce(account.is_active, true) = true
+	  and (
+		lower(coalesce(membership.role, 'user')) in ('owner', 'admin')
+		or exists (
+			select 1
+			from public.user_permission_overrides permission_override
+			where permission_override.organization_id = membership.organization_id
+			  and permission_override.user_id = membership.user_id
+			  and permission_override.permission_key = 'settings_billing'
+			  and permission_override.allowed = true
+		)
+		or (
+			not exists (
+				select 1
+				from public.user_permission_overrides permission_override
+				where permission_override.organization_id = membership.organization_id
+				  and permission_override.user_id = membership.user_id
+				  and permission_override.permission_key = 'settings_billing'
+			)
+			and exists (
+				select 1
+				from public.user_organization_roles user_role
+				join public.organization_role_permissions role_permission
+				  on role_permission.organization_id = user_role.organization_id
+				 and role_permission.role_id = user_role.role_id
+				join public.available_permissions permission
+				  on permission.id = role_permission.permission_id
+				where user_role.organization_id = membership.organization_id
+				  and user_role.user_id = membership.user_id
+				  and user_role.is_active = true
+				  and permission.key = 'settings_billing'
+			)
+		)
+	  )
+ )`
+}
 
 type pendingNotification struct {
 	ID             string
@@ -41,6 +96,10 @@ type notificationDeliveryResult struct {
 	Push     DispatchChannelResult
 	Email    DispatchChannelResult
 	Error    string
+	// Billing receipt delivery owns its payment-state lock and persistence in
+	// one transaction. The generic caller must not overwrite that result with
+	// the stale metadata snapshot it claimed earlier.
+	SkipPersistence bool
 }
 
 func (repo Repository) StartNotificationDispatchWorker(ctx context.Context, logger *slog.Logger) {
@@ -81,52 +140,103 @@ func (repo Repository) ProcessNotificationDeliveries(ctx context.Context) error 
 }
 
 func (repo Repository) processNotificationDeliveries(ctx context.Context, logger *slog.Logger) error {
-	tx, err := repo.db.Pool().Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
-	var locked bool
-	if err := tx.QueryRow(ctx, `select pg_try_advisory_xact_lock($1)`, notificationDispatchLockKey).Scan(&locked); err != nil {
-		return err
-	}
-	if !locked {
-		return nil
-	}
-
-	notifications, err := repo.listPendingNotificationDeliveries(ctx, tx)
-	if err != nil {
-		return err
-	}
-
-	notifications, err = repo.claimPendingNotificationDeliveries(ctx, tx, notifications)
-	if err != nil {
-		return err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
-
-	for _, notification := range notifications {
-		delivery := repo.dispatchPendingNotification(ctx, notification, nil)
-		if logger != nil && delivery.Error != "" {
-			logger.Warn(
-				"notification delivery failed",
-				"notification_id", notification.ID,
-				"organization_id", notification.OrganizationID,
-				"user_id", notification.UserID,
-				"event_key", stringFromMap(notification.Metadata, "event_key"),
-				"error", delivery.Error,
-			)
+	if err := repo.processPendingPropertyReservationNotificationJobs(ctx); err != nil {
+		if logger == nil {
+			return err
 		}
-		if err := repo.markNotificationDeliveryDirect(ctx, notification, delivery); err != nil {
+		logger.Error("property reservation notification outbox recovery failed", "error", err)
+	}
+
+	// Drain a bounded burst immediately. Each worker claims exactly one row in
+	// its own transaction, so every provider fan-out owns an independent token
+	// and lease. The wall-clock boundary stops new claims without cancelling an
+	// in-flight provider call whose result still needs durable persistence.
+	deadline := time.Now().Add(notificationDispatchDrainTimeout)
+	var started atomic.Int64
+	errorChannel := make(chan error, notificationDispatchConcurrency)
+	var workers sync.WaitGroup
+	workers.Add(notificationDispatchConcurrency)
+	for range notificationDispatchConcurrency {
+		go func() {
+			defer workers.Done()
+			for {
+				if ctx.Err() != nil || time.Now().After(deadline) {
+					return
+				}
+				if started.Add(1) > notificationDispatchDrainLimit {
+					return
+				}
+				processed, err := repo.processOneNotificationDelivery(ctx, logger)
+				if err != nil {
+					select {
+					case errorChannel <- err:
+					default:
+					}
+					return
+				}
+				if !processed {
+					return
+				}
+			}
+		}()
+	}
+	workers.Wait()
+	close(errorChannel)
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for err := range errorChannel {
+		if err != nil {
 			return err
 		}
 	}
-
 	return nil
+}
+
+func (repo Repository) processOneNotificationDelivery(
+	ctx context.Context,
+	logger *slog.Logger,
+) (bool, error) {
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+
+	notifications, err := repo.listPendingNotificationDeliveries(ctx, tx)
+	if err != nil {
+		return false, err
+	}
+	notifications, err = repo.claimPendingNotificationDeliveries(ctx, tx, notifications)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	if len(notifications) == 0 {
+		return false, nil
+	}
+
+	notification := notifications[0]
+	delivery := repo.dispatchPendingNotification(ctx, notification, nil)
+	if logger != nil && delivery.Error != "" {
+		logger.Warn(
+			"notification delivery failed",
+			"notification_id", notification.ID,
+			"organization_id", notification.OrganizationID,
+			"user_id", notification.UserID,
+			"event_key", stringFromMap(notification.Metadata, "event_key"),
+			"error", delivery.Error,
+		)
+	}
+	if !delivery.SkipPersistence {
+		if err := repo.markNotificationDeliveryDirect(ctx, notification, delivery); err != nil {
+			return true, err
+		}
+	}
+	return true, nil
 }
 
 func (repo Repository) dispatchNotificationDeliveries(ctx context.Context, notification Notification, channels []string) notificationDeliveryResult {
@@ -138,12 +248,16 @@ func (repo Repository) dispatchNotificationDeliveries(ctx context.Context, notif
 		Title:          notification.Title,
 		Content:        firstNotificationText(stringValue(notification.Content), stringFromMap(notification.Metadata, "body")),
 		Type:           notification.Type,
+		TargetURL:      notification.TargetURL,
 		Metadata:       notification.Metadata,
 	}
 	if pending.Metadata == nil {
 		pending.Metadata = map[string]any{}
 	}
 	delivery := repo.dispatchPendingNotification(ctx, pending, channels)
+	if delivery.SkipPersistence {
+		return delivery
+	}
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		delivery.Error = firstNotificationText(delivery.Error, err.Error())
@@ -165,7 +279,7 @@ func (repo Repository) listPendingNotificationDeliveries(ctx context.Context, tx
 		select
 			id::text,
 			organization_id::text,
-			user_id::text,
+			coalesce(user_id::text, ''),
 			coalesce(lead_id::text, ''),
 			coalesce(title, ''),
 			coalesce(content, body, ''),
@@ -173,40 +287,50 @@ func (repo Repository) listPendingNotificationDeliveries(ctx context.Context, tx
 			coalesce(target_url, ''),
 			coalesce(metadata, '{}'::jsonb)::text
 		from public.notifications
-		where created_at >= now() - interval '48 hours'
-		  and (
+		where (
 		    (
 		      lower(coalesce(metadata->'dispatch'->'whatsapp'->>'required', metadata->>'whatsapp_dispatch_required', 'false')) in ('true', '1', 'yes')
-		      and coalesce(metadata->'dispatch'->'whatsapp'->>'status', metadata->'whatsapp_dispatch'->>'status', 'pending') not in ('sent', 'skipped', 'permanent_failed')
-		      and coalesce(nullif(coalesce(metadata->'dispatch'->'whatsapp'->>'attempts', metadata->'whatsapp_dispatch'->>'attempts'), '')::int, 0) < $1
+		      and coalesce(metadata->'dispatch'->'whatsapp'->>'status', metadata->'whatsapp_dispatch'->>'status', 'pending') not in ('accepted', 'delivered', 'delivery_failed', 'sent', 'skipped', 'permanent_failed')
+			      and coalesce(nullif(coalesce(metadata->'dispatch'->'whatsapp'->>'attempts', metadata->'whatsapp_dispatch'->>'attempts'), '')::int, 0) < $1
+			      and coalesce(nullif(metadata->'dispatch'->'whatsapp'->>'next_attempt_at', '')::timestamptz, '-infinity'::timestamptz) <= now()
 		      and (
 		        coalesce(metadata->'dispatch'->'whatsapp'->>'status', metadata->'whatsapp_dispatch'->>'status', 'pending') <> 'processing'
-		        or coalesce(nullif(metadata->'dispatch'->'whatsapp'->>'claimed_at', '')::timestamptz, now() - interval '1 hour') < now() - interval '5 minutes'
+			        or coalesce(nullif(metadata->'dispatch'->'whatsapp'->>'claimed_at', '')::timestamptz, now() - interval '1 hour') < now() - ($3::bigint * interval '1 second')
 		      )
 		    )
 		    or (
 		      lower(coalesce(metadata->'dispatch'->'push'->>'required', 'false')) in ('true', '1', 'yes')
-		      and coalesce(metadata->'dispatch'->'push'->>'status', 'pending') not in ('sent', 'skipped', 'permanent_failed')
-		      and coalesce(nullif(metadata->'dispatch'->'push'->>'attempts', '')::int, 0) < $1
+		      and coalesce(metadata->'dispatch'->'push'->>'status', 'pending') not in ('accepted', 'delivered', 'delivery_failed', 'sent', 'skipped', 'permanent_failed')
+			      and coalesce(nullif(metadata->'dispatch'->'push'->>'attempts', '')::int, 0) < $1
+			      and coalesce(nullif(metadata->'dispatch'->'push'->>'next_attempt_at', '')::timestamptz, '-infinity'::timestamptz) <= now()
 		      and (
 		        coalesce(metadata->'dispatch'->'push'->>'status', 'pending') <> 'processing'
-		        or coalesce(nullif(metadata->'dispatch'->'push'->>'claimed_at', '')::timestamptz, now() - interval '1 hour') < now() - interval '5 minutes'
+			        or coalesce(nullif(metadata->'dispatch'->'push'->>'claimed_at', '')::timestamptz, now() - interval '1 hour') < now() - ($3::bigint * interval '1 second')
 		      )
 		    )
 		    or (
 		      lower(coalesce(metadata->'dispatch'->'email'->>'required', 'false')) in ('true', '1', 'yes')
-		      and coalesce(metadata->'dispatch'->'email'->>'status', 'pending') not in ('sent', 'skipped', 'permanent_failed')
-		      and coalesce(nullif(metadata->'dispatch'->'email'->>'attempts', '')::int, 0) < $1
+		      and coalesce(metadata->'dispatch'->'email'->>'status', 'pending') not in ('accepted', 'delivered', 'delivery_failed', 'sent', 'skipped', 'permanent_failed')
+			      and coalesce(nullif(metadata->'dispatch'->'email'->>'attempts', '')::int, 0) < $1
+			      and coalesce(nullif(metadata->'dispatch'->'email'->>'next_attempt_at', '')::timestamptz, '-infinity'::timestamptz) <= now()
 		      and (
 		        coalesce(metadata->'dispatch'->'email'->>'status', 'pending') <> 'processing'
-		        or coalesce(nullif(metadata->'dispatch'->'email'->>'claimed_at', '')::timestamptz, now() - interval '1 hour') < now() - interval '5 minutes'
+			        or coalesce(nullif(metadata->'dispatch'->'email'->>'claimed_at', '')::timestamptz, now() - interval '1 hour') < now() - ($3::bigint * interval '1 second')
 		      )
 		    )
+		  )
+		  and lower(btrim(coalesce(metadata->>'policy_type', ''))) <> 'cadence_task'
+		  and lower(btrim(coalesce(metadata->>'event_key', ''))) not in (
+		    'cadence_task',
+		    'cadence_task_warning',
+		    'cadence_task_overdue',
+		    'cadence_task_reminder',
+		    'lead_cadence_task'
 		  )
 		order by created_at asc
 		limit $2
 		for update skip locked
-	`, notificationDispatchMaxAttempts, notificationDispatchBatchLimit)
+	`, notificationDispatchMaxAttempts, notificationDispatchBatchLimit, int64(notificationDispatchClaimTimeout/time.Second))
 	if err != nil {
 		return nil, err
 	}
@@ -227,6 +351,11 @@ func (repo Repository) listPendingNotificationDeliveries(ctx context.Context, tx
 		if strings.TrimSpace(rawMetadata) != "" {
 			_ = json.Unmarshal([]byte(rawMetadata), &item.Metadata)
 		}
+		if isCadenceNotificationDeliverySuppressed(item.Metadata) {
+			// Cadence notifications are retired. Leave historical rows untouched
+			// while keeping them outside every external-delivery claim.
+			continue
+		}
 		notifications = append(notifications, item)
 	}
 	return notifications, rows.Err()
@@ -241,6 +370,9 @@ func (repo Repository) claimPendingNotificationDeliveries(ctx context.Context, t
 		if metadata == nil {
 			metadata = map[string]any{}
 		}
+		if isCadenceNotificationDeliverySuppressed(metadata) {
+			continue
+		}
 
 		channelClaimed := false
 		for _, channel := range []string{"whatsapp", "push", "email"} {
@@ -248,6 +380,9 @@ func (repo Repository) claimPendingNotificationDeliveries(ctx context.Context, t
 				continue
 			}
 			metadata = setNotificationChannelProcessing(metadata, channel, claimToken)
+			if channel == "whatsapp" {
+				metadata = prepareTransactionalWhatsAppReceiptCorrelation(metadata, notification)
+			}
 			channelClaimed = true
 		}
 		if !channelClaimed {
@@ -270,21 +405,216 @@ func (repo Repository) claimPendingNotificationDeliveries(ctx context.Context, t
 }
 
 func (repo Repository) dispatchPendingNotification(ctx context.Context, notification pendingNotification, channels []string) notificationDeliveryResult {
+	if isCadenceNotificationDeliverySuppressed(notification.Metadata) {
+		return notificationDeliveryResult{
+			Error:           "cadence_notification_delivery_disabled",
+			SkipPersistence: true,
+		}
+	}
+	if stringFromMap(notification.Metadata, "event_key") == "billing_payment_receipt" {
+		return repo.dispatchPendingBillingReceiptNotification(ctx, notification, channels)
+	}
+	return repo.dispatchPendingNotificationUnchecked(ctx, notification, channels)
+}
+
+func isCadenceNotificationDeliverySuppressed(metadata map[string]any) bool {
+	policyType := strings.ToLower(strings.TrimSpace(stringFromMap(metadata, "policy_type")))
+	if policyType == "cadence_task" {
+		return true
+	}
+
+	eventKey := strings.ToLower(strings.TrimSpace(stringFromMap(metadata, "event_key")))
+	switch eventKey {
+	case "cadence_task", "cadence_task_warning", "cadence_task_overdue", "cadence_task_reminder", "lead_cadence_task":
+		return true
+	default:
+		return false
+	}
+}
+
+func (repo Repository) dispatchPendingNotificationUnchecked(ctx context.Context, notification pendingNotification, channels []string) notificationDeliveryResult {
 	var result notificationDeliveryResult
 	if shouldAttemptNotificationChannel(notification.Metadata, "whatsapp", channels) {
-		result.WhatsApp, _ = repo.dispatchPendingWhatsAppNotification(ctx, notification)
+		if rejected := repo.preflightBillingNotificationChannel(ctx, notification); rejected != nil {
+			result.WhatsApp = *rejected
+		} else {
+			result.WhatsApp, _ = repo.dispatchPendingWhatsAppNotification(ctx, notification)
+		}
 	}
 	if shouldAttemptNotificationChannel(notification.Metadata, "push", channels) {
-		result.Push = repo.dispatchPendingPushNotification(ctx, notification)
+		if rejected := repo.preflightBillingNotificationChannel(ctx, notification); rejected != nil {
+			result.Push = *rejected
+		} else {
+			result.Push = repo.dispatchPendingPushNotification(ctx, notification)
+		}
 	}
 	if shouldAttemptNotificationChannel(notification.Metadata, "email", channels) {
-		result.Email = repo.dispatchPendingEmailNotification(ctx, notification)
+		if rejected := repo.preflightBillingNotificationChannel(ctx, notification); rejected != nil {
+			result.Email = *rejected
+		} else {
+			result.Email = repo.dispatchPendingEmailNotification(ctx, notification)
+		}
 	}
 
 	for _, item := range []DispatchChannelResult{result.WhatsApp, result.Push, result.Email} {
-		if item.Error != "" && item.Attempted && !item.OK {
+		if item.Error != "" && item.Enabled && !item.OK {
 			result.Error = firstNotificationText(result.Error, item.Error)
 		}
+	}
+	return result
+}
+
+func (repo Repository) preflightBillingNotificationChannel(ctx context.Context, notification pendingNotification) *DispatchChannelResult {
+	eventKey := strings.ToLower(strings.TrimSpace(stringFromMap(notification.Metadata, "event_key")))
+	if !requiresCurrentBillingNotificationAuthorization(eventKey) {
+		return nil
+	}
+
+	authorized, err := repo.currentBillingNotificationAuthorization(
+		ctx,
+		notification.OrganizationID,
+		notification.UserID,
+	)
+	if err != nil {
+		return &DispatchChannelResult{
+			Enabled: true,
+			Error:   "billing_dispatch_authorization_check_failed: " + trimMax(err.Error(), 700),
+		}
+	}
+	if !authorized {
+		return &DispatchChannelResult{
+			Enabled:   true,
+			Permanent: true,
+			Skipped:   1,
+			Error:     "billing_dispatch_authorization_revoked",
+		}
+	}
+	return nil
+}
+
+func (repo Repository) currentBillingNotificationAuthorization(ctx context.Context, organizationID string, userID string) (bool, error) {
+	var authorized bool
+	err := repo.db.Pool().QueryRow(
+		ctx,
+		billingNotificationDispatchAuthorizationQuery,
+		organizationID,
+		userID,
+	).Scan(&authorized)
+	return authorized, err
+}
+
+func requiresCurrentBillingNotificationAuthorization(eventKey string) bool {
+	eventKey = strings.ToLower(strings.TrimSpace(eventKey))
+	return isBillingNotificationEvent(eventKey) && eventKey != "billing_payment_receipt"
+}
+
+func (repo Repository) dispatchPendingBillingReceiptNotification(
+	ctx context.Context,
+	notification pendingNotification,
+	channels []string,
+) notificationDeliveryResult {
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return billingReceiptPreflightFailure(notification, channels, err)
+	}
+	defer tx.Rollback(ctx)
+
+	var paymentStatus string
+	var persistedMetadataRaw string
+	err = tx.QueryRow(ctx, `
+		select
+		  upper(coalesce(payment.status, 'UNKNOWN')),
+		  coalesce(notification.metadata, '{}'::jsonb)::text
+		from public.notifications notification
+		join public.asaas_payments payment
+		  on payment.id::text = notification.metadata ->> 'payment_id'
+		 and payment.organization_id = notification.organization_id
+		join public.billing_payment_receipts receipt
+		  on receipt.id::text = notification.metadata ->> 'receipt_id'
+		 and receipt.payment_id = payment.id
+		 and receipt.organization_id = notification.organization_id
+		where notification.id = $1::uuid
+		  and notification.organization_id = $2::uuid
+		  and notification.metadata ->> 'event_key' = 'billing_payment_receipt'
+		for update of payment, notification, receipt
+	`, notification.ID, notification.OrganizationID).Scan(&paymentStatus, &persistedMetadataRaw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		paymentStatus = "UNKNOWN"
+	} else if err != nil {
+		return billingReceiptPreflightFailure(notification, channels, err)
+	}
+	if paymentStatus != "UNKNOWN" {
+		persistedMetadata := map[string]any{}
+		if err := json.Unmarshal([]byte(persistedMetadataRaw), &persistedMetadata); err != nil {
+			return billingReceiptPreflightFailure(notification, channels, err)
+		}
+		if !notificationClaimsMatch(notification.Metadata, persistedMetadata, channels) {
+			return notificationDeliveryResult{
+				Error:           errNotificationDeliveryClaimLost.Error(),
+				SkipPersistence: true,
+			}
+		}
+	}
+
+	if !isConfirmedBillingReceiptPaymentStatus(paymentStatus) {
+		if _, err := tx.Exec(ctx, `
+			select private.cancel_billing_payment_receipt_delivery(
+			  $1::uuid,
+			  $2
+			)
+		`, notification.ID, paymentStatus); err != nil {
+			return billingReceiptPreflightFailure(notification, channels, err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return billingReceiptPreflightFailure(notification, channels, err)
+		}
+		return notificationDeliveryResult{SkipPersistence: true}
+	}
+
+	// Keep the payment, receipt and claimed notification update-locked through
+	// the provider request and outbox state write. A concurrent refund waits,
+	// then preserves a delivery
+	// already accepted by the provider while cancelling every unsent channel.
+	result := repo.dispatchPendingNotificationUnchecked(ctx, notification, channels)
+	if err := repo.markNotificationDelivery(ctx, tx, notification, result); err != nil {
+		result.Error = firstNotificationText(result.Error, "billing_receipt_delivery_persist_failed: "+err.Error())
+		result.SkipPersistence = true
+		return result
+	}
+	if err := tx.Commit(ctx); err != nil {
+		result.Error = firstNotificationText(result.Error, "billing_receipt_delivery_commit_failed: "+err.Error())
+	}
+	result.SkipPersistence = true
+	return result
+}
+
+func isConfirmedBillingReceiptPaymentStatus(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "RECEIVED", "CONFIRMED", "RECEIVED_IN_CASH", "REFUND_DENIED":
+		return true
+	default:
+		return false
+	}
+}
+
+func billingReceiptPreflightFailure(
+	notification pendingNotification,
+	channels []string,
+	err error,
+) notificationDeliveryResult {
+	message := "billing_receipt_payment_preflight_failed"
+	if err != nil {
+		message += ": " + trimMax(err.Error(), 900)
+	}
+	result := notificationDeliveryResult{
+		Error:           message,
+		SkipPersistence: true,
+	}
+	if shouldAttemptNotificationChannel(notification.Metadata, "whatsapp", channels) {
+		result.WhatsApp = DispatchChannelResult{Enabled: true, Error: message}
+	}
+	if shouldAttemptNotificationChannel(notification.Metadata, "email", channels) {
+		result.Email = DispatchChannelResult{Enabled: true, Error: message}
 	}
 	return result
 }
@@ -292,10 +622,20 @@ func (repo Repository) dispatchPendingNotification(ctx context.Context, notifica
 func (repo Repository) dispatchPendingWhatsAppNotification(ctx context.Context, notification pendingNotification) (DispatchWhatsAppResult, error) {
 	eventKey := firstNotificationText(stringFromMap(notification.Metadata, "event_key"), "notification")
 	variables := notificationVariables(notification.Metadata)
-	recipient, err := repo.getNotificationRecipient(ctx, notification.OrganizationID, notification.UserID)
+	recipient, err := repo.resolveNotificationDeliveryRecipient(ctx, notification, eventKey, "whatsapp")
 	if err != nil {
 		return DispatchWhatsAppResult{Enabled: true, Error: err.Error()}, err
 	}
+	if path := stringFromMap(variables, "checkout_path"); strings.HasPrefix(path, "/") {
+		variables["checkout_url"] = strings.TrimRight(repo.notificationEmail.appURL, "/") + path
+	}
+	if path := stringFromMap(variables, "verification_path"); strings.HasPrefix(path, "/") {
+		variables["verification_url"] = strings.TrimRight(repo.notificationEmail.appURL, "/") + path
+	}
+	// The email confirmation action is an authentication credential. It belongs
+	// exclusively to the addressed email and must never be copied into a
+	// WhatsApp template payload or provider log.
+	delete(variables, "email_confirmation_url")
 
 	request := DispatchNotificationRequest{
 		EventKey:  eventKey,
@@ -314,6 +654,68 @@ func (repo Repository) dispatchPendingWhatsAppNotification(ctx context.Context, 
 	}
 	result, err := repo.dispatchWhatsAppNotification(ctx, tenantContext, request, recipient, notification.Title, notification.Content, eventKey, request.DedupeKey)
 	return result, err
+}
+
+func (repo Repository) resolveNotificationDeliveryRecipient(
+	ctx context.Context,
+	notification pendingNotification,
+	eventKey string,
+	channel string,
+) (notificationRecipient, error) {
+	if snapshot, complete := immutableNotificationRecipientSnapshot(notification, eventKey, channel); complete {
+		return snapshot, nil
+	}
+
+	recipient, err := repo.getNotificationRecipient(ctx, notification.OrganizationID, notification.UserID)
+	if err != nil {
+		return notificationRecipient{}, err
+	}
+	// Operational billing messages must follow the currently authorized
+	// account contact. The metadata values are only the enqueue-time audit
+	// snapshot and may already be stale after an email/phone correction.
+	if requiresCurrentBillingNotificationContact(eventKey) {
+		return recipient, nil
+	}
+	// Preserve the existing policy for operational events: the active membership
+	// lookup above must succeed before any optional metadata override is used.
+	recipient.Name = firstNotificationText(stringFromMap(notification.Metadata, "recipient_name"), recipient.Name)
+	recipient.Email = firstNotificationText(stringFromMap(notification.Metadata, "recipient_email"), recipient.Email)
+	recipient.WhatsApp = firstNotificationText(stringFromMap(notification.Metadata, "recipient_whatsapp"), recipient.WhatsApp)
+	return recipient, nil
+}
+
+func immutableNotificationRecipientSnapshot(notification pendingNotification, eventKey string, channel string) (notificationRecipient, bool) {
+	eventKey = strings.TrimSpace(eventKey)
+	if !usesImmutableNotificationRecipientSnapshot(eventKey) {
+		return notificationRecipient{}, false
+	}
+
+	recipient := notificationRecipient{
+		ID:       notification.UserID,
+		Name:     stringFromMap(notification.Metadata, "recipient_name"),
+		Email:    stringFromMap(notification.Metadata, "recipient_email"),
+		WhatsApp: stringFromMap(notification.Metadata, "recipient_whatsapp"),
+	}
+	switch strings.ToLower(strings.TrimSpace(channel)) {
+	case "email":
+		return recipient, recipient.Email != ""
+	case "whatsapp":
+		return recipient, recipient.WhatsApp != ""
+	default:
+		return notificationRecipient{}, false
+	}
+}
+
+func usesImmutableNotificationRecipientSnapshot(eventKey string) bool {
+	eventKey = strings.ToLower(strings.TrimSpace(eventKey))
+	return eventKey == "onboarding_welcome" ||
+		eventKey == "onboarding_email_confirmation" ||
+		eventKey == "billing_payment_receipt"
+}
+
+func requiresCurrentBillingNotificationContact(eventKey string) bool {
+	eventKey = strings.ToLower(strings.TrimSpace(eventKey))
+	return isBillingNotificationEvent(eventKey) && eventKey != "billing_payment_receipt"
 }
 
 func (repo Repository) dispatchPendingPushNotification(ctx context.Context, notification pendingNotification) DispatchChannelResult {
@@ -444,12 +846,80 @@ func (repo Repository) deactivateDeadPushSubscription(ctx context.Context, userI
 
 func (repo Repository) dispatchPendingEmailNotification(ctx context.Context, notification pendingNotification) DispatchChannelResult {
 	eventKey := firstNotificationText(stringFromMap(notification.Metadata, "event_key"), "notification")
-	if eventKey != "deal_won" {
+	if eventKey != "deal_won" && eventKey != "onboarding_welcome" && eventKey != "onboarding_email_confirmation" && !isBillingNotificationEvent(eventKey) {
 		return DispatchChannelResult{Enabled: false, Error: "email_event_not_supported"}
 	}
-	recipient, err := repo.getNotificationRecipient(ctx, notification.OrganizationID, notification.UserID)
+	if confirmationURL := stringFromMap(notificationVariables(notification.Metadata), "email_confirmation_url"); confirmationURL != "" && emailConfirmationCapabilityExpired(notification.Metadata, time.Now().UTC()) {
+		return DispatchChannelResult{
+			Enabled:   true,
+			Permanent: true,
+			Provider:  "resend",
+			Error:     "onboarding_email_confirmation_capability_expired",
+		}
+	}
+	recipient, err := repo.resolveNotificationDeliveryRecipient(ctx, notification, eventKey, "email")
 	if err != nil {
 		return DispatchChannelResult{Enabled: true, Error: err.Error()}
+	}
+	idempotencyKey := "vimob:" + eventKey + ":" + notification.ID + ":v1"
+	if err := repo.prepareNotificationEmailDelivery(
+		ctx,
+		notification,
+		recipient.Email,
+		transactionalEmailSubject(eventKey, notification.Title),
+		eventKey,
+		idempotencyKey,
+	); err != nil {
+		return DispatchChannelResult{
+			Enabled:        true,
+			Provider:       "resend",
+			Recipient:      strings.TrimSpace(recipient.Email),
+			IdempotencyKey: idempotencyKey,
+			Error:          "email_log_prepare_failed: " + trimMax(err.Error(), 900),
+		}
+	}
+	if eventKey == "onboarding_welcome" || eventKey == "onboarding_email_confirmation" {
+		variables := notificationVariables(notification.Metadata)
+		return repo.notificationEmail.sendOnboarding(ctx, onboardingEmailPayload{
+			RecipientEmail:       recipient.Email,
+			RecipientName:        recipient.Name,
+			Organization:         stringFromMap(variables, "organization_name"),
+			PlanName:             stringFromMap(variables, "plan_name"),
+			SignupPath:           stringFromMap(variables, "signup_path"),
+			TrialDays:            stringFromMap(variables, "trial_days"),
+			TrialEndsAt:          stringFromMap(variables, "trial_ends_at"),
+			CheckoutPath:         stringFromMap(variables, "checkout_path"),
+			EmailConfirmationURL: stringFromMap(variables, "email_confirmation_url"),
+			TermsVersion:         stringFromMap(variables, "terms_version"),
+			PrivacyVersion:       stringFromMap(variables, "privacy_version"),
+			IdempotencyKey:       idempotencyKey,
+		})
+	}
+	if isBillingNotificationEvent(eventKey) {
+		variables := notificationVariables(notification.Metadata)
+		return repo.notificationEmail.sendBilling(ctx, billingEmailPayload{
+			RecipientEmail:    recipient.Email,
+			RecipientName:     recipient.Name,
+			EventKey:          eventKey,
+			Title:             notification.Title,
+			Content:           notification.Content,
+			Amount:            firstNotificationText(stringFromMap(notification.Metadata, "amount"), stringFromMap(variables, "amount")),
+			DueDate:           firstNotificationText(stringFromMap(notification.Metadata, "due_date"), stringFromMap(variables, "due_date")),
+			TargetURL:         firstNotificationText(notification.TargetURL, notificationTargetURL(notification)),
+			ReceiptNumber:     stringFromMap(variables, "receipt_number"),
+			Organization:      stringFromMap(variables, "organization_name"),
+			PayerName:         stringFromMap(variables, "payer_name"),
+			PayerTaxID:        stringFromMap(variables, "payer_tax_id"),
+			PlanName:          stringFromMap(variables, "plan_name"),
+			BillingPeriod:     billingPeriodLabel(stringFromMap(variables, "billing_period_months")),
+			BillingType:       stringFromMap(variables, "billing_type"),
+			PaidAt:            stringFromMap(variables, "paid_at"),
+			ProviderReference: stringFromMap(variables, "provider_payment_reference"),
+			VerificationPath:  stringFromMap(variables, "verification_path"),
+			IssuerName:        stringFromMap(variables, "issuer_name"),
+			IssuedAt:          stringFromMap(variables, "issued_at"),
+			IdempotencyKey:    idempotencyKey,
+		})
 	}
 	payload := dealWonEmailPayload{
 		RecipientEmail: recipient.Email,
@@ -459,8 +929,74 @@ func (repo Repository) dispatchPendingEmailNotification(ctx context.Context, not
 		Organization:   firstNotificationText(stringFromMap(notification.Metadata, "organization_name"), stringFromMap(notificationVariables(notification.Metadata), "organization_name")),
 		Value:          firstNotificationText(stringFromMap(notification.Metadata, "valor_interesse"), stringFromMap(notificationVariables(notification.Metadata), "valor_interesse")),
 		LeadURL:        firstNotificationText(notification.TargetURL, notificationTargetURL(notification)),
+		IdempotencyKey: idempotencyKey,
 	}
 	return repo.notificationEmail.sendDealWon(ctx, payload)
+}
+
+func (repo Repository) prepareNotificationEmailDelivery(
+	ctx context.Context,
+	notification pendingNotification,
+	recipientEmail string,
+	subject string,
+	eventKey string,
+	idempotencyKey string,
+) error {
+	_, err := repo.db.Pool().Exec(ctx, `
+		insert into public.email_logs (
+			organization_id,
+			user_id,
+			notification_id,
+			recipient_email,
+			subject,
+			status,
+			error_message,
+			sent_at,
+			template_key,
+			provider,
+			idempotency_key,
+			updated_at,
+			metadata
+		)
+		values (
+			$1::uuid,
+			nullif($2, '')::uuid,
+			$3::uuid,
+			$4,
+			$5,
+			'processing',
+			null,
+			null,
+			$6,
+			'resend',
+			$7,
+			now(),
+			jsonb_build_object('event_key', $6, 'phase', 'provider_request_pending')
+		)
+		on conflict (notification_id) where notification_id is not null
+		do update set
+			recipient_email = excluded.recipient_email,
+			subject = excluded.subject,
+			status = case
+				when email_logs.status_event_at is not null
+				  or email_logs.status = 'delivered'
+					then email_logs.status
+				else 'processing'
+			end,
+			error_message = case
+				when email_logs.status_event_at is not null
+				  or email_logs.status = 'delivered'
+					then email_logs.error_message
+				else null
+			end,
+			template_key = excluded.template_key,
+			provider = excluded.provider,
+			idempotency_key = coalesce(email_logs.idempotency_key, excluded.idempotency_key),
+			updated_at = now(),
+			metadata = coalesce(email_logs.metadata, '{}'::jsonb) || excluded.metadata
+	`, notification.OrganizationID, notification.UserID, notification.ID,
+		strings.TrimSpace(recipientEmail), strings.TrimSpace(subject), eventKey, idempotencyKey)
+	return err
 }
 
 func (repo Repository) markNotificationDelivery(ctx context.Context, tx pgx.Tx, notification pendingNotification, result notificationDeliveryResult) error {
@@ -468,22 +1004,133 @@ func (repo Repository) markNotificationDelivery(ctx context.Context, tx pgx.Tx, 
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
-	if result.WhatsApp.Enabled || result.WhatsApp.Attempted || result.WhatsApp.Error != "" {
+	writeWhatsApp := result.WhatsApp.Enabled || result.WhatsApp.Attempted || result.WhatsApp.Error != ""
+	writePush := result.Push.Enabled || result.Push.Attempted || result.Push.Error != ""
+	writeEmail := result.Email.Enabled || result.Email.Attempted || result.Email.Error != ""
+	whatsAppClaimToken := notificationChannelClaimToken(metadata, "whatsapp")
+	pushClaimToken := notificationChannelClaimToken(metadata, "push")
+	emailClaimToken := notificationChannelClaimToken(metadata, "email")
+	if writeWhatsApp {
 		metadata = setNotificationChannelDispatch(metadata, "whatsapp", result.WhatsApp)
 		metadata["whatsapp_dispatch"] = mapFromAny(mapFromAny(metadata["dispatch"])["whatsapp"])
 	}
-	if result.Push.Enabled || result.Push.Attempted || result.Push.Error != "" {
+	if writePush {
 		metadata = setNotificationChannelDispatch(metadata, "push", result.Push)
 	}
-	if result.Email.Enabled || result.Email.Attempted || result.Email.Error != "" {
+	if writeEmail {
 		metadata = setNotificationChannelDispatch(metadata, "email", result.Email)
 	}
 
-	_, err := tx.Exec(ctx, `
+	command, err := tx.Exec(ctx, `
 		update public.notifications
 		set metadata = $2::jsonb
 		where id = $1::uuid
-	`, notification.ID, jsonb(metadata))
+		  and (
+		    not $3::boolean
+		    or $4 = ''
+		    or coalesce(metadata #>> '{dispatch,whatsapp,claim_token}', '') = $4
+		  )
+		  and (
+		    not $5::boolean
+		    or $6 = ''
+		    or coalesce(metadata #>> '{dispatch,push,claim_token}', '') = $6
+		  )
+		  and (
+		    not $7::boolean
+		    or $8 = ''
+		    or coalesce(metadata #>> '{dispatch,email,claim_token}', '') = $8
+		  )
+	`, notification.ID, jsonb(metadata), writeWhatsApp, whatsAppClaimToken, writePush, pushClaimToken, writeEmail, emailClaimToken)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return errNotificationDeliveryClaimLost
+	}
+	if writeEmail {
+		return repo.recordNotificationEmailDelivery(ctx, tx, notification, result.Email)
+	}
+	return nil
+}
+
+func (repo Repository) recordNotificationEmailDelivery(ctx context.Context, tx pgx.Tx, notification pendingNotification, result DispatchChannelResult) error {
+	status := "blocked"
+	if result.OK {
+		status = "accepted"
+	} else if result.Attempted {
+		status = "failed"
+	}
+	eventKey := firstNotificationText(stringFromMap(notification.Metadata, "event_key"), "notification")
+	if strings.EqualFold(strings.TrimSpace(result.Provider), "resend") && strings.TrimSpace(result.MessageID) != "" {
+		if _, err := tx.Exec(ctx, `
+			select pg_catalog.pg_advisory_xact_lock(
+				pg_catalog.hashtextextended('resend:' || $1, 0)
+			)
+		`, strings.TrimSpace(result.MessageID)); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec(ctx, `
+		insert into public.email_logs (
+			organization_id,
+			user_id,
+			notification_id,
+			recipient_email,
+			subject,
+			status,
+			error_message,
+			sent_at,
+			template_key,
+			provider,
+			provider_message_id,
+			idempotency_key,
+			accepted_at,
+			updated_at,
+			metadata
+		)
+		values (
+			$1::uuid,
+			nullif($2, '')::uuid,
+			$3::uuid,
+			$4,
+			$5,
+			$6,
+			nullif($7, ''),
+			now(),
+			$8,
+			coalesce(nullif($9, ''), 'resend'),
+			nullif($10, ''),
+			nullif($11, ''),
+			case when $6 = 'accepted' then now() else null end,
+			now(),
+			jsonb_build_object('event_key', $8, 'http_status', $12::int)
+		)
+		on conflict (notification_id) where notification_id is not null
+		do update set
+			recipient_email = excluded.recipient_email,
+			subject = excluded.subject,
+			status = case
+				when email_logs.status_event_at is not null
+				  or email_logs.status = 'delivered'
+					then email_logs.status
+				else excluded.status
+			end,
+			error_message = case
+				when email_logs.status_event_at is not null
+				  or email_logs.status = 'delivered'
+					then email_logs.error_message
+				else excluded.error_message
+			end,
+			sent_at = excluded.sent_at,
+			provider = excluded.provider,
+			provider_message_id = coalesce(excluded.provider_message_id, email_logs.provider_message_id),
+			idempotency_key = coalesce(excluded.idempotency_key, email_logs.idempotency_key),
+			accepted_at = coalesce(email_logs.accepted_at, excluded.accepted_at),
+			updated_at = now(),
+			metadata = coalesce(email_logs.metadata, '{}'::jsonb) || excluded.metadata
+	`, notification.OrganizationID, notification.UserID, notification.ID,
+		strings.TrimSpace(result.Recipient), transactionalEmailSubject(eventKey, notification.Title), status, trimMax(result.Error, 1000),
+		eventKey, result.Provider, result.MessageID, result.IdempotencyKey, result.Status)
 	return err
 }
 
@@ -502,37 +1149,83 @@ func (repo Repository) markNotificationDeliveryDirect(ctx context.Context, notif
 
 func setNotificationChannelDispatch(metadata map[string]any, channel string, result DispatchChannelResult) map[string]any {
 	dispatch := mapFromAny(metadata["dispatch"])
+	previous := mapFromAny(dispatch[channel])
 	attempts := notificationDispatchAttempts(metadata, channel) + 1
 	status := "failed"
 	errorText := result.Error
 	switch {
 	case result.OK:
 		status = "sent"
+		if channel == "email" || channel == "whatsapp" {
+			// A provider 2xx only accepted the request. Delivery is reconciled by
+			// the signed provider webhook; accepted is terminal for automatic
+			// retries so we never duplicate a transactional message.
+			status = "accepted"
+		}
+	case result.OutcomeUnknown && channel == "whatsapp":
+		// The request was written but its response was not authoritative. Do not
+		// resend blindly: keep an accepted-like terminal state that the signed
+		// provider webhook can reconcile by expected_message_id.
+		status = "accepted"
 	case result.Permanent:
 		status = "permanent_failed"
-	case !result.Enabled:
-		status = "skipped"
-	case !result.Attempted && errorText != "":
-		status = "skipped"
-	case !result.Attempted:
-		status = "skipped"
 	case attempts >= notificationDispatchMaxAttempts:
 		status = "permanent_failed"
 	}
+	nextAttemptAt := ""
+	if status == "failed" {
+		delay := 30 * time.Second * time.Duration(1<<minInt(attempts-1, 7))
+		if delay > time.Hour {
+			delay = time.Hour
+		}
+		nextAttemptAt = time.Now().UTC().Add(delay).Format(time.RFC3339)
+	}
 	dispatch[channel] = map[string]any{
-		"required":    true,
-		"status":      status,
-		"attempts":    attempts,
-		"provider":    result.Provider,
-		"session_id":  result.SessionID,
-		"instance_id": result.InstanceID,
-		"http_status": result.Status,
-		"sent":        result.Sent,
-		"skipped":     result.Skipped,
-		"error":       errorText,
-		"updated_at":  time.Now().UTC().Format(time.RFC3339),
+		"required":            true,
+		"status":              status,
+		"attempts":            attempts,
+		"provider":            result.Provider,
+		"recipient":           firstNotificationText(result.Recipient, stringFromMap(previous, "recipient")),
+		"session_id":          result.SessionID,
+		"instance_id":         result.InstanceID,
+		"message_id":          result.MessageID,
+		"expected_message_id": result.ExpectedMessageID,
+		"idempotency_key":     result.IdempotencyKey,
+		"http_status":         result.Status,
+		"sent":                result.Sent,
+		"skipped":             result.Skipped,
+		"error":               errorText,
+		"outcome_unknown":     result.OutcomeUnknown,
+		"next_attempt_at":     nextAttemptAt,
+		"updated_at":          time.Now().UTC().Format(time.RFC3339),
 	}
 	metadata["dispatch"] = dispatch
+	if channel == "email" && (result.OK || result.Permanent) {
+		metadata = scrubEmailConfirmationCapability(metadata)
+	}
+	return metadata
+}
+
+func emailConfirmationCapabilityExpired(metadata map[string]any, now time.Time) bool {
+	expiresAt := strings.TrimSpace(stringFromMap(metadata, "email_confirmation_expires_at"))
+	if expiresAt == "" {
+		return true
+	}
+	parsed, err := time.Parse(time.RFC3339, expiresAt)
+	return err != nil || !now.Before(parsed)
+}
+
+func scrubEmailConfirmationCapability(metadata map[string]any) map[string]any {
+	variables := mapFromAny(metadata["variables"])
+	_, nestedExists := variables["email_confirmation_url"]
+	_, rootExists := metadata["email_confirmation_url"]
+	if !nestedExists && !rootExists {
+		return metadata
+	}
+	delete(variables, "email_confirmation_url")
+	delete(metadata, "email_confirmation_url")
+	metadata["variables"] = variables
+	metadata["email_confirmation_scrubbed_at"] = time.Now().UTC().Format(time.RFC3339)
 	return metadata
 }
 
@@ -551,6 +1244,54 @@ func setNotificationChannelProcessing(metadata map[string]any, channel string, c
 		metadata["whatsapp_dispatch_required"] = true
 	}
 	return metadata
+}
+
+func prepareTransactionalWhatsAppReceiptCorrelation(metadata map[string]any, notification pendingNotification) map[string]any {
+	eventKey := strings.ToLower(strings.TrimSpace(stringFromMap(metadata, "event_key")))
+	if !isPlatformTransactionalNotificationEvent(eventKey) {
+		return metadata
+	}
+	recipient := normalizeNotificationWhatsAppRecipient(stringFromMap(metadata, "recipient_whatsapp"))
+	dedupeKey := firstNotificationText(stringFromMap(metadata, "dedupe_key"), notification.ID)
+	idempotencyKey := notificationWhatsAppIdempotencyKey(notification.OrganizationID, eventKey, dedupeKey)
+	if recipient == "" || idempotencyKey == "" {
+		return metadata
+	}
+	dispatch := mapFromAny(metadata["dispatch"])
+	current := mapFromAny(dispatch["whatsapp"])
+	current["provider"] = "evolution_go"
+	current["notification_id"] = notification.ID
+	current["organization_id"] = notification.OrganizationID
+	current["recipient"] = recipient
+	current["idempotency_key"] = idempotencyKey
+	current["expected_message_id"] = deterministicNotificationWhatsAppMessageID(idempotencyKey)
+	current["prepared_at"] = time.Now().UTC().Format(time.RFC3339)
+	dispatch["whatsapp"] = current
+	metadata["dispatch"] = dispatch
+	metadata["whatsapp_dispatch"] = mapFromAny(current)
+	return metadata
+}
+
+func notificationChannelClaimToken(metadata map[string]any, channel string) string {
+	dispatch := mapFromAny(mapFromAny(metadata["dispatch"])[channel])
+	claimToken := strings.TrimSpace(fmt.Sprint(dispatch["claim_token"]))
+	if claimToken == "" && channel == "whatsapp" {
+		claimToken = strings.TrimSpace(fmt.Sprint(mapFromAny(metadata["whatsapp_dispatch"])["claim_token"]))
+	}
+	return claimToken
+}
+
+func notificationClaimsMatch(claimed map[string]any, persisted map[string]any, requested []string) bool {
+	for _, channel := range []string{"whatsapp", "push", "email"} {
+		if !shouldAttemptNotificationChannel(claimed, channel, requested) {
+			continue
+		}
+		expected := notificationChannelClaimToken(claimed, channel)
+		if expected != "" && notificationChannelClaimToken(persisted, channel) != expected {
+			return false
+		}
+	}
+	return true
 }
 
 func shouldClaimNotificationChannel(metadata map[string]any, channel string) bool {
@@ -579,7 +1320,7 @@ func shouldAttemptNotificationChannel(metadata map[string]any, channel string, r
 	}
 	status := notificationChannelStatus(metadata, channel)
 	switch status {
-	case "sent", "skipped", "permanent_failed":
+	case "accepted", "delivered", "delivery_failed", "sent", "skipped", "permanent_failed":
 		return false
 	}
 	return notificationDispatchAttempts(metadata, channel) < notificationDispatchMaxAttempts
@@ -866,6 +1607,26 @@ func notificationTargetURL(notification pendingNotification) string {
 	default:
 		return "/notifications"
 	}
+}
+
+func billingPeriodLabel(value string) string {
+	switch strings.TrimSpace(value) {
+	case "1", "1.0":
+		return "mensal"
+	case "6", "6.0":
+		return "semestral"
+	case "12", "12.0":
+		return "anual"
+	default:
+		return firstNotificationText(strings.TrimSpace(value), "mensal")
+	}
+}
+
+func minInt(left int, right int) int {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 func notificationVariables(metadata map[string]any) map[string]any {

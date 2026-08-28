@@ -34,15 +34,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context) (
 			coalesce(p.is_default, false),
 			coalesce(p.is_active, true),
 			coalesce(p.position, 0),
-			(
-				select rr.id::text
-				from public.round_robins rr
-				where rr.organization_id = p.organization_id
-				  and rr.pipeline_id = p.id
-				  and rr.is_active = true
-				order by rr.created_at asc
-				limit 1
-			),
+			p.default_round_robin_id::text,
 			p.created_at,
 			p.updated_at
 		from public.pipelines p
@@ -139,15 +131,7 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, pi
 			coalesce(p.is_default, false),
 			coalesce(p.is_active, true),
 			coalesce(p.position, 0),
-			(
-				select rr.id::text
-				from public.round_robins rr
-				where rr.organization_id = p.organization_id
-				  and rr.pipeline_id = p.id
-				  and rr.is_active = true
-				order by rr.created_at asc
-				limit 1
-			),
+			p.default_round_robin_id::text,
 			p.created_at,
 			p.updated_at
 		from public.pipelines p
@@ -386,6 +370,10 @@ func (repo Repository) UpdateStage(ctx context.Context, tenantContext tenant.Con
 	if !canManagePipelines(tenantContext) {
 		return Stage{}, tenant.ErrOrganizationAccessDenied
 	}
+	qualifiedPatch, err := qualifiedPatchForStageUpdate(input)
+	if err != nil {
+		return Stage{}, err
+	}
 
 	assignments := []string{}
 	args := []any{tenantContext.OrganizationID, stageID}
@@ -409,23 +397,69 @@ func (repo Repository) UpdateStage(ctx context.Context, tenantContext tenant.Con
 	addString("stage_key", input.StageKey)
 	addBool("is_won", input.IsWon)
 	addBool("is_lost", input.IsLost)
+	addBool("is_qualified", qualifiedPatch)
 	addBool("is_active", input.IsActive)
 	assignments = append(assignments, "updated_at = now()")
 
-	tag, err := repo.db.Pool().Exec(ctx, `
-		update public.stages
-		set `+strings.Join(assignments, ", ")+`
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-	`, args...)
+	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return Stage{}, err
 	}
-	if tag.RowsAffected() == 0 {
-		return Stage{}, ErrStageNotFound
+	defer tx.Rollback(ctx)
+
+	pipelineID, err := repo.lockStagePipelineForUpdate(
+		ctx,
+		tx,
+		tenantContext.OrganizationID,
+		stageID,
+	)
+	if err != nil {
+		return Stage{}, err
 	}
 
-	return repo.GetStage(ctx, tenantContext, stageID)
+	if input.IsQualified.IsTrue() {
+		if err := repo.ensureStageCanBeQualified(
+			ctx,
+			tx,
+			tenantContext.OrganizationID,
+			pipelineID,
+			stageID,
+			input,
+		); err != nil {
+			return Stage{}, err
+		}
+		if _, err := tx.Exec(ctx, `
+			update public.stages
+			set is_qualified = false,
+			    updated_at = now()
+			where organization_id = $1::uuid
+			  and pipeline_id = $2::uuid
+			  and id <> $3::uuid
+			  and is_qualified is true
+		`, tenantContext.OrganizationID, pipelineID, stageID); err != nil {
+			return Stage{}, err
+		}
+	}
+
+	stage, err := scanStage(tx.QueryRow(ctx, `
+		update public.stages as s
+		set `+strings.Join(assignments, ", ")+`
+		where s.organization_id = $1::uuid
+		  and s.id = $2::uuid
+		returning `+stageSelectFields()+`
+	`, args...))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Stage{}, ErrStageNotFound
+	}
+	if err != nil {
+		return Stage{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Stage{}, err
+	}
+
+	return stage, nil
 }
 
 func (repo Repository) ReorderStages(ctx context.Context, tenantContext tenant.Context, pipelineID string, input reorderStagesInput) ([]Stage, error) {
@@ -602,22 +636,29 @@ func (repo Repository) SetDefaultRoundRobin(ctx context.Context, tenantContext t
 
 	if input.RoundRobinID == nil {
 		if _, err := tx.Exec(ctx, `
-			update public.round_robins
-			set pipeline_id = null,
+			update public.pipelines
+			set default_round_robin_id = null,
 			    updated_at = now()
 			where organization_id = $1::uuid
-			  and pipeline_id = $2::uuid
+			  and id = $2::uuid
 		`, tenantContext.OrganizationID, pipelineID); err != nil {
 			return Pipeline{}, err
 		}
 	} else {
 		tag, err := tx.Exec(ctx, `
-			update public.round_robins
-			set pipeline_id = $3::uuid,
+			update public.pipelines
+			set default_round_robin_id = $3::uuid,
 			    updated_at = now()
 			where organization_id = $1::uuid
 			  and id = $2::uuid
-		`, tenantContext.OrganizationID, *input.RoundRobinID, pipelineID)
+			  and exists (
+			    select 1
+			    from public.round_robins as queue
+			    where queue.organization_id = $1::uuid
+			      and queue.id = $3::uuid
+			      and coalesce(queue.is_active, true) = true
+			  )
+		`, tenantContext.OrganizationID, pipelineID, *input.RoundRobinID)
 		if err != nil {
 			return Pipeline{}, err
 		}
@@ -709,6 +750,60 @@ func (repo Repository) getStagePipelineID(ctx context.Context, tx pgx.Tx, organi
 	return pipelineID, err
 }
 
+func (repo Repository) lockStagePipelineForUpdate(ctx context.Context, tx pgx.Tx, organizationID string, stageID string) (string, error) {
+	var pipelineID string
+	err := tx.QueryRow(ctx, `
+		select p.id::text
+		from public.pipelines as p
+		join public.stages as s
+		  on s.organization_id = p.organization_id
+		 and s.pipeline_id = p.id
+		where p.organization_id = $1::uuid
+		  and s.organization_id = $1::uuid
+		  and s.id = $2::uuid
+		for update of p
+	`, organizationID, stageID).Scan(&pipelineID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrStageNotFound
+	}
+	return pipelineID, err
+}
+
+func (repo Repository) ensureStageCanBeQualified(
+	ctx context.Context,
+	tx pgx.Tx,
+	organizationID string,
+	pipelineID string,
+	stageID string,
+	input updateStageInput,
+) error {
+	var isWon, isLost, isActive bool
+	err := tx.QueryRow(ctx, `
+		select
+			coalesce(is_won, false),
+			coalesce(is_lost, false),
+			coalesce(is_active, true)
+		from public.stages
+		where organization_id = $1::uuid
+		  and pipeline_id = $2::uuid
+		  and id = $3::uuid
+	`, organizationID, pipelineID, stageID).Scan(&isWon, &isLost, &isActive)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrStageNotFound
+	}
+	if err != nil {
+		return err
+	}
+
+	if input.IsWon.Resolve(isWon) || input.IsLost.Resolve(isLost) || !input.IsActive.Resolve(isActive) {
+		return fmt.Errorf(
+			"%w: a qualified stage must be active and non-terminal",
+			ErrInvalidInput,
+		)
+	}
+	return nil
+}
+
 func (repo Repository) uniqueStageKey(ctx context.Context, tx pgx.Tx, organizationID string, pipelineID string, name string) (string, error) {
 	baseKey := buildStageKey(name)
 	rows, err := tx.Query(ctx, `
@@ -780,6 +875,7 @@ func stageSelectFields() string {
 		coalesce(s.position, 0),
 		coalesce(s.is_won, false),
 		coalesce(s.is_lost, false),
+		coalesce((to_jsonb(s)->>'is_qualified')::boolean, false),
 		coalesce(s.is_active, true),
 		s.created_at,
 		s.updated_at`
@@ -798,6 +894,7 @@ func scanStage(row scanner) (Stage, error) {
 		&stage.Position,
 		&stage.IsWon,
 		&stage.IsLost,
+		&stage.IsQualified,
 		&stage.IsActive,
 		&stage.CreatedAt,
 		&stage.UpdatedAt,

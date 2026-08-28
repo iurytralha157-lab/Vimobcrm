@@ -25,6 +25,7 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 import { leadsAPI } from '@/lib/api/leads';
+import { getPipelineStageColorStyle } from '@/config/pipeline-stage-colors';
 
 // Drag and Drop imports
 import {
@@ -83,7 +84,7 @@ function SortableQueueRow({
   };
 
   return (
-    <TableRow ref={setNodeRef} style={style} className={cn(isDragging && "bg-white/[0.055]")}>
+    <TableRow ref={setNodeRef} style={style} className={cn(isDragging && "bg-[var(--app-surface-hover)]")}>
       <TableCell className="w-10">
         <button {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing p-1">
           <GripVertical className="h-4 w-4 text-muted-foreground" />
@@ -105,7 +106,7 @@ function SortableQueueRow({
       </TableCell>
       <TableCell>
         <Badge
-          style={{ backgroundColor: `${item.stage_color}20`, color: item.stage_color, borderColor: `${item.stage_color}40` }}
+          style={getPipelineStageColorStyle(item.stage_color)}
           variant="outline"
         >
           {item.stage_name || 'Sem estágio'}

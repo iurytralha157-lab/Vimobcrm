@@ -11,6 +11,15 @@ import {
 
 export type { PropertyCity, PropertyNeighborhood, PropertyCondominium }
 
+const LOCATION_STALE_TIME = 5 * 60 * 1_000
+const LOCATION_GC_TIME = 30 * 60 * 1_000
+
+const locationQueryPolicy = {
+  staleTime: LOCATION_STALE_TIME,
+  gcTime: LOCATION_GC_TIME,
+  refetchOnWindowFocus: false,
+} as const
+
 function useOrganizationId() {
   const { profile, organization } = useAuth()
   return organization?.id || profile?.organization_id || undefined
@@ -22,7 +31,7 @@ function getErrorMessage(error: unknown) {
 }
 
 // Cities hooks
-export function usePropertyCities() {
+export function usePropertyCities(options: { enabled?: boolean } = {}) {
   const organizationId = useOrganizationId()
 
   return useQuery({
@@ -33,7 +42,8 @@ export function usePropertyCities() {
       const { data } = await propertyLocationsAPI.getCities(organizationId)
       return data
     },
-    enabled: !!organizationId,
+    enabled: !!organizationId && options.enabled !== false,
+    ...locationQueryPolicy,
   })
 }
 
@@ -85,7 +95,7 @@ export function useDeleteCity() {
 }
 
 // Neighborhoods hooks
-export function usePropertyNeighborhoods(cityId?: string) {
+export function usePropertyNeighborhoods(cityId?: string, options: { enabled?: boolean } = {}) {
   const organizationId = useOrganizationId()
 
   return useQuery({
@@ -96,7 +106,8 @@ export function usePropertyNeighborhoods(cityId?: string) {
       const { data } = await propertyLocationsAPI.getNeighborhoods(organizationId, cityId)
       return data
     },
-    enabled: !!organizationId,
+    enabled: !!organizationId && options.enabled !== false,
+    ...locationQueryPolicy,
   })
 }
 
@@ -159,6 +170,7 @@ export function usePropertyCondominiums(neighborhoodId?: string, options: { enab
       return data
     },
     enabled: !!organizationId && options.enabled !== false,
+    ...locationQueryPolicy,
   })
 }
 

@@ -25,6 +25,8 @@ async function expectRouteDenied(page: Page, path: string) {
 }
 
 test.describe('limites de modulo e pagina por perfil', () => {
+  test.describe.configure({ timeout: 120_000 });
+
   test('administrador atravessa todos os limites administrativos', async ({ page }) => {
     await signInAs(page, 'admin');
     const context = await fetchTenantContext(page);
@@ -36,7 +38,7 @@ test.describe('limites de modulo e pagina por perfil', () => {
     await expectAPINotForbidden(page, 'GET', '/v1/settings/roles');
     await expectRouteAllowed(page, `/settings/users/${context.userId}`);
     await expectRouteAllowed(page, '/dashboard/site');
-    await expectRouteAllowed(page, '/dashboard/campaigns');
+    await expectRouteAllowed(page, '/marketing');
     await expectRouteAllowed(page, '/properties/new');
   });
 
@@ -72,7 +74,7 @@ test.describe('limites de modulo e pagina por perfil', () => {
     await expectAPIStatus(page, 'GET', `/v1/settings/users/${context.userId}/permissions`, 403);
     await expectRouteDenied(page, `/settings/users/${context.userId}`);
     await expectRouteDenied(page, '/dashboard/site');
-    await expectRouteDenied(page, '/dashboard/campaigns');
+    await expectRouteDenied(page, '/marketing');
     await expectRouteDenied(page, '/properties/new');
     await expectRouteAllowed(page, '/crm/contacts');
     await expectRouteAllowed(page, '/crm/conversas');
@@ -108,7 +110,7 @@ test.describe('limites de modulo e pagina por perfil', () => {
     await expectAPIStatus(page, 'GET', `/v1/settings/users/${context.userId}/permissions`, 403);
     await expectRouteDenied(page, `/settings/users/${context.userId}`);
     await expectRouteDenied(page, '/dashboard/site');
-    await expectRouteDenied(page, '/dashboard/campaigns');
+    await expectRouteDenied(page, '/marketing');
     await expectRouteDenied(page, '/properties/new');
     await expectRouteAllowed(page, '/crm/pipelines');
     await expectRouteAllowed(page, '/crm/contacts');

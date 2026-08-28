@@ -3,9 +3,13 @@ package integrations
 import "errors"
 
 var (
-	ErrInvalidInput        = errors.New("invalid integration input")
-	ErrIntegrationNotFound = errors.New("integration not found")
-	ErrFunctionNotAllowed  = errors.New("integration function is not allowed")
+	ErrInvalidInput               = errors.New("invalid integration input")
+	ErrBillingCheckoutUnavailable = errors.New("billing checkout security is unavailable")
+	ErrIntegrationNotFound        = errors.New("integration not found")
+	ErrFunctionNotAllowed         = errors.New("integration function is not allowed")
+	ErrMetaUpstream               = errors.New("meta upstream request failed")
+	ErrMetaDeliveryUncertain      = errors.New("meta delivery result is uncertain")
+	ErrIdempotencyConflict        = errors.New("idempotency key is already bound to another request")
 )
 
 type Envelope[T any] struct {
@@ -13,10 +17,12 @@ type Envelope[T any] struct {
 }
 
 type ExternalConfig struct {
-	ProjectURL       string
-	APIKey           string
-	MetaGraphVersion string
-	MetaGraphBaseURL string
+	ProjectURL            string
+	APIKey                string
+	ClientIPSigningSecret string
+	MetaAppSecret         string
+	MetaGraphVersion      string
+	MetaGraphBaseURL      string
 }
 
 type FunctionResponse struct {
@@ -54,4 +60,29 @@ type ToggleMetaFormConfigRequest struct {
 	IntegrationID string `json:"integrationId"`
 	FormID        string `json:"formId"`
 	IsActive      bool   `json:"isActive"`
+}
+
+// MetaConversionFeedbackRequest configures the dedicated CRM Dataset
+// credential used by Conversions API for CRM. DatasetAccessToken and
+// TestEventCode are write-only and are never included in a response.
+// ReplayRecentFacts explicitly queues all eligible real facts from Meta
+// acquisition entries in the preceding seven days.
+type MetaConversionFeedbackRequest struct {
+	IntegrationID      string  `json:"integrationId"`
+	DatasetID          *string `json:"datasetId"`
+	DatasetName        *string `json:"datasetName"`
+	DatasetAccessToken *string `json:"datasetAccessToken"`
+	Enabled            bool    `json:"enabled"`
+	ReplayRecentFacts  bool    `json:"replayRecentFacts"`
+	TestEventCode      *string `json:"testEventCode,omitempty"`
+}
+
+type SendMetaMessageRequest struct {
+	Text           string `json:"text"`
+	IdempotencyKey string `json:"idempotencyKey"`
+}
+
+type SendMetaMessageResult struct {
+	Message    map[string]any
+	StatusCode int
 }

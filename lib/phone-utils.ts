@@ -1,5 +1,5 @@
 /**
- * Country data for phone input
+ * Country data used by the phone input. Codes do not include the leading `+`.
  */
 export interface Country {
   name: string;
@@ -30,13 +30,97 @@ export const countries: Country[] = [
   { name: 'Japão', code: '81', flag: '🇯🇵' },
 ];
 
+const E164_PATTERN = /^\+[1-9]\d{7,14}$/;
+const PHONE_INPUT_PATTERN = /^[+\d\s().-]+$/;
+
+function hasValidParenthesisStructure(value: string) {
+  let parenthesisDepth = 0;
+
+  for (const character of value) {
+    if (character === '(') {
+      if (parenthesisDepth !== 0) return false;
+      parenthesisDepth = 1;
+    } else if (character === ')') {
+      if (parenthesisDepth !== 1) return false;
+      parenthesisDepth = 0;
+    }
+  }
+
+  return parenthesisDepth === 0;
+}
+
+function hasExplicitInternationalPrefix(value: string) {
+  const trimmed = value.trim();
+  return trimmed.startsWith('+') || trimmed.startsWith('00');
+}
+
+function sortedUniqueCountryCodes() {
+  return Array.from(new Set(countries.map((country) => country.code)))
+    .sort((left, right) => right.length - left.length);
+}
+
 /**
- * Parse a phone number and extract country code, DDD, and number
+ * Converts a user/provider phone into E.164.
+ *
+ * Brazilian numbers remain convenient: a local DDD + number (10 or 11
+ * digits), and legacy values beginning with 55, are accepted. International
+ * values must carry an explicit `+`/`00`, or already contain 12-15 digits.
+ */
+export function normalizePhoneToE164(phone?: string | null): string | null {
+  if (!phone) return null;
+
+  const trimmed = phone.trim();
+  if (
+    !trimmed
+    || !PHONE_INPUT_PATTERN.test(trimmed)
+    || !hasValidParenthesisStructure(trimmed)
+  ) return null;
+
+  const plusCount = (trimmed.match(/\+/g) || []).length;
+  if (plusCount > 1 || (plusCount === 1 && !trimmed.startsWith('+'))) return null;
+
+  const digits = trimmed.replace(/\D/g, '');
+  let internationalDigits: string;
+
+  if (trimmed.startsWith('+')) {
+    internationalDigits = digits;
+  } else if (trimmed.startsWith('00')) {
+    internationalDigits = digits.slice(2);
+  } else if (digits.startsWith('55') && (digits.length === 12 || digits.length === 13)) {
+    internationalDigits = digits;
+  } else if (digits.length === 10 || digits.length === 11) {
+    internationalDigits = `55${digits}`;
+  } else if (digits.length >= 12 && digits.length <= 15) {
+    internationalDigits = digits;
+  } else {
+    return null;
+  }
+
+  const normalized = `+${internationalDigits}`;
+  return E164_PATTERN.test(normalized) ? normalized : null;
+}
+
+export function isValidE164Phone(phone?: string | null): boolean {
+  return normalizePhoneToE164(phone) !== null;
+}
+
+/**
+ * Parses a phone for the controlled country/local-number input.
  */
 export function parsePhoneInput(phone: string): { countryCode: string; ddd: string; number: string } {
   if (!phone) return { countryCode: '55', ddd: '', number: '' };
 
-  const cleaned = phone.replace(/\D/g, '');
+  const trimmed = phone.trim();
+  const cleaned = trimmed.replace(/\D/g, '');
+  const explicitInternational = hasExplicitInternationalPrefix(trimmed);
+
+  if (!explicitInternational && (cleaned.length === 10 || cleaned.length === 11)) {
+    return {
+      countryCode: '55',
+      ddd: cleaned.slice(0, 2),
+      number: cleaned.slice(2),
+    };
+  }
 
   if (cleaned.startsWith('55') && (cleaned.length === 12 || cleaned.length === 13)) {
     return {
@@ -46,166 +130,147 @@ export function parsePhoneInput(phone: string): { countryCode: string; ddd: stri
     };
   }
 
-  if (cleaned.length === 10 || cleaned.length === 11) {
-    return {
-      countryCode: '55',
-      ddd: cleaned.slice(0, 2),
-      number: cleaned.slice(2),
-    };
-  }
-
-  // Try to match country codes (sorted by length descending to match longer codes first)
-  const sortedCountries = [...countries].sort((a, b) => b.code.length - a.code.length);
-
-  for (const country of sortedCountries) {
-    if (cleaned.startsWith(country.code)) {
-      const rest = cleaned.slice(country.code.length);
-      // For Brazil, DDD is 2 digits
-      if (country.code === '55' && rest.length >= 2) {
+  if (explicitInternational || cleaned.length >= 12) {
+    const countryCode = sortedUniqueCountryCodes().find((code) => cleaned.startsWith(code));
+    if (countryCode) {
+      const rest = cleaned.slice(countryCode.length);
+      if (countryCode === '55') {
         return {
-          countryCode: '55',
+          countryCode,
           ddd: rest.slice(0, 2),
           number: rest.slice(2),
         };
       }
-      // For other countries, assume first 2-3 digits might be area code
-      if (rest.length >= 2) {
-        return {
-          countryCode: country.code,
-          ddd: rest.slice(0, Math.min(3, Math.floor(rest.length / 2))),
-          number: rest.slice(Math.min(3, Math.floor(rest.length / 2))),
-        };
-      }
-      return {
-        countryCode: country.code,
-        ddd: '',
-        number: rest,
-      };
+      return { countryCode, ddd: '', number: rest };
     }
+  }
+
+  if (explicitInternational) {
+    return { countryCode: '', ddd: '', number: cleaned };
   }
 
   return { countryCode: '55', ddd: '', number: cleaned };
 }
 
 /**
- * Format phone parts into a clean number string for storage
+ * Builds the canonical value emitted by the phone input. Partial values are
+ * allowed while typing; submit-time validation is handled separately.
  */
 export function formatPhoneFromParts(countryCode: string, ddd: string, number: string): string {
   const cleanCountry = countryCode.replace(/\D/g, '');
-  const cleanDdd = ddd.replace(/\D/g, '');
-  const cleanNumber = number.replace(/\D/g, '');
+  const localDigits = `${ddd}${number}`.replace(/\D/g, '');
+  if (!cleanCountry || !localDigits) return '';
 
-  if (!cleanDdd && !cleanNumber) return '';
-
-  return `${cleanCountry}${cleanDdd}${cleanNumber}`;
+  return `+${`${cleanCountry}${localDigits}`.slice(0, 15)}`;
 }
 
-/**
- * Get country from phone number
- */
 export function getCountryFromPhone(phone: string): Country {
   const { countryCode } = parsePhoneInput(phone);
-  return countries.find(c => c.code === countryCode) || countries[0];
+  return countries.find((country) => country.code === countryCode) || countries[0];
 }
 
 /**
- * Normalizes a phone number by removing non-digits and country code 55
- * This is used to match phones in different formats (e.g., 5522999999999 vs 22999999999)
+ * Produces a comparison key while retaining compatibility with legacy BR
+ * matching, where the 55 prefix was intentionally omitted.
  */
 export function normalizePhone(phone: string): string {
-  if (!phone) return '';
-
-  // Remove all non-digit characters
-  let cleaned = phone.replace(/\D/g, '');
-
-  // If starts with 55 and has 12+ digits, remove the 55
-  if (cleaned.length >= 12 && cleaned.startsWith('55')) {
-    cleaned = cleaned.substring(2);
-  }
-
-  return cleaned;
+  const canonical = normalizePhoneToE164(phone);
+  const digits = (canonical || phone).replace(/\D/g, '');
+  return digits.startsWith('55') && (digits.length === 12 || digits.length === 13)
+    ? digits.slice(2)
+    : digits;
 }
 
 /**
- * Formats a phone number for WhatsApp API (Brazil default)
- * - Removes all non-digit characters
- * - Adds Brazil country code (55) if not present
- * - Handles various input formats
+ * WhatsApp addresses use the E.164 digits without the leading `+`.
  */
 export function formatPhoneForWhatsApp(phone: string): string {
-  // Remove all non-digit characters
-  const cleaned = phone.replace(/\D/g, "");
-
-  // If empty, return as is
-  if (!cleaned) return cleaned;
-
-  // Brazil phone numbers:
-  // - Full format: 55 + DDD (2 digits) + number (8-9 digits) = 12-13 digits
-  // - Without country code: DDD + number = 10-11 digits
-  // - Just the number: 8-9 digits
-
-  // If already has 55 at start and is long enough, keep it
-  if (cleaned.startsWith("55") && cleaned.length >= 12) {
-    return cleaned;
-  }
-
-  // If has 12-13 digits but doesn't start with 55, might be a different country
-  // Only add 55 if it looks like a Brazilian number (10-11 digits without country code)
-  if (cleaned.length === 10 || cleaned.length === 11) {
-    // Brazilian format: DDD (2 digits) + number (8-9 digits)
-    return `55${cleaned}`;
-  }
-
-  // If 8-9 digits (just the number without DDD), we can't safely add 55
-  // because we don't know the DDD - return as is and let it fail gracefully
-  if (cleaned.length >= 8 && cleaned.length <= 9) {
-    console.warn("Phone number without DDD:", cleaned);
-    return cleaned;
-  }
-
-  // For any other length, return as is
-  return cleaned;
+  const canonical = normalizePhoneToE164(phone);
+  return canonical ? canonical.slice(1) : '';
 }
 
 export function isValidWhatsAppPhone(phone?: string | null): boolean {
-  if (!phone) return false;
-
-  const digits = formatPhoneForWhatsApp(phone).replace(/\D/g, '');
-
-  if (!digits) return false;
-
-  if (digits.startsWith('55')) {
-    return digits.length === 12 || digits.length === 13;
-  }
-
-  return digits.length >= 10 && digits.length <= 15;
+  return isValidE164Phone(phone);
 }
 
 /**
- * Formats a phone number for display (with flag and formatted)
+ * Formats known countries without changing the canonical country code.
  */
 export function formatPhoneForDisplay(phone: string): string {
   if (!phone) return '';
 
-  const cleaned = phone.replace(/\D/g, "");
-  const parsed = parsePhoneInput(cleaned);
-  const country = countries.find(c => c.code === parsed.countryCode) || countries[0];
+  const canonical = normalizePhoneToE164(phone);
+  if (!canonical) return phone.trim();
 
-  // Format based on country
+  const parsed = parsePhoneInput(canonical);
+  const country = countries.find((entry) => entry.code === parsed.countryCode);
+  if (!country) return canonical;
+
   if (parsed.countryCode === '55') {
-    // Brazilian format: (XX) XXXXX-XXXX or (XX) XXXX-XXXX
     const num = parsed.number;
     if (num.length === 9) {
-      return `${country.flag} +${parsed.countryCode} (${parsed.ddd}) ${num.slice(0, 5)}-${num.slice(5)}`;
-    } else if (num.length === 8) {
-      return `${country.flag} +${parsed.countryCode} (${parsed.ddd}) ${num.slice(0, 4)}-${num.slice(4)}`;
+      return `${country.flag} +55 (${parsed.ddd}) ${num.slice(0, 5)}-${num.slice(5)}`;
+    }
+    if (num.length === 8) {
+      return `${country.flag} +55 (${parsed.ddd}) ${num.slice(0, 4)}-${num.slice(4)}`;
     }
   }
 
-  // Generic format for other countries
-  if (parsed.ddd) {
-    return `${country.flag} +${parsed.countryCode} (${parsed.ddd}) ${parsed.number}`;
+  return `${country.flag} +${parsed.countryCode} ${parsed.number}`.trim();
+}
+
+const WHATSAPP_INDIVIDUAL_JID_PATTERN = /^([1-9]\d{7,14})(?::\d+)?@(s\.whatsapp\.net|c\.us)$/i;
+
+function phoneFromWhatsAppJid(remoteJid?: string | null) {
+  const match = remoteJid?.trim().match(WHATSAPP_INDIVIDUAL_JID_PATTERN);
+  return match ? normalizePhoneToE164(`+${match[1]}`) : null;
+}
+
+function normalizeWhatsAppContactValue(value?: string | null) {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+
+  if (trimmed.startsWith('+') || trimmed.startsWith('00')) {
+    return normalizePhoneToE164(trimmed);
+  }
+  if (/^[1-9]\d{7,14}$/.test(trimmed)) {
+    return normalizePhoneToE164(`+${trimmed}`);
   }
 
-  return `${country.flag} +${parsed.countryCode} ${parsed.number}`;
+  return normalizePhoneToE164(trimmed);
+}
+
+/**
+ * Resolves the canonical phone identity stored by WhatsApp. Unlike manual
+ * lead entry, digits-only contact_phone/JID values already include the DDI.
+ */
+export function normalizeWhatsAppContactPhoneToE164(
+  contactPhone?: string | null,
+  remoteJid?: string | null,
+): string | null {
+  return phoneFromWhatsAppJid(remoteJid) || normalizeWhatsAppContactValue(contactPhone);
+}
+
+export function formatWhatsAppContactPhoneForDisplay(
+  contactPhone?: string | null,
+  remoteJid?: string | null,
+): string {
+  const canonical = normalizeWhatsAppContactPhoneToE164(contactPhone, remoteJid);
+  return canonical ? formatPhoneForDisplay(canonical) : contactPhone?.trim() || '';
+}
+
+export function formatWhatsAppContactLabel(
+  contactName?: string | null,
+  contactPhone?: string | null,
+  remoteJid?: string | null,
+): string {
+  const trimmedName = contactName?.trim() || '';
+  const canonical = normalizeWhatsAppContactPhoneToE164(contactPhone, remoteJid);
+
+  if (trimmedName) {
+    const nameCanonical = normalizeWhatsAppContactPhoneToE164(trimmedName, trimmedName);
+    if (!canonical || nameCanonical !== canonical) return trimmedName;
+  }
+
+  return canonical ? formatPhoneForDisplay(canonical) : trimmedName;
 }

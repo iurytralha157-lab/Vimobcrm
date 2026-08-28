@@ -87,9 +87,13 @@ export const emailSendRequestSchema = z.discriminatedUnion('template', [
 
 export const emailWebhookEventSchema = z
   .object({
-    type: z.string().trim().min(1),
-    created_at: z.string().trim().optional(),
-    data: emailPayloadSchema.optional().default({}),
+    type: z.string().trim().regex(/^email\.[a-z_]+$/).max(80),
+    created_at: z.string().trim().datetime({ offset: true }),
+    data: z
+      .object({
+        email_id: z.string().trim().min(1).max(255),
+      })
+      .passthrough(),
   })
   .passthrough()
 

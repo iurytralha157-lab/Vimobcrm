@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useLeadAnalytics } from '@/hooks/use-lead-analytics';
 import { ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, AreaChart, Area } from 'recharts';
-import { Route, MousePointerClick, Users, TrendingUp, FileText, Monitor, CheckCircle, Eye, ExternalLink, Smartphone, Globe, MapPin, Activity, ArrowRight } from 'lucide-react';
+import { Route, MousePointerClick, Users, TrendingUp, FileText, Monitor, CheckCircle, Eye, ExternalLink, Smartphone, Globe, MapPin, Activity, ArrowRight, AlertCircle, RefreshCw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -12,11 +12,10 @@ import { useState } from 'react';
 import type { LeadJourney } from '@/hooks/use-lead-analytics';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import { useAuth } from '@/contexts/AuthContext';
-import { useQuery } from '@tanstack/react-query';
-import { siteAPI } from '@/lib/api/site';
+import { useSiteDashboardUrl } from '@/hooks/site';
 import { VisitorMap } from './VisitorMap';
-import { getSitePublicUrl } from '@/lib/site/site-publication';
+import { DomainValidationError } from '@/lib/validation';
+import { getSitePublicPageUrl } from '@/lib/site/site-publication';
 
 const EVENT_LABELS: Record<string, string> = {
   pageview: 'Visualização',
@@ -30,6 +29,18 @@ const EVENT_LABELS: Record<string, string> = {
 };
 
 const FUNNEL_ORDER = ['pageview', 'page_view', 'property_search', 'property_view', 'favorite', 'cta_click', 'whatsapp_click', 'form_submit'];
+
+function getJourneyErrorDescription(error: unknown) {
+  if (error instanceof DomainValidationError && error.direction === 'input') {
+    return 'O período selecionado não é válido. Escolha um intervalo de até 366 dias.';
+  }
+  if (error instanceof DomainValidationError && error.direction === 'response') {
+    return 'A API respondeu em um formato incompatível. Nenhuma jornada foi estimada.';
+  }
+  return error instanceof Error
+    ? error.message
+    : 'Não foi possível carregar as jornadas do site agora.';
+}
 
 interface LeadJourneyDashboardProps {
   dateFrom: Date;
@@ -55,47 +66,58 @@ function FunnelStage({ item, index, max }: { item: { name: string; total: number
 		style={{ width: `${width}%`, background: `color-mix(in srgb, var(--chart-1) ${intensity}%, var(--app-surface-soft))` }}
 	  >
 		<span className="truncate text-[var(--app-text-primary)]">{item.name}</span>
-		<span className="shrink-0 font-medium text-[var(--app-text-primary)]">{item.total}</span>
+		<span className="shrink-0 font-normal text-[var(--app-text-primary)]">{item.total}</span>
 	  </div>
 	);
 }
 
 export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardProps) {
-  const { data, isLoading } = useLeadAnalytics(dateFrom, dateTo);
+  const analyticsQuery = useLeadAnalytics(dateFrom, dateTo);
+  const { data } = analyticsQuery;
   const [selectedJourney, setSelectedJourney] = useState<LeadJourney | null>(null);
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || undefined;
+  const siteBaseUrl = useSiteDashboardUrl();
 
-  const { data: siteInfo } = useQuery({
-    queryKey: ['org-site-info', organizationId],
-    queryFn: async () => {
-      if (!organizationId) return null;
-      return siteAPI.getSite(organizationId);
-    },
-    enabled: !!organizationId,
-  });
-
-  const siteBaseUrl = getSitePublicUrl({
-    customDomain: siteInfo?.custom_domain,
-    domainVerified: siteInfo?.domain_verified,
-    subdomain: siteInfo?.subdomain,
-  });
-
-  if (isLoading) {
+  if (!data && analyticsQuery.isPending) {
     return (
-      <div className="space-y-6">
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-28" />)}
+      <div className="space-y-4" aria-label="Carregando percursos dos leads">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-24 rounded-[8px]" />)}
         </div>
-        <Skeleton className="h-64" />
+        <Skeleton className="h-64 rounded-[8px]" />
       </div>
     );
   }
 
-  const analytics = data || {
-    journeys: [] as LeadJourney[], funnel: [] as { event_type: string; total: number }[], top_pages: [] as { page_path: string; views: number }[], daily_views: [] as { date: string; views: number }[],
-    total_sessions: 0, total_conversions: 0, device_breakdown: [] as { device_type: string; total: number }[], locations: [] as { city: string; region: string | null; country: string | null; lat: number | null; lng: number | null; sessions: number }[],
-  };
+  if (!data && analyticsQuery.isError) {
+    return (
+      <Card className="app-card bg-[var(--app-surface-solid)]">
+        <CardContent role="alert" className="flex min-h-[240px] flex-col items-center justify-center p-6 text-center">
+          <span className="flex h-10 w-10 items-center justify-center rounded-[8px] bg-red-500/[0.08] text-red-500">
+            <Route className="h-4 w-4" aria-hidden="true" />
+          </span>
+          <p className="mt-3 text-sm font-normal text-[var(--app-text-primary)]">
+            Não foi possível carregar os percursos
+          </p>
+          <p className="mt-1 max-w-lg text-xs font-light leading-5 text-[var(--app-text-tertiary)]">
+            {getJourneyErrorDescription(analyticsQuery.error)}
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => analyticsQuery.refetch()}
+            disabled={analyticsQuery.isFetching}
+            className="mt-4 h-9 rounded-[6px] px-4 text-xs shadow-none"
+          >
+            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${analyticsQuery.isFetching ? 'animate-spin' : ''}`} />
+            {analyticsQuery.isFetching ? 'Carregando' : 'Tentar novamente'}
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!data) return null;
+  const analytics = data;
 
   const conversionRate = analytics.total_sessions > 0
     ? ((analytics.total_conversions / analytics.total_sessions) * 100).toFixed(1)
@@ -111,59 +133,79 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
 	  return (aIndex === -1 ? 99 : aIndex) - (bIndex === -1 ? 99 : bIndex);
 	});
 
-  const chartData = analytics.daily_views.map(d => ({
-    date: format(new Date(d.date), 'dd/MM', { locale: ptBR }),
-    views: d.views,
-  }));
+  const chartData = analytics.daily_views.map((item) => {
+    const [, month, day] = item.date.split('-');
+    return { date: `${day}/${month}`, views: item.views };
+  });
 
 	const totalInteractions = analytics.funnel.reduce((acc, item) => acc + item.total, 0);
 	const funnelMax = Math.max(...funnelData.map(item => item.total), 1);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
+
+      {analyticsQuery.isError && (
+        <div role="status" className="flex flex-col gap-3 rounded-[8px] bg-amber-500/[0.08] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2 text-sm text-[var(--app-text-secondary)]">
+            <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" aria-hidden="true" />
+            Os últimos percursos válidos continuam visíveis, mas a atualização falhou.
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => analyticsQuery.refetch()}
+            disabled={analyticsQuery.isFetching}
+            className="h-8 gap-1.5 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-3 text-xs shadow-none hover:bg-[var(--app-surface-hover)]"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${analyticsQuery.isFetching ? 'animate-spin' : ''}`} />
+            {analyticsQuery.isFetching ? 'Atualizando' : 'Tentar novamente'}
+          </Button>
+        </div>
+      )}
 
 	  <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
 		<Card className="app-card !bg-[var(--app-surface-soft)]">
           <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-2">
-			  <Users className="h-4 w-4 text-[#FF4529]" />
-              <span className="text-xs text-muted-foreground">Sessões</span>
+			  <Users className="h-4 w-4 text-primary" />
+              <span className="text-xs font-light text-muted-foreground">Sessões</span>
             </div>
-			<span className="text-2xl font-semibold text-[var(--app-text-primary)]">{analytics.total_sessions}</span>
+			<span className="text-2xl font-normal text-[var(--app-text-primary)]">{analytics.total_sessions}</span>
           </CardContent>
         </Card>
 		<Card className="app-card !bg-[var(--app-surface-soft)]">
           <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-2">
-			  <MousePointerClick className="h-4 w-4 text-[#FF4529]" />
-              <span className="text-xs text-muted-foreground">Conversões</span>
+			  <MousePointerClick className="h-4 w-4 text-primary" />
+              <span className="text-xs font-light text-muted-foreground">Conversões</span>
             </div>
-			<span className="text-2xl font-semibold text-[var(--app-text-primary)]">{analytics.total_conversions}</span>
+			<span className="text-2xl font-normal text-[var(--app-text-primary)]">{analytics.total_conversions}</span>
           </CardContent>
         </Card>
 		<Card className="app-card !bg-[var(--app-surface-soft)]">
           <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-2">
-			  <TrendingUp className="h-4 w-4 text-[#FF4529]" />
-              <span className="text-xs text-muted-foreground">Taxa de Conversão</span>
+			  <TrendingUp className="h-4 w-4 text-primary" />
+              <span className="text-xs font-light text-muted-foreground">Taxa de Conversão</span>
             </div>
-			<span className="text-2xl font-semibold text-[var(--app-text-primary)]">{conversionRate}%</span>
+			<span className="text-2xl font-normal text-[var(--app-text-primary)]">{conversionRate}%</span>
           </CardContent>
         </Card>
 		<Card className="app-card !bg-[var(--app-surface-soft)]">
           <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-2">
-			  <Activity className="h-4 w-4 text-[#FF4529]" />
-			  <span className="text-xs text-muted-foreground">Interações</span>
+			  <Activity className="h-4 w-4 text-primary" />
+			  <span className="text-xs font-light text-muted-foreground">Interações</span>
 			</div>
-			<span className="text-2xl font-semibold text-[var(--app-text-primary)]">{totalInteractions}</span>
+			<span className="text-2xl font-normal text-[var(--app-text-primary)]">{totalInteractions}</span>
           </CardContent>
         </Card>
       </div>
 
       <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-2">
         {funnelData.length > 0 && (
-          <Card className="app-card flex h-full min-h-[430px] flex-col overflow-hidden">
+          <Card className={cn('app-card flex h-full min-h-[430px] flex-col overflow-hidden', chartData.length === 0 && 'lg:col-span-2')}>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm flex items-center gap-2">
                 <MousePointerClick className="w-4 h-4 text-primary" />
@@ -181,7 +223,7 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
         )}
 
         {chartData.length > 0 && (
-          <Card className="app-card">
+          <Card className={cn('app-card', funnelData.length === 0 && 'lg:col-span-2')}>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm flex items-center gap-2">
                 <TrendingUp className="w-4 h-4 text-primary" />
@@ -191,7 +233,7 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
             <CardContent>
               <div className="h-48 min-h-[192px] min-w-[1px]">
 				<ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} initialDimension={{ width: 640, height: 192 }}>
-				  <AreaChart data={chartData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+				  <AreaChart data={chartData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }} accessibilityLayer>
 					<defs><linearGradient id="journeyViews" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="var(--chart-1)" stopOpacity={0.24} /><stop offset="95%" stopColor="var(--chart-1)" stopOpacity={0} /></linearGradient></defs>
 					<CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--app-border)" />
 					<XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: 'var(--app-text-tertiary)' }} />
@@ -218,10 +260,22 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
             <CardContent className="app-scrollbar h-[350px] flex-1 space-y-1 overflow-y-auto px-3 pb-3">
               {analytics.top_pages.map((page, i) => (
                 <div key={page.page_path} className="flex min-w-0 items-center gap-3 rounded-[7px] px-2 py-2.5 hover:bg-[var(--app-surface-soft)]">
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] text-[11px] font-semibold text-[var(--app-text-secondary)]">{i + 1}</span>
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] text-[11px] font-light text-[var(--app-text-secondary)]">{i + 1}</span>
                   <span className="min-w-0 flex-1 truncate font-mono text-xs text-[var(--app-text-secondary)]" title={page.page_path}>{page.page_path}</span>
-                  <span className="shrink-0"><strong className="text-sm font-semibold text-[var(--app-text-primary)]">{page.views}</strong><span className="ml-1 text-[10px] text-[var(--app-text-tertiary)]">views</span></span>
-                  {siteBaseUrl && <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 rounded-[6px] shadow-none hover:bg-[var(--app-surface-hover)]" aria-label={`Abrir ${page.page_path} no site`} title="Abrir página no site" onClick={() => window.open(`${siteBaseUrl}${page.page_path}`, '_blank')}><ExternalLink className="h-3.5 w-3.5" /></Button>}
+                  <span className="shrink-0"><strong className="text-[12px] font-normal text-[var(--app-text-primary)]">{page.views}</strong><span className="ml-1 text-[10px] text-[var(--app-text-tertiary)]">views</span></span>
+                  {getSitePublicPageUrl(siteBaseUrl, page.page_path) && (
+                    <Button asChild variant="ghost" size="icon" className="h-7 w-7 shrink-0 rounded-[6px] shadow-none hover:bg-[var(--app-surface-hover)]">
+                      <a
+                        href={getSitePublicPageUrl(siteBaseUrl, page.page_path) || undefined}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={`Abrir ${page.page_path} no site`}
+                        title="Abrir página no site"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                      </a>
+                    </Button>
+                  )}
                 </div>
               ))}
             </CardContent>
@@ -229,7 +283,7 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
         )}
 
         {/* Visitor Location Map */}
-        <Card className="app-card flex h-full min-h-[430px] flex-col overflow-hidden">
+        <Card className={cn('app-card flex h-full min-h-[430px] flex-col overflow-hidden', analytics.top_pages.length === 0 && 'lg:col-span-2')}>
           <CardHeader className="pb-3">
             <CardTitle className="text-sm flex items-center gap-2">
               <MapPin className="w-4 h-4 text-primary" />
@@ -275,8 +329,8 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
               const journeyOrigin = getJourneyOrigin(j);
               return (
                   <div key={j.session_id} className={cn('grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-2 rounded-[7px] px-3 py-3 hover:bg-[var(--app-surface-soft)] md:grid-cols-[110px_minmax(0,1fr)_180px_110px_32px] md:items-center', j.converted && 'bg-emerald-500/[0.05]')}>
-                  <div className="flex items-center gap-2"><span className={cn('h-2 w-2 rounded-full', j.converted ? 'bg-emerald-500' : 'bg-[#FF4529]')} /><div><p className="font-mono text-xs text-[var(--app-text-primary)]">{j.session_id.substring(0, 8)}</p><p className="text-[10px] text-[var(--app-text-tertiary)]">{format(new Date(j.first_event), 'dd/MM HH:mm', { locale: ptBR })}</p></div></div>
-                  <div className="col-span-2 flex min-w-0 items-start gap-2 font-mono text-[11px] text-[var(--app-text-secondary)] md:col-span-1 md:items-center"><span className="min-w-0 break-all md:truncate" title={firstPath}>{firstPath}</span>{j.path_sequence.length > 1 && <><ArrowRight className="mt-0.5 h-3 w-3 shrink-0 text-[#FF4529] md:mt-0" /><span className="min-w-0 break-all md:truncate" title={lastPath}>{lastPath}</span></>}</div>
+                  <div className="flex items-center gap-2"><span className={cn('h-2 w-2 rounded-full', j.converted ? 'bg-emerald-500' : 'bg-primary/50')} /><div><p className="font-mono text-xs text-[var(--app-text-primary)]">{j.session_id.substring(0, 8)}</p><p className="text-[10px] text-[var(--app-text-tertiary)]">{format(new Date(j.first_event), 'dd/MM HH:mm', { locale: ptBR })}</p></div></div>
+                  <div className="col-span-2 flex min-w-0 items-start gap-2 font-mono text-[11px] text-[var(--app-text-secondary)] md:col-span-1 md:items-center"><span className="min-w-0 break-all md:truncate" title={firstPath}>{firstPath}</span>{j.path_sequence.length > 1 && <><ArrowRight className="mt-0.5 h-3 w-3 shrink-0 text-primary md:mt-0" /><span className="min-w-0 break-all md:truncate" title={lastPath}>{lastPath}</span></>}</div>
                   <div className="col-span-2 min-w-0 text-[11px] text-[var(--app-text-tertiary)] md:col-span-1">
                     <p className="break-words md:truncate" title={eventNames.join(', ')}>{eventNames.join(' · ') || 'Sem eventos'}</p>
                     <p className="mt-0.5 flex min-w-0 items-center gap-1"><Globe className="h-3 w-3 shrink-0" /><span className="truncate">{journeyOrigin}</span></p>
@@ -294,7 +348,7 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
 		<Card className="app-card !bg-[var(--app-surface-soft)]">
           <CardContent className="p-6 text-center">
             <Route className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
-            <p className="font-semibold mb-1">Nenhuma jornada registrada ainda</p>
+            <p className="mb-1 text-[14px] font-normal">Nenhuma jornada registrada ainda</p>
             <p className="text-sm text-muted-foreground">
               Os dados aparecerão quando visitantes navegarem pelo site público.
             </p>
@@ -330,7 +384,7 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
                 </div>
 				<div className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <p className="text-[10px] text-muted-foreground mb-1">Total de eventos</p>
-                  <p className="font-semibold">{selectedJourney.total_events}</p>
+                  <p className="font-normal">{selectedJourney.total_events}</p>
                 </div>
 				<div className="rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <p className="text-[10px] text-muted-foreground mb-1">Primeira ação</p>
@@ -400,7 +454,7 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
                 <p className="text-xs font-medium mb-2">Tipos de evento</p>
                 <div className="flex flex-wrap gap-x-3 gap-y-1.5 rounded-[7px] bg-[var(--app-surface-soft)] px-3 py-2.5">
                   {[...new Set(selectedJourney.event_sequence)].map((evt, idx) => (
-                    <span key={idx} className="flex items-center gap-1.5 text-[11px] text-[var(--app-text-secondary)]"><span className="h-1.5 w-1.5 rounded-full bg-[#FF4529]" />{EVENT_LABELS[evt] || evt}</span>
+                    <span key={idx} className="flex items-center gap-1.5 text-[11px] text-[var(--app-text-secondary)]"><span className="h-1.5 w-1.5 rounded-full bg-primary/50" />{EVENT_LABELS[evt] || evt}</span>
                   ))}
                 </div>
               </div>
@@ -418,7 +472,7 @@ export function LeadJourneyDashboard({ dateFrom, dateTo }: LeadJourneyDashboardP
 							<div className="absolute bottom-0 left-2.5 top-5 w-px bg-[var(--app-border)]" />
                           )}
                           <div className={cn(
-                            'absolute left-0 w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 text-[9px] font-bold',
+                            'absolute left-0 mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-normal',
                             idx === 0
                               ? 'bg-primary/15 text-primary'
                               : isLast

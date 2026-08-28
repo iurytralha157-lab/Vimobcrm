@@ -23,30 +23,35 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Erro desconhecido'
 }
 
+function useOrganizationId() {
+  const { profile, organization } = useAuth()
+  return organization?.id || profile?.organization_id || undefined
+}
+
 export function useSiteSearchFilters() {
-  const { profile } = useAuth()
+  const organizationId = useOrganizationId()
 
   return useQuery({
-    queryKey: ['site-search-filters', profile?.organization_id],
+    queryKey: ['site-search-filters', organizationId],
     queryFn: async () => {
-      if (!profile?.organization_id) return []
-      return siteAPI.listSearchFilters(profile.organization_id)
+      if (!organizationId) return []
+      return siteAPI.listSearchFilters(organizationId)
     },
-    enabled: !!profile?.organization_id,
+    enabled: !!organizationId,
   })
 }
 
 export function useCreateSearchFilter() {
   const queryClient = useQueryClient()
-  const { profile } = useAuth()
+  const organizationId = useOrganizationId()
 
   return useMutation({
     mutationFn: async (item: Pick<SiteSearchFilter, 'filter_key' | 'label' | 'position' | 'is_active'>) => {
-      if (!profile?.organization_id) throw new Error('Organização não encontrada')
-      return siteAPI.createSearchFilter(item, profile.organization_id)
+      if (!organizationId) throw new Error('Organização não encontrada')
+      return siteAPI.createSearchFilter(item, organizationId)
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['site-search-filters'] })
+      queryClient.invalidateQueries({ queryKey: ['site-search-filters', organizationId] })
       toast.success('Filtro adicionado!')
     },
     onError: (error: unknown) => {
@@ -57,14 +62,15 @@ export function useCreateSearchFilter() {
 
 export function useUpdateSearchFilter() {
   const queryClient = useQueryClient()
-  const { profile } = useAuth()
+  const organizationId = useOrganizationId()
 
   return useMutation({
     mutationFn: async (item: Partial<SiteSearchFilter> & { id: string }) => {
-      return siteAPI.updateSearchFilter(item, profile?.organization_id)
+      if (!organizationId) throw new Error('Organização não encontrada')
+      return siteAPI.updateSearchFilter(item, organizationId)
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['site-search-filters'] })
+      queryClient.invalidateQueries({ queryKey: ['site-search-filters', organizationId] })
       toast.success('Filtro atualizado!')
     },
     onError: (error: unknown) => {
@@ -75,14 +81,15 @@ export function useUpdateSearchFilter() {
 
 export function useDeleteSearchFilter() {
   const queryClient = useQueryClient()
-  const { profile } = useAuth()
+  const organizationId = useOrganizationId()
 
   return useMutation({
     mutationFn: async (id: string) => {
-      await siteAPI.deleteSearchFilter(id, profile?.organization_id)
+      if (!organizationId) throw new Error('Organização não encontrada')
+      await siteAPI.deleteSearchFilter(id, organizationId)
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['site-search-filters'] })
+      queryClient.invalidateQueries({ queryKey: ['site-search-filters', organizationId] })
       toast.success('Filtro removido!')
     },
     onError: (error: unknown) => {
@@ -93,14 +100,15 @@ export function useDeleteSearchFilter() {
 
 export function useReorderSearchFilters() {
   const queryClient = useQueryClient()
-  const { profile } = useAuth()
+  const organizationId = useOrganizationId()
 
   return useMutation({
     mutationFn: async (items: { id: string; position: number }[]) => {
-      await siteAPI.reorderSearchFilters(items, profile?.organization_id)
+      if (!organizationId) throw new Error('Organização não encontrada')
+      await siteAPI.reorderSearchFilters(items, organizationId)
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['site-search-filters'] })
+      queryClient.invalidateQueries({ queryKey: ['site-search-filters', organizationId] })
     },
     onError: (error: unknown) => {
       toast.error('Erro ao reordenar: ' + getErrorMessage(error))

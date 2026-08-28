@@ -10,6 +10,8 @@ export type TenantQueryAccessContext = {
   ledPipelineIds?: readonly string[] | null
   isSuperAdmin?: boolean | null
   impersonatedOrganizationId?: string | null
+  propertyEditPolicy?: string | null
+  propertyOwnerContactVisibility?: string | null
 }
 
 const missingValue = 'none'
@@ -30,5 +32,7 @@ export function createTenantQueryAccessSignature(context: TenantQueryAccessConte
     `pipelines:${stableList(context.ledPipelineIds)}`,
     `super-admin:${context.isSuperAdmin ? 'yes' : 'no'}`,
     `impersonated:${context.impersonatedOrganizationId ?? missingValue}`,
+    `property-edit:${context.propertyEditPolicy ?? missingValue}`,
+    `property-owner-contacts:${context.propertyOwnerContactVisibility ?? missingValue}`,
   ].join('|')
 }

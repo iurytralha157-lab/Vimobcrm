@@ -1,7 +1,7 @@
 import { useFloatingChat } from "@/contexts/FloatingChatContext";
 import { Button } from "@/components/ui/button";
 import { MessageCircle } from "lucide-react";
-import { useWhatsAppConversations, useWhatsAppRealtimeConversations } from "@/hooks/use-whatsapp-conversations";
+import { useWhatsAppConversations } from "@/hooks/use-whatsapp-conversations";
 import { useAccessibleSessions } from "@/hooks/use-accessible-sessions";
 import { usePathname } from 'next/navigation';
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -24,12 +24,6 @@ export function FloatingChatButton() {
     undefined,
     { hideGroups: true },
     conversationSessionIds,
-  );
-
-  useWhatsAppRealtimeConversations(
-    shouldLoadFloatingChatData && !isOnConversationsPage,
-    loadingSessions ? undefined : accessibleSessionIds,
-    [],
   );
 
   const [side, setSide] = useState<'right' | 'left'>('right');
@@ -116,11 +110,11 @@ export function FloatingChatButton() {
         }}
         onClick={handleClick}
         size="icon"
-        className={`h-16 w-16 rounded-full shadow-none hover:shadow-none bg-primary text-primary-foreground transition-all duration-300 hover:scale-110 active:scale-95 select-none ${isDragging ? 'scale-95 opacity-80 cursor-grabbing' : 'cursor-grab animate-in fade-in zoom-in duration-500'}`}
+        className={`h-12 w-12 select-none rounded-[8px] bg-primary/50 text-primary-foreground shadow-none transition-colors hover:bg-primary hover:shadow-none ${isDragging ? 'cursor-grabbing opacity-80' : 'cursor-grab'}`}
       >
         <MessageCircle className="h-8 w-8 stroke-[2.5px]" />
         {leadUnreadCount > 0 && (
-          <span className="absolute -top-1 -right-1 h-6 min-w-6 px-1.5 flex items-center justify-center rounded-full bg-destructive text-destructive-foreground text-[11px] font-bold shadow-md border-2 border-background animate-pulse">
+          <span className="absolute -right-1 -top-1 flex h-6 min-w-6 items-center justify-center rounded-[6px] border-0 bg-destructive px-1.5 text-[11px] font-light text-destructive-foreground shadow-none">
             {leadUnreadCount > 99 ? "99+" : leadUnreadCount}
           </span>
         )}

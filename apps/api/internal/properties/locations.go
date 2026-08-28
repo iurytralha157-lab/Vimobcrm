@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"net/url"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -55,9 +57,9 @@ func (repo Repository) CreateCity(ctx context.Context, tenantContext tenant.Cont
 	}
 
 	input.Name = trimMax(input.Name, 120)
-	input.UF = strings.ToUpper(trimMax(input.UF, 2))
-	if input.Name == "" {
-		return nil, fmt.Errorf("%w: city name is required", ErrInvalidInput)
+	input.UF = strings.ToUpper(strings.TrimSpace(input.UF))
+	if input.Name == "" || (input.UF != "" && !isLocationStateCode(input.UF)) {
+		return nil, fmt.Errorf("%w: city data is invalid", ErrInvalidInput)
 	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
@@ -235,15 +237,33 @@ func (repo Repository) CreateCondominium(ctx context.Context, tenantContext tena
 	input.Name = trimMax(input.Name, 120)
 	input.Address = trimMax(input.Address, 300)
 	input.PhotoURL = trimMax(input.PhotoURL, 1000)
+	if input.PhotoURL != "" && !isSafeLocationURL(input.PhotoURL) {
+		return nil, fmt.Errorf("%w: photo_url is invalid", ErrInvalidInput)
+	}
 	input.CEP = trimMax(input.CEP, 20)
 	input.Number = trimMax(input.Number, 40)
 	input.Complement = trimMax(input.Complement, 160)
 	input.ConciergeType = trimMax(input.ConciergeType, 80)
 	input.Notes = trimMax(input.Notes, 1200)
-	cityID, hasCity := normalizeOptionalUUID(input.CityID)
-	neighborhoodID, hasNeighborhood := normalizeOptionalUUID(input.NeighborhoodID)
+	cityID, hasCity, err := parseOptionalLocationUUID(input.CityID)
+	if err != nil {
+		return nil, err
+	}
+	neighborhoodID, hasNeighborhood, err := parseOptionalLocationUUID(input.NeighborhoodID)
+	if err != nil {
+		return nil, err
+	}
 	if input.Name == "" {
 		return nil, fmt.Errorf("%w: condominium name is required", ErrInvalidInput)
+	}
+	if input.DefaultCondominiumFee != nil && (*input.DefaultCondominiumFee < 0 || math.IsNaN(*input.DefaultCondominiumFee) || math.IsInf(*input.DefaultCondominiumFee, 0)) {
+		return nil, fmt.Errorf("%w: default_condominium_fee is invalid", ErrInvalidInput)
+	}
+	if input.Latitude != nil && (*input.Latitude < -90 || *input.Latitude > 90 || math.IsNaN(*input.Latitude) || math.IsInf(*input.Latitude, 0)) {
+		return nil, fmt.Errorf("%w: latitude is invalid", ErrInvalidInput)
+	}
+	if input.Longitude != nil && (*input.Longitude < -180 || *input.Longitude > 180 || math.IsNaN(*input.Longitude) || math.IsInf(*input.Longitude, 0)) {
+		return nil, fmt.Errorf("%w: longitude is invalid", ErrInvalidInput)
 	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
@@ -258,7 +278,7 @@ func (repo Repository) CreateCondominium(ctx context.Context, tenantContext tena
 		}
 	}
 	if hasNeighborhood {
-		if err := repo.ensureNeighborhoodScope(ctx, tx, tenantContext.OrganizationID, neighborhoodID); err != nil {
+		if err := repo.ensureNeighborhoodScope(ctx, tx, tenantContext.OrganizationID, neighborhoodID, cityID); err != nil {
 			return nil, err
 		}
 	}
@@ -422,14 +442,18 @@ func (repo Repository) ensureCityScope(ctx context.Context, tx pgx.Tx, organizat
 	return nil
 }
 
-func (repo Repository) ensureNeighborhoodScope(ctx context.Context, tx pgx.Tx, organizationID string, neighborhoodID string) error {
+func (repo Repository) ensureNeighborhoodScope(ctx context.Context, tx pgx.Tx, organizationID string, neighborhoodID string, cityID string) error {
 	var exists bool
 	if err := tx.QueryRow(ctx, `
 		select exists (
 			select 1 from public.property_neighborhoods
 			where organization_id = $1::uuid and id = $2::uuid
+			  and (
+			    nullif($3::text, '') is null
+			    or city_id = nullif($3::text, '')::uuid
+			  )
 		)
-	`, organizationID, neighborhoodID).Scan(&exists); err != nil {
+	`, organizationID, neighborhoodID, cityID).Scan(&exists); err != nil {
 		return err
 	}
 	if !exists {
@@ -438,12 +462,32 @@ func (repo Repository) ensureNeighborhoodScope(ctx context.Context, tx pgx.Tx, o
 	return nil
 }
 
-func normalizeOptionalUUID(value string) (string, bool) {
+func parseOptionalLocationUUID(value string) (string, bool, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return "", false
+		return "", false, nil
 	}
-	return normalizeUUID(value)
+	normalized, ok := normalizeUUID(value)
+	if !ok {
+		return "", false, ErrInvalidInput
+	}
+	return normalized, true, nil
+}
+
+func isSafeLocationURL(value string) bool {
+	parsed, err := url.ParseRequestURI(strings.TrimSpace(value))
+	if err != nil || parsed.Host == "" || parsed.User != nil {
+		return false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	return scheme == "http" || scheme == "https"
+}
+
+func isLocationStateCode(value string) bool {
+	if len(value) != 2 {
+		return false
+	}
+	return value[0] >= 'A' && value[0] <= 'Z' && value[1] >= 'A' && value[1] <= 'Z'
 }
 
 func scanLocation(row scanner) (Location, error) {

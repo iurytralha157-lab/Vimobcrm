@@ -56,6 +56,7 @@ export function FavoriteButton({
     <button
       type="button"
       aria-label={isFavorited ? "Remover dos favoritos" : "Adicionar aos favoritos"}
+      aria-pressed={isFavorited}
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -66,11 +67,17 @@ export function FavoriteButton({
         writeFavorites(organizationId, next);
       }}
       className={cn(
-        "inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/92 text-slate-700 transition hover:scale-105 hover:bg-white",
+        "inline-flex h-9 w-9 items-center justify-center rounded-[6px] bg-[var(--site-card)] text-[var(--site-card-fg)] outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[var(--site-primary)]",
         className,
       )}
     >
-      <Heart className={cn("h-4 w-4", isFavorited && "fill-red-500 text-red-500")} />
+      <Heart
+        aria-hidden="true"
+        className={cn(
+          "h-4 w-4",
+          isFavorited && "fill-[var(--site-primary)] text-[var(--site-primary)]",
+        )}
+      />
     </button>
   );
 }

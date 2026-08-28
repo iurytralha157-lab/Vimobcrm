@@ -194,15 +194,15 @@ export function SdrDistributionButton({ lead, refetchStages }: SdrDistributionBu
           Distribuir SDR
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[320px] sm:w-[380px] p-0" align="start">
-        <div className="p-3 border-b border-white/[0.055] bg-white/[0.035]">
+      <PopoverContent className="w-[320px] rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 shadow-sm sm:w-[380px]" align="start">
+        <div className="border-b border-[var(--app-border)] bg-[var(--app-surface-soft)] p-3">
           <div className="flex items-center gap-2">
             {step !== 'pipeline' && (
               <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setStep(step === 'manual' ? 'mode' : 'pipeline')}>
                 <ChevronLeft className="h-4 w-4" />
               </Button>
             )}
-            <h4 className="font-semibold text-sm">
+            <h4 className="text-[14px] font-normal">
               {step === 'pipeline' && 'Selecionar Pipeline'}
               {step === 'mode' && 'Modo de Distribuição'}
               {step === 'manual' && 'Distribuir Manualmente'}
@@ -245,9 +245,9 @@ export function SdrDistributionButton({ lead, refetchStages }: SdrDistributionBu
 
           {step === 'mode' && (
             <div className="space-y-3 p-1">
-              <div className="bg-primary/5 rounded-lg p-3 border border-primary/10 mb-4">
+              <div className="mb-4 rounded-[8px] border-0 bg-primary/5 p-3">
                 <p className="text-xs text-muted-foreground mb-1">Pipeline selecionada:</p>
-                <p className="text-sm font-semibold text-primary">{selectedPipeline?.name}</p>
+                <p className="text-[12px] font-normal text-primary">{selectedPipeline?.name}</p>
               </div>
 
               {pipelineTeams.length > 0 ? (

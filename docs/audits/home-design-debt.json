@@ -1,0 +1,289 @@
+{
+  "schemaVersion": 2,
+  "sourceDigestSha256": "91d2f8cf6b503c5ad7f969c2cf5c3dcf50e6cec66f96e8397ac98e5973c1c00c",
+  "surfaceInventoryDigestSha256": "946ba4b501222a7952e81c4ef81ee9e4049676708abba02a6f778a1dd05f502a",
+  "scope": {
+    "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
+    "filesScanned": 362,
+    "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
+  },
+  "counts": {
+    "filesWithFindings": 4,
+    "findings": 16,
+    "protectedReachableFilesWithFindings": 3,
+    "protectedReachableFindings": 15,
+    "bySurfaceScope": {
+      "protected-only": 15,
+      "protected-and-public": 0,
+      "public-only": 1,
+      "infrastructure": 0
+    },
+    "byPriority": {
+      "P1": 1,
+      "P2": 0,
+      "P3": 15
+    },
+    "byRule": {
+      "heavy-shadow": {
+        "count": 0,
+        "guidance": "Usar shadow-none ou a sombra sutil dos pop-ups globais.",
+        "label": "Sombra forte",
+        "priority": "P1"
+      },
+      "medium-shadow": {
+        "count": 0,
+        "guidance": "Blocos Home não usam sombra; validar se a elevação é realmente necessária.",
+        "label": "Sombra fora do padrão",
+        "priority": "P2"
+      },
+      "oversized-radius": {
+        "count": 1,
+        "guidance": "Blocos usam 8px; controles 6px; microelementos 4px.",
+        "label": "Raio acima de 8px",
+        "priority": "P1"
+      },
+      "heavy-font": {
+        "count": 0,
+        "guidance": "Texto normal usa 300; títulos usam 400.",
+        "label": "Tipografia pesada",
+        "priority": "P1"
+      },
+      "hardcoded-color": {
+        "count": 0,
+        "guidance": "Usar tokens --app-* ou cores semânticas do domínio.",
+        "label": "Cor hardcoded",
+        "priority": "P1"
+      },
+      "hardcoded-surface": {
+        "count": 0,
+        "guidance": "Usar --app-surface-solid, --app-surface-soft ou --app-surface-hover.",
+        "label": "Superfície branca/preta fixa",
+        "priority": "P2"
+      },
+      "aggressive-motion": {
+        "count": 0,
+        "guidance": "Remover scale/translate decorativo de cards e ações operacionais.",
+        "label": "Movimento agressivo",
+        "priority": "P2"
+      },
+      "uppercase-tracking": {
+        "count": 15,
+        "guidance": "Preferir texto natural em 10–12px e peso 300.",
+        "label": "Caixa alta/tracking",
+        "priority": "P3"
+      },
+      "panel-blur": {
+        "count": 0,
+        "guidance": "O overlay pode escurecer; o painel deve usar superfície sólida.",
+        "label": "Blur no painel",
+        "priority": "P2"
+      }
+    }
+  },
+  "topFiles": [
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
+      "count": 8,
+      "score": 8,
+      "rules": {
+        "uppercase-tracking": 8
+      }
+    },
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
+      "count": 4,
+      "score": 4,
+      "rules": {
+        "uppercase-tracking": 4
+      }
+    },
+    {
+      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
+      "count": 3,
+      "score": 3,
+      "rules": {
+        "uppercase-tracking": 3
+      }
+    },
+    {
+      "file": "components/features/auth/AuthSplitLayout.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    }
+  ],
+  "topProtectedFiles": [
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
+      "count": 8,
+      "score": 8,
+      "rules": {
+        "uppercase-tracking": 8
+      }
+    },
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
+      "count": 4,
+      "score": 4,
+      "rules": {
+        "uppercase-tracking": 4
+      }
+    },
+    {
+      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
+      "count": 3,
+      "score": 3,
+      "rules": {
+        "uppercase-tracking": 3
+      }
+    }
+  ],
+  "findings": [
+    {
+      "file": "components/features/auth/AuthSplitLayout.tsx",
+      "line": 46,
+      "match": "rounded-[16px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "public-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
+      "line": 93,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
+      "line": 369,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
+      "line": 433,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
+      "line": 439,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
+      "line": 75,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
+      "line": 98,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
+      "line": 140,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
+      "line": 146,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
+      "line": 271,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
+      "line": 318,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
+      "line": 433,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
+      "line": 434,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
+      "line": 603,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
+      "line": 800,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
+      "line": 829,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    }
+  ]
+}

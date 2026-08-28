@@ -24,8 +24,9 @@ export function ReentryBadge({ count, lastEntryAt, className, size = 'sm' }: Ree
   const value = count ?? 0;
   if (value <= 0) return null;
 
-  const tooltipText = lastEntryAt
-    ? `Última reentrada: ${format(new Date(lastEntryAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}`
+  const lastEntryDate = lastEntryAt ? new Date(lastEntryAt) : null;
+  const tooltipText = lastEntryDate && !Number.isNaN(lastEntryDate.getTime())
+    ? `Última reentrada: ${format(lastEntryDate, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}`
     : `${value} reentrada${value > 1 ? 's' : ''}`;
 
   const sizeClass = size === 'sm' ? 'h-5 px-1.5 text-[10px]' : 'h-6 px-2 text-xs';
@@ -36,14 +37,17 @@ export function ReentryBadge({ count, lastEntryAt, className, size = 'sm' }: Ree
       <Tooltip>
         <TooltipTrigger asChild>
           <span
+            role="status"
+            tabIndex={0}
+            aria-label={tooltipText}
             className={cn(
-              'inline-flex items-center gap-1 rounded-full font-semibold',
+              'inline-flex items-center gap-1 rounded-full font-normal',
               'bg-warning/15 text-warning border border-warning/30',
               sizeClass,
               className
             )}
           >
-            <RotateCw className={iconClass} />
+            <RotateCw aria-hidden="true" className={iconClass} />
             {value}
           </span>
         </TooltipTrigger>

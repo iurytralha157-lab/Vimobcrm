@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(6);
+select plan(7);
 
 select is(
   (
@@ -29,7 +29,6 @@ select is(
         'can_access_schedule_event',
         'can_manage_round_robin_as_leader',
         'can_view_whatsapp_conversation',
-        'check_storage_org_access',
         'get_user_led_pipeline_ids',
         'get_user_led_team_ids',
         'get_user_organization_id',
@@ -63,9 +62,39 @@ select is(
     where namespace.nspname = 'public'
       and procedure.prosecdef
       and not has_function_privilege('service_role', procedure.oid, 'execute')
+      and procedure.oid::regprocedure::text <> all(array[
+        'handle_lead_intake(uuid)',
+        'redistribute_lead_from_pool(uuid,text)',
+        'redistribute_lead_round_robin(uuid)',
+        'trigger_handle_lead_intake()'
+      ]::text[])
   ),
   0::bigint,
-  'service role retains access to backend functions'
+  'service role retains access except to retired distribution entrypoints'
+);
+
+select ok(
+  not has_function_privilege(
+    'service_role',
+    'public.handle_lead_intake(uuid)',
+    'execute'
+  )
+  and not has_function_privilege(
+    'service_role',
+    'public.redistribute_lead_from_pool(uuid,text)',
+    'execute'
+  )
+  and not has_function_privilege(
+    'service_role',
+    'public.redistribute_lead_round_robin(uuid)',
+    'execute'
+  )
+  and not has_function_privilege(
+    'service_role',
+    'public.trigger_handle_lead_intake()',
+    'execute'
+  ),
+  'retired distribution entrypoints remain inaccessible to service role'
 );
 
 select is(
@@ -119,7 +148,6 @@ select is(
         'can_access_schedule_event',
         'can_manage_round_robin_as_leader',
         'can_view_whatsapp_conversation',
-        'check_storage_org_access',
         'get_user_led_pipeline_ids',
         'get_user_led_team_ids',
         'get_user_organization_id',

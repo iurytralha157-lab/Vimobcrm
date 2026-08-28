@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { roundRobinsAPI } from '@/lib/api/round-robins';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface ScheduleDay {
   day: number;
@@ -19,18 +20,19 @@ interface QueueMember {
   id?: string;
   type: 'user' | 'team';
   entityId: string;
+  teamId?: string;
   weight: number;
   name?: string;
 }
 
 interface QueueSettings {
+  ignore_availability?: boolean;
   enable_redistribution?: boolean;
   redistribution_timeout_minutes?: number;
   redistribution_warning_minutes?: number;
   redistribution_max_attempts?: number;
   preserve_position?: boolean;
   require_checkin?: boolean;
-  ignore_availability?: boolean;
   reentry_behavior?: 'redistribute' | 'keep_assignee';
 }
 
@@ -82,14 +84,17 @@ function toRoundRobinInput(input: CreateQueueInput) {
 
 export function useCreateQueueAdvanced() {
   const queryClient = useQueryClient();
+  const { organization, profile } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
 
   return useMutation({
     mutationFn: async (input: CreateQueueInput) => {
-      return roundRobinsAPI.createRoundRobin(toRoundRobinInput(input));
+      if (!organizationId) throw new Error('Organização não identificada');
+      return roundRobinsAPI.createRoundRobin(toRoundRobinInput(input), organizationId);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['round-robins'] });
-      queryClient.invalidateQueries({ queryKey: ['round-robin-rules'] });
+      queryClient.invalidateQueries({ queryKey: ['round-robins', organizationId] });
+      queryClient.invalidateQueries({ queryKey: ['round-robin-rules', organizationId] });
       toast.success('Fila de distribuicao criada!');
     },
     onError: (error) => {
@@ -100,14 +105,17 @@ export function useCreateQueueAdvanced() {
 
 export function useUpdateQueueAdvanced() {
   const queryClient = useQueryClient();
+  const { organization, profile } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
 
   return useMutation({
     mutationFn: async ({ id, ...input }: CreateQueueInput & { id: string }) => {
-      return roundRobinsAPI.updateRoundRobin(id, toRoundRobinInput(input));
+      if (!organizationId) throw new Error('Organização não identificada');
+      return roundRobinsAPI.updateRoundRobin(id, toRoundRobinInput(input), organizationId);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['round-robins'] });
-      queryClient.invalidateQueries({ queryKey: ['round-robin-rules'] });
+      queryClient.invalidateQueries({ queryKey: ['round-robins', organizationId] });
+      queryClient.invalidateQueries({ queryKey: ['round-robin-rules', organizationId] });
       toast.success('Fila atualizada!');
     },
     onError: (error) => {

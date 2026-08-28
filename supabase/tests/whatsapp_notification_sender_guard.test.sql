@@ -23,12 +23,21 @@ values (
 insert into public.users (id, organization_id, name, email, role, is_active)
 values
   ('d1000000-0000-4000-8000-000000000001', 'd2000000-0000-4000-8000-000000000001', 'Notification User', 'notification-user@example.test', 'user', true),
-  ('d1000000-0000-4000-8000-000000000002', 'd2000000-0000-4000-8000-000000000001', 'Notification Admin', 'notification-admin@example.test', 'admin', true);
+  ('d1000000-0000-4000-8000-000000000002', 'd2000000-0000-4000-8000-000000000001', 'Notification Admin', 'notification-admin@example.test', 'admin', true)
+on conflict (id) do update
+set organization_id = excluded.organization_id,
+    name = excluded.name,
+    email = excluded.email,
+    role = excluded.role,
+    is_active = excluded.is_active;
 
 insert into public.organization_members (organization_id, user_id, role, is_active)
 values
   ('d2000000-0000-4000-8000-000000000001', 'd1000000-0000-4000-8000-000000000001', 'user', true),
-  ('d2000000-0000-4000-8000-000000000001', 'd1000000-0000-4000-8000-000000000002', 'admin', true);
+  ('d2000000-0000-4000-8000-000000000001', 'd1000000-0000-4000-8000-000000000002', 'admin', true)
+on conflict (user_id, organization_id) do update
+set role = excluded.role,
+    is_active = excluded.is_active;
 
 insert into public.whatsapp_sessions (
   id, organization_id, owner_user_id, instance_name, provider, status, is_active

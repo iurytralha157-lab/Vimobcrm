@@ -11,20 +11,27 @@ function upsertAttachment(current: LeadAttachment[] | undefined, attachment: Lea
   return [attachment, ...attachments.filter((item) => item.id !== attachment.id)];
 }
 
+const attachmentQueryKey = (organizationId: string | null, leadId: string) =>
+  ['lead-attachments', organizationId || 'none', leadId] as const;
+
 export function useLeadAttachments(leadId: string | null) {
+  const { organization, profile } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id || null;
+
   return useQuery({
-    queryKey: ['lead-attachments', leadId],
+    queryKey: attachmentQueryKey(organizationId, leadId || 'none'),
     queryFn: async () => {
       if (!leadId) return [];
-      return leadAttachmentsAPI.list(leadId);
+      return leadAttachmentsAPI.list(leadId, organizationId);
     },
-    enabled: !!leadId,
+    enabled: !!leadId && !!organizationId,
   });
 }
 
 export function useCreateLeadAttachment() {
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { user, organization, profile } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id || null;
 
   return useMutation({
     mutationFn: async (attachment: {
@@ -40,22 +47,23 @@ export function useCreateLeadAttachment() {
         { limit: 20, windowMs: 60_000 },
       ]);
 
-      return leadAttachmentsAPI.create(attachment);
+      if (!organizationId) throw new Error('Organização não selecionada');
+      return leadAttachmentsAPI.create(attachment, organizationId);
     },
     onSuccess: (data: LeadAttachment, variables) => {
-      queryClient.setQueryData<LeadAttachment[]>(['lead-attachments', variables.lead_id], (current) =>
+      queryClient.setQueryData<LeadAttachment[]>(attachmentQueryKey(organizationId, variables.lead_id), (current) =>
         upsertAttachment(current, data)
       );
-      queryClient.invalidateQueries({ queryKey: ['lead-attachments', variables.lead_id] });
+      queryClient.invalidateQueries({ queryKey: attachmentQueryKey(organizationId, variables.lead_id) });
       queryClient.invalidateQueries({ queryKey: ['activities', variables.lead_id] });
       queryClient.invalidateQueries({ queryKey: ['activities'] });
       queryClient.invalidateQueries({ queryKey: ['recent-activities'] });
       queryClient.invalidateQueries({ queryKey: ['lead-history-v2', variables.lead_id] });
       if (data?.lead_id && data.lead_id !== variables.lead_id) {
-        queryClient.setQueryData<LeadAttachment[]>(['lead-attachments', data.lead_id], (current) =>
+        queryClient.setQueryData<LeadAttachment[]>(attachmentQueryKey(organizationId, data.lead_id), (current) =>
           upsertAttachment(current, data)
         );
-        queryClient.invalidateQueries({ queryKey: ['lead-attachments', data.lead_id] });
+        queryClient.invalidateQueries({ queryKey: attachmentQueryKey(organizationId, data.lead_id) });
       }
       toast.success('Documento anexado com sucesso!');
     },
@@ -69,7 +77,8 @@ export function useCreateLeadAttachment() {
 
 export function useUploadLeadAttachment() {
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { user, organization, profile } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id || null;
 
   return useMutation({
     mutationFn: async ({ leadId, file }: { leadId: string; file: File }) => {
@@ -78,22 +87,23 @@ export function useUploadLeadAttachment() {
         { limit: 20, windowMs: 60_000 },
       ]);
 
-      return leadAttachmentsAPI.upload(leadId, file);
+      if (!organizationId) throw new Error('Organização não selecionada');
+      return leadAttachmentsAPI.upload(leadId, file, organizationId);
     },
     onSuccess: (data: LeadAttachment, variables) => {
-      queryClient.setQueryData<LeadAttachment[]>(['lead-attachments', variables.leadId], (current) =>
+      queryClient.setQueryData<LeadAttachment[]>(attachmentQueryKey(organizationId, variables.leadId), (current) =>
         upsertAttachment(current, data)
       );
-      queryClient.invalidateQueries({ queryKey: ['lead-attachments', variables.leadId] });
+      queryClient.invalidateQueries({ queryKey: attachmentQueryKey(organizationId, variables.leadId) });
       queryClient.invalidateQueries({ queryKey: ['activities', variables.leadId] });
       queryClient.invalidateQueries({ queryKey: ['activities'] });
       queryClient.invalidateQueries({ queryKey: ['recent-activities'] });
       queryClient.invalidateQueries({ queryKey: ['lead-history-v2', variables.leadId] });
       if (data?.lead_id && data.lead_id !== variables.leadId) {
-        queryClient.setQueryData<LeadAttachment[]>(['lead-attachments', data.lead_id], (current) =>
+        queryClient.setQueryData<LeadAttachment[]>(attachmentQueryKey(organizationId, data.lead_id), (current) =>
           upsertAttachment(current, data)
         );
-        queryClient.invalidateQueries({ queryKey: ['lead-attachments', data.lead_id] });
+        queryClient.invalidateQueries({ queryKey: attachmentQueryKey(organizationId, data.lead_id) });
       }
     },
     onError: (error) => {

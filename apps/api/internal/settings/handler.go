@@ -13,6 +13,7 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
+	authpkg "github.com/vimob-crm/vimob-crm/packages/auth"
 )
 
 type Handler struct {
@@ -21,6 +22,8 @@ type Handler struct {
 }
 
 const maxSettingsImageUploadBytes = 10 << 20
+
+var errPasswordChangeSourceMismatch = errors.New("password change source does not match authentication method")
 
 func NewHandler(repo Repository, publishers ...realtime.Publisher) Handler {
 	publisher := realtime.Publisher(realtime.NoopPublisher{})
@@ -134,8 +137,8 @@ func (handler Handler) UploadOrganizationLogo(w http.ResponseWriter, r *http.Req
 }
 
 func (handler Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.UserID == "" {
+	authenticatedUser, ok := httpserver.UserFromContext(r.Context())
+	if !ok || authenticatedUser.ID == "" {
 		httpserver.WriteError(w, r, http.StatusUnauthorized, "unauthorized", "Missing authenticated user.")
 		return
 	}
@@ -145,6 +148,18 @@ func (handler Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(w, r, &request); err != nil {
 		return
 	}
+	source, err := passwordChangeSourceForSession(authenticatedUser, request.Source)
+	if err != nil {
+		if errors.Is(err, errPasswordChangeSourceMismatch) {
+			httpserver.WriteError(w, r, http.StatusForbidden, "password_change_source_mismatch", "Password change source does not match the authenticated session.")
+			return
+		}
+		writeSettingsError(w, r, err)
+		return
+	}
+	request.Source = source
+	tenantContext := tenant.Context{UserID: authenticatedUser.ID}
+
 	result, err := handler.repo.ChangePassword(r.Context(), tenantContext, request)
 	if err != nil {
 		writeSettingsError(w, r, err)
@@ -152,6 +167,19 @@ func (handler Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpserver.WriteJSON(w, http.StatusOK, result)
+}
+
+func passwordChangeSourceForSession(user authpkg.User, rawSource string) (string, error) {
+	source, ok := normalizePasswordChangeSource(rawSource)
+	if !ok {
+		return "", ErrInvalidInput
+	}
+
+	if user.IsPasswordRecovery() != (source == authpkg.AuthenticationMethodRecovery) {
+		return "", errPasswordChangeSourceMismatch
+	}
+
+	return source, nil
 }
 
 func (handler Handler) PasswordStatus(w http.ResponseWriter, r *http.Request) {
@@ -342,6 +370,26 @@ func (handler Handler) ShowSubscription(w http.ResponseWriter, r *http.Request) 
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[SubscriptionOverview]{Data: overview})
 }
 
+func (handler Handler) RefreshSubscriptionPayment(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+
+	payment, err := handler.repo.RefreshSubscriptionPayment(
+		r.Context(),
+		tenantContext,
+		r.PathValue("id"),
+	)
+	if err != nil {
+		writeSettingsError(w, r, err)
+		return
+	}
+
+	w.Header().Set("Cache-Control", "no-store")
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[PaymentHistoryItem]{Data: payment})
+}
+
 func (handler Handler) UpdateSubscriptionBilling(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := organizationContext(w, r)
 	if !ok {
@@ -439,7 +487,7 @@ func (handler Handler) ReplaceUserPermissions(w http.ResponseWriter, r *http.Req
 }
 
 func (handler Handler) publishUserPermissionsChanged(tenantContext tenant.Context, userID string) {
-	handler.publisher.Publish(realtime.NewEvent(
+	handler.publisher.Publish(realtime.NewTargetedEvent(
 		"access.permissions.changed",
 		tenantContext.OrganizationID,
 		userID,
@@ -699,6 +747,22 @@ func writeSettingsError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrPushVAPIDMismatch):
 		httpserver.WriteError(w, r, http.StatusConflict, "push_vapid_key_mismatch", "Push configuration changed. Refresh the app and enable notifications again.")
+	case errors.Is(err, ErrCheckoutInProgress):
+		httpserver.WriteError(w, r, http.StatusConflict, "billing_checkout_in_progress", "Finish or cancel the current checkout before selecting another plan.")
+	case errors.Is(err, ErrPlanChangeInProgress):
+		httpserver.WriteError(w, r, http.StatusConflict, "billing_plan_change_in_progress", "A different plan change is already scheduled for this subscription.")
+	case errors.Is(err, ErrPlanChangeRequiresActive):
+		httpserver.WriteError(w, r, http.StatusConflict, "billing_plan_change_requires_active", "Regularize the current subscription before changing plans.")
+	case errors.Is(err, ErrAsaasNotConfigured):
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "asaas_plan_change_unavailable", "Automatic plan changes are temporarily unavailable.")
+	case errors.Is(err, ErrAsaasAmbiguous):
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "asaas_plan_change_reconciling", "The plan change is being reconciled with the billing provider. Try again shortly.")
+	case errors.Is(err, ErrAsaasOperation):
+		httpserver.WriteError(w, r, http.StatusBadGateway, "asaas_plan_change_failed", "The billing provider rejected the plan change.")
+	case errors.Is(err, ErrPaymentNotFound):
+		httpserver.WriteError(w, r, http.StatusNotFound, "billing_payment_not_found", "Payment was not found.")
+	case errors.Is(err, ErrPaymentProviderMismatch):
+		httpserver.WriteError(w, r, http.StatusBadGateway, "billing_payment_identity_mismatch", "The payment could not be safely reconciled.")
 	case errors.Is(err, ErrInvalidInput):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_settings_input", "Settings input is invalid.")
 	case errors.Is(err, ErrAPIKeyNotFound):

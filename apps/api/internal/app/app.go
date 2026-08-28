@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/admin"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/ai"
@@ -11,11 +12,15 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/attention"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/audit"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/automations"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/billing"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/cadences"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/config"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/developments"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/financial"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/gamification"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/health"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/help"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/homefocus"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/integrations"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/leads"
@@ -25,6 +30,8 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/pipelines"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/portals"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/properties"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/publications"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/publicingress"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/roundrobin"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/schedule"
@@ -42,12 +49,28 @@ import (
 )
 
 type App struct {
-	handler http.Handler
-	db      *dbpkg.Postgres
-	auth    *authpkg.Verifier
+	handler  http.Handler
+	db       *dbpkg.Postgres
+	auth     *authpkg.Verifier
+	realtime *realtime.Hub
 }
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
+	backgroundWorkers := newBackgroundWorkerStartup(cfg.BackgroundWorkersEnabled)
+	if !cfg.BackgroundWorkersEnabled && logger != nil {
+		logger.Info(
+			"api background workers disabled",
+			"config", "API_BACKGROUND_WORKERS_ENABLED",
+		)
+	}
+
+	publicClientIPResolver, err := publicingress.NewClientIPResolver(
+		cfg.HTTP.TrustedProxyCIDRs,
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	authVerifier, err := authpkg.NewVerifier(ctx, cfg.Auth)
 	if err != nil {
 		return nil, err
@@ -59,16 +82,69 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	}
 
 	mux := http.NewServeMux()
-	realtimeHub := realtime.NewHub()
+	realtimeHub := realtime.NewDurableHub(realtime.NewPostgresStore(postgres), logger)
+	if _, err := backgroundWorkers.RunWithError(func() error {
+		return realtimeHub.Start(ctx)
+	}); err != nil {
+		postgres.Close()
+		authVerifier.Close()
+		return nil, err
+	}
 
-	healthHandler := health.NewHandler(postgres, cfg.Database.HealthTimeout)
+	var metaOAuthHandler *meta.OAuthHandler
+	if strings.TrimSpace(cfg.Meta.AppID) != "" {
+		metaOAuthHandler, err = meta.NewOAuthHandler(postgres, meta.OAuthConfig{
+			AppID:          cfg.Meta.AppID,
+			AppSecret:      cfg.Meta.AppSecret,
+			LoginConfigID:  cfg.Meta.LoginConfigID,
+			GraphVersion:   cfg.Meta.GraphVersion,
+			CallbackURL:    cfg.Meta.OAuthCallbackURL,
+			AllowedOrigins: meta.ParseOAuthAllowedOrigins(cfg.Email.AppURL, strings.Join(cfg.Meta.OAuthAllowedOrigins, ",")),
+			GraphBaseURL:   cfg.Meta.GraphBaseURL,
+		})
+		if err != nil {
+			realtimeHub.Close()
+			postgres.Close()
+			authVerifier.Close()
+			return nil, err
+		}
+	}
+	billingReconciler := billing.NewReconciler(postgres, billing.Config{
+		Enabled:         cfg.Asaas.ReconciliationEnabled,
+		BaseURL:         cfg.Asaas.APIURL,
+		APIKey:          cfg.Asaas.APIKey,
+		FunctionsURL:    cfg.Storage.ProjectURL,
+		FunctionsAPIKey: cfg.Storage.APIKey,
+		AppURL:          cfg.Email.AppURL,
+		Interval:        cfg.Asaas.ReconciliationInterval,
+		BatchSize:       cfg.Asaas.ReconciliationBatch,
+		RequestTimeout:  cfg.Asaas.RequestTimeout,
+	})
+	backgroundWorkers.Run(func() {
+		billingReconciler.Start(ctx, logger)
+	})
+
+	healthHandler := health.NewHandler(postgres, cfg.Database.HealthTimeout).WithRuntimeStats(
+		func() map[string]any {
+			return map[string]any{
+				"realtime":              realtimeHub.Stats(),
+				"billingReconciliation": billingReconciler.Stats(),
+			}
+		},
+	)
+	helpHandler := help.NewHandler(help.NewRepository(postgres))
 	realtimeHandler := realtime.NewHandler(realtimeHub)
 	analyticsHandler := analytics.NewHandler(analytics.NewRepository(postgres))
 	attentionRepository := attention.NewRepository(postgres)
-	attentionRepository.StartWorker(ctx, logger)
+	backgroundWorkers.Run(func() {
+		attentionRepository.StartWorker(ctx, logger)
+	})
 	attentionHandler := attention.NewHandler(attentionRepository)
+	homeFocusHandler := homefocus.NewHandler(homefocus.NewRepository(postgres))
 	gamificationRepository := gamification.NewRepository(postgres)
-	gamificationRepository.StartWorker(ctx, logger)
+	backgroundWorkers.Run(func() {
+		gamificationRepository.StartWorker(ctx, logger)
+	})
 	gamificationHandler := gamification.NewHandler(gamificationRepository)
 	cadencesHandler := cadences.NewHandler(cadences.NewRepository(postgres))
 	financialHandler := financial.NewHandler(financial.NewRepository(postgres, financial.StorageConfig{
@@ -76,18 +152,20 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		APIKey:     cfg.Storage.APIKey,
 	}))
 	adminHandler := admin.NewHandler(admin.NewRepository(postgres, admin.ExternalConfig{
-		ProjectURL:        cfg.Storage.ProjectURL,
-		APIKey:            cfg.Storage.APIKey,
-		ResendAPIKey:      cfg.Email.ResendAPIKey,
-		FromEmail:         cfg.Email.FromEmail,
-		ReplyTo:           cfg.Email.ReplyTo,
-		SupportEmail:      cfg.Email.SupportEmail,
-		AppURL:            cfg.Email.AppURL,
-		EvolutionGoURL:    cfg.EvolutionGo.APIURL,
-		EvolutionGoAPIKey: cfg.EvolutionGo.APIKey,
-		AsaasURL:          cfg.Asaas.APIURL,
-		AsaasAPIKey:       cfg.Asaas.APIKey,
-	}))
+		Environment:          cfg.Environment,
+		ProjectURL:           cfg.Storage.ProjectURL,
+		APIKey:               cfg.Storage.APIKey,
+		ResendAPIKey:         cfg.Email.ResendAPIKey,
+		FromEmail:            cfg.Email.FromEmail,
+		ReplyTo:              cfg.Email.ReplyTo,
+		SupportEmail:         cfg.Email.SupportEmail,
+		AppURL:               cfg.Email.AppURL,
+		EvolutionGoURL:       cfg.EvolutionGo.APIURL,
+		EvolutionGoAPIKey:    cfg.EvolutionGo.APIKey,
+		AsaasURL:             cfg.Asaas.APIURL,
+		AsaasAPIKey:          cfg.Asaas.APIKey,
+		SignupRecoverySecret: cfg.Email.SignupRecoverySecret,
+	})).WithPublicClientIPResolver(publicClientIPResolver)
 	aiRepository := ai.NewRepository(postgres)
 	aiService := ai.NewService(aiRepository, ai.Config{
 		OpenAIAPIKey:  cfg.AI.OpenAIAPIKey,
@@ -108,11 +186,12 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 			APIKey: cfg.EvolutionGo.APIKey,
 		},
 		Email: leads.EmailConfig{
-			ResendAPIKey: cfg.Email.ResendAPIKey,
-			FromEmail:    cfg.Email.FromEmail,
-			ReplyTo:      cfg.Email.ReplyTo,
-			SupportEmail: cfg.Email.SupportEmail,
-			AppURL:       cfg.Email.AppURL,
+			ResendAPIKey:   cfg.Email.ResendAPIKey,
+			FromEmail:      cfg.Email.FromEmail,
+			ReplyTo:        cfg.Email.ReplyTo,
+			SupportEmail:   cfg.Email.SupportEmail,
+			AppURL:         cfg.Email.AppURL,
+			AuthProjectURL: cfg.Storage.ProjectURL,
 		},
 		Push: leads.PushConfig{
 			VAPIDPublicKey:        cfg.Push.VAPIDPublicKey,
@@ -124,31 +203,71 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 			FCMServiceAccountFile: cfg.Push.FCMServiceAccountFile,
 		},
 	})
-	leadsRepository.StartRedistributionWorker(ctx, logger)
-	leadsRepository.StartNotificationDispatchWorker(ctx, logger)
+	backgroundWorkers.Run(func() {
+		leadsRepository.StartRedistributionWorker(ctx, logger)
+	})
+	backgroundWorkers.Run(func() {
+		if !startNotificationDispatchWorker(cfg.Notifications.DispatchWorkerEnabled, func() {
+			leadsRepository.StartNotificationDispatchWorker(ctx, logger)
+		}) && logger != nil {
+			logger.Info(
+				"notification dispatch worker disabled",
+				"config", "NOTIFICATION_DISPATCH_WORKER_ENABLED",
+			)
+		}
+	})
 	leadsHandler := leads.NewHandler(leadsRepository, realtimeHub)
 	pipelinesHandler := pipelines.NewHandler(pipelines.NewRepository(postgres))
 	propertiesHandler := properties.NewHandler(properties.NewRepository(postgres, properties.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
 	}))
+	publicationsRepository := publications.NewRepository(postgres, publications.Config{
+		PublicBaseURL: cfg.Publications.PublicBaseURL,
+		AppURL:        cfg.Email.AppURL,
+		StorageURL:    cfg.Storage.ProjectURL,
+		StorageAPIKey: cfg.Storage.APIKey,
+		Worker: publications.WorkerConfig{
+			Enabled:     cfg.Publications.WorkerEnabled,
+			Interval:    cfg.Publications.WorkerInterval,
+			BatchSize:   cfg.Publications.WorkerBatch,
+			Lease:       cfg.Publications.WorkerLease,
+			MaxAttempts: cfg.Publications.MaxAttempts,
+		},
+	})
+	backgroundWorkers.Run(func() {
+		publicationsRepository.StartWorker(ctx, logger)
+	})
+	publicationsHandler := publications.NewHandler(publicationsRepository)
+	developmentsRepository := developments.NewRepository(postgres)
+	backgroundWorkers.Run(func() {
+		developmentsRepository.StartReservationExpirationWorker(ctx, logger, developments.ReservationExpirationWorkerConfig{
+			Enabled:   cfg.Developments.ReservationExpirationWorkerEnabled,
+			Interval:  cfg.Developments.ReservationExpirationWorkerInterval,
+			BatchSize: cfg.Developments.ReservationExpirationWorkerBatch,
+		})
+	})
+	developmentsHandler := developments.NewHandler(developmentsRepository)
 	roundRobinHandler := roundrobin.NewHandler(roundrobin.NewRepository(postgres))
 	scheduleHandler := schedule.NewHandler(schedule.NewRepository(postgres, gamificationRepository), realtimeHub)
 	stageConfigHandler := stageconfig.NewHandler(stageconfig.NewRepository(postgres))
 	settingsHandler := settings.NewHandler(settings.NewRepository(postgres, settings.ExternalConfig{
-		ProjectURL:     cfg.Storage.ProjectURL,
-		APIKey:         cfg.Storage.APIKey,
-		ResendAPIKey:   cfg.Email.ResendAPIKey,
-		FromEmail:      cfg.Email.FromEmail,
-		ReplyTo:        cfg.Email.ReplyTo,
-		SupportEmail:   cfg.Email.SupportEmail,
-		AppURL:         cfg.Email.AppURL,
-		VAPIDPublicKey: cfg.Push.VAPIDPublicKey,
+		ProjectURL:          cfg.Storage.ProjectURL,
+		APIKey:              cfg.Storage.APIKey,
+		ResendAPIKey:        cfg.Email.ResendAPIKey,
+		FromEmail:           cfg.Email.FromEmail,
+		ReplyTo:             cfg.Email.ReplyTo,
+		SupportEmail:        cfg.Email.SupportEmail,
+		AppURL:              cfg.Email.AppURL,
+		VAPIDPublicKey:      cfg.Push.VAPIDPublicKey,
+		AsaasURL:            cfg.Asaas.APIURL,
+		AsaasAPIKey:         cfg.Asaas.APIKey,
+		AsaasRequestTimeout: cfg.Asaas.RequestTimeout,
 	}), realtimeHub)
 	siteHandler := site.NewHandler(site.NewRepository(postgres, site.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
-	}), realtimeHub)
+	}), realtimeHub).WithPublicClientIPResolver(publicClientIPResolver)
 	teamsHandler := teams.NewHandler(teams.NewRepository(postgres, teams.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
@@ -165,12 +284,14 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
 	})
-	automationsRepository.StartRuntimeWorker(ctx, logger, automations.WorkerConfig{
-		Enabled:            cfg.Automations.RuntimeWorkerEnabled,
-		RuntimeInterval:    cfg.Automations.RuntimeWorkerInterval,
-		InactivityInterval: cfg.Automations.InactivityWorkerInterval,
-		RunTimeout:         cfg.Automations.WorkerRunTimeout,
-		LockTimeout:        cfg.Automations.WorkerLockTimeout,
+	backgroundWorkers.Run(func() {
+		automationsRepository.StartRuntimeWorker(ctx, logger, automations.WorkerConfig{
+			Enabled:            cfg.Automations.RuntimeWorkerEnabled,
+			RuntimeInterval:    cfg.Automations.RuntimeWorkerInterval,
+			InactivityInterval: cfg.Automations.InactivityWorkerInterval,
+			RunTimeout:         cfg.Automations.WorkerRunTimeout,
+			LockTimeout:        cfg.Automations.WorkerLockTimeout,
+		})
 	})
 	automationsHandler := automations.NewHandler(automationsRepository)
 	whatsappHandler := whatsapp.NewHandler(whatsapp.NewRepository(postgres, gamificationRepository, whatsapp.StorageConfig{
@@ -195,35 +316,104 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		WebhookWorkerEnabled:          cfg.WhatsApp.WebhookWorkerEnabled,
 		WebhookWorkerInterval:         cfg.WhatsApp.WebhookWorkerInterval,
 		WebhookWorkerBatch:            cfg.WhatsApp.WebhookWorkerBatch,
+		WebhookWorkerConcurrency:      cfg.WhatsApp.WebhookWorkerConcurrency,
 		SessionSupervisorEnabled:      cfg.WhatsApp.SessionSupervisorEnabled,
 		SessionSupervisorInitialDelay: cfg.WhatsApp.SessionSupervisorInitialDelay,
 		SessionSupervisorInterval:     cfg.WhatsApp.SessionSupervisorInterval,
 		SessionSupervisorBatch:        cfg.WhatsApp.SessionSupervisorBatch,
 	})
-	whatsappHandler.StartAIWorker(ctx, logger)
-	whatsappHandler.StartOutboxWorker(ctx, logger)
-	whatsappHandler.StartWebhookWorker(ctx, logger)
-	whatsappHandler.StartSessionSupervisor(ctx, logger)
+	backgroundWorkers.Run(func() {
+		whatsappHandler.StartAIWorker(ctx, logger)
+	})
+	backgroundWorkers.Run(func() {
+		whatsappHandler.StartOutboxWorker(ctx, logger)
+	})
+	backgroundWorkers.Run(func() {
+		whatsappHandler.StartWebhookWorker(ctx, logger)
+	})
+	backgroundWorkers.Run(func() {
+		whatsappHandler.StartSessionSupervisor(ctx, logger)
+	})
 	webhooksHandler := webhooks.NewHandler(webhooks.NewRepository(postgres), realtimeHub)
 	metaHandler := meta.NewHandler(meta.NewRepository(postgres, meta.Config{
-		AppSecret:          cfg.Meta.AppSecret,
-		WebhookVerifyToken: cfg.Meta.WebhookVerifyToken,
-		GraphVersion:       cfg.Meta.GraphVersion,
-		GraphBaseURL:       cfg.Meta.GraphBaseURL,
+		AppSecret:                               cfg.Meta.AppSecret,
+		WebhookVerifyToken:                      cfg.Meta.WebhookVerifyToken,
+		GraphVersion:                            cfg.Meta.GraphVersion,
+		GraphBaseURL:                            cfg.Meta.GraphBaseURL,
+		ConversionFeedbackWorkerEnabled:         cfg.Meta.ConversionFeedbackWorkerEnabled,
+		ConversionFeedbackWorkerInterval:        cfg.Meta.ConversionFeedbackWorkerInterval,
+		ConversionFeedbackWorkerBatch:           cfg.Meta.ConversionFeedbackWorkerBatch,
+		ConversionFeedbackWorkerLease:           cfg.Meta.ConversionFeedbackWorkerLease,
+		ConversionFeedbackRequestTimeout:        cfg.Meta.ConversionFeedbackRequestTimeout,
+		ConversionFeedbackPartnerAgent:          cfg.Meta.ConversionFeedbackPartnerAgent,
+		ConversionFeedbackAppSecretProofEnabled: cfg.Meta.ConversionFeedbackAppSecretProofEnabled,
 	}), realtimeHub)
-	metaHandler.StartWebhookWorker(ctx, logger)
+	backgroundWorkers.Run(func() {
+		if cfg.Meta.WebhookWorkerEnabled {
+			metaHandler.StartWebhookWorker(ctx, logger)
+		}
+	})
+	backgroundWorkers.Run(func() {
+		metaHandler.StartConversionFeedbackWorker(ctx, logger)
+	})
+	metaMarketingSyncHandler := meta.NewMarketingSyncHTTPHandler(meta.NewMarketingSyncService(postgres, meta.Config{
+		AppSecret:    cfg.Meta.AppSecret,
+		GraphVersion: cfg.Meta.GraphVersion,
+		GraphBaseURL: cfg.Meta.GraphBaseURL,
+	}, nil))
 	integrationsHandler := integrations.NewHandler(integrations.NewRepository(postgres, integrations.ExternalConfig{
-		ProjectURL:       cfg.Storage.ProjectURL,
-		APIKey:           cfg.Storage.APIKey,
-		MetaGraphVersion: cfg.Meta.GraphVersion,
-		MetaGraphBaseURL: cfg.Meta.GraphBaseURL,
-	}))
-	portalsHandler := portals.NewHandler(portals.NewRepository(postgres))
+		ProjectURL:            cfg.Storage.ProjectURL,
+		APIKey:                cfg.Storage.APIKey,
+		ClientIPSigningSecret: cfg.Storage.EdgeClientIPSigningSecret,
+		MetaAppSecret:         cfg.Meta.AppSecret,
+		MetaGraphVersion:      cfg.Meta.GraphVersion,
+		MetaGraphBaseURL:      cfg.Meta.GraphBaseURL,
+	})).WithPublicClientIPResolver(publicClientIPResolver)
+	metaOAuthActionHandler := http.HandlerFunc(metaOAuthUnavailable)
+	metaOAuthCallbackHandler := http.HandlerFunc(metaOAuthUnavailable)
+	if metaOAuthHandler != nil {
+		metaOAuthActionHandler = metaOAuthHandler.Action
+		metaOAuthCallbackHandler = metaOAuthHandler.Callback
+	}
+	portalsRepository := portals.NewRepository(postgres, portals.Config{
+		WebhookSecret:              cfg.Portals.GrupoOLXWebhookSecret,
+		ImportReportWorkerEnabled:  cfg.Portals.ImportReportWorkerEnabled,
+		ImportReportWorkerInterval: cfg.Portals.ImportReportWorkerInterval,
+		ImportReportWorkerBatch:    cfg.Portals.ImportReportWorkerBatch,
+	})
+	backgroundWorkers.Run(func() {
+		portalsRepository.StartImportReportWorker(ctx, logger)
+	})
+	portalsHandler := portals.NewHandler(portalsRepository).WithPublicClientIPResolver(publicClientIPResolver)
 
+	billingAccessAllowlist := tenant.NewBillingAccessAllowlist(
+		"GET /v1/me",
+		"GET /v1/me/profile",
+		"POST /v1/me/switch-organization",
+		"GET /v1/user-organizations",
+		"POST /v1/telemetry/errors",
+		"GET /v1/admin/error-events",
+		"POST /v1/admin/error-events/{id}/resolve",
+		"GET /v1/subscription-plans/active",
+		"GET /v1/settings/subscription",
+		"POST /v1/settings/subscription/payments/{id}/refresh",
+		"PATCH /v1/settings/subscription/billing",
+		"PATCH /v1/settings/subscription/plan",
+		"POST /v1/settings/subscription/charge",
+		"GET /v1/home/publications",
+		"GET /v1/home/notices",
+		"POST /v1/home/assistant",
+		"GET /v1/help/articles",
+		"GET /v1/help/articles/{slug}",
+		"POST /v1/help/search",
+	)
 	withAuthTenant := func(handler http.Handler) http.Handler {
 		return httpserver.RequireAuth(
 			authVerifier,
-			tenant.Attach(tenantRepository, handler),
+			tenant.Attach(
+				tenantRepository,
+				tenant.RequireBillingAccess(billingAccessAllowlist, handler),
+			),
 		)
 	}
 
@@ -237,6 +427,14 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 
 	withModulePermission := func(module string, permission string, handler http.Handler) http.Handler {
 		return withOrganization(tenant.RequireModule(module, tenant.RequirePermission(permission, handler)))
+	}
+
+	withModulesPermission := func(modules []string, permission string, handler http.Handler) http.Handler {
+		guarded := tenant.RequirePermission(permission, handler)
+		for index := len(modules) - 1; index >= 0; index-- {
+			guarded = tenant.RequireModule(modules[index], guarded)
+		}
+		return withOrganization(guarded)
 	}
 
 	withPermission := func(permission string, handler http.Handler) http.Handler {
@@ -253,11 +451,11 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("POST /v1/telemetry/errors", withAuthTenant(http.HandlerFunc(telemetryHandler.CreateErrorEvent)))
 	mux.Handle("GET /v1/audit-logs", withAuthTenant(http.HandlerFunc(auditHandler.List)))
 	mux.Handle("POST /v1/audit-logs", withAuthTenant(http.HandlerFunc(auditHandler.Create)))
-	mux.Handle("GET /v1/analytics/meta-insights", withPermission(permissions.DashboardCampaignsView, http.HandlerFunc(analyticsHandler.MetaInsights)))
-	mux.Handle("GET /v1/analytics/campaign-insights", withPermission(permissions.DashboardCampaignsView, http.HandlerFunc(analyticsHandler.CampaignInsights)))
-	mux.Handle("GET /v1/analytics/lead", withPermission(permissions.DashboardSiteView, http.HandlerFunc(analyticsHandler.LeadAnalytics)))
-	mux.Handle("GET /v1/analytics/site-summary", withPermission(permissions.DashboardSiteView, http.HandlerFunc(analyticsHandler.SiteSummary)))
-	mux.Handle("GET /v1/analytics/site-detailed", withPermission(permissions.DashboardSiteView, http.HandlerFunc(analyticsHandler.SiteDetailed)))
+	mux.Handle("GET /v1/analytics/meta-insights", withModulePermission("campaigns", permissions.DashboardCampaignsView, http.HandlerFunc(analyticsHandler.MetaInsights)))
+	mux.Handle("GET /v1/analytics/campaign-insights", withModulePermission("campaigns", permissions.DashboardCampaignsView, http.HandlerFunc(analyticsHandler.CampaignInsights)))
+	mux.Handle("GET /v1/analytics/lead", withModulePermission("site", permissions.DashboardSiteView, http.HandlerFunc(analyticsHandler.LeadAnalytics)))
+	mux.Handle("GET /v1/analytics/site-summary", withModulePermission("site", permissions.DashboardSiteView, http.HandlerFunc(analyticsHandler.SiteSummary)))
+	mux.Handle("GET /v1/analytics/site-detailed", withModulePermission("site", permissions.DashboardSiteView, http.HandlerFunc(analyticsHandler.SiteDetailed)))
 	mux.Handle("GET /v1/analytics/enterprise-kpis", withPermission(permissions.DashboardView, http.HandlerFunc(analyticsHandler.EnterpriseKPIs)))
 	mux.Handle("GET /v1/analytics/dre-executive", withPermission(permissions.FinancialView, http.HandlerFunc(analyticsHandler.DREExecutive)))
 	mux.Handle("GET /v1/analytics/sla-summary", withPermission(permissions.DashboardView, http.HandlerFunc(analyticsHandler.SlaSummary)))
@@ -278,6 +476,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("POST /v1/attention/items/{id}/acknowledge", withPermission(permissions.AttentionView, http.HandlerFunc(attentionHandler.AcknowledgeItem)))
 	mux.Handle("POST /v1/attention/items/{id}/snooze", withPermission(permissions.AttentionView, http.HandlerFunc(attentionHandler.SnoozeItem)))
 	mux.Handle("POST /v1/attention/items/{id}/resolve", withPermission(permissions.AttentionView, http.HandlerFunc(attentionHandler.ResolveItem)))
+	mux.Handle("GET /v1/home/focus", withPermission(permissions.AttentionView, http.HandlerFunc(homeFocusHandler.List)))
+	mux.Handle("GET /v1/home/notices", withOrganization(http.HandlerFunc(homeFocusHandler.Notices)))
 	mux.Handle("GET /v1/admin/error-events", withAuthTenant(http.HandlerFunc(telemetryHandler.ListErrorEvents)))
 	mux.Handle("POST /v1/admin/error-events/{id}/resolve", withAuthTenant(http.HandlerFunc(telemetryHandler.ResolveErrorEvent)))
 	mux.Handle("GET /v1/gamification/overview", withModulePermission("gamification", permissions.GamificationView, http.HandlerFunc(gamificationHandler.Overview)))
@@ -293,6 +493,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("PATCH /v1/gamification/manual-entries/{id}", withModulePermission("gamification", permissions.GamificationManage, http.HandlerFunc(gamificationHandler.DecideManualEntry)))
 	mux.Handle("POST /v1/gamification/seasons", withModulePermission("gamification", permissions.GamificationManage, http.HandlerFunc(gamificationHandler.ResetSeason)))
 	mux.Handle("GET /v1/cadence-templates", withOrganization(http.HandlerFunc(cadencesHandler.ListTemplates)))
+	mux.Handle("GET /v1/stages/{id}/operational-rules", withOrganization(http.HandlerFunc(cadencesHandler.GetOperationalRules)))
+	mux.Handle("PUT /v1/stages/{id}/operational-rules", withPermission(permissions.PipelineManage, http.HandlerFunc(cadencesHandler.UpsertOperationalRules)))
+	mux.Handle("GET /v1/leads/{id}/cadence-state", withOrganization(http.HandlerFunc(cadencesHandler.GetLeadCadenceState)))
 	mux.Handle("POST /v1/cadence-tasks", withPermission(permissions.PipelineManage, http.HandlerFunc(cadencesHandler.CreateTask)))
 	mux.Handle("PATCH /v1/cadence-tasks/{id}", withPermission(permissions.PipelineManage, http.HandlerFunc(cadencesHandler.UpdateTask)))
 	mux.Handle("DELETE /v1/cadence-tasks/{id}", withPermission(permissions.PipelineManage, http.HandlerFunc(cadencesHandler.DeleteTask)))
@@ -350,15 +553,29 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("DELETE /v1/admin/users/{id}", withAuthTenant(http.HandlerFunc(adminHandler.DeleteUser)))
 	mux.Handle("POST /v1/admin/users/{id}/reset-password", withAuthTenant(http.HandlerFunc(adminHandler.ResetUserPassword)))
 	mux.Handle("GET /v1/announcements/active", withAuthTenant(http.HandlerFunc(adminHandler.ListActiveAnnouncements)))
+	mux.Handle("GET /v1/home/publications", withAuthTenant(http.HandlerFunc(adminHandler.ListHomePublications)))
+	mux.Handle("POST /v1/home/assistant", withAuthTenant(http.HandlerFunc(adminHandler.AnswerHomeAssistant)))
+	mux.Handle("GET /v1/help/articles", withAuthTenant(http.HandlerFunc(helpHandler.ListArticles)))
+	mux.Handle("GET /v1/help/articles/{slug}", withAuthTenant(http.HandlerFunc(helpHandler.ShowArticle)))
+	mux.Handle("POST /v1/help/search", withAuthTenant(http.HandlerFunc(helpHandler.SearchArticles)))
+	mux.Handle("GET /v1/public/help/articles", http.HandlerFunc(helpHandler.ListPublicArticles))
+	mux.Handle("GET /v1/public/help/articles/{slug}", http.HandlerFunc(helpHandler.ShowPublicArticle))
+	mux.Handle("GET /v1/admin/home-publications", withAuthTenant(http.HandlerFunc(adminHandler.ListHomePublicationsAdmin)))
+	mux.Handle("POST /v1/admin/home-publications", withAuthTenant(http.HandlerFunc(adminHandler.CreateHomePublicationAdmin)))
+	mux.Handle("PUT /v1/admin/home-publications/order", withAuthTenant(http.HandlerFunc(adminHandler.ReorderHomePublicationsAdmin)))
+	mux.Handle("PATCH /v1/admin/home-publications/{id}", withAuthTenant(http.HandlerFunc(adminHandler.UpdateHomePublicationAdmin)))
+	mux.Handle("DELETE /v1/admin/home-publications/{id}", withAuthTenant(http.HandlerFunc(adminHandler.DeleteHomePublicationAdmin)))
+	mux.Handle("POST /v1/admin/home-publications/{id}/image", withAuthTenant(http.HandlerFunc(adminHandler.UploadHomePublicationImageAdmin)))
+	mux.Handle("DELETE /v1/admin/home-publications/{id}/image", withAuthTenant(http.HandlerFunc(adminHandler.DeleteHomePublicationImageAdmin)))
 	mux.Handle("GET /v1/feature-requests/mine", withAuthTenant(http.HandlerFunc(adminHandler.ListMyFeatureRequests)))
 	mux.Handle("POST /v1/feature-requests", withOrganization(http.HandlerFunc(adminHandler.CreateFeatureRequest)))
 	mux.Handle("GET /v1/admin/feature-requests", withAuthTenant(http.HandlerFunc(adminHandler.ListFeatureRequestsAdmin)))
 	mux.Handle("PATCH /v1/admin/feature-requests/{id}", withAuthTenant(http.HandlerFunc(adminHandler.RespondFeatureRequestAdmin)))
-	mux.Handle("GET /v1/invitations", withAuthTenant(http.HandlerFunc(adminHandler.ListInvitations)))
+	mux.Handle("GET /v1/invitations", withPermission(permissions.UsersManage, http.HandlerFunc(adminHandler.ListInvitations)))
 	mux.Handle("POST /v1/invitations", withPermission(permissions.UsersManage, http.HandlerFunc(adminHandler.CreateInvitation)))
 	mux.Handle("POST /v1/invitations/{id}/resend", withPermission(permissions.UsersManage, http.HandlerFunc(adminHandler.ResendInvitation)))
 	mux.Handle("DELETE /v1/invitations/{id}", withPermission(permissions.UsersManage, http.HandlerFunc(adminHandler.DeleteInvitation)))
-	mux.Handle("POST /v1/invitations/{token}/accept", withAuthTenant(http.HandlerFunc(adminHandler.AcceptInvitationAuthenticated)))
+	mux.Handle("POST /v1/invitations/{token}/accept", httpserver.RequireAuth(authVerifier, http.HandlerFunc(adminHandler.AcceptInvitationAuthenticated)))
 	mux.Handle("GET /v1/onboarding-requests/mine", withAuthTenant(http.HandlerFunc(adminHandler.ShowMyOnboardingRequest)))
 	mux.Handle("POST /v1/onboarding-requests", withAuthTenant(http.HandlerFunc(adminHandler.CreateOnboardingRequest)))
 	mux.Handle("GET /v1/admin/onboarding-requests", withAuthTenant(http.HandlerFunc(adminHandler.ListOnboardingRequestsAdmin)))
@@ -379,6 +596,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("POST /v1/admin/tables/{table}", withAuthTenant(http.HandlerFunc(adminHandler.CreateTableRow)))
 	mux.Handle("PATCH /v1/admin/tables/{table}/{id}", withAuthTenant(http.HandlerFunc(adminHandler.UpdateTableRow)))
 	mux.Handle("DELETE /v1/admin/tables/{table}/{id}", withAuthTenant(http.HandlerFunc(adminHandler.DeleteTableRow)))
+	mux.Handle("GET /v1/admin/system-settings/notification-dispatch", withAuthTenant(http.HandlerFunc(adminHandler.ShowNotificationDispatchSettings)))
+	mux.Handle("PUT /v1/admin/system-settings/notification-dispatch", withAuthTenant(http.HandlerFunc(adminHandler.UpdateNotificationDispatchSettings)))
 	mux.Handle("GET /v1/admin/orphan-members", withAuthTenant(http.HandlerFunc(adminHandler.OrphanMemberStats)))
 	mux.Handle("POST /v1/admin/orphan-members/cleanup", withAuthTenant(http.HandlerFunc(adminHandler.CleanupOrphanMembers)))
 	mux.Handle("GET /v1/dashboard/stats", withPermission(permissions.DashboardView, http.HandlerFunc(leadsHandler.ShowDashboardStats)))
@@ -441,11 +660,16 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("POST /v1/public/webhooks/generic", http.HandlerFunc(webhooksHandler.ReceiveLead))
 	mux.HandleFunc("GET /v1/public/integrations/meta/webhook", metaHandler.Webhook)
 	mux.HandleFunc("POST /v1/public/integrations/meta/webhook", metaHandler.Webhook)
+	mux.HandleFunc("GET /v1/public/integrations/meta/oauth/callback", metaOAuthCallbackHandler)
 	mux.HandleFunc("GET /v1/public/integrations/portals/grupo-olx/feed/{token}", portalsHandler.GrupoOLXFeed)
 	mux.HandleFunc("POST /v1/public/integrations/portals/grupo-olx/leads/{token}", portalsHandler.GrupoOLXLeadWebhook)
 	mux.HandleFunc("POST /v1/public/integrations/portals/grupo-olx/import-reports/{token}", portalsHandler.GrupoOLXImportReportWebhook)
+	mux.HandleFunc("GET /v1/public/property-publications/{publicationId}/versions/{version}/assets/{assetId}", publicationsHandler.PublicMedia)
 	mux.HandleFunc("GET /v1/public/onboarding/plans", adminHandler.PublicSubscriptionPlans)
+	mux.HandleFunc("POST /v1/public/onboarding/validate-step", adminHandler.PublicOnboardingValidateStep)
 	mux.HandleFunc("POST /v1/public/onboarding/signup", adminHandler.PublicOnboardingSignup)
+	mux.HandleFunc("POST /v1/public/onboarding/signup/recovery", adminHandler.PublicRecoverOnboardingSignup)
+	mux.HandleFunc("POST /v1/public/onboarding/email-confirmation/resend", adminHandler.PublicResendOnboardingEmailConfirmation)
 	mux.HandleFunc("POST /v1/public/onboarding/checkout-plan", adminHandler.PublicCheckoutPlan)
 	mux.HandleFunc("GET /v1/public/system-settings", settingsHandler.PublicSystemSettings)
 	mux.HandleFunc("GET /v1/public/site/resolve", siteHandler.ResolvePublicSite)
@@ -473,27 +697,35 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("PUT /v1/integrations/imoview", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.SaveImoview)))
 	mux.Handle("DELETE /v1/integrations/imoview", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.DeleteImoview)))
 	mux.Handle("GET /v1/integrations/meta", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.ListMetaIntegrations)))
+	mux.Handle("PUT /v1/integrations/meta/conversion-feedback", withModulePermission("campaigns", permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.SaveMetaConversionFeedback)))
+	mux.Handle("POST /v1/integrations/meta/oauth/actions", withPermission(permissions.SettingsIntegrations, metaOAuthActionHandler))
+	mux.Handle("POST /v1/integrations/meta/marketing/sync", withModulePermission("campaigns", permissions.SettingsIntegrations, http.HandlerFunc(metaMarketingSyncHandler.Sync)))
+	mux.Handle("GET /v1/integrations/meta/pages/{pageId}/forms", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.ListMetaPageForms)))
 	mux.Handle("GET /v1/integrations/meta/oauth-flows/{id}", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.ShowMetaOAuthFlow)))
 	mux.Handle("GET /v1/integrations/meta/form-configs", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.ListMetaFormConfigs)))
 	mux.Handle("POST /v1/integrations/meta/form-configs", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.SaveMetaFormConfig)))
 	mux.Handle("PATCH /v1/integrations/meta/form-configs", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.ToggleMetaFormConfig)))
 	mux.Handle("DELETE /v1/integrations/meta/form-configs", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.DeleteMetaFormConfig)))
 	mux.Handle("GET /v1/integrations/meta/webhook-health", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.MetaWebhookHealth)))
-	mux.Handle("GET /v1/integrations/meta/conversations", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.ListMetaConversations)))
-	mux.Handle("GET /v1/integrations/meta/conversations/{id}/messages", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.ListMetaMessages)))
+	mux.Handle("GET /v1/integrations/meta/conversations", withModulesPermission([]string{"whatsapp", "campaigns"}, permissions.WhatsAppView, http.HandlerFunc(integrationsHandler.ListMetaConversations)))
+	mux.Handle("GET /v1/integrations/meta/conversations/{id}/messages", withModulesPermission([]string{"whatsapp", "campaigns"}, permissions.WhatsAppView, http.HandlerFunc(integrationsHandler.ListMetaMessages)))
+	mux.Handle("POST /v1/integrations/meta/conversations/{id}/messages", withModulesPermission([]string{"whatsapp", "campaigns"}, permissions.WhatsAppOperate, http.HandlerFunc(integrationsHandler.SendMetaMessage)))
 	mux.Handle("GET /v1/integrations/portals/grupo-olx", withModulePermission("portals", permissions.SettingsIntegrations, http.HandlerFunc(portalsHandler.GetGrupoOLX)))
 	mux.Handle("PUT /v1/integrations/portals/grupo-olx", withModulePermission("portals", permissions.SettingsIntegrations, http.HandlerFunc(portalsHandler.SaveGrupoOLX)))
 	mux.Handle("POST /v1/integrations/portals/grupo-olx/activate", withModulePermission("portals", permissions.SettingsIntegrations, http.HandlerFunc(portalsHandler.ActivateGrupoOLX)))
+	mux.Handle("POST /v1/integrations/portals/grupo-olx/pause", withModulePermission("portals", permissions.SettingsIntegrations, http.HandlerFunc(portalsHandler.PauseGrupoOLX)))
 	mux.Handle("POST /v1/integrations/portals/grupo-olx/regenerate-feed-token", withModulePermission("portals", permissions.SettingsIntegrations, http.HandlerFunc(portalsHandler.RegenerateGrupoOLXFeedToken)))
 	mux.Handle("POST /v1/integrations/portals/grupo-olx/regenerate-webhook-token", withModulePermission("portals", permissions.SettingsIntegrations, http.HandlerFunc(portalsHandler.RegenerateGrupoOLXWebhookToken)))
 	mux.Handle("GET /v1/integrations/portals/grupo-olx/publications", withModulePermission("portals", permissions.SettingsIntegrations, http.HandlerFunc(portalsHandler.ListGrupoOLXPublications)))
 	mux.Handle("PUT /v1/integrations/portals/grupo-olx/publications", withModulePermission("portals", permissions.SettingsIntegrations, http.HandlerFunc(portalsHandler.UpsertGrupoOLXPublications)))
+	mux.Handle("GET /v1/integrations/portals/grupo-olx/import-reports", withModulePermission("portals", permissions.SettingsIntegrations, http.HandlerFunc(portalsHandler.ListGrupoOLXImportReports)))
+	mux.Handle("POST /v1/integrations/portals/grupo-olx/import-reports/{id}/replay", withModulePermission("portals", permissions.SettingsIntegrations, http.HandlerFunc(portalsHandler.ReplayGrupoOLXImportReport)))
 	mux.Handle("GET /v1/public/push-config", http.HandlerFunc(settingsHandler.PublicPushConfig))
 	mux.Handle("PATCH /v1/settings/profile", withAuthTenant(http.HandlerFunc(settingsHandler.UpdateProfile)))
 	mux.Handle("POST /v1/settings/profile/avatar", withAuthTenant(http.HandlerFunc(settingsHandler.UploadProfileAvatar)))
 	mux.Handle("PATCH /v1/settings/organization", withPermission(permissions.SettingsOrganization, http.HandlerFunc(settingsHandler.UpdateOrganization)))
 	mux.Handle("POST /v1/settings/organization/logo", withPermission(permissions.SettingsOrganization, http.HandlerFunc(settingsHandler.UploadOrganizationLogo)))
-	mux.Handle("POST /v1/settings/password", withAuthTenant(http.HandlerFunc(settingsHandler.ChangePassword)))
+	mux.Handle("POST /v1/settings/password", httpserver.RequirePasswordChangeAuth(authVerifier, http.HandlerFunc(settingsHandler.ChangePassword)))
 	mux.Handle("GET /v1/settings/password/status", withAuthTenant(http.HandlerFunc(settingsHandler.PasswordStatus)))
 	mux.Handle("GET /v1/settings/modules", withOrganization(http.HandlerFunc(settingsHandler.ListOrganizationModules)))
 	mux.Handle("GET /v1/settings/setup-guide-progress", withAuthTenant(http.HandlerFunc(settingsHandler.ShowSetupGuideProgress)))
@@ -505,8 +737,10 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("POST /v1/settings/api-keys", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(settingsHandler.CreateAPIKey)))
 	mux.Handle("DELETE /v1/settings/api-keys/{id}", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(settingsHandler.DeleteAPIKey)))
 	mux.Handle("GET /v1/settings/subscription", withPermission(permissions.SettingsBilling, http.HandlerFunc(settingsHandler.ShowSubscription)))
+	mux.Handle("POST /v1/settings/subscription/payments/{id}/refresh", withPermission(permissions.SettingsBilling, http.HandlerFunc(settingsHandler.RefreshSubscriptionPayment)))
 	mux.Handle("PATCH /v1/settings/subscription/billing", withPermission(permissions.SettingsBilling, http.HandlerFunc(settingsHandler.UpdateSubscriptionBilling)))
 	mux.Handle("PATCH /v1/settings/subscription/plan", withPermission(permissions.SettingsBilling, http.HandlerFunc(settingsHandler.SelectSubscriptionPlan)))
+	mux.Handle("POST /v1/settings/subscription/charge", withPermission(permissions.SettingsBilling, http.HandlerFunc(integrationsHandler.CreateSubscriptionCharge)))
 	mux.Handle("GET /v1/settings/roles", withPermission(permissions.PermissionsManage, http.HandlerFunc(settingsHandler.ListOrganizationRoles)))
 	mux.Handle("POST /v1/settings/roles", withPermission(permissions.PermissionsManage, http.HandlerFunc(settingsHandler.CreateRole)))
 	mux.Handle("PATCH /v1/settings/roles/{id}", withPermission(permissions.PermissionsManage, http.HandlerFunc(settingsHandler.UpdateRole)))
@@ -520,66 +754,66 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("GET /v1/settings/user-roles", withPermission(permissions.PermissionsManage, http.HandlerFunc(settingsHandler.ListUserOrganizationRoles)))
 	mux.Handle("PUT /v1/settings/user-roles", withPermission(permissions.PermissionsManage, http.HandlerFunc(settingsHandler.AssignUserRole)))
 	mux.Handle("GET /v1/settings/has-permission", withAuthTenant(http.HandlerFunc(settingsHandler.HasPermission)))
-	mux.Handle("GET /v1/site", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.ShowSite)))
-	mux.Handle("POST /v1/site", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.CreateSite)))
-	mux.Handle("PATCH /v1/site", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.UpdateSite)))
-	mux.Handle("POST /v1/site/domain/verify", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.VerifyDomain)))
-	mux.Handle("POST /v1/site/assets", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.UploadAsset)))
-	mux.Handle("GET /v1/site/menu-items", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.ListMenuItems)))
-	mux.Handle("POST /v1/site/menu-items", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.CreateMenuItem)))
-	mux.Handle("PATCH /v1/site/menu-items/{id}", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.UpdateMenuItem)))
-	mux.Handle("DELETE /v1/site/menu-items/{id}", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.DeleteMenuItem)))
-	mux.Handle("POST /v1/site/menu-items/reorder", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.ReorderMenuItems)))
-	mux.Handle("GET /v1/site/search-filters", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.ListSearchFilters)))
-	mux.Handle("POST /v1/site/search-filters", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.CreateSearchFilter)))
-	mux.Handle("PATCH /v1/site/search-filters/{id}", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.UpdateSearchFilter)))
-	mux.Handle("DELETE /v1/site/search-filters/{id}", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.DeleteSearchFilter)))
-	mux.Handle("POST /v1/site/search-filters/reorder", withPermission(permissions.SettingsSite, http.HandlerFunc(siteHandler.ReorderSearchFilters)))
-	mux.Handle("GET /v1/whatsapp/message-templates", withPermission(permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ListMessageTemplates)))
-	mux.Handle("POST /v1/whatsapp/message-templates", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.CreateMessageTemplate)))
-	mux.Handle("PATCH /v1/whatsapp/message-templates/{id}", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.UpdateMessageTemplate)))
-	mux.Handle("DELETE /v1/whatsapp/message-templates/{id}", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.DeleteMessageTemplate)))
-	mux.Handle("GET /v1/whatsapp/sessions", withPermission(permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ListSessions)))
-	mux.Handle("POST /v1/whatsapp/sessions", withPermission(permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.CreateSession)))
-	mux.Handle("GET /v1/whatsapp/sessions/{id}", withPermission(permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ShowSession)))
-	mux.Handle("DELETE /v1/whatsapp/sessions/{id}", withPermission(permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.DeleteSession)))
-	mux.Handle("POST /v1/whatsapp/sessions/{id}/qr", withPermission(permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.GetQRCode)))
-	mux.Handle("POST /v1/whatsapp/sessions/{id}/status", withPermission(permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.GetConnectionStatus)))
-	mux.Handle("POST /v1/whatsapp/sessions/{id}/recreate", withPermission(permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.RecreateSession)))
-	mux.Handle("POST /v1/whatsapp/sessions/{id}/logout", withPermission(permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.LogoutSession)))
-	mux.Handle("POST /v1/whatsapp/sessions/{id}/notification-session", withPermission(permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.ToggleNotificationSession)))
-	mux.Handle("POST /v1/whatsapp/sessions/{id}/ai-auto-reply", withPermission(permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.ToggleAutoReplySession)))
-	mux.Handle("GET /v1/whatsapp/sessions/{id}/access", withPermission(permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.ListSessionAccess)))
-	mux.Handle("POST /v1/whatsapp/sessions/{id}/access", withPermission(permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.GrantSessionAccess)))
-	mux.Handle("DELETE /v1/whatsapp/sessions/{id}/access/{userId}", withPermission(permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.RevokeSessionAccess)))
-	mux.Handle("GET /v1/whatsapp/sessions/{id}/labels", withPermission(permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ListLabels)))
-	mux.Handle("POST /v1/whatsapp/sessions/{id}/labels/sync", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.SyncLabels)))
-	mux.Handle("POST /v1/whatsapp/sessions/{id}/labels/assign", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.AssignLabel)))
-	mux.Handle("GET /v1/whatsapp/sessions/{id}/groups", withPermission(permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ListGroups)))
-	mux.Handle("POST /v1/whatsapp/sessions/{id}/groups/sync", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.SyncGroups)))
-	mux.Handle("POST /v1/whatsapp/sessions/{id}/groups/info", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.GroupInfo)))
-	mux.Handle("POST /v1/whatsapp/sessions/{id}/groups/invite-link", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.GroupInviteLink)))
-	mux.Handle("POST /v1/whatsapp/sessions/{id}/groups/update", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.UpdateGroup)))
-	mux.Handle("POST /v1/whatsapp/sessions/{id}/contacts/check", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.CheckNumbers)))
-	mux.Handle("POST /v1/whatsapp/sessions/{id}/contacts/avatar", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.FetchAvatar)))
-	mux.Handle("POST /v1/whatsapp/sessions/{id}/contacts/sync", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.SyncContactsAvatars)))
-	mux.Handle("POST /v1/whatsapp/sessions/{id}/history-sync", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.HistorySync)))
-	mux.Handle("POST /v1/whatsapp/provider-action", withPermission(permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.ProviderAction)))
-	mux.Handle("GET /v1/whatsapp/conversations", withPermission(permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ListConversations)))
-	mux.Handle("POST /v1/whatsapp/conversations/start", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.StartConversation)))
-	mux.Handle("GET /v1/whatsapp/conversations/find", withPermission(permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.FindConversation)))
-	mux.Handle("GET /v1/whatsapp/history", withPermission(permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.HistoryAccess)))
-	mux.Handle("GET /v1/whatsapp/conversations/{id}", withPermission(permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ShowConversation)))
-	mux.Handle("GET /v1/whatsapp/conversations/{id}/messages", withPermission(permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ListMessages)))
-	mux.Handle("POST /v1/whatsapp/conversations/{id}/send-message", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.SendMessage)))
-	mux.Handle("POST /v1/whatsapp/conversations/{id}/messages/{messageId}/reaction", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.ReactToMessage)))
-	mux.Handle("POST /v1/whatsapp/conversations/{id}/mark-read", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.MarkConversationAsRead)))
-	mux.Handle("POST /v1/whatsapp/conversations/{id}/mark-seen", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.MarkAsSeenOnWhatsApp)))
-	mux.Handle("POST /v1/whatsapp/conversations/{id}/archive", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.ArchiveConversation)))
-	mux.Handle("DELETE /v1/whatsapp/conversations/{id}", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.DeleteConversation)))
-	mux.Handle("POST /v1/whatsapp/conversations/{id}/link-lead", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.LinkConversationToLead)))
-	mux.Handle("GET /v1/whatsapp/conversations/{id}/labels", withPermission(permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ListChatLabels)))
-	mux.Handle("POST /v1/whatsapp/messages/{id}/retry-media", withPermission(permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.RetryMediaDownload)))
+	mux.Handle("GET /v1/site", withModulePermission("site", permissions.SettingsSite, http.HandlerFunc(siteHandler.ShowSite)))
+	mux.Handle("POST /v1/site", withModulePermission("site", permissions.SettingsSite, http.HandlerFunc(siteHandler.CreateSite)))
+	mux.Handle("PATCH /v1/site", withModulePermission("site", permissions.SettingsSite, http.HandlerFunc(siteHandler.UpdateSite)))
+	mux.Handle("POST /v1/site/domain/verify", withModulePermission("site", permissions.SettingsSite, http.HandlerFunc(siteHandler.VerifyDomain)))
+	mux.Handle("POST /v1/site/assets", withModulePermission("site", permissions.SettingsSite, http.HandlerFunc(siteHandler.UploadAsset)))
+	mux.Handle("GET /v1/site/menu-items", withModulePermission("site", permissions.SettingsSite, http.HandlerFunc(siteHandler.ListMenuItems)))
+	mux.Handle("POST /v1/site/menu-items", withModulePermission("site", permissions.SettingsSite, http.HandlerFunc(siteHandler.CreateMenuItem)))
+	mux.Handle("PATCH /v1/site/menu-items/{id}", withModulePermission("site", permissions.SettingsSite, http.HandlerFunc(siteHandler.UpdateMenuItem)))
+	mux.Handle("DELETE /v1/site/menu-items/{id}", withModulePermission("site", permissions.SettingsSite, http.HandlerFunc(siteHandler.DeleteMenuItem)))
+	mux.Handle("POST /v1/site/menu-items/reorder", withModulePermission("site", permissions.SettingsSite, http.HandlerFunc(siteHandler.ReorderMenuItems)))
+	mux.Handle("GET /v1/site/search-filters", withModulePermission("site", permissions.SettingsSite, http.HandlerFunc(siteHandler.ListSearchFilters)))
+	mux.Handle("POST /v1/site/search-filters", withModulePermission("site", permissions.SettingsSite, http.HandlerFunc(siteHandler.CreateSearchFilter)))
+	mux.Handle("PATCH /v1/site/search-filters/{id}", withModulePermission("site", permissions.SettingsSite, http.HandlerFunc(siteHandler.UpdateSearchFilter)))
+	mux.Handle("DELETE /v1/site/search-filters/{id}", withModulePermission("site", permissions.SettingsSite, http.HandlerFunc(siteHandler.DeleteSearchFilter)))
+	mux.Handle("POST /v1/site/search-filters/reorder", withModulePermission("site", permissions.SettingsSite, http.HandlerFunc(siteHandler.ReorderSearchFilters)))
+	mux.Handle("GET /v1/whatsapp/message-templates", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ListMessageTemplates)))
+	mux.Handle("POST /v1/whatsapp/message-templates", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.CreateMessageTemplate)))
+	mux.Handle("PATCH /v1/whatsapp/message-templates/{id}", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.UpdateMessageTemplate)))
+	mux.Handle("DELETE /v1/whatsapp/message-templates/{id}", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.DeleteMessageTemplate)))
+	mux.Handle("GET /v1/whatsapp/sessions", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ListSessions)))
+	mux.Handle("POST /v1/whatsapp/sessions", withModulePermission("whatsapp", permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.CreateSession)))
+	mux.Handle("GET /v1/whatsapp/sessions/{id}", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ShowSession)))
+	mux.Handle("DELETE /v1/whatsapp/sessions/{id}", withModulePermission("whatsapp", permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.DeleteSession)))
+	mux.Handle("POST /v1/whatsapp/sessions/{id}/qr", withModulePermission("whatsapp", permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.GetQRCode)))
+	mux.Handle("POST /v1/whatsapp/sessions/{id}/status", withModulePermission("whatsapp", permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.GetConnectionStatus)))
+	mux.Handle("POST /v1/whatsapp/sessions/{id}/recreate", withModulePermission("whatsapp", permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.RecreateSession)))
+	mux.Handle("POST /v1/whatsapp/sessions/{id}/logout", withModulePermission("whatsapp", permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.LogoutSession)))
+	mux.Handle("POST /v1/whatsapp/sessions/{id}/notification-session", withModulePermission("whatsapp", permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.ToggleNotificationSession)))
+	mux.Handle("POST /v1/whatsapp/sessions/{id}/ai-auto-reply", withModulePermission("whatsapp", permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.ToggleAutoReplySession)))
+	mux.Handle("GET /v1/whatsapp/sessions/{id}/access", withModulePermission("whatsapp", permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.ListSessionAccess)))
+	mux.Handle("POST /v1/whatsapp/sessions/{id}/access", withModulePermission("whatsapp", permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.GrantSessionAccess)))
+	mux.Handle("DELETE /v1/whatsapp/sessions/{id}/access/{userId}", withModulePermission("whatsapp", permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.RevokeSessionAccess)))
+	mux.Handle("GET /v1/whatsapp/sessions/{id}/labels", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ListLabels)))
+	mux.Handle("POST /v1/whatsapp/sessions/{id}/labels/sync", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.SyncLabels)))
+	mux.Handle("POST /v1/whatsapp/sessions/{id}/labels/assign", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.AssignLabel)))
+	mux.Handle("GET /v1/whatsapp/sessions/{id}/groups", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ListGroups)))
+	mux.Handle("POST /v1/whatsapp/sessions/{id}/groups/sync", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.SyncGroups)))
+	mux.Handle("POST /v1/whatsapp/sessions/{id}/groups/info", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.GroupInfo)))
+	mux.Handle("POST /v1/whatsapp/sessions/{id}/groups/invite-link", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.GroupInviteLink)))
+	mux.Handle("POST /v1/whatsapp/sessions/{id}/groups/update", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.UpdateGroup)))
+	mux.Handle("POST /v1/whatsapp/sessions/{id}/contacts/check", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.CheckNumbers)))
+	mux.Handle("POST /v1/whatsapp/sessions/{id}/contacts/avatar", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.FetchAvatar)))
+	mux.Handle("POST /v1/whatsapp/sessions/{id}/contacts/sync", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.SyncContactsAvatars)))
+	mux.Handle("POST /v1/whatsapp/sessions/{id}/history-sync", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.HistorySync)))
+	mux.Handle("POST /v1/whatsapp/provider-action", withModulePermission("whatsapp", permissions.WhatsAppManage, http.HandlerFunc(whatsappHandler.ProviderAction)))
+	mux.Handle("GET /v1/whatsapp/conversations", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ListConversations)))
+	mux.Handle("POST /v1/whatsapp/conversations/start", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.StartConversation)))
+	mux.Handle("GET /v1/whatsapp/conversations/find", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.FindConversation)))
+	mux.Handle("GET /v1/whatsapp/history", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.HistoryAccess)))
+	mux.Handle("GET /v1/whatsapp/conversations/{id}", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ShowConversation)))
+	mux.Handle("GET /v1/whatsapp/conversations/{id}/messages", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ListMessages)))
+	mux.Handle("POST /v1/whatsapp/conversations/{id}/send-message", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.SendMessage)))
+	mux.Handle("POST /v1/whatsapp/conversations/{id}/messages/{messageId}/reaction", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.ReactToMessage)))
+	mux.Handle("POST /v1/whatsapp/conversations/{id}/mark-read", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.MarkConversationAsRead)))
+	mux.Handle("POST /v1/whatsapp/conversations/{id}/mark-seen", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.MarkAsSeenOnWhatsApp)))
+	mux.Handle("POST /v1/whatsapp/conversations/{id}/archive", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.ArchiveConversation)))
+	mux.Handle("DELETE /v1/whatsapp/conversations/{id}", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.DeleteConversation)))
+	mux.Handle("POST /v1/whatsapp/conversations/{id}/link-lead", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.LinkConversationToLead)))
+	mux.Handle("GET /v1/whatsapp/conversations/{id}/labels", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ListChatLabels)))
+	mux.Handle("POST /v1/whatsapp/messages/{id}/retry-media", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.RetryMediaDownload)))
 	mux.Handle("GET /v1/lead-enrichments", withOrganization(http.HandlerFunc(leadsHandler.ListEnrichments)))
 	mux.Handle("GET /v1/pipeline-board", withOrganization(http.HandlerFunc(leadsHandler.ShowPipelineBoard)))
 	mux.Handle("GET /v1/pipeline-stage-leads", withOrganization(http.HandlerFunc(leadsHandler.ListPipelineStageLeads)))
@@ -609,7 +843,11 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("POST /v1/notifications/{id}/read", withOrganization(http.HandlerFunc(leadsHandler.MarkNotificationRead)))
 	mux.Handle("POST /v1/notifications/read-all", withOrganization(http.HandlerFunc(leadsHandler.MarkAllNotificationsRead)))
 	mux.Handle("GET /v1/leads", withOrganization(http.HandlerFunc(leadsHandler.List)))
-	mux.Handle("POST /v1/leads", withPermission(permissions.LeadCreate, http.HandlerFunc(leadsHandler.Create)))
+	// Lead creation is authorized after the request is validated: regular rows
+	// require lead_create, while importMode rows require lead_import. Keeping the
+	// generic organization middleware here lets the repository enforce that
+	// distinction without granting either capability to the other.
+	mux.Handle("POST /v1/leads", withOrganization(http.HandlerFunc(leadsHandler.Create)))
 	mux.Handle("GET /v1/leads/{id}/timeline", withOrganization(http.HandlerFunc(leadsHandler.ListLeadTimeline)))
 	mux.Handle("GET /v1/leads/{id}/journey", withOrganization(http.HandlerFunc(leadsHandler.ListLeadJourney)))
 	mux.Handle("GET /v1/leads/{id}/history-raw", withOrganization(http.HandlerFunc(leadsHandler.ShowLeadHistoryRaw)))
@@ -625,17 +863,53 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("POST /v1/leads/{id}/redistribute", withPermission(permissions.LeadOperate, http.HandlerFunc(leadsHandler.RedistributeRoundRobin)))
 	mux.Handle("POST /v1/leads/{id}/tags", withPermission(permissions.LeadOperate, http.HandlerFunc(leadsHandler.AddTag)))
 	mux.Handle("DELETE /v1/leads/{id}/tags/{tagId}", withPermission(permissions.LeadOperate, http.HandlerFunc(leadsHandler.RemoveTag)))
-	mux.Handle("GET /v1/properties", withPermission(permissions.PropertyView, http.HandlerFunc(propertiesHandler.List)))
-	mux.Handle("GET /v1/properties/stats", withPermission(permissions.PropertyView, http.HandlerFunc(propertiesHandler.Stats)))
-	mux.Handle("POST /v1/properties", withPermission(permissions.PropertyManage, http.HandlerFunc(propertiesHandler.Create)))
-	mux.Handle("GET /v1/properties/{id}", withPermission(permissions.PropertyView, http.HandlerFunc(propertiesHandler.Show)))
-	mux.Handle("GET /v1/properties/{id}/history", withPermission(permissions.PropertyView, http.HandlerFunc(propertiesHandler.History)))
-	mux.Handle("PATCH /v1/properties/{id}", withPermission(permissions.PropertyManage, http.HandlerFunc(propertiesHandler.Update)))
-	mux.Handle("DELETE /v1/properties/{id}", withPermission(permissions.PropertyManage, http.HandlerFunc(propertiesHandler.Delete)))
-	mux.Handle("POST /v1/property-images", withPermission(permissions.PropertyManage, http.HandlerFunc(propertiesHandler.UploadImage)))
-	mux.Handle("GET /v1/property-captors/{id}", withPermission(permissions.PropertyView, http.HandlerFunc(propertiesHandler.ShowPropertyCaptor)))
-	mux.Handle("GET /v1/property-site-info", withPermission(permissions.PropertyView, http.HandlerFunc(propertiesHandler.ShowPropertySiteInfo)))
-	mux.Handle("GET /v1/property-summaries", withPermission(permissions.PropertyView, http.HandlerFunc(propertiesHandler.ListPropertySummaries)))
+	mux.Handle("GET /v1/property-developments", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(developmentsHandler.List)))
+	mux.Handle("POST /v1/property-developments", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(developmentsHandler.Create)))
+	mux.Handle("GET /v1/property-developments/{id}/workspace", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(developmentsHandler.ShowWorkspace)))
+	mux.Handle("GET /v1/property-developments/{id}/units", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(developmentsHandler.ListUnits)))
+	mux.Handle("GET /v1/property-developments/{id}/reservations", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(developmentsHandler.ListReservations)))
+	mux.Handle("POST /v1/property-developments/{id}/phases", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(developmentsHandler.CreatePhase)))
+	mux.Handle("POST /v1/property-developments/{id}/buildings", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(developmentsHandler.CreateBuilding)))
+	mux.Handle("POST /v1/property-developments/{id}/floor-plans", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(developmentsHandler.CreateFloorPlan)))
+	mux.Handle("POST /v1/property-developments/{id}/units/bulk", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(developmentsHandler.BulkCreateUnits)))
+	mux.Handle("PATCH /v1/property-developments/{id}/units/{unitId}", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(developmentsHandler.UpdateUnit)))
+	mux.Handle("PUT /v1/property-developments/{id}/units/{unitId}/price", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(developmentsHandler.UpdateUnitPrice)))
+	mux.Handle("POST /v1/property-developments/{id}/units/{unitId}/reservations", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(developmentsHandler.CreateReservation)))
+	mux.Handle("POST /v1/property-developments/{id}/reservations/{reservationId}/cancel", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(developmentsHandler.CancelReservation)))
+	mux.Handle("POST /v1/property-developments/{id}/reservations/{reservationId}/convert", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(developmentsHandler.ConvertReservation)))
+	mux.Handle("POST /v1/property-developments/{id}/reservations/{reservationId}/extend", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(developmentsHandler.ExtendReservation)))
+	mux.Handle("POST /v1/property-developments/{id}/price-tables/{priceTableId}/activate", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(developmentsHandler.ActivatePriceTable)))
+	mux.Handle("GET /v1/properties", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.List)))
+	mux.Handle("GET /v1/properties/stats", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.Stats)))
+	mux.Handle("POST /v1/properties", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.Create)))
+	mux.Handle("GET /v1/properties/{id}", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.Show)))
+	mux.Handle("GET /v1/properties/{id}/workspace", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.ShowWorkspace)))
+	mux.Handle("GET /v1/properties/{id}/history", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.History)))
+	mux.Handle("GET /v1/properties/{id}/publications", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(publicationsHandler.Overview)))
+	mux.Handle("POST /v1/properties/{id}/publications/site/publish", withModulesPermission([]string{"properties", "site"}, permissions.PropertyManage, http.HandlerFunc(publicationsHandler.Publish)))
+	mux.Handle("POST /v1/properties/{id}/publications/site/unpublish", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(publicationsHandler.Unpublish)))
+	mux.Handle("POST /v1/properties/{id}/publications/site/retry", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(publicationsHandler.Retry)))
+	mux.Handle("POST /v1/properties/{id}/publications/grupo-olx/publish", withModulesPermission([]string{"properties", "portals"}, permissions.PropertyManage, http.HandlerFunc(publicationsHandler.PublishGrupoOLX)))
+	mux.Handle("POST /v1/properties/{id}/publications/grupo-olx/unpublish", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(publicationsHandler.UnpublishGrupoOLX)))
+	mux.Handle("POST /v1/properties/{id}/publications/grupo-olx/retry", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(publicationsHandler.RetryGrupoOLX)))
+	mux.Handle("PUT /v1/properties/{id}/offers/{offerType}", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.UpsertOffer)))
+	mux.Handle("POST /v1/properties/{id}/ownerships", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.CreateOwnership)))
+	mux.Handle("PATCH /v1/properties/{id}/ownerships/{ownershipId}", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.UpdateOwnership)))
+	mux.Handle("POST /v1/properties/{id}/ownerships/{ownershipId}/end", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.EndOwnership)))
+	mux.Handle("POST /v1/properties/{id}/assets", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.CreateAsset)))
+	mux.Handle("POST /v1/properties/{id}/assets/upload-intents", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.CreateAssetUploadIntent)))
+	mux.Handle("PUT /v1/properties/{id}/assets/order", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.ReorderAssets)))
+	mux.Handle("PATCH /v1/properties/{id}/assets/{assetId}", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.UpdateAsset)))
+	mux.Handle("DELETE /v1/properties/{id}/assets/{assetId}", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.DeleteAsset)))
+	mux.Handle("PUT /v1/properties/{id}/assets/{assetId}/primary", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.SetPrimaryAsset)))
+	mux.Handle("POST /v1/properties/{id}/keys", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.CreateKey)))
+	mux.Handle("POST /v1/properties/{id}/keys/{keyId}/movements", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.MoveKey)))
+	mux.Handle("PATCH /v1/properties/{id}", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.Update)))
+	mux.Handle("DELETE /v1/properties/{id}", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.Delete)))
+	mux.Handle("POST /v1/property-images", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.UploadImage)))
+	mux.Handle("GET /v1/property-captors/{id}", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.ShowPropertyCaptor)))
+	mux.Handle("GET /v1/property-site-info", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.ShowPropertySiteInfo)))
+	mux.Handle("GET /v1/property-summaries", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.ListPropertySummaries)))
 	mux.Handle("GET /v1/user-organizations", withAuthTenant(http.HandlerFunc(usersHandler.ListUserOrganizations)))
 	mux.Handle("GET /v1/users", withOrganization(http.HandlerFunc(usersHandler.ListOrganizationUsers)))
 	mux.Handle("POST /v1/users", withPermission(permissions.UsersManage, http.HandlerFunc(usersHandler.CreateOrganizationUser)))
@@ -644,6 +918,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("DELETE /v1/users/{id}", withPermission(permissions.UsersManage, http.HandlerFunc(usersHandler.DeleteOrganizationUser)))
 	mux.Handle("GET /v1/user-summaries", withOrganization(http.HandlerFunc(usersHandler.ListSummaries)))
 	mux.Handle("GET /v1/teams", withPermission(permissions.TeamView, http.HandlerFunc(teamsHandler.List)))
+	mux.Handle("GET /v1/teams/{id}", withPermission(permissions.TeamView, http.HandlerFunc(teamsHandler.Get)))
 	mux.Handle("POST /v1/teams", withPermission(permissions.TeamManage, http.HandlerFunc(teamsHandler.Create)))
 	mux.Handle("PATCH /v1/teams/{id}", withPermission(permissions.TeamManage, http.HandlerFunc(teamsHandler.Update)))
 	mux.Handle("DELETE /v1/teams/{id}", withPermission(permissions.TeamManage, http.HandlerFunc(teamsHandler.Delete)))
@@ -657,26 +932,26 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	mux.Handle("PATCH /v1/member-availability", withOrganization(http.HandlerFunc(teamsHandler.UpsertAvailability)))
 	mux.Handle("GET /v1/team-members/{id}/availability", withOrganization(http.HandlerFunc(teamsHandler.ListTeamMemberAvailability)))
 	mux.Handle("PUT /v1/team-members/{id}/availability", withOrganization(http.HandlerFunc(teamsHandler.ReplaceAvailability)))
-	mux.Handle("GET /v1/property-types", withPermission(permissions.PropertyView, http.HandlerFunc(propertiesHandler.ListPropertyTypes)))
-	mux.Handle("POST /v1/property-types", withPermission(permissions.PropertyManage, http.HandlerFunc(propertiesHandler.CreatePropertyType)))
-	mux.Handle("GET /v1/property-features", withPermission(permissions.PropertyView, http.HandlerFunc(propertiesHandler.ListPropertyFeatures)))
-	mux.Handle("POST /v1/property-features", withPermission(permissions.PropertyManage, http.HandlerFunc(propertiesHandler.CreatePropertyFeature)))
-	mux.Handle("POST /v1/property-features/seed-defaults", withPermission(permissions.PropertyManage, http.HandlerFunc(propertiesHandler.SeedPropertyFeatures)))
-	mux.Handle("GET /v1/property-proximities", withPermission(permissions.PropertyView, http.HandlerFunc(propertiesHandler.ListPropertyProximities)))
-	mux.Handle("POST /v1/property-proximities", withPermission(permissions.PropertyManage, http.HandlerFunc(propertiesHandler.CreatePropertyProximity)))
-	mux.Handle("POST /v1/property-proximities/seed-defaults", withPermission(permissions.PropertyManage, http.HandlerFunc(propertiesHandler.SeedPropertyProximities)))
-	mux.Handle("GET /v1/property-cities", withPermission(permissions.PropertyView, http.HandlerFunc(propertiesHandler.ListCities)))
-	mux.Handle("POST /v1/property-cities", withPermission(permissions.PropertyManage, http.HandlerFunc(propertiesHandler.CreateCity)))
-	mux.Handle("DELETE /v1/property-cities/{id}", withPermission(permissions.PropertyManage, http.HandlerFunc(propertiesHandler.DeleteCity)))
-	mux.Handle("GET /v1/property-neighborhoods", withPermission(permissions.PropertyView, http.HandlerFunc(propertiesHandler.ListNeighborhoods)))
-	mux.Handle("POST /v1/property-neighborhoods", withPermission(permissions.PropertyManage, http.HandlerFunc(propertiesHandler.CreateNeighborhood)))
-	mux.Handle("DELETE /v1/property-neighborhoods/{id}", withPermission(permissions.PropertyManage, http.HandlerFunc(propertiesHandler.DeleteNeighborhood)))
-	mux.Handle("GET /v1/property-condominiums", withPermission(permissions.PropertyView, http.HandlerFunc(propertiesHandler.ListCondominiums)))
-	mux.Handle("POST /v1/property-condominiums", withPermission(permissions.PropertyManage, http.HandlerFunc(propertiesHandler.CreateCondominium)))
-	mux.Handle("DELETE /v1/property-condominiums/{id}", withPermission(permissions.PropertyManage, http.HandlerFunc(propertiesHandler.DeleteCondominium)))
-	mux.Handle("GET /v1/property-owners", withPermission(permissions.PropertyView, http.HandlerFunc(propertiesHandler.ListOwners)))
-	mux.Handle("POST /v1/property-owners", withPermission(permissions.PropertyManage, http.HandlerFunc(propertiesHandler.CreateOwner)))
-	mux.Handle("PATCH /v1/property-owners/{id}", withPermission(permissions.PropertyManage, http.HandlerFunc(propertiesHandler.UpdateOwner)))
+	mux.Handle("GET /v1/property-types", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.ListPropertyTypes)))
+	mux.Handle("POST /v1/property-types", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.CreatePropertyType)))
+	mux.Handle("GET /v1/property-features", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.ListPropertyFeatures)))
+	mux.Handle("POST /v1/property-features", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.CreatePropertyFeature)))
+	mux.Handle("POST /v1/property-features/seed-defaults", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.SeedPropertyFeatures)))
+	mux.Handle("GET /v1/property-proximities", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.ListPropertyProximities)))
+	mux.Handle("POST /v1/property-proximities", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.CreatePropertyProximity)))
+	mux.Handle("POST /v1/property-proximities/seed-defaults", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.SeedPropertyProximities)))
+	mux.Handle("GET /v1/property-cities", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.ListCities)))
+	mux.Handle("POST /v1/property-cities", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.CreateCity)))
+	mux.Handle("DELETE /v1/property-cities/{id}", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.DeleteCity)))
+	mux.Handle("GET /v1/property-neighborhoods", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.ListNeighborhoods)))
+	mux.Handle("POST /v1/property-neighborhoods", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.CreateNeighborhood)))
+	mux.Handle("DELETE /v1/property-neighborhoods/{id}", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.DeleteNeighborhood)))
+	mux.Handle("GET /v1/property-condominiums", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.ListCondominiums)))
+	mux.Handle("POST /v1/property-condominiums", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.CreateCondominium)))
+	mux.Handle("DELETE /v1/property-condominiums/{id}", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.DeleteCondominium)))
+	mux.Handle("GET /v1/property-owners", withModulePermission("properties", permissions.PropertyView, http.HandlerFunc(propertiesHandler.ListOwners)))
+	mux.Handle("POST /v1/property-owners", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.CreateOwner)))
+	mux.Handle("PATCH /v1/property-owners/{id}", withModulePermission("properties", permissions.PropertyManage, http.HandlerFunc(propertiesHandler.UpdateOwner)))
 	mux.Handle("GET /v1/pipelines", withOrganization(http.HandlerFunc(pipelinesHandler.List)))
 	mux.Handle("POST /v1/pipelines", withPermission(permissions.PipelineManage, http.HandlerFunc(pipelinesHandler.Create)))
 	mux.Handle("PATCH /v1/pipelines/{id}", withPermission(permissions.PipelineManage, http.HandlerFunc(pipelinesHandler.Update)))
@@ -710,10 +985,21 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	)
 
 	return &App{
-		handler: handler,
-		db:      postgres,
-		auth:    authVerifier,
+		handler:  handler,
+		db:       postgres,
+		auth:     authVerifier,
+		realtime: realtimeHub,
 	}, nil
+}
+
+func metaOAuthUnavailable(w http.ResponseWriter, r *http.Request) {
+	httpserver.WriteError(
+		w,
+		r,
+		http.StatusServiceUnavailable,
+		"meta_oauth_not_configured",
+		"Meta OAuth is not configured on the backend.",
+	)
 }
 
 func (app *App) Handler() http.Handler {
@@ -721,6 +1007,10 @@ func (app *App) Handler() http.Handler {
 }
 
 func (app *App) Close() {
+	if app.realtime != nil {
+		app.realtime.Close()
+	}
+
 	if app.db != nil {
 		app.db.Close()
 	}

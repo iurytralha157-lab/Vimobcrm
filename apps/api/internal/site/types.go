@@ -161,6 +161,7 @@ type PublicContactRequest struct {
 	UTMContent      *string `json:"utm_content"`
 	GCLID           *string `json:"gclid"`
 	FBCLID          *string `json:"fbclid"`
+	ClientIP        string  `json:"-"`
 }
 
 type PublicTrackingRequest struct {
@@ -180,4 +181,5 @@ type PublicTrackingRequest struct {
 	UTMMedium      *string        `json:"utm_medium"`
 	UTMCampaign    *string        `json:"utm_campaign"`
 	Metadata       map[string]any `json:"metadata"`
+	ClientIP       string         `json:"-"`
 }

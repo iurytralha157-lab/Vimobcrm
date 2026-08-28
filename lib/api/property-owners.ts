@@ -1,5 +1,5 @@
 import { vimobAPIRequest } from './vimob-client'
-import { apiPropertyOwnerListResponseSchema, apiPropertyOwnerResponseSchema, entityIdSchema, organizationIdSchema, parseDomainInput, propertyOwnerInputSchema, validateDomainResponse } from '@/lib/validation'
+import { apiPropertyOwnerListResponseSchema, apiPropertyOwnerPageResponseSchema, apiPropertyOwnerResponseSchema, entityIdSchema, organizationIdSchema, parseDomainInput, propertyOwnerInputSchema, propertyOwnerPageQuerySchema, validateDomainResponse } from '@/lib/validation'
 
 export type PropertyOwnerProperty = {
   id: string
@@ -43,8 +43,20 @@ type ListResponse<T> = {
   data: T[]
 }
 
+type PageResponse<T> = ListResponse<T> & {
+  next_cursor?: string | null
+  total_count?: number
+}
+
 type ItemResponse<T> = {
   data: T
+}
+
+export type PropertyOwnerPage = {
+  owners: PropertyOwner[]
+  nextCursor: string | null
+  totalCount: number
+  legacyOwners?: PropertyOwner[]
 }
 
 export const propertyOwnersAPI = {
@@ -55,6 +67,36 @@ export const propertyOwnersAPI = {
     })
     validateDomainResponse(apiPropertyOwnerListResponseSchema, response, 'property-owners.list')
     return response
+  },
+
+  async getOwnersPage(
+    organizationId: string,
+    params: { search?: string; limit: number; cursor?: string | null; signal?: AbortSignal },
+  ): Promise<PropertyOwnerPage> {
+    const orgId = parseDomainInput(organizationIdSchema, organizationId, 'property-owners.page.organization')
+    const query = parseDomainInput(propertyOwnerPageQuerySchema, {
+      search: params.search,
+      limit: params.limit,
+      cursor: params.cursor,
+    }, 'property-owners.page.query')
+    const response = await vimobAPIRequest<PageResponse<PropertyOwner>>('/v1/property-owners', {
+      organizationId: orgId,
+      query: {
+        search: query.search,
+        limit: query.limit,
+        cursor: query.cursor || undefined,
+      },
+      signal: params.signal,
+    })
+    validateDomainResponse(apiPropertyOwnerPageResponseSchema, response, 'property-owners.page')
+
+    const hasServerPagination = typeof response.total_count === 'number'
+    return {
+      owners: hasServerPagination ? response.data : response.data.slice(0, query.limit),
+      nextCursor: hasServerPagination ? response.next_cursor || null : null,
+      totalCount: response.total_count ?? response.data.length,
+      legacyOwners: hasServerPagination ? undefined : response.data,
+    }
   },
 
   async createOwner(organizationId: string, owner: PropertyOwnerInput) {

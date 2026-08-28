@@ -31,6 +31,7 @@ import { useCreateScheduleEvent, useUpdateScheduleEvent, useDeleteScheduleEvent,
 import { useScheduleUsers } from '@/hooks/use-schedule-users';
 import { useLeads } from '@/hooks/use-leads';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
+import { scheduleClockInputSchema } from '@/lib/validation/schedule';
 
 const eventTypes: { type: EventType; label: string; icon: React.ElementType }[] = [
   { type: 'call', label: 'Ligar', icon: Phone },
@@ -153,9 +154,10 @@ export function EventForm({ open, onOpenChange, event, leadId, leadName, default
 
   const maxDescriptionLength = 280;
   const remainingChars = maxDescriptionLength - (description?.length || 0);
+  const hasValidTime = scheduleClockInputSchema.safeParse(time).success;
 
   const handleSubmit = async () => {
-    if (!title.trim() || !date || !selectedUserId) return;
+    if (!title.trim() || !date || !selectedUserId || !hasValidTime) return;
 
     const [hours, minutes] = time.split(':').map(Number);
     const startTime = new Date(date);
@@ -527,7 +529,7 @@ export function EventForm({ open, onOpenChange, event, leadId, leadName, default
                 <Button
                   className="flex-1 md:flex-none md:min-w-[150px] rounded-xl font-black uppercase tracking-tight shadow-lg shadow-primary/20"
                   onClick={handleSubmit}
-                  disabled={isLoading || !title.trim() || !selectedUserId}
+                  disabled={isLoading || !title.trim() || !selectedUserId || !hasValidTime}
                 >
                   {isLoading ? 'Salvando...' : 'Salvar'}
                 </Button>

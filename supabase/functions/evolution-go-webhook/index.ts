@@ -2,28 +2,51 @@
 // Evolution Go webhook for the Vimob WhatsApp module.
 // All writes are scoped by a resolved whatsapp_sessions.id before touching CRM data.
 import { createClient } from "npm:@supabase/supabase-js@2";
+import {
+  readSupabaseSecretKeyEnvironment,
+  selectSupabaseAdminSecretKey,
+} from "../_shared/supabase-secret-keys.ts";
+import {
+  claimEvolutionMessageDelivery,
+  completeEvolutionMessageDelivery,
+  retryEvolutionMessageDelivery,
+  type OwnedEvolutionMessageClaim,
+} from "../evolution-webhook/delivery-claim.ts";
+import {
+  authorizeEvolutionGoWebhookIngress,
+  readBoundedJsonBody,
+  validateEvolutionGoSessionBinding,
+  WebhookRequestBodyError,
+  type EvolutionGoWebhookAuthorization,
+} from "./request-security.ts";
+import {
+  appendConversationUnreadEffect,
+  completedEvolutionGoEffectMetadata,
+  conversationUnreadEffectCount,
+  deterministicEvolutionGoEffectId,
+  EVOLUTION_GO_UNREAD_LEDGER_LIMIT,
+  evolutionGoEffectFingerprint,
+  hasConversationUnreadEffect,
+  pendingEvolutionGoEffectMetadata,
+  removeConversationUnreadEffect,
+  storedEvolutionGoEffectState,
+} from "./message-effects.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, x-api-key, x-webhook-token, x-evolution-webhook-token, content-type",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, x-api-key, x-webhook-secret, x-webhook-token, x-evolution-webhook-token, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 type JsonRecord = Record<string, any>;
 
-declare const EdgeRuntime:
-  | {
-      waitUntil?: (promise: Promise<unknown>) => void;
-    }
-  | undefined;
-
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const EVOLUTION_GO_API_KEY = Deno.env.get("EVOLUTION_GO_API_KEY") || "";
+const EVOLUTION_WEBHOOK_SECRET = Deno.env.get("EVOLUTION_WEBHOOK_SECRET") || "";
 const VIMOB_API_URL = Deno.env.get("VIMOB_API_URL") || Deno.env.get("VIMOB_API_BASE_URL") || "";
 const AI_AUTOREPLY_TOKEN = Deno.env.get("AI_AUTOREPLY_TOKEN") || Deno.env.get("INTERNAL_WEBHOOK_TOKEN") || "";
 
-const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
+let supabase: any;
 
 function json(body: JsonRecord, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -59,24 +82,6 @@ function normalizeText(value: unknown) {
 function cleanText(value: unknown) {
   const text = normalizeText(value).trim();
   return text || null;
-}
-
-function redactLogText(value: unknown) {
-  const text = value instanceof Error ? value.message : String(value ?? "");
-  return text
-    .replace(/([?&](?:webhook_token|apikey|token|access_token|signature)=)[^&\s"']+/gi, "$1[REDACTED]")
-    .replace(/((?:webhook_token|instanceToken|instance_token|apikey|api_key|token|access_token|authorization|signature)["']?\s*[:=]\s*["']?)[^"',}\s&]+/gi, "$1[REDACTED]")
-    .replace(/(Bearer\s+)[A-Za-z0-9._~-]+/gi, "$1[REDACTED]")
-    .slice(0, 1000);
-}
-
-function safeUrlForLog(value: unknown) {
-  try {
-    const parsed = new URL(normalizeText(value));
-    return `${parsed.origin}${parsed.pathname}`;
-  } catch {
-    return "[invalid-url]";
-  }
 }
 
 function optionalUuid(value: unknown) {
@@ -363,6 +368,15 @@ function stableHash(input: string) {
   return Math.abs(hash).toString(36);
 }
 
+async function stableDistributionKey(prefix: string, ...parts: string[]) {
+  const encodedParts = new TextEncoder().encode(JSON.stringify(parts));
+  const digest = await crypto.subtle.digest("SHA-256", encodedParts);
+  const digestHex = [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return `${prefix.trim()}:${digestHex}`;
+}
+
 function normalizeStatus(data: any) {
   const target = data?.data || data || {};
   const rawState = String(firstPresent(target.state, target.State, target.connectionStatus, target.status) || "").toLowerCase();
@@ -402,39 +416,58 @@ function extractQr(payload: any) {
 
 function extractInstanceSignals(payload: any, url: URL) {
   const data = payload?.data || payload?.Data || {};
+  const sessionIds = unique([
+    url.searchParams.get("session_id"),
+    payload.session_id,
+    payload.sessionId,
+    data.session_id,
+    data.sessionId,
+  ].map((value) => normalizeText(value).trim()).filter(Boolean));
+  const instanceIds = unique([
+    url.searchParams.get("instance_id"),
+    payload.instance_id,
+    payload.instanceId,
+    payload.instanceID,
+    payload.InstanceID,
+    data.instance_id,
+    data.instanceId,
+    data.instanceID,
+    data.InstanceID,
+    data.instance?.id,
+    data.instance?.uuid,
+  ].map((value) => normalizeText(value).trim()).filter(Boolean));
+  const instanceNames = unique([
+    url.searchParams.get("instance_name"),
+    payload.instance_name,
+    payload.instanceName,
+    payload.instance,
+    payload.Name,
+    data.instance_name,
+    data.instanceName,
+    data.instance,
+    data.Name,
+    data.name,
+  ].map((value) => normalizeText(value).trim()).filter(Boolean));
   return {
-    sessionId: firstPresent(url.searchParams.get("session_id"), payload.session_id, payload.sessionId, data.session_id, data.sessionId),
-    instanceId: firstPresent(
-      url.searchParams.get("instance_id"),
-      payload.instance_id,
-      payload.instanceId,
-      payload.instanceID,
-      payload.InstanceID,
-      data.instance_id,
-      data.instanceId,
-      data.instanceID,
-      data.InstanceID,
-      data.instance?.id,
-      data.instance?.uuid,
-    ),
-    instanceName: firstPresent(
-      url.searchParams.get("instance_name"),
-      payload.instance_name,
-      payload.instanceName,
-      payload.instance,
-      payload.Name,
-      data.instance_name,
-      data.instanceName,
-      data.instance,
-      data.Name,
-      data.name,
-    ),
+    sessionIds,
+    instanceIds,
+    instanceNames,
   };
 }
 
 async function resolveSession(payload: any, url: URL) {
   const signals = extractInstanceSignals(payload, url);
-  const sessionId = optionalUuid(signals.sessionId);
+  if (signals.sessionIds.length > 1) {
+    return { session: null, reason: "CONFLICTING_SESSION_IDS", signals };
+  }
+  if (signals.instanceIds.length > 1 || signals.instanceNames.length > 1) {
+    return { session: null, reason: "CONFLICTING_INSTANCE_SIGNALS", signals };
+  }
+  const suppliedSessionId = signals.sessionIds[0] || "";
+  const sessionId = optionalUuid(suppliedSessionId);
+  if (suppliedSessionId && !sessionId) {
+    return { session: null, reason: "INVALID_SESSION_ID", signals };
+  }
 
   if (sessionId) {
     const { data, error } = await supabase
@@ -449,74 +482,38 @@ async function resolveSession(payload: any, url: URL) {
     return { session: data, reason: null, signals };
   }
 
-  const filters: string[] = [];
-  if (signals.instanceId) filters.push(`instance_id.eq.${signals.instanceId}`, `provider_instance_id.eq.${signals.instanceId}`);
-  if (signals.instanceName) filters.push(`instance_name.eq.${signals.instanceName}`, `name.eq.${signals.instanceName}`);
-
-  if (filters.length === 0) return { session: null, reason: "MISSING_SESSION_ID", signals };
-
-  const { data, error } = await supabase
-    .from("whatsapp_sessions")
-    .select("*")
-    .eq("provider", "evolution_go")
-    .or(filters.join(","));
-
-  if (error) throw error;
-  if (!data || data.length !== 1) {
-    return { session: null, reason: "BLOCKED_STATUS_UPDATE_NO_UNIQUE_SESSION", signals, matches: data?.length || 0 };
+  const lookups: Array<[string, string]> = [];
+  for (const instanceId of signals.instanceIds) {
+    lookups.push(["instance_id", instanceId], ["provider_instance_id", instanceId]);
+  }
+  for (const instanceName of signals.instanceNames) {
+    lookups.push(["instance_name", instanceName], ["name", instanceName]);
+  }
+  if (lookups.length === 0) {
+    return { session: null, reason: "MISSING_SESSION_SIGNAL", signals };
   }
 
-  return { session: data[0], reason: null, signals };
-}
-
-function hasQueryCredential(url: URL) {
-  for (const name of url.searchParams.keys()) {
-    if (["webhook_token", "apikey", "token"].includes(name.trim().toLowerCase())) return true;
+  const matches = new Map<string, JsonRecord>();
+  for (const [column, value] of lookups) {
+    const { data, error } = await supabase
+      .from("whatsapp_sessions")
+      .select("*")
+      .eq("provider", "evolution_go")
+      .eq(column, value)
+      .limit(2);
+    if (error) throw error;
+    for (const candidate of data || []) matches.set(candidate.id, candidate);
   }
-  return false;
-}
-
-function validateWebhookAuth(req: Request, session: JsonRecord) {
-  const expectedWebhookToken = session.advanced_settings?.webhook_token;
-  const incomingWebhookTokens = [
-    req.headers.get("x-webhook-token"),
-    req.headers.get("x-evolution-webhook-token"),
-  ].filter((value): value is string => Boolean(value));
-
-  if (expectedWebhookToken) {
-    return incomingWebhookTokens.length > 0 &&
-      incomingWebhookTokens.every((value) => value === expectedWebhookToken);
+  if (matches.size !== 1) {
+    return {
+      session: null,
+      reason: matches.size === 0 ? "SESSION_NOT_FOUND" : "AMBIGUOUS_SESSION",
+      signals,
+      matches: matches.size,
+    };
   }
 
-  const incomingKeys = [
-    req.headers.get("apikey"),
-    req.headers.get("x-api-key"),
-    req.headers.get("authorization")?.replace(/^Bearer\s+/i, ""),
-  ].filter((value): value is string => Boolean(value));
-
-  if (EVOLUTION_GO_API_KEY) {
-    return incomingKeys.length > 0 && incomingKeys.every((value) => value === EVOLUTION_GO_API_KEY);
-  }
-
-  console.warn("Evolution webhook rejected because no session webhook token or provider API key is configured.");
-  return false;
-}
-
-function validateSessionSignals(session: JsonRecord, signals: JsonRecord) {
-  const expected = unique([
-    session.instance_id,
-    session.instance_name,
-    session.provider_instance_id,
-    session.name,
-  ].map((value) => normalizeText(value)));
-
-  const incoming = unique([
-    signals.instanceId,
-    signals.instanceName,
-  ].map((value) => normalizeText(value)));
-
-  if (incoming.length === 0 || expected.length === 0) return true;
-  return incoming.some((value) => expected.includes(value));
+  return { session: [...matches.values()][0], reason: null, signals };
 }
 
 function isMessageLike(value: any) {
@@ -881,10 +878,7 @@ async function fetchInboundMedia(sourceUrl: string | null) {
         size: bytes.byteLength,
       };
     } catch (error) {
-      console.warn("Unable to fetch inbound WhatsApp media", {
-        sourceUrl: safeUrlForLog(url),
-        error: redactLogText(error),
-      });
+      console.warn("Unable to fetch inbound WhatsApp media", { sourceUrl: url, error });
     }
   }
 
@@ -1101,7 +1095,9 @@ function normalizeMessage(message: any) {
     null,
   );
   const isReaction = isRecord(reaction) || isRecord(encryptedReaction);
-  const reactionPayload = isRecord(reaction) ? reaction : (isRecord(encryptedReaction) ? encryptedReaction : null);
+  const reactionPayload = isRecord(reaction)
+    ? reaction
+    : (isRecord(encryptedReaction) ? encryptedReaction : null);
   const deletedMessageId = extractDeletedMessageId(messageNode, message);
   const referral = extractWhatsAppReferral(messageNode, message, mediaBlock);
 
@@ -1230,32 +1226,26 @@ function whatsappAttribution(message: ReturnType<typeof normalizeMessage>) {
   );
 }
 
-async function hasVerifiedWhatsAppLeadCreationContext(organizationId: string, message: ReturnType<typeof normalizeMessage>) {
+async function hasVerifiedWhatsAppLeadCreationContext(
+  organizationId: string,
+  message: ReturnType<typeof normalizeMessage>,
+) {
   const referral = message?.referral;
   if (!referral) return false;
+
   const explicitSourceType = cleanText(referral.explicit_source_type)?.toLowerCase() || "";
   const sourceId = cleanText(referral.source_id) || "";
   if (explicitSourceType !== "ad" || !/^\d{5,40}$/.test(sourceId)) return false;
 
-  const [{ data: insight, error: insightError }, { data: creative, error: creativeError }] = await Promise.all([
-    supabase
-      .from("meta_campaign_insights")
-      .select("id")
-      .eq("organization_id", organizationId)
-      .eq("ad_id", sourceId)
-      .limit(1)
-      .maybeSingle(),
-    supabase
-      .from("meta_creative_assets")
-      .select("id")
-      .eq("organization_id", organizationId)
-      .eq("ad_id", sourceId)
-      .limit(1)
-      .maybeSingle(),
-  ]);
-  if (insightError) throw insightError;
-  if (creativeError) throw creativeError;
-  return Boolean(insight?.id || creative?.id);
+  const { data: insight, error } = await supabase
+    .from("meta_campaign_insights")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("ad_id", sourceId)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return Boolean(insight?.id);
 }
 
 function ruleMatches(rule: JsonRecord, message: ReturnType<typeof normalizeMessage>) {
@@ -1336,37 +1326,32 @@ async function isManagedWhatsAppMessageDistributionRule(rule: JsonRecord | null,
   return matchType === "whatsapp_message_contains" || hasManagedMirrorShape;
 }
 
-async function resolveRoundRobinAssignee(rule: JsonRecord | null, organizationId: string) {
-  const targetRoundRobinId = optionalUuid(rule?.target_round_robin_id);
+async function resolveRoundRobinTarget(
+  rule: JsonRecord | null,
+  organizationId: string,
+  persistedMetadata: JsonRecord = {},
+) {
+  const hasPersistedTarget = Object.prototype.hasOwnProperty.call(
+    persistedMetadata,
+    "target_round_robin_id",
+  );
+  const targetRoundRobinId = optionalUuid(
+    hasPersistedTarget
+      ? persistedMetadata.target_round_robin_id
+      : rule?.target_round_robin_id,
+  );
   if (!targetRoundRobinId) return null;
 
-  const { data: roundRobin } = await supabase
+  const { data: roundRobin, error } = await supabase
     .from("round_robins")
-    .select("id, current_position")
+    .select("id")
     .eq("id", targetRoundRobinId)
     .eq("organization_id", organizationId)
     .eq("is_active", true)
     .maybeSingle();
 
-  if (!roundRobin) return null;
-
-  const { data: members, error } = await supabase
-    .from("round_robin_members")
-    .select("user_id, position")
-    .eq("round_robin_id", roundRobin.id)
-    .eq("organization_id", organizationId)
-    .eq("is_active", true)
-    .order("position", { ascending: true });
-
   if (error) throw error;
-  if (!members?.length) return null;
-
-  const index = Math.abs(Number(roundRobin.current_position || 0)) % members.length;
-  return {
-    roundRobinId: roundRobin.id,
-    nextPosition: Number(roundRobin.current_position || 0) + 1,
-    userId: members[index].user_id,
-  };
+  return optionalUuid(roundRobin?.id);
 }
 
 async function findLeadByPhone(organizationId: string, phone: string) {
@@ -1419,11 +1404,12 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
   const campaignLabel = campaignLabelForMessage(message, rule);
 
   if (existing) {
+    const existingMetadata = isRecord(existing.metadata) ? existing.metadata : {};
     const update: JsonRecord = {
       last_contact_at: now,
       updated_at: now,
       metadata: {
-        ...(existing.metadata || {}),
+        ...existingMetadata,
         ...(attribution ? { whatsapp_attribution: attribution } : {}),
         last_whatsapp_session_id: session.id,
         last_whatsapp_remote_jid: identity.remoteJid || message.remoteJid,
@@ -1439,8 +1425,38 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
     if ((campaignLabel || attribution?.campaign_name) && !existing.source_detail) {
       update.source_detail = campaignLabel || attribution?.campaign_name;
     }
-    await supabase.from("leads").update(update).eq("id", existing.id);
-    return { ...existing, ...update, is_new_lead: false };
+    const { error: leadUpdateError } = await supabase
+      .from("leads")
+      .update(update)
+      .eq("organization_id", session.organization_id)
+      .eq("id", existing.id);
+    if (leadUpdateError) throw leadUpdateError;
+
+    const persistedKey = normalizeText(existingMetadata.distribution_idempotency_key).trim();
+    let distributionResult: JsonRecord | null = null;
+    if (
+      parseBoolean(existingMetadata.distribution_deferred) &&
+      normalizeText(existingMetadata.source).toLowerCase() === "whatsapp" &&
+      /^whatsapp-edge:[0-9a-f]{64}$/.test(persistedKey)
+    ) {
+      const persistedOccurredAt = normalizeText(existingMetadata.distribution_occurred_at).trim();
+      distributionResult = await distributeLeadFromEdge({
+        organizationId: session.organization_id,
+        leadId: existing.id,
+        idempotencyKey: persistedKey,
+        roundRobinId: await resolveRoundRobinTarget(rule, session.organization_id, existingMetadata),
+        occurredAt: Number.isNaN(Date.parse(persistedOccurredAt))
+          ? (message.sentAt || now)
+          : persistedOccurredAt,
+      });
+    }
+
+    return {
+      ...existing,
+      ...update,
+      assigned_user_id: optionalUuid(distributionResult?.assigned_user_id) || existing.assigned_user_id || null,
+      is_new_lead: false,
+    };
   }
 
   if (!(await hasVerifiedWhatsAppLeadCreationContext(session.organization_id, message))) {
@@ -1454,19 +1470,20 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
   }
 
   const managedMessageDistribution = await isManagedWhatsAppMessageDistributionRule(rule, session.organization_id);
-  const roundRobinAssignee = managedMessageDistribution
-    ? null
-    : await resolveRoundRobinAssignee(rule, session.organization_id);
   const targetUserId = managedMessageDistribution ? null : optionalUuid(rule?.target_user_id);
   const targetPipelineId = managedMessageDistribution ? null : optionalUuid(rule?.target_pipeline_id);
   const targetStageId = managedMessageDistribution ? null : optionalUuid(rule?.target_stage_id);
   const targetTeamId = managedMessageDistribution ? null : optionalUuid(rule?.target_team_id);
-  const targetRoundRobinId = optionalUuid(rule?.target_round_robin_id);
+  const targetRoundRobinId = managedMessageDistribution
+    ? optionalUuid(rule?.target_round_robin_id)
+    : targetUserId
+      ? null
+      : await resolveRoundRobinTarget(rule, session.organization_id);
   const ownerUserId = optionalUuid(session.owner_user_id) || optionalUuid(session.created_by);
   const assignedUserId = targetUserId
-    || optionalUuid(roundRobinAssignee?.userId)
-    || (managedMessageDistribution ? null : ownerUserId);
+    || (targetRoundRobinId ? null : (managedMessageDistribution ? null : ownerUserId));
   const sourceLabel = rule?.source_label || "WhatsApp";
+  const distributionKey = await stableDistributionKey("whatsapp-edge", session.id, message.messageId);
 
   const { data: upsertedLead, error } = await supabase
     .rpc("upsert_whatsapp_webhook_lead", {
@@ -1502,6 +1519,13 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
         campaign_label: campaignLabel,
         whatsapp_attribution: attribution,
         property_id: property?.id || null,
+        ...(managedMessageDistribution
+          ? {}
+          : {
+              distribution_deferred: true,
+              distribution_idempotency_key: distributionKey,
+              distribution_occurred_at: message.sentAt || now,
+            }),
       },
     });
 
@@ -1510,7 +1534,32 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
   if (error) {
     if (isUniqueViolation(error, "leads_org_phone_unique")) {
       const recovered = await findLeadByPhone(session.organization_id, phone);
-      if (recovered?.id) return { ...recovered, is_new_lead: false };
+      if (recovered?.id) {
+        const recoveredMetadata = isRecord(recovered.metadata) ? recovered.metadata : {};
+        const recoveredKey = normalizeText(recoveredMetadata.distribution_idempotency_key).trim();
+        let recoveredDistribution: JsonRecord | null = null;
+        if (
+          parseBoolean(recoveredMetadata.distribution_deferred) &&
+          normalizeText(recoveredMetadata.source).toLowerCase() === "whatsapp" &&
+          /^whatsapp-edge:[0-9a-f]{64}$/.test(recoveredKey)
+        ) {
+          const recoveredOccurredAt = normalizeText(recoveredMetadata.distribution_occurred_at).trim();
+          recoveredDistribution = await distributeLeadFromEdge({
+            organizationId: session.organization_id,
+            leadId: recovered.id,
+            idempotencyKey: recoveredKey,
+            roundRobinId: await resolveRoundRobinTarget(rule, session.organization_id, recoveredMetadata),
+            occurredAt: Number.isNaN(Date.parse(recoveredOccurredAt))
+              ? (message.sentAt || now)
+              : recoveredOccurredAt,
+          });
+        }
+        return {
+          ...recovered,
+          assigned_user_id: optionalUuid(recoveredDistribution?.assigned_user_id) || recovered.assigned_user_id || null,
+          is_new_lead: false,
+        };
+      }
     }
     throw error;
   }
@@ -1519,6 +1568,7 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
     throw new Error("Lead upsert did not return a lead");
   }
 
+  let distributionResult: JsonRecord | null = null;
   if (managedMessageDistribution && lead.is_new_lead) {
     const { data: refreshedLead, error: refreshError } = await supabase
       .from("leads")
@@ -1528,25 +1578,51 @@ async function ensureLead(session: JsonRecord, message: ReturnType<typeof normal
       .single();
     if (refreshError) throw refreshError;
     lead = { ...lead, ...refreshedLead, is_new_lead: true };
-  }
-
-  if (roundRobinAssignee?.roundRobinId && lead.is_new_lead) {
-    await supabase
-      .from("round_robins")
-      .update({ current_position: roundRobinAssignee.nextPosition, updated_at: now })
-      .eq("id", roundRobinAssignee.roundRobinId);
-
-    await supabase.from("round_robin_logs").insert({
-      organization_id: session.organization_id,
-      round_robin_id: roundRobinAssignee.roundRobinId,
-      lead_id: lead.id,
-      assigned_user_id: roundRobinAssignee.userId,
-      reason: "whatsapp_inbound_rule",
-      metadata: { whatsapp_session_id: session.id, matched_rule_id: rule?.id || null, whatsapp_attribution: attribution },
+  } else if (!managedMessageDistribution) {
+    distributionResult = await distributeLeadFromEdge({
+      organizationId: session.organization_id,
+      leadId: lead.id,
+      idempotencyKey: distributionKey,
+      roundRobinId: targetRoundRobinId,
+      occurredAt: message.sentAt || now,
     });
   }
 
-  return { ...lead, is_new_lead: Boolean(lead.is_new_lead) };
+  return {
+    ...lead,
+    assigned_user_id: optionalUuid(distributionResult?.assigned_user_id) || lead.assigned_user_id || null,
+    is_new_lead: Boolean(lead.is_new_lead),
+  };
+}
+
+async function distributeLeadFromEdge(params: {
+  organizationId: string;
+  leadId: string;
+  idempotencyKey: string;
+  roundRobinId: string | null;
+  occurredAt: string;
+}) {
+  const { data, error } = await supabase
+    .rpc("distribute_lead_from_backend", {
+      p_organization_id: params.organizationId,
+      p_lead_id: params.leadId,
+      p_idempotency_key: params.idempotencyKey,
+      p_round_robin_id: params.roundRobinId,
+      p_preserve_assignee: true,
+      p_source: "whatsapp",
+      p_now: params.occurredAt,
+    });
+
+  if (error) throw error;
+  if (!isRecord(data)) {
+    throw new Error("Canonical lead distribution returned an invalid result");
+  }
+
+  const reason = normalizeText(data.reason);
+  if (!["assigned", "already_assigned", "no_matching_queue", "no_available_members"].includes(reason)) {
+    throw new Error(`Canonical lead distribution rejected the request: ${reason || "unknown_reason"}`);
+  }
+  return data;
 }
 
 async function upsertLeadMetaAttribution(
@@ -1594,6 +1670,7 @@ async function upsertLeadMetaAttribution(
         raw_payload: payload,
         updated_at: new Date().toISOString(),
       })
+      .eq("organization_id", session.organization_id)
       .eq("id", existing.id)
       .or("source_type.is.null,source_type.eq.whatsapp_click_to_message,platform.eq.whatsapp");
     if (error) throw error;
@@ -1638,20 +1715,12 @@ async function logLeadEntryAttribution(
     property_id: lead.property_id || lead.interest_property_id || null,
   };
 
-  const { data: existing, error: existingError } = await supabase
-    .from("lead_entry_events")
-    .select("id")
-    .eq("organization_id", session.organization_id)
-    .eq("lead_id", lead.id)
-    .eq("source", "whatsapp")
-    .eq("metadata->>message_id", message.messageId)
-    .maybeSingle();
-  if (existingError) throw existingError;
-  if (existing?.id) return;
-
   const { error } = await supabase.from("lead_entry_events").insert({
     organization_id: session.organization_id,
     lead_id: lead.id,
+    provider: "whatsapp",
+    provider_event_id: `${session.id}:${message.messageId}`,
+    occurred_at: message.sentAt,
     source: "whatsapp",
     entry_type: lead.is_new_lead ? "initial" : "reentry",
     property_id: lead.property_id || lead.interest_property_id || null,
@@ -1661,7 +1730,10 @@ async function logLeadEntryAttribution(
     utm_campaign: attribution.campaign_name || null,
     metadata,
   });
-  if (error) throw error;
+  if (
+    error &&
+    !isUniqueViolation(error, "lead_entry_events_provider_event_unique_idx")
+  ) throw error;
 }
 
 async function logCreativeActivity(
@@ -1686,18 +1758,14 @@ async function logCreativeActivity(
     property_id: lead.property_id || lead.interest_property_id || null,
   };
 
-  const { data: existing, error: existingError } = await supabase
-    .from("activities")
-    .select("id")
-    .eq("organization_id", session.organization_id)
-    .eq("lead_id", lead.id)
-    .eq("type", "meta_creative")
-    .eq("metadata->>message_id", message.messageId)
-    .maybeSingle();
-  if (existingError) throw existingError;
-  if (existing?.id) return;
-
+  const activityId = await deterministicEvolutionGoEffectId(
+    session.organization_id,
+    session.id,
+    message.messageId,
+    "meta_creative_activity",
+  );
   const { error } = await supabase.from("activities").insert({
+    id: activityId,
     organization_id: session.organization_id,
     lead_id: lead.id,
     user_id: null,
@@ -1705,7 +1773,7 @@ async function logCreativeActivity(
     content: attribution.creative_name || attribution.ad_name || "Criativo do anuncio",
     metadata,
   });
-  if (error) throw error;
+  if (error && !isUniqueViolation(error, "activities_pkey")) throw error;
 }
 
 async function resolveGroupName(session: JsonRecord, remoteJid: string, incomingName?: string | null) {
@@ -1720,7 +1788,7 @@ async function resolveGroupName(session: JsonRecord, remoteJid: string, incoming
     .maybeSingle();
 
   if (error) {
-    console.warn("[evolution-go-webhook] group name lookup failed", redactLogText(error));
+    console.warn("[evolution-go-webhook] group name lookup failed", error.message);
     return null;
   }
 
@@ -1862,7 +1930,7 @@ async function safelyUpsertWhatsAppIdentityAliases(
     console.warn("[evolution-go-webhook] identity alias update failed; message processing will continue", {
       session_id: session.id,
       conversation_id: conversation.id,
-      error: redactLogText(error),
+      error: error instanceof Error ? error.message : String(error),
     });
   }
 }
@@ -1880,7 +1948,7 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
     console.warn("[evolution-go-webhook] identity alias lookup failed; direct identity matching will continue", {
       session_id: session.id,
       remote_jid: remoteJid,
-      error: redactLogText(error),
+      error: error instanceof Error ? error.message : String(error),
     });
   }
 
@@ -1919,7 +1987,9 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
     if (error) throw error;
 
     const matches = data || [];
-    const canonical = matches.find((conversation) => conversation.remote_jid === remoteJid) || null;
+    const canonical = matches.find((conversation: JsonRecord) =>
+      conversation.remote_jid === remoteJid
+    ) || null;
     existing = canonical || matches[0] || null;
     canonicalConflict = Boolean(canonical && existing && canonical.id !== existing.id);
   }
@@ -1991,11 +2061,14 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
     if (error) throw error;
 
     if (attachableLeadId && !existing.lead_id) {
-      await supabase
+      const { error: messageLeadUpdateError } = await supabase
         .from("whatsapp_messages")
         .update({ lead_id: attachableLeadId })
+        .eq("organization_id", session.organization_id)
+        .eq("session_id", session.id)
         .eq("conversation_id", existing.id)
         .is("lead_id", null);
+      if (messageLeadUpdateError) throw messageLeadUpdateError;
     }
 
     await safelyUpsertWhatsAppIdentityAliases(session, identity, lead, data, identityAliases);
@@ -2055,12 +2128,28 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
   return data;
 }
 
+async function findStoredMessage(
+  session: JsonRecord,
+  message: ReturnType<typeof normalizeMessage>,
+) {
+  if (!message) return null;
+  const { data, error } = await supabase
+    .from("whatsapp_messages")
+    .select("id, conversation_id, metadata")
+    .eq("organization_id", session.organization_id)
+    .eq("session_id", session.id)
+    .eq("message_id", message.messageId)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
 async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead: JsonRecord | null, message: ReturnType<typeof normalizeMessage>) {
   if (!message) return { inserted: false, message: null };
 
   const { data: existing, error: existingError } = await supabase
     .from("whatsapp_messages")
-    .select("id, conversation_id, media_storage_path, media_status, media_error, status, delivered_at, read_at")
+    .select("id, conversation_id, media_storage_path, media_status, media_error, metadata")
     .eq("organization_id", session.organization_id)
     .eq("session_id", session.id)
     .eq("message_id", message.messageId)
@@ -2107,12 +2196,12 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
     status: message.fromMe ? "sent" : "received",
     sent_at: message.sentAt,
     received_at: message.fromMe ? null : new Date().toISOString(),
-    metadata: {
+    metadata: pendingEvolutionGoEffectMetadata({
       source: "evolution_go_webhook",
       whatsapp_attribution: whatsappAttribution(message),
       whatsapp_referral: message.referral,
-      ...(isMedia && !mediaStoragePath ? { media_retry_source: "provider" } : {}),
-    },
+      raw: message.raw,
+    }, message.messageId),
   };
 
   if (existing) {
@@ -2121,14 +2210,20 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
       .from("whatsapp_messages")
       .update({
         ...row,
+        metadata: pendingEvolutionGoEffectMetadata({
+          ...(isRecord(existing.metadata) ? existing.metadata : {}),
+          source: "evolution_go_webhook",
+          whatsapp_attribution: whatsappAttribution(message),
+          whatsapp_referral: message.referral,
+          raw: message.raw,
+        }, message.messageId),
         media_storage_path: mediaStoragePath || existing.media_storage_path || null,
         media_status: mediaStatus || existing.media_status || null,
         media_error: mediaStoragePath ? null : (mediaError || existing.media_error || null),
-        status: monotonicMessageStatus(existing.status, row.status),
-        delivered_at: existing.delivered_at || undefined,
-        read_at: existing.read_at || undefined,
         updated_at: undefined,
       })
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
       .eq("id", existing.id)
       .select("*")
       .single();
@@ -2144,6 +2239,30 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
 
   if (error) throw error;
   return { inserted: true, message: data };
+}
+
+async function completeStoredMessageEffects(
+  session: JsonRecord,
+  storedMessage: JsonRecord | null,
+  providerMessageId: string,
+) {
+  if (!storedMessage?.id) throw new Error("Stored message is missing");
+  const metadata = completedEvolutionGoEffectMetadata(
+    storedMessage.metadata,
+    providerMessageId,
+  );
+  const { data, error } = await supabase
+    .from("whatsapp_messages")
+    .update({ metadata })
+    .eq("organization_id", session.organization_id)
+    .eq("session_id", session.id)
+    .eq("id", storedMessage.id)
+    .eq("message_id", providerMessageId)
+    .select("id")
+    .maybeSingle();
+  if (error || !data?.id) {
+    throw error || new Error("Stored message effect completion lost ownership");
+  }
 }
 
 async function markMessageDeleted(session: JsonRecord, message: ReturnType<typeof normalizeMessage>) {
@@ -2178,9 +2297,12 @@ async function markMessageDeleted(session: JsonRecord, message: ReturnType<typeo
         deleted_at: deletedAt,
         deletion_event: {
           message_id: message.messageId,
+          raw: message.raw,
         },
       },
     })
+    .eq("organization_id", session.organization_id)
+    .eq("session_id", session.id)
     .eq("id", target.id);
   if (updateError) throw updateError;
 
@@ -2192,6 +2314,8 @@ async function markMessageDeleted(session: JsonRecord, message: ReturnType<typeo
         last_message_preview: "Esta mensagem foi apagada",
         updated_at: deletedAt,
       })
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
       .eq("id", target.conversation_id)
       .eq("last_message_at", target.sent_at);
     if (conversationError) throw conversationError;
@@ -2200,24 +2324,139 @@ async function markMessageDeleted(session: JsonRecord, message: ReturnType<typeo
   return true;
 }
 
-async function updateConversationAfterMessage(conversation: JsonRecord, normalized: ReturnType<typeof normalizeMessage>, inserted: boolean) {
-  if (!normalized || !inserted || normalized.messageType === "reaction") return;
+async function updateConversationAfterMessage(
+  session: JsonRecord,
+  conversation: JsonRecord,
+  normalized: ReturnType<typeof normalizeMessage>,
+) {
+  if (!normalized || normalized.messageType === "reaction") return;
+  const effectKey = await evolutionGoEffectFingerprint(
+    session.organization_id,
+    session.id,
+    normalized.messageId,
+    "conversation_unread",
+  );
+  let current = conversation;
 
-  await supabase
-    .from("whatsapp_conversations")
-    .update({
-      last_message: previewForMessage(normalized),
-      last_message_preview: previewForMessage(normalized),
-      last_message_at: normalized.sentAt,
-      unread_count: normalized.fromMe ? conversation.unread_count || 0 : Number(conversation.unread_count || 0) + 1,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", conversation.id);
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    if (hasConversationUnreadEffect(current.metadata, effectKey)) return;
+    if (
+      conversationUnreadEffectCount(current.metadata) >=
+        EVOLUTION_GO_UNREAD_LEDGER_LIMIT
+    ) {
+      // At capacity, absence is ambiguous: the key might have been evicted by
+      // an older implementation. Fail closed instead of incrementing twice.
+      throw new Error("Conversation webhook effect ledger is saturated");
+    }
+    const currentLastAt = Date.parse(normalizeText(current.last_message_at));
+    const messageAt = Date.parse(normalized.sentAt);
+    const shouldAdvancePreview = !Number.isFinite(currentLastAt) ||
+      !Number.isFinite(messageAt) || currentLastAt <= messageAt;
+    const previousUpdatedAt = normalizeText(current.updated_at).trim();
+    const candidateUpdatedAt = new Date().toISOString();
+    const updatedAt = previousUpdatedAt && candidateUpdatedAt <= previousUpdatedAt
+      ? new Date(Date.parse(previousUpdatedAt) + 1).toISOString()
+      : candidateUpdatedAt;
+    const update: JsonRecord = {
+      metadata: appendConversationUnreadEffect(current.metadata, effectKey),
+      unread_count: normalized.fromMe
+        ? Number(current.unread_count || 0)
+        : Number(current.unread_count || 0) + 1,
+      updated_at: updatedAt,
+    };
+    if (shouldAdvancePreview) {
+      update.last_message = previewForMessage(normalized);
+      update.last_message_preview = previewForMessage(normalized);
+      update.last_message_at = normalized.sentAt;
+    }
+
+    let updateQuery = supabase
+      .from("whatsapp_conversations")
+      .update(update)
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .eq("id", current.id);
+    updateQuery = previousUpdatedAt
+      ? updateQuery.eq("updated_at", previousUpdatedAt)
+      : updateQuery.is("updated_at", null);
+    const { data, error } = await updateQuery
+      .select("*")
+      .maybeSingle();
+    if (error) throw error;
+    if (data?.id) return;
+
+    const { data: refreshed, error: refreshError } = await supabase
+      .from("whatsapp_conversations")
+      .select("*")
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .eq("id", current.id)
+      .maybeSingle();
+    if (refreshError) throw refreshError;
+    if (!refreshed) throw new Error("Conversation disappeared during webhook processing");
+    current = refreshed;
+  }
+  throw new Error("Conversation webhook effect remained contended");
+}
+
+async function releaseConversationMessageEffect(
+  session: JsonRecord,
+  conversationId: string,
+  providerMessageId: string,
+) {
+  const effectKey = await evolutionGoEffectFingerprint(
+    session.organization_id,
+    session.id,
+    providerMessageId,
+    "conversation_unread",
+  );
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const { data: current, error: readError } = await supabase
+      .from("whatsapp_conversations")
+      .select("id, metadata, updated_at")
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .eq("id", conversationId)
+      .maybeSingle();
+    if (readError) throw readError;
+    if (!current) throw new Error("Conversation effect ledger target disappeared");
+    if (!hasConversationUnreadEffect(current.metadata, effectKey)) return;
+
+    const previousUpdatedAt = normalizeText(current.updated_at).trim();
+    const candidateUpdatedAt = new Date().toISOString();
+    const updatedAt = previousUpdatedAt && candidateUpdatedAt <= previousUpdatedAt
+      ? new Date(Date.parse(previousUpdatedAt) + 1).toISOString()
+      : candidateUpdatedAt;
+    let updateQuery = supabase
+      .from("whatsapp_conversations")
+      .update({
+        metadata: removeConversationUnreadEffect(current.metadata, effectKey),
+        updated_at: updatedAt,
+      })
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .eq("id", conversationId);
+    updateQuery = previousUpdatedAt
+      ? updateQuery.eq("updated_at", previousUpdatedAt)
+      : updateQuery.is("updated_at", null);
+    const { data, error } = await updateQuery.select("id").maybeSingle();
+    if (error) throw error;
+    if (data?.id) return;
+  }
+  throw new Error("Conversation webhook effect cleanup remained contended");
 }
 
 async function logInbound(session: JsonRecord, conversation: JsonRecord, lead: JsonRecord | null, rule: JsonRecord | null, message: ReturnType<typeof normalizeMessage>) {
-  if (!message || message.fromMe || message.isGroup || message.messageType === "reaction") return;
-  await supabase.from("whatsapp_inbound_logs").insert({
+  if (!message || message.fromMe || message.isGroup) return;
+  const logId = await deterministicEvolutionGoEffectId(
+    session.organization_id,
+    session.id,
+    message.messageId,
+    "inbound_log",
+  );
+  const { error } = await supabase.from("whatsapp_inbound_logs").insert({
+    id: logId,
     organization_id: session.organization_id,
     session_id: session.id,
     conversation_id: conversation.id,
@@ -2234,6 +2473,9 @@ async function logInbound(session: JsonRecord, conversation: JsonRecord, lead: J
       property_code: detectPropertyCode(message),
     },
   });
+  if (error && !isUniqueViolation(error, "whatsapp_inbound_logs_pkey")) {
+    throw error;
+  }
 }
 
 async function triggerAutoReply(
@@ -2242,12 +2484,14 @@ async function triggerAutoReply(
   storedMessage: JsonRecord | null,
   message: ReturnType<typeof normalizeMessage>,
 ) {
-  if (!VIMOB_API_URL || !AI_AUTOREPLY_TOKEN) {
-    console.warn("AI auto-reply skipped: missing VIMOB_API_URL or AI_AUTOREPLY_TOKEN");
-    return;
-  }
-  if (!message || message.fromMe || message.isGroup || message.messageType === "reaction" || !storedMessage?.id) return;
+  if (
+    !message || message.fromMe || message.isGroup ||
+    message.messageType === "reaction" || !storedMessage?.id
+  ) return;
   if (!message.content || !String(message.content).trim()) return;
+  if (!VIMOB_API_URL || !AI_AUTOREPLY_TOKEN) {
+    throw new Error("AI auto-reply service is not configured");
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 25_000);
@@ -2270,116 +2514,190 @@ async function triggerAutoReply(
     });
 
     if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      console.warn("AI auto-reply request failed", response.status, redactLogText(body));
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error(`AI auto-reply request failed with status ${response.status}`);
     } else {
       const body = await response.json().catch(() => null);
       if (body?.skipped) {
         console.warn("AI auto-reply skipped", body.reason || "unknown_reason");
       }
     }
-  } catch (error) {
-    console.warn("AI auto-reply request failed", redactLogText(error));
   } finally {
     clearTimeout(timeout);
   }
 }
 
-function scheduleAutoReply(
-  session: JsonRecord,
-  conversation: JsonRecord,
-  storedMessage: JsonRecord | null,
-  message: ReturnType<typeof normalizeMessage>,
-) {
-  const task = triggerAutoReply(session, conversation, storedMessage, message);
-  if (typeof EdgeRuntime !== "undefined" && typeof EdgeRuntime.waitUntil === "function") {
-    EdgeRuntime.waitUntil(task);
-    return;
-  }
-  task.catch((error) => console.warn("AI auto-reply background task failed", redactLogText(error)));
-}
+type AuthorizedEvolutionGoWebhook = Extract<
+  EvolutionGoWebhookAuthorization,
+  { authorized: true }
+>;
 
-async function handleMessages(session: JsonRecord, payload: any) {
+async function handleMessages(
+  session: JsonRecord,
+  payload: any,
+  event: string,
+  authorization: AuthorizedEvolutionGoWebhook,
+) {
   const messages = extractMessages(payload);
   let processed = 0;
+  let duplicates = 0;
+  let inProgress = 0;
 
   for (const rawMessage of messages) {
     const message = normalizeMessage(rawMessage);
-    if (!message) continue;
-    if (message.messageType === "deleted_event") {
-      if (await markMessageDeleted(session, message)) processed += 1;
-      continue;
-    }
+    if (!message) throw new Error("Unsupported message-like Evolution payload");
     if (message.messageType === "reaction" && !message.reactionToMessageId) {
-      continue;
+      throw new Error("Evolution reaction is missing its target message");
     }
-    const messageIdentity = whatsappIdentityForMessage(message);
-    const diagnosticRemoteJid = messageIdentity.remoteJid || message.remoteJid;
+    let ownedClaim: OwnedEvolutionMessageClaim | null = null;
+    if (authorization.contract !== "internal_worker_lease") {
+      const deliveryClaim = await claimEvolutionMessageDelivery(supabase, {
+        organizationId: session.organization_id,
+        sessionId: session.id,
+        providerInstanceId: normalizeText(firstPresent(
+          session.provider_instance_id,
+          session.instance_id,
+          session.instance_name,
+        )) || null,
+        providerMessageId: message.messageId,
+        eventType: event || "messages.upsert",
+        providerPayload: {
+          event: event || "messages.upsert",
+          instance: firstPresent(
+            session.provider_instance_id,
+            session.instance_id,
+            session.instance_name,
+          ),
+          data: rawMessage,
+        },
+      });
+      if (deliveryClaim.outcome === "duplicate") {
+        duplicates += 1;
+        continue;
+      }
+      if (deliveryClaim.outcome === "in_progress") {
+        inProgress += 1;
+        continue;
+      }
+      if (deliveryClaim.outcome === "dead") {
+        throw new Error("Evolution message delivery is dead-lettered");
+      }
+      ownedClaim = deliveryClaim;
+    }
 
-    let rule: JsonRecord | null = null;
-    let lead: JsonRecord | null = null;
+    try {
+      if (message.messageType === "deleted_event") {
+        if (!(await markMessageDeleted(session, message))) {
+          throw new Error("Evolution deletion target is not available yet");
+        }
+        if (ownedClaim) {
+          await completeEvolutionMessageDelivery(supabase, ownedClaim);
+        }
+        processed += 1;
+        continue;
+      }
 
-    const isReactionEvent = message.messageType === "reaction";
-    if (!message.fromMe && !message.isGroup && !isReactionEvent) {
-      try {
+      const storedBeforeProcessing = await findStoredMessage(session, message);
+      if (storedBeforeProcessing) {
+        const state = storedEvolutionGoEffectState(
+          storedBeforeProcessing.metadata,
+          message.messageId,
+        );
+        if (state === "completed") {
+          if (storedBeforeProcessing.conversation_id) {
+            await releaseConversationMessageEffect(
+              session,
+              storedBeforeProcessing.conversation_id,
+              message.messageId,
+            );
+          }
+          if (ownedClaim) {
+            await completeEvolutionMessageDelivery(supabase, ownedClaim);
+          }
+          duplicates += 1;
+          continue;
+        }
+        if (state !== "pending") {
+          // Rows created before this ledger cannot prove whether unread, CRM
+          // attribution, or auto-reply already ran. Never guess and duplicate
+          // those effects; keep the durable caller retrying for remediation.
+          throw new Error("Stored Evolution message has no recoverable effect ledger");
+        }
+      }
+
+      let rule: JsonRecord | null = null;
+      let lead: JsonRecord | null = null;
+      if (!message.fromMe && !message.isGroup) {
         rule = await findInboundRule(session, message);
-      } catch (error) {
-        console.warn("[evolution-go-webhook] inbound rule lookup failed; message will still be stored", {
-          session_id: session.id,
-          remote_jid: diagnosticRemoteJid,
-          error: redactLogText(error),
-        });
-      }
-
-      try {
         lead = await ensureLead(session, message, rule);
-      } catch (error) {
-        console.warn("[evolution-go-webhook] lead resolution failed; message will still be stored", {
-          session_id: session.id,
-          remote_jid: diagnosticRemoteJid,
-          error: redactLogText(error),
-        });
       }
-    }
 
-    const conversation = await ensureConversation(session, message, lead);
-    const attachedLead = conversation.lead_id && conversation.lead_id === lead?.id ? lead : null;
-    const result = await insertMessage(session, conversation, attachedLead, message);
-    await updateConversationAfterMessage(conversation, message, result.inserted);
-    await logInbound(session, conversation, attachedLead, rule, message);
-    if (result.inserted && !isReactionEvent) {
+      const conversation = await ensureConversation(session, message, lead);
+      const attachedLead = conversation.lead_id && conversation.lead_id === lead?.id ? lead : null;
+      const result = await insertMessage(session, conversation, attachedLead, message);
+      if (!result.message?.id) throw new Error("Evolution message was not stored");
+      const persistedState = storedEvolutionGoEffectState(
+        result.message.metadata,
+        message.messageId,
+      );
+      if (persistedState === "completed") {
+        await releaseConversationMessageEffect(
+          session,
+          result.message.conversation_id || conversation.id,
+          message.messageId,
+        );
+        if (ownedClaim) {
+          await completeEvolutionMessageDelivery(supabase, ownedClaim);
+        }
+        duplicates += 1;
+        continue;
+      }
+      if (persistedState !== "pending") {
+        throw new Error("Evolution message effect ledger is invalid");
+      }
+
+      await updateConversationAfterMessage(session, conversation, message);
+      await logInbound(session, conversation, attachedLead, rule, message);
       await upsertLeadMetaAttribution(session, conversation, attachedLead, message);
       await logLeadEntryAttribution(session, conversation, attachedLead, message);
       await logCreativeActivity(session, conversation, attachedLead, message);
-      scheduleAutoReply(session, conversation, result.message, message);
+      await triggerAutoReply(session, conversation, result.message, message);
+      await completeStoredMessageEffects(
+        session,
+        result.message,
+        message.messageId,
+      );
+      await releaseConversationMessageEffect(
+        session,
+        result.message.conversation_id || conversation.id,
+        message.messageId,
+      );
+      if (ownedClaim) {
+        await completeEvolutionMessageDelivery(supabase, ownedClaim);
+      }
+      processed += 1;
+    } catch (error) {
+      if (ownedClaim) {
+        try {
+          await retryEvolutionMessageDelivery(supabase, ownedClaim);
+        } catch {
+          console.error("evolution-go-webhook failed to release direct delivery");
+        }
+      }
+      throw error;
     }
-    processed += 1;
   }
 
-  return processed;
+  return { processed, duplicates, inProgress };
 }
 
 function statusFromProvider(value: unknown) {
   const raw = normalizeText(value).toLowerCase();
-  if (["3", "4", "read", "played"].includes(raw)) return "read";
-  if (["2", "delivered", "delivery", "device_ack", "deviceack"].includes(raw)) return "delivered";
-  if (["1", "sent", "server_ack", "serverack"].includes(raw)) return "sent";
-  if (["0", "queued", "pending"].includes(raw)) return "pending";
-  if (["-1", "failed", "error"].includes(raw)) return "failed";
-  return null;
-}
-
-function monotonicMessageStatus(currentValue: unknown, incomingValue: unknown) {
-  const current = normalizeText(currentValue).toLowerCase();
-  const incoming = normalizeText(incomingValue).toLowerCase();
-  if (!current) return incoming || "received";
-  if (!incoming || current === incoming) return current;
-  if (current === "read") return current;
-  if (incoming === "read") return incoming;
-  if (current === "delivered" && ["queued", "pending", "sent", "received"].includes(incoming)) return current;
-  if (current === "failed" && ["queued", "pending", "sent", "received"].includes(incoming)) return current;
-  if (incoming === "failed" && ["delivered", "read"].includes(current)) return current;
-  return incoming;
+  if (["read", "played"].includes(raw)) return "read";
+  if (["delivered", "delivery"].includes(raw)) return "delivered";
+  if (["sent", "server_ack", "serverack"].includes(raw)) return "sent";
+  if (["failed", "error"].includes(raw)) return "failed";
+  return raw || null;
 }
 
 async function handleMessageStatus(session: JsonRecord, payload: any) {
@@ -2411,78 +2729,19 @@ async function handleMessageStatus(session: JsonRecord, payload: any) {
     ));
     if (messageIds.length === 0 || !status) continue;
 
-    const { data: targets, error: targetError } = await supabase
+    const update: JsonRecord = { status };
+    if (status === "delivered") update.delivered_at = new Date().toISOString();
+    if (status === "read") update.read_at = new Date().toISOString();
+    if (status === "failed") update.error_message = firstPresent(entry.error, entry.message, "Falha no envio");
+
+    const { error } = await supabase
       .from("whatsapp_messages")
-      .select("id, message_id, status, delivered_at, read_at")
+      .update(update)
       .eq("organization_id", session.organization_id)
       .eq("session_id", session.id)
       .in("message_id", messageIds);
-    if (targetError) throw targetError;
-
-    const targetIds = targets
-      ?.filter((target: JsonRecord) => (
-        normalizeText(target.status).toLowerCase() !== status
-        && monotonicMessageStatus(target.status, status) === status
-      ))
-      .map((target: JsonRecord) => target.id);
-    const receiptAt = new Date().toISOString();
-    const failureReason = normalizeText(firstPresent(entry.error, entry.message, "Falha no envio"));
-
-    const update: JsonRecord = { status };
-    if (status === "delivered") update.delivered_at = receiptAt;
-    if (status === "read") update.read_at = receiptAt;
-
-    if (targetIds?.length) {
-      const { error } = await supabase
-        .from("whatsapp_messages")
-        .update(update)
-        .eq("organization_id", session.organization_id)
-        .eq("session_id", session.id)
-        .in("id", targetIds);
-      if (error) throw error;
-    }
-
-    const { data: outboxTargets, error: outboxTargetError } = await supabase
-      .from("whatsapp_outbox")
-      .select("id, provider_message_id, status")
-      .eq("organization_id", session.organization_id)
-      .eq("session_id", session.id)
-      .in("provider_message_id", messageIds);
-    if (outboxTargetError) throw outboxTargetError;
-
-    const outboxTargetIds = outboxTargets
-      ?.filter((target: JsonRecord) => (
-        normalizeText(target.status).toLowerCase() !== status
-        && monotonicMessageStatus(target.status, status) === status
-      ))
-      .map((target: JsonRecord) => target.id);
-
-    if (outboxTargetIds?.length) {
-      const outboxUpdate: JsonRecord = { status };
-      if (status === "delivered") outboxUpdate.delivered_at = receiptAt;
-      if (status === "read") outboxUpdate.read_at = receiptAt;
-      if (status === "failed") {
-        outboxUpdate.failed_at = receiptAt;
-        outboxUpdate.last_error = failureReason;
-      }
-      const { error: outboxError } = await supabase
-        .from("whatsapp_outbox")
-        .update(outboxUpdate)
-        .eq("organization_id", session.organization_id)
-        .eq("session_id", session.id)
-        .in("id", outboxTargetIds);
-      if (outboxError) throw outboxError;
-    }
-
-    const matchedMessageIds = new Set([
-      ...(targets || []).map((target: JsonRecord) => normalizeText(target.message_id)),
-      ...(outboxTargets || []).map((target: JsonRecord) => normalizeText(target.provider_message_id)),
-    ].filter(Boolean));
-    const missingMessageIds = messageIds.filter((messageId) => !matchedMessageIds.has(messageId));
-    if (missingMessageIds.length > 0) {
-      throw new Error(`MESSAGE_STATUS_TARGET_NOT_FOUND:${missingMessageIds.join(",")}`);
-    }
-    updated += targetIds?.length || 0;
+    if (error) throw error;
+    updated += messageIds.length;
   }
   return updated;
 }
@@ -2491,7 +2750,7 @@ async function handleQr(session: JsonRecord, payload: any) {
   const qrcode = extractQr(payload);
   if (!qrcode) return false;
 
-  await supabase
+  const { error } = await supabase
     .from("whatsapp_sessions")
     .update({
       status: "qr_ready",
@@ -2503,21 +2762,21 @@ async function handleQr(session: JsonRecord, payload: any) {
       },
       updated_at: new Date().toISOString(),
     })
+    .eq("organization_id", session.organization_id)
     .eq("id", session.id);
+  if (error) throw error;
 
   return true;
 }
 
 async function handleConnection(session: JsonRecord, payload: any) {
-  const normalizedStatus = normalizeStatus(payload);
+  const normalizedStatus: string = normalizeStatus(payload);
   const raw = payload?.data || payload?.Data || payload;
-  const rawState = normalizeText(firstPresent(raw.state, raw.State, raw.connectionStatus, raw.status)).toLowerCase();
-  const isErrorState = ["error", "failed", "failure"].includes(rawState);
   const jid = firstPresent(raw.jid, raw.JID, raw.phone, raw.Phone, raw.user?.id);
   const update: JsonRecord = {
     status: normalizedStatus,
     updated_at: new Date().toISOString(),
-    last_error: isErrorState ? firstPresent(raw.error, raw.message, "Falha na conexao") : null,
+    last_error: normalizedStatus === "error" ? firstPresent(raw.error, raw.message) : null,
   };
 
   if (normalizedStatus === "connected") {
@@ -2527,7 +2786,12 @@ async function handleConnection(session: JsonRecord, payload: any) {
     update.profile_picture = firstPresent(raw.profilePicture, raw.pictureUrl, session.profile_picture);
   }
 
-  await supabase.from("whatsapp_sessions").update(update).eq("id", session.id);
+  const { error } = await supabase
+    .from("whatsapp_sessions")
+    .update(update)
+    .eq("organization_id", session.organization_id)
+    .eq("id", session.id);
+  if (error) throw error;
   return normalizedStatus;
 }
 
@@ -2550,13 +2814,14 @@ async function upsertLabels(session: JsonRecord, payload: any) {
     const name = normalizeText(firstPresent(label.name, label.Name, label.text, label.label));
     if (!remoteLabelId && !name) continue;
 
-    const { data: existing } = await supabase
+    const { data: existing, error: lookupError } = await supabase
       .from("whatsapp_labels")
       .select("id")
       .eq("organization_id", session.organization_id)
       .eq("session_id", session.id)
       .eq("remote_label_id", remoteLabelId || name)
       .maybeSingle();
+    if (lookupError) throw lookupError;
 
     const row = {
       organization_id: session.organization_id,
@@ -2568,9 +2833,16 @@ async function upsertLabels(session: JsonRecord, payload: any) {
     };
 
     if (existing) {
-      await supabase.from("whatsapp_labels").update(row).eq("id", existing.id);
+      const { error } = await supabase
+        .from("whatsapp_labels")
+        .update(row)
+        .eq("organization_id", session.organization_id)
+        .eq("session_id", session.id)
+        .eq("id", existing.id);
+      if (error) throw error;
     } else {
-      await supabase.from("whatsapp_labels").insert(row);
+      const { error } = await supabase.from("whatsapp_labels").insert(row);
+      if (error) throw error;
     }
     processed += 1;
   }
@@ -2597,7 +2869,7 @@ async function upsertGroups(session: JsonRecord, payload: any) {
       participants: Array.isArray(group.participants) ? group.participants : [],
       owner_jid: normalizeJid(firstPresent(group.owner, group.ownerJid), false) || null,
       is_announce: parseBoolean(firstPresent(group.isAnnounce, group.announce)),
-      metadata: { source: "evolution_go_webhook" },
+      metadata: { raw: group },
     };
 
     const { error } = await supabase
@@ -2616,46 +2888,84 @@ async function upsertGroups(session: JsonRecord, payload: any) {
       .eq("session_id", session.id)
       .eq("remote_jid", groupJid)
       .eq("is_group", true);
-    if (conversationUpdateError) {
-      console.warn("[evolution-go-webhook] group conversation name sync failed", conversationUpdateError.message);
-    }
+    if (conversationUpdateError) throw conversationUpdateError;
   }
   return processed;
 }
 
 Deno.serve(async (req) => {
-  const url = new URL(req.url);
-  if (hasQueryCredential(url)) {
-    return json({ ok: false, error: "Webhook credentials must be sent in headers" }, 400);
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-  if (req.method === "GET") return json({ ok: true, service: "evolution-go-webhook" });
   if (req.method !== "POST") return json({ ok: false, error: "Method not allowed" }, 405);
 
+  const authorization = authorizeEvolutionGoWebhookIngress(req, {
+    privateWorker: readSupabaseSecretKeyEnvironment(),
+    webhookSecret: EVOLUTION_WEBHOOK_SECRET,
+    providerApiKey: EVOLUTION_GO_API_KEY,
+  });
+  if (authorization.authorized === false) {
+    const reason = authorization.reason;
+    const status = reason === "query_credential_forbidden"
+      ? 400
+      : reason === "missing_server_secret"
+      ? 503
+      : reason === "missing_credential" || reason === "missing_session_token"
+      ? 401
+      : 403;
+    return json({ ok: false, error: "Webhook authentication failed" }, status);
+  }
+
   try {
-    const payload = await req.json().catch(() => ({}));
-    const event = normalizeText(firstPresent(payload.event, payload.type, payload.action, payload.Event, payload.data?.event)).toLowerCase();
+    const url = new URL(req.url);
+    const serviceKeyEnvironment = readSupabaseSecretKeyEnvironment();
+    const serviceKey = selectSupabaseAdminSecretKey(serviceKeyEnvironment);
+    if (!SUPABASE_URL || !serviceKey) {
+      return json({ ok: false, error: "Webhook service is unavailable" }, 503);
+    }
+    // Authentication above is deliberately complete before this privileged
+    // client exists or the request body is consumed.
+    supabase = createClient(SUPABASE_URL, serviceKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const payload = await readBoundedJsonBody<any>(req);
+    const event = normalizeText(firstPresent(
+      payload.event,
+      payload.type,
+      payload.action,
+      payload.Event,
+      payload.data?.event,
+    )).trim().toLowerCase().slice(0, 160);
     const resolved = await resolveSession(payload, url);
 
     if (!resolved.session) {
-      return json({ ok: true, ignored: true, reason: resolved.reason, signals: resolved.signals, matches: resolved.matches || 0 });
+      const status = resolved.reason === "SESSION_NOT_FOUND"
+        ? 404
+        : resolved.reason === "AMBIGUOUS_SESSION" ||
+            resolved.reason === "CONFLICTING_SESSION_IDS" ||
+            resolved.reason === "CONFLICTING_INSTANCE_SIGNALS"
+        ? 409
+        : 400;
+      return json({ ok: false, error: "Webhook session could not be resolved" }, status);
     }
 
-    if (!validateWebhookAuth(req, resolved.session)) {
-      return json({ ok: false, error: "Invalid webhook token" }, 403);
-    }
-
-    if (!validateSessionSignals(resolved.session, resolved.signals)) {
-      return json({ ok: true, ignored: true, reason: "BLOCKED_SESSION_INSTANCE_MISMATCH", signals: resolved.signals });
+    const binding = validateEvolutionGoSessionBinding(
+      req,
+      resolved.session,
+      resolved.signals,
+    );
+    if (binding.valid === false) {
+      const reason = binding.reason;
+      const status = reason === "missing_session_token"
+        ? 503
+        : reason === "invalid_session_token"
+        ? 403
+        : 409;
+      return json({ ok: false, error: "Webhook session binding failed" }, status);
     }
 
     if (resolved.session.is_active === false || resolved.session.status === "deleted") {
-      return json({
-        ok: true,
-        ignored: true,
-        reason: "INACTIVE_SESSION",
-        session_id: resolved.session.id,
-      });
+      return json({ ok: false, error: "Webhook session is inactive" }, 409);
     }
 
     const qrUpdated = event.includes("qr") || extractQr(payload) ? await handleQr(resolved.session, payload) : false;
@@ -2670,28 +2980,35 @@ Deno.serve(async (req) => {
 
     const labelsProcessed = event.includes("label") ? await upsertLabels(resolved.session, payload) : 0;
     const groupsProcessed = event.includes("group") ? await upsertGroups(resolved.session, payload) : 0;
-    const isMessageStatusEvent = event.includes("status") || event.includes("receipt") || event.includes("ack");
-    const statusUpdated = isMessageStatusEvent
+    const statusUpdated = event.includes("status") || event.includes("receipt") || event.includes("ack")
       ? await handleMessageStatus(resolved.session, payload)
       : 0;
-    // Receipt payloads commonly carry a message key/remoteJid but no message
-    // body. Treating those as normal messages creates empty ghost rows.
-    const messagesProcessed = isMessageStatusEvent ? 0 : await handleMessages(resolved.session, payload);
+    const messageResult = await handleMessages(
+      resolved.session,
+      payload,
+      event,
+      authorization,
+    );
 
     return json({
       ok: true,
       session_id: resolved.session.id,
-      event,
       qrUpdated,
       connectionStatus,
-      messagesProcessed,
+      messagesProcessed: messageResult.processed,
+      messageDuplicates: messageResult.duplicates,
+      messagesInProgress: messageResult.inProgress,
       statusUpdated,
       labelsProcessed,
       groupsProcessed,
-    });
+    }, messageResult.inProgress > 0 ? 202 : 200);
   } catch (error) {
-    const safeError = redactLogText(error);
-    console.error("evolution-go-webhook error:", safeError);
+    if (error instanceof WebhookRequestBodyError) {
+      return json({ ok: false, error: error.code }, error.status);
+    }
+    console.error("evolution-go-webhook processing failed", {
+      name: error instanceof Error ? error.name : "UnknownError",
+    });
     return json({ ok: false, error: "Webhook processing failed" }, 500);
   }
 });

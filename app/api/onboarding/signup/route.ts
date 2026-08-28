@@ -1,55 +1,77 @@
-import { onboardingSignupSchema } from '@/lib/validation/onboarding'
+import {
+  onboardingSignupResponseSchema,
+  onboardingSignupSchema,
+  type ParsedOnboardingSignupResponse,
+} from '@/lib/validation/onboarding'
+import { RequestBodyTooLargeError, readRequestTextWithLimit } from '@/lib/security/limited-request-body'
 import {
   enforceServerRateLimit,
+  getForwardedForHeader,
   getRequestIp,
+  getRequestRateLimitIdentity,
   rateLimitHeaders,
   ServerRateLimitError,
 } from '@/lib/security/server-rate-limit'
 
 export const runtime = 'nodejs'
 
-type SignupResult = {
-  ok: boolean
+const SIGNUP_BACKEND_TIMEOUT_MS = 45_000
+const SIGNUP_MAX_BODY_BYTES = 16 * 1024
+
+type SignupResult = ParsedOnboardingSignupResponse
+type SignupResponseBody = SignupResult | {
+  ok: false
+  code: string
   message: string
-  redirectTo?: string
-  checkoutToken?: string | null
-  organizationId?: string
+  issues?: unknown
 }
 
-function jsonResponse(body: SignupResult, status: number, headers?: HeadersInit) {
-  return Response.json(body, { status, headers })
+function jsonResponse(body: SignupResponseBody, status: number, headers?: HeadersInit) {
+  const responseHeaders = new Headers(headers)
+  responseHeaders.set('Cache-Control', 'no-store')
+  return Response.json(body, { status, headers: responseHeaders })
 }
 
 function getAPIBaseURL() {
   return (process.env.VIMOB_API_URL || process.env.NEXT_PUBLIC_VIMOB_API_URL || 'http://localhost:8081').replace(/\/+$/, '')
 }
 
-async function postPublicBackend<T>(path: string, body: unknown) {
+async function postPublicBackend(path: string, body: unknown, forwardedFor: string | null) {
+  const headers = new Headers({
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+  })
+  if (forwardedFor) {
+    headers.set('X-Forwarded-For', forwardedFor)
+  }
+
   const response = await fetch(`${getAPIBaseURL()}${path}`, {
     method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(body),
+    cache: 'no-store',
+    signal: AbortSignal.timeout(SIGNUP_BACKEND_TIMEOUT_MS),
   })
-  const payload = (await response.json().catch(() => null)) as T | null
+  const rawPayload = await response.json().catch(() => null)
+  const payload = onboardingSignupResponseSchema.safeParse(rawPayload)
   return { response, payload }
 }
 
 export async function POST(request: Request) {
   let rawBody: unknown
   const clientIp = getRequestIp(request)
+  const forwardedFor = getForwardedForHeader(request)
+  const rateLimitIdentity = getRequestRateLimitIdentity(request)
 
   try {
-    enforceServerRateLimit(`onboarding-signup:ip:${clientIp}`, [
+    enforceServerRateLimit(`onboarding-signup:ip:${rateLimitIdentity}`, [
       { limit: 3, windowMs: 60_000 },
       { limit: 10, windowMs: 60 * 60_000 },
     ])
   } catch (error) {
     if (error instanceof ServerRateLimitError) {
       return jsonResponse(
-        { ok: false, message: 'Muitas tentativas. Aguarde antes de tentar novamente.' },
+        { ok: false, code: 'signup_rate_limited', message: 'Muitas tentativas. Aguarde antes de tentar novamente.' },
         429,
         rateLimitHeaders(error),
       )
@@ -59,20 +81,30 @@ export async function POST(request: Request) {
   }
 
   try {
-    rawBody = await request.json()
-  } catch {
-    return jsonResponse({ ok: false, message: 'Payload invalido.' }, 400)
+    const rawText = await readRequestTextWithLimit(request, SIGNUP_MAX_BODY_BYTES)
+    rawBody = JSON.parse(rawText)
+  } catch (error) {
+    const tooLarge = error instanceof RequestBodyTooLargeError
+    return jsonResponse(
+      {
+        ok: false,
+        code: tooLarge ? 'signup_payload_too_large' : 'signup_invalid_payload',
+        message: tooLarge ? 'Os dados enviados ultrapassam o limite permitido.' : 'Payload invalido.',
+      },
+      tooLarge ? 413 : 400,
+    )
   }
 
   const parsed = onboardingSignupSchema.safeParse(rawBody)
   if (!parsed.success) {
-    return Response.json(
+    return jsonResponse(
       {
         ok: false,
+        code: 'signup_invalid_input',
         message: 'Dados de cadastro invalidos.',
         issues: parsed.error.flatten(),
       },
-      { status: 400 },
+      400,
     )
   }
 
@@ -85,7 +117,7 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof ServerRateLimitError) {
       return jsonResponse(
-        { ok: false, message: 'Muitas tentativas para este e-mail. Aguarde antes de tentar novamente.' },
+        { ok: false, code: 'signup_rate_limited', message: 'Muitas tentativas para este e-mail. Aguarde antes de tentar novamente.' },
         429,
         rateLimitHeaders(error),
       )
@@ -95,23 +127,35 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { response, payload } = await postPublicBackend<SignupResult>('/v1/public/onboarding/signup', {
-      ...input,
-      ipAddress: clientIp,
-      userAgent: request.headers.get('user-agent') || '',
-    })
-
-    return jsonResponse(
-      payload || { ok: false, message: 'Resposta invalida do backend.' },
-      response.status,
+    const { response, payload } = await postPublicBackend(
+      '/v1/public/onboarding/signup',
+      {
+        ...input,
+        ipAddress: clientIp,
+        userAgent: request.headers.get('user-agent') || '',
+      },
+      forwardedFor,
     )
-  } catch {
+
+    if (!payload.success) {
+      return jsonResponse(
+        { ok: false, code: 'signup_invalid_response', message: 'O servidor devolveu uma resposta de cadastro invalida. Tente novamente.' },
+        502,
+      )
+    }
+
+    return jsonResponse(payload.data, response.status)
+  } catch (error) {
+    const timedOut = error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError')
     return jsonResponse(
       {
         ok: false,
-        message: 'A API do Vimob não está acessível para concluir o cadastro.',
+        code: timedOut ? 'signup_timeout' : 'signup_unavailable',
+        message: timedOut
+          ? 'O cadastro demorou mais que o esperado. Tente novamente: a mesma tentativa sera retomada com seguranca.'
+          : 'Nao foi possivel concluir o cadastro agora. Tente novamente.',
       },
-      503,
+      timedOut ? 504 : 503,
     )
   }
 }

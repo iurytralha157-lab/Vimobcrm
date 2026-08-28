@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 )
@@ -14,6 +15,35 @@ const OrganizationHeader = "X-Organization-ID"
 
 type Resolver interface {
 	Resolve(ctx context.Context, userID string, requestedOrganizationID string) (Context, error)
+}
+
+type BillingAccessAllowlist map[string]struct{}
+
+func NewBillingAccessAllowlist(patterns ...string) BillingAccessAllowlist {
+	allowlist := make(BillingAccessAllowlist, len(patterns))
+	for _, pattern := range patterns {
+		if normalized := normalizeRoutePattern(pattern); normalized != "" {
+			allowlist[normalized] = struct{}{}
+		}
+	}
+	return allowlist
+}
+
+func (allowlist BillingAccessAllowlist) Allows(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+
+	pattern := normalizeRoutePattern(r.Pattern)
+	if pattern == "" {
+		pattern = normalizeRoutePattern(r.Method + " " + r.URL.Path)
+	}
+	_, allowed := allowlist[pattern]
+	return allowed
+}
+
+func normalizeRoutePattern(pattern string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(pattern)), " ")
 }
 
 func Attach(repo Resolver, next http.Handler) http.Handler {
@@ -31,6 +61,23 @@ func Attach(repo Resolver, next http.Handler) http.Handler {
 		}
 
 		next.ServeHTTP(w, r.WithContext(ContextWithTenant(r.Context(), tenantContext)))
+	})
+}
+
+func RequireBillingAccess(allowlist BillingAccessAllowlist, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if allowlist.Allows(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		tenantContext, ok := FromContext(r.Context())
+		if !ok || !tenantContext.HasBillingAccessAt(time.Now()) {
+			httpserver.WriteError(w, r, http.StatusPaymentRequired, "billing_access_required", "Billing access is required to use this resource.")
+			return
+		}
+
+		next.ServeHTTP(w, r)
 	})
 }
 

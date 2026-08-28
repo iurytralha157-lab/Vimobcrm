@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { RequestBodyTooLargeError, readRequestTextWithLimit } from '@/lib/security/limited-request-body'
 import {
   enforceServerRateLimit,
   getRequestIp,
@@ -8,9 +9,21 @@ import {
 
 export const runtime = 'nodejs'
 
+const CHECKOUT_PLAN_BACKEND_TIMEOUT_MS = 15_000
+const CHECKOUT_PLAN_MAX_BODY_BYTES = 2 * 1024
+
 const checkoutPlanSchema = z.object({
-  checkoutToken: z.string().trim().regex(/^[a-f0-9]{48}$/i),
+  checkoutToken: z.string().trim().regex(/^(?:[a-f0-9]{32}|[a-f0-9]{48})$/i),
   planSlug: z.string().trim().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/i),
+})
+
+const checkoutPlanResponseSchema = z.object({
+  ok: z.boolean(),
+  message: z.string().trim().min(1).max(500),
+  requiresPayment: z.boolean().optional(),
+  checkoutToken: z.string().regex(/^(?:[a-f0-9]{32}|[a-f0-9]{48})$/i).nullable().optional(),
+  organizationId: z.string().uuid().optional(),
+  plan: z.record(z.string(), z.unknown()).optional(),
 })
 
 function jsonResponse(
@@ -20,18 +33,21 @@ function jsonResponse(
     requiresPayment?: boolean
     checkoutToken?: string | null
     organizationId?: string
+    plan?: Record<string, unknown>
   },
   status: number,
   headers?: HeadersInit,
 ) {
-  return Response.json(body, { status, headers })
+  const responseHeaders = new Headers(headers)
+  responseHeaders.set('Cache-Control', 'no-store')
+  return Response.json(body, { status, headers: responseHeaders })
 }
 
 function getAPIBaseURL() {
   return (process.env.VIMOB_API_URL || process.env.NEXT_PUBLIC_VIMOB_API_URL || 'http://localhost:8081').replace(/\/+$/, '')
 }
 
-async function postPublicBackend<T>(path: string, body: unknown) {
+async function postPublicBackend(path: string, body: unknown) {
   const response = await fetch(`${getAPIBaseURL()}${path}`, {
     method: 'POST',
     headers: {
@@ -39,8 +55,12 @@ async function postPublicBackend<T>(path: string, body: unknown) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
+    cache: 'no-store',
+    signal: AbortSignal.timeout(CHECKOUT_PLAN_BACKEND_TIMEOUT_MS),
   })
-  const payload = (await response.json().catch(() => null)) as T | null
+  const payload = checkoutPlanResponseSchema.safeParse(
+    await response.json().catch(() => null),
+  )
   return { response, payload }
 }
 
@@ -66,9 +86,17 @@ export async function POST(request: Request) {
   }
 
   try {
-    rawBody = await request.json()
-  } catch {
-    return jsonResponse({ ok: false, message: 'Payload invalido.' }, 400)
+    const rawText = await readRequestTextWithLimit(request, CHECKOUT_PLAN_MAX_BODY_BYTES)
+    rawBody = JSON.parse(rawText)
+  } catch (error) {
+    const tooLarge = error instanceof RequestBodyTooLargeError
+    return jsonResponse(
+      {
+        ok: false,
+        message: tooLarge ? 'Os dados enviados ultrapassam o limite permitido.' : 'Payload invalido.',
+      },
+      tooLarge ? 413 : 400,
+    )
   }
 
   const parsed = checkoutPlanSchema.safeParse(rawBody)
@@ -95,25 +123,30 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { response, payload } = await postPublicBackend<{
-      ok: boolean
-      message: string
-      requiresPayment?: boolean
-      checkoutToken?: string | null
-      organizationId?: string
-    }>('/v1/public/onboarding/checkout-plan', parsed.data)
-
-    return jsonResponse(
-      payload || { ok: false, message: 'Resposta invalida do backend.' },
-      response.status,
+    const { response, payload } = await postPublicBackend(
+      '/v1/public/onboarding/checkout-plan',
+      parsed.data,
     )
-  } catch {
+
+    if (!payload.success) {
+      return jsonResponse(
+        { ok: false, message: 'O servidor devolveu uma resposta inválida. Tente novamente.' },
+        502,
+      )
+    }
+
+    return jsonResponse(payload.data, response.status)
+  } catch (error) {
+    const timedOut = error instanceof DOMException
+      && (error.name === 'TimeoutError' || error.name === 'AbortError')
     return jsonResponse(
       {
         ok: false,
-        message: 'A API do Vimob não está acessível para atualizar o plano.',
+        message: timedOut
+          ? 'A atualização do plano demorou mais que o esperado. Tente novamente.'
+          : 'Não foi possível atualizar o plano agora. Tente novamente.',
       },
-      503,
+      timedOut ? 504 : 503,
     )
   }
 }

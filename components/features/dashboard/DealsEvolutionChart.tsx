@@ -13,6 +13,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { DashboardChartTooltip } from './DashboardChartTooltip';
+import { DASHBOARD_DEAL_EVOLUTION_COLORS } from '@/config/dashboard-chart-colors';
 
 export interface DealsEvolutionPoint {
   date: string;
@@ -27,6 +28,7 @@ interface DealsEvolutionChartProps {
 }
 
 const SKELETON_BAR_HEIGHTS = [96, 128, 72, 112, 88, 136, 104];
+const INITIAL_CHART_DIMENSION = { width: 600, height: 250 };
 const chartTickStyle = {
   fill: 'var(--app-text-tertiary)',
   fontSize: 10,
@@ -122,10 +124,12 @@ export function DealsEvolutionChart({ data, isLoading }: DealsEvolutionChartProp
 
   if (isLoading) {
     return (
-      <Card className="app-card overflow-hidden h-full flex flex-col">
-        <CardHeader className="pb-2">
-          <CardTitle className="dashboard-card-title flex items-center gap-2 !text-[14px] !font-light !text-[var(--app-text-primary)]">
-            <TrendingUp className="h-4 w-4 text-primary" />
+      <Card className="flex h-full flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
+        <CardHeader className="px-4 pb-2 pt-4">
+          <CardTitle className="flex items-center gap-2 text-[14px] font-normal text-[var(--app-text-primary)]">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+              <TrendingUp className="h-3.5 w-3.5" />
+            </span>
             Evolução de Negócios
           </CardTitle>
         </CardHeader>
@@ -138,17 +142,21 @@ export function DealsEvolutionChart({ data, isLoading }: DealsEvolutionChartProp
 
   if (!data || data.length === 0) {
     return (
-      <Card className="app-card overflow-hidden h-full flex flex-col">
-        <CardHeader className="pb-2">
-          <CardTitle className="dashboard-card-title flex items-center gap-2 !text-[14px] !font-light !text-[var(--app-text-primary)]">
-            <TrendingUp className="h-4 w-4 text-primary" />
+      <Card className="flex h-full flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
+        <CardHeader className="px-4 pb-2 pt-4">
+          <CardTitle className="flex items-center gap-2 text-[14px] font-normal text-[var(--app-text-primary)]">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+              <TrendingUp className="h-3.5 w-3.5" />
+            </span>
             Evolução de Negócios
           </CardTitle>
         </CardHeader>
         <CardContent className="flex-1 flex items-center justify-center">
-          <div className="text-center py-8">
-            <TrendingUp className="h-8 w-8 text-muted-foreground/30 mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">
+          <div className="py-8 text-center">
+            <span className="mx-auto mb-2 flex h-8 w-8 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+              <TrendingUp className="h-3.5 w-3.5" />
+            </span>
+            <p className="text-[12px] font-light text-[var(--app-text-secondary)]">
               Nenhum dado disponível
             </p>
           </div>
@@ -165,17 +173,26 @@ export function DealsEvolutionChart({ data, isLoading }: DealsEvolutionChartProp
   const yTickCount = getYTickCount(chartSize.height, maxValue);
 
   return (
-    <Card className="app-card overflow-hidden h-full flex flex-col">
-      <CardHeader className="pb-2">
-        <CardTitle className="dashboard-card-title flex items-center gap-2 !text-[14px] !font-light !text-[var(--app-text-primary)]">
-          <TrendingUp className="h-4 w-4 text-primary" />
+    <Card className="flex h-full flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
+      <CardHeader className="px-4 pb-2 pt-4">
+        <CardTitle className="flex items-center gap-2 text-[14px] font-normal text-[var(--app-text-primary)]">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+            <TrendingUp className="h-3.5 w-3.5" />
+          </span>
           Evolução de Negócios
         </CardTitle>
       </CardHeader>
       <CardContent className="pb-3 flex-1 flex flex-col px-0">
         {/* Chart */}
         <div className="dashboard-recharts-focusless relative min-h-[200px] w-full flex-1">
-          <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1} onResize={handleResize}>
+          <ResponsiveContainer
+            width="100%"
+            height="100%"
+            minWidth={1}
+            minHeight={1}
+            initialDimension={INITIAL_CHART_DIMENSION}
+            onResize={handleResize}
+          >
             <AreaChart
               data={data}
               margin={{
@@ -187,16 +204,16 @@ export function DealsEvolutionChart({ data, isLoading }: DealsEvolutionChartProp
             >
               <defs>
                 <linearGradient id="gradientGanhos" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#22C55E" stopOpacity={0.4} />
-                  <stop offset="95%" stopColor="#22C55E" stopOpacity={0} />
+                  <stop offset="5%" stopColor={DASHBOARD_DEAL_EVOLUTION_COLORS.won} stopOpacity={0.4} />
+                  <stop offset="95%" stopColor={DASHBOARD_DEAL_EVOLUTION_COLORS.won} stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="gradientPerdas" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#EF4444" stopOpacity={0.4} />
-                  <stop offset="95%" stopColor="#EF4444" stopOpacity={0} />
+                  <stop offset="5%" stopColor={DASHBOARD_DEAL_EVOLUTION_COLORS.lost} stopOpacity={0.4} />
+                  <stop offset="95%" stopColor={DASHBOARD_DEAL_EVOLUTION_COLORS.lost} stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="gradientAbertos" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.4} />
-                  <stop offset="95%" stopColor="#3B82F6" stopOpacity={0} />
+                  <stop offset="5%" stopColor={DASHBOARD_DEAL_EVOLUTION_COLORS.open} stopOpacity={0.4} />
+                  <stop offset="95%" stopColor={DASHBOARD_DEAL_EVOLUTION_COLORS.open} stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid
@@ -230,31 +247,31 @@ export function DealsEvolutionChart({ data, isLoading }: DealsEvolutionChartProp
                 type="monotone"
                 dataKey="abertos"
                 name="abertos"
-                stroke="#3B82F6"
+                stroke={DASHBOARD_DEAL_EVOLUTION_COLORS.open}
                 strokeWidth={2}
                 fill="url(#gradientAbertos)"
                 dot={false}
-                activeDot={{ r: 4, strokeWidth: 2, stroke: '#fff' }}
+                activeDot={{ r: 4, strokeWidth: 2, stroke: 'var(--app-surface-solid)' }}
               />
               <Area
                 type="monotone"
                 dataKey="ganhos"
                 name="ganhos"
-                stroke="#22C55E"
+                stroke={DASHBOARD_DEAL_EVOLUTION_COLORS.won}
                 strokeWidth={2}
                 fill="url(#gradientGanhos)"
                 dot={false}
-                activeDot={{ r: 4, strokeWidth: 2, stroke: '#fff' }}
+                activeDot={{ r: 4, strokeWidth: 2, stroke: 'var(--app-surface-solid)' }}
               />
               <Area
                 type="monotone"
                 dataKey="perdas"
                 name="perdas"
-                stroke="#EF4444"
+                stroke={DASHBOARD_DEAL_EVOLUTION_COLORS.lost}
                 strokeWidth={2}
                 fill="url(#gradientPerdas)"
                 dot={false}
-                activeDot={{ r: 4, strokeWidth: 2, stroke: '#fff' }}
+                activeDot={{ r: 4, strokeWidth: 2, stroke: 'var(--app-surface-solid)' }}
               />
             </AreaChart>
           </ResponsiveContainer>

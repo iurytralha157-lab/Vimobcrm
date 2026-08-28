@@ -17,6 +17,27 @@ type LeadMetaWithCreativeLinks = LeadMeta & {
   creative_instagram_url?: string | null;
 };
 
+function getSafeExternalUrl(value: unknown) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function formatCapturedAt(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Data indisponível';
+  return format(date, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
+}
+
+function openExternalUrl(url: string) {
+  window.open(url, '_blank', 'noopener,noreferrer');
+}
+
 interface LeadTrackingSectionProps {
   leadMeta: LeadMeta | null;
   isLoading?: boolean;
@@ -25,10 +46,10 @@ interface LeadTrackingSectionProps {
 export function LeadTrackingSection({ leadMeta, isLoading }: LeadTrackingSectionProps) {
   if (isLoading) {
     return (
-      <div className="rounded-xl bg-white/[0.035] border border-white/[0.055] p-4">
+      <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-4">
         <div className="animate-pulse space-y-3">
-          <div className="h-4 bg-muted rounded w-1/3" />
-          <div className="h-20 bg-muted rounded" />
+          <div className="h-4 w-1/3 rounded-[4px] bg-[var(--app-surface-hover)]" />
+          <div className="h-20 rounded-[6px] bg-[var(--app-surface-hover)]" />
         </div>
       </div>
     );
@@ -55,6 +76,10 @@ export function LeadTrackingSection({ leadMeta, isLoading }: LeadTrackingSection
   }
 
   const creativeInstagramUrl = (leadMeta as LeadMetaWithCreativeLinks).creative_instagram_url;
+  const creativeImageUrl = getSafeExternalUrl(leadMeta.creative_url);
+  const creativeVideoUrl = getSafeExternalUrl(leadMeta.creative_video_url);
+  const instagramUrl = getSafeExternalUrl(creativeInstagramUrl);
+  const primaryCreativeUrl = creativeVideoUrl || creativeImageUrl;
 
   return (
     <div className="space-y-4">
@@ -62,10 +87,12 @@ export function LeadTrackingSection({ leadMeta, isLoading }: LeadTrackingSection
 
       {/* Campaign Data */}
       {hasCampaignData && (
-        <div className="rounded-xl bg-white/[0.035] border border-white/[0.055] p-4 space-y-3">
-          <div className="flex items-center gap-2 mb-3">
-            <Megaphone className="h-4 w-4 text-primary" />
-            <span className="text-sm font-medium">Dados da Campanha</span>
+        <div className="space-y-3 rounded-[8px] bg-[var(--app-surface-soft)] p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <span className="grid h-8 w-8 place-items-center rounded-[6px] bg-primary/50 text-primary-foreground">
+              <Megaphone className="h-4 w-4" />
+            </span>
+            <span className="text-[14px] font-normal">Dados da Campanha</span>
           </div>
 
           <div className="grid gap-2">
@@ -93,7 +120,7 @@ export function LeadTrackingSection({ leadMeta, isLoading }: LeadTrackingSection
                 label="Anúncio"
                 value={leadMeta.ad_name || leadMeta.ad_id || ''}
                 subValue={leadMeta.ad_name && leadMeta.ad_id ? `ID: ${leadMeta.ad_id}` : undefined}
-                externalUrl={leadMeta.creative_video_url || leadMeta.creative_url || undefined}
+                externalUrl={primaryCreativeUrl || undefined}
                 externalUrlLabel="Ver criativo"
               />
             )}
@@ -111,49 +138,53 @@ export function LeadTrackingSection({ leadMeta, isLoading }: LeadTrackingSection
               <TrackingRow
                 icon={Calendar}
                 label="Capturado em"
-                value={format(new Date(leadMeta.created_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                value={formatCapturedAt(leadMeta.created_at)}
               />
             )}
           </div>
 
           {/* Creative Preview (Video or Image) */}
-          {(leadMeta.creative_video_url || leadMeta.creative_url) && (
-            <div className="mt-3 pt-3 border-t border-white/[0.055] space-y-2">
-              {leadMeta.creative_video_url ? (
+          {primaryCreativeUrl && (
+            <div className="mt-3 space-y-2 border-t border-[var(--app-border)] pt-3">
+              {creativeVideoUrl ? (
                 <video
-                  src={leadMeta.creative_video_url}
+                  src={creativeVideoUrl}
                   controls
                   preload="metadata"
-                  className="w-full rounded-lg max-h-[240px] bg-black"
-                  poster={leadMeta.creative_url || undefined}
+                  className="max-h-[240px] w-full rounded-[8px] bg-black"
+                  poster={creativeImageUrl || undefined}
                 />
-              ) : leadMeta.creative_url ? (
-                <>
-                {/* eslint-disable-next-line @next/next/no-img-element -- Creative URLs come from Meta and may not be covered by Next image domains yet. */}
-                <img
-                  src={leadMeta.creative_url}
-                  alt="Criativo do anúncio"
-                  className="w-full rounded-lg max-h-[240px] object-cover cursor-pointer hover:opacity-90 transition-opacity"
-                  onClick={() => window.open(leadMeta.creative_url!, '_blank')}
-                />
-                </>
+              ) : creativeImageUrl ? (
+                <button
+                  type="button"
+                  className="block w-full rounded-[8px] outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
+                  onClick={() => openExternalUrl(creativeImageUrl)}
+                  aria-label="Abrir criativo do anúncio"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element -- Creative URLs come from Meta and may not be covered by Next image domains yet. */}
+                  <img
+                    src={creativeImageUrl}
+                    alt="Criativo do anúncio"
+                    className="max-h-[240px] w-full rounded-[8px] object-cover transition-opacity hover:opacity-90"
+                  />
+                </button>
               ) : null}
               <div className="flex gap-2">
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
-                  className="flex-1 gap-2 text-xs"
-                  onClick={() => window.open(leadMeta.creative_video_url || leadMeta.creative_url!, '_blank')}
+                  className="h-8 flex-1 gap-2 rounded-[6px] bg-[var(--app-surface-solid)] text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]"
+                  onClick={() => openExternalUrl(primaryCreativeUrl)}
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
                   Ver Criativo
                 </Button>
-                {creativeInstagramUrl && (
+                {instagramUrl && (
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
-                    className="flex-1 gap-2 text-xs"
-                    onClick={() => window.open(creativeInstagramUrl, '_blank')}
+                    className="h-8 flex-1 gap-2 rounded-[6px] bg-[var(--app-surface-solid)] text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]"
+                    onClick={() => openExternalUrl(instagramUrl)}
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
                     Ver no Instagram
@@ -167,10 +198,12 @@ export function LeadTrackingSection({ leadMeta, isLoading }: LeadTrackingSection
 
       {/* UTM Parameters */}
       {hasUtmData && (
-        <div className="rounded-xl bg-white/[0.035] border border-white/[0.055] p-4 space-y-3">
-          <div className="flex items-center gap-2 mb-3">
-            <Link2 className="h-4 w-4 text-primary" />
-            <span className="text-sm font-medium">Parâmetros UTM</span>
+        <div className="space-y-3 rounded-[8px] bg-[var(--app-surface-soft)] p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <span className="grid h-8 w-8 place-items-center rounded-[6px] bg-primary/50 text-primary-foreground">
+              <Link2 className="h-4 w-4" />
+            </span>
+            <span className="text-[14px] font-normal">Parâmetros UTM</span>
           </div>
 
           <div className="grid grid-cols-2 gap-2">
@@ -195,12 +228,14 @@ export function LeadTrackingSection({ leadMeta, isLoading }: LeadTrackingSection
 
       {/* Contact Notes */}
       {hasContactNotes && (
-        <div className="rounded-xl bg-gradient-to-br from-amber-50/50 to-amber-100/30 dark:from-amber-950/20 dark:to-amber-900/10 border border-amber-200/50 dark:border-amber-800/30 p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <FileText className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-            <span className="text-sm font-medium text-amber-800 dark:text-amber-200">Observações do Contato</span>
+        <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <span className="grid h-8 w-8 place-items-center rounded-[6px] bg-primary/50 text-primary-foreground">
+              <FileText className="h-4 w-4" />
+            </span>
+            <span className="text-[14px] font-normal">Observações do Contato</span>
           </div>
-          <p className="text-sm text-amber-700 dark:text-amber-300 whitespace-pre-wrap">
+          <p className="whitespace-pre-wrap text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
             {leadMeta.contact_notes}
           </p>
         </div>
@@ -221,24 +256,25 @@ interface TrackingRowProps {
 
 function TrackingRow({ icon: Icon, label, value, subValue, externalUrl }: TrackingRowProps) {
   return (
-    <div className="flex items-center gap-3 p-2.5 rounded-lg bg-white/[0.035]">
-      <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-        <Icon className="h-4 w-4 text-primary" />
+    <div className="flex items-center gap-3 rounded-[6px] bg-[var(--app-surface-solid)] p-2.5">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+        <Icon className="h-4 w-4" />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-xs text-muted-foreground">{label}</p>
-        <p className="text-sm font-medium truncate">{value}</p>
+        <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">{label}</p>
+        <p className="truncate text-[12px] font-normal text-[var(--app-text-primary)]">{value}</p>
         {subValue && (
-          <p className="text-xs text-muted-foreground truncate">{subValue}</p>
+          <p className="truncate text-[11px] font-light text-[var(--app-text-tertiary)]">{subValue}</p>
         )}
       </div>
       {externalUrl && (
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7 shrink-0"
-          onClick={() => window.open(externalUrl, '_blank')}
+          className="h-8 w-8 shrink-0 rounded-[6px] shadow-none hover:bg-[var(--app-surface-hover)]"
+          onClick={() => openExternalUrl(externalUrl)}
           title="Abrir no Meta Ads Manager"
+          aria-label="Abrir criativo no Meta Ads Manager"
         >
           <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
         </Button>
@@ -255,9 +291,9 @@ interface UtmTagProps {
 
 function UtmTag({ label, value, className }: UtmTagProps) {
   return (
-    <div className={`bg-white/[0.035] rounded-lg px-3 py-2 ${className || ''}`}>
-      <p className="text-xs text-muted-foreground font-mono">utm_{label}</p>
-      <p className="text-sm font-medium truncate">{value}</p>
+    <div className={`rounded-[6px] bg-[var(--app-surface-solid)] px-3 py-2 ${className || ''}`}>
+      <p className="font-mono text-[11px] font-light text-[var(--app-text-tertiary)]">utm_{label}</p>
+      <p className="truncate text-[12px] font-normal text-[var(--app-text-primary)]">{value}</p>
     </div>
   );
 }

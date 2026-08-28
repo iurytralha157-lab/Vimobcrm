@@ -201,6 +201,13 @@ func TestNextRoundRobinMemberAvailabilityUsesConfiguredSchedule(t *testing.T) {
 
 	requiredFragments := []string{
 		"public.member_availability",
+		"left join public.teams direct_team",
+		"and (entries.team_id is null or (direct_team.id is not null and tm.id is not null))",
+		"availability_members as",
+		"availability_member.user_id = eligible.user_id",
+		"where eligible.team_member_id is null",
+		"or availability_member.id = eligible.team_member_id",
+		"from availability_members eligible",
 		"generate_series(0, 7)",
 		"candidates.user_id <> nullif($3, '')::uuid",
 		"required_member.team_id = nullif($4, '')::uuid",

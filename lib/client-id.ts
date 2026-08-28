@@ -1,4 +1,4 @@
-export function createClientId(prefix = 'id') {
+export function createUUID() {
   const cryptoRef = globalThis.crypto;
 
   if (typeof cryptoRef?.randomUUID === 'function') {
@@ -13,6 +13,16 @@ export function createClientId(prefix = 'id') {
 
     const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+
+  throw new Error('Secure UUID generation is not available in this browser');
+}
+
+export function createClientId(prefix = 'id') {
+  try {
+    return createUUID();
+  } catch {
+    // Legacy non-security-sensitive callers retain their historical fallback.
   }
 
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;

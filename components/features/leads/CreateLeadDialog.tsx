@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useId, useMemo, useRef } from 'react';
-import { maskCNPJ, maskCPF, maskPhone, maskRG } from '@/lib/masks';
+import { maskCNPJ, maskCPF, maskRG } from '@/lib/masks';
+import { isValidE164Phone } from '@/lib/phone-utils';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { leadAttachmentsAPI } from '@/lib/api/lead-attachments';
@@ -8,6 +9,7 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { InternationalPhoneInput } from '@/components/shared/forms/InternationalPhoneInput';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -16,12 +18,14 @@ import { TagSelector } from '@/components/ui/tag-selector';
 import { Loader2, User, Briefcase, Building2, DollarSign, Trophy, XCircle, CircleDot, FileText, X, Home, Paperclip, Trash2, Plus } from 'lucide-react';
 import { PropertyPickerDialog } from '@/components/features/properties/PropertyPickerDialog';
 import { useAuth } from '@/contexts/AuthContext';
+import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useOrganizationUsers } from '@/hooks/use-users';
 import { usePipelines, useStages } from '@/hooks/use-stages';
 import { useProperties } from '@/hooks/use-properties';
 import { useCreateLead, useLead, useLeadSensitiveProfile, useUpdateLead, type Lead } from '@/hooks/use-leads';
 import { useTeams } from '@/hooks/use-teams';
+import { getPipelineStageColorStyle } from '@/config/pipeline-stage-colors';
 
 type EditableLead = Omit<Partial<Lead>, 'tags' | 'stage' | 'assignee'> & {
   id: string;
@@ -103,11 +107,15 @@ export function CreateLeadDialog({
   const { profile, organization } = useAuth();
   const fieldIdPrefix = useId();
   const { hasPermission } = useUserPermissions();
+  const { hasModule } = useOrganizationModules();
   const { data: allUsers = [] } = useOrganizationUsers();
   const allAssignableUsers = hasPermission('lead_operate') ? allUsers : allUsers.filter(u => u.id === profile?.id);
   const canSelectTeam = hasPermission('lead_view_all') || hasPermission('lead_view_team');
   const { data: teams = [] } = useTeams({ enabled: open && canSelectTeam });
-  const canViewProperties = hasPermission('property_view') || hasPermission('property_manage');
+  const hasPropertiesModule = hasModule('properties');
+  const canViewProperties =
+    hasPropertiesModule &&
+    (hasPermission('property_view') || hasPermission('property_manage'));
   const { data: pipelines = [] } = usePipelines();
   const { data: properties = [] } = useProperties(undefined, {}, { enabled: canViewProperties && open });
   const createLead = useCreateLead();
@@ -552,7 +560,11 @@ export function CreateLeadDialog({
       let failedAttachments = 0;
       for (const file of pendingAttachments) {
         try {
-          await leadAttachmentsAPI.upload(savedLead.id, file);
+          await leadAttachmentsAPI.upload(
+            savedLead.id,
+            file,
+            organization?.id || profile?.organization_id,
+          );
         } catch {
           failedAttachments += 1;
         }
@@ -615,8 +627,7 @@ export function CreateLeadDialog({
     });
   };
 
-  const phoneDigits = formData.phone.replace(/\D/g, '');
-  const hasValidPhone = !formData.phone || phoneDigits.length >= 10;
+  const hasValidPhone = !formData.phone || isValidE164Phone(formData.phone);
   const hasValidEmail = !formData.email.trim() || EMAIL_REGEX.test(formData.email.trim());
   const hasContactChannel = (!!formData.phone && hasValidPhone) || (!!formData.email.trim() && hasValidEmail);
   const hasRequiredLeadIdentity = !!formData.name.trim() && hasContactChannel;
@@ -653,10 +664,10 @@ export function CreateLeadDialog({
   };
   const describedBy = (...ids: Array<string | false | null | undefined>) => ids.filter(Boolean).join(' ') || undefined;
   const leadDialogSurfaceClass = cn(
-    "!left-1/2 !right-auto !top-1/2 !bottom-auto !h-auto max-h-[88vh] !w-[96vw] !border-0 bg-[var(--app-surface)] !p-0 text-[var(--app-text-primary)] shadow-[0_24px_80px_rgba(0,0,0,0.34)] backdrop-blur-2xl sm:!w-[720px] sm:!max-w-[720px]",
+    "!left-1/2 !right-auto !top-1/2 !bottom-auto !h-auto max-h-[88vh] !w-[96vw] !border-0 bg-[var(--app-surface)] !p-0 text-[var(--app-text-primary)] shadow-none sm:!w-[720px] sm:!max-w-[720px]",
     "!duration-0 !transition-none flex flex-col overflow-hidden rounded-none will-change-transform sm:rounded-[24px]",
     "data-[state=open]:!animate-none data-[state=closed]:!animate-none data-[state=closed]:!slide-out-to-right data-[state=open]:!slide-in-from-right",
-    "[&_label]:text-[var(--app-text-secondary)] [&_label]:font-medium",
+    "[&_label]:text-[12px] [&_label]:font-light [&_label]:text-[var(--app-text-secondary)]",
     "[&_input]:h-10 [&_input]:border-0 [&_input]:bg-[var(--app-surface-soft)] [&_input]:text-[var(--app-text-primary)] [&_input]:placeholder:text-[var(--app-text-tertiary)] [&_input]:shadow-none [&_input]:ring-0",
     "[&_textarea]:border-0 [&_textarea]:bg-[var(--app-surface-soft)] [&_textarea]:text-[var(--app-text-primary)] [&_textarea]:placeholder:text-[var(--app-text-tertiary)] [&_textarea]:shadow-none [&_textarea]:ring-0",
     "[&_button[role=combobox]]:h-10 [&_button[role=combobox]]:border-0 [&_button[role=combobox]]:bg-[var(--app-surface-soft)] [&_button[role=combobox]]:text-[var(--app-text-primary)] [&_button[role=combobox]]:shadow-none",
@@ -678,7 +689,7 @@ export function CreateLeadDialog({
     }
 
     if (formData.phone && !hasValidPhone) {
-      nextErrors.phone = 'Telefone invalido. Informe DDD + numero (min. 10 digitos).';
+      nextErrors.phone = 'Telefone invalido. Informe DDI + numero (ex.: +55 11 99999-9999).';
     }
 
     if (formData.email.trim() && !hasValidEmail) {
@@ -797,7 +808,7 @@ export function CreateLeadDialog({
         ref={dialogContentRef}
         side="right"
         className={leadDialogSurfaceClass}
-        overlayClassName="!bg-black/18 !backdrop-blur-[1px]"
+        overlayClassName="!bg-black/18"
         onInteractOutside={handleInteractOutside}
         style={{
           transform: `translate(calc(-50% + ${dialogPosition.x}px), calc(-50% + ${dialogPosition.y}px))`,
@@ -810,7 +821,7 @@ export function CreateLeadDialog({
           onPointerUp={handleDragEnd}
           onPointerCancel={handleDragEnd}
         >
-          <SheetTitle className="flex items-center gap-2 pr-9 text-[15px] font-semibold text-[var(--app-text-primary)]">
+          <SheetTitle className="flex items-center gap-2 pr-9 text-[14px] font-normal text-[var(--app-text-primary)]">
             <User className="h-4 w-4 text-primary" />
             <span>{isEditMode ? 'Editar Lead' : 'Novo Lead'}</span>
           </SheetTitle>
@@ -827,7 +838,7 @@ export function CreateLeadDialog({
 
         {/* Draft restored banner */}
         {draftRestored && (
-          <div className="mx-6 mt-2 flex items-center justify-between gap-2 rounded-xl bg-[var(--app-surface-soft)] px-3 py-2">
+          <div className="mx-6 mt-2 flex items-center justify-between gap-2 rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-2">
             <div className="flex items-center gap-2 text-sm text-[var(--app-text-secondary)]">
               <FileText className="h-4 w-4 flex-shrink-0" />
               <span>Rascunho restaurado</span>
@@ -835,7 +846,7 @@ export function CreateLeadDialog({
             <button
               type="button"
               onClick={discardDraft}
-              className="flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80"
+              className="flex items-center gap-1 text-[12px] font-light text-primary hover:text-primary/80"
             >
               <X className="h-3 w-3" />
               Descartar
@@ -847,11 +858,11 @@ export function CreateLeadDialog({
           <div className="flex-1 min-h-0 overflow-y-auto">
             <div className="px-6 pb-4 pt-3">
               <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                <TabsList data-tour="lead-form-tabs" className={cn('mb-5 grid h-10 w-full rounded-xl bg-[var(--app-surface-soft)] p-1', isEditMode ? 'grid-cols-3' : 'grid-cols-4')}>
-                  <TabsTrigger data-tour="lead-form-tab-basic" value="basic" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Contato</TabsTrigger>
-                  <TabsTrigger data-tour="lead-form-tab-profile" value="profile" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Pessoa</TabsTrigger>
-                  <TabsTrigger data-tour="lead-form-tab-interest" value="interest" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Interesse</TabsTrigger>
-                  {!isEditMode && <TabsTrigger data-tour="lead-form-tab-management" value="management" className="rounded-lg text-xs text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-white">Gestão</TabsTrigger>}
+                <TabsList data-tour="lead-form-tabs" className={cn('mb-5 grid h-10 w-full rounded-[8px] bg-[var(--app-surface-soft)] p-1', isEditMode ? 'grid-cols-3' : 'grid-cols-4')}>
+                  <TabsTrigger data-tour="lead-form-tab-basic" value="basic" className="rounded-[6px] text-[12px] font-light text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Contato</TabsTrigger>
+                  <TabsTrigger data-tour="lead-form-tab-profile" value="profile" className="rounded-[6px] text-[12px] font-light text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Pessoa</TabsTrigger>
+                  <TabsTrigger data-tour="lead-form-tab-interest" value="interest" className="rounded-[6px] text-[12px] font-light text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Interesse</TabsTrigger>
+                  {!isEditMode && <TabsTrigger data-tour="lead-form-tab-management" value="management" className="rounded-[6px] text-[12px] font-light text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Gestão</TabsTrigger>}
                 </TabsList>
 
                 {/* Basic Info Tab */}
@@ -881,13 +892,11 @@ export function CreateLeadDialog({
                       <div className="grid grid-cols-2 gap-3">
                         <div className="space-y-1.5">
                           <Label htmlFor={fieldIds.phone} className="text-sm font-medium">Telefone</Label>
-                          <Input
+                          <InternationalPhoneInput
                             id={fieldIds.phone}
                             value={formData.phone}
-                            onChange={(e) => updateField('phone', maskPhone(e.target.value))}
+                            onChange={(value) => updateField('phone', value)}
                             placeholder="(00) 00000-0000"
-                            inputMode="tel"
-                            maxLength={15}
                             aria-invalid={Boolean(errors.phone || errors.contact)}
                             aria-describedby={describedBy(
                               errors.phone && `${fieldIds.phone}-error`,
@@ -976,7 +985,7 @@ export function CreateLeadDialog({
                 <TabsContent data-tour="lead-form-profile" value="profile" className="mt-0 space-y-5">
                   <div className="space-y-2">
                     <Label>Tipo de pessoa</Label>
-                    <div className="grid grid-cols-2 gap-2 rounded-xl bg-[var(--app-surface-soft)] p-1">
+                    <div className="grid grid-cols-2 gap-2 rounded-[8px] bg-[var(--app-surface-soft)] p-1">
                       {([
                         ['individual', 'Pessoa física'],
                         ['company', 'Pessoa jurídica'],
@@ -986,9 +995,9 @@ export function CreateLeadDialog({
                           type="button"
                           onClick={() => updateField('person_type', value)}
                           className={cn(
-                            'h-9 rounded-lg text-xs font-medium transition-colors',
+                            'h-9 rounded-[6px] text-[12px] font-light transition-colors',
                             formData.person_type === value
-                              ? 'bg-primary text-white shadow-sm'
+                              ? 'bg-primary text-primary-foreground shadow-none'
                               : 'text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)]',
                           )}
                         >
@@ -1080,10 +1089,10 @@ export function CreateLeadDialog({
                     <p className="text-xs text-[var(--app-text-tertiary)]">Digite somente os números; a moeda é formatada automaticamente.</p>
                   </div>
 
-                  <div className="space-y-3">
+                  {hasPropertiesModule && <div className="space-y-3">
                     <Label className="flex items-center gap-2"><Home className="h-3.5 w-3.5" />Imóveis de interesse</Label>
                     {selectedInterestProperties.map((property, index) => (
-                      <div key={property.id} className="flex items-center gap-3 rounded-xl bg-[var(--app-surface-soft)] px-3 py-2.5">
+                      <div key={property.id} className="flex items-center gap-3 rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-2.5">
                         <Building2 className="h-4 w-4 shrink-0 text-primary" />
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium text-[var(--app-text-primary)]">{[property.code, property.title].filter(Boolean).join(' - ')}</p>
@@ -1136,13 +1145,13 @@ export function CreateLeadDialog({
                         });
                       }}
                       trigger={(
-                        <button type="button" disabled={!canViewProperties} className="flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-primary/40 bg-primary/10 px-3 text-xs font-medium text-primary hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-50">
+                        <button type="button" disabled={!canViewProperties} className="flex h-10 w-full items-center justify-center gap-2 rounded-[6px] border border-dashed border-primary/40 bg-primary/10 px-3 text-[12px] font-light text-primary hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-50">
                           <Plus className="h-3.5 w-3.5" />{selectedInterestProperties.length > 0 ? 'Adicionar outro imóvel' : 'Adicionar imóvel'}
                         </button>
                       )}
                     />
                     {!canViewProperties && <p className="text-xs text-[var(--app-text-tertiary)]">Seu perfil não possui acesso aos imóveis.</p>}
-                  </div>
+                  </div>}
 
                   {!isEditMode && <div className="space-y-3 border-t border-[var(--app-border)] pt-4">
                     <div>
@@ -1160,11 +1169,11 @@ export function CreateLeadDialog({
                         event.currentTarget.value = '';
                       }}
                     />
-                    <label htmlFor={`${fieldIdPrefix}-lead-attachments`} className="flex h-10 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-primary/40 bg-primary/10 text-xs font-medium text-primary hover:bg-primary/15">
+                    <label htmlFor={`${fieldIdPrefix}-lead-attachments`} className="flex h-10 cursor-pointer items-center justify-center gap-2 rounded-[6px] border border-dashed border-primary/40 bg-primary/10 text-[12px] font-light text-primary hover:bg-primary/15">
                       <Plus className="h-3.5 w-3.5" />Adicionar documentos
                     </label>
                     {pendingAttachments.map((file) => (
-                      <div key={`${file.name}:${file.size}:${file.lastModified}`} className="flex items-center gap-3 rounded-xl bg-[var(--app-surface-soft)] px-3 py-2">
+                      <div key={`${file.name}:${file.size}:${file.lastModified}`} className="flex items-center gap-3 rounded-[8px] bg-[var(--app-surface-soft)] px-3 py-2">
                         <FileText className="h-4 w-4 shrink-0 text-primary" />
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-xs font-medium text-[var(--app-text-primary)]">{file.name}</p>
@@ -1312,7 +1321,7 @@ export function CreateLeadDialog({
                               <div className="flex items-center gap-2">
                                 <div
                                   className="h-2.5 w-2.5 rounded-full"
-                                  style={{ backgroundColor: s.color || "#6b7280" }}
+                                   style={getPipelineStageColorStyle(s.color)}
                                 />
                                 {s.name}
                               </div>
@@ -1352,7 +1361,7 @@ export function CreateLeadDialog({
               <Button
                 key="btn-avancar"
                 type="button"
-                className="h-10 w-[60%] bg-primary text-white hover:bg-primary/90"
+                className="h-10 w-[60%] rounded-[6px] bg-primary/50 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
                 onClick={() => {
                   if (activeTab === 'basic') {
                     if (!validateBasicStep()) return;
@@ -1372,7 +1381,7 @@ export function CreateLeadDialog({
                 data-tour="lead-form-submit"
                 key="btn-submit"
                 type="submit"
-                className="h-10 w-[60%] bg-primary text-white hover:bg-primary/90"
+                className="h-10 w-[60%] rounded-[6px] bg-primary/50 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
                 disabled={isSubmitting || isLoadingEditLead || sensitiveProfileError || !hasRequiredLeadIdentity || (!isEditMode && !hasRequiredManagement)}
               >
                 {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}

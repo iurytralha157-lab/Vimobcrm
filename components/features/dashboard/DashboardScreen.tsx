@@ -18,7 +18,13 @@ import {
   Trophy,
   PieChart as PieChartIcon,
 } from "lucide-react";
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
+import {
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+} from "recharts";
 
 import { performanceTracker } from "@/lib/performance";
 import { cn } from "@/lib/utils";
@@ -37,8 +43,19 @@ import { LeadSourcesChart } from "@/components/features/dashboard/LeadSourcesCha
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 // Hooks e Contextos
@@ -49,15 +66,20 @@ import {
   useEnhancedDashboardStats,
   useDealsEvolutionData,
   useLeadSourcesData,
+  useDashboardQueryScope,
 } from "@/hooks/use-dashboard-stats";
-import { useAuth } from "@/contexts/AuthContext";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { SharedFilters } from "@/components/shared/SharedFilters";
 import { datePresetOptions, sourceLabels } from "@/hooks/use-dashboard-filters";
-import { getDashboardExtraCounts, type DashboardAPIFilters } from "@/lib/api/dashboard";
+import {
+  getDashboardExtraCounts,
+  type DashboardAPIFilters,
+} from "@/lib/api/dashboard";
+import { DASHBOARD_CHART_COLORS } from "@/config/dashboard-chart-colors";
 
 const DASHBOARD_EXTRA_COUNTS_STALE_TIME_MS = 1000 * 60 * 10;
 const DASHBOARD_DESKTOP_BREAKPOINT_PX = 1024;
+const DIALOG_CHART_INITIAL_DIMENSION = { width: 180, height: 180 };
 
 type KPIFormat = "number" | "currency" | "percent" | "time";
 
@@ -84,10 +106,14 @@ type DashboardKPI = {
 };
 
 function useIsDashboardDesktop() {
-  const [isDashboardDesktop, setIsDashboardDesktop] = useState<boolean | null>(null);
+  const [isDashboardDesktop, setIsDashboardDesktop] = useState<boolean | null>(
+    null,
+  );
 
   useEffect(() => {
-    const mediaQuery = window.matchMedia(`(min-width: ${DASHBOARD_DESKTOP_BREAKPOINT_PX}px)`);
+    const mediaQuery = window.matchMedia(
+      `(min-width: ${DASHBOARD_DESKTOP_BREAKPOINT_PX}px)`,
+    );
     const syncDashboardLayout = () => setIsDashboardDesktop(mediaQuery.matches);
 
     syncDashboardLayout();
@@ -110,8 +136,8 @@ export default function Dashboard() {
   const [lostDialogOpen, setLostDialogOpen] = useState(false);
   const [wonDialogOpen, setWonDialogOpen] = useState(false);
   const [shouldLoadFilterOptions, setShouldLoadFilterOptions] = useState(false);
-  const { organization, profile } = useAuth();
-  const activeOrganizationId = organization?.id ?? profile?.organization_id;
+  const dashboardQueryScope = useDashboardQueryScope();
+  const activeOrganizationId = dashboardQueryScope.organizationId;
   const filterOptionsPipelineId = useFilterOptionsPipelineId();
 
   const {
@@ -149,24 +175,30 @@ export default function Dashboard() {
     isLoadingCampaigns,
     isLoadingAdSets,
     isLoadingAds,
-  } = useSharedFilters({ loadDynamicOptions: shouldLoadFilterOptions, pipelineId: filterOptionsPipelineId });
+  } = useSharedFilters({
+    loadDynamicOptions: shouldLoadFilterOptions,
+    pipelineId: filterOptionsPipelineId,
+  });
 
   // Mapeamento de strings de data para chaves de cache estáveis
   const dateFromStr = filters.dateRange.from.toISOString();
   const dateToStr = filters.dateRange.to.toISOString();
 
-  const dashboardFilters = useMemo<DashboardAPIFilters>(() => ({
-    dateRange: filters.dateRange,
-    teamId: filters.teamId,
-    userId: filters.userId,
-    source: filters.source,
-    campaignId: filters.campaignId,
-    adSetId: filters.adSetId,
-    adId: filters.adId,
-    tagId: filters.tagId,
-    dealStatus: filters.dealStatus,
-    searchQuery: filters.searchQuery,
-  }), [filters]);
+  const dashboardFilters = useMemo<DashboardAPIFilters>(
+    () => ({
+      dateRange: filters.dateRange,
+      teamId: filters.teamId,
+      userId: filters.userId,
+      source: filters.source,
+      campaignId: filters.campaignId,
+      adSetId: filters.adSetId,
+      adId: filters.adId,
+      tagId: filters.tagId,
+      dealStatus: filters.dealStatus,
+      searchQuery: filters.searchQuery,
+    }),
+    [filters],
+  );
 
   // Data hooks - Imobiliário
   const {
@@ -175,8 +207,10 @@ export default function Dashboard() {
     isError: statsError,
     refetch: refetchStats,
   } = useEnhancedDashboardStats(dashboardFilters);
-  const { data: evolutionData = [], isLoading: evolutionLoading } = useDealsEvolutionData(dashboardFilters);
-  const { data: sourcesData = [], isLoading: sourcesLoading } = useLeadSourcesData(dashboardFilters);
+  const { data: evolutionData = [], isLoading: evolutionLoading } =
+    useDealsEvolutionData(dashboardFilters);
+  const { data: sourcesData = [], isLoading: sourcesLoading } =
+    useLeadSourcesData(dashboardFilters);
   const hasOrganization = Boolean(activeOrganizationId);
 
   const {
@@ -188,6 +222,8 @@ export default function Dashboard() {
     queryKey: [
       "dashboard-extra-counts",
       activeOrganizationId,
+      dashboardQueryScope.currentUserId,
+      dashboardQueryScope.accessSignature,
       dateFromStr,
       dateToStr,
       filters.userId,
@@ -200,8 +236,13 @@ export default function Dashboard() {
       filters.dealStatus,
       filters.searchQuery,
     ],
-    queryFn: () => getDashboardExtraCounts({ organizationId: activeOrganizationId, filters: dashboardFilters }),
-    enabled: !!activeOrganizationId,
+    queryFn: ({ signal }) =>
+      getDashboardExtraCounts({
+        organizationId: activeOrganizationId,
+        filters: dashboardFilters,
+        signal,
+      }),
+    enabled: dashboardQueryScope.isReady,
     staleTime: DASHBOARD_EXTRA_COUNTS_STALE_TIME_MS,
   });
 
@@ -215,12 +256,20 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (hasOrganization && !statsLoading && !evolutionLoading) {
-      performanceTracker.addMetric("Dashboard Full Load", performance.now(), "ms");
+      performanceTracker.addMetric(
+        "Dashboard Full Load",
+        performance.now(),
+        "ms",
+      );
     }
   }, [hasOrganization, statsLoading, evolutionLoading]);
 
-  const funnelComponent = <SalesFunnelWithPipeline filters={dashboardFilters} />;
-  const periodLabel = datePresetOptions.find((o) => o.value === datePreset)?.label || "Período selecionado";
+  const funnelComponent = (
+    <SalesFunnelWithPipeline filters={dashboardFilters} />
+  );
+  const periodLabel =
+    datePresetOptions.find((o) => o.value === datePreset)?.label ||
+    "Período selecionado";
 
   const retryKpis = () => {
     void refetchStats();
@@ -229,6 +278,9 @@ export default function Dashboard() {
 
   const kpiData: EnhancedDashboardStats = stats || {
     totalLeads: 0,
+    leadsInProgress: 0,
+    leadsClosed: 0,
+    leadsLost: 0,
     openLeads: 0,
     lostLeads: 0,
     conversionRate: 0,
@@ -257,11 +309,14 @@ export default function Dashboard() {
     <AppLayout title="Dashboard" disableMainScroll={true} borderless>
       <div
         className={cn(
-          "dashboard-borderless flex flex-col gap-2 md:gap-3 animate-fade-in h-full w-full",
-          !isMobile ? "flex-1 min-h-0 overflow-hidden" : "",
+          "dashboard-borderless flex h-full w-full animate-fade-in flex-col gap-3 overflow-hidden pb-1",
+          !isMobile ? "flex-1 min-h-0" : "",
         )}
       >
-        <div data-tour="dashboard-filters">
+        <div
+          className="flex shrink-0 justify-end"
+          data-tour="dashboard-filters"
+        >
           <SharedFilters
             datePreset={datePreset}
             onDatePresetChange={setDatePreset}
@@ -306,88 +361,41 @@ export default function Dashboard() {
         </div>
 
         {isDashboardDesktop === null ? (
-          <div className="flex-1 min-h-[420px] rounded-[8px] bg-[var(--app-surface-muted)]" />
+          <div className="min-h-[420px] flex-1 rounded-[8px] bg-[var(--app-surface-soft)]" />
         ) : isDashboardDesktop ? (
-        <div className="grid lg:grid-cols-12 gap-2 md:gap-3 flex-1 min-h-0 overflow-y-auto app-scrollbar">
-          <div className="col-span-8 flex flex-col gap-3 min-h-0">
-            <div className="flex-shrink-0">
-              {kpisError ? (
-                <DashboardDataError onRetry={retryKpis} />
-              ) : (
-                <KPICardsGrid
-                  data={kpiData}
-                  isLoading={kpisLoading}
-                  periodLabel={periodLabel}
-                  propertyCount={propertyCount}
-                  siteVisits={siteVisits}
-                  scheduledVisits={scheduledVisitsCount}
-                  layout="top"
-                  onLostClick={() => setLostDialogOpen(true)}
-                  onWonClick={() => setWonDialogOpen(true)}
-                />
-              )}
-            </div>
-
-            <div data-tour="dashboard-evolution" className="flex-1 min-h-0">
-              <DealsEvolutionChart data={evolutionData} isLoading={evolutionDataLoading} />
-            </div>
-          </div>
-
-          <div className="col-span-4 min-h-0 flex flex-col gap-3">
-            <div data-tour="dashboard-funnel" className="h-[48%] min-h-0">{funnelComponent}</div>
-            <div data-tour="dashboard-sources" className="h-[52%] min-h-0">
-              <LeadSourcesChart
-                data={sourcesData}
-                isLoading={sourcesDataLoading}
-                selectedSource={source}
-                onSourceChange={setSource}
-              />
-            </div>
-          </div>
-        </div>
-        ) : (
-        <div className={cn("scrollbar-hidden flex flex-col gap-4 overflow-y-auto", !isMobile ? "flex-1 min-h-0" : "")}>
-          {kpisError ? (
-            <DashboardDataError onRetry={retryKpis} />
-          ) : (
-            <KPICards
-              data={kpiData}
-              isLoading={kpisLoading}
-              periodLabel={periodLabel}
-              scheduledVisits={scheduledVisitsCount}
-              propertyCount={propertyCount}
-              siteVisits={siteVisits}
-              onLostClick={() => setLostDialogOpen(true)}
-              onWonClick={() => setWonDialogOpen(true)}
-            />
-          )}
-
-          <Tabs
-            value={mobileChartTab}
-            onValueChange={setMobileChartTab}
-            className={cn(!isMobile ? "flex-1 flex flex-col min-h-0" : "")}
-          >
-            <TabsList className="w-full grid grid-cols-3 gap-1 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
-              <TabsTrigger value="funnel" className="mx-0 rounded-[6px] text-xs data-[state=active]:shadow-none">
-                Funil
-              </TabsTrigger>
-              <TabsTrigger value="evolution" className="mx-0 rounded-[6px] text-xs data-[state=active]:shadow-none">
-                Evolução
-              </TabsTrigger>
-              <TabsTrigger value="sources" className="mx-0 rounded-[6px] text-xs data-[state=active]:shadow-none">
-                Origem
-              </TabsTrigger>
-            </TabsList>
-            <TabsContent value="funnel" className={cn("mt-3", !isMobile ? "flex-1 min-h-0" : "")}>
-              <div data-tour="dashboard-funnel" className="h-[400px]">{funnelComponent}</div>
-            </TabsContent>
-            <TabsContent value="evolution" className={cn("mt-3", !isMobile ? "flex-1 min-h-0" : "")}>
-              <div data-tour="dashboard-evolution" className="h-[400px]">
-                <DealsEvolutionChart data={evolutionData} isLoading={evolutionDataLoading} />
+          <div className="grid min-h-0 flex-1 grid-cols-12 gap-3 overflow-hidden">
+            <div className="col-span-8 flex min-h-0 flex-col gap-3">
+              <div className="shrink-0">
+                {kpisError ? (
+                  <DashboardDataError onRetry={retryKpis} />
+                ) : (
+                  <KPICardsGrid
+                    data={kpiData}
+                    isLoading={kpisLoading}
+                    periodLabel={periodLabel}
+                    propertyCount={propertyCount}
+                    siteVisits={siteVisits}
+                    scheduledVisits={scheduledVisitsCount}
+                    layout="top"
+                    onLostClick={() => setLostDialogOpen(true)}
+                    onWonClick={() => setWonDialogOpen(true)}
+                  />
+                )}
               </div>
-            </TabsContent>
-            <TabsContent value="sources" className={cn("mt-3", !isMobile ? "flex-1 min-h-0" : "")}>
-              <div data-tour="dashboard-sources" className="h-[450px]">
+
+              <div data-tour="dashboard-evolution" className="min-h-0 flex-1">
+                <DealsEvolutionChart
+                  data={evolutionData}
+                  isLoading={evolutionDataLoading}
+                />
+              </div>
+            </div>
+
+            <div className="col-span-4 flex min-h-0 flex-col gap-3">
+              <div data-tour="dashboard-funnel" className="h-[48%] min-h-0">
+                {funnelComponent}
+              </div>
+              <div data-tour="dashboard-sources" className="h-[52%] min-h-0">
                 <LeadSourcesChart
                   data={sourcesData}
                   isLoading={sourcesDataLoading}
@@ -395,9 +403,75 @@ export default function Dashboard() {
                   onSourceChange={setSource}
                 />
               </div>
-            </TabsContent>
-          </Tabs>
-        </div>
+            </div>
+          </div>
+        ) : (
+          <div className="scrollbar-hidden min-h-0 flex-1 space-y-4 overflow-y-auto pb-5">
+            <section>
+              {kpisError ? (
+                <DashboardDataError onRetry={retryKpis} />
+              ) : (
+                <KPICards
+                  data={kpiData}
+                  isLoading={kpisLoading}
+                  periodLabel={periodLabel}
+                  scheduledVisits={scheduledVisitsCount}
+                  propertyCount={propertyCount}
+                  siteVisits={siteVisits}
+                  onLostClick={() => setLostDialogOpen(true)}
+                  onWonClick={() => setWonDialogOpen(true)}
+                />
+              )}
+            </section>
+
+            <section>
+              <Tabs value={mobileChartTab} onValueChange={setMobileChartTab}>
+                <TabsList className="grid h-10 w-full grid-cols-3 gap-1 rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-1 shadow-none">
+                  <TabsTrigger
+                    value="funnel"
+                    className="mx-0 h-8 rounded-[6px] text-[11px] font-light text-[var(--app-text-secondary)] shadow-none data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:text-[var(--app-text-primary)] data-[state=active]:shadow-none"
+                  >
+                    Funil
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="evolution"
+                    className="mx-0 h-8 rounded-[6px] text-[11px] font-light text-[var(--app-text-secondary)] shadow-none data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:text-[var(--app-text-primary)] data-[state=active]:shadow-none"
+                  >
+                    Evolução
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="sources"
+                    className="mx-0 h-8 rounded-[6px] text-[11px] font-light text-[var(--app-text-secondary)] shadow-none data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:text-[var(--app-text-primary)] data-[state=active]:shadow-none"
+                  >
+                    Origem
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="funnel" className="mt-3">
+                  <div data-tour="dashboard-funnel" className="h-[390px]">
+                    {funnelComponent}
+                  </div>
+                </TabsContent>
+                <TabsContent value="evolution" className="mt-3">
+                  <div data-tour="dashboard-evolution" className="h-[390px]">
+                    <DealsEvolutionChart
+                      data={evolutionData}
+                      isLoading={evolutionDataLoading}
+                    />
+                  </div>
+                </TabsContent>
+                <TabsContent value="sources" className="mt-3">
+                  <div data-tour="dashboard-sources" className="h-[430px]">
+                    <LeadSourcesChart
+                      data={sourcesData}
+                      isLoading={sourcesDataLoading}
+                      selectedSource={source}
+                      onSourceChange={setSource}
+                    />
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </section>
+          </div>
         )}
       </div>
 
@@ -448,21 +522,25 @@ function formatKPIValue(value: string | number, format: KPIFormat): string {
 
 function DashboardDataError({ onRetry }: { onRetry: () => void }) {
   return (
-    <Card className="border-destructive/25 bg-destructive/[0.04]">
-      <CardContent className="flex min-h-[96px] items-center justify-between gap-3 p-4">
+    <Card className="rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
+      <CardContent className="flex min-h-[96px] flex-col items-start justify-between gap-3 p-4 sm:flex-row sm:items-center">
         <div className="flex min-w-0 items-center gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-destructive/10 text-destructive">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-destructive/10 text-destructive">
             <XCircle className="h-4 w-4" />
           </span>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-foreground">Nao foi possivel carregar os dados.</p>
-            <p className="text-xs text-muted-foreground">Os numeros foram preservados fora da tela ate a consulta responder corretamente.</p>
+            <p className="text-[14px] font-normal text-[var(--app-text-primary)]">
+              Não foi possível carregar os dados.
+            </p>
+            <p className="mt-0.5 text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
+              Tente novamente para atualizar os indicadores.
+            </p>
           </div>
         </div>
         <button
           type="button"
           onClick={onRetry}
-          className="h-9 shrink-0 rounded-[6px] bg-primary px-3 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+          className="h-8 shrink-0 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-primary-foreground shadow-none transition-colors hover:bg-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
         >
           Tentar novamente
         </button>
@@ -509,12 +587,15 @@ function KPICardsGrid({
     ];
 
     return (
-      <div className={cn("grid gap-3", isSide ? "grid-cols-2" : "grid-cols-5")}>
+      <div className={cn("grid gap-2", isSide ? "grid-cols-2" : "grid-cols-5")}>
         {Array.from({ length: 9 }).map((_, i) => (
           <Card
             key={`skeleton-${i}`}
             data-tour={skeletonTours[i]}
-            className={cn(i === 5 && !isSide ? "col-span-2" : "")}
+            className={cn(
+              "rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none",
+              i === 5 && !isSide ? "col-span-2" : "",
+            )}
           >
             <CardContent className="p-4">
               <div className="flex items-start justify-between">
@@ -523,7 +604,7 @@ function KPICardsGrid({
                   <Skeleton className="h-6 w-12" />
                   <Skeleton className="h-3 w-10" />
                 </div>
-                <Skeleton className="h-9 w-9 rounded-lg" />
+                <Skeleton className="h-8 w-8 rounded-[6px]" />
               </div>
             </CardContent>
           </Card>
@@ -545,7 +626,10 @@ function KPICardsGrid({
     {
       title: "Em aberto",
       value: data.openLeads ?? 0,
-      rate: data.totalLeads > 0 ? ((data.openLeads ?? 0) / data.totalLeads) * 100 : 0,
+      rate:
+        data.totalLeads > 0
+          ? ((data.openLeads ?? 0) / data.totalLeads) * 100
+          : 0,
       icon: CircleDot,
       tooltip: `Percentual de leads em aberto dentro do total do período - ${periodLabel}`,
       format: "number",
@@ -555,7 +639,10 @@ function KPICardsGrid({
     {
       title: "Perdidos",
       value: data.lostLeads ?? 0,
-      rate: data.totalLeads > 0 ? ((data.lostLeads ?? 0) / data.totalLeads) * 100 : 0,
+      rate:
+        data.totalLeads > 0
+          ? ((data.lostLeads ?? 0) / data.totalLeads) * 100
+          : 0,
       rateVariant: "negative",
       icon: XCircle,
       tooltip: `Percentual de leads perdidos dentro do total do período - ${periodLabel}`,
@@ -584,7 +671,10 @@ function KPICardsGrid({
     {
       title: "Visitas",
       value: scheduledVisits ?? 0,
-      rate: data.totalLeads > 0 ? ((scheduledVisits ?? 0) / data.totalLeads) * 100 : 0,
+      rate:
+        data.totalLeads > 0
+          ? ((scheduledVisits ?? 0) / data.totalLeads) * 100
+          : 0,
       rateVariant: "auto",
       icon: CalendarCheck,
       tooltip: `Visitas e reuniões criadas no período em relação ao total de leads - ${periodLabel}`,
@@ -646,9 +736,9 @@ function KPICardsGrid({
         ? "text-destructive"
         : kpi.rateVariant === "auto"
           ? (kpi.rate ?? 0) > 0
-            ? "text-emerald-500"
+            ? "text-[var(--lead-status-won-fg)]"
             : "text-destructive"
-          : "text-emerald-500";
+          : "text-[var(--lead-status-won-fg)]";
 
     const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
       if (!kpi.onClick) return;
@@ -660,31 +750,40 @@ function KPICardsGrid({
 
     return (
       <div key={kpi.title} className={cn("h-full", className)}>
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Card
-              data-tour={kpi.tourTarget}
-              className={cn(
-                "app-card card-hover h-full border-0 transition-colors",
-                kpi.interactive
-                  ? "cursor-pointer hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-                  : "cursor-default",
-              )}
-              role={kpi.interactive ? "button" : undefined}
-              tabIndex={kpi.interactive ? 0 : undefined}
-              onClick={kpi.onClick}
-              onKeyDown={handleKeyDown}
-            >
-              <CardContent className={cn("relative h-full p-3 sm:p-4", kpi.compact ? "min-h-[78px] sm:min-h-[82px]" : "min-h-[96px]")}>
-                <div className="min-w-0">
-                    <p className="mb-1 truncate pr-9 text-[12px] font-light leading-tight text-muted-foreground sm:pr-11">
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Card
+                data-tour={kpi.tourTarget}
+                className={cn(
+                  "group h-full rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none transition-colors",
+                  kpi.interactive
+                    ? "cursor-pointer hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
+                    : "cursor-default",
+                )}
+                role={kpi.interactive ? "button" : undefined}
+                tabIndex={kpi.interactive ? 0 : undefined}
+                onClick={kpi.onClick}
+                onKeyDown={handleKeyDown}
+              >
+                <CardContent
+                  className={cn(
+                    "relative h-full p-3 sm:p-4",
+                    kpi.compact
+                      ? "min-h-[78px] sm:min-h-[82px]"
+                      : "min-h-[96px]",
+                  )}
+                >
+                  <div className="min-w-0">
+                    <p className="mb-1 truncate pr-9 text-[12px] font-light leading-tight text-[var(--app-text-tertiary)] sm:pr-11">
                       {kpi.title}
                     </p>
                     <p
                       className={cn(
-                        "font-medium leading-tight text-[var(--app-text-primary)]",
-                        isCurrency ? "text-sm sm:text-lg xl:text-xl break-words" : "text-lg sm:text-2xl truncate",
+                        "font-normal leading-tight text-[var(--app-text-primary)]",
+                        isCurrency
+                          ? "text-sm sm:text-lg xl:text-xl break-words"
+                          : "text-lg sm:text-2xl truncate",
                       )}
                       style={getDashboardKPIValueStyle(kpi.color)}
                     >
@@ -693,14 +792,16 @@ function KPICardsGrid({
                     {hasTrend && (
                       <div className="flex items-center gap-0.5 mt-1">
                         {isPositive ? (
-                          <TrendingUp className="h-3 w-3 text-emerald-500" />
+                          <TrendingUp className="h-3 w-3 text-[var(--lead-status-won-fg)]" />
                         ) : (
                           <TrendingDown className="h-3 w-3 text-destructive" />
                         )}
                         <span
                           className={cn(
                             "text-[10px] font-light",
-                            isPositive ? "text-emerald-500" : "text-destructive",
+                            isPositive
+                              ? "text-[var(--lead-status-won-fg)]"
+                              : "text-destructive",
                           )}
                         >
                           {kpi.trend! > 0 ? "+" : ""}
@@ -709,26 +810,37 @@ function KPICardsGrid({
                       </div>
                     )}
                     {kpi.rate !== undefined && (
-                      <div className={cn("mt-1 max-w-full whitespace-nowrap text-[10px] font-light leading-tight", rateColorClass)}>
-                        {formatKPIValue(kpi.rate, "percent")}{kpi.rateLabel ? ` ${kpi.rateLabel}` : ""}
+                      <div
+                        className={cn(
+                          "mt-1 max-w-full whitespace-nowrap text-[10px] font-light leading-tight",
+                          rateColorClass,
+                        )}
+                      >
+                        {formatKPIValue(kpi.rate, "percent")}
+                        {kpi.rateLabel ? ` ${kpi.rateLabel}` : ""}
                       </div>
                     )}
-                  {showIcon && (
-                    <div
-                      className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 sm:right-4 sm:top-4 sm:h-9 sm:w-9"
-                    >
-                      <Icon className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </TooltipTrigger>
-          <TooltipContent className="text-[var(--app-text-primary)]">
-            <p className="text-[11px] font-light leading-snug">{kpi.tooltip}</p>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+                    {showIcon && (
+                      <div
+                        className={cn(
+                          "absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground transition-colors sm:right-4 sm:top-4",
+                          kpi.interactive && "group-hover:bg-primary",
+                        )}
+                      >
+                        <Icon className="h-4 w-4" />
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </TooltipTrigger>
+            <TooltipContent className="app-header-popover rounded-[8px] border-0 text-[var(--app-text-primary)]">
+              <p className="text-[11px] font-light leading-snug">
+                {kpi.tooltip}
+              </p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
     );
   };
@@ -736,7 +848,7 @@ function KPICardsGrid({
   const isSide = layout === "side";
 
   return (
-    <div className={cn("grid gap-3", isSide ? "grid-cols-2" : "grid-cols-5")}>
+    <div className={cn("grid gap-2", isSide ? "grid-cols-2" : "grid-cols-5")}>
       {allKpis.map((kpi) => {
         const isVgv = kpi.title === "VGV";
         return renderKPI(kpi, isVgv && !isSide ? "col-span-2" : undefined);
@@ -755,13 +867,16 @@ function formatCurrency(value: number): string {
 
 function formatDateTime(value: string | null): string {
   if (!value) return "--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--";
+
   return new Intl.DateTimeFormat("pt-BR", {
     day: "2-digit",
     month: "2-digit",
     year: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  }).format(date);
 }
 
 function formatConversionDays(days: number | null): string {
@@ -791,7 +906,7 @@ function DashboardAssigneeAvatar({ name }: { name?: string | null }) {
       <Tooltip>
         <TooltipTrigger asChild>
           <div className="flex w-9 justify-end md:w-[34px]" aria-label={label}>
-            <div className="flex h-7 w-7 items-center justify-center rounded-[7px] bg-[#ff4a2f] text-[9px] font-light text-white ring-1 ring-[#ff4a2f]/20">
+            <div className="flex h-7 w-7 items-center justify-center rounded-[6px] bg-primary/50 text-[9px] font-light text-primary-foreground ring-1 ring-primary/20">
               {name ? getInitials(name) : "--"}
             </div>
           </div>
@@ -819,16 +934,6 @@ type DistributionTooltipEntry = {
   payload?: Partial<DistributionChartPoint>;
 };
 
-const WON_SOURCE_COLORS = [
-  "#10B981",
-  "#06B6D4",
-  "#3B82F6",
-  "#F59E0B",
-  "#8B5CF6",
-  "#EF4444",
-  "#14B8A6",
-];
-
 function DistributionTooltip({
   active,
   payload,
@@ -846,19 +951,21 @@ function DistributionTooltip({
   const leadLabel = count === 1 ? "lead" : "leads";
 
   return (
-    <div className="min-w-[160px] rounded-xl border-0 bg-[var(--app-surface-solid)] px-3 py-2.5 text-[var(--app-text-primary)] shadow-[0_8px_20px_rgba(0,0,0,0.18)]">
+    <div className="min-w-[160px] rounded-[8px] border-0 bg-[var(--app-surface-solid)] px-3 py-2.5 text-[var(--app-text-primary)] shadow-none">
       <div className="mb-1 flex items-center gap-2">
         <span
-          className="h-2.5 w-2.5 rounded-full ring-2 ring-[var(--app-surface-solid)]"
+          className="h-2.5 w-2.5 rounded-[4px] ring-2 ring-[var(--app-surface-solid)]"
           style={{ backgroundColor: point?.color || entry.color || entry.fill }}
         />
-        <span className="truncate text-[11px] font-light text-[var(--app-text-secondary)]">{point?.label || fallbackLabel}</span>
+        <span className="truncate text-[11px] font-light text-[var(--app-text-secondary)]">
+          {point?.label || fallbackLabel}
+        </span>
       </div>
       <div className="flex items-end justify-between gap-4">
         <span className="text-[11px] font-light text-[var(--app-text-tertiary)]">
           {count} {leadLabel}
         </span>
-        <span className="rounded-full bg-[var(--app-surface-soft)] px-2 py-0.5 text-[11px] font-medium tabular-nums text-[var(--app-text-primary)]">
+        <span className="rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-0.5 text-[11px] font-light tabular-nums text-[var(--app-text-primary)]">
           {formatKPIValue(point?.percentage || 0, "percent")}
         </span>
       </div>
@@ -870,11 +977,22 @@ function getSourceLabel(source: string | null | undefined): string {
   const normalizedSource = (source || "").trim();
   const labelKey = normalizedSource.toLowerCase();
 
-  return sourceLabels[labelKey] || sourceLabels[normalizedSource] || normalizedSource || "Origem não informada";
+  return (
+    sourceLabels[labelKey] ||
+    sourceLabels[normalizedSource] ||
+    normalizedSource ||
+    "Origem não informada"
+  );
 }
 
-function buildWonSourceBuckets(wonDeals: EnhancedDashboardStats["wonDeals"], totalWon: number): DistributionChartPoint[] {
-  const groupedSources = new Map<string, { key: string; label: string; count: number }>();
+function buildWonSourceBuckets(
+  wonDeals: EnhancedDashboardStats["wonDeals"],
+  totalWon: number,
+): DistributionChartPoint[] {
+  const groupedSources = new Map<
+    string,
+    { key: string; label: string; count: number }
+  >();
 
   for (const deal of wonDeals) {
     const source = (deal.source || "").trim();
@@ -896,11 +1014,15 @@ function buildWonSourceBuckets(wonDeals: EnhancedDashboardStats["wonDeals"], tot
   const percentageBase = totalWon > 0 ? totalWon : wonDeals.length;
 
   return Array.from(groupedSources.values())
-    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "pt-BR"))
+    .sort(
+      (a, b) => b.count - a.count || a.label.localeCompare(b.label, "pt-BR"),
+    )
     .map((bucket, index) => ({
       ...bucket,
-      percentage: percentageBase > 0 ? (bucket.count / percentageBase) * 100 : 0,
-      color: WON_SOURCE_COLORS[index % WON_SOURCE_COLORS.length],
+      percentage:
+        percentageBase > 0 ? (bucket.count / percentageBase) * 100 : 0,
+      color:
+        DASHBOARD_CHART_COLORS[(index + 3) % DASHBOARD_CHART_COLORS.length],
     }));
 }
 
@@ -920,63 +1042,101 @@ function LostDealsDialog({
   const lostDeals = data.lostDeals || [];
   const reasonBuckets = [...(data.lostReasonBuckets || [])]
     .filter((bucket) => bucket.count > 0)
-    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "pt-BR"));
+    .sort(
+      (a, b) => b.count - a.count || a.label.localeCompare(b.label, "pt-BR"),
+    );
   const totalLost = data.lostLeads || lostDeals.length;
   const topReason = reasonBuckets[0];
   const otherBucket = reasonBuckets.find((bucket) => bucket.key === "outros");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-tour="dashboard-lost-dialog" className="app-card max-h-[82dvh] w-[calc(100vw-24px)] max-w-[980px] gap-0 overflow-hidden rounded-[12px] p-0 shadow-2xl backdrop-blur-xl sm:w-[92vw] sm:rounded-xl">
-        <DialogHeader className="px-4 pb-2 pt-4 text-left sm:px-5 sm:pt-5">
-          <DialogTitle className="flex items-start gap-2 pr-8 text-[15px] font-semibold leading-snug sm:items-center sm:text-base">
-            <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive sm:mt-0" />
+      <DialogContent
+        data-tour="dashboard-lost-dialog"
+        className="dashboard-dialog-shell flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden p-0 sm:h-[min(720px,calc(100dvh-32px))] sm:max-h-[calc(100dvh-32px)] sm:w-[min(960px,calc(100vw-32px))] sm:max-w-[960px] [&>button.absolute]:right-3 [&>button.absolute]:top-3 [&>button.absolute]:grid [&>button.absolute]:h-9 [&>button.absolute]:w-9 [&>button.absolute]:place-items-center sm:[&>button.absolute]:right-4 sm:[&>button.absolute]:top-4"
+      >
+        <DialogHeader className="shrink-0 px-4 pb-3 pr-14 pt-[calc(0.75rem+env(safe-area-inset-top))] text-left sm:px-5 sm:pt-4">
+          <DialogTitle className="flex items-center gap-2.5 text-[14px] font-light leading-snug text-[var(--app-text-primary)]">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+              <XCircle className="h-3.5 w-3.5" />
+            </span>
             <span>Perdidos - Motivos de Perda</span>
           </DialogTitle>
-          <DialogDescription className="text-xs leading-5 sm:text-sm">
+          <DialogDescription className="pl-[42px] text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
             {totalLost} perdidos em {periodLabel.toLowerCase()}
             {topReason ? ` | principal motivo: ${topReason.label}` : ""}
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="dashboard-dialog-scroll max-h-[calc(82dvh-78px)] overflow-x-hidden">
-          <div className="space-y-4 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:space-y-5 sm:px-5 sm:pb-5">
-            <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
-              <div className="app-card-soft p-3">
-                <p className="text-xs text-muted-foreground">Perdidos</p>
-                <p className="mt-1 text-2xl font-bold text-destructive">{totalLost}</p>
+        <ScrollArea className="dashboard-dialog-scroll min-h-0 flex-1 overflow-x-hidden">
+          <div className="space-y-3 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:px-5 sm:pb-5">
+            <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4">
+              <div className="min-w-0 rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-3 shadow-none">
+                <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
+                  Perdidos
+                </p>
+                <p className="mt-1 text-[20px] font-normal leading-tight tabular-nums text-destructive">
+                  {totalLost}
+                </p>
               </div>
-              <div className="app-card-soft p-3">
-                <p className="text-xs text-muted-foreground">Motivos</p>
-                <p className="mt-1 text-2xl font-bold">{reasonBuckets.length}</p>
+              <div className="min-w-0 rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-3 shadow-none">
+                <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
+                  Motivos
+                </p>
+                <p className="mt-1 text-[20px] font-normal leading-tight tabular-nums">
+                  {reasonBuckets.length}
+                </p>
               </div>
-              <div className="app-card-soft p-3">
-                <p className="text-xs text-muted-foreground">Principal motivo</p>
-                <p className="mt-1 truncate text-xl font-bold">{topReason?.label || "--"}</p>
+              <div className="min-w-0 rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-3 shadow-none">
+                <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
+                  Principal motivo
+                </p>
+                <p
+                  title={topReason?.label || undefined}
+                  className="mt-1 line-clamp-2 text-[14px] font-normal leading-5"
+                >
+                  {topReason?.label || "--"}
+                </p>
               </div>
-              <div className="app-card-soft p-3">
-                <p className="text-xs text-muted-foreground">Outros</p>
-                <p className="mt-1 text-2xl font-bold">{otherBucket?.count || 0}</p>
+              <div className="min-w-0 rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-3 shadow-none">
+                <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
+                  Outros
+                </p>
+                <p className="mt-1 text-[20px] font-normal leading-tight tabular-nums">
+                  {otherBucket?.count || 0}
+                </p>
               </div>
             </div>
 
-            <div className="app-card-soft overflow-hidden p-4">
+            <div className="overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-3 shadow-none sm:p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <h3 className="text-sm font-semibold">Distribuição dos motivos</h3>
-                  <p className="text-xs text-muted-foreground">Maiores causas de perda no período filtrado.</p>
+                  <h3 className="text-[14px] font-normal">
+                    Distribuição dos motivos
+                  </h3>
+                  <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
+                    Maiores causas de perda no período filtrado.
+                  </p>
                 </div>
-                <PieChartIcon className="h-4 w-4 shrink-0 text-destructive" />
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+                  <PieChartIcon className="h-3.5 w-3.5" />
+                </span>
               </div>
 
               {reasonBuckets.length === 0 ? (
-                <div className="rounded-lg bg-[var(--app-surface-soft)] p-4 text-center text-sm text-muted-foreground">
+                <div className="rounded-[8px] bg-[var(--app-surface-solid)] p-4 text-center text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
                   Nenhuma perda registrada nesse período.
                 </div>
               ) : (
-                <div className="grid min-w-0 gap-4 md:grid-cols-[280px_minmax(0,1fr)]">
-                  <div className="dashboard-recharts-focusless relative mx-auto h-[210px] w-full max-w-[240px] sm:h-[240px] sm:max-w-[280px]">
-                    <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
+                <div className="grid min-w-0 gap-3 md:grid-cols-[190px_minmax(0,1fr)] md:items-center">
+                  <div className="dashboard-recharts-focusless relative mx-auto h-[150px] w-full max-w-[170px] sm:h-[180px] sm:max-w-[190px]">
+                    <ResponsiveContainer
+                      width="100%"
+                      height="100%"
+                      minWidth={1}
+                      minHeight={1}
+                      initialDimension={DIALOG_CHART_INITIAL_DIMENSION}
+                    >
                       <PieChart>
                         <Pie
                           data={reasonBuckets}
@@ -995,36 +1155,58 @@ function LostDealsDialog({
                           ))}
                         </Pie>
                         <RechartsTooltip
-                          content={<DistributionTooltip fallbackLabel="Motivo" />}
+                          content={
+                            <DistributionTooltip fallbackLabel="Motivo" />
+                          }
                           cursor={false}
                           wrapperStyle={{ zIndex: 30, pointerEvents: "none" }}
                         />
                       </PieChart>
                     </ResponsiveContainer>
                     <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                      <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground/70">Perdas</span>
-                      <span className="text-4xl font-black leading-tight text-foreground">{totalLost}</span>
+                      <span className="text-[10px] font-light text-[var(--app-text-tertiary)]">
+                        Perdas
+                      </span>
+                      <span className="text-[30px] font-normal leading-tight text-[var(--app-text-primary)]">
+                        {totalLost}
+                      </span>
                     </div>
                   </div>
 
                   <div className="min-w-0 space-y-3">
                     {reasonBuckets.map((bucket) => (
-                      <div key={bucket.key} className="flex min-w-0 items-center gap-3 text-xs">
+                      <div
+                        key={bucket.key}
+                        className="flex min-w-0 items-center gap-3 text-xs"
+                      >
                         <div className="min-w-0 flex-1">
                           <div className="mb-1 flex items-center gap-2">
-                            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: bucket.color }} />
-                            <span className="truncate font-semibold">{bucket.label}</span>
+                            <span
+                              className="h-2.5 w-2.5 shrink-0 rounded-[4px]"
+                              style={{ backgroundColor: bucket.color }}
+                            />
+                            <span className="truncate font-light">
+                              {bucket.label}
+                            </span>
                           </div>
-                          <div className="h-2.5 overflow-hidden rounded-full bg-[var(--app-surface-soft)]">
+                          <div className="h-2.5 overflow-hidden rounded-[4px] bg-[var(--app-surface-solid)]">
                             <div
-                              className="h-full rounded-full shadow-[0_0_0_1px_rgba(0,0,0,0.04)] transition-all"
-                              style={{ width: `${Math.max(4, Math.min(100, bucket.percentage || 0))}%`, backgroundColor: bucket.color }}
+                              className="h-full rounded-[4px] transition-[width] duration-200"
+                              style={{
+                                width: `${Math.max(4, Math.min(100, bucket.percentage || 0))}%`,
+                                backgroundColor: bucket.color,
+                              }}
                             />
                           </div>
                         </div>
                         <div className="flex min-w-[76px] shrink-0 flex-col items-end gap-0.5 sm:min-w-[118px] sm:flex-row sm:items-center sm:justify-end sm:gap-3">
-                          <span className="font-semibold tabular-nums">{bucket.count}</span>
-                          <span className="font-semibold tabular-nums" style={{ color: bucket.color }}>
+                          <span className="font-normal tabular-nums">
+                            {bucket.count}
+                          </span>
+                          <span
+                            className="font-normal tabular-nums"
+                            style={{ color: bucket.color }}
+                          >
                             {formatKPIValue(bucket.percentage || 0, "percent")}
                           </span>
                         </div>
@@ -1035,54 +1217,82 @@ function LostDealsDialog({
               )}
             </div>
 
-            <div className="app-card-soft overflow-hidden p-4">
+            <div className="overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-3 shadow-none sm:p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
-                <h3 className="text-sm font-semibold">Perdidos do período</h3>
-                <span className="shrink-0 text-xs text-muted-foreground">{lostDeals.length} registros</span>
+                <h3 className="text-[14px] font-light">Perdidos do período</h3>
+                <span className="shrink-0 text-[12px] font-light text-[var(--app-text-tertiary)]">
+                  {lostDeals.length} registros
+                </span>
               </div>
 
               {lostDeals.length === 0 ? (
-                <div className="rounded-lg bg-[var(--app-surface-soft)] p-4 text-center text-sm text-muted-foreground">
+                <div className="rounded-[8px] bg-[var(--app-surface-solid)] p-4 text-center text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
                   Nenhum lead perdido nesse período.
                 </div>
               ) : (
-                <div className="dashboard-dialog-list overflow-hidden rounded-[8px] bg-[var(--app-surface-muted)]">
+                <div className="dashboard-dialog-list overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)]">
                   {lostDeals.map((deal) => (
                     <div
                       key={deal.id}
                       className="dashboard-dialog-list-row grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-3 p-3 text-[12px] transition-colors hover:bg-[var(--app-surface-hover)] md:grid-cols-[0.8fr_1.3fr_34px_220px_auto] md:items-center md:gap-y-2"
                     >
                       <div className="col-span-2 min-w-0 md:col-span-1">
-                        <p className="truncate text-[12px] font-medium text-[var(--app-text-primary)]">{deal.name}</p>
+                        <p className="truncate text-[12px] font-normal text-[var(--app-text-primary)]">
+                          {deal.name}
+                        </p>
                         <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">
-                          {sourceLabels[deal.source || ""] || deal.source || "Origem não informada"}
+                          {sourceLabels[deal.source || ""] ||
+                            deal.source ||
+                            "Origem não informada"}
                         </p>
                       </div>
                       <div className="col-span-2 min-w-0 md:col-span-1">
-                        <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">Motivo</p>
-                        <p className="truncate text-[12px] font-medium text-destructive">{deal.lostReasonGroup}</p>
-                        <p className="break-words text-[11px] font-light text-[var(--app-text-tertiary)]">{deal.lostReason}</p>
+                        <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">
+                          Motivo
+                        </p>
+                        <p className="truncate text-[12px] font-normal text-destructive">
+                          {deal.lostReasonGroup}
+                        </p>
+                        <p className="break-words text-[11px] font-light text-[var(--app-text-tertiary)]">
+                          {deal.lostReason}
+                        </p>
                       </div>
                       <div className="col-span-2 min-w-0 md:col-span-1 md:flex md:justify-center">
                         <span className="block truncate text-[11px] text-[var(--app-text-secondary)] md:hidden">
-                          Responsável: <span className="font-medium text-[var(--app-text-primary)]">{deal.assignedUserName || "Sem responsável"}</span>
+                          Responsável:{" "}
+                          <span className="font-normal text-[var(--app-text-primary)]">
+                            {deal.assignedUserName || "Sem responsável"}
+                          </span>
                         </span>
-                        <span className="hidden md:block"><DashboardAssigneeAvatar name={deal.assignedUserName} /></span>
+                        <span className="hidden md:block">
+                          <DashboardAssigneeAvatar
+                            name={deal.assignedUserName}
+                          />
+                        </span>
                       </div>
                       <div className="col-span-2 grid grid-cols-2 gap-3 md:col-span-1 md:text-right">
                         <div className="min-w-0">
-                          <p className="text-[10px] font-light uppercase tracking-wide text-[var(--app-text-tertiary)]">Entrada</p>
-                          <p className="truncate text-[11px] font-medium text-[var(--app-text-primary)]">{formatDateTime(deal.createdAt)}</p>
+                          <p className="text-[10px] font-light text-[var(--app-text-tertiary)]">
+                            Entrada
+                          </p>
+                          <p className="truncate text-[11px] font-light text-[var(--app-text-primary)]">
+                            {formatDateTime(deal.createdAt)}
+                          </p>
                         </div>
                         <div className="min-w-0">
-                          <p className="text-[10px] font-light uppercase tracking-wide text-destructive/75">Perda</p>
-                          <p className="truncate text-[11px] font-medium text-destructive">{formatDateTime(deal.lostAt)}</p>
+                          <p className="text-[10px] font-light text-destructive/75">
+                            Perda
+                          </p>
+                          <p className="truncate text-[11px] font-light text-destructive">
+                            {formatDateTime(deal.lostAt)}
+                          </p>
                         </div>
                       </div>
                       <button
                         type="button"
                         onClick={() => onViewLead(deal.id)}
-                        className="col-span-2 inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 md:col-span-1"
+                        aria-label={`Visualizar ${deal.name}`}
+                        className="col-span-2 inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-primary-foreground shadow-none transition-colors hover:bg-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40 md:col-span-1 md:h-9"
                       >
                         <Eye className="h-3.5 w-3.5" />
                         Visualizar
@@ -1121,58 +1331,98 @@ function WonDealsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-tour="dashboard-won-dialog" className="app-card max-h-[82dvh] w-[calc(100vw-24px)] max-w-[980px] gap-0 overflow-hidden rounded-[12px] p-0 shadow-2xl backdrop-blur-xl sm:w-[92vw] sm:rounded-xl">
-        <DialogHeader className="px-4 pb-2 pt-4 text-left sm:px-5 sm:pt-5">
-          <DialogTitle className="flex items-start gap-2 pr-8 text-[15px] font-semibold leading-snug sm:items-center sm:text-base">
-            <Trophy className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500 sm:mt-0" />
+      <DialogContent
+        data-tour="dashboard-won-dialog"
+        className="dashboard-dialog-shell flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden p-0 sm:h-[min(720px,calc(100dvh-32px))] sm:max-h-[calc(100dvh-32px)] sm:w-[min(960px,calc(100vw-32px))] sm:max-w-[960px] [&>button.absolute]:right-3 [&>button.absolute]:top-3 [&>button.absolute]:grid [&>button.absolute]:h-9 [&>button.absolute]:w-9 [&>button.absolute]:place-items-center sm:[&>button.absolute]:right-4 sm:[&>button.absolute]:top-4"
+      >
+        <DialogHeader className="shrink-0 px-4 pb-3 pr-14 pt-[calc(0.75rem+env(safe-area-inset-top))] text-left sm:px-5 sm:pt-4">
+          <DialogTitle className="flex items-center gap-2.5 text-[14px] font-light leading-snug text-[var(--app-text-primary)]">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+              <Trophy className="h-3.5 w-3.5" />
+            </span>
             <span>Ganhos - Tempo de Conversão</span>
           </DialogTitle>
-          <DialogDescription className="text-xs leading-5 sm:text-sm">
+          <DialogDescription className="pl-[42px] text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
             {totalWon} ganhos em {periodLabel.toLowerCase()}
-            {averageDays !== null && averageDays !== undefined ? ` | média: ${averageDays} dias` : ""}
+            {averageDays !== null && averageDays !== undefined
+              ? ` | média: ${averageDays} dias`
+              : ""}
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="dashboard-dialog-scroll max-h-[calc(82dvh-78px)] overflow-x-hidden">
-          <div className="space-y-4 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:space-y-5 sm:px-5 sm:pb-5">
-            <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
-              <div className="app-card-soft p-3">
-                <p className="text-xs text-muted-foreground">Ganhos</p>
-                <p className="mt-1 text-2xl font-bold">{totalWon}</p>
+        <ScrollArea className="dashboard-dialog-scroll min-h-0 flex-1 overflow-x-hidden">
+          <div className="space-y-3 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:px-5 sm:pb-5">
+            <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4">
+              <div className="min-w-0 rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-3 shadow-none">
+                <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
+                  Ganhos
+                </p>
+                <p className="mt-1 text-[20px] font-normal leading-tight tabular-nums">
+                  {totalWon}
+                </p>
               </div>
-              <div className="app-card-soft p-3">
-                <p className="text-xs text-muted-foreground">Conversão</p>
-                <p className={cn("mt-1 text-2xl font-bold", data.conversionRate > 0 ? "text-emerald-500" : "text-destructive")}>
+              <div className="min-w-0 rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-3 shadow-none">
+                <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
+                  Conversão
+                </p>
+                <p
+                  className={cn(
+                    "mt-1 text-[20px] font-normal leading-tight tabular-nums",
+                    data.conversionRate > 0
+                      ? "text-[var(--lead-status-won-fg)]"
+                      : "text-destructive",
+                  )}
+                >
                   {formatKPIValue(data.conversionRate || 0, "percent")}
                 </p>
               </div>
-              <div className="app-card-soft p-3">
-                <p className="text-xs text-muted-foreground">VGV dos ganhos</p>
-                <p className="mt-1 text-xl font-bold text-emerald-500">{formatCurrency(totalVgv)}</p>
+              <div className="min-w-0 rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-3 shadow-none">
+                <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
+                  VGV dos ganhos
+                </p>
+                <p className="mt-1 truncate text-[18px] font-normal leading-tight tabular-nums text-[var(--lead-status-won-fg)]">
+                  {formatCurrency(totalVgv)}
+                </p>
               </div>
-              <div className="app-card-soft p-3">
-                <p className="text-xs text-muted-foreground">Ticket médio</p>
-                <p className="mt-1 text-xl font-bold">{formatCurrency(averageTicket)}</p>
+              <div className="min-w-0 rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-3 shadow-none">
+                <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
+                  Ticket médio
+                </p>
+                <p className="mt-1 truncate text-[18px] font-normal leading-tight tabular-nums">
+                  {formatCurrency(averageTicket)}
+                </p>
               </div>
             </div>
 
-            <div className="app-card-soft overflow-hidden p-4">
+            <div className="overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-3 shadow-none sm:p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <h3 className="text-sm font-semibold">Origem e tempo dos ganhos</h3>
-                  <p className="text-xs text-muted-foreground">Pizza por origem e tempo até o ganho no período filtrado.</p>
+                  <h3 className="text-[14px] font-normal">
+                    Origem e tempo dos ganhos
+                  </h3>
+                  <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
+                    Pizza por origem e tempo até o ganho no período filtrado.
+                  </p>
                 </div>
-                <PieChartIcon className="h-4 w-4 shrink-0 text-emerald-500" />
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+                  <PieChartIcon className="h-3.5 w-3.5" />
+                </span>
               </div>
 
               {sourceBuckets.length === 0 ? (
-                <div className="rounded-lg bg-[var(--app-surface-soft)] p-4 text-center text-sm text-muted-foreground">
+                <div className="rounded-[8px] bg-[var(--app-surface-solid)] p-4 text-center text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
                   Nenhum ganho fechado nesse período.
                 </div>
               ) : (
-                <div className="grid min-w-0 gap-4 md:grid-cols-[215px_minmax(0,1fr)]">
-                  <div className="dashboard-recharts-focusless relative mx-auto h-[160px] w-full max-w-[190px] sm:h-[190px] sm:max-w-[215px]">
-                    <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
+                <div className="grid min-w-0 gap-3 md:grid-cols-[190px_minmax(0,1fr)] md:items-center">
+                  <div className="dashboard-recharts-focusless relative mx-auto h-[150px] w-full max-w-[170px] sm:h-[180px] sm:max-w-[190px]">
+                    <ResponsiveContainer
+                      width="100%"
+                      height="100%"
+                      minWidth={1}
+                      minHeight={1}
+                      initialDimension={DIALOG_CHART_INITIAL_DIMENSION}
+                    >
                       <PieChart>
                         <Pie
                           data={sourceBuckets}
@@ -1191,22 +1441,30 @@ function WonDealsDialog({
                           ))}
                         </Pie>
                         <RechartsTooltip
-                          content={<DistributionTooltip fallbackLabel="Origem" />}
+                          content={
+                            <DistributionTooltip fallbackLabel="Origem" />
+                          }
                           cursor={false}
                           wrapperStyle={{ zIndex: 30, pointerEvents: "none" }}
                         />
                       </PieChart>
                     </ResponsiveContainer>
                     <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                      <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground/70">Ganhos</span>
-                      <span className="text-3xl font-black leading-tight text-foreground">{totalWon}</span>
+                      <span className="text-[10px] font-light text-[var(--app-text-tertiary)]">
+                        Ganhos
+                      </span>
+                      <span className="text-[30px] font-normal leading-tight text-[var(--app-text-primary)]">
+                        {totalWon}
+                      </span>
                     </div>
                   </div>
 
                   <div className="min-w-0 space-y-3">
                     {data.wonConversionBuckets.map((bucket) => {
                       const hasDeals = bucket.count > 0;
-                      const width = hasDeals ? Math.max(4, Math.min(100, bucket.percentage || 0)) : 0;
+                      const width = hasDeals
+                        ? Math.max(4, Math.min(100, bucket.percentage || 0))
+                        : 0;
 
                       return (
                         <div
@@ -1217,19 +1475,45 @@ function WonDealsDialog({
                           )}
                         >
                           <div className="flex min-w-0 items-center justify-between gap-3 sm:contents">
-                            <span className={cn("min-w-0 truncate text-muted-foreground", !hasDeals && "text-[11px]")}>
+                            <span
+                              className={cn(
+                                "min-w-0 truncate text-muted-foreground",
+                                !hasDeals && "text-[11px]",
+                              )}
+                            >
                               {bucket.label}
                             </span>
                             <div className="flex shrink-0 items-center gap-3 sm:contents">
-                              <span className={cn("text-right font-semibold tabular-nums", !hasDeals && "text-[11px]")}>{bucket.count}</span>
-                              <span className={cn("text-right font-semibold tabular-nums", !hasDeals && "text-[11px]")} style={{ color: bucket.color }}>
-                                {formatKPIValue(bucket.percentage || 0, "percent")}
+                              <span
+                                className={cn(
+                                  "text-right font-normal tabular-nums",
+                                  !hasDeals && "text-[11px]",
+                                )}
+                              >
+                                {bucket.count}
+                              </span>
+                              <span
+                                className={cn(
+                                  "text-right font-normal tabular-nums",
+                                  !hasDeals && "text-[11px]",
+                                )}
+                                style={{ color: bucket.color }}
+                              >
+                                {formatKPIValue(
+                                  bucket.percentage || 0,
+                                  "percent",
+                                )}
                               </span>
                             </div>
                           </div>
-                          <div className={cn("overflow-hidden rounded-full bg-[var(--app-surface-soft)] sm:col-start-2 sm:row-start-1", hasDeals ? "h-2.5 sm:h-3" : "h-1.5")}>
+                          <div
+                            className={cn(
+                              "overflow-hidden rounded-[4px] bg-[var(--app-surface-solid)] sm:col-start-2 sm:row-start-1",
+                              hasDeals ? "h-2.5 sm:h-3" : "h-1.5",
+                            )}
+                          >
                             <div
-                              className="h-full rounded-full shadow-[0_0_0_1px_rgba(0,0,0,0.04)] transition-all"
+                              className="h-full rounded-[4px] transition-[width] duration-200"
                               style={{
                                 width: `${width}%`,
                                 backgroundColor: bucket.color,
@@ -1244,53 +1528,79 @@ function WonDealsDialog({
               )}
             </div>
 
-            <div className="app-card-soft overflow-hidden p-4">
+            <div className="overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-3 shadow-none sm:p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
-                <h3 className="text-sm font-semibold">Ganhos do período</h3>
-                <span className="shrink-0 text-xs text-muted-foreground">{wonDeals.length} registros</span>
+                <h3 className="text-[14px] font-light">Ganhos do período</h3>
+                <span className="shrink-0 text-[12px] font-light text-[var(--app-text-tertiary)]">
+                  {wonDeals.length} registros
+                </span>
               </div>
 
               {wonDeals.length === 0 ? (
-                <div className="rounded-lg bg-[var(--app-surface-soft)] p-4 text-center text-sm text-muted-foreground">
+                <div className="rounded-[8px] bg-[var(--app-surface-solid)] p-4 text-center text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
                   Nenhum ganho fechado nesse período.
                 </div>
               ) : (
-                <div className="dashboard-dialog-list overflow-hidden rounded-[8px] bg-[var(--app-surface-muted)]">
+                <div className="dashboard-dialog-list overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)]">
                   {wonDeals.map((deal) => (
                     <div
                       key={deal.id}
                       className="dashboard-dialog-list-row grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-3 p-3 text-[12px] transition-colors hover:bg-[var(--app-surface-hover)] md:grid-cols-[1fr_34px_220px_0.75fr_auto] md:items-center md:gap-y-2"
                     >
                       <div className="col-span-2 min-w-0 md:col-span-1">
-                        <p className="truncate text-[12px] font-medium text-[var(--app-text-primary)]">{deal.name}</p>
+                        <p className="truncate text-[12px] font-normal text-[var(--app-text-primary)]">
+                          {deal.name}
+                        </p>
                         <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">
-                          {sourceLabels[deal.source || ""] || deal.source || "Origem não informada"}
+                          {sourceLabels[deal.source || ""] ||
+                            deal.source ||
+                            "Origem não informada"}
                         </p>
                       </div>
                       <div className="col-span-2 min-w-0 md:col-span-1 md:flex md:justify-center">
                         <span className="block truncate text-[11px] text-[var(--app-text-secondary)] md:hidden">
-                          Responsável: <span className="font-medium text-[var(--app-text-primary)]">{deal.assignedUserName || "Sem responsável"}</span>
+                          Responsável:{" "}
+                          <span className="font-normal text-[var(--app-text-primary)]">
+                            {deal.assignedUserName || "Sem responsável"}
+                          </span>
                         </span>
-                        <span className="hidden md:block"><DashboardAssigneeAvatar name={deal.assignedUserName} /></span>
+                        <span className="hidden md:block">
+                          <DashboardAssigneeAvatar
+                            name={deal.assignedUserName}
+                          />
+                        </span>
                       </div>
                       <div className="col-span-2 grid grid-cols-2 gap-3 md:col-span-1">
                         <div className="min-w-0">
-                          <p className="text-[10px] font-light uppercase tracking-wide text-[var(--app-text-tertiary)]">Entrada</p>
-                          <p className="truncate text-[11px] font-medium text-[var(--app-text-primary)]">{formatDateTime(deal.createdAt)}</p>
+                          <p className="text-[10px] font-light text-[var(--app-text-tertiary)]">
+                            Entrada
+                          </p>
+                          <p className="truncate text-[11px] font-light text-[var(--app-text-primary)]">
+                            {formatDateTime(deal.createdAt)}
+                          </p>
                         </div>
                         <div className="min-w-0">
-                          <p className="text-[10px] font-light uppercase tracking-wide text-emerald-500/75">Ganho</p>
-                          <p className="truncate text-[11px] font-medium text-emerald-500">{formatDateTime(deal.wonAt)}</p>
+                          <p className="text-[10px] font-light text-[var(--lead-status-won-fg)] opacity-75">
+                            Ganho
+                          </p>
+                          <p className="truncate text-[11px] font-light text-[var(--lead-status-won-fg)]">
+                            {formatDateTime(deal.wonAt)}
+                          </p>
                         </div>
                       </div>
                       <div className="md:text-right">
-                        <p className="text-[12px] font-medium text-emerald-500">{formatCurrency(deal.value)}</p>
-                        <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">{formatConversionDays(deal.conversionDays)}</p>
+                        <p className="text-[12px] font-normal text-[var(--lead-status-won-fg)]">
+                          {formatCurrency(deal.value)}
+                        </p>
+                        <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">
+                          {formatConversionDays(deal.conversionDays)}
+                        </p>
                       </div>
                       <button
                         type="button"
                         onClick={() => onViewLead(deal.id)}
-                        className="col-span-2 inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 md:col-span-1"
+                        aria-label={`Visualizar ${deal.name}`}
+                        className="col-span-2 inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-primary-foreground shadow-none transition-colors hover:bg-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40 md:col-span-1 md:h-9"
                       >
                         <Eye className="h-3.5 w-3.5" />
                         Visualizar

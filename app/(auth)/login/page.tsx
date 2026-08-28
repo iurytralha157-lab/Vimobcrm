@@ -2,8 +2,10 @@ import type { Metadata } from "next";
 import LoginScreen from "@/components/features/auth/login-screen";
 
 export const metadata: Metadata = {
-  title: "Login | Vimob",
-  description: "Acesse seu sistema de gestao imobiliaria",
+  title: {
+    absolute: "Entrar | Vimob crm",
+  },
+  description: "Acesse seu sistema de gestão imobiliária",
 };
 
 export default function LoginPage() {

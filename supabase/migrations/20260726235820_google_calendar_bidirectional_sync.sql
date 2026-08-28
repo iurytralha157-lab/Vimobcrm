@@ -472,6 +472,7 @@ as $function$
 declare
   cron_secret text;
   request_body jsonb;
+  supabase_url text;
 begin
   select decrypted_secret
   into cron_secret
@@ -479,8 +480,18 @@ begin
   where name = 'google_calendar_cron_secret'
   limit 1;
 
+  select nullif(btrim(decrypted_secret), '')
+  into supabase_url
+  from vault.decrypted_secrets
+  where name = 'google_calendar_sync_base_url'
+  limit 1;
+
   if cron_secret is null then
     raise exception 'Google Agenda cron secret is missing';
+  end if;
+
+  if supabase_url is null then
+    raise exception 'Google Agenda sync base URL is missing';
   end if;
 
   request_body := jsonb_build_object('action', p_action);
@@ -489,7 +500,8 @@ begin
   end if;
 
   return net.http_post(
-    url := 'https://iemalzlfnbouobyjwlwi.supabase.co/functions/v1/google-calendar-sync',
+    url := rtrim(supabase_url, '/')
+      || '/functions/v1/google-calendar-sync',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
       'x-vimob-cron-secret', cron_secret
@@ -516,14 +528,25 @@ begin
 end
 $migration$;
 
-select cron.schedule(
-  'google-calendar-sync-jobs',
-  '* * * * *',
-  $cron$select private.invoke_google_calendar_worker('run_due_jobs', 20);$cron$
-);
+do $migration$
+begin
+  if exists (
+    select 1
+    from vault.decrypted_secrets
+    where name = 'google_calendar_sync_base_url'
+      and nullif(btrim(decrypted_secret), '') is not null
+  ) then
+    perform cron.schedule(
+      'google-calendar-sync-jobs',
+      '* * * * *',
+      $cron$select private.invoke_google_calendar_worker('run_due_jobs', 20);$cron$
+    );
 
-select cron.schedule(
-  'google-calendar-renew-watches',
-  '17 3 * * *',
-  $cron$select private.invoke_google_calendar_worker('renew_watches');$cron$
-);
+    perform cron.schedule(
+      'google-calendar-renew-watches',
+      '17 3 * * *',
+      $cron$select private.invoke_google_calendar_worker('renew_watches');$cron$
+    );
+  end if;
+end
+$migration$;

@@ -123,8 +123,44 @@ func TestCanViewAllPropertiesHonorsExplicitPermission(t *testing.T) {
 		MemberRole:     "user",
 		Permissions:    []string{"property_view_all"},
 	}
-	if !canViewAllProperties(viewAllContext) {
-		t.Fatal("property_view_all permission should allow full property visibility")
+	if canViewAllProperties(viewAllContext) {
+		t.Fatal("legacy property_view_all aliases must not bypass property_manage")
+	}
+}
+
+func TestBasicPropertyViewDoesNotExpandRecordScope(t *testing.T) {
+	context := tenant.Context{
+		UserID:         "user-1",
+		OrganizationID: "org-1",
+		MemberRole:     "user",
+		Permissions:    []string{"property_view"},
+	}
+
+	if canViewAllProperties(context) {
+		t.Fatal("property_view must not grant organization-wide record visibility")
+	}
+	if canViewTeamProperties(context) {
+		t.Fatal("property_view must not grant team record visibility")
+	}
+}
+
+func TestRequestedOwnScopeRestrictsPropertyManagers(t *testing.T) {
+	context := tenant.Context{
+		UserID:         "manager-1",
+		OrganizationID: "org-1",
+		MemberRole:     "admin",
+		IsTeamLeader:   true,
+	}
+
+	args, _ := addScopedPropertyVisibility(
+		[]any{"org-1"},
+		[]string{"p.organization_id = $1::uuid"},
+		context,
+		"p",
+		"own",
+	)
+	if args[1] != false || args[3] != false {
+		t.Fatalf("own scope must disable all/team visibility, got args %v", args)
 	}
 }
 

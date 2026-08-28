@@ -3,6 +3,7 @@ package webhooks
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -261,19 +263,27 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 	utmContent := payloadString(payload, "utm_content", "utmContent")
 
 	metadata := map[string]any{
-		"source":            "generic_webhook",
-		"provider":          "generic_webhook",
-		"provider_event_id": nullableString(providerEventKey),
-		"external_event_id": nullableString(providerEventID),
-		"webhook_id":        webhook.ID,
-		"webhook_name":      webhook.Name,
-		"payload":           payload,
+		"source":                "generic_webhook",
+		"provider":              "generic_webhook",
+		"provider_event_id":     nullableString(providerEventKey),
+		"external_event_id":     nullableString(providerEventID),
+		"webhook_id":            webhook.ID,
+		"webhook_name":          webhook.Name,
+		"payload":               payload,
+		"distribution_deferred": true,
 	}
 	if formAnswers := webhookFormAnswers(payload); len(formAnswers) > 0 {
 		metadata["form_answers"] = formAnswers
 	}
 	metadataJSON, _ := json.Marshal(metadata)
 	payloadJSON, _ := json.Marshal(payload)
+	distributionIdentity := string(payloadJSON)
+	if providerEventKey != nil {
+		distributionIdentity = *providerEventKey
+	}
+	distributionDigest := sha256.Sum256([]byte(webhook.ID + ":" + distributionIdentity))
+	distributionKey := "generic-webhook:" + hex.EncodeToString(distributionDigest[:])
+	occurredAt := webhookOccurredAt(payload)
 
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
@@ -451,7 +461,18 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 	if err := repo.insertLeadTags(ctx, tx, webhook.OrganizationID, leadID, webhook.TargetTagIDs); err != nil {
 		return IncomingLeadResult{}, err
 	}
-	if err := repo.insertWebhookLeadEntry(ctx, tx, webhook, leadID, propertyID, sourceDetail, providerEventKey, campaignID, campaignName, adsetID, adsetName, adID, adName, formID, utmSource, utmMedium, utmCampaign, utmContent, utmTerm, webhookOccurredAt(payload), payloadJSON, reentry); err != nil {
+	if err := repo.insertWebhookLeadEntry(ctx, tx, webhook, leadID, propertyID, sourceDetail, providerEventKey, campaignID, campaignName, adsetID, adsetName, adID, adName, formID, utmSource, utmMedium, utmCampaign, utmContent, utmTerm, occurredAt, payloadJSON, reentry); err != nil {
+		return IncomingLeadResult{}, err
+	}
+	distributionSource := "webhook"
+	if _, err := distribution.Distribute(ctx, tx, distribution.Request{
+		OrganizationID:   webhook.OrganizationID,
+		LeadID:           leadID,
+		IdempotencyKey:   distributionKey,
+		PreserveAssignee: true,
+		Source:           &distributionSource,
+		OccurredAt:       occurredAt,
+	}); err != nil {
 		return IncomingLeadResult{}, err
 	}
 	if err := repo.insertWebhookActivity(ctx, tx, webhook, leadID, *name, reentry, metadata); err != nil {

@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/supabasehttp"
 )
 
 type StorageConfig struct {
@@ -42,8 +44,7 @@ func (client storageClient) upload(ctx context.Context, bucket string, objectPat
 	if strings.TrimSpace(contentType) == "" {
 		contentType = "application/octet-stream"
 	}
-	request.Header.Set("apikey", client.apiKey)
-	request.Header.Set("Authorization", "Bearer "+client.apiKey)
+	supabasehttp.SetServiceAuth(request, client.apiKey)
 	request.Header.Set("Content-Type", contentType)
 	request.Header.Set("x-upsert", "false")
 	return client.doStorageRequest(request)
@@ -59,8 +60,7 @@ func (client storageClient) remove(ctx context.Context, bucket string, objectPat
 	if err != nil {
 		return err
 	}
-	request.Header.Set("apikey", client.apiKey)
-	request.Header.Set("Authorization", "Bearer "+client.apiKey)
+	supabasehttp.SetServiceAuth(request, client.apiKey)
 	request.Header.Set("Content-Type", "application/json")
 	return client.doStorageRequest(request)
 }
@@ -75,8 +75,7 @@ func (client storageClient) signedURL(ctx context.Context, bucket string, object
 	if err != nil {
 		return "", err
 	}
-	request.Header.Set("apikey", client.apiKey)
-	request.Header.Set("Authorization", "Bearer "+client.apiKey)
+	supabasehttp.SetServiceAuth(request, client.apiKey)
 	request.Header.Set("Content-Type", "application/json")
 
 	response, err := client.httpClient.Do(request)

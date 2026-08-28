@@ -4,9 +4,30 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { AuthLogo } from "@/components/features/auth/auth-logo";
 import { VimobLoader } from "@/components/shared/loading";
-import { useAuth } from "@/contexts/AuthContext";
+import { saveCheckoutBillingProfileSession } from "@/lib/billing/checkout-profile-session";
+import {
+  applyPublicSignupEmailCorrection,
+  clearPublicSignupAttempt,
+  getOrCreatePublicSignupAttemptId,
+  persistPublicSignupCompletion,
+  readPublicSignupCompletion,
+} from "@/lib/onboarding/signup-attempt";
+import {
+  CURRENT_PRIVACY_VERSION,
+  CURRENT_TERMS_VERSION,
+  onboardingAccessStepSchema,
+  onboardingOrganizationStepSchema,
+  onboardingSignupResponseSchema,
+  onboardingStepValidationResponseSchema,
+  type ParsedOnboardingSignupResponse,
+  type ParsedOnboardingStepValidationResponse,
+} from "@/lib/validation/onboarding";
+import {
+  PlanCarousel,
+  type OnboardingPlanOption as PlanOption,
+} from "./PlanCarousel";
+import { SignupRecoveryActions } from "./SignupRecoveryActions";
 
 const SignupPaymentPanel = dynamic(
   () => import("./signup-payment-panel").then((module) => module.SignupPaymentPanel),
@@ -41,13 +62,7 @@ type CountryCodeOption = {
   value: string;
 };
 
-type SignupResponse = {
-  ok: boolean;
-  message: string;
-  redirectTo?: string;
-  checkoutToken?: string | null;
-  organizationId?: string;
-};
+type SignupResponse = ParsedOnboardingSignupResponse;
 
 type CheckoutPlanChangeResponse = {
   ok: boolean;
@@ -57,27 +72,15 @@ type CheckoutPlanChangeResponse = {
   organizationId?: string;
 };
 
-type PlanOption = {
-  id?: string;
-  slug: string;
-  signupPath: "trial" | "paid";
-  name: string;
-  price: string;
-  description: string;
-  billingCycle?: string | null;
-  trialEnabled?: boolean | null;
-  trialDays?: number | null;
-  maxUsers?: number | null;
-  maxWhatsappSessions?: number | null;
-  modules?: string[];
-  features?: string[];
-};
-
 type PublicPlan = {
   id?: string;
   slug?: string;
   name?: string;
   price?: number;
+  reference_price?: number | null;
+  discount_percentage?: number | null;
+  display_order?: number | null;
+  billing_periods?: number[] | null;
   billing_cycle?: string | null;
   description?: string | null;
   trial_enabled?: boolean | null;
@@ -85,11 +88,27 @@ type PublicPlan = {
   max_users?: number | null;
   max_whatsapp_sessions?: number | null;
   modules?: string[] | null;
+  display_features?: string[] | null;
 };
 
 type PublicPlansResponse = {
   data?: PublicPlan[];
+  error?: string;
 };
+
+type PlansLoadState = "idle" | "loading" | "ready" | "empty" | "error";
+
+type SignupFieldErrorKey =
+  | "documentNumber"
+  | "companyName"
+  | "brokersCount"
+  | "adminName"
+  | "phone"
+  | "email"
+  | "password"
+  | "legal";
+
+type SignupFieldErrors = Partial<Record<SignupFieldErrorKey, string>>;
 
 const initialFormData: OnboardingData = {
   documentNumber: "",
@@ -105,7 +124,13 @@ const initialFormData: OnboardingData = {
 };
 
 const inputClass =
-  "h-12 w-full rounded-[6px] border border-transparent bg-[#121212] px-4 text-sm font-extralight tracking-wide text-white placeholder:text-white/30 outline-none transition-colors focus:border-transparent focus:bg-[#121212]";
+  "auth-login-field h-12 w-full rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-4 text-base text-[var(--app-text-primary)] placeholder:text-[var(--app-text-secondary)] outline-none ring-0 transition-colors sm:text-sm focus:bg-[var(--app-surface-solid)] focus:ring-1 focus:ring-primary/40";
+
+const labelClass =
+  "block text-[13px] font-light text-[var(--app-text-primary)]";
+
+const secondaryActionClass =
+  "h-12 w-[36%] rounded-[6px] border-0 bg-[var(--app-surface-solid)] text-[12px] font-light text-[var(--app-text-secondary)] outline-none transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] focus-visible:ring-1 focus-visible:ring-primary/40";
 
 const defaultCountryCodeOption: CountryCodeOption = {
   label: "BR +55",
@@ -122,51 +147,6 @@ const countryCodeOptions: CountryCodeOption[] = [
   { label: "CL +56", maxDigits: 9, placeholder: "0 0000 0000", value: "+56" },
   { label: "UY +598", maxDigits: 8, placeholder: "0000 0000", value: "+598" },
   { label: "PY +595", maxDigits: 9, placeholder: "000 000 000", value: "+595" },
-];
-
-const fallbackPlanOptions: PlanOption[] = [
-  {
-    slug: "starter-197",
-    signupPath: "trial",
-    name: "Starter",
-    price: "R$ 197/mes",
-    description: "7 dias grátis. Kanban, dashboard, agenda, WhatsApp, Meta e imóveis.",
-    billingCycle: "monthly",
-    trialEnabled: true,
-    trialDays: 7,
-    maxUsers: 5,
-    maxWhatsappSessions: 5,
-    modules: ["crm", "agenda", "whatsapp", "meta"],
-    features: ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integração Meta", "Imóveis"],
-  },
-  {
-    slug: "intermediario-297",
-    signupPath: "paid",
-    name: "Pro",
-    price: "R$ 297/mes",
-    description: "Tudo do Starter, com site público.",
-    billingCycle: "monthly",
-    trialEnabled: false,
-    trialDays: null,
-    maxUsers: 10,
-    maxWhatsappSessions: 10,
-    modules: ["crm", "agenda", "whatsapp", "meta", "properties", "site"],
-    features: ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integração Meta", "Imóveis", "Site"],
-  },
-  {
-    slug: "master-497",
-    signupPath: "paid",
-    name: "Master",
-    price: "R$ 497/mes",
-    description: "Tudo do Pro, com automações e mais usuários.",
-    billingCycle: "monthly",
-    trialEnabled: false,
-    trialDays: null,
-    maxUsers: 20,
-    maxWhatsappSessions: 20,
-    modules: ["crm", "agenda", "whatsapp", "meta", "properties", "site", "automations", "webhooks", "api", "portals"],
-    features: ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integração Meta", "Imóveis", "Site", "Automações", "Portais"],
-  },
 ];
 
 function normalizePlanName(name: string) {
@@ -190,43 +170,36 @@ function formatPlanPrice(price?: number, cycle?: string | null) {
   return `${formatted}${formatBillingCycle(cycle)}`;
 }
 
-function getPlanFeatures(slug: string, modules: string[]) {
-  const normalizedSlug = slug.toLowerCase();
-  const moduleSet = new Set(modules.map((moduleName) => moduleName.toLowerCase()));
-  const features = ["Kanban", "Dashboard", "Agenda", "WhatsApp", "Integração Meta", "Imóveis"];
+function normalizePlanFeatures(features?: string[] | null) {
+  if (!Array.isArray(features)) return [];
 
-  if (moduleSet.has("site") || normalizedSlug.includes("pro") || normalizedSlug.includes("intermediario") || normalizedSlug.includes("master")) {
-    features.push("Site");
-  }
-
-  if (moduleSet.has("automations") || normalizedSlug.includes("master")) {
-    features.push("Automações");
-  }
-
-  if (moduleSet.has("portals") || normalizedSlug.includes("master")) {
-    features.push("Portais");
-  }
-
-  return features;
+  return Array.from(
+    new Set(
+      features
+        .filter((feature): feature is string => typeof feature === "string")
+        .map((feature) => feature.trim())
+        .filter(Boolean),
+    ),
+  );
 }
 
-function getPlanDisplayDefaults(slug: string) {
-  const normalizedSlug = slug.toLowerCase();
-
-  if (normalizedSlug.includes("master")) {
-    return { maxUsers: 20, maxWhatsappSessions: 20 };
-  }
-
-  if (normalizedSlug.includes("pro") || normalizedSlug.includes("intermediario")) {
-    return { maxUsers: 10, maxWhatsappSessions: 10 };
-  }
-
-  return { maxUsers: 5, maxWhatsappSessions: 5 };
+function normalizePositiveNumber(value?: number | null) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : null;
 }
 
-function getDisplayLimit(value: number | null | undefined, fallback: number) {
-  const numericValue = typeof value === "number" && Number.isFinite(value) ? value : 0;
-  return Math.max(numericValue, fallback);
+function normalizeDisplayOrder(value?: number | null) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function comparePlansByDisplayOrder(first: PlanOption, second: PlanOption) {
+  if (first.displayOrder === null || first.displayOrder === undefined) {
+    return second.displayOrder === null || second.displayOrder === undefined ? 0 : 1;
+  }
+
+  if (second.displayOrder === null || second.displayOrder === undefined) return -1;
+  return first.displayOrder - second.displayOrder;
 }
 
 function mapPublicPlan(plan: PublicPlan): PlanOption | null {
@@ -238,7 +211,6 @@ function mapPublicPlan(plan: PublicPlan): PlanOption | null {
   const trialDays = plan.trial_days ?? null;
   const isTrial = Boolean(plan.trial_enabled) && Number(trialDays || 0) > 0;
   const modules = Array.isArray(plan.modules) ? plan.modules.filter(Boolean) : [];
-  const defaults = getPlanDisplayDefaults(slug);
 
   return {
     id: plan.id,
@@ -246,14 +218,17 @@ function mapPublicPlan(plan: PublicPlan): PlanOption | null {
     signupPath: isTrial ? "trial" : "paid",
     name: normalizePlanName(name),
     price: formatPlanPrice(plan.price, plan.billing_cycle),
-    description: plan.description?.trim() || "Plano Vimob CRM.",
+    originalPrice: normalizePositiveNumber(plan.reference_price),
+    discount: normalizePositiveNumber(plan.discount_percentage),
+    displayOrder: normalizeDisplayOrder(plan.display_order),
+    description: plan.description?.trim() || "",
     billingCycle: plan.billing_cycle ?? null,
     trialEnabled: Boolean(plan.trial_enabled),
     trialDays,
-    maxUsers: getDisplayLimit(plan.max_users, defaults.maxUsers),
-    maxWhatsappSessions: getDisplayLimit(plan.max_whatsapp_sessions, defaults.maxWhatsappSessions),
+    maxUsers: plan.max_users ?? null,
+    maxWhatsappSessions: plan.max_whatsapp_sessions ?? null,
     modules,
-    features: getPlanFeatures(slug, modules),
+    features: normalizePlanFeatures(plan.display_features),
   };
 }
 
@@ -316,7 +291,20 @@ function formatPhoneNumber(value: string, countryCode: string) {
   return digits;
 }
 
-function translateSignupMessage(message?: string) {
+function translateSignupMessage(message?: string, code?: string) {
+  if (code === "signup_email_exists") {
+    return "Este e-mail já está cadastrado. Faça login ou use outro e-mail.";
+  }
+  if (code === "signup_document_exists") {
+    return "Já existe uma organização cadastrada com este CPF ou CNPJ.";
+  }
+  if (code === "signup_attempt_conflict") {
+    return "Esta tentativa pertence a outro e-mail. Reinicie o cadastro em uma nova aba.";
+  }
+  if (code === "signup_rate_limited") {
+    return "Muitas tentativas. Aguarde um pouco antes de tentar novamente.";
+  }
+
   const normalized = (message || "").toLowerCase();
 
   if (
@@ -330,6 +318,60 @@ function translateSignupMessage(message?: string) {
   return message || "Não foi possível concluir o cadastro.";
 }
 
+function collectStepFieldErrors(
+  issues: readonly { message: string; path: readonly PropertyKey[] }[],
+): SignupFieldErrors {
+  const errors: SignupFieldErrors = {};
+  const allowedFields = new Set<SignupFieldErrorKey>([
+    "documentNumber",
+    "companyName",
+    "brokersCount",
+    "adminName",
+    "phone",
+    "email",
+    "password",
+    "legal",
+  ]);
+
+  for (const issue of issues) {
+    const rawField = issue.path[0] === "legalAccepted" ? "legal" : issue.path[0];
+    if (typeof rawField !== "string" || !allowedFields.has(rawField as SignupFieldErrorKey)) continue;
+    const field = rawField as SignupFieldErrorKey;
+    if (!errors[field]) errors[field] = issue.message;
+  }
+
+  return errors;
+}
+
+function InlineFieldError({ field, message }: { field: SignupFieldErrorKey; message?: string }) {
+  if (!message) return null;
+  return (
+    <p id={field + "-error"} className="text-[12px] font-light leading-[15px] text-primary">
+      {message}
+    </p>
+  );
+}
+
+async function requestStepValidation(body: unknown): Promise<{
+  response: Response;
+  result: ParsedOnboardingStepValidationResponse;
+}> {
+  const response = await fetch("/api/onboarding/validate-step", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const parsed = onboardingStepValidationResponseSchema.safeParse(
+    await response.json().catch(() => null),
+  );
+
+  if (!parsed.success) {
+    throw new Error("O servidor devolveu uma resposta de validação inválida.");
+  }
+
+  return { response, result: parsed.data };
+}
+
 function EnvelopeIcon() {
   return (
     <svg
@@ -339,7 +381,7 @@ function EnvelopeIcon() {
       fill="none"
       stroke="currentColor"
       strokeWidth="0.75"
-      className="text-white/40"
+      className="text-[var(--app-text-tertiary)]"
       aria-hidden="true"
     >
       <rect x="1.5" y="3.5" width="13" height="9" />
@@ -415,13 +457,19 @@ function ChevronDownIcon() {
   );
 }
 
-function StepIndicator({ step }: { step: OnboardingStep }) {
+function StepIndicator({
+  step,
+  compact = false,
+}: {
+  step: OnboardingStep;
+  compact?: boolean;
+}) {
   const steps = [1, 2, 3] as const;
   const currentStep = Math.min(step, 3);
 
   return (
     <div
-      className="mb-5"
+      className={compact ? "mb-2" : "mb-5"}
       role="progressbar"
       aria-label="Progresso do cadastro"
       aria-valuemin={1}
@@ -433,7 +481,7 @@ function StepIndicator({ step }: { step: OnboardingStep }) {
         {steps.map((item) => (
           <span
             key={item}
-            className={item <= currentStep ? "h-px bg-[#FF4529]" : "h-px bg-white/10"}
+            className={item <= currentStep ? "h-px bg-primary" : "h-px bg-[var(--app-border)]"}
             aria-hidden="true"
           />
         ))}
@@ -444,39 +492,64 @@ function StepIndicator({ step }: { step: OnboardingStep }) {
 
 function LegalConsentText({
   checked,
+  disabled,
+  invalid,
   onCheckedChange,
 }: {
   checked: boolean;
+  disabled?: boolean;
+  invalid?: boolean;
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="mx-auto flex max-w-[340px] items-start gap-3 text-left">
-      <input
-        id="legal-consent"
-        type="checkbox"
-        checked={checked}
-        onChange={(event) => onCheckedChange(event.target.checked)}
-        className="mt-1 h-4 w-4 shrink-0 accent-[#FF4529]"
-      />
+    <div className="auth-signup-legal mx-auto flex max-w-[360px] items-start gap-3 text-left">
+      <span className="relative mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
+        <input
+          id="legal-consent"
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          aria-invalid={invalid || undefined}
+          aria-describedby={invalid ? "legal-error" : undefined}
+          onChange={(event) => onCheckedChange(event.target.checked)}
+          className="peer absolute inset-0 z-10 h-4 w-4 cursor-pointer opacity-0 disabled:cursor-not-allowed"
+        />
+        <span
+          className={
+            invalid
+              ? "h-4 w-4 rounded-[4px] border border-primary transition-colors peer-checked:border-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary/30"
+              : "h-4 w-4 rounded-[4px] border border-[var(--app-border-strong)] transition-colors peer-checked:border-primary peer-focus-visible:ring-2 peer-focus-visible:ring-primary/30"
+          }
+        />
+        <span className="pointer-events-none absolute hidden h-2 w-2 rounded-[2px] bg-primary peer-checked:block" />
+      </span>
       <label
         htmlFor="legal-consent"
-        className="text-[11px] font-light leading-5 tracking-wide text-white/45"
+        className="text-[11px] leading-[17px] text-[var(--app-text-tertiary)]"
       >
       Ao me cadastrar, eu aceito os{" "}
       <Link
         href="/termos-de-uso"
-        className="font-semibold text-white/70 outline-none transition-colors hover:text-[#FF4529] focus-visible:text-[#FF4529]"
+        target="_blank"
+        rel="noopener noreferrer"
+        prefetch={false}
+        className="text-primary outline-none transition-opacity hover:opacity-80"
       >
         Termos de Uso
-      </Link>{" "}
+      </Link>{' '}
+
       e{" "}
       <Link
         href="/politica-de-privacidade"
-        className="font-semibold text-white/70 outline-none transition-colors hover:text-[#FF4529] focus-visible:text-[#FF4529]"
+        target="_blank"
+        rel="noopener noreferrer"
+        prefetch={false}
+        className="text-primary outline-none transition-opacity hover:opacity-80"
       >
         Política de Privacidade
-      </Link>{" "}
-      da Vimob
+      </Link>{' '}
+
+      da Vimob CRM.
       </label>
     </div>
   );
@@ -484,22 +557,27 @@ function LegalConsentText({
 
 export function OnboardingForm() {
   const router = useRouter();
-  const { signIn, switchOrganization } = useAuth();
   const [step, setStep] = useState<OnboardingStep>(1);
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState<OnboardingData>(initialFormData);
   const [acceptedLegal, setAcceptedLegal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isValidatingStep, setIsValidatingStep] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<SignupFieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const stepValidationInFlight = useRef(false);
   const [checkoutToken, setCheckoutToken] = useState<string | null>(null);
-  const [createdOrganizationId, setCreatedOrganizationId] = useState<string | null>(null);
+  const [recoveryCapability, setRecoveryCapability] = useState<string | null>(null);
   const [isChangingCheckoutPlan, setIsChangingCheckoutPlan] = useState(false);
   const [isUpdatingCheckoutPlan, setIsUpdatingCheckoutPlan] = useState(false);
-  const [planOptions, setPlanOptions] = useState<PlanOption[]>(fallbackPlanOptions);
-  const plansRequestStarted = useRef(false);
+  const [planOptions, setPlanOptions] = useState<PlanOption[]>([]);
+  const [plansLoadState, setPlansLoadState] = useState<PlansLoadState>("idle");
+  const [plansLoadError, setPlansLoadError] = useState<string | null>(null);
+  const [plansRequestVersion, setPlansRequestVersion] = useState(0);
   const selectedPlan = planOptions.find((plan) => plan.slug === formData.planSlug);
-  const shouldShowPaymentPanel = step === 3 && !!selectedPlan;
+  const shouldShowPaymentPanel = step === 3 && !!selectedPlan && !!checkoutToken;
   const isCheckoutPlanLocked = Boolean(checkoutToken) && !isChangingCheckoutPlan;
+  const shouldLoadPlans = step >= 2;
   const passwordRules = [
     {
       label: "8 caracteres",
@@ -514,46 +592,74 @@ export function OnboardingForm() {
       isValid: /[^A-Za-z0-9]/.test(formData.password),
     },
   ];
-  const isPasswordStrong = passwordRules.every((rule) => rule.isValid);
   const selectedCountryCodeOption = getCountryCodeOption(
     formData.phoneCountryCode,
   );
-  const phoneDigits = onlyDigits(
-    formData.phone,
-    selectedCountryCodeOption.maxDigits,
-  );
-  const isPhoneNumberValid =
-    phoneDigits.length === selectedCountryCodeOption.maxDigits;
-  const hasRequiredAccessFields =
-    formData.adminName.trim().length > 0 &&
-    isPhoneNumberValid &&
-    formData.email.trim().length > 0;
-  const canContinueAccess =
-    hasRequiredAccessFields && isPasswordStrong && acceptedLegal && !isSubmitting;
   const canSubmitPlan =
     !!selectedPlan && !isSubmitting && !isUpdatingCheckoutPlan && !checkoutToken;
 
   useEffect(() => {
-    if (step < 2 || plansRequestStarted.current) return;
+    const hydrationFrame = window.requestAnimationFrame(() => {
+      try {
+        const completedSignup = readPublicSignupCompletion(window.sessionStorage);
+        if (!completedSignup) return;
 
-    plansRequestStarted.current = true;
+        setCheckoutToken(completedSignup.checkoutToken);
+        setRecoveryCapability(completedSignup.recoveryCapability || null);
+        setFormData((current) => ({ ...current, email: completedSignup.email }));
+        if (completedSignup.requiresPayment) {
+          router.replace(completedSignup.redirectTo);
+          return;
+        }
+
+        setStep(4);
+      } catch {
+        // Browsers may disable sessionStorage. A live submission still reports
+        // this before mutating the backend when it tries to create the attempt.
+      }
+    });
+
+    return () => window.cancelAnimationFrame(hydrationFrame);
+  }, [router]);
+
+  useEffect(() => {
+    if (!shouldLoadPlans) return;
+
     let isMounted = true;
 
     async function loadPlans() {
+      setPlansLoadState("loading");
+      setPlansLoadError(null);
+
       try {
         const response = await fetch("/api/onboarding/plans", {
           headers: { Accept: "application/json" },
         });
-        const payload = (await response.json()) as PublicPlansResponse;
-        const nextPlans = (payload.data || [])
-          .map(mapPublicPlan)
-          .filter((plan): plan is PlanOption => Boolean(plan));
+        const payload = (await response.json().catch(() => ({}))) as PublicPlansResponse;
 
-        if (isMounted && nextPlans.length > 0) {
-          setPlanOptions(nextPlans);
+        if (!response.ok || !Array.isArray(payload.data)) {
+          throw new Error(payload.error || "Não foi possível carregar os planos agora.");
         }
-      } catch {
-        if (isMounted) setPlanOptions(fallbackPlanOptions);
+
+        const nextPlans = payload.data
+          .map(mapPublicPlan)
+          .filter((plan): plan is PlanOption => Boolean(plan))
+          .sort(comparePlansByDisplayOrder);
+
+        if (!isMounted) return;
+
+        setPlanOptions(nextPlans);
+        setPlansLoadState(nextPlans.length > 0 ? "ready" : "empty");
+      } catch (error) {
+        if (!isMounted) return;
+
+        setPlanOptions([]);
+        setPlansLoadState("error");
+        setPlansLoadError(
+          error instanceof Error
+            ? error.message
+            : "Não foi possível carregar os planos agora.",
+        );
       }
     }
 
@@ -562,7 +668,7 @@ export function OnboardingForm() {
     return () => {
       isMounted = false;
     };
-  }, [step]);
+  }, [plansRequestVersion, shouldLoadPlans]);
 
   useEffect(() => {
     if (step !== 2) return;
@@ -570,20 +676,35 @@ export function OnboardingForm() {
   }, [step]);
 
   const handleAccessPlatform = useCallback(
-    async (organizationId?: string | null) => {
-      const targetOrganizationId = organizationId || createdOrganizationId;
-
-      if (targetOrganizationId) {
-        await switchOrganization(targetOrganizationId);
-      }
-
-      router.replace("/dashboard");
+    () => {
+      router.replace("/login?emailConfirmation=required");
     },
-    [createdOrganizationId, router, switchOrganization],
+    [router],
   );
+
+  function clearFieldError(field: SignupFieldErrorKey) {
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  }
 
   function updateField(field: keyof OnboardingData, value: string) {
     setFormData((current) => ({ ...current, [field]: value }));
+    if (
+      field === "documentNumber" ||
+      field === "companyName" ||
+      field === "brokersCount" ||
+      field === "adminName" ||
+      field === "phone" ||
+      field === "email" ||
+      field === "password"
+    ) {
+      clearFieldError(field);
+    }
+    setSubmitError(null);
   }
 
   function updatePhoneCountryCode(countryCode: string) {
@@ -592,6 +713,29 @@ export function OnboardingForm() {
       phone: formatPhoneNumber(current.phone, countryCode),
       phoneCountryCode: countryCode,
     }));
+    clearFieldError("phone");
+    setSubmitError(null);
+  }
+
+  function showFieldErrors(
+    errors: SignupFieldErrors,
+    order: readonly SignupFieldErrorKey[],
+  ) {
+    setFieldErrors(errors);
+    const firstField = order.find((field) => Boolean(errors[field]));
+    if (!firstField) return;
+    const elementId = firstField === "legal" ? "legal-consent" : firstField;
+    window.requestAnimationFrame(() => document.getElementById(elementId)?.focus());
+  }
+
+  function fieldInputClass(field: SignupFieldErrorKey, extra = "") {
+    return [inputClass, extra, fieldErrors[field] ? "ring-1 ring-primary/50" : ""]
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  function fieldDescription(field: SignupFieldErrorKey) {
+    return fieldErrors[field] ? field + "-error" : undefined;
   }
 
   function requestCheckoutPlanChange() {
@@ -647,14 +791,10 @@ export function OnboardingForm() {
       }));
       setCheckoutToken(result.checkoutToken || checkoutToken);
 
-      if (result.organizationId) {
-        setCreatedOrganizationId(result.organizationId);
-      }
-
       setIsChangingCheckoutPlan(false);
 
       if (!result.requiresPayment) {
-        await handleAccessPlatform(result.organizationId);
+        handleAccessPlatform();
       }
     } catch {
       setSubmitError("Não foi possível atualizar o plano agora.");
@@ -668,28 +808,148 @@ export function OnboardingForm() {
     setSubmitError(null);
 
     if (step === 1) {
-      setStep(2);
+      const parsedStep = onboardingOrganizationStepSchema.safeParse({
+        companyName: formData.companyName,
+        documentNumber: formData.documentNumber,
+        brokersCount: formData.brokersCount,
+      });
+      if (!parsedStep.success) {
+        showFieldErrors(collectStepFieldErrors(parsedStep.error.issues), [
+          "documentNumber",
+          "companyName",
+          "brokersCount",
+        ]);
+        return;
+      }
+      if (stepValidationInFlight.current) return;
+
+      stepValidationInFlight.current = true;
+      setIsValidatingStep(true);
+      setFieldErrors({});
+
+      try {
+        const { response, result } = await requestStepValidation({
+          step: "organization",
+          companyName: parsedStep.data.companyName,
+          documentNumber: parsedStep.data.documentNumber,
+        });
+
+        if (!response.ok || !result.ok) {
+          if (!result.ok && result.code === "signup_document_exists") {
+            showFieldErrors(
+              { documentNumber: translateSignupMessage(result.message, result.code) },
+              ["documentNumber"],
+            );
+          } else {
+            setSubmitError(
+              !result.ok
+                ? translateSignupMessage(result.message, result.code)
+                : "Não foi possível validar os dados agora. Tente novamente.",
+            );
+          }
+          return;
+        }
+
+        setFormData((current) => ({
+          ...current,
+          companyName: parsedStep.data.companyName,
+          documentNumber: formatCpfCnpj(parsedStep.data.documentNumber),
+          brokersCount: String(parsedStep.data.brokersCount),
+        }));
+        setStep(2);
+      } catch (error) {
+        setSubmitError(
+          error instanceof Error
+            ? error.message
+            : "Não foi possível validar os dados agora. Tente novamente.",
+        );
+      } finally {
+        stepValidationInFlight.current = false;
+        setIsValidatingStep(false);
+      }
       return;
     }
 
     if (step === 2) {
-      if (canContinueAccess) {
-        setStep(3);
+      const parsedStep = onboardingAccessStepSchema.safeParse({
+        adminName: formData.adminName,
+        phoneCountryCode: formData.phoneCountryCode,
+        phone: formData.phone,
+        email: formData.email,
+        password: formData.password,
+        legalAccepted: acceptedLegal,
+      });
+      if (!parsedStep.success) {
+        showFieldErrors(collectStepFieldErrors(parsedStep.error.issues), [
+          "adminName",
+          "phone",
+          "email",
+          "password",
+          "legal",
+        ]);
+        return;
       }
+      if (stepValidationInFlight.current) return;
 
+      stepValidationInFlight.current = true;
+      setIsValidatingStep(true);
+      setFieldErrors({});
+
+      try {
+        const { response, result } = await requestStepValidation({
+          step: "access",
+          email: parsedStep.data.email,
+        });
+
+        if (!response.ok || !result.ok) {
+          if (!result.ok && result.code === "signup_email_exists") {
+            showFieldErrors(
+              { email: translateSignupMessage(result.message, result.code) },
+              ["email"],
+            );
+          } else {
+            setSubmitError(
+              !result.ok
+                ? translateSignupMessage(result.message, result.code)
+                : "Não foi possível validar os dados agora. Tente novamente.",
+            );
+          }
+          return;
+        }
+
+        setFormData((current) => ({
+          ...current,
+          adminName: parsedStep.data.adminName,
+          phone: parsedStep.data.phone,
+          email: parsedStep.data.email,
+        }));
+        setStep(3);
+      } catch (error) {
+        setSubmitError(
+          error instanceof Error
+            ? error.message
+            : "Não foi possível validar os dados agora. Tente novamente.",
+        );
+      } finally {
+        stepValidationInFlight.current = false;
+        setIsValidatingStep(false);
+      }
       return;
     }
 
     if (step === 3 && canSubmitPlan) {
       setIsSubmitting(true);
+      let signupCompleted = false;
 
       try {
+        const attemptId = getOrCreatePublicSignupAttemptId(window.sessionStorage);
         const response = await fetch("/api/onboarding/signup", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
+            attemptId,
             companyName: formData.companyName,
             documentNumber: formData.documentNumber,
             brokersCount: formData.brokersCount,
@@ -702,35 +962,97 @@ export function OnboardingForm() {
             planSlug: formData.planSlug,
             termsAccepted: acceptedLegal,
             privacyAccepted: acceptedLegal,
+            termsVersion: CURRENT_TERMS_VERSION,
+            privacyVersion: CURRENT_PRIVACY_VERSION,
           }),
         });
-        const result = (await response.json()) as SignupResponse;
+        const parsedResult = onboardingSignupResponseSchema.safeParse(
+          await response.json().catch(() => null),
+        );
+
+        if (!parsedResult.success) {
+          setSubmitError("O servidor devolveu uma resposta de cadastro inválida. Tente novamente.");
+          return;
+        }
+
+        const result: SignupResponse = parsedResult.data;
 
         if (!response.ok || !result.ok) {
-          setSubmitError(translateSignupMessage(result.message));
+          if (result.ok) {
+            setSubmitError(result.message || "Não foi possível concluir o cadastro.");
+            return;
+          }
+          if (result.code === "signup_document_exists") {
+            setStep(1);
+            showFieldErrors(
+              { documentNumber: translateSignupMessage(result.message, result.code) },
+              ["documentNumber"],
+            );
+            return;
+          }
+          if (result.code === "signup_email_exists") {
+            setStep(2);
+            showFieldErrors(
+              { email: translateSignupMessage(result.message, result.code) },
+              ["email"],
+            );
+            return;
+          }
+
+          setSubmitError(translateSignupMessage(result.message, result.code));
           return;
         }
 
-        const { error } = await signIn(formData.email.trim(), formData.password);
+        signupCompleted = true;
+        setCheckoutToken(result.checkoutToken);
+        setRecoveryCapability(result.recoveryCapability);
+        // The password is no longer needed after the backend confirms the
+        // idempotent signup. Remove it from component memory before navigating
+        // to checkout or rendering the confirmation state.
+        setFormData((current) => ({ ...current, password: "" }));
 
-        if (error) {
-          setStep(4);
+        try {
+          persistPublicSignupCompletion(
+            window.sessionStorage,
+            attemptId,
+            formData.email,
+            result,
+          );
+        } catch {
+          // The backend is already authoritative at this point. A browser
+          // storage failure must never turn a completed signup into a false
+          // "cadastro não concluído" error.
+        }
+
+        if (result.requiresPayment) {
+          try {
+            const documentDigits = onlyDigits(formData.documentNumber);
+            saveCheckoutBillingProfileSession(result.organizationId, {
+              name:
+                documentDigits.length === 14
+                  ? formData.companyName.trim()
+                  : formData.adminName.trim(),
+              email: formData.email.trim(),
+              cpf_cnpj: formData.documentNumber.trim(),
+              phone: `${formData.phoneCountryCode} ${formData.phone}`.trim(),
+            });
+          } catch {
+            // Checkout can still collect the billing profile again. This
+            // session convenience is not part of signup correctness.
+          }
+          // Checkout remains authorized by its opaque public token. Email
+          // ownership is proved separately and never blocks payment.
+          router.replace(result.redirectTo);
           return;
         }
 
-        if (selectedPlan?.signupPath === "paid") {
-          const tokenFromRedirect = result.redirectTo?.startsWith("/checkout/")
-            ? result.redirectTo.replace("/checkout/", "")
-            : null;
-
-          setCheckoutToken(result.checkoutToken || tokenFromRedirect);
-          setCreatedOrganizationId(result.organizationId || null);
-          return;
-        }
-
-        router.replace(result.redirectTo || "/select-organization");
+        setStep(4);
       } catch {
-        setSubmitError("Não foi possível concluir o cadastro agora.");
+        if (signupCompleted) {
+          setStep(4);
+        } else {
+          setSubmitError("Não foi possível concluir o cadastro agora.");
+        }
       } finally {
         setIsSubmitting(false);
       }
@@ -738,51 +1060,74 @@ export function OnboardingForm() {
   }
 
   return (
-    <div className="relative w-full max-w-sm">
-      <header className="mb-5 text-center">
-        <AuthLogo />
-        {step !== 4 ? <h1 className="sr-only">Criar conta no Vimob CRM</h1> : null}
-        <p className="mt-4 text-sm font-extralight tracking-wide text-white/50">
+    <div className="relative w-full max-w-[400px]">
+      <header className={`text-left ${step === 3 ? "mb-2" : "mb-8 lg:mb-10"}`}>
+        <h1 className="text-[20px] font-normal text-[var(--app-text-primary)]">
+          {step === 4 ? "Cadastro concluído" : "Criar conta no Vimob CRM"}
+        </h1>
+        <p className="mt-1.5 text-[12px] font-light text-[var(--app-text-tertiary)]">
           {step === 4
-            ? "Estamos preparando seu ambiente"
+            ? "Agora confirme seu e-mail"
             : "Crie a infraestrutura da sua organização"}
         </p>
       </header>
 
-      <StepIndicator step={step} />
+      <StepIndicator step={step} compact={step === 3} />
 
       {step === 4 ? (
         <div className="space-y-6 py-4 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-none border border-[#FF4529] text-[#FF4529]">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
             <CheckIcon />
           </div>
           <div className="space-y-2">
-            <h1 className="text-sm font-extralight uppercase tracking-[0.2em] text-white">
-              Cadastro recebido
-            </h1>
-            <p className="text-sm font-extralight leading-6 tracking-wide text-white/56">
+            <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
               O ambiente da{" "}
-              <span className="text-white">
+              <span className="text-[var(--app-text-primary)]">
                 {formData.companyName || "sua organização"}
               </span>{" "}
-              está pronto para ser conectado ao backend.
+              está pronto. Enviamos um e-mail para {formData.email || "o endereço cadastrado"}. Confirme o endereço antes de entrar no Vimob.
             </p>
           </div>
           <Link
-            href="/login"
-            className="auth-primary-action inline-flex h-12 w-full items-center justify-center rounded-[6px] text-[12px] font-extralight uppercase tracking-[0.08em] outline-none transition-colors"
+            href="/login?emailConfirmation=required"
+            className="auth-primary-action inline-flex h-12 w-full items-center justify-center rounded-[6px] text-[12px] font-light outline-none transition-colors"
           >
             Ir para login
           </Link>
+          {recoveryCapability && formData.email ? (
+            <SignupRecoveryActions
+              capability={recoveryCapability}
+              currentEmail={formData.email}
+              onCorrected={(recoveryResult) => {
+                if (recoveryResult.email) {
+                  setFormData((current) => ({ ...current, email: recoveryResult.email || current.email }));
+                }
+                setRecoveryCapability(null);
+                try {
+                  applyPublicSignupEmailCorrection(window.sessionStorage, recoveryResult);
+                } catch {
+                  // Backend remains authoritative if browser storage is unavailable.
+                }
+              }}
+              onCancelled={(recoveryResult) => {
+                try {
+                  clearPublicSignupAttempt(window.sessionStorage);
+                } catch {
+                  // Navigation below still restarts the local form.
+                }
+                window.location.assign(recoveryResult.redirectTo);
+              }}
+            />
+          ) : null}
         </div>
       ) : (
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form method="post" noValidate onSubmit={handleSubmit} aria-busy={isValidatingStep || isSubmitting} className={step === 3 ? "space-y-2" : "space-y-4"}>
           {step === 1 ? (
             <>
               <div className="space-y-2">
                 <label
                   htmlFor="documentNumber"
-                  className="block text-sm font-extralight tracking-wide text-white"
+                  className={labelClass}
                 >
                   CPF/CNPJ
                 </label>
@@ -794,6 +1139,9 @@ export function OnboardingForm() {
                   maxLength={18}
                   pattern="(\d{3}\.\d{3}\.\d{3}-\d{2}|\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})"
                   required
+                  disabled={isValidatingStep}
+                  aria-invalid={Boolean(fieldErrors.documentNumber) || undefined}
+                  aria-describedby={fieldDescription("documentNumber")}
                   title="Informe um CPF com 11 números ou CNPJ com 14 números."
                   placeholder="CPF ou CNPJ"
                   value={formData.documentNumber}
@@ -803,14 +1151,15 @@ export function OnboardingForm() {
                       formatCpfCnpj(event.target.value),
                     )
                   }
-                  className={inputClass}
+                  className={fieldInputClass("documentNumber")}
                 />
+                <InlineFieldError field="documentNumber" message={fieldErrors.documentNumber} />
               </div>
 
               <div className="space-y-2">
                 <label
                   htmlFor="companyName"
-                  className="block text-sm font-extralight tracking-wide text-white"
+                  className={labelClass}
                 >
                   Nome da imobiliária
                 </label>
@@ -819,19 +1168,23 @@ export function OnboardingForm() {
                   name="companyName"
                   type="text"
                   required
+                  disabled={isValidatingStep}
+                  aria-invalid={Boolean(fieldErrors.companyName) || undefined}
+                  aria-describedby={fieldDescription("companyName")}
                   placeholder="Ex: Machado Imóveis"
                   value={formData.companyName}
                   onChange={(event) =>
                     updateField("companyName", event.target.value)
                   }
-                  className={inputClass}
+                  className={fieldInputClass("companyName")}
                 />
+                <InlineFieldError field="companyName" message={fieldErrors.companyName} />
               </div>
 
               <div className="space-y-2">
                 <label
                   htmlFor="brokersCount"
-                  className="block text-sm font-extralight tracking-wide text-white"
+                  className={labelClass}
                 >
                   Quantidade de corretores
                 </label>
@@ -840,29 +1193,41 @@ export function OnboardingForm() {
                   name="brokersCount"
                   type="number"
                   min="1"
+                  max="500"
                   required
+                  disabled={isValidatingStep}
+                  aria-invalid={Boolean(fieldErrors.brokersCount) || undefined}
+                  aria-describedby={fieldDescription("brokersCount")}
                   placeholder="Ex: 25"
                   value={formData.brokersCount}
                   onChange={(event) =>
                     updateField("brokersCount", event.target.value)
                   }
-                  className={inputClass}
+                  className={fieldInputClass("brokersCount")}
                 />
+                <InlineFieldError field="brokersCount" message={fieldErrors.brokersCount} />
               </div>
 
               <button
                 type="submit"
-                className="auth-primary-action h-12 w-full rounded-[6px] text-[12px] font-extralight uppercase tracking-[0.08em] outline-none transition-colors"
+                disabled={isValidatingStep}
+                className="auth-primary-action h-12 w-full rounded-[6px] text-[12px] font-light outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-45"
               >
-                Continuar
+                {isValidatingStep ? "Verificando..." : "Continuar"}
               </button>
+
+              {submitError ? (
+                <p role="alert" className="text-center text-[12px] font-light leading-[15px] text-primary">
+                  {submitError}
+                </p>
+              ) : null}
             </>
           ) : step === 2 ? (
             <>
               <div className="space-y-2">
                 <label
                   htmlFor="adminName"
-                  className="block text-sm font-extralight tracking-wide text-white"
+                  className={labelClass}
                 >
                   Nome completo do gestor
                 </label>
@@ -871,32 +1236,37 @@ export function OnboardingForm() {
                   name="adminName"
                   type="text"
                   required
+                  disabled={isValidatingStep}
+                  aria-invalid={Boolean(fieldErrors.adminName) || undefined}
+                  aria-describedby={fieldDescription("adminName")}
                   placeholder="Nome do gestor administrador"
                   value={formData.adminName}
                   onChange={(event) =>
                     updateField("adminName", event.target.value)
                   }
-                  className={inputClass}
+                  className={fieldInputClass("adminName")}
                 />
+                <InlineFieldError field="adminName" message={fieldErrors.adminName} />
               </div>
 
               <div className="space-y-2">
                 <label
                   htmlFor="phone"
-                  className="block text-sm font-extralight tracking-wide text-white"
+                  className={labelClass}
                 >
                   WhatsApp
                 </label>
-                <div className="flex h-12 overflow-hidden rounded-[6px] bg-[#121212]">
-                  <div className="relative w-[112px] shrink-0 border-r border-white/10">
+                <div className={fieldErrors.phone ? "flex h-12 overflow-hidden rounded-[6px] bg-[var(--app-surface-solid)] ring-1 ring-primary/50" : "flex h-12 overflow-hidden rounded-[6px] bg-[var(--app-surface-solid)] focus-within:ring-1 focus-within:ring-primary/40"}>
+                  <div className="relative w-[112px] shrink-0 border-r border-[var(--app-border)]">
                     <select
                       name="phoneCountryCode"
                       value={formData.phoneCountryCode}
+                      disabled={isValidatingStep}
                       onChange={(event) =>
                         updatePhoneCountryCode(event.target.value)
                       }
                       aria-label="Código do país"
-                      className="h-12 w-full appearance-none bg-[#121212] pl-4 pr-8 text-sm font-extralight tracking-wide text-white outline-none"
+                      className="auth-login-field h-12 w-full appearance-none bg-[var(--app-surface-solid)] pl-4 pr-8 text-base text-[var(--app-text-primary)] outline-none sm:text-sm"
                     >
                       {countryCodeOptions.map((option) => (
                         <option key={option.value} value={option.value}>
@@ -904,7 +1274,7 @@ export function OnboardingForm() {
                         </option>
                       ))}
                     </select>
-                    <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-white/45">
+                    <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[var(--app-text-tertiary)]">
                       <ChevronDownIcon />
                     </span>
                   </div>
@@ -919,6 +1289,9 @@ export function OnboardingForm() {
                         : selectedCountryCodeOption.maxDigits
                     }
                     required
+                    disabled={isValidatingStep}
+                    aria-invalid={Boolean(fieldErrors.phone) || undefined}
+                    aria-describedby={fieldDescription("phone")}
                     placeholder={selectedCountryCodeOption.placeholder}
                     value={formData.phone}
                     onChange={(event) =>
@@ -930,15 +1303,16 @@ export function OnboardingForm() {
                         ),
                       )
                     }
-                    className="h-12 min-w-0 flex-1 bg-[#121212] px-4 text-sm font-extralight tracking-wide text-white placeholder:text-white/30 outline-none transition-colors focus:bg-[#121212]"
+                    className="auth-login-field h-12 min-w-0 flex-1 bg-[var(--app-surface-solid)] px-4 text-base text-[var(--app-text-primary)] placeholder:text-[var(--app-text-secondary)] outline-none sm:text-sm"
                   />
                 </div>
+                <InlineFieldError field="phone" message={fieldErrors.phone} />
               </div>
 
               <div className="space-y-2">
                 <label
                   htmlFor="email"
-                  className="block text-sm font-extralight tracking-wide text-white"
+                  className={labelClass}
                 >
                   E-mail de acesso
                 </label>
@@ -952,20 +1326,24 @@ export function OnboardingForm() {
                     type="email"
                     autoComplete="email"
                     required
+                    disabled={isValidatingStep}
+                    aria-invalid={Boolean(fieldErrors.email) || undefined}
+                    aria-describedby={fieldDescription("email")}
                     placeholder="seu@email.com"
                     value={formData.email}
                     onChange={(event) =>
                       updateField("email", event.target.value)
                     }
-                    className={`${inputClass} pl-11`}
+                    className={fieldInputClass("email", "pl-11")}
                   />
                 </div>
+                <InlineFieldError field="email" message={fieldErrors.email} />
               </div>
 
               <div className="space-y-2">
                 <label
                   htmlFor="password"
-                  className="block text-sm font-extralight tracking-wide text-white"
+                  className={labelClass}
                 >
                   Crie sua senha
                 </label>
@@ -977,33 +1355,38 @@ export function OnboardingForm() {
                     autoComplete="new-password"
                     required
                     minLength={8}
+                    maxLength={128}
+                    disabled={isValidatingStep}
+                    aria-invalid={Boolean(fieldErrors.password) || undefined}
+                    aria-describedby={fieldDescription("password")}
                     placeholder="Mínimo 8 caracteres"
                     value={formData.password}
                     onChange={(event) =>
                       updateField("password", event.target.value)
                     }
-                    className={`${inputClass} pr-12`}
+                    className={fieldInputClass("password", "pr-12")}
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword((current) => !current)}
-                    className="absolute inset-y-0 right-0 flex items-center px-4 text-white/65 outline-none transition-colors hover:text-white/90 focus-visible:text-white"
+                    className="absolute inset-y-0 right-0 flex items-center px-4 text-[var(--app-text-tertiary)] outline-none transition-colors hover:text-[var(--app-text-primary)] focus-visible:text-[var(--app-text-primary)]"
                     aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
                   >
                     <EyeIcon open={showPassword} />
                   </button>
                 </div>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-[11px] font-extralight tracking-wide">
+                <InlineFieldError field="password" message={fieldErrors.password} />
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-[11px] font-light">
                   {passwordRules.map((rule) => (
                     <span
                       key={rule.label}
                       className={`inline-flex items-center gap-1 whitespace-nowrap ${
-                        rule.isValid ? "text-[#FF4529]" : "text-white/38"
+                        rule.isValid ? "text-primary" : "text-[var(--app-text-tertiary)]"
                       }`}
                     >
                       <span
                         className={`h-1.5 w-1.5 rounded-full ${
-                          rule.isValid ? "bg-[#FF4529]" : "bg-white/24"
+                          rule.isValid ? "bg-primary" : "bg-[var(--app-border-strong)]"
                         }`}
                         aria-hidden="true"
                       />
@@ -1016,76 +1399,78 @@ export function OnboardingForm() {
               <div className="flex gap-3 pt-1">
                 <button
                   type="button"
-                  onClick={() => setStep(1)}
-                  disabled={isSubmitting}
-                  className="h-12 w-[36%] rounded-[6px] border border-white/10 text-[12px] font-extralight uppercase tracking-[0.08em] text-white/70 outline-none transition-colors hover:bg-white/5 focus-visible:border-[#FF4529]"
+                  onClick={() => {
+                    setFieldErrors({});
+                    setSubmitError(null);
+                    setStep(1);
+                  }}
+                  disabled={isSubmitting || isValidatingStep}
+                  className={secondaryActionClass}
                 >
                   Voltar
                 </button>
                 <button
                   type="submit"
-                  disabled={!canContinueAccess}
-                  className="auth-primary-action h-12 flex-1 rounded-[6px] text-[12px] font-extralight uppercase tracking-[0.08em] outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-45"
+                  disabled={isSubmitting || isValidatingStep}
+                  className="auth-primary-action h-12 flex-1 rounded-[6px] text-[12px] font-light outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-45"
                 >
-                  Continuar
+                  {isValidatingStep ? "Verificando..." : "Continuar"}
                 </button>
               </div>
 
               {submitError ? (
-                <p className="text-center text-xs font-light leading-5 text-[#FF4529]">
+                <p className="text-center text-xs font-light leading-5 text-primary">
                   {submitError}
                 </p>
               ) : null}
 
               <LegalConsentText
                 checked={acceptedLegal}
-                onCheckedChange={setAcceptedLegal}
+                disabled={isValidatingStep}
+                invalid={Boolean(fieldErrors.legal)}
+                onCheckedChange={(checked) => {
+                  setAcceptedLegal(checked);
+                  clearFieldError("legal");
+                  setSubmitError(null);
+                }}
               />
+              <InlineFieldError field="legal" message={fieldErrors.legal} />
             </>
           ) : (
             <>
-              <div className="space-y-2">
-                <p className="block text-sm font-extralight tracking-wide text-white">
+              <div className="space-y-1.5">
+                <p className={labelClass}>
                   Escolha seu plano
                 </p>
-                <div className="grid gap-2">
-                  {planOptions.map((plan) => {
-                    const isSelected = formData.planSlug === plan.slug;
-                    const isPlanDisabled =
-                      isCheckoutPlanLocked || isUpdatingCheckoutPlan;
-
-                    return (
-                      <button
-                        key={plan.slug}
-                        type="button"
-                        onClick={() => void selectPlan(plan)}
-                        disabled={isPlanDisabled}
-                        aria-pressed={isSelected}
-                        className={`min-h-[74px] rounded-[6px] px-4 py-3 text-left outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-55 ${
-                          isSelected
-                            ? "bg-[#FF4529]/15"
-                            : "bg-[#121212] hover:bg-[#171717]"
-                        }`}
-                      >
-                        <span className="flex items-center justify-between gap-3">
-                          <span className="text-sm font-light tracking-wide text-white">
-                            {plan.name}
-                          </span>
-                          <span className="shrink-0 text-xs font-light uppercase tracking-[0.08em] text-[#FF4529]">
-                            {plan.price}
-                          </span>
-                        </span>
-                        <span className="mt-1 block text-xs font-extralight leading-5 tracking-wide text-white/45">
-                          {plan.description}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+                {plansLoadState === "idle" || plansLoadState === "loading" ? (
+                  <div className="flex min-h-36 items-center justify-center rounded-[8px] bg-[var(--app-surface-solid)]">
+                    <VimobLoader size="sm" label="Carregando planos..." />
+                  </div>
+                ) : plansLoadState === "error" ? (
+                  <div className="rounded-[8px] bg-[var(--app-surface-solid)] px-5 py-6 text-center">
+                    <p className="text-xs font-light leading-5 text-[var(--app-text-secondary)]">
+                      {plansLoadError || "Não foi possível carregar os planos agora."}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setPlansRequestVersion((current) => current + 1)}
+                      className="mt-4 inline-flex h-10 items-center justify-center rounded-[6px] bg-primary/50 px-5 text-[11px] font-light text-primary-foreground outline-none transition-colors hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary/30"
+                    >
+                      Tentar novamente
+                    </button>
+                  </div>
+                ) : (
+                  <PlanCarousel
+                    plans={planOptions}
+                    selectedSlug={formData.planSlug}
+                    disabled={isCheckoutPlanLocked || isUpdatingCheckoutPlan}
+                    onSelect={selectPlan}
+                  />
+                )}
                 {checkoutToken ? (
                   <p
-                    className={`text-[11px] font-extralight leading-5 tracking-wide ${
-                      isChangingCheckoutPlan ? "text-[#FF4529]" : "text-white/38"
+                    className={`text-[11px] font-light leading-5 ${
+                      isChangingCheckoutPlan ? "text-primary" : "text-[var(--app-text-tertiary)]"
                     }`}
                   >
                     {isChangingCheckoutPlan
@@ -1095,19 +1480,19 @@ export function OnboardingForm() {
                 ) : null}
               </div>
 
-              <div className="flex gap-3 pt-1">
+              <div className="flex gap-3">
                 <button
                   type="button"
                   onClick={() => setStep(2)}
                   disabled={isSubmitting || !!checkoutToken}
-                  className="h-12 w-[36%] rounded-[6px] border border-white/10 text-[12px] font-extralight uppercase tracking-[0.08em] text-white/70 outline-none transition-colors hover:bg-white/5 focus-visible:border-[#FF4529] disabled:cursor-not-allowed disabled:opacity-45"
+                  className={`${secondaryActionClass} disabled:cursor-not-allowed disabled:opacity-45`}
                 >
                   Voltar
                 </button>
                 <button
                   type="submit"
                   disabled={!canSubmitPlan}
-                  className="auth-primary-action h-12 flex-1 rounded-[6px] text-[12px] font-extralight uppercase tracking-[0.08em] outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-45"
+                  className="auth-primary-action h-12 flex-1 rounded-[6px] text-[12px] font-light outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   {isUpdatingCheckoutPlan
                     ? "Atualizando plano"
@@ -1116,33 +1501,21 @@ export function OnboardingForm() {
                     : isSubmitting
                       ? "Criando ambiente"
                       : selectedPlan?.signupPath === "paid"
-                        ? "Criar e pagar"
+                        ? `Criar e pagar ${selectedPlan.name}`
                         : selectedPlan
-                          ? "Iniciar teste gratis"
+                          ? `Iniciar teste ${selectedPlan.name}`
                           : "Escolha um plano"}
                 </button>
               </div>
 
               {submitError ? (
-                <p className="text-center text-xs font-light leading-5 text-[#FF4529]">
+                <p className="text-center text-xs font-light leading-5 text-primary">
                   {submitError}
                 </p>
               ) : null}
             </>
           )}
         </form>
-      )}
-
-      {step < 4 && (
-        <footer className="mt-5 text-center text-sm font-extralight tracking-wide">
-          <span className="text-white/30">Já tem uma organização? </span>
-          <Link
-            href="/login"
-            className="text-[#FF4529] outline-none transition-opacity hover:opacity-80"
-          >
-            Fazer login
-          </Link>
-        </footer>
       )}
 
       {shouldShowPaymentPanel ? (

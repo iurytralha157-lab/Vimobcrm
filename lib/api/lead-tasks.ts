@@ -6,6 +6,19 @@ type Envelope<T> = {
   data: T
 }
 
+export type CompleteCadenceTaskInput = {
+  leadId: string
+  taskId?: string
+  templateTaskId?: string
+  dayOffset?: number
+  type?: 'call' | 'message' | 'email' | 'note'
+  title?: string
+  description?: string
+  outcome?: string
+  outcomeNotes?: string
+  organizationId?: string | null
+}
+
 export const leadTasksAPI = {
   async list(leadId: string) {
     const id = parseDomainInput(entityIdSchema, leadId, 'lead-tasks.list.id')
@@ -44,20 +57,17 @@ export const leadTasksAPI = {
     return response.data
   },
 
-  async completeCadence(input: {
-    leadId: string
-    templateTaskId: string
-    dayOffset: number
-    type: 'call' | 'message' | 'email' | 'note'
-    title: string
-    description?: string
-    outcome?: string
-    outcomeNotes?: string
-  }) {
-    const body = parseDomainInput(cadenceTaskCompletionInputSchema, input, 'lead-tasks.complete-cadence')
+  async completeCadence(input: CompleteCadenceTaskInput) {
+    const { organizationId, ...completion } = input
+    const body = parseDomainInput(
+      cadenceTaskCompletionInputSchema,
+      completion,
+      'lead-tasks.complete-cadence',
+    )
     const response = await vimobAPIRequest<Envelope<LeadTask>>('/v1/lead-tasks/complete-cadence', {
       method: 'POST',
       body,
+      organizationId,
     })
     validateDomainResponse(apiLeadTaskResponseSchema, response, 'lead-tasks.complete-cadence')
     return response.data

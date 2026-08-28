@@ -21,6 +21,7 @@
 # next.js
 /.next/
 /.next-e2e/
+/.next-*/
 /out/
 
 # production
@@ -34,6 +35,9 @@ coverage.out
 .DS_Store
 *.pem
 .codex/
+/.codex-tmp/
+/.codex-worktrees/
+/.cache/
 .tmp/
 .CLAUDE_SYSTEM_PROMPT.md
 /reports/

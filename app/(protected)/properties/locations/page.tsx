@@ -2,5 +2,5 @@ import PropertyLocationsScreen from "@/components/features/properties/PropertyLo
 import { PermissionBoundary } from "@/components/shared/access/PermissionBoundary";
 
 export default function PropertyLocationsPage() {
-  return <PermissionBoundary title="Localizacoes" permission="property_manage"><PropertyLocationsScreen initialTab="cities" /></PermissionBoundary>;
+  return <PermissionBoundary title="Localizações" permission="property_manage"><PropertyLocationsScreen initialTab="cities" /></PermissionBoundary>;
 }

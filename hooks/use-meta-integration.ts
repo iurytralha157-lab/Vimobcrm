@@ -2,65 +2,26 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { integrationsAPI } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import {
+  metaAdAccountsActionResponseSchema,
+  metaOAuthFlowResultSchema,
+  metaPublicIntegrationSchema,
+  type MetaOAuthAdAccount,
+  type MetaOAuthFlowResult as ValidatedMetaOAuthFlowResult,
+  type MetaOAuthPage,
+  type MetaPublicIntegration,
+} from "@/lib/validation";
 
-export interface MetaIntegration {
-  id: string;
-  organization_id: string;
-  page_id: string | null;
-  page_name: string | null;
-  is_connected: boolean | null;
-  last_error: string | null;
-  last_sync_at: string | null;
-  created_at: string;
-  updated_at: string;
-  leads_received: number | null;
-  selected_ad_accounts: unknown;
-  ad_account_id: string | null;
-  integration_type?: string | null;
-  instagram_business_account_id?: string | null;
-  instagram_username?: string | null;
-  health_status?: string | null;
-  token_status?: string | null;
-  token_expires_at?: string | null;
-  last_validated_at?: string | null;
-  webhook_subscribed_at?: string | null;
-  facebook_user_id?: string | null;
-  facebook_user_name?: string | null;
-  page_picture_url?: string | null;
-}
+export type MetaIntegration = MetaPublicIntegration;
 
-export interface MetaPage {
-  id: string;
-  name: string;
-  access_token: string;
-  picture?: { data?: { url?: string } };
-  facebook_user_id?: string;
-  facebook_user_name?: string;
-}
+export type MetaPage = MetaOAuthPage;
+export type MetaAdAccount = MetaOAuthAdAccount;
 
 type MetaAuthURLResponse = { auth_url: string };
-type MetaExchangeResponse = { pages: MetaPage[]; user_token: string };
-export type MetaOAuthFlowResult = {
-  id: string;
-  organization_id: string;
-  user_id: string;
-  status: string;
-  payload?: (MetaExchangeResponse & {
-    success?: boolean;
-    userToken?: string;
-    adAccountId?: string;
-    facebook_user_id?: string;
-    facebook_user_name?: string;
-  }) | null;
-  error_message?: string | null;
-  expires_at?: string | null;
-  consumed_at?: string | null;
-  created_at?: string;
-  updated_at?: string;
-};
+export type MetaOAuthFlowResult = ValidatedMetaOAuthFlowResult;
 
-function invokeMeta<T>(endpoint: "meta-oauth" | "instagram-oauth", body: Record<string, unknown>, organizationId?: string | null) {
-  return integrationsAPI.invokeFunction<T>(endpoint, body, organizationId);
+function invokeMeta<T>(body: Record<string, unknown>, organizationId?: string | null) {
+  return integrationsAPI.metaOAuthAction<T>(body, organizationId);
 }
 
 export function useMetaIntegrations(options: { enabled?: boolean } = {}) {
@@ -71,7 +32,8 @@ export function useMetaIntegrations(options: { enabled?: boolean } = {}) {
     queryKey: ["meta-integrations", organizationId],
     queryFn: async () => {
       if (!organizationId) return [];
-      return integrationsAPI.listMetaIntegrations(organizationId) as unknown as Promise<MetaIntegration[]>;
+      const result = await integrationsAPI.listMetaIntegrations(organizationId);
+      return metaPublicIntegrationSchema.array().parse(result);
     },
     enabled: options.enabled !== false && !!organizationId,
   });
@@ -85,27 +47,13 @@ export function useMetaGetAuthUrl() {
     mutationFn: async (params: string | { returnUrl: string; includeInstagram?: boolean }) => {
       const returnUrl = typeof params === "string" ? params : params.returnUrl;
       const includeInstagram = typeof params === "string" ? false : !!params.includeInstagram;
-      const endpoint = includeInstagram ? "instagram-oauth" : "meta-oauth";
 
-      return invokeMeta<MetaAuthURLResponse>(endpoint, {
+      return invokeMeta<MetaAuthURLResponse>({
         action: "get_auth_url",
         return_url: returnUrl,
+        ...(includeInstagram ? { include_instagram: true } : {}),
       }, organizationId);
     },
-  });
-}
-
-export function useMetaExchangeToken() {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
-
-  return useMutation({
-    mutationFn: ({ code, redirectUri }: { code: string; redirectUri: string }) =>
-      invokeMeta<MetaExchangeResponse>("meta-oauth", {
-        action: "exchange_token",
-        code,
-        redirect_uri: redirectUri,
-      }, organizationId),
   });
 }
 
@@ -117,39 +65,30 @@ export function useMetaConnectPage() {
   return useMutation({
     mutationFn: ({
       pageId,
-      userToken,
+      flowId,
       pipelineId,
       stageId,
       defaultStatus,
       adAccountId,
       selectedAdAccountIds,
-      facebookUserId,
-      facebookUserName,
-      pagePictureUrl,
     }: {
       pageId: string;
-      userToken: string;
+      flowId: string;
       pipelineId?: string | null;
       stageId?: string | null;
       defaultStatus?: string | null;
       adAccountId?: string;
       selectedAdAccountIds?: string[];
-      facebookUserId?: string;
-      facebookUserName?: string;
-      pagePictureUrl?: string;
     }) =>
-      invokeMeta<{ success?: boolean; messenger_active?: boolean }>("meta-oauth", {
+      invokeMeta<{ success?: boolean; messenger_active?: boolean }>({
         action: "connect_page",
         page_id: pageId,
-        code: userToken,
+        flow_id: flowId,
         pipeline_id: pipelineId || null,
         stage_id: stageId || null,
         default_status: defaultStatus || null,
         ad_account_id: adAccountId,
         selected_ad_accounts: selectedAdAccountIds,
-        facebook_user_id: facebookUserId,
-        facebook_user_name: facebookUserName,
-        page_picture_url: pagePictureUrl,
       }, organizationId),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["meta-integrations"] });
@@ -185,7 +124,7 @@ export function useMetaUpdatePage() {
       defaultStatus: string;
       selectedAdAccountIds?: string[];
     }) =>
-      invokeMeta("meta-oauth", {
+      invokeMeta({
         action: "update_page",
         page_id: pageId,
         pipeline_id: pipelineId,
@@ -210,7 +149,7 @@ export function useMetaDisconnectPage() {
 
   return useMutation({
     mutationFn: (pageId: string) =>
-      invokeMeta("meta-oauth", {
+      invokeMeta({
         action: "disconnect_page",
         page_id: pageId,
       }, organizationId),
@@ -231,7 +170,7 @@ export function useMetaTogglePage() {
 
   return useMutation({
     mutationFn: ({ pageId, isActive }: { pageId: string; isActive: boolean }) =>
-      invokeMeta("meta-oauth", {
+      invokeMeta({
         action: "toggle_page",
         page_id: pageId,
         is_active: isActive,
@@ -252,18 +191,77 @@ export function useMetaUpdateAdAccounts() {
 
   return useMutation({
     mutationFn: ({ pageId, adAccountIds }: { pageId: string; adAccountIds: string[] }) =>
-      invokeMeta("meta-oauth", {
+      invokeMeta({
         action: "update_ad_accounts",
         page_id: pageId,
         selected_ad_accounts: adAccountIds,
       }, organizationId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["meta-integrations"] });
-      toast.success("Contas de anuncio atualizadas!");
+      toast.success("Contas de anúncio atualizadas!");
     },
     onError: (error: Error) => {
       toast.error(`Erro: ${error.message}`);
     },
+  });
+}
+
+export function useMetaConversionFeedback() {
+  const queryClient = useQueryClient();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
+
+  return useMutation({
+    mutationFn: (input: {
+      integrationId: string;
+      datasetId?: string | null;
+      datasetName?: string | null;
+      datasetAccessToken?: string | null;
+      enabled: boolean;
+      replayRecentFacts: boolean;
+      testEventCode?: string;
+    }) => integrationsAPI.saveMetaConversionFeedback(input, organizationId),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["meta-integrations"] });
+      if (result.recent_facts_replay_requested === true) {
+        const queued = typeof result.recent_facts_queued === "number"
+          ? result.recent_facts_queued
+          : 0;
+        toast.success(
+          queued === 0
+            ? "Integração ativada; nenhum novo fato recente foi enfileirado."
+            : `Integração ativada; ${queued} ${queued === 1 ? "fato real enfileirado" : "fatos reais enfileirados"}.`,
+        );
+        return;
+      }
+      toast.success("Devolução de qualidade do Meta atualizada.");
+    },
+    onError: (error: Error) => {
+      toast.error(`Não foi possível atualizar a devolução: ${error.message}`);
+    },
+  });
+}
+
+export function useMetaAdAccounts(
+  pageId?: string | null,
+  options: { enabled: boolean } = { enabled: false },
+) {
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
+
+  return useQuery({
+    queryKey: ["meta-ad-accounts", organizationId, pageId],
+    queryFn: async () => {
+      if (!organizationId || !pageId) return [];
+      const result = await invokeMeta<unknown>({
+        action: "list_ad_accounts",
+        page_id: pageId,
+      }, organizationId);
+      return metaAdAccountsActionResponseSchema.parse(result).ad_accounts;
+    },
+    enabled: options.enabled && !!organizationId && !!pageId,
+    staleTime: 1000 * 60 * 5,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -274,28 +272,8 @@ export function useMetaOAuthFlowResult() {
   return useMutation({
     mutationFn: async (flowId: string) => {
       if (!organizationId) throw new Error("Organização não encontrada");
-      return integrationsAPI.getMetaOAuthFlow(flowId, organizationId) as unknown as Promise<MetaOAuthFlowResult>;
+      const result = await integrationsAPI.getMetaOAuthFlow(flowId, organizationId);
+      return metaOAuthFlowResultSchema.parse(result);
     },
-  });
-}
-
-export function useMetaAdAccounts(userToken?: string, integrationId?: string) {
-  return useQuery({
-    queryKey: ["meta-ad-accounts", userToken, integrationId],
-    queryFn: async () => {
-      if (!userToken) return [];
-
-      const response = await fetch(
-        `https://graph.facebook.com/v25.0/me/adaccounts?fields=id,name,account_id&access_token=${userToken}`,
-      );
-
-      if (!response.ok) {
-        throw new Error("Não foi possível buscar as contas de anúncios da Meta.");
-      }
-
-      const data = await response.json();
-      return data.data || [];
-    },
-    enabled: !!userToken,
   });
 }

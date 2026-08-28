@@ -68,8 +68,8 @@ func TestWorkerQueriesAgainstDatabase(t *testing.T) {
 	if err := postgres.Pool().QueryRow(ctx, `select attention_eligible from public.leads where id = $1::uuid`, manualLeadID).Scan(&manual); err != nil {
 		t.Fatal(err)
 	}
-	if !eligible || manual {
-		t.Fatalf("unexpected eligibility: eligible meta=%v manual WhatsApp label=%v", eligible, manual)
+	if !eligible || !manual {
+		t.Fatalf("all leads must be attention eligible: meta=%v manual=%v", eligible, manual)
 	}
 	var instanceCount int
 	if err := postgres.Pool().QueryRow(ctx, `
@@ -89,8 +89,8 @@ func TestWorkerQueriesAgainstDatabase(t *testing.T) {
 	`, fixtureOrganizationID, manualLeadID).Scan(&instanceCount); err != nil {
 		t.Fatal(err)
 	}
-	if instanceCount != 0 {
-		t.Fatalf("manual lead must not get an attention instance, got %d", instanceCount)
+	if instanceCount != 1 {
+		t.Fatalf("manual lead must get one attention instance, got %d", instanceCount)
 	}
 	var organizationID, userID string
 	if err := postgres.Pool().QueryRow(ctx, `

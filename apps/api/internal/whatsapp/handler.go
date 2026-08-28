@@ -3,7 +3,6 @@ package whatsapp
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 
@@ -12,14 +11,19 @@ import (
 )
 
 type Handler struct {
-	repo           Repository
-	aiRunner       aiRunner
-	autoReplyToken string
-	workerConfig   WorkerConfig
+	repo               Repository
+	aiRunner           aiRunner
+	autoReplyToken     string
+	workerConfig       WorkerConfig
+	webhookRateLimiter *evolutionWebhookRateLimiter
 }
 
 func NewHandler(repo Repository) Handler {
-	return Handler{repo: repo, workerConfig: DefaultWorkerConfig()}
+	return Handler{
+		repo:               repo,
+		workerConfig:       DefaultWorkerConfig(),
+		webhookRateLimiter: newEvolutionWebhookRateLimiter(),
+	}
 }
 
 func (handler Handler) WithWorkerConfig(config WorkerConfig) Handler {
@@ -39,6 +43,17 @@ func (handler Handler) EvolutionGoWebhook(w http.ResponseWriter, r *http.Request
 		httpserver.WriteError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method is not allowed.")
 		return
 	}
+	if evolutionWebhookContentLengthTooLarge(r) {
+		r.Close = true
+		w.Header().Set("Connection", "close")
+		httpserver.WriteError(w, r, http.StatusRequestEntityTooLarge, "whatsapp_webhook_body_too_large", "Webhook body is too large.")
+		return
+	}
+	if !handler.allowEvolutionWebhookRequest(r) {
+		w.Header().Set("Retry-After", "1")
+		httpserver.WriteError(w, r, http.StatusTooManyRequests, "whatsapp_webhook_rate_limited", "Too many webhook requests.")
+		return
+	}
 	if err := handler.repo.AuthorizeEvolutionWebhookRoute(r.Context(), r.URL.Query(), r.Header); err != nil {
 		if errors.Is(err, errWebhookSessionMismatch) {
 			httpserver.WriteError(w, r, http.StatusForbidden, "whatsapp_webhook_session_mismatch", "WhatsApp webhook instance does not match the configured session.")
@@ -49,9 +64,15 @@ func (handler Handler) EvolutionGoWebhook(w http.ResponseWriter, r *http.Request
 	}
 
 	defer r.Body.Close()
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 32<<20))
+	body, err := readEvolutionWebhookBody(w, r)
 	if err != nil {
-		httpserver.WriteError(w, r, http.StatusRequestEntityTooLarge, "whatsapp_webhook_body_too_large", "Webhook body is too large.")
+		if errors.Is(err, errEvolutionWebhookBodyTooLarge) {
+			r.Close = true
+			w.Header().Set("Connection", "close")
+			httpserver.WriteError(w, r, http.StatusRequestEntityTooLarge, "whatsapp_webhook_body_too_large", "Webhook body is too large.")
+		} else {
+			httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_whatsapp_webhook", "WhatsApp webhook body could not be read.")
+		}
 		return
 	}
 	envelope, err := parseEvolutionWebhookEnvelope(r.URL.Query(), r.Header, body)
@@ -318,13 +339,16 @@ func (handler Handler) ListConversations(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	conversations, err := handler.repo.ListConversations(r.Context(), tenantContext, filter)
+	conversations, nextCursor, err := handler.repo.listConversationsPage(r.Context(), tenantContext, filter)
 	if err != nil {
 		writeWhatsAppError(w, r, err)
 		return
 	}
 
-	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]Conversation]{Data: conversations})
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]Conversation]{
+		Data: conversations,
+		Meta: ConversationListMeta{NextCursor: nextCursor},
+	})
 }
 
 func (handler Handler) StartConversation(w http.ResponseWriter, r *http.Request) {

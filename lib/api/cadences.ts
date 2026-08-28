@@ -1,11 +1,16 @@
 import {
   apiCadenceTaskResponseSchema,
   apiCadenceTemplateListResponseSchema,
+  apiStageOperationalRulesResponseSchema,
   apiSwitchLeadCadenceResponseSchema,
   createCadenceTaskInputSchema,
   parseDomainInput,
+  type StageOperationalRules,
+  type UpdateStageOperationalRulesInput,
   updateCadenceTaskBodySchema,
+  updateStageOperationalRulesInputSchema,
   switchLeadCadenceInputSchema,
+  uuidSchema,
   validateDomainResponse,
 } from '@/lib/validation'
 import { vimobAPIRequest } from './vimob-client'
@@ -111,4 +116,52 @@ export const cadencesAPI = {
     validateDomainResponse(apiSwitchLeadCadenceResponseSchema, response, 'cadences.lead.switch')
     return response.data
   },
+
+  async getStageOperationalRules(stageId: string, organizationId?: string | null): Promise<StageOperationalRules> {
+    const parsedStageId = parseDomainInput(uuidSchema, stageId, 'cadences.stage-rules.get.id')
+    const response = await vimobAPIRequest<Envelope<StageOperationalRules>>(
+      `/v1/stages/${parsedStageId}/operational-rules`,
+      { organizationId },
+    )
+    validateDomainResponse(
+      apiStageOperationalRulesResponseSchema,
+      response,
+      'cadences.stage-rules.get',
+    )
+    return response.data
+  },
+
+  async updateStageOperationalRules(
+    input: UpdateStageOperationalRulesInput,
+    organizationId?: string | null,
+  ): Promise<StageOperationalRules> {
+    const body = parseDomainInput(
+      updateStageOperationalRulesInputSchema,
+      input,
+      'cadences.stage-rules.update',
+    )
+    const response = await vimobAPIRequest<Envelope<StageOperationalRules>>(
+      `/v1/stages/${body.stage_id}/operational-rules`,
+      {
+        method: 'PUT',
+        organizationId,
+        body,
+      },
+    )
+    validateDomainResponse(
+      apiStageOperationalRulesResponseSchema,
+      response,
+      'cadences.stage-rules.update',
+    )
+    return response.data
+  },
 }
+
+export type {
+  StageOperationalAttention,
+  StageOperationalAttentionMode,
+  StageOperationalCadenceTask,
+  StageOperationalLifecycle,
+  StageOperationalRules,
+  UpdateStageOperationalRulesInput,
+} from '@/lib/validation'

@@ -3,16 +3,21 @@ package leads
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"path"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -170,6 +175,8 @@ type TagMutationRequest struct {
 	Color       string  `json:"color"`
 	Description *string `json:"description"`
 }
+
+var tagHexColorPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 
 type tagMutationInput struct {
 	Name        string
@@ -332,7 +339,8 @@ type LeadTaskPatchRequest struct {
 
 type CompleteCadenceTaskRequest struct {
 	LeadID         string  `json:"leadId"`
-	TemplateTaskID string  `json:"templateTaskId"`
+	TaskID         string  `json:"taskId,omitempty"`
+	TemplateTaskID string  `json:"templateTaskId,omitempty"`
 	DayOffset      int     `json:"dayOffset"`
 	Type           string  `json:"type"`
 	Title          string  `json:"title"`
@@ -350,8 +358,57 @@ type Notification struct {
 	Type           string         `json:"type"`
 	IsRead         bool           `json:"is_read"`
 	LeadID         *string        `json:"lead_id"`
+	TargetURL      string         `json:"target_url"`
 	Metadata       map[string]any `json:"metadata"`
 	CreatedAt      time.Time      `json:"created_at"`
+}
+
+type NotificationCursor struct {
+	CreatedAt time.Time `json:"created_at"`
+	ID        string    `json:"id"`
+}
+
+type NotificationListResponse struct {
+	Data       []Notification `json:"data"`
+	NextCursor *string        `json:"next_cursor"`
+}
+
+func encodeNotificationCursor(cursor NotificationCursor) string {
+	payload, _ := json.Marshal(cursor)
+	return base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func decodeNotificationCursor(value string) (*NotificationCursor, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	if len(value) > 512 {
+		return nil, fmt.Errorf("%w: notification cursor is invalid", ErrInvalidInput)
+	}
+
+	payload, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return nil, fmt.Errorf("%w: notification cursor is invalid", ErrInvalidInput)
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var cursor NotificationCursor
+	if err := decoder.Decode(&cursor); err != nil {
+		return nil, fmt.Errorf("%w: notification cursor is invalid", ErrInvalidInput)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("%w: notification cursor is invalid", ErrInvalidInput)
+	}
+
+	id, valid := normalizeUUID(cursor.ID)
+	if !valid || cursor.CreatedAt.IsZero() {
+		return nil, fmt.Errorf("%w: notification cursor is invalid", ErrInvalidInput)
+	}
+	cursor.ID = id
+	cursor.CreatedAt = cursor.CreatedAt.UTC()
+	return &cursor, nil
 }
 
 type CreateNotificationRequest struct {
@@ -389,17 +446,22 @@ type DispatchNotificationResult struct {
 }
 
 type DispatchChannelResult struct {
-	Enabled    bool   `json:"enabled"`
-	Attempted  bool   `json:"attempted"`
-	OK         bool   `json:"ok"`
-	Permanent  bool   `json:"permanent,omitempty"`
-	Status     int    `json:"status,omitempty"`
-	Error      string `json:"error,omitempty"`
-	Provider   string `json:"provider,omitempty"`
-	SessionID  string `json:"session_id,omitempty"`
-	InstanceID string `json:"instance_id,omitempty"`
-	Sent       int    `json:"sent,omitempty"`
-	Skipped    int    `json:"skipped,omitempty"`
+	Enabled           bool   `json:"enabled"`
+	Attempted         bool   `json:"attempted"`
+	OK                bool   `json:"ok"`
+	Permanent         bool   `json:"permanent,omitempty"`
+	OutcomeUnknown    bool   `json:"-"`
+	Status            int    `json:"status,omitempty"`
+	Error             string `json:"error,omitempty"`
+	Provider          string `json:"provider,omitempty"`
+	SessionID         string `json:"session_id,omitempty"`
+	InstanceID        string `json:"instance_id,omitempty"`
+	Sent              int    `json:"sent,omitempty"`
+	Skipped           int    `json:"skipped,omitempty"`
+	MessageID         string `json:"-"`
+	ExpectedMessageID string `json:"-"`
+	IdempotencyKey    string `json:"-"`
+	Recipient         string `json:"-"`
 }
 
 type DispatchWhatsAppResult = DispatchChannelResult
@@ -539,6 +601,9 @@ func (request TagMutationRequest) Validate() (tagMutationInput, error) {
 	if input.Color == "" {
 		input.Color = "#64748b"
 	}
+	if !tagHexColorPattern.MatchString(input.Color) {
+		return tagMutationInput{}, fmt.Errorf("%w: color must use hexadecimal format #RRGGBB", ErrInvalidInput)
+	}
 	return input, nil
 }
 
@@ -635,17 +700,32 @@ func (request CompleteCadenceTaskRequest) Validate() (CompleteCadenceTaskRequest
 		return CompleteCadenceTaskRequest{}, fmt.Errorf("%w: leadId is invalid", ErrInvalidInput)
 	}
 	request.LeadID = leadID
-	request.TemplateTaskID = trimMax(request.TemplateTaskID, 120)
+	request.TaskID = strings.TrimSpace(request.TaskID)
+	request.TemplateTaskID = strings.TrimSpace(request.TemplateTaskID)
+	if request.TaskID != "" {
+		taskID, valid := normalizeUUID(request.TaskID)
+		if !valid {
+			return CompleteCadenceTaskRequest{}, fmt.Errorf("%w: taskId is invalid", ErrInvalidInput)
+		}
+		request.TaskID = taskID
+	}
+	if request.TemplateTaskID != "" {
+		templateTaskID, valid := normalizeUUID(request.TemplateTaskID)
+		if !valid {
+			return CompleteCadenceTaskRequest{}, fmt.Errorf("%w: templateTaskId is invalid", ErrInvalidInput)
+		}
+		request.TemplateTaskID = templateTaskID
+	}
+	if request.TaskID == "" && request.TemplateTaskID == "" {
+		return CompleteCadenceTaskRequest{}, fmt.Errorf("%w: taskId or templateTaskId is required", ErrInvalidInput)
+	}
 	request.Type = trimMax(request.Type, 40)
 	request.Title = trimMax(request.Title, 180)
 	request.Description = optionalStringFromPointer(request.Description, 1_000)
 	request.Outcome = optionalStringFromPointer(request.Outcome, 120)
 	request.OutcomeNotes = optionalStringFromPointer(request.OutcomeNotes, 1_000)
-	if request.Title == "" {
-		return CompleteCadenceTaskRequest{}, fmt.Errorf("%w: title is required", ErrInvalidInput)
-	}
-	if request.Type == "" {
-		request.Type = "note"
+	if request.Type != "" && !validEnum(request.Type, "call", "message", "email", "note") {
+		return CompleteCadenceTaskRequest{}, fmt.Errorf("%w: type is invalid", ErrInvalidInput)
 	}
 	return request, nil
 }
@@ -677,28 +757,30 @@ func (repo Repository) countContacts(ctx context.Context, tenantContext tenant.C
 }
 
 func (repo Repository) listContactsFull(ctx context.Context, tenantContext tenant.Context, filter ContactListFilter) ([]Contact, error) {
-	total, err := repo.countContacts(ctx, tenantContext, filter)
-	if err != nil {
-		return nil, err
-	}
-	if total == 0 {
-		return []Contact{}, nil
-	}
-
 	where, args, err := buildContactWhere(tenantContext, filter)
 	if err != nil {
 		return nil, err
 	}
+	countResult := make(chan struct {
+		total int64
+		err   error
+	}, 1)
+	go func() {
+		total, countErr := repo.countContacts(ctx, tenantContext, filter)
+		countResult <- struct {
+			total int64
+			err   error
+		}{total: total, err: countErr}
+	}()
 
 	offset := (filter.Page - 1) * filter.Limit
-	args = append(args, total, filter.Limit, offset)
-	totalIndex := len(args) - 2
+	args = append(args, filter.Limit, offset)
 	limitIndex := len(args) - 1
 	offsetIndex := len(args)
 
 	rows, err := repo.db.Pool().Query(ctx, `
 		select
-			$`+fmt.Sprint(totalIndex)+`::bigint as total_count,
+			0::bigint as total_count,
 			l.id::text,
 			l.name,
 			l.phone,
@@ -855,32 +937,41 @@ func (repo Repository) listContactsFull(ctx context.Context, tenantContext tenan
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	count := <-countResult
+	if count.err != nil {
+		return nil, count.err
+	}
+	for index := range contacts {
+		contacts[index].TotalCount = count.total
+	}
 	return contacts, nil
 }
 
 func (repo Repository) listContactsCompact(ctx context.Context, tenantContext tenant.Context, filter ContactListFilter) ([]Contact, error) {
-	total, err := repo.countContacts(ctx, tenantContext, filter)
-	if err != nil {
-		return nil, err
-	}
-	if total == 0 {
-		return []Contact{}, nil
-	}
-
 	where, args, err := buildContactWhere(tenantContext, filter)
 	if err != nil {
 		return nil, err
 	}
+	countResult := make(chan struct {
+		total int64
+		err   error
+	}, 1)
+	go func() {
+		total, countErr := repo.countContacts(ctx, tenantContext, filter)
+		countResult <- struct {
+			total int64
+			err   error
+		}{total: total, err: countErr}
+	}()
 
 	offset := (filter.Page - 1) * filter.Limit
-	args = append(args, total, filter.Limit, offset)
-	totalIndex := len(args) - 2
+	args = append(args, filter.Limit, offset)
 	limitIndex := len(args) - 1
 	offsetIndex := len(args)
 
 	rows, err := repo.db.Pool().Query(ctx, `
 		select
-			$`+fmt.Sprint(totalIndex)+`::bigint as total_count,
+			0::bigint as total_count,
 			l.id::text,
 			l.name,
 			l.phone,
@@ -1013,6 +1104,13 @@ func (repo Repository) listContactsCompact(ctx context.Context, tenantContext te
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	count := <-countResult
+	if count.err != nil {
+		return nil, count.err
+	}
+	for index := range contacts {
+		contacts[index].TotalCount = count.total
+	}
 	return contacts, nil
 }
 
@@ -1022,7 +1120,7 @@ func (repo Repository) ListTags(ctx context.Context, tenantContext tenant.Contex
 			t.id::text,
 			t.name,
 			t.color,
-			null::text as description,
+			t.description,
 			t.organization_id::text,
 			t.created_at,
 			count(distinct l.id)::bigint as lead_count
@@ -1030,7 +1128,7 @@ func (repo Repository) ListTags(ctx context.Context, tenantContext tenant.Contex
 		left join public.lead_tags lt on lt.tag_id = t.id
 		left join public.leads l on l.id = lt.lead_id and l.organization_id = t.organization_id
 		where t.organization_id = $1::uuid
-		group by t.id, t.name, t.color, t.organization_id, t.created_at
+		group by t.id, t.name, t.color, t.description, t.organization_id, t.created_at
 		order by t.name asc
 	`, tenantContext.OrganizationID)
 	if err != nil {
@@ -1054,10 +1152,10 @@ func (repo Repository) CreateTag(ctx context.Context, tenantContext tenant.Conte
 		return Tag{}, tenant.ErrOrganizationAccessDenied
 	}
 	return scanTag(repo.db.Pool().QueryRow(ctx, `
-		insert into public.tags (organization_id, name, color)
-		values ($1::uuid, $2, $3)
-		returning id::text, name, color, null::text, organization_id::text, created_at, 0::bigint
-	`, tenantContext.OrganizationID, input.Name, input.Color))
+		insert into public.tags (organization_id, name, color, description)
+		values ($1::uuid, $2, $3, $4)
+		returning id::text, name, color, description, organization_id::text, created_at, 0::bigint
+	`, tenantContext.OrganizationID, input.Name, input.Color, input.Description))
 }
 
 func (repo Repository) UpdateTag(ctx context.Context, tenantContext tenant.Context, tagID string, input tagMutationInput) (Tag, error) {
@@ -1070,11 +1168,11 @@ func (repo Repository) UpdateTag(ctx context.Context, tenantContext tenant.Conte
 	}
 	return scanTag(repo.db.Pool().QueryRow(ctx, `
 		update public.tags
-		set name = $3, color = $4
+		set name = $3, color = $4, description = $5
 		where id = $1::uuid and organization_id = $2::uuid
-		returning id::text, name, color, null::text, organization_id::text, created_at,
+		returning id::text, name, color, description, organization_id::text, created_at,
 			(select count(*)::bigint from public.lead_tags lt where lt.tag_id = public.tags.id)
-	`, tagID, tenantContext.OrganizationID, input.Name, input.Color))
+	`, tagID, tenantContext.OrganizationID, input.Name, input.Color, input.Description))
 }
 
 func (repo Repository) DeleteTag(ctx context.Context, tenantContext tenant.Context, tagID string) error {
@@ -1480,9 +1578,15 @@ func (repo Repository) PatchLeadTask(ctx context.Context, tenantContext tenant.C
 	if !ok {
 		return LeadTask{}, ErrInvalidInput
 	}
-	current, err := repo.getTaskLeadID(ctx, taskID)
+	current, err := repo.getTaskLeadID(ctx, tenantContext.OrganizationID, taskID)
 	if err != nil {
 		return LeadTask{}, err
+	}
+	if current.IsCadence {
+		return LeadTask{}, fmt.Errorf(
+			"%w: cadence tasks must be completed through the cadence endpoint",
+			ErrInvalidInput,
+		)
 	}
 	if err := repo.ensureLeadEditable(ctx, tenantContext, current.LeadID); err != nil {
 		return LeadTask{}, err
@@ -1522,82 +1626,182 @@ func (repo Repository) PatchLeadTask(ctx context.Context, tenantContext tenant.C
 }
 
 func (repo Repository) CompleteCadenceTask(ctx context.Context, tenantContext tenant.Context, request CompleteCadenceTaskRequest) (LeadTask, error) {
-	if err := repo.ensureLeadEditable(ctx, tenantContext, request.LeadID); err != nil {
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return LeadTask{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	// Cadence lifecycle paths lock lead -> tasks -> enrollment. Keep completion
+	// in the same order so a simultaneous stage move, reassignment or cadence
+	// switch cannot deadlock or invalidate this task between authorization and
+	// completion.
+	if err := ensureLeadEditableForUpdate(ctx, tx, tenantContext, request.LeadID); err != nil {
 		return LeadTask{}, err
 	}
 
-	var existingID string
-	err := repo.db.Pool().QueryRow(ctx, `
-		select id::text
-		from public.lead_tasks
-		where lead_id = $1::uuid
+	var existingID, status string
+	var outcomeRequired bool
+	var templateTaskID pgtype.Text
+	err = tx.QueryRow(ctx, `
+		select
+			lt.id::text,
+			coalesce(lt.status, case when coalesce(lt.is_done, false) then 'completed' else 'pending' end),
+			case
+			  when lower(coalesce(lt.metadata->>'outcome_required', '')) in ('true', '1', 'yes') then true
+			  when lower(coalesce(lt.metadata->>'outcome_required', '')) in ('false', '0', 'no') then false
+			  else coalesce(ctt.outcome_required, false)
+			end,
+			lt.cadence_template_task_id::text
+		from public.lead_tasks lt
+		join public.cadence_enrollments ce
+		  on ce.organization_id = lt.organization_id
+		 and ce.id = lt.cadence_enrollment_id
+		 and ce.status in ('active', 'completed')
+		join public.lead_stage_cycles sc
+		  on sc.organization_id = ce.organization_id
+		 and sc.id = ce.stage_cycle_id
+		 and sc.exited_at is null
+		join public.leads l
+		  on l.organization_id = lt.organization_id
+		 and l.id = lt.lead_id
+		 and l.deal_status = 'open'
+		 and l.stage_id = sc.stage_id
+		left join public.cadence_tasks_template ctt
+		  on ctt.organization_id = lt.organization_id
+		 and ctt.id = lt.cadence_template_task_id
+		where lt.organization_id = $1::uuid
+		  and lt.lead_id = $2::uuid
+		  and coalesce(lt.status, case when coalesce(lt.is_done, false) then 'completed' else 'pending' end) in ('pending', 'completed')
 		  and (
-		    cadence_template_task_id = $2::uuid
-		    or (
-		      cadence_template_task_id is null
-		      and title = $3
-		      and day_offset = $4
-		      and coalesce(type, '') = $5
-		    )
-		  )
-		  and coalesce(status, case when coalesce(is_done, false) then 'completed' else 'pending' end) <> 'cancelled'
-		order by is_done desc nulls last, created_at asc
-		limit 1
-	`, request.LeadID, request.TemplateTaskID, request.Title, request.DayOffset, request.Type).Scan(&existingID)
-	if err != nil && err != pgx.ErrNoRows {
-		return LeadTask{}, err
-	}
-
-	var task LeadTask
-	if existingID != "" {
-		task, err = scanLeadTask(repo.db.Pool().QueryRow(ctx, `
-			update public.lead_tasks
-			set is_done = true,
-				done_at = now(),
-				done_by = $2::uuid,
-				outcome = coalesce($3, outcome),
-				outcome_notes = coalesce($4, outcome_notes)
-			where id = $1::uuid
-			returning id::text, lead_id::text, day_offset, type, title, description, due_date,
-				is_done, done_at, done_by::text, outcome, outcome_notes, created_at
-		`, existingID, tenantContext.UserID, request.Outcome, request.OutcomeNotes))
-	} else {
-		task, err = scanLeadTask(repo.db.Pool().QueryRow(ctx, `
-			insert into public.lead_tasks (
-				lead_id, cadence_template_task_id, day_offset, type, title, description,
-				is_done, done_at, done_by, outcome, outcome_notes
+			(nullif($3, '') is not null and lt.id = nullif($3, '')::uuid)
+			or (
+			  nullif($3, '') is null
+			  and lt.cadence_template_task_id = nullif($4, '')::uuid
 			)
-			values ($1::uuid, $2::uuid, $3, $4, $5, $6, true, now(), $7::uuid, $8, $9)
-			returning id::text, lead_id::text, day_offset, type, title, description, due_date,
-				is_done, done_at, done_by::text, outcome, outcome_notes, created_at
-		`, request.LeadID, request.TemplateTaskID, request.DayOffset, request.Type, request.Title, request.Description, tenantContext.UserID, request.Outcome, request.OutcomeNotes))
+		  )
+		order by
+		  case coalesce(lt.status, case when coalesce(lt.is_done, false) then 'completed' else 'pending' end)
+		    when 'pending' then 0 else 1
+		  end,
+		  lt.created_at desc,
+		  lt.id desc
+		limit 1
+		for update of lt
+	`, tenantContext.OrganizationID, request.LeadID, request.TaskID, request.TemplateTaskID).Scan(
+		&existingID,
+		&status,
+		&outcomeRequired,
+		&templateTaskID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return LeadTask{}, ErrInvalidReference
 	}
 	if err != nil {
 		return LeadTask{}, err
 	}
-	if err := repo.insertTaskCompletedActivity(ctx, tenantContext.OrganizationID, request.LeadID, task.ID, task.Type, task.DayOffset, task.Title, tenantContext.UserID, &request.TemplateTaskID, request.Outcome, request.OutcomeNotes); err != nil {
+	if outcomeRequired && (request.Outcome == nil || strings.TrimSpace(*request.Outcome) == "") {
+		return LeadTask{}, fmt.Errorf("%w: outcome is required for this cadence task", ErrInvalidInput)
+	}
+
+	if status == "completed" {
+		task, err := scanLeadTask(tx.QueryRow(ctx, `
+			select id::text, lead_id::text, day_offset, type, title, description, due_date,
+				is_done, done_at, done_by::text, outcome, outcome_notes, created_at
+			from public.lead_tasks
+			where organization_id = $1::uuid and id = $2::uuid
+		`, tenantContext.OrganizationID, existingID))
+		if err != nil {
+			return LeadTask{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return LeadTask{}, err
+		}
+		return task, nil
+	}
+
+	task, err := scanLeadTask(tx.QueryRow(ctx, `
+		update public.lead_tasks
+		set is_done = true,
+			status = 'completed',
+			done_at = now(),
+			completed_at = now(),
+			done_by = $3::uuid,
+			outcome = coalesce($4, outcome),
+			outcome_notes = coalesce($5, outcome_notes)
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		  and coalesce(
+		    status,
+		    case when coalesce(is_done, false) then 'completed' else 'pending' end
+		  ) = 'pending'
+		  and coalesce(is_done, false) = false
+		returning id::text, lead_id::text, day_offset, type, title, description, due_date,
+			is_done, done_at, done_by::text, outcome, outcome_notes, created_at
+	`, tenantContext.OrganizationID, existingID, tenantContext.UserID, request.Outcome, request.OutcomeNotes))
+	if err != nil {
 		return LeadTask{}, err
 	}
+
+	activityMetadata := map[string]any{
+		"task_id":    task.ID,
+		"task_type":  task.Type,
+		"day_offset": task.DayOffset,
+	}
+	if templateTaskID.Valid {
+		activityMetadata["template_task_id"] = templateTaskID.String
+	}
+	if request.Outcome != nil {
+		activityMetadata["outcome"] = *request.Outcome
+	}
+	if request.OutcomeNotes != nil {
+		activityMetadata["outcome_notes"] = *request.OutcomeNotes
+	}
+	if _, err := tx.Exec(ctx, `
+		insert into public.activities (
+			organization_id, lead_id, type, content, user_id, metadata
+		) values (
+			$1::uuid, $2::uuid, 'task_completed', $3, $4::uuid, $5::jsonb
+		)
+	`, tenantContext.OrganizationID, request.LeadID, "Cadencia concluida: "+task.Title, tenantContext.UserID, jsonb(activityMetadata)); err != nil {
+		return LeadTask{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return LeadTask{}, err
+	}
+	repo.recordTaskGamification(tenantContext.OrganizationID, tenantContext.UserID, task.ID, task.Type, request.Outcome)
 	return task, nil
 }
 
-func (repo Repository) ListNotifications(ctx context.Context, tenantContext tenant.Context, userID string, limit int) ([]Notification, error) {
+func (repo Repository) ListNotifications(ctx context.Context, tenantContext tenant.Context, userID string, cursor *NotificationCursor, limit int) ([]Notification, *NotificationCursor, error) {
 	if userID == "" {
 		userID = tenantContext.UserID
 	}
-	if userID != tenantContext.UserID && !canManageLeads(tenantContext) {
-		return nil, tenant.ErrOrganizationAccessDenied
+	if userID != tenantContext.UserID {
+		return nil, nil, tenant.ErrOrganizationAccessDenied
 	}
 	limit = max(1, min(limit, 100))
+	hasCursor := cursor != nil
+	cursorCreatedAt := time.Time{}
+	cursorID := "00000000-0000-0000-0000-000000000000"
+	if cursor != nil {
+		cursorCreatedAt = cursor.CreatedAt
+		cursorID = cursor.ID
+	}
 	rows, err := repo.db.Pool().Query(ctx, `
-		select id::text, user_id::text, organization_id::text, title, content, type, coalesce(is_read, false), lead_id::text, coalesce(metadata, '{}'::jsonb)::text, created_at
+		select id::text, user_id::text, organization_id::text, title, content, type, coalesce(is_read, false), lead_id::text, coalesce(target_url, ''), coalesce(metadata, '{}'::jsonb)::text, created_at
 		from public.notifications
 		where organization_id = $1::uuid and user_id = $2::uuid
-		order by created_at desc
+		  and `+billingNotificationVisibilitySQL("$1", "$4")+`
+		  and (
+		    not $5::boolean
+		    or (created_at, id) < ($6::timestamptz, $7::uuid)
+		  )
+		order by created_at desc, id desc
 		limit $3
-	`, tenantContext.OrganizationID, userID, limit)
+	`, tenantContext.OrganizationID, userID, limit+1, tenantContext.UserID, hasCursor, cursorCreatedAt, cursorID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 
@@ -1605,18 +1809,29 @@ func (repo Repository) ListNotifications(ctx context.Context, tenantContext tena
 	for rows.Next() {
 		notification, err := scanNotification(rows)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
+		notification.Metadata = redactNotificationMetadataForAPI(notification.Metadata)
 		notifications = append(notifications, notification)
 	}
-	return notifications, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	var nextCursor *NotificationCursor
+	if len(notifications) > limit {
+		notifications = notifications[:limit]
+		last := notifications[len(notifications)-1]
+		nextCursor = &NotificationCursor{CreatedAt: last.CreatedAt.UTC(), ID: last.ID}
+	}
+	return notifications, nextCursor, nil
 }
 
 func (repo Repository) CountUnreadNotifications(ctx context.Context, tenantContext tenant.Context, userID string) (int64, error) {
 	if userID == "" {
 		userID = tenantContext.UserID
 	}
-	if userID != tenantContext.UserID && !canManageLeads(tenantContext) {
+	if userID != tenantContext.UserID {
 		return 0, tenant.ErrOrganizationAccessDenied
 	}
 	var count int64
@@ -1626,7 +1841,8 @@ func (repo Repository) CountUnreadNotifications(ctx context.Context, tenantConte
 		where organization_id = $1::uuid
 		  and user_id = $2::uuid
 		  and coalesce(is_read, false) = false
-	`, tenantContext.OrganizationID, userID).Scan(&count)
+		  and `+billingNotificationVisibilitySQL("$1", "$3")+`
+	`, tenantContext.OrganizationID, userID, tenantContext.UserID).Scan(&count)
 	return count, err
 }
 
@@ -1641,6 +1857,7 @@ func (repo Repository) MarkNotificationRead(ctx context.Context, tenantContext t
 		where id = $1::uuid
 		  and organization_id = $2::uuid
 		  and user_id = $3::uuid
+		  and `+billingNotificationVisibilitySQL("$2", "$3")+`
 	`, id, tenantContext.OrganizationID, tenantContext.UserID)
 	if err != nil {
 		return err
@@ -1658,8 +1875,31 @@ func (repo Repository) MarkAllNotificationsRead(ctx context.Context, tenantConte
 		where organization_id = $1::uuid
 		  and user_id = $2::uuid
 		  and coalesce(is_read, false) = false
+		  and `+billingNotificationVisibilitySQL("$1", "$2")+`
 	`, tenantContext.OrganizationID, tenantContext.UserID)
 	return err
+}
+
+func billingNotificationVisibilitySQL(organizationParameter string, userParameter string) string {
+	return `(
+		` + billingNotificationAuthorizationSQL(organizationParameter, userParameter) + `
+		or (
+			lower(coalesce(type, '')) <> 'billing'
+			and left(lower(coalesce(metadata ->> 'event_key', '')), 8) <> 'billing_'
+		)
+	)`
+}
+
+func redactNotificationMetadataForAPI(metadata map[string]any) map[string]any {
+	if metadata == nil {
+		return map[string]any{}
+	}
+	delete(metadata, "email_confirmation_url")
+	if variables, ok := metadata["variables"].(map[string]any); ok {
+		delete(variables, "email_confirmation_url")
+		metadata["variables"] = variables
+	}
+	return metadata
 }
 
 func (repo Repository) CreateNotification(ctx context.Context, tenantContext tenant.Context, request CreateNotificationRequest) (Notification, error) {
@@ -1687,11 +1927,17 @@ func (repo Repository) CreateNotification(ctx context.Context, tenantContext ten
 		metadata = map[string]any{}
 	}
 	eventKey := firstNotificationText(stringFromMap(metadata, "event_key"), notificationType)
+	if err := validatePublicNotificationEvent(eventKey); err != nil {
+		return Notification{}, err
+	}
+	if _, err := repo.getNotificationRecipient(ctx, organizationID, userID); err != nil {
+		return Notification{}, err
+	}
 	metadata = applyNotificationDispatchMetadata(metadata, eventKey, nil)
 	return scanNotification(repo.db.Pool().QueryRow(ctx, `
 		insert into public.notifications (user_id, organization_id, title, content, type, lead_id, is_read, metadata)
 		values ($1::uuid, $2::uuid, $3, $4, $5, $6, false, $7::jsonb)
-		returning id::text, user_id::text, organization_id::text, title, content, type, coalesce(is_read, false), lead_id::text, coalesce(metadata, '{}'::jsonb)::text, created_at
+		returning id::text, user_id::text, organization_id::text, title, content, type, coalesce(is_read, false), lead_id::text, coalesce(target_url, ''), coalesce(metadata, '{}'::jsonb)::text, created_at
 	`, userID, organizationID, title, optionalStringFromPointer(request.Content, 1_000), notificationType, request.LeadID, jsonb(metadata)))
 }
 
@@ -1713,8 +1959,8 @@ func (repo Repository) DispatchNotification(ctx context.Context, tenantContext t
 	if !ok {
 		return DispatchNotificationResult{}, fmt.Errorf("%w: user_id is invalid", ErrInvalidInput)
 	}
-	if normalizedUserID != tenantContext.UserID && !canDispatchNotifications(tenantContext) {
-		return DispatchNotificationResult{}, tenant.ErrOrganizationAccessDenied
+	if err := authorizePublicNotificationDispatch(tenantContext, eventKey, normalizedUserID, request.Channels); err != nil {
+		return DispatchNotificationResult{}, err
 	}
 
 	recipient, err := repo.getNotificationRecipient(ctx, tenantContext.OrganizationID, normalizedUserID)
@@ -1801,13 +2047,13 @@ func (repo Repository) createNotificationRow(ctx context.Context, organizationID
 	return scanNotification(repo.db.Pool().QueryRow(ctx, `
 		insert into public.notifications (user_id, organization_id, title, content, type, lead_id, is_read, metadata)
 		values ($1::uuid, $2::uuid, $3, $4, $5, $6, false, $7::jsonb)
-		returning id::text, user_id::text, organization_id::text, title, content, type, coalesce(is_read, false), lead_id::text, coalesce(metadata, '{}'::jsonb)::text, created_at
+		returning id::text, user_id::text, organization_id::text, title, content, type, coalesce(is_read, false), lead_id::text, coalesce(target_url, ''), coalesce(metadata, '{}'::jsonb)::text, created_at
 	`, userID, organizationID, title, optionalString(content, 1_000), notificationType, leadID, jsonb(metadata)))
 }
 
 func (repo Repository) findRecentNotificationByDedupeKey(ctx context.Context, organizationID string, userID string, dedupeKey string) (Notification, bool, error) {
 	notification, err := scanNotification(repo.db.Pool().QueryRow(ctx, `
-		select id::text, user_id::text, organization_id::text, title, content, type, coalesce(is_read, false), lead_id::text, coalesce(metadata, '{}'::jsonb)::text, created_at
+		select id::text, user_id::text, organization_id::text, title, content, type, coalesce(is_read, false), lead_id::text, coalesce(target_url, ''), coalesce(metadata, '{}'::jsonb)::text, created_at
 		from public.notifications
 		where organization_id = $1::uuid
 		  and user_id = $2::uuid
@@ -1884,14 +2130,20 @@ func (repo Repository) dispatchWhatsAppNotification(ctx context.Context, tenantC
 		}
 	}
 	messageText := buildWhatsAppNotificationText(eventKey, title, content, request.Variables)
+	idempotencyKey := notificationWhatsAppIdempotencyKey(tenantContext.OrganizationID, eventKey, dedupeKey)
 
 	var organizationResult DispatchWhatsAppResult
-	if session, found, err := repo.findNotificationWhatsAppSession(ctx, tenantContext.OrganizationID); err != nil {
-		return result, err
-	} else if found {
-		organizationResult, err = repo.dispatchWhatsAppViaEvolutionGo(ctx, session, to, messageText, "evolution_go_org_session")
-		if err == nil && organizationResult.OK {
-			return organizationResult, nil
+	if !isPlatformTransactionalNotificationEvent(eventKey) {
+		if session, found, err := repo.findNotificationWhatsAppSession(ctx, tenantContext.OrganizationID); err != nil {
+			return result, err
+		} else if found {
+			organizationResult, err = repo.dispatchWhatsAppViaEvolutionGo(ctx, session, to, messageText, "evolution_go_org_session", idempotencyKey)
+			if err == nil && organizationResult.OK {
+				return organizationResult, nil
+			}
+			if organizationResult.Permanent {
+				return organizationResult, err
+			}
 		}
 	}
 
@@ -1900,7 +2152,7 @@ func (repo Repository) dispatchWhatsAppNotification(ctx context.Context, tenantC
 			InstanceID:  strings.TrimSpace(config.InstanceID),
 			InstanceKey: firstNotificationText(config.InstanceName, config.InstanceID),
 			Token:       strings.TrimSpace(config.Token),
-		}, to, messageText, "evolution_go_global_instance")
+		}, to, messageText, "evolution_go_global_instance", idempotencyKey)
 		if err == nil && globalResult.OK {
 			if organizationResult.Attempted {
 				globalResult.Provider = "evolution_go_global_instance_fallback"
@@ -1958,13 +2210,44 @@ func (repo Repository) findNotificationWhatsAppSession(ctx context.Context, orga
 	return session, true, nil
 }
 
-func (repo Repository) dispatchWhatsAppViaEvolutionGo(ctx context.Context, session notificationWhatsAppSession, to string, text string, provider string) (DispatchWhatsAppResult, error) {
+func (repo Repository) dispatchWhatsAppViaEvolutionGo(ctx context.Context, session notificationWhatsAppSession, to string, text string, provider string, idempotencyKey string) (DispatchWhatsAppResult, error) {
+	return repo.dispatchWhatsAppViaEvolutionGoWithClient(
+		ctx,
+		session,
+		to,
+		text,
+		provider,
+		idempotencyKey,
+		&http.Client{Timeout: 15 * time.Second},
+	)
+}
+
+func (repo Repository) dispatchWhatsAppViaEvolutionGoWithClient(
+	ctx context.Context,
+	session notificationWhatsAppSession,
+	to string,
+	text string,
+	provider string,
+	idempotencyKey string,
+	client *http.Client,
+) (DispatchWhatsAppResult, error) {
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	expectedMessageID := deterministicNotificationWhatsAppMessageID(idempotencyKey)
 	result := DispatchWhatsAppResult{
-		Enabled:    true,
-		Attempted:  true,
-		Provider:   provider,
-		SessionID:  session.ID,
-		InstanceID: firstNotificationText(session.InstanceID, session.InstanceKey),
+		Enabled:           true,
+		Attempted:         true,
+		Provider:          provider,
+		SessionID:         session.ID,
+		InstanceID:        firstNotificationText(session.InstanceID, session.InstanceKey),
+		ExpectedMessageID: expectedMessageID,
+		IdempotencyKey:    idempotencyKey,
+		Recipient:         normalizeNotificationWhatsAppRecipient(to),
+	}
+	if idempotencyKey == "" {
+		result.Attempted = false
+		result.Permanent = true
+		result.Error = "notification_whatsapp_idempotency_key_missing"
+		return result, fmt.Errorf("%w: WhatsApp notification idempotency key is required", ErrInvalidInput)
 	}
 	if strings.TrimSpace(repo.evolutionGoAPIURL) == "" {
 		result.Error = "evolution_go_api_url_missing"
@@ -1983,6 +2266,7 @@ func (repo Repository) dispatchWhatsAppViaEvolutionGo(ctx context.Context, sessi
 	payload := map[string]any{
 		"number": normalizeNotificationWhatsAppRecipient(to),
 		"text":   text,
+		"id":     expectedMessageID,
 	}
 	rawPayload, err := json.Marshal(payload)
 	if err != nil {
@@ -2000,21 +2284,137 @@ func (repo Repository) dispatchWhatsAppViaEvolutionGo(ctx context.Context, sessi
 		httpRequest.Header.Set("instanceId", strings.TrimSpace(session.InstanceKey))
 	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	if client == nil {
+		client = &http.Client{Timeout: 15 * time.Second}
+	}
+	var requestWriteObserved atomic.Bool
+	trace := &httptrace.ClientTrace{
+		WroteRequest: func(httptrace.WroteRequestInfo) {
+			// Once any request write completes (or reports a write error), the
+			// provider may have observed the deterministic stanza. Retrying blindly
+			// can duplicate a transactional message; the webhook must reconcile the
+			// exact expected_message_id instead.
+			requestWriteObserved.Store(true)
+		},
+	}
+	httpRequest = httpRequest.WithContext(httptrace.WithClientTrace(httpRequest.Context(), trace))
 	response, err := client.Do(httpRequest)
 	if err != nil {
-		result.Error = err.Error()
+		if requestWriteObserved.Load() {
+			result = evolutionGoOutcomeUnknown(result, err)
+		} else {
+			// DNS, dial and TLS failures before WroteRequest are definitive: the
+			// provider did not observe the mutation, so the durable outbox may retry.
+			result.Error = err.Error()
+		}
 		return result, err
 	}
 	defer response.Body.Close()
 
 	result.Status = response.StatusCode
-	result.OK = response.StatusCode >= 200 && response.StatusCode < 300
-	if !result.OK {
-		raw, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		result.Error = trimMax(firstNotificationText(strings.TrimSpace(string(raw)), response.Status), 240)
+	raw, readErr := io.ReadAll(io.LimitReader(response.Body, 64*1024+1))
+	if readErr != nil {
+		if response.StatusCode >= 200 && response.StatusCode < 300 {
+			result = evolutionGoOutcomeUnknown(result, readErr)
+		} else {
+			result.Error = readErr.Error()
+		}
+		return result, readErr
 	}
+	if len(raw) > 64*1024 {
+		responseErr := errors.New("Evolution Go response exceeds the allowed size")
+		if response.StatusCode >= 200 && response.StatusCode < 300 {
+			result = evolutionGoOutcomeUnknown(result, responseErr)
+		} else {
+			result.Error = "evolution_go_response_too_large"
+		}
+		return result, responseErr
+	}
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		result.Error = trimMax(firstNotificationText(strings.TrimSpace(string(raw)), response.Status), 240)
+		return result, nil
+	}
+
+	providerMessageID := ""
+	if len(bytes.TrimSpace(raw)) > 0 {
+		var providerResponse map[string]any
+		if err := json.Unmarshal(raw, &providerResponse); err != nil {
+			responseErr := fmt.Errorf("Evolution Go returned an invalid success response: %w", err)
+			result = evolutionGoOutcomeUnknown(result, responseErr)
+			return result, responseErr
+		}
+		providerMessageID = notificationEvolutionProviderMessageID(providerResponse)
+	}
+	if providerMessageID != "" && providerMessageID != expectedMessageID {
+		result.MessageID = providerMessageID
+		result.Permanent = true
+		result.Error = "evolution_go_provider_message_id_mismatch"
+		return result, fmt.Errorf(
+			"Evolution Go provider message id mismatch (expected %s, received %s)",
+			expectedMessageID,
+			providerMessageID,
+		)
+	}
+	result.MessageID = firstNotificationText(providerMessageID, expectedMessageID)
+	result.OK = true
+	result.Sent = 1
 	return result, nil
+}
+
+func evolutionGoOutcomeUnknown(result DispatchWhatsAppResult, err error) DispatchWhatsAppResult {
+	result.OK = false
+	result.Permanent = false
+	result.OutcomeUnknown = true
+	result.MessageID = firstNotificationText(result.MessageID, result.ExpectedMessageID)
+	result.Error = "evolution_go_delivery_outcome_unknown"
+	if err != nil && strings.TrimSpace(err.Error()) != "" {
+		result.Error += ": " + trimMax(err.Error(), 200)
+	}
+	return result
+}
+
+func notificationWhatsAppIdempotencyKey(organizationID string, eventKey string, dedupeKey string) string {
+	dedupeKey = strings.TrimSpace(dedupeKey)
+	if dedupeKey == "" {
+		return ""
+	}
+	return "vimob:whatsapp:" + strings.TrimSpace(organizationID) + ":" + strings.TrimSpace(eventKey) + ":" + dedupeKey + ":v1"
+}
+
+// deterministicNotificationWhatsAppMessageID mirrors the canonical WhatsApp
+// outbox contract: Evolution Go receives a stable, 128-bit uppercase stanza ID.
+func deterministicNotificationWhatsAppMessageID(idempotencyKey string) string {
+	digest := sha256.Sum256([]byte(strings.TrimSpace(idempotencyKey)))
+	return strings.ToUpper(hex.EncodeToString(digest[:16]))
+}
+
+func notificationEvolutionProviderMessageID(payload map[string]any) string {
+	paths := []string{
+		"sentMessageId", "messageId", "messageID", "MessageID", "id", "ID", "Id",
+		"key.id", "key.ID", "Key.ID", "Info.ID", "Info.Id", "info.ID", "info.id",
+		"data.sentMessageId", "data.messageId", "data.messageID", "data.MessageID",
+		"data.id", "data.ID", "data.key.id", "data.Key.ID", "data.Info.ID",
+		"data.Info.Id", "data.info.ID", "data.info.id", "Data.messageId",
+		"Data.MessageID", "Data.id", "Data.ID", "Data.Info.ID", "Data.Info.Id",
+		"message.key.id", "message.Key.ID", "data.message.key.id",
+		"data.message.Key.ID", "response.key.id", "response.Key.ID",
+	}
+	for _, candidate := range paths {
+		current := any(payload)
+		for _, key := range strings.Split(candidate, ".") {
+			object, ok := current.(map[string]any)
+			if !ok {
+				current = nil
+				break
+			}
+			current = object[key]
+		}
+		if value, ok := current.(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func normalizeNotificationWhatsAppRecipient(value string) string {
@@ -2034,14 +2434,14 @@ func normalizeNotificationWhatsAppRecipient(value string) string {
 
 func buildWhatsAppNotificationText(eventKey string, title string, content string, variables map[string]any) string {
 	if rendered := stringFromMap(variables, "__rendered_whatsapp_message"); rendered != "" {
-		return rendered
+		return ensureActionableBillingWhatsAppLink(eventKey, rendered, variables)
 	}
 
 	eventKey = strings.TrimSpace(eventKey)
 	title = strings.TrimSpace(title)
 	content = strings.TrimSpace(content)
 	if formatted := buildWhatsAppNotificationTemplate(eventKey, title, content, variables); formatted != "" {
-		return formatted
+		return ensureActionableBillingWhatsAppLink(eventKey, formatted, variables)
 	}
 	if title == "" {
 		return content
@@ -2050,6 +2450,29 @@ func buildWhatsAppNotificationText(eventKey string, title string, content string
 		return "🔔 *" + title + "*"
 	}
 	return "🔔 *" + title + "*\n" + content
+}
+
+func ensureActionableBillingWhatsAppLink(eventKey string, message string, variables map[string]any) string {
+	switch strings.ToLower(strings.TrimSpace(eventKey)) {
+	case "billing_payment_created",
+		"billing_due_in_3_days",
+		"billing_due_today",
+		"billing_card_refused",
+		"billing_overdue_1_day",
+		"billing_overdue_5_days":
+	default:
+		return message
+	}
+
+	billingURL := strings.TrimSpace(stringFromMap(variables, "billing_url"))
+	if billingURL == "" || strings.Contains(message, billingURL) {
+		return message
+	}
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return "Acesse: " + billingURL
+	}
+	return message + "\nAcesse: " + billingURL
 }
 
 func buildWhatsAppNotificationTemplate(eventKey string, title string, content string, variables map[string]any) string {
@@ -2088,6 +2511,9 @@ func buildWhatsAppNotificationTemplate(eventKey string, title string, content st
 	)
 	scheduleLeadName := scheduleReminderLeadName(variables)
 	propertyName := scheduleReminderPropertyName(variables)
+	billingURL := stringFromMap(variables, "billing_url")
+	billingAmount := stringFromMap(variables, "amount")
+	billingDueDate := stringFromMap(variables, "due_date")
 
 	lines := []string{}
 	appendField := func(icon string, label string, value string) {
@@ -2108,6 +2534,36 @@ func buildWhatsAppNotificationTemplate(eventKey string, title string, content st
 			return
 		}
 		appendField("📌", "Pipeline", firstNotificationText(pipeline, stage))
+	}
+	if eventKey == "onboarding_welcome" {
+		lines = append(lines, "*BEM-VINDO AO VIMOB*")
+		appendField("🏢", "Organização", stringFromMap(variables, "organization_name"))
+		appendField("📦", "Plano", stringFromMap(variables, "plan_name"))
+		if checkoutURL := stringFromMap(variables, "checkout_url"); checkoutURL != "" {
+			lines = append(lines, "Continuar: "+checkoutURL)
+		}
+		return strings.Join(cleanNotificationTemplateLines(lines), "\n")
+	}
+	if isBillingNotificationEvent(eventKey) {
+		lines = append(lines, "💳 *"+strings.ToUpper(firstNotificationText(title, "Cobranca Vimob"))+"*")
+		if content != "" {
+			lines = append(lines, content)
+		}
+		appendField("💰", "Valor", billingAmount)
+		appendField("📅", "Vencimento", billingDueDate)
+		if eventKey == "billing_payment_receipt" {
+			appendField("🧾", "Comprovante", stringFromMap(variables, "receipt_number"))
+			appendField("📦", "Plano", stringFromMap(variables, "plan_name"))
+			appendField("💳", "Pagamento", billingMethodLabel(stringFromMap(variables, "billing_type")))
+			appendField("✅", "Pago em", stringFromMap(variables, "paid_at"))
+			if verificationURL := stringFromMap(variables, "verification_url"); verificationURL != "" {
+				lines = append(lines, "🔎 Verifique: "+verificationURL)
+			}
+		}
+		if billingURL != "" {
+			lines = append(lines, "🔗 Acesse: "+billingURL)
+		}
+		return strings.Join(cleanNotificationTemplateLines(lines), "\n")
 	}
 
 	switch eventKey {
@@ -2503,6 +2959,9 @@ func buildDispatchNotificationContent(eventKey string, request DispatchNotificat
 }
 
 func notificationTypeForEvent(eventKey string) string {
+	if isBillingNotificationEvent(eventKey) {
+		return "billing"
+	}
 	switch eventKey {
 	case "new_lead_received", "lead_reentry", "lead_duplicate_existing", "lead_transferred", "lead_stage_changed", "lead_redistribution_warning", "lead_redistributed_received", "lead_redistributed_away":
 		return "lead"
@@ -2520,7 +2979,12 @@ func notificationTypeForEvent(eventKey string) string {
 }
 
 func shouldDispatchLeadWhatsAppNotification(eventKey string) bool {
+	if isBillingNotificationEvent(eventKey) {
+		return true
+	}
 	switch strings.TrimSpace(eventKey) {
+	case "onboarding_welcome":
+		return true
 	case "new_lead_received",
 		"lead_reentry",
 		"lead_duplicate_existing",
@@ -2545,7 +3009,61 @@ func shouldDispatchPushNotification(eventKey string) bool {
 }
 
 func shouldDispatchEmailNotification(eventKey string) bool {
-	return strings.TrimSpace(eventKey) == "deal_won"
+	eventKey = strings.TrimSpace(eventKey)
+	return eventKey == "deal_won" || eventKey == "onboarding_welcome" || isBillingNotificationEvent(eventKey)
+}
+
+func isBillingNotificationEvent(eventKey string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(eventKey)), "billing_")
+}
+
+func isPlatformTransactionalNotificationEvent(eventKey string) bool {
+	eventKey = strings.ToLower(strings.TrimSpace(eventKey))
+	return eventKey == "onboarding_welcome" ||
+		eventKey == "onboarding_email_confirmation" ||
+		isBillingNotificationEvent(eventKey)
+}
+
+// validatePublicNotificationEvent keeps platform-owned transactional events out
+// of both user-facing notification endpoints. These rows must originate from a
+// trusted backend transaction/outbox so their recipient, amount and receipt
+// payload cannot be forged by an organization user.
+func validatePublicNotificationEvent(eventKey string) error {
+	if isPlatformTransactionalNotificationEvent(eventKey) {
+		return fmt.Errorf(
+			"%w: platform transactional notifications are backend-owned",
+			tenant.ErrOrganizationAccessDenied,
+		)
+	}
+	return nil
+}
+
+func authorizePublicNotificationDispatch(tenantContext tenant.Context, eventKey string, userID string, channels []string) error {
+	if err := validatePublicNotificationEvent(eventKey); err != nil {
+		return err
+	}
+
+	canDispatch := canDispatchNotifications(tenantContext)
+	if strings.TrimSpace(userID) != strings.TrimSpace(tenantContext.UserID) && !canDispatch {
+		return tenant.ErrOrganizationAccessDenied
+	}
+	if requestsExternalNotificationChannel(eventKey, channels) && !canDispatch {
+		return fmt.Errorf(
+			"%w: email and WhatsApp notification dispatch requires elevated permission",
+			tenant.ErrOrganizationAccessDenied,
+		)
+	}
+	return nil
+}
+
+func requestsExternalNotificationChannel(eventKey string, channels []string) bool {
+	if len(channels) == 0 {
+		// An omitted channel list means "all supported channels". Keep a
+		// push/system-only event usable by regular members, but require dispatch
+		// permission whenever the event would actually fan out externally.
+		return shouldDispatchEmailNotification(eventKey) || shouldDispatchLeadWhatsAppNotification(eventKey)
+	}
+	return requestWantsChannel(channels, "email") || requestWantsChannel(channels, "whatsapp")
 }
 
 func applyNotificationDispatchMetadata(metadata map[string]any, eventKey string, channels []string) map[string]any {
@@ -3387,6 +3905,7 @@ func scanNotification(row scanner) (Notification, error) {
 		&notification.Type,
 		&notification.IsRead,
 		&leadID,
+		&notification.TargetURL,
 		&metadataRaw,
 		&notification.CreatedAt,
 	); err != nil {
@@ -3415,12 +3934,26 @@ func jsonMap(value string) map[string]any {
 }
 
 type taskLead struct {
-	LeadID string
+	LeadID    string
+	IsCadence bool
 }
 
-func (repo Repository) getTaskLeadID(ctx context.Context, taskID string) (taskLead, error) {
+func (repo Repository) getTaskLeadID(
+	ctx context.Context,
+	organizationID string,
+	taskID string,
+) (taskLead, error) {
 	var current taskLead
-	err := repo.db.Pool().QueryRow(ctx, `select lead_id::text from public.lead_tasks where id = $1::uuid`, taskID).Scan(&current.LeadID)
+	err := repo.db.Pool().QueryRow(ctx, `
+		select
+			task.lead_id::text,
+			task.cadence_enrollment_id is not null
+		from public.lead_tasks task
+		join public.leads lead
+		  on lead.id = task.lead_id
+		 and lead.organization_id = $1::uuid
+		where task.id = $2::uuid
+	`, organizationID, taskID).Scan(&current.LeadID, &current.IsCadence)
 	if err == pgx.ErrNoRows {
 		return taskLead{}, ErrInvalidReference
 	}
@@ -3504,6 +4037,37 @@ func (repo Repository) ensureLeadEditable(ctx context.Context, tenantContext ten
 		limit 1
 	`, tenantContext.OrganizationID, leadID).Scan(&assignedUserID, &teamID)
 	if err == pgx.ErrNoRows {
+		return ErrLeadNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if !authorization.CanOperateLead(tenantContext, authorization.LeadResource{
+		AssignedUserID: textValue(assignedUserID),
+		TeamID:         textValue(teamID),
+	}) {
+		return tenant.ErrOrganizationAccessDenied
+	}
+	return nil
+}
+
+func ensureLeadEditableForUpdate(
+	ctx context.Context,
+	tx pgx.Tx,
+	tenantContext tenant.Context,
+	leadID string,
+) error {
+	var assignedUserID, teamID pgtype.Text
+	err := tx.QueryRow(ctx, `
+		select
+			assigned_user_id::text,
+			nullif(to_jsonb(l)->>'team_id', '')
+		from public.leads l
+		where organization_id = $1::uuid and id = $2::uuid
+		limit 1
+		for update of l
+	`, tenantContext.OrganizationID, leadID).Scan(&assignedUserID, &teamID)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrLeadNotFound
 	}
 	if err != nil {

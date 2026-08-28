@@ -7,8 +7,11 @@ import { Heart } from "lucide-react";
 import { publicSiteAPI } from "@/lib/api/public-site";
 import type { PublicPropertiesData, PublicProperty, PublicSiteConfig } from "@/lib/api/public-site-server";
 import { PublicPropertyCard } from "./PublicPropertyCard";
-import { buildSiteHref, getThemeTokens } from "./public-site-utils";
+import { buildSiteHref } from "./public-site-utils";
 import { getPublicFavoriteIds } from "./FavoriteButton";
+
+const MAX_FAVORITES_PER_REQUEST = 60;
+const SAFE_PROPERTY_ID_PATTERN = /^[\w-]{1,100}$/;
 
 type PublicFavoritesClientProps = Readonly<{
   basePath: string;
@@ -16,27 +19,40 @@ type PublicFavoritesClientProps = Readonly<{
 }>;
 
 export function PublicFavoritesClient({ basePath, site }: PublicFavoritesClientProps) {
-  const tokens = getThemeTokens(site);
   const favoriteKey = useSyncExternalStore(subscribeFavorites, () => getPublicFavoriteIds(site.organization_id).join(","), () => "");
-  const favoriteIds = useMemo(() => (favoriteKey ? favoriteKey.split(",").filter(Boolean) : []), [favoriteKey]);
+  const favoriteIds = useMemo(
+    () => favoriteKey
+      .split(",")
+      .map((id) => id.trim())
+      .filter((id, index, values) => SAFE_PROPERTY_ID_PATTERN.test(id) && values.indexOf(id) === index)
+      .slice(0, MAX_FAVORITES_PER_REQUEST),
+    [favoriteKey],
+  );
+  const requestIds = useMemo(() => favoriteIds.join(","), [favoriteIds]);
   const [properties, setProperties] = useState<PublicProperty[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     let active = true;
 
     async function loadFavorites() {
-      if (!favoriteKey) {
+      if (!requestIds) {
         setProperties([]);
+        setLoadError(false);
+        setLoading(false);
         return;
       }
 
       setLoading(true);
+      setLoadError(false);
+      setProperties((current) => current.filter((property) => favoriteIds.includes(property.id)));
       try {
         const data = await publicSiteAPI.getData<PublicPropertiesData>({
           endpoint: "properties",
-          ids: favoriteKey,
-          limit: Math.min(favoriteIds.length, 60) || 1,
+          ids: requestIds,
+          limit: favoriteIds.length,
           organization_id: site.organization_id,
         });
         if (!active) return;
@@ -44,7 +60,7 @@ export function PublicFavoritesClient({ basePath, site }: PublicFavoritesClientP
         const byId = new Map(data.properties.map((property) => [property.id, property]));
         setProperties(favoriteIds.map((id) => byId.get(id)).filter((property): property is PublicProperty => Boolean(property)));
       } catch {
-        if (active) setProperties([]);
+        if (active) setLoadError(true);
       } finally {
         if (active) setLoading(false);
       }
@@ -55,7 +71,7 @@ export function PublicFavoritesClient({ basePath, site }: PublicFavoritesClientP
     return () => {
       active = false;
     };
-  }, [favoriteIds, favoriteKey, site.organization_id]);
+  }, [favoriteIds, requestIds, retryCount, site.organization_id]);
 
   const hasFavorites = favoriteIds.length > 0;
   const missingCount = useMemo(() => Math.max(0, favoriteIds.length - properties.length), [favoriteIds.length, properties.length]);
@@ -65,7 +81,6 @@ export function PublicFavoritesClient({ basePath, site }: PublicFavoritesClientP
       <FavoriteEmptyState
         basePath={basePath}
         description="Abra os imóveis e toque no coração para montar sua lista neste navegador."
-        iconColor={tokens.primary}
         title="Nenhum favorito salvo ainda"
       />
     );
@@ -73,14 +88,38 @@ export function PublicFavoritesClient({ basePath, site }: PublicFavoritesClientP
 
   if (loading && properties.length === 0) {
     return (
-      <div className="flex min-h-56 items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-current/15 border-t-current" style={{ color: tokens.primary }} />
+      <div
+        role="status"
+        aria-live="polite"
+        className="mx-auto flex min-h-56 max-w-2xl items-center justify-center rounded-lg bg-[var(--site-card)] p-8 text-center text-xs font-light text-[var(--site-card-fg)]"
+      >
+        Carregando favoritos…
       </div>
     );
   }
 
+  if (loadError && properties.length === 0) {
+    return <FavoriteLoadError onRetry={() => setRetryCount((current) => current + 1)} />;
+  }
+
   return (
     <div className="space-y-6">
+      {loadError ? (
+        <div
+          role="alert"
+          className="flex flex-col items-start justify-between gap-3 rounded-lg bg-[var(--site-card)] p-4 text-xs font-light text-[var(--site-card-fg)] sm:flex-row sm:items-center"
+        >
+          <p>Não foi possível atualizar a lista. Os últimos favoritos carregados continuam visíveis.</p>
+          <button
+            type="button"
+            onClick={() => setRetryCount((current) => current + 1)}
+            className="inline-flex h-9 shrink-0 items-center justify-center rounded-md bg-[var(--site-primary)] px-3 text-xs font-light text-[var(--site-primary-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--site-accent)] focus-visible:ring-offset-2"
+          >
+            Tentar novamente
+          </button>
+        </div>
+      ) : null}
+
       {properties.length > 0 ? (
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {properties.map((property) => (
@@ -91,13 +130,12 @@ export function PublicFavoritesClient({ basePath, site }: PublicFavoritesClientP
         <FavoriteEmptyState
           basePath={basePath}
           description="Os imóveis salvos podem ter sido removidos, vendidos ou retirados do site."
-          iconColor={tokens.primary}
           title="Favoritos indisponíveis"
         />
       )}
 
-      {missingCount > 0 ? (
-        <p className="text-center text-sm font-light opacity-64">
+      {!loadError && !loading && missingCount > 0 ? (
+        <p className="text-center text-xs font-light opacity-65">
           {missingCount} favorito(s) não estão mais disponíveis no site.
         </p>
       ) : null}
@@ -117,28 +155,49 @@ function subscribeFavorites(onStoreChange: () => void) {
 function FavoriteEmptyState({
   basePath,
   description,
-  iconColor,
   title,
 }: Readonly<{
   basePath: string;
   description: string;
-  iconColor: string;
   title: string;
 }>) {
   return (
-    <div className="mx-auto max-w-2xl rounded-[10px] bg-[var(--site-card)] p-8 text-center">
-      <span className="mx-auto inline-flex h-12 w-12 items-center justify-center rounded-[10px] bg-white/8" style={{ color: iconColor }}>
+    <div className="mx-auto max-w-2xl rounded-lg bg-[var(--site-card)] p-8 text-center text-[var(--site-card-fg)]">
+      <span className="mx-auto inline-flex h-12 w-12 items-center justify-center rounded-md bg-[var(--site-secondary)] text-[var(--site-secondary-fg)]">
         <Heart className="h-5 w-5" />
       </span>
-      <h2 className="mt-5 text-2xl font-light">{title}</h2>
-      <p className="mx-auto mt-3 max-w-lg text-sm font-light leading-6 opacity-70">{description}</p>
+      <h2 className="mt-5 text-sm font-normal">{title}</h2>
+      <p className="mx-auto mt-3 max-w-lg text-xs font-light leading-5 opacity-70">{description}</p>
       <Link
         href={buildSiteHref(basePath, "/imoveis")}
-        className="mt-6 inline-flex h-11 items-center justify-center rounded-[10px] px-5 text-sm font-light text-white"
-        style={{ backgroundColor: iconColor }}
+        className="mt-6 inline-flex h-10 items-center justify-center rounded-md bg-[var(--site-primary)] px-5 text-xs font-light text-[var(--site-primary-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--site-accent)] focus-visible:ring-offset-2"
       >
         Ver imóveis
       </Link>
+    </div>
+  );
+}
+
+function FavoriteLoadError({ onRetry }: Readonly<{ onRetry: () => void }>) {
+  return (
+    <div
+      role="alert"
+      className="mx-auto max-w-2xl rounded-lg bg-[var(--site-card)] p-8 text-center text-[var(--site-card-fg)]"
+    >
+      <span className="mx-auto inline-flex h-12 w-12 items-center justify-center rounded-md bg-[var(--site-secondary)] text-[var(--site-secondary-fg)]">
+        <Heart className="h-5 w-5" />
+      </span>
+      <h2 className="mt-5 text-sm font-normal">Não foi possível carregar os favoritos</h2>
+      <p className="mx-auto mt-3 max-w-lg text-xs font-light leading-5 opacity-70">
+        Verifique sua conexão e tente novamente.
+      </p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="mt-6 inline-flex h-10 items-center justify-center rounded-md bg-[var(--site-primary)] px-5 text-xs font-light text-[var(--site-primary-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--site-accent)] focus-visible:ring-offset-2"
+      >
+        Tentar novamente
+      </button>
     </div>
   );
 }

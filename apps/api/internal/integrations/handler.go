@@ -2,23 +2,28 @@ package integrations
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/publicingress"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 type Handler struct {
-	repo Repository
+	repo                   Repository
+	publicClientIPResolver publicingress.ClientIPResolver
 }
 
 func NewHandler(repo Repository) Handler {
 	return Handler{repo: repo}
+}
+
+func (handler Handler) WithPublicClientIPResolver(resolver publicingress.ClientIPResolver) Handler {
+	handler.publicClientIPResolver = resolver
+	return handler
 }
 
 func (handler Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
@@ -32,20 +37,59 @@ func (handler Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if item, handled, err := handler.handleLocalMetaOAuthAction(r.Context(), tenantContext, r.PathValue("name"), body); handled {
-		if err != nil {
-			writeIntegrationError(w, r, err)
-			return
-		}
-		httpserver.WriteJSON(w, http.StatusOK, item)
+	handler.invokeAuthorizedFunction(
+		w,
+		r,
+		r.PathValue("name"),
+		r.Header.Get("Authorization"),
+		body,
+	)
+}
+
+func (handler Handler) CreateSubscriptionCharge(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+	body, err := readJSONBodyWithOrganization(r, tenantContext.OrganizationID)
+	if err != nil {
+		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
 		return
 	}
 
-	response, err := handler.repo.InvokeFunction(r.Context(), r.PathValue("name"), r.Header.Get("Authorization"), body)
+	handler.invokeAuthorizedFunction(
+		w,
+		r,
+		"asaas-create-charge",
+		r.Header.Get("Authorization"),
+		body,
+	)
+}
+
+func (handler Handler) invokeAuthorizedFunction(
+	w http.ResponseWriter,
+	r *http.Request,
+	name string,
+	authorization string,
+	body []byte,
+) {
+	response, err := handler.repo.InvokeFunctionRequest(
+		r.Context(),
+		name,
+		http.MethodPost,
+		authorization,
+		body,
+		nil,
+		handler.publicClientIPResolver.Resolve(r),
+	)
 	if err != nil {
 		writeIntegrationError(w, r, err)
 		return
 	}
+	writeFunctionResponse(w, response)
+}
+
+func writeFunctionResponse(w http.ResponseWriter, response FunctionResponse) {
 	contentType := response.ContentType
 	if contentType == "" {
 		contentType = "application/json"
@@ -53,31 +97,6 @@ func (handler Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(response.Body)
-}
-
-type metaOAuthActionRequest struct {
-	Action string `json:"action"`
-	PageID string `json:"page_id"`
-}
-
-func (handler Handler) handleLocalMetaOAuthAction(ctx context.Context, tenantContext tenant.Context, name string, body []byte) (map[string]any, bool, error) {
-	if name != "meta-oauth" {
-		return nil, false, nil
-	}
-
-	var request metaOAuthActionRequest
-	if err := json.Unmarshal(body, &request); err != nil {
-		return nil, true, ErrInvalidInput
-	}
-	if strings.TrimSpace(request.Action) != "get_page_forms" {
-		return nil, false, nil
-	}
-
-	forms, err := handler.repo.ListMetaPageForms(ctx, tenantContext, request.PageID)
-	if err != nil {
-		return nil, true, err
-	}
-	return map[string]any{"forms": forms}, true, nil
 }
 
 func (handler Handler) PublicCheckoutInfo(w http.ResponseWriter, r *http.Request) {
@@ -97,6 +116,13 @@ func (handler Handler) PublicCancelPayment(w http.ResponseWriter, r *http.Reques
 }
 
 func (handler Handler) invokePublicFunction(w http.ResponseWriter, r *http.Request, name string, method string) {
+	// Public billing capabilities may return masked customer data, payment
+	// state and short-lived payment artifacts. Keep every response out of
+	// browser/proxy caches even if an upstream function forgets the header.
+	w.Header().Set("Cache-Control", "private, no-store, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Vary", "Authorization")
+
 	body := []byte{}
 	if method != http.MethodGet {
 		defer r.Body.Close()
@@ -111,7 +137,15 @@ func (handler Handler) invokePublicFunction(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	response, err := handler.repo.InvokeFunctionRequest(r.Context(), name, method, "", body, r.URL.Query())
+	response, err := handler.repo.InvokeFunctionRequest(
+		r.Context(),
+		name,
+		method,
+		r.Header.Get("Authorization"),
+		body,
+		r.URL.Query(),
+		handler.publicClientIPResolver.Resolve(r),
+	)
 	if err != nil {
 		writeIntegrationError(w, r, err)
 		return
@@ -232,6 +266,38 @@ func (handler Handler) ListMetaIntegrations(w http.ResponseWriter, r *http.Reque
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]map[string]any]{Data: items})
 }
 
+func (handler Handler) SaveMetaConversionFeedback(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+	defer r.Body.Close()
+	var request MetaConversionFeedbackRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		return
+	}
+	item, err := handler.repo.SaveMetaConversionFeedback(r.Context(), tenantContext, request)
+	if err != nil {
+		writeIntegrationError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[map[string]any]{Data: item})
+}
+
+func (handler Handler) ListMetaPageForms(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+
+	items, err := handler.repo.ListMetaPageForms(r.Context(), tenantContext, r.PathValue("pageId"))
+	if err != nil {
+		writeIntegrationError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, map[string]any{"forms": items})
+}
+
 func (handler Handler) ShowMetaOAuthFlow(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := organizationContext(w, r)
 	if !ok {
@@ -344,6 +410,24 @@ func (handler Handler) ListMetaMessages(w http.ResponseWriter, r *http.Request) 
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]map[string]any]{Data: items})
 }
 
+func (handler Handler) SendMetaMessage(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := organizationContext(w, r)
+	if !ok {
+		return
+	}
+	defer r.Body.Close()
+	var request SendMetaMessageRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		return
+	}
+	result, err := handler.repo.SendMetaMessage(r.Context(), tenantContext, r.PathValue("id"), request)
+	if err != nil {
+		writeIntegrationError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, result.StatusCode, Envelope[map[string]any]{Data: result.Message})
+}
+
 func organizationContext(w http.ResponseWriter, r *http.Request) (tenant.Context, bool) {
 	tenantContext, ok := tenant.FromContext(r.Context())
 	if !ok || tenantContext.OrganizationID == "" {
@@ -396,12 +480,18 @@ func (nilResponseWriter) WriteHeader(statusCode int) {}
 
 func writeIntegrationError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, ErrBillingCheckoutUnavailable):
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "billing_checkout_unavailable", "Billing checkout is temporarily unavailable.")
 	case errors.Is(err, ErrInvalidInput):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_integration_input", "Integration input is invalid.")
 	case errors.Is(err, ErrFunctionNotAllowed):
 		httpserver.WriteError(w, r, http.StatusForbidden, "integration_function_not_allowed", "Integration function is not allowed.")
 	case errors.Is(err, ErrIntegrationNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "integration_not_found", "Integration was not found.")
+	case errors.Is(err, ErrMetaUpstream):
+		httpserver.WriteError(w, r, http.StatusBadGateway, "meta_upstream_failed", "Meta could not complete the request.")
+	case errors.Is(err, ErrIdempotencyConflict):
+		httpserver.WriteError(w, r, http.StatusConflict, "idempotency_conflict", "This request key is already bound to another message.")
 	case errors.Is(err, tenant.ErrOrganizationAccessDenied):
 		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
 	default:

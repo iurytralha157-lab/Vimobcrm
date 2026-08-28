@@ -10,8 +10,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useQuery } from '@tanstack/react-query';
 import { getPropertySiteInfo } from '@/lib/api/property-support';
 import { buildPropertySiteUrl } from '@/lib/property-site-url';
+import { getSafePropertyImageSource } from '@/lib/property-media';
 import { toast } from 'sonner';
 import { normalizeSearchText, searchTextIncludes } from '@/lib/search-text';
+import { useOrganizationModules } from '@/hooks/use-organization-modules';
 
 interface Property {
   id: string;
@@ -111,15 +113,18 @@ export function PropertyPickerDialog({
   const [filterType, setFilterType] = useState('');
   const [filterPurpose, setFilterPurpose] = useState('');
   const [filterLocation, setFilterLocation] = useState('');
-  const { profile } = useAuth();
+  const { profile, organization } = useAuth();
+  const { hasModule } = useOrganizationModules();
+  const hasPropertiesModule = hasModule('properties');
+  const organizationId = organization?.id || profile?.organization_id;
 
   const { data: siteInfo } = useQuery({
-    queryKey: ['org-site-info', profile?.organization_id],
+    queryKey: ['org-site-info', organizationId],
     queryFn: async () => {
-      if (!profile?.organization_id) return null;
-      return getPropertySiteInfo(profile.organization_id);
+      if (!organizationId) return null;
+      return getPropertySiteInfo(organizationId);
     },
-    enabled: !!profile?.organization_id && open,
+    enabled: !!organizationId && hasPropertiesModule && open,
   });
 
   const selectedProperty = (properties || []).find(p => p.id === selectedPropertyId);
@@ -147,6 +152,7 @@ export function PropertyPickerDialog({
     setFilterType('');
     setFilterPurpose('');
     setFilterLocation('');
+    setShowFilters(false);
     setOpen(true);
     onOpenChange?.(true);
   };
@@ -163,6 +169,8 @@ export function PropertyPickerDialog({
     const full = code ? `${code} - ${title}` : title;
     return full.length > (code.length + 13) ? full.slice(0, code.length + 13) + '...' : full;
   };
+
+  if (!hasPropertiesModule) return null;
 
   return (
     <>
@@ -184,14 +192,14 @@ export function PropertyPickerDialog({
       )}
 
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="w-[95%] max-w-4xl max-h-[90vh] flex flex-col p-0 overflow-hidden">
-          <div className="flex items-center gap-3 p-4 pr-12 pb-3 border-b">
-            <DialogTitle className="text-sm font-semibold whitespace-nowrap">Selecionar Imóvel</DialogTitle>
-            <div className="relative flex-1">
+        <DialogContent className="flex max-h-[90vh] w-[calc(100vw-2rem)] max-w-4xl flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none">
+          <div className="flex flex-col gap-3 border-b border-[var(--app-border)] p-4 pr-12 sm:flex-row sm:items-center">
+            <DialogTitle className="whitespace-nowrap text-sm font-normal">Selecionar imóvel</DialogTitle>
+            <div className="relative min-w-0 flex-1">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
                 placeholder="Buscar por código ou nome..."
-                className="h-8 text-xs pl-8"
+                className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] pl-8 text-xs font-light shadow-none focus-visible:ring-1 focus-visible:ring-primary/30"
                 value={search}
                 onChange={e => {
                   setSearch(e.target.value);
@@ -200,19 +208,20 @@ export function PropertyPickerDialog({
               />
             </div>
             <Button
-              variant={showFilters ? 'secondary' : 'ghost'}
-              size="icon"
-              className="h-8 w-8 shrink-0"
+              variant={showFilters ? 'secondary' : 'outline'}
+              size="sm"
+              className="h-8 shrink-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-xs font-light shadow-none hover:bg-[var(--app-surface-hover)]"
               onClick={() => setShowFilters(!showFilters)}
             >
-              <SlidersHorizontal className="h-3.5 w-3.5" />
+              <SlidersHorizontal className="mr-1.5 h-3.5 w-3.5" />
+              Filtros
             </Button>
           </div>
 
           {showFilters && (
-            <div className="flex flex-wrap items-center gap-3 px-4 pt-4 pb-3 border-b">
+            <div className="grid grid-cols-1 gap-2 border-b border-[var(--app-border)] bg-[var(--app-surface-soft)] px-4 py-3 sm:grid-cols-3">
               <select
-                className="h-9 text-xs rounded-md border bg-background px-3 flex-1 min-w-[140px]"
+                className="h-8 min-w-0 rounded-[6px] border-0 bg-[var(--app-surface)] px-3 text-xs text-foreground outline-none ring-1 ring-[var(--app-border)] focus:ring-primary"
                 value={filterType}
                 onChange={e => setFilterType(e.target.value)}
               >
@@ -222,7 +231,7 @@ export function PropertyPickerDialog({
                 ))}
               </select>
               <select
-                className="h-9 text-xs rounded-md border bg-background px-3 flex-1 min-w-[140px]"
+                className="h-8 min-w-0 rounded-[6px] border-0 bg-[var(--app-surface)] px-3 text-xs text-foreground outline-none ring-1 ring-[var(--app-border)] focus:ring-primary"
                 value={filterPurpose}
                 onChange={e => setFilterPurpose(e.target.value)}
               >
@@ -232,7 +241,7 @@ export function PropertyPickerDialog({
                 ))}
               </select>
               <select
-                className="h-9 text-xs rounded-md border bg-background px-3 flex-1 min-w-[140px]"
+                className="h-8 min-w-0 rounded-[6px] border-0 bg-[var(--app-surface)] px-3 text-xs text-foreground outline-none ring-1 ring-[var(--app-border)] focus:ring-primary"
                 value={filterLocation}
                 onChange={e => setFilterLocation(e.target.value)}
               >
@@ -256,24 +265,29 @@ export function PropertyPickerDialog({
                 ) : (
                   <Building2 className="h-8 w-8 mb-2 opacity-40" />
                 )}
-                <p className="text-xs">{isLoading ? 'Carregando imoveis...' : 'Nenhum imóvel encontrado'}</p>
+                <p className="text-xs font-light">{isLoading ? 'Carregando imóveis...' : 'Nenhum imóvel encontrado'}</p>
               </div>
             ) : (
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {filteredProperties.map(p => {
                   const statusBadge = getPropertyStatusBadge(p.status);
                   const StatusIcon = statusBadge?.icon;
                   const blockedMessage = getSelectionBlockedMessage(p.status);
+                  const imageSource = getSafePropertyImageSource(p.imagem_principal);
 
                   return (
                     <div
                       key={p.id}
+                      role="button"
+                      tabIndex={blockedMessage ? -1 : 0}
+                      aria-label={`Selecionar ${p.code ? `${p.code} - ` : ''}${p.title || 'imóvel'}`}
+                      aria-pressed={selectedPropertyId === p.id}
                       className={cn(
-                        'flex flex-col rounded-xl border overflow-hidden text-left transition-all',
+                        'flex flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-soft)] text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40',
                         blockedMessage
                           ? 'cursor-not-allowed opacity-75'
-                          : 'cursor-pointer hover:ring-2 hover:ring-primary/50',
-                        selectedPropertyId === p.id && 'ring-2 ring-primary'
+                          : 'cursor-pointer hover:bg-[var(--app-surface-hover)]',
+                        selectedPropertyId === p.id && 'ring-1 ring-primary'
                       )}
                       aria-disabled={!!blockedMessage}
                       title={blockedMessage || undefined}
@@ -283,13 +297,20 @@ export function PropertyPickerDialog({
                           return;
                         }
                         onSelect(p);
-                        setOpen(false);
+                        handleOpenChange(false);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.target !== event.currentTarget) return;
+                        if (blockedMessage || (event.key !== 'Enter' && event.key !== ' ')) return;
+                        event.preventDefault();
+                        onSelect(p);
+                        handleOpenChange(false);
                       }}
                     >
                       <div className="relative aspect-[4/3] bg-[var(--app-surface-soft)]">
-                      {p.imagem_principal ? (
+                      {imageSource ? (
                         <NextImage
-                          src={p.imagem_principal}
+                          src={imageSource}
                           alt={p.title || 'Imóvel'}
                           fill
                           sizes="220px"
@@ -302,15 +323,15 @@ export function PropertyPickerDialog({
                         </div>
                       )}
                       {statusBadge && StatusIcon && (
-                        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/25">
-                          <Badge className={cn('border-0 px-2.5 py-1 text-[10px] font-semibold uppercase shadow-sm backdrop-blur-sm', statusBadge.className)}>
+                        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-[var(--app-surface-solid)]/75">
+                          <Badge className={cn('rounded-[4px] border-0 px-2.5 py-1 text-[10px] font-light shadow-none', statusBadge.className)}>
                             <StatusIcon className="h-3 w-3 mr-1" />
                             {statusBadge.label}
                           </Badge>
                         </div>
                       )}
                       {p.code && (
-                        <Badge className="absolute top-1.5 left-1.5 text-[9px] px-1.5 py-0 h-4 bg-[#ff482a] text-white backdrop-blur-sm border-0">
+                        <Badge className="absolute left-1.5 top-1.5 h-4 rounded-[4px] border-0 bg-primary px-1.5 py-0 text-[9px] font-light text-primary-foreground shadow-none">
                           {p.code}
                         </Badge>
                       )}
@@ -318,27 +339,29 @@ export function PropertyPickerDialog({
                         const url = buildPropertySiteUrl(p.code, siteInfo);
                         return url ? (
                           <button
-                            className="absolute top-1.5 right-1.5 w-6 h-6 bg-black/60 hover:bg-black/80 backdrop-blur-sm rounded-full flex items-center justify-center transition-colors"
+                            type="button"
+                            aria-label={`Abrir ${p.code} no site`}
+                            className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-[6px] bg-[var(--app-surface-solid)] text-primary shadow-none transition-colors hover:bg-[var(--app-surface-hover)]"
                             title="Ver no site"
                             onClick={(e) => {
                               e.stopPropagation();
-                              window.open(url, '_blank');
+                              window.open(url, '_blank', 'noopener,noreferrer');
                             }}
                           >
-                            <ExternalLink className="h-3 w-3 text-white" />
+                            <ExternalLink className="h-3 w-3" />
                           </button>
                         ) : null;
                       })()}
                       </div>
                       <div className="p-2 space-y-0.5">
-                      <p className="text-[11px] font-medium truncate">{p.title || 'Sem título'}</p>
+                      <p className="truncate text-[11px] font-normal">{p.title || 'Sem título'}</p>
                       {p.bairro && (
                         <p className="text-[10px] text-muted-foreground truncate">
                           {p.bairro}{p.cidade ? `, ${p.cidade}` : ''}
                         </p>
                       )}
                       {p.preco && (
-                        <p className="text-[11px] font-semibold text-primary">
+                        <p className="text-[11px] font-normal text-primary">
                           {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(p.preco))}
                         </p>
                       )}

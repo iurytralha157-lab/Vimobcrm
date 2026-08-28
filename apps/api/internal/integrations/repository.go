@@ -3,6 +3,9 @@ package integrations
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
@@ -36,16 +40,40 @@ func NewRepository(db *dbpkg.Postgres, external ExternalConfig) Repository {
 		db:       db,
 		external: external,
 		client: &http.Client{
-			Timeout: 60 * time.Second,
+			Timeout: 95 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 	}
 }
 
 func (repo Repository) InvokeFunction(ctx context.Context, name string, authorization string, body []byte) (FunctionResponse, error) {
-	return repo.InvokeFunctionRequest(ctx, name, http.MethodPost, authorization, body, nil)
+	return repo.InvokeFunctionRequest(ctx, name, http.MethodPost, authorization, body, nil, "")
 }
 
-func (repo Repository) InvokeFunctionRequest(ctx context.Context, name string, method string, authorization string, body []byte, query url.Values) (FunctionResponse, error) {
+func signedEdgeClientIPHeaders(secret string, method string, requestPath string, clientIP string, body []byte, now time.Time) (string, string, bool) {
+	secret = strings.TrimSpace(secret)
+	normalizedIP := net.ParseIP(strings.TrimSpace(clientIP))
+	if len(secret) < 32 || normalizedIP == nil {
+		return "", "", false
+	}
+	timestamp := fmt.Sprintf("%d", now.UTC().Unix())
+	bodyDigest := sha256.Sum256(body)
+	canonical := strings.Join([]string{
+		"v1",
+		timestamp,
+		strings.ToUpper(strings.TrimSpace(method)),
+		requestPath,
+		normalizedIP.String(),
+		hex.EncodeToString(bodyDigest[:]),
+	}, "\n")
+	digest := hmac.New(sha256.New, []byte(secret))
+	_, _ = digest.Write([]byte(canonical))
+	return timestamp, hex.EncodeToString(digest.Sum(nil)), true
+}
+
+func (repo Repository) InvokeFunctionRequest(ctx context.Context, name string, method string, authorization string, body []byte, query url.Values, clientIP string) (FunctionResponse, error) {
 	if !allowedFunction(name) {
 		return FunctionResponse{}, ErrFunctionNotAllowed
 	}
@@ -78,6 +106,28 @@ func (repo Repository) InvokeFunctionRequest(ctx context.Context, name string, m
 		request.Header.Set("Authorization", authorization)
 	} else if repo.external.APIKey != "" {
 		request.Header.Set("Authorization", "Bearer "+repo.external.APIKey)
+	}
+	normalizedIP := net.ParseIP(strings.TrimSpace(clientIP))
+	if name == "asaas-create-charge" && normalizedIP == nil {
+		return FunctionResponse{}, ErrBillingCheckoutUnavailable
+	}
+	if normalizedIP != nil {
+		timestamp, signature, signed := signedEdgeClientIPHeaders(
+			repo.external.ClientIPSigningSecret,
+			method,
+			endpoint.EscapedPath(),
+			normalizedIP.String(),
+			body,
+			time.Now(),
+		)
+		if name == "asaas-create-charge" && !signed {
+			return FunctionResponse{}, ErrBillingCheckoutUnavailable
+		}
+		if signed {
+			request.Header.Set("X-Vimob-Client-IP", normalizedIP.String())
+			request.Header.Set("X-Vimob-Client-IP-Timestamp", timestamp)
+			request.Header.Set("X-Vimob-Client-IP-Signature", signature)
+		}
 	}
 
 	response, err := repo.client.Do(request)
@@ -211,12 +261,58 @@ func (repo Repository) DeleteImoview(ctx context.Context, tenantContext tenant.C
 }
 
 func (repo Repository) ListMetaIntegrations(ctx context.Context, tenantContext tenant.Context) ([]map[string]any, error) {
+	items, err := repo.listJSON(ctx, `
+		select to_jsonb(mi) || jsonb_build_object(
+			'marketing_token_available',
+				exists (
+					select 1
+					from vault.decrypted_secrets as secret
+					where secret.id = credentials.user_access_token_secret_ref
+					  and nullif(secret.decrypted_secret, '') is not null
+				)
+				and coalesce(credentials.granted_scopes, array[]::text[]) @> array[
+					'ads_read',
+					'read_insights',
+					'instagram_basic',
+					'instagram_manage_insights'
+				]::text[]
+		)
+		from public.meta_integrations_public mi
+		join public.meta_integrations as credentials
+		  on credentials.id = mi.id
+		 and credentials.organization_id = mi.organization_id
+		where mi.organization_id = $1::uuid
+		order by mi.created_at desc
+	`, tenantContext.OrganizationID)
+	if err == nil {
+		return items, nil
+	}
+	if !isMetaMarketingCapabilitySchemaMissing(err) {
+		return nil, err
+	}
+
+	// During a rolling migration the legacy, tokenless projection can already
+	// serve lead integrations while the durable Marketing columns are not yet
+	// available. Keep the connection visible, but fail the advanced capability
+	// closed until the database can prove both token presence and scopes.
 	return repo.listJSON(ctx, `
-		select to_jsonb(mi)
+		select to_jsonb(mi) || jsonb_build_object(
+			'marketing_token_available', false
+		)
 		from public.meta_integrations_public mi
 		where mi.organization_id = $1::uuid
 		order by mi.created_at desc
 	`, tenantContext.OrganizationID)
+}
+
+func isMetaMarketingCapabilitySchemaMissing(err error) bool {
+	var databaseError *pgconn.PgError
+	if !errors.As(err, &databaseError) || databaseError.Code != "42703" {
+		return false
+	}
+	detail := strings.ToLower(databaseError.ColumnName + " " + databaseError.Message)
+	return strings.Contains(detail, "user_access_token_secret_ref") ||
+		strings.Contains(detail, "granted_scopes")
 }
 
 func (repo Repository) ListMetaPageForms(ctx context.Context, tenantContext tenant.Context, pageID string) ([]map[string]any, error) {
@@ -248,6 +344,9 @@ type metaIntegrationSnapshot struct {
 type metaLeadFormsResponse struct {
 	Data   []metaLeadForm `json:"data"`
 	Paging struct {
+		Cursors struct {
+			After string `json:"after"`
+		} `json:"cursors"`
 		Next string `json:"next"`
 	} `json:"paging"`
 }
@@ -269,8 +368,13 @@ type metaFormQuestion struct {
 func (repo Repository) getMetaIntegrationByPage(ctx context.Context, organizationID string, pageID string) (metaIntegrationSnapshot, error) {
 	var raw []byte
 	err := repo.db.Pool().QueryRow(ctx, `
-		select to_jsonb(mi)
+		select to_jsonb(mi) || jsonb_build_object(
+			'access_token',
+			coalesce(nullif(mi.access_token, ''), secret.decrypted_secret)
+		)
 		from public.meta_integrations mi
+		left join vault.decrypted_secrets secret
+		  on secret.id = mi.access_token_secret_ref
 		where mi.organization_id = $1::uuid
 		  and mi.page_id = $2
 		  and coalesce(mi.is_connected, true) = true
@@ -289,14 +393,9 @@ func (repo Repository) getMetaIntegrationByPage(ctx context.Context, organizatio
 		return metaIntegrationSnapshot{}, err
 	}
 
-	accessToken := cleanTextFromAny(item["access_token"])
-	if accessToken == nil {
-		accessToken = plainSecretValue(cleanTextFromAny(item["access_token_secret_ref"]))
-	}
-
 	return metaIntegrationSnapshot{
 		ID:          cleanStringFromAny(item["id"]),
-		AccessToken: accessToken,
+		AccessToken: cleanTextFromAny(item["access_token"]),
 	}, nil
 }
 
@@ -312,19 +411,31 @@ func (repo Repository) fetchMetaLeadForms(ctx context.Context, pageID string, ac
 		return nil, err
 	}
 	query := endpoint.Query()
-	query.Set("access_token", accessToken)
 	query.Set("fields", "id,name,status,leads_count,questions{key,label,type}")
 	query.Set("limit", "100")
+	if proof := metaAppSecretProof(repo.external.MetaAppSecret, accessToken); proof != "" {
+		query.Set("appsecret_proof", proof)
+	}
 	endpoint.RawQuery = query.Encode()
 
 	forms := []map[string]any{}
-	nextURL := endpoint.String()
-	for page := 0; page < 10 && nextURL != ""; page++ {
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, nil)
+	after := ""
+	seenCursors := make(map[string]struct{})
+	for page := 0; page < 10; page++ {
+		pageURL := *endpoint
+		pageQuery := pageURL.Query()
+		if after == "" {
+			pageQuery.Del("after")
+		} else {
+			pageQuery.Set("after", after)
+		}
+		pageURL.RawQuery = pageQuery.Encode()
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL.String(), nil)
 		if err != nil {
 			return nil, err
 		}
 		request.Header.Set("Accept", "application/json")
+		request.Header.Set("Authorization", "Bearer "+accessToken)
 
 		response, err := repo.client.Do(request)
 		if err != nil {
@@ -346,10 +457,29 @@ func (repo Repository) fetchMetaLeadForms(ctx context.Context, pageID string, ac
 		for _, form := range payload.Data {
 			forms = append(forms, metaLeadFormToMap(form))
 		}
-		nextURL = strings.TrimSpace(payload.Paging.Next)
+		nextCursor := strings.TrimSpace(payload.Paging.Cursors.After)
+		if strings.TrimSpace(payload.Paging.Next) == "" || nextCursor == "" {
+			break
+		}
+		if _, repeated := seenCursors[nextCursor]; repeated {
+			break
+		}
+		seenCursors[nextCursor] = struct{}{}
+		after = nextCursor
 	}
 
 	return forms, nil
+}
+
+func metaAppSecretProof(appSecret string, accessToken string) string {
+	appSecret = strings.TrimSpace(appSecret)
+	accessToken = strings.TrimSpace(accessToken)
+	if appSecret == "" || accessToken == "" {
+		return ""
+	}
+	digest := hmac.New(sha256.New, []byte(appSecret))
+	_, _ = digest.Write([]byte(accessToken))
+	return hex.EncodeToString(digest.Sum(nil))
 }
 
 func metaLeadFormToMap(form metaLeadForm) map[string]any {
@@ -403,7 +533,77 @@ func (repo Repository) GetMetaOAuthFlow(ctx context.Context, tenantContext tenan
 			'organization_id', mof.organization_id::text,
 			'user_id', mof.user_id::text,
 			'status', mof.status,
-			'payload', mof.payload,
+			'payload',
+				jsonb_strip_nulls(jsonb_build_object(
+					'flow_id',
+					mof.id::text,
+					'success',
+					mof.payload->'success',
+					'adAccountId',
+					coalesce(mof.payload->'adAccountId', mof.payload->'ad_account_id'),
+					'ad_accounts',
+					coalesce((
+						select jsonb_agg(
+							jsonb_strip_nulls(jsonb_build_object(
+								'id', account->'id',
+								'account_id', account->'account_id',
+								'name', account->'name',
+								'account_status', account->'account_status',
+								'currency', account->'currency',
+								'timezone_name', account->'timezone_name'
+							))
+							order by account->>'name', account->>'id'
+						)
+						from jsonb_array_elements(
+							case
+								when jsonb_typeof(mof.payload->'ad_accounts') = 'array'
+									then mof.payload->'ad_accounts'
+								else '[]'::jsonb
+							end
+						) as account
+						where nullif(account->>'id', '') is not null
+					), '[]'::jsonb),
+					'facebook_user_id',
+					mof.payload->'facebook_user_id',
+					'facebook_user_name',
+					mof.payload->'facebook_user_name',
+					'pages',
+					coalesce((
+						select jsonb_agg(
+							jsonb_strip_nulls(jsonb_build_object(
+								'id', page->'id',
+								'name', page->'name',
+								'picture',
+									case
+										when nullif(page #>> '{picture,data,url}', '') is not null
+											then jsonb_build_object(
+												'data',
+												jsonb_build_object('url', page #>> '{picture,data,url}')
+											)
+										else null
+									end,
+								'instagram_business_account',
+									case
+										when nullif(page #>> '{instagram_business_account,id}', '') is not null
+											then jsonb_strip_nulls(jsonb_build_object(
+												'id', page #> '{instagram_business_account,id}',
+												'username', page #> '{instagram_business_account,username}'
+											))
+										else null
+									end,
+								'facebook_user_id', page->'facebook_user_id',
+								'facebook_user_name', page->'facebook_user_name'
+							))
+						)
+						from jsonb_array_elements(
+							case
+								when jsonb_typeof(mof.payload->'pages') = 'array'
+									then mof.payload->'pages'
+								else '[]'::jsonb
+							end
+						) as page
+					), '[]'::jsonb)
+				)),
 			'error_message', mof.error_message,
 			'expires_at', mof.expires_at,
 			'consumed_at', mof.consumed_at,
@@ -416,6 +616,185 @@ func (repo Repository) GetMetaOAuthFlow(ctx context.Context, tenantContext tenan
 		  and mof.user_id = $3::uuid
 		limit 1
 	`, tenantContext.OrganizationID, flowID, tenantContext.UserID)
+}
+
+// ClaimMetaOAuthConnectPayload atomically consumes one OAuth result and builds
+// the legacy Edge Function request on the server. Provider tokens never cross
+// the browser boundary.
+func (repo Repository) ClaimMetaOAuthConnectPayload(
+	ctx context.Context,
+	tenantContext tenant.Context,
+	request map[string]any,
+) ([]byte, error) {
+	flowID := cleanStringFromAny(request["flow_id"])
+	pageID := cleanStringFromAny(request["page_id"])
+	if flowID == "" || pageID == "" {
+		return nil, ErrInvalidInput
+	}
+	requestedAdAccounts := cleanUniqueStringList(request["selected_ad_accounts"], 50)
+	if len(requestedAdAccounts) == 0 {
+		if requested := cleanStringFromAny(request["ad_account_id"]); requested != "" {
+			requestedAdAccounts = []string{requested}
+		}
+	}
+
+	var rawPayload []byte
+	err := repo.db.Pool().QueryRow(ctx, `
+		with claimed as (
+			select flow.id, flow.payload
+			from public.meta_oauth_flows as flow
+			where flow.id = $2::uuid
+			  and flow.organization_id = $1::uuid
+			  and flow.user_id = $3::uuid
+			  and flow.consumed_at is null
+			  and coalesce(flow.expires_at, now() + interval '1 minute') > now()
+			  and lower(coalesce(flow.status, '')) = 'success'
+			  and nullif(
+					coalesce(flow.payload->>'user_token', flow.payload->>'userToken'),
+					''
+				  ) is not null
+			  and exists (
+					select 1
+					from jsonb_array_elements(
+						case
+							when jsonb_typeof(flow.payload->'pages') = 'array'
+								then flow.payload->'pages'
+							else '[]'::jsonb
+						end
+					) as page
+					where page->>'id' = $4
+				  )
+			  and not exists (
+					select 1
+					from unnest($5::text[]) as requested(account_id)
+					where not exists (
+						select 1
+						from jsonb_array_elements(
+							case
+								when jsonb_typeof(flow.payload->'ad_accounts') = 'array'
+									then flow.payload->'ad_accounts'
+								else '[]'::jsonb
+							end
+						) as account
+						where account->>'id' = requested.account_id
+					)
+					  and requested.account_id <> coalesce(
+						flow.payload->>'adAccountId',
+						flow.payload->>'ad_account_id',
+						''
+					  )
+				  )
+			for update
+		),
+		consumed as (
+			update public.meta_oauth_flows as flow
+			set consumed_at = now(),
+			    status = 'consumed',
+			    payload = jsonb_build_object(
+					'success', true,
+					'flow_id', flow.id::text,
+					'consumed', true
+				),
+			    updated_at = now()
+			from claimed
+			where flow.id = claimed.id
+			returning claimed.payload as claimed_payload
+		)
+		select claimed_payload
+		from consumed
+	`, tenantContext.OrganizationID, flowID, tenantContext.UserID, pageID, requestedAdAccounts).Scan(&rawPayload)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrIntegrationNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rawPayload, &payload); err != nil {
+		return nil, ErrInvalidInput
+	}
+	userToken := cleanStringFromAny(payload["user_token"])
+	if userToken == "" {
+		userToken = cleanStringFromAny(payload["userToken"])
+	}
+	if userToken == "" {
+		return nil, ErrInvalidInput
+	}
+
+	pageFound := false
+	if pages, ok := payload["pages"].([]any); ok {
+		for _, rawPage := range pages {
+			page, ok := rawPage.(map[string]any)
+			if !ok || cleanStringFromAny(page["id"]) != pageID {
+				continue
+			}
+			pageFound = true
+			delete(request, "page_picture_url")
+			if picture, ok := page["picture"].(map[string]any); ok {
+				if data, ok := picture["data"].(map[string]any); ok {
+					if pictureURL := cleanStringFromAny(data["url"]); pictureURL != "" {
+						request["page_picture_url"] = pictureURL
+					}
+				}
+			}
+			break
+		}
+	}
+	if !pageFound {
+		return nil, ErrInvalidInput
+	}
+
+	delete(request, "flow_id")
+	delete(request, "user_token")
+	delete(request, "userToken")
+	delete(request, "access_token")
+	delete(request, "accessToken")
+	request["action"] = "connect_page"
+	request["code"] = userToken
+	request["organization_id"] = tenantContext.OrganizationID
+	request["organizationId"] = tenantContext.OrganizationID
+	request["facebook_user_id"] = cleanStringFromAny(payload["facebook_user_id"])
+	request["facebook_user_name"] = cleanStringFromAny(payload["facebook_user_name"])
+	accessibleAdAccounts := make(map[string]struct{})
+	if accounts, ok := payload["ad_accounts"].([]any); ok {
+		for _, rawAccount := range accounts {
+			account, ok := rawAccount.(map[string]any)
+			if !ok {
+				continue
+			}
+			if accountID := cleanStringFromAny(account["id"]); accountID != "" {
+				accessibleAdAccounts[accountID] = struct{}{}
+			}
+		}
+	}
+	defaultAdAccountID := cleanStringFromAny(payload["adAccountId"])
+	if defaultAdAccountID == "" {
+		defaultAdAccountID = cleanStringFromAny(payload["ad_account_id"])
+	}
+	if defaultAdAccountID != "" {
+		accessibleAdAccounts[defaultAdAccountID] = struct{}{}
+	}
+
+	selectedAdAccounts := requestedAdAccounts
+	if len(selectedAdAccounts) == 0 && defaultAdAccountID != "" {
+		selectedAdAccounts = []string{defaultAdAccountID}
+	}
+	for _, accountID := range selectedAdAccounts {
+		if _, allowed := accessibleAdAccounts[accountID]; !allowed {
+			return nil, ErrInvalidInput
+		}
+	}
+
+	if len(selectedAdAccounts) == 0 {
+		delete(request, "ad_account_id")
+		delete(request, "selected_ad_accounts")
+	} else {
+		request["ad_account_id"] = selectedAdAccounts[0]
+		request["selected_ad_accounts"] = selectedAdAccounts
+	}
+
+	return json.Marshal(request)
 }
 
 func (repo Repository) ListMetaFormConfigs(ctx context.Context, tenantContext tenant.Context, integrationID string) ([]map[string]any, error) {
@@ -459,6 +838,45 @@ func (repo Repository) SaveMetaFormConfig(ctx context.Context, tenantContext ten
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+
+	var referencesBelongToOrganization bool
+	if err := tx.QueryRow(ctx, `
+		select
+			exists (
+				select 1
+				from public.meta_integrations as integration
+				where integration.organization_id = $1::uuid
+				  and integration.id = $2::uuid
+			)
+			and (
+				$3 = ''
+				or exists (
+					select 1
+					from public.round_robins as queue
+					where queue.organization_id = $1::uuid
+					  and queue.id = nullif($3, '')::uuid
+				)
+			)
+			and (
+				$4 = ''
+				or exists (
+					select 1
+					from public.properties as property
+					where property.organization_id = $1::uuid
+					  and property.id = nullif($4, '')::uuid
+				)
+			)
+	`,
+		tenantContext.OrganizationID,
+		integrationID,
+		cleanString(request.RoundRobinID),
+		cleanString(request.PropertyID),
+	).Scan(&referencesBelongToOrganization); err != nil {
+		return nil, err
+	}
+	if !referencesBelongToOrganization {
+		return nil, ErrInvalidInput
+	}
 
 	var raw []byte
 	err = tx.QueryRow(ctx, `
@@ -585,7 +1003,12 @@ func (repo Repository) DeleteMetaFormConfig(ctx context.Context, tenantContext t
 	if tag.RowsAffected() == 0 {
 		return ErrIntegrationNotFound
 	}
-	if _, err := tx.Exec(ctx, `delete from public.round_robin_rules where match_type = 'meta_form' and match_value = $1`, formID); err != nil {
+	if _, err := tx.Exec(ctx, `
+		delete from public.round_robin_rules
+		where organization_id = $1::uuid
+		  and match_type = 'meta_form'
+		  and match_value = $2
+	`, tenantContext.OrganizationID, formID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -728,6 +1151,244 @@ func (repo Repository) ListMetaMessages(ctx context.Context, tenantContext tenan
 		return []map[string]any{}, nil
 	}
 	return items, err
+}
+
+type metaMessageTarget struct {
+	ConversationID string
+	RecipientID    string
+	Platform       string
+	SenderID       string
+	AccessToken    string
+}
+
+type metaSendMessageResponse struct {
+	MessageID   string `json:"message_id"`
+	RecipientID string `json:"recipient_id"`
+}
+
+// SendMetaMessage keeps the complete messaging path in the Go backend. The
+// recipient, sender and Page credential are all resolved from tenant-scoped
+// database state; none of them are trusted from the browser request.
+func (repo Repository) SendMetaMessage(ctx context.Context, tenantContext tenant.Context, conversationID string, request SendMetaMessageRequest) (SendMetaMessageResult, error) {
+	conversationID = strings.TrimSpace(conversationID)
+	text := strings.TrimSpace(request.Text)
+	normalizedConversationID, validConversationID := normalizeMetaIdempotencyKey(conversationID)
+	clientRequestID, validKey := normalizeMetaIdempotencyKey(request.IdempotencyKey)
+	if !validConversationID || text == "" || len([]rune(text)) > 2_000 || !validKey {
+		return SendMetaMessageResult{}, ErrInvalidInput
+	}
+	conversationID = normalizedConversationID
+
+	reservation, owned, err := repo.reserveMetaOutboundMessage(
+		ctx,
+		tenantContext.OrganizationID,
+		conversationID,
+		clientRequestID,
+		text,
+	)
+	if err != nil {
+		return SendMetaMessageResult{}, err
+	}
+	if !owned {
+		return metaOutboundSendResult(reservation, true, false), nil
+	}
+
+	target, err := repo.metaMessageTarget(ctx, tenantContext.OrganizationID, conversationID)
+	if err != nil {
+		detachedCtx, cancel := metaDetachedContext()
+		defer cancel()
+		failed, updateErr := repo.markMetaOutboundState(
+			detachedCtx,
+			tenantContext.OrganizationID,
+			reservation,
+			"failed",
+			"meta_integration_unavailable",
+		)
+		if updateErr != nil {
+			return metaOutboundSendResult(reservation, false, false), nil
+		}
+		return metaOutboundSendResult(failed, false, false), nil
+	}
+
+	reservation, err = repo.markMetaOutboundAttempt(ctx, tenantContext.OrganizationID, reservation)
+	if err != nil {
+		// The provider must never be called unless the durable row records that
+		// an attempt is about to happen.
+		return SendMetaMessageResult{}, err
+	}
+
+	providerMessage, err := repo.sendMetaGraphMessage(ctx, target, text)
+	if err != nil {
+		status := "failed"
+		errorCode := "meta_provider_rejected"
+		if errors.Is(err, ErrMetaDeliveryUncertain) {
+			status = "uncertain"
+			errorCode = "meta_delivery_uncertain"
+		}
+		detachedCtx, cancel := metaDetachedContext()
+		defer cancel()
+		updated, updateErr := repo.markMetaOutboundState(
+			detachedCtx,
+			tenantContext.OrganizationID,
+			reservation,
+			status,
+			errorCode,
+		)
+		if updateErr != nil {
+			// The committed pending reservation still blocks all retries from
+			// reaching Graph, even when recording the more precise state fails.
+			return metaOutboundSendResult(reservation, false, false), nil
+		}
+		return metaOutboundSendResult(updated, false, false), nil
+	}
+
+	completed, err := repo.finalizeMetaOutboundMessage(
+		ctx,
+		tenantContext.OrganizationID,
+		reservation,
+		providerMessage.MessageID,
+	)
+	if err == nil {
+		return metaOutboundSendResult(completed, false, true), nil
+	}
+
+	// Meta accepted the request but local finalization failed. Never retry the
+	// provider: retain the reservation as uncertain (or pending if this best-
+	// effort classification cannot be persisted).
+	detachedCtx, cancel := metaDetachedContext()
+	defer cancel()
+	uncertain, updateErr := repo.markMetaOutboundState(
+		detachedCtx,
+		tenantContext.OrganizationID,
+		reservation,
+		"uncertain",
+		"meta_persistence_uncertain",
+	)
+	if updateErr != nil {
+		return metaOutboundSendResult(reservation, false, false), nil
+	}
+	return metaOutboundSendResult(uncertain, false, false), nil
+}
+
+func (repo Repository) metaMessageTarget(ctx context.Context, organizationID string, conversationID string) (metaMessageTarget, error) {
+	var target metaMessageTarget
+	err := repo.db.Pool().QueryRow(ctx, `
+		select
+			conversation.id::text,
+			conversation.external_id,
+			conversation.platform,
+			coalesce(case
+				when conversation.platform = 'instagram'
+					then nullif(integration.instagram_business_account_id, '')
+				else nullif(integration.page_id, '')
+			end, '') as sender_id,
+			coalesce(nullif(secret.decrypted_secret, ''), nullif(integration.access_token, ''), '')
+		from public.meta_conversations conversation
+		join lateral (
+			select candidate.*
+			from public.meta_integrations candidate
+			where candidate.organization_id = conversation.organization_id
+			  and candidate.page_id = conversation.page_id
+			  and coalesce(candidate.is_connected, false) = true
+			order by candidate.updated_at desc nulls last, candidate.created_at desc
+			limit 1
+		) integration on true
+		left join vault.decrypted_secrets secret
+		  on secret.id = integration.access_token_secret_ref
+		where conversation.organization_id = $1::uuid
+		  and conversation.id::text = $2
+		limit 1
+	`, organizationID, conversationID).Scan(
+		&target.ConversationID,
+		&target.RecipientID,
+		&target.Platform,
+		&target.SenderID,
+		&target.AccessToken,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return metaMessageTarget{}, ErrIntegrationNotFound
+	}
+	if err != nil {
+		return metaMessageTarget{}, err
+	}
+	if strings.TrimSpace(target.RecipientID) == "" || strings.TrimSpace(target.SenderID) == "" || strings.TrimSpace(target.AccessToken) == "" {
+		return metaMessageTarget{}, ErrIntegrationNotFound
+	}
+	if target.Platform != "messenger" && target.Platform != "instagram" {
+		return metaMessageTarget{}, ErrInvalidInput
+	}
+	return target, nil
+}
+
+func (repo Repository) sendMetaGraphMessage(ctx context.Context, target metaMessageTarget, text string) (metaSendMessageResponse, error) {
+	endpoint, err := url.Parse(
+		strings.TrimRight(repo.external.MetaGraphBaseURL, "/") + "/" +
+			strings.Trim(strings.TrimSpace(repo.external.MetaGraphVersion), "/") + "/" +
+			url.PathEscape(target.SenderID) + "/messages",
+	)
+	if err != nil {
+		return metaSendMessageResponse{}, fmt.Errorf("%w: invalid graph endpoint", ErrMetaUpstream)
+	}
+	query := endpoint.Query()
+	if proof := metaAppSecretProof(repo.external.MetaAppSecret, target.AccessToken); proof != "" {
+		query.Set("appsecret_proof", proof)
+	}
+	endpoint.RawQuery = query.Encode()
+
+	payload := map[string]any{
+		"recipient": map[string]string{"id": target.RecipientID},
+		"message":   map[string]string{"text": text},
+	}
+	if target.Platform == "messenger" {
+		payload["messaging_type"] = "RESPONSE"
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return metaSendMessageResponse{}, err
+	}
+
+	requestCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	graphRequest, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint.String(), bytes.NewReader(body))
+	if err != nil {
+		return metaSendMessageResponse{}, fmt.Errorf("%w: request creation failed", ErrMetaUpstream)
+	}
+	graphRequest.Header.Set("Accept", "application/json")
+	graphRequest.Header.Set("Content-Type", "application/json")
+	graphRequest.Header.Set("Authorization", "Bearer "+target.AccessToken)
+
+	response, err := repo.client.Do(graphRequest)
+	if err != nil {
+		return metaSendMessageResponse{}, fmt.Errorf("%w: %w", ErrMetaUpstream, ErrMetaDeliveryUncertain)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
+		if response.StatusCode == http.StatusRequestTimeout ||
+			response.StatusCode == http.StatusTooEarly ||
+			response.StatusCode == http.StatusTooManyRequests ||
+			response.StatusCode >= http.StatusInternalServerError {
+			return metaSendMessageResponse{}, fmt.Errorf(
+				"%w: %w",
+				ErrMetaUpstream,
+				ErrMetaDeliveryUncertain,
+			)
+		}
+		return metaSendMessageResponse{}, fmt.Errorf("%w: graph status %d", ErrMetaUpstream, response.StatusCode)
+	}
+
+	var result metaSendMessageResponse
+	decoder := json.NewDecoder(io.LimitReader(response.Body, 1<<20))
+	if err := decoder.Decode(&result); err != nil {
+		return metaSendMessageResponse{}, fmt.Errorf("%w: %w", ErrMetaUpstream, ErrMetaDeliveryUncertain)
+	}
+	result.MessageID = strings.TrimSpace(result.MessageID)
+	result.RecipientID = strings.TrimSpace(result.RecipientID)
+	if result.MessageID == "" {
+		return metaSendMessageResponse{}, fmt.Errorf("%w: %w", ErrMetaUpstream, ErrMetaDeliveryUncertain)
+	}
+	return result, nil
 }
 
 func (repo Repository) replaceMetaFormRule(ctx context.Context, tx pgx.Tx, organizationID string, roundRobinID *string, formID string) error {
@@ -906,11 +1567,7 @@ func allowedFunction(name string) bool {
 		"asaas-cancel-payment",
 		"cleanup-orphan-members",
 		"change-password",
-		"verify-domain-dns",
-		"meta-oauth",
-		"instagram-oauth",
-		"meta-campaign-insights",
-		"meta-messenger-proxy":
+		"verify-domain-dns":
 		return true
 	default:
 		return false
@@ -968,16 +1625,40 @@ func cleanStringFromAny(value any) string {
 	}
 }
 
-func plainSecretValue(value *string) *string {
-	if value == nil {
-		return nil
+func cleanUniqueStringList(value any, limit int) []string {
+	if limit <= 0 {
+		return []string{}
 	}
-	text := strings.TrimSpace(*value)
-	text = strings.TrimPrefix(text, "plain:")
-	if text == "" {
-		return nil
+
+	items := make([]string, 0)
+	seen := make(map[string]struct{})
+	appendValue := func(raw any) {
+		if len(items) >= limit {
+			return
+		}
+		cleaned := cleanStringFromAny(raw)
+		if cleaned == "" {
+			return
+		}
+		if _, exists := seen[cleaned]; exists {
+			return
+		}
+		seen[cleaned] = struct{}{}
+		items = append(items, cleaned)
 	}
-	return &text
+
+	switch typed := value.(type) {
+	case []any:
+		for _, raw := range typed {
+			appendValue(raw)
+		}
+	case []string:
+		for _, raw := range typed {
+			appendValue(raw)
+		}
+	}
+
+	return items
 }
 
 func nullableString(value *string) any {

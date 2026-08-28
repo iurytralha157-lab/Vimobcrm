@@ -55,8 +55,10 @@ const DeletableEdge: FC<EdgeProps> = ({
           className="group"
         >
           <button
+            type="button"
             onClick={onDelete}
-            className="opacity-0 group-hover:opacity-100 hover:opacity-100 transition-opacity bg-destructive text-destructive-foreground rounded-full p-1 shadow-md hover:scale-110 cursor-pointer"
+            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-[6px] bg-destructive p-0 text-destructive-foreground opacity-0 shadow-none transition-opacity group-hover:opacity-100 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label="Remover conexão"
             title="Remover conexão"
           >
             <X className="h-3 w-3" />

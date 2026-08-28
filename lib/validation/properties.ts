@@ -7,6 +7,16 @@ const optionalNumberValueSchema = z.union([
   z.string().trim().regex(/^-?\d+(\.\d+)?$/),
   z.null(),
 ]).optional()
+const optionalNonNegativeNumberValueSchema = z.union([
+  z.number().finite().min(0),
+  z.string().trim().regex(/^\d+(\.\d+)?$/),
+  z.null(),
+]).optional()
+const optionalNonNegativeIntegerValueSchema = z.union([
+  z.number().int().min(0),
+  z.string().trim().regex(/^\d+$/),
+  z.null(),
+]).optional()
 const optionalNonNegativeFilterSchema = z.union([
   z.number().finite().min(0),
   z.string().trim().regex(/^\d+(\.\d+)?$/),
@@ -50,6 +60,7 @@ const propertyMutationShape = {
   tipo_de_negocio: z.string().trim().max(80).nullable().optional(),
   tipo_de_imovel: z.string().trim().max(120).nullable().optional(),
   property_id: optionalUUIDValueSchema,
+  created_by: optionalUUIDValueSchema,
   responsible_user_id: optionalUUIDValueSchema,
   cadastrado_por: optionalUUIDValueSchema,
   corretor_id: optionalUUIDValueSchema,
@@ -58,14 +69,28 @@ const propertyMutationShape = {
   city_id: optionalUUIDValueSchema,
   neighborhood_id: optionalUUIDValueSchema,
   property_type_id: optionalUUIDValueSchema,
-  preco: optionalNumberValueSchema,
-  valor_locacao: optionalNumberValueSchema,
-  area_total: optionalNumberValueSchema,
-  area_util: optionalNumberValueSchema,
-  quartos: optionalNumberValueSchema,
-  suites: optionalNumberValueSchema,
-  banheiros: optionalNumberValueSchema,
-  vagas: optionalNumberValueSchema,
+  preco: optionalNonNegativeNumberValueSchema,
+  valor_locacao: optionalNonNegativeNumberValueSchema,
+  condominio: optionalNonNegativeNumberValueSchema,
+  iptu: optionalNonNegativeNumberValueSchema,
+  area_total: optionalNonNegativeNumberValueSchema,
+  area_util: optionalNonNegativeNumberValueSchema,
+  quartos: optionalNonNegativeIntegerValueSchema,
+  suites: optionalNonNegativeIntegerValueSchema,
+  banheiros: optionalNonNegativeIntegerValueSchema,
+  vagas: optionalNonNegativeIntegerValueSchema,
+  commission_percentage: optionalNonNegativeNumberValueSchema.refine(
+    (value) => value == null || Number(value) <= 100,
+    'A comissao deve estar entre 0 e 100',
+  ),
+  latitude: optionalNumberValueSchema.refine(
+    (value) => value == null || (Number(value) >= -90 && Number(value) <= 90),
+    'Latitude invalida',
+  ),
+  longitude: optionalNumberValueSchema.refine(
+    (value) => value == null || (Number(value) >= -180 && Number(value) <= 180),
+    'Longitude invalida',
+  ),
   aceita_permuta: z.boolean().nullable().optional(),
   aceita_financiamento: z.boolean().nullable().optional(),
   published_on_site: z.boolean().nullable().optional(),

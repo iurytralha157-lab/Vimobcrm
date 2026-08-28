@@ -3,20 +3,30 @@ package admin
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/publicingress"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 type Handler struct {
-	repo Repository
+	repo                   Repository
+	publicClientIPResolver publicingress.ClientIPResolver
 }
 
 func NewHandler(repo Repository) Handler {
 	return Handler{repo: repo}
+}
+
+func (handler Handler) WithPublicClientIPResolver(
+	resolver publicingress.ClientIPResolver,
+) Handler {
+	handler.publicClientIPResolver = resolver
+	return handler
 }
 
 func (handler Handler) ListOrganizations(w http.ResponseWriter, r *http.Request) {
@@ -208,6 +218,11 @@ func (handler Handler) AcceptInvitationPublic(w http.ResponseWriter, r *http.Req
 	if err := decodeJSON(w, r, &request); err != nil {
 		return
 	}
+	request = invitationAcceptanceRequestWithHTTPMetadata(
+		request,
+		r,
+		handler.publicClientIPResolver,
+	)
 
 	result, err := handler.repo.AcceptInvitationPublic(r.Context(), r.PathValue("token"), request)
 	if err != nil {
@@ -218,14 +233,39 @@ func (handler Handler) AcceptInvitationPublic(w http.ResponseWriter, r *http.Req
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[AcceptInvitationResult]{Data: result})
 }
 
+func invitationAcceptanceRequestWithHTTPMetadata(
+	request AcceptInvitationRequest,
+	httpRequest *http.Request,
+	resolver publicingress.ClientIPResolver,
+) AcceptInvitationRequest {
+	request.IPAddress = resolver.Resolve(httpRequest)
+	request.UserAgent = httpRequest.UserAgent()
+	return request
+}
+
 func (handler Handler) AcceptInvitationAuthenticated(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
 	user, ok := httpserver.UserFromContext(r.Context())
 	if !ok || user.ID == "" {
 		httpserver.WriteError(w, r, http.StatusUnauthorized, "unauthorized", "Missing authenticated user.")
 		return
 	}
+	var request AcceptInvitationRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		return
+	}
+	request = invitationAcceptanceRequestWithHTTPMetadata(
+		request,
+		r,
+		handler.publicClientIPResolver,
+	)
 
-	result, err := handler.repo.AcceptInvitationAuthenticated(r.Context(), user.ID, r.PathValue("token"))
+	result, err := handler.repo.AcceptInvitationAuthenticated(
+		r.Context(),
+		user.ID,
+		r.PathValue("token"),
+		request,
+	)
 	if err != nil {
 		writeAdminError(w, r, err)
 		return
@@ -240,12 +280,105 @@ func (handler Handler) PublicOnboardingSignup(w http.ResponseWriter, r *http.Req
 	if err := decodeJSON(w, r, &request); err != nil {
 		return
 	}
+	request.IPAddress = handler.publicClientIPResolver.Resolve(r)
+	request.UserAgent = r.UserAgent()
 	item, err := handler.repo.PublicOnboardingSignup(r.Context(), request)
 	if err != nil {
 		writeOnboardingError(w, r, err)
 		return
 	}
 	httpserver.WriteJSON(w, http.StatusCreated, item)
+}
+
+func (handler Handler) PublicOnboardingValidateStep(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	var request PublicOnboardingStepValidationRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		return
+	}
+	request.ipAddress = handler.publicClientIPResolver.Resolve(r)
+	result, err := handler.repo.PublicOnboardingValidateStep(r.Context(), request)
+	if err != nil {
+		writeOnboardingError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, result)
+}
+
+func (handler Handler) PublicResendOnboardingEmailConfirmation(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	var request ResendOnboardingEmailConfirmationRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		return
+	}
+	request.IPAddress = handler.publicClientIPResolver.Resolve(r)
+	request.UserAgent = r.UserAgent()
+
+	err := handler.repo.ResendPublicSignupEmailConfirmation(r.Context(), request)
+	if errors.Is(err, ErrPublicSignupRateLimited) {
+		httpserver.WriteJSON(w, http.StatusTooManyRequests, map[string]any{
+			"ok":      false,
+			"message": "Muitas tentativas. Aguarde antes de solicitar outro e-mail.",
+		})
+		return
+	}
+	if errors.Is(err, ErrInvalidInput) {
+		httpserver.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"ok":      false,
+			"message": "Informe um e-mail valido.",
+		})
+		return
+	}
+	if err != nil {
+		// Account existence is intentionally never reflected in the public
+		// response. Operators still receive an actionable error without putting
+		// the requested address or a single-use credential in logs.
+		slog.ErrorContext(r.Context(), "public signup confirmation resend failed", "error", err)
+	}
+
+	httpserver.WriteJSON(w, http.StatusAccepted, map[string]any{
+		"ok":      true,
+		"message": "Se existir um cadastro aguardando confirmacao, enviaremos um novo link para o e-mail informado.",
+	})
+}
+
+func (handler Handler) PublicRecoverOnboardingSignup(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	var request PublicSignupRecoveryRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		return
+	}
+	request.IPAddress = handler.publicClientIPResolver.Resolve(r)
+	request.UserAgent = r.UserAgent()
+
+	result, err := handler.repo.RecoverPublicSignup(r.Context(), request)
+	if errors.Is(err, ErrPublicSignupRateLimited) {
+		httpserver.WriteJSON(w, http.StatusTooManyRequests, map[string]any{
+			"ok": false, "message": "Muitas tentativas. Aguarde antes de tentar novamente.",
+		})
+		return
+	}
+	if errors.Is(err, ErrInvalidInput) {
+		httpserver.WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"ok": false, "message": "Revise os dados informados para recuperar o cadastro.",
+		})
+		return
+	}
+	if errors.Is(err, ErrPublicSignupRecoveryUnavailable) {
+		httpserver.WriteJSON(w, http.StatusConflict, map[string]any{
+			"ok": false, "message": "Este cadastro não pode mais ser alterado por este link. Fale com o suporte se precisar de ajuda.",
+		})
+		return
+	}
+	if err != nil {
+		// Capabilities and e-mail addresses are intentionally omitted from logs.
+		slog.ErrorContext(r.Context(), "public signup recovery failed", "action", request.Action, "error", err)
+		httpserver.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"ok": false, "message": "Não foi possível alterar o cadastro agora. Tente novamente.",
+		})
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, result)
 }
 
 func (handler Handler) PublicCheckoutPlan(w http.ResponseWriter, r *http.Request) {
@@ -417,6 +550,37 @@ func (handler Handler) DeleteTableRow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (handler Handler) ShowNotificationDispatchSettings(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := adminContext(w, r)
+	if !ok {
+		return
+	}
+	item, err := handler.repo.ShowNotificationDispatchSettings(r.Context(), tenantContext)
+	if err != nil {
+		writeAdminError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[NotificationDispatchSettings]{Data: item})
+}
+
+func (handler Handler) UpdateNotificationDispatchSettings(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := adminContext(w, r)
+	if !ok {
+		return
+	}
+	defer r.Body.Close()
+	var request UpdateNotificationDispatchSettingsRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		return
+	}
+	item, err := handler.repo.UpdateNotificationDispatchSettings(r.Context(), tenantContext, request)
+	if err != nil {
+		writeAdminError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[NotificationDispatchSettings]{Data: item})
 }
 
 func (handler Handler) OrphanMemberStats(w http.ResponseWriter, r *http.Request) {
@@ -698,6 +862,8 @@ func writeAdminError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
 	case errors.Is(err, ErrInvitationEmailFailed):
 		httpserver.WriteError(w, r, http.StatusBadGateway, "invitation_email_failed", "Nao foi possivel enviar o convite por e-mail. Verifique a configuracao de envio.")
+	case errors.Is(err, ErrPasswordRecoveryEmailFailed):
+		httpserver.WriteError(w, r, http.StatusBadGateway, "password_recovery_email_failed", "Nao foi possivel enviar o e-mail de recuperacao. Verifique a configuracao de envio.")
 	case errors.Is(err, ErrOrganizationDeleteConfirm):
 		httpserver.WriteError(w, r, http.StatusConflict, "organization_delete_confirmation_mismatch", "O nome informado nao corresponde a organizacao.")
 	case errors.Is(err, ErrOrganizationExternalCleanup):
@@ -711,19 +877,31 @@ func writeAdminError(w http.ResponseWriter, r *http.Request, err error) {
 
 func writeOnboardingError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, ErrPublicSignupRateLimited):
+		httpserver.WriteJSON(w, http.StatusTooManyRequests, map[string]any{"ok": false, "code": "signup_rate_limited", "message": "Muitas tentativas. Aguarde antes de tentar novamente."})
+	case errors.Is(err, ErrSignupAttemptConflict):
+		httpserver.WriteJSON(w, http.StatusConflict, map[string]any{"ok": false, "code": "signup_attempt_conflict", "message": "Esta tentativa ja foi usada com outro e-mail. Use o e-mail original ou inicie o cadastro em uma nova aba."})
+	case errors.Is(err, ErrPublicSignupEmailExists):
+		httpserver.WriteJSON(w, http.StatusConflict, map[string]any{"ok": false, "code": "signup_email_exists", "message": "Este e-mail ja esta cadastrado. Faca login ou use outro e-mail."})
+	case errors.Is(err, ErrPublicSignupDocumentExists):
+		httpserver.WriteJSON(w, http.StatusConflict, map[string]any{"ok": false, "code": "signup_document_exists", "message": "Ja existe uma organizacao cadastrada com este CPF ou CNPJ."})
+	case errors.Is(err, ErrPublicSignupConfirmationFailed):
+		httpserver.WriteJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "code": "signup_confirmation_failed", "message": "Nao foi possivel preparar a confirmacao do e-mail. Tente novamente em alguns instantes."})
 	case errors.Is(err, ErrInvalidInput):
-		httpserver.WriteJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "Dados de cadastro invalidos."})
+		httpserver.WriteJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "code": "signup_invalid_input", "message": "Dados de cadastro invalidos."})
 	case errors.Is(err, ErrNotFound):
-		httpserver.WriteJSON(w, http.StatusNotFound, map[string]any{"ok": false, "message": "Plano de cadastro nao encontrado."})
+		httpserver.WriteJSON(w, http.StatusNotFound, map[string]any{"ok": false, "code": "signup_plan_not_found", "message": "Plano de cadastro nao encontrado."})
 	case strings.Contains(strings.ToLower(err.Error()), "already"):
-		httpserver.WriteJSON(w, http.StatusConflict, map[string]any{"ok": false, "message": "Este e-mail ja esta cadastrado. Faca login ou use outro e-mail."})
+		httpserver.WriteJSON(w, http.StatusConflict, map[string]any{"ok": false, "code": "signup_email_exists", "message": "Este e-mail ja esta cadastrado. Faca login ou use outro e-mail."})
 	default:
-		httpserver.WriteJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "message": "Nao foi possivel concluir o cadastro. Tente novamente em alguns instantes."})
+		httpserver.WriteJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "code": "signup_failed", "message": "Nao foi possivel concluir o cadastro. Tente novamente em alguns instantes."})
 	}
 }
 
 func writeCheckoutPlanError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, ErrCheckoutPlanConflict):
+		httpserver.WriteJSON(w, http.StatusConflict, map[string]any{"ok": false, "message": "Ja existe uma cobranca em andamento. Cancele ou aguarde a conciliacao antes de trocar o plano."})
 	case errors.Is(err, ErrInvalidInput):
 		httpserver.WriteJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "Dados de plano invalidos."})
 	case errors.Is(err, ErrNotFound):

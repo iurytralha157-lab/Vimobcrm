@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   Archive,
   BellRing,
+  ChevronDown,
   Clock3,
   Loader2,
   Plus,
@@ -19,6 +20,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -69,6 +71,7 @@ import { cn } from '@/lib/utils'
 const POLICY_TYPE_LABELS: Record<AttentionPolicyType, string> = {
   unassigned: 'Lead sem responsavel',
   first_contact: 'Primeiro contato',
+  first_effective_contact: 'Contato efetivo',
   stage_inactivity: 'Inatividade na etapa',
   stage_age: 'Tempo maximo na etapa',
   cadence_task: 'Tarefa de cadencia',
@@ -77,6 +80,7 @@ const POLICY_TYPE_LABELS: Record<AttentionPolicyType, string> = {
 const POLICY_TYPE_DESCRIPTIONS: Record<AttentionPolicyType, string> = {
   unassigned: 'Cobra atribuicao quando um lead permanece sem corretor.',
   first_contact: 'Mede o primeiro contato humano em cada ciclo de atribuicao.',
+  first_effective_contact: 'Mede quando o lead responde ou atende em cada ciclo de atribuicao.',
   stage_inactivity: 'Reinicia o relogio somente quando ocorre uma acao valida.',
   stage_age: 'Limita o tempo total do lead na etapa, mesmo quando ha atividades.',
   cadence_task: 'Lembra o corretor quando uma tarefa materializada da cadencia vence.',
@@ -87,6 +91,20 @@ const POLICY_STATUS_LABELS: Record<AttentionPolicyStatus, string> = {
   enabled: 'Ativa',
   paused: 'Pausada',
   archived: 'Arquivada',
+}
+
+const PIPELINE_POLICY_TYPES: AttentionPolicyType[] = [
+  'unassigned',
+  'first_contact',
+  'first_effective_contact',
+  'cadence_task',
+]
+
+function formatPolicyDuration(minutes: number) {
+  if (minutes % 10_080 === 0) return `${minutes / 10_080} sem`
+  if (minutes % 1_440 === 0) return `${minutes / 1_440} d`
+  if (minutes % 60 === 0) return `${minutes / 60} h`
+  return `${minutes} min`
 }
 
 type PolicyDraft = {
@@ -122,11 +140,14 @@ function parseMinutes(value: string, fallback: number) {
 
 function PolicyCard({ policy }: { policy: AttentionPolicy }) {
   const [draft, setDraft] = useState<PolicyDraft>(() => policyToDraft(policy))
+  const [open, setOpen] = useState(false)
   const updatePolicy = useUpdateAttentionPolicy()
   const isArchived = policy.status === 'archived'
   const warningMinutes = parseMinutes(draft.warningMinutes, 0)
   const thresholdMinutes = parseMinutes(draft.thresholdMinutes, 1)
   const isInvalid = warningMinutes >= thresholdMinutes || thresholdMinutes < 1
+  const initialDraft = policyToDraft(policy)
+  const isDirty = JSON.stringify(draft) !== JSON.stringify(initialDraft)
 
   const setField = <K extends keyof PolicyDraft>(field: K, value: PolicyDraft[K]) => {
     setDraft((current) => ({ ...current, [field]: value }))
@@ -148,155 +169,150 @@ function PolicyCard({ policy }: { policy: AttentionPolicy }) {
           ? Math.max(1, parseMinutes(draft.redistributionMinutes, thresholdMinutes + 60))
           : null,
         businessHoursOnly: draft.businessHoursOnly,
-        config: {
-          ...(policy.config || {}),
-          redistributionBeforeFirstContactOnly: policy.policyType === 'first_contact'
-            ? true
-            : policy.config?.redistributionBeforeFirstContactOnly === true,
-        },
+        redistributeBeforeContactOnly: policy.policyType === 'first_contact'
+          ? (policy.redistributeBeforeContactOnly ?? true)
+          : (policy.redistributeBeforeContactOnly ?? false),
       },
     })
   }
 
   return (
-    <Card className="app-card overflow-hidden">
-      <CardHeader className="gap-3 pb-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 space-y-1">
-            <CardTitle className="flex flex-wrap items-center gap-2 text-base">
-              <span className="truncate">{policy.name}</span>
-              <Badge variant={policy.status === 'enabled' ? 'default' : 'secondary'}>
-                {POLICY_STATUS_LABELS[policy.status]}
-              </Badge>
-              <Badge variant="outline">v{policy.version}</Badge>
-            </CardTitle>
-            <CardDescription>
-              {POLICY_TYPE_LABELS[policy.policyType]}
-              {policy.stageName ? ` · ${policy.stageName}` : ''}
-              {policy.pipelineName ? ` · ${policy.pipelineName}` : ''}
-            </CardDescription>
-          </div>
-          {isArchived && <Archive className="h-5 w-5 text-muted-foreground" />}
-        </div>
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          {POLICY_TYPE_DESCRIPTIONS[policy.policyType]}
-        </p>
-      </CardHeader>
-
-      <CardContent className="space-y-5">
-        {isArchived ? (
-          <div className="rounded-lg bg-white/[0.04] p-4 text-sm text-muted-foreground">
-            Esta versão foi arquivada e permanece disponível apenas para auditoria dos ciclos históricos.
-          </div>
-        ) : (
-          <>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              <div className="space-y-2 md:col-span-2 xl:col-span-1">
-                <Label htmlFor={`policy-name-${policy.id}`}>Nome da regra</Label>
-                <Input
-                  id={`policy-name-${policy.id}`}
-                  value={draft.name}
-                  onChange={(event) => setField('name', event.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Modo</Label>
-                <Select value={draft.status} onValueChange={(value) => setField('status', value as PolicyDraft['status'])}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="shadow">Observacao, sem cobrar</SelectItem>
-                    <SelectItem value="enabled">Ativa</SelectItem>
-                    <SelectItem value="paused">Pausada</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <MinutesField
-                id={`warning-${policy.id}`}
-                label="Avisar antes do limite"
-                value={draft.warningMinutes}
-                min={0}
-                onChange={(value) => setField('warningMinutes', value)}
-              />
-              <MinutesField
-                id={`threshold-${policy.id}`}
-                label="Limite para violacao"
-                value={draft.thresholdMinutes}
-                min={1}
-                onChange={(value) => setField('thresholdMinutes', value)}
-              />
-              <MinutesField
-                id={`repeat-${policy.id}`}
-                label="Repetir lembrete a cada"
-                value={draft.repeatMinutes}
-                min={15}
-                onChange={(value) => setField('repeatMinutes', value)}
-              />
-              <MinutesField
-                id={`escalation-${policy.id}`}
-                label="Escalar para lider/admin em"
-                value={draft.escalationMinutes}
-                min={1}
-                optional
-                onChange={(value) => setField('escalationMinutes', value)}
-              />
-            </div>
-
-            {isInvalid && (
-              <p className="text-sm text-destructive">O aviso nao pode acontecer depois do limite da regra.</p>
-            )}
-
-            <div className="grid gap-3 rounded-xl bg-white/[0.035] p-4 md:grid-cols-2">
-              <ToggleRow
-                icon={Clock3}
-                title="Contar somente horário comercial"
-                description="Pausa o relógio fora da jornada configurada para a organização."
-                checked={draft.businessHoursOnly}
-                onCheckedChange={(value) => setField('businessHoursOnly', value)}
-              />
-              <ToggleRow
-                icon={Shuffle}
-                title="Redistribuicao por tempo"
-                description="Opcional; também depende da chave global de segurança."
-                checked={draft.redistributionEnabled}
-                onCheckedChange={(value) => setField('redistributionEnabled', value)}
-              />
-              {draft.redistributionEnabled && (
-                <div className="space-y-2 md:col-start-2">
-                  <MinutesField
-                    id={`redistribution-${policy.id}`}
-                    label="Redistribuir depois de"
-                    value={draft.redistributionMinutes}
-                    min={1}
-                    onChange={(value) => setField('redistributionMinutes', value)}
-                  />
-                  {policy.policyType === 'first_contact' && (
-                    <p className="text-xs text-muted-foreground">
-                      Protecao ativa: redistribui apenas se ainda nao houve primeiro contato humano neste ciclo.
-                    </p>
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className="overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)]"
+      data-testid="attention-policy"
+    >
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          className="group grid w-full grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-2.5 rounded-[6px] p-2.5 text-left transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 sm:grid-cols-[40px_minmax(0,1fr)_auto] sm:gap-3 sm:p-3"
+        >
+          <span className="flex h-9 w-9 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground transition-colors group-hover:bg-primary sm:h-10 sm:w-10">
+            {isArchived ? <Archive className="h-4 w-4" /> : <Clock3 className="h-4 w-4" />}
+          </span>
+          <span className="min-w-0">
+            <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+              <span className="truncate text-[13px] font-normal text-[var(--app-text-primary)] sm:text-sm">
+                {policy.name}
+              </span>
+              <span className="inline-flex h-5 items-center gap-1.5 rounded-[4px] bg-[var(--app-surface-soft)] px-1.5 text-[9px] font-light text-[var(--app-text-secondary)]">
+                <span
+                  className={cn(
+                    'h-1.5 w-1.5 rounded-full',
+                    policy.status === 'enabled'
+                      ? 'bg-primary'
+                      : policy.status === 'shadow'
+                        ? 'bg-amber-400'
+                        : 'bg-[var(--app-text-tertiary)]',
                   )}
-                </div>
-              )}
-            </div>
+                />
+                {POLICY_STATUS_LABELS[policy.status]}
+              </span>
+              <span className="text-[9px] font-light text-[var(--app-text-tertiary)]">v{policy.version}</span>
+            </span>
+            <span className="mt-0.5 block truncate text-[12px] font-light leading-5 text-[var(--app-text-tertiary)]">
+              {POLICY_TYPE_LABELS[policy.policyType]}
+              {policy.pipelineName ? ` · ${policy.pipelineName}` : ''}
+              {policy.stageName ? ` · ${policy.stageName}` : ''}
+            </span>
+          </span>
+          <span className="flex h-8 w-8 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]">
+            <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')} />
+          </span>
+        </button>
+      </CollapsibleTrigger>
 
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.07] pt-4">
-              <p className="max-w-2xl text-xs text-muted-foreground">
-                Ao salvar, o backend cria uma nova versao. Ciclos em andamento continuam vinculados a versao anterior.
-              </p>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setDraft(policyToDraft(policy))} disabled={updatePolicy.isPending}>
-                  <RotateCcw className="mr-2 h-4 w-4" />
-                  Desfazer
-                </Button>
-                <Button onClick={handleSave} disabled={updatePolicy.isPending || isInvalid || draft.name.trim().length < 2}>
-                  {updatePolicy.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                  Salvar nova versao
-                </Button>
-              </div>
+      <CollapsibleContent>
+        <div className="space-y-5 border-t border-border/30 px-3 pb-4 pt-3 sm:px-4 sm:pb-5 sm:pt-4">
+          <p className="text-[12px] font-light leading-5 text-[var(--app-text-tertiary)]">
+            {POLICY_TYPE_DESCRIPTIONS[policy.policyType]}
+          </p>
+
+          {isArchived ? (
+            <div className="rounded-[6px] bg-[var(--app-surface-soft)] p-3 text-[12px] font-light leading-5 text-[var(--app-text-tertiary)]">
+              Esta versão foi arquivada e permanece disponível apenas para auditoria dos ciclos históricos.
             </div>
-          </>
-        )}
-      </CardContent>
-    </Card>
+          ) : (
+            <>
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                <div className="space-y-2 md:col-span-2 xl:col-span-1">
+                  <Label htmlFor={`policy-name-${policy.id}`}>Nome da regra</Label>
+                  <Input
+                    id={`policy-name-${policy.id}`}
+                    value={draft.name}
+                    onChange={(event) => setField('name', event.target.value)}
+                    className="rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-xs font-light shadow-none"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Modo</Label>
+                  <Select value={draft.status} onValueChange={(value) => setField('status', value as PolicyDraft['status'])}>
+                    <SelectTrigger className="rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-xs font-light shadow-none"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="shadow">Observação, sem cobrar</SelectItem>
+                      <SelectItem value="enabled">Ativa</SelectItem>
+                      <SelectItem value="paused">Pausada</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <MinutesField id={`warning-${policy.id}`} label="Avisar antes do limite" value={draft.warningMinutes} min={0} onChange={(value) => setField('warningMinutes', value)} />
+                <MinutesField id={`threshold-${policy.id}`} label="Limite para violação" value={draft.thresholdMinutes} min={1} onChange={(value) => setField('thresholdMinutes', value)} />
+                <MinutesField id={`repeat-${policy.id}`} label="Repetir lembrete a cada" value={draft.repeatMinutes} min={15} onChange={(value) => setField('repeatMinutes', value)} />
+                <MinutesField id={`escalation-${policy.id}`} label="Escalar para líder/admin em" value={draft.escalationMinutes} min={1} optional onChange={(value) => setField('escalationMinutes', value)} />
+              </div>
+
+              {isInvalid && (
+                <p className="text-[12px] font-light text-destructive">O aviso precisa acontecer antes do limite da regra.</p>
+              )}
+
+              <div className="grid gap-2 rounded-[8px] bg-[var(--app-surface-soft)] p-2 md:grid-cols-2">
+                <ToggleRow
+                  icon={Clock3}
+                  title="Contar somente horário comercial"
+                  description="Pausa o relógio fora da jornada configurada para a organização."
+                  checked={draft.businessHoursOnly}
+                  onCheckedChange={(value) => setField('businessHoursOnly', value)}
+                />
+                <ToggleRow
+                  icon={Shuffle}
+                  title="Redistribuição por tempo"
+                  description="Também depende da chave global de segurança."
+                  checked={draft.redistributionEnabled}
+                  onCheckedChange={(value) => setField('redistributionEnabled', value)}
+                />
+                {draft.redistributionEnabled && (
+                  <div className="space-y-2 px-2 pb-2 md:col-start-2">
+                    <MinutesField id={`redistribution-${policy.id}`} label="Redistribuir depois de" value={draft.redistributionMinutes} min={1} onChange={(value) => setField('redistributionMinutes', value)} />
+                    {policy.policyType === 'first_contact' && (
+                      <p className="text-[11px] font-light leading-5 text-[var(--app-text-tertiary)]">
+                        Redistribui somente se ainda não houve primeiro contato humano neste ciclo.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/30 pt-4">
+                <p className="max-w-2xl text-[11px] font-light leading-5 text-[var(--app-text-tertiary)]">
+                  Ao salvar, uma nova versão é criada. Ciclos em andamento mantêm a versão anterior.
+                </p>
+                <div className="flex gap-2">
+                  <Button variant="ghost" className="rounded-[6px] text-xs font-light" onClick={() => setDraft(initialDraft)} disabled={updatePolicy.isPending || !isDirty}>
+                    <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                    Desfazer
+                  </Button>
+                  <Button className="rounded-[6px] text-xs font-light" onClick={handleSave} disabled={updatePolicy.isPending || isInvalid || draft.name.trim().length < 2 || !isDirty}>
+                    {updatePolicy.isPending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-2 h-3.5 w-3.5" />}
+                    Salvar nova versão
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 
@@ -316,8 +332,8 @@ function MinutesField({
   onChange: (value: string) => void
 }) {
   return (
-    <div className="space-y-2">
-      <Label htmlFor={id}>{label}</Label>
+    <div className="space-y-1.5">
+      <Label htmlFor={id} className="text-[12px] font-light text-[var(--app-text-secondary)]">{label}</Label>
       <div className="relative">
         <Input
           id={id}
@@ -327,9 +343,9 @@ function MinutesField({
           placeholder={optional ? 'Sem escalonamento' : undefined}
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          className="pr-16"
+          className="rounded-[6px] border-0 bg-[var(--app-surface-soft)] pr-16 text-xs font-light shadow-none"
         />
-        <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground">min</span>
+        <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[10px] font-light text-[var(--app-text-tertiary)]">min</span>
       </div>
     </div>
   )
@@ -349,12 +365,14 @@ function ToggleRow({
   onCheckedChange: (checked: boolean) => void
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 rounded-lg p-2">
+    <div className="flex items-start justify-between gap-4 rounded-[6px] p-2">
       <div className="flex gap-3">
-        <Icon className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+          <Icon className="h-3.5 w-3.5" />
+        </span>
         <div>
-          <p className="text-sm font-medium">{title}</p>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{description}</p>
+          <p className="text-[13px] font-normal text-[var(--app-text-primary)]">{title}</p>
+          <p className="mt-0.5 text-[11px] font-light leading-5 text-[var(--app-text-tertiary)]">{description}</p>
         </div>
       </div>
       <Switch checked={checked} onCheckedChange={onCheckedChange} />
@@ -362,10 +380,22 @@ function ToggleRow({
   )
 }
 
-function CreatePolicyDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+function CreatePolicyDialog({
+  open,
+  onOpenChange,
+  lockedPipelineId,
+  lockedPipelineName,
+  availablePolicyTypes,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  lockedPipelineId?: string
+  lockedPipelineName?: string
+  availablePolicyTypes: AttentionPolicyType[]
+}) {
   const [name, setName] = useState('')
-  const [policyType, setPolicyType] = useState<AttentionPolicyType>('first_contact')
-  const [pipelineId, setPipelineId] = useState('')
+  const [policyType, setPolicyType] = useState<AttentionPolicyType>(availablePolicyTypes[0] ?? 'first_contact')
+  const [pipelineId, setPipelineId] = useState(lockedPipelineId ?? '')
   const [stageId, setStageId] = useState('')
   const [warningMinutes, setWarningMinutes] = useState('30')
   const [thresholdMinutes, setThresholdMinutes] = useState('60')
@@ -381,14 +411,15 @@ function CreatePolicyDialog({ open, onOpenChange }: { open: boolean; onOpenChang
   const parsedWarning = parseMinutes(warningMinutes, 0)
   const parsedThreshold = parseMinutes(thresholdMinutes, 1)
   const canSubmit = name.trim().length >= 2
+    && availablePolicyTypes.includes(policyType)
     && parsedThreshold >= 1
     && parsedWarning < parsedThreshold
     && (!requiresStage || Boolean(pipelineId && stageId))
 
   const reset = () => {
     setName('')
-    setPolicyType('first_contact')
-    setPipelineId('')
+    setPolicyType(availablePolicyTypes[0] ?? 'first_contact')
+    setPipelineId(lockedPipelineId ?? '')
     setStageId('')
     setWarningMinutes('30')
     setThresholdMinutes('60')
@@ -414,9 +445,7 @@ function CreatePolicyDialog({ open, onOpenChange }: { open: boolean; onOpenChang
         ? Math.max(1, parseMinutes(redistributionMinutes, parsedThreshold + 60))
         : null,
       businessHoursOnly,
-      config: {
-        redistributionBeforeFirstContactOnly: policyType === 'first_contact',
-      },
+      redistributeBeforeContactOnly: policyType === 'first_contact',
     }
 
     createPolicy.mutate(input, {
@@ -429,11 +458,11 @@ function CreatePolicyDialog({ open, onOpenChange }: { open: boolean; onOpenChang
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+      <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto rounded-[8px] border-0 shadow-none">
         <DialogHeader>
-          <DialogTitle>Nova regra de cadencia</DialogTitle>
-          <DialogDescription>
-            A regra nasce em observação. Assim você mede o impacto antes de ativar cobranças ou redistribuição.
+          <DialogTitle className="text-base font-normal">Nova regra de atenção</DialogTitle>
+          <DialogDescription className="text-[12px] font-light leading-5">
+            A regra nasce em observação para você validar os prazos antes de ativar cobranças ou redistribuição.
           </DialogDescription>
         </DialogHeader>
 
@@ -458,28 +487,34 @@ function CreatePolicyDialog({ open, onOpenChange }: { open: boolean; onOpenChang
             >
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                {(Object.keys(POLICY_TYPE_LABELS) as AttentionPolicyType[]).map((type) => (
+                {availablePolicyTypes.map((type) => (
                   <SelectItem key={type} value={type}>{POLICY_TYPE_LABELS[type]}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>Pipeline {requiresStage ? '(obrigatoria)' : '(opcional)'}</Label>
-            <Select
-              value={pipelineId || 'all'}
-              onValueChange={(value) => {
-                setPipelineId(value === 'all' ? '' : value)
-                setStageId('')
-              }}
-              disabled={pipelinesLoading}
-            >
-              <SelectTrigger><SelectValue placeholder="Todas as pipelines" /></SelectTrigger>
-              <SelectContent>
-                {!requiresStage && <SelectItem value="all">Todas as pipelines</SelectItem>}
-                {pipelines.map((pipeline) => <SelectItem key={pipeline.id} value={pipeline.id}>{pipeline.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <Label>Pipeline {requiresStage ? '(obrigatória)' : '(opcional)'}</Label>
+            {lockedPipelineId ? (
+              <div className="flex h-10 items-center rounded-[6px] bg-[var(--app-surface-soft)] px-3 text-xs font-light text-[var(--app-text-secondary)]">
+                {lockedPipelineName || 'Pipeline selecionada'}
+              </div>
+            ) : (
+              <Select
+                value={pipelineId || 'all'}
+                onValueChange={(value) => {
+                  setPipelineId(value === 'all' ? '' : value)
+                  setStageId('')
+                }}
+                disabled={pipelinesLoading}
+              >
+                <SelectTrigger><SelectValue placeholder="Todas as pipelines" /></SelectTrigger>
+                <SelectContent>
+                  {!requiresStage && <SelectItem value="all">Todas as pipelines</SelectItem>}
+                  {pipelines.map((pipeline) => <SelectItem key={pipeline.id} value={pipeline.id}>{pipeline.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            )}
           </div>
           {requiresStage && (
             <div className="space-y-2 md:col-span-2">
@@ -498,7 +533,7 @@ function CreatePolicyDialog({ open, onOpenChange }: { open: boolean; onOpenChang
           <MinutesField id="new-escalation" label="Escalar para lider/admin em" value={escalationMinutes} min={1} optional onChange={setEscalationMinutes} />
         </div>
 
-        <div className="space-y-3 rounded-xl bg-white/[0.035] p-4">
+        <div className="space-y-2 rounded-[8px] bg-[var(--app-surface-soft)] p-2">
           <ToggleRow
             icon={Clock3}
             title="Somente horário comercial"
@@ -525,12 +560,12 @@ function CreatePolicyDialog({ open, onOpenChange }: { open: boolean; onOpenChang
         </div>
 
         {parsedWarning >= parsedThreshold && (
-          <p className="text-sm text-destructive">O aviso deve acontecer antes do limite, nunca no mesmo instante.</p>
+          <p className="text-[12px] font-light text-destructive">O aviso deve acontecer antes do limite, nunca no mesmo instante.</p>
         )}
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={createPolicy.isPending}>Cancelar</Button>
-          <Button onClick={handleCreate} disabled={!canSubmit || createPolicy.isPending}>
+          <Button variant="ghost" className="rounded-[6px] text-xs font-light" onClick={() => onOpenChange(false)} disabled={createPolicy.isPending}>Cancelar</Button>
+          <Button className="rounded-[6px] text-xs font-light" onClick={handleCreate} disabled={!canSubmit || createPolicy.isPending}>
             {createPolicy.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
             Criar em observação
           </Button>
@@ -550,14 +585,15 @@ type GlobalSettingsDraft = {
 }
 
 function GlobalSafetyCard({ settings }: { settings: AttentionSettings }) {
-  const [draft, setDraft] = useState<GlobalSettingsDraft>(() => ({
+  const initialDraft: GlobalSettingsDraft = {
     engineMode: settings.engineMode,
     notificationsEnabled: settings.notificationsEnabled,
     redistributionEnabled: settings.redistributionEnabled,
     timezone: settings.timezone,
     defaultRepeatMinutes: String(settings.defaultRepeatMinutes ?? 1_440),
     maxReminders: String(settings.maxReminders ?? 0),
-  }))
+  }
+  const [draft, setDraft] = useState<GlobalSettingsDraft>(() => initialDraft)
   const [redistributionConfirmOpen, setRedistributionConfirmOpen] = useState(false)
   const updateSettings = useUpdateAttentionSettings()
   const parsedRepeatMinutes = parseMinutes(draft.defaultRepeatMinutes, 0)
@@ -566,6 +602,7 @@ function GlobalSafetyCard({ settings }: { settings: AttentionSettings }) {
     || parsedRepeatMinutes < 15
     || parsedMaxReminders < 0
   const isEnabled = draft.engineMode === 'enabled'
+  const isDirty = JSON.stringify(draft) !== JSON.stringify(initialDraft)
 
   const setField = <K extends keyof GlobalSettingsDraft>(field: K, value: GlobalSettingsDraft[K]) => {
     setDraft((current) => ({ ...current, [field]: value }))
@@ -592,43 +629,42 @@ function GlobalSafetyCard({ settings }: { settings: AttentionSettings }) {
 
   return (
     <>
-      <Card className={cn(
-        'app-card overflow-hidden border-2',
-        isEnabled ? 'border-amber-500/35' : 'border-emerald-500/20',
-      )}>
-        <CardHeader className="gap-3 pb-4">
+      <Card className="app-card overflow-hidden border-0 bg-[var(--app-surface-solid)] shadow-none">
+        <CardHeader className="gap-3 p-4 pb-3 sm:p-5 sm:pb-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <Power className={cn('h-5 w-5', isEnabled ? 'text-amber-500' : 'text-emerald-500')} />
-                Seguranca global do motor
-              </CardTitle>
-              <CardDescription className="mt-1">
-                Travas da organização que prevalecem sobre todas as políticas individuais.
-              </CardDescription>
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+                <Power className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <CardTitle className="text-[14px] font-normal text-[var(--app-text-primary)]">
+                  Segurança da organização
+                </CardTitle>
+                <CardDescription className="mt-1 text-[12px] font-light leading-5 text-[var(--app-text-tertiary)]">
+                  Define como todos os pipelines monitoram prazos, enviam avisos e permitem redistribuições.
+                </CardDescription>
+              </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Badge variant={isEnabled ? 'default' : 'secondary'}>
+              <Badge variant="secondary" className="rounded-[4px] text-[10px] font-light">
                 Motor {draft.engineMode === 'disabled' ? 'desligado' : draft.engineMode === 'shadow' ? 'em observação' : 'ativo'}
               </Badge>
-              <Badge variant={draft.redistributionEnabled ? 'destructive' : 'outline'}>
-                Redistribuicao {draft.redistributionEnabled ? 'liberada' : 'bloqueada'}
+              <Badge variant="secondary" className="rounded-[4px] text-[10px] font-light">
+                Redistribuição {draft.redistributionEnabled ? 'liberada' : 'bloqueada'}
               </Badge>
             </div>
           </div>
         </CardHeader>
 
-        <CardContent className="space-y-5">
-          <Alert className={cn(
-            isEnabled
-              ? 'border-amber-500/30 bg-amber-500/[0.08]'
-              : 'border-emerald-500/20 bg-emerald-500/[0.06]',
-          )}>
-            {isEnabled ? <AlertTriangle className="h-4 w-4 text-amber-500" /> : <ShieldCheck className="h-4 w-4 text-emerald-500" />}
-            <AlertTitle>{isEnabled ? 'Ativação operacional preparada' : 'Ambiente seguro para configuração'}</AlertTitle>
-            <AlertDescription>
+        <CardContent className="space-y-5 p-4 pt-0 sm:p-5 sm:pt-0">
+          <Alert className="rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
+            {isEnabled ? <AlertTriangle className="h-4 w-4 text-[var(--app-text-secondary)]" /> : <ShieldCheck className="h-4 w-4 text-[var(--app-text-secondary)]" />}
+            <AlertTitle className="text-[13px] font-normal text-[var(--app-text-primary)]">
+              {isEnabled ? 'Motor em modo ativo' : 'Configuração protegida'}
+            </AlertTitle>
+            <AlertDescription className="text-[12px] font-light leading-5 text-[var(--app-text-tertiary)]">
               {isEnabled
-                ? 'Ao salvar em modo ativo, politicas ativas iniciam cobrancas somente para leads futuros elegiveis: nao manuais e criados depois da implantacao. Leads antigos nunca entram.'
+                ? 'Políticas ativas passam a gerar cobranças. Instâncias abertas anteriores à ativação permanecem em observação para evitar cobrança retroativa imediata.'
                 : 'Use o modo observação para medir prazos sem cobrar corretores. O modo desligado interrompe a avaliação global.'}
             </AlertDescription>
           </Alert>
@@ -637,7 +673,7 @@ function GlobalSafetyCard({ settings }: { settings: AttentionSettings }) {
             <div className="space-y-2">
               <Label>Modo do motor</Label>
               <Select value={draft.engineMode} onValueChange={(value) => setField('engineMode', value as AttentionEngineMode)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger className="rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-xs font-light shadow-none"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="disabled">Desligado</SelectItem>
                   <SelectItem value="shadow">Observacao, sem cobranca</SelectItem>
@@ -652,6 +688,7 @@ function GlobalSafetyCard({ settings }: { settings: AttentionSettings }) {
                 value={draft.timezone}
                 onChange={(event) => setField('timezone', event.target.value)}
                 placeholder="America/Sao_Paulo"
+                className="rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-xs font-light shadow-none"
               />
             </div>
             <MinutesField
@@ -670,12 +707,13 @@ function GlobalSafetyCard({ settings }: { settings: AttentionSettings }) {
                 step={1}
                 value={draft.maxReminders}
                 onChange={(event) => setField('maxReminders', event.target.value)}
+                className="rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-xs font-light shadow-none"
               />
-              <p className="text-xs text-muted-foreground">Use 0 para lembretes ilimitados ate a resolucao.</p>
+              <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">Use 0 para lembretes ilimitados até a resolução.</p>
             </div>
           </div>
 
-          <div className="grid gap-3 rounded-xl bg-white/[0.035] p-4 md:grid-cols-2">
+          <div className="grid gap-2 rounded-[8px] bg-[var(--app-surface-soft)] p-2 md:grid-cols-2">
             <ToggleRow
               icon={BellRing}
               title="Notificações habilitadas"
@@ -685,20 +723,20 @@ function GlobalSafetyCard({ settings }: { settings: AttentionSettings }) {
             />
             <ToggleRow
               icon={Shuffle}
-              title="Kill switch de redistribuicao"
-              description="Comeca desligado. Mesmo ligado, cada politica ainda precisa autorizar a redistribuicao."
+              title="Redistribuição automática"
+              description="Mesmo ligada, cada política ainda precisa autorizar a redistribuição."
               checked={draft.redistributionEnabled}
               onCheckedChange={handleRedistributionChange}
             />
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.07] pt-4">
-            <p className="max-w-2xl text-xs text-muted-foreground">
-              Desligar o kill switch bloqueia qualquer nova redistribuicao por SLA sem alterar a atribuicao atual dos leads.
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/30 pt-4">
+            <p className="max-w-2xl text-[11px] font-light leading-5 text-[var(--app-text-tertiary)]">
+              Desligar a redistribuição bloqueia novas trocas por SLA sem alterar a atribuição atual dos leads.
             </p>
-            <Button onClick={handleSave} disabled={isInvalid || updateSettings.isPending}>
-              {updateSettings.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-              Salvar segurança global
+            <Button className="rounded-[6px] text-xs font-light" onClick={handleSave} disabled={isInvalid || updateSettings.isPending || !isDirty}>
+              {updateSettings.isPending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-2 h-3.5 w-3.5" />}
+              Salvar configuração
             </Button>
           </div>
         </CardContent>
@@ -707,9 +745,9 @@ function GlobalSafetyCard({ settings }: { settings: AttentionSettings }) {
       <AlertDialog open={redistributionConfirmOpen} onOpenChange={setRedistributionConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Liberar redistribuicao automatica por tempo?</AlertDialogTitle>
+            <AlertDialogTitle>Liberar redistribuição automática por tempo?</AlertDialogTitle>
             <AlertDialogDescription>
-              Esta é a trava global da organização. Quando o motor e uma política também estiverem ativos, leads futuros elegíveis poderão trocar de corretor após o prazo configurado. A ativação não inclui leads antigos ou manuais.
+              Esta é a trava global da organização. Quando o motor e uma política também estiverem ativos, leads poderão trocar de corretor após o prazo configurado. Instâncias abertas anteriores à ativação permanecem protegidas em observação.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -719,7 +757,7 @@ function GlobalSafetyCard({ settings }: { settings: AttentionSettings }) {
                 setField('redistributionEnabled', true)
                 setRedistributionConfirmOpen(false)
               }}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="rounded-[6px] bg-primary text-primary-foreground hover:bg-primary/90"
             >
               Entendi, liberar no rascunho
             </AlertDialogAction>
@@ -730,22 +768,91 @@ function GlobalSafetyCard({ settings }: { settings: AttentionSettings }) {
   )
 }
 
-export function AttentionPolicySettings() {
+function InheritedPolicyRow({ policy }: { policy: AttentionPolicy }) {
+  return (
+    <div className="grid grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-2.5 rounded-[6px] px-2.5 py-2.5 sm:grid-cols-[40px_minmax(0,1fr)_auto] sm:gap-3 sm:px-3">
+      <span className="flex h-9 w-9 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground sm:h-10 sm:w-10">
+        <Clock3 className="h-4 w-4" />
+      </span>
+      <span className="min-w-0">
+        <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <span className="truncate text-[13px] font-normal text-[var(--app-text-primary)] sm:text-sm">
+            {policy.name}
+          </span>
+          <span className="inline-flex h-5 items-center gap-1.5 rounded-[4px] bg-[var(--app-surface-soft)] px-1.5 text-[9px] font-light text-[var(--app-text-secondary)]">
+            <span
+              className={cn(
+                'h-1.5 w-1.5 rounded-full',
+                policy.status === 'enabled'
+                  ? 'bg-primary'
+                  : policy.status === 'shadow'
+                    ? 'bg-amber-400'
+                    : 'bg-[var(--app-text-tertiary)]',
+              )}
+            />
+            {POLICY_STATUS_LABELS[policy.status]}
+          </span>
+        </span>
+        <span className="mt-0.5 block truncate text-[12px] font-light leading-5 text-[var(--app-text-tertiary)]">
+          {POLICY_TYPE_LABELS[policy.policyType]} · limite de {formatPolicyDuration(policy.thresholdMinutes)}
+        </span>
+      </span>
+      <span className="rounded-[4px] bg-[var(--app-surface-soft)] px-2 py-1 text-[9px] font-light text-[var(--app-text-tertiary)]">
+        Organização
+      </span>
+    </div>
+  )
+}
+
+type AttentionPolicySettingsProps = {
+  pipelineId?: string
+  pipelineName?: string
+}
+
+export function AttentionPolicySettings({
+  pipelineId,
+  pipelineName,
+}: AttentionPolicySettingsProps = {}) {
   const [createOpen, setCreateOpen] = useState(false)
   const { data: policies = [], isLoading, isError, refetch } = useAttentionPolicies()
   const settingsQuery = useAttentionSettings()
+  const isPipelineContext = Boolean(pipelineId)
+  const scopedPolicies = isPipelineContext
+    ? policies.filter((policy) => policy.pipelineId === pipelineId && !policy.stageId)
+    : policies
+  const currentScopePolicyTypes = new Set(
+    (isPipelineContext
+      ? scopedPolicies
+      : policies.filter((policy) => !policy.pipelineId && !policy.stageId)
+    )
+      .filter((policy) => policy.status !== 'archived')
+      .map((policy) => policy.policyType),
+  )
+  const allowedPolicyTypes = isPipelineContext
+    ? PIPELINE_POLICY_TYPES
+    : (Object.keys(POLICY_TYPE_LABELS) as AttentionPolicyType[])
+  const availablePolicyTypes = allowedPolicyTypes.filter((type) => !currentScopePolicyTypes.has(type))
+  const inheritedPolicies = isPipelineContext
+    ? policies.filter((policy) => (
+      !policy.pipelineId
+      && !policy.stageId
+      && policy.status !== 'archived'
+      && PIPELINE_POLICY_TYPES.includes(policy.policyType)
+      && !currentScopePolicyTypes.has(policy.policyType)
+    ))
+    : []
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3 pb-1">
       {settingsQuery.isLoading ? (
-        <Skeleton className="h-80 rounded-xl" />
+        <Skeleton className="h-72 rounded-[8px]" />
       ) : settingsQuery.isError || !settingsQuery.data ? (
-        <Alert variant="destructive">
+        <Alert className="rounded-[8px] border-0 bg-[var(--app-surface-solid)]">
           <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>Segurança global indisponível</AlertTitle>
-          <AlertDescription className="mt-2 flex flex-wrap items-center gap-3">
+          <AlertTitle className="text-[13px] font-normal">Segurança global indisponível</AlertTitle>
+          <AlertDescription className="mt-2 flex flex-wrap items-center gap-3 text-[12px] font-light">
             <span>Não foi possível confirmar o modo do motor. Nenhuma alteração deve ser ativada sem esta leitura.</span>
-            <Button variant="outline" size="sm" onClick={() => settingsQuery.refetch()}>Tentar novamente</Button>
+            <Button variant="ghost" size="sm" className="rounded-[6px] text-xs font-light" onClick={() => settingsQuery.refetch()}>Tentar novamente</Button>
           </AlertDescription>
         </Alert>
       ) : (
@@ -762,62 +869,100 @@ export function AttentionPolicySettings() {
         />
       )}
 
-      <Alert className="border-amber-500/25 bg-amber-500/[0.07]">
-        <ShieldCheck className="h-4 w-4 text-amber-500" />
-        <AlertTitle>Seguranca em camadas</AlertTitle>
-        <AlertDescription>
-          Uma regra ativa pode gerar cobranças. Redistribuição só acontece quando a regra permite e o kill switch global também está ligado. Comece sempre em observação. As regras valem somente para leads não manuais criados depois da implantação; não há inscrição de legado.
+      <Alert className="rounded-[8px] border-0 bg-[var(--app-surface-solid)]">
+        <ShieldCheck className="h-4 w-4 text-[var(--app-text-secondary)]" />
+        <AlertTitle className="text-[13px] font-normal text-[var(--app-text-primary)]">Segurança em camadas</AlertTitle>
+        <AlertDescription className="text-[12px] font-light leading-5 text-[var(--app-text-tertiary)]">
+          {isPipelineContext
+            ? 'A organização define a trava geral, o pipeline personaliza os prazos e cada coluna pode criar uma exceção local. A regra mais específica sempre prevalece.'
+            : 'Uma regra ativa pode gerar cobranças. A redistribuição só acontece quando a regra e a configuração global permitem. Comece em observação e ative depois de validar os prazos.'}
         </AlertDescription>
       </Alert>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">Políticas de cadência e SLA</h2>
-          <p className="text-sm text-muted-foreground">Configure cada relogio sem alterar ciclos que ja estao em andamento.</p>
+          <h2 className="text-[14px] font-normal text-[var(--app-text-primary)]">
+            {isPipelineContext ? `Regras de ${pipelineName || 'pipeline'}` : 'Políticas de cadência e SLA'}
+          </h2>
+          <p className="mt-1 text-[12px] font-light leading-5 text-[var(--app-text-tertiary)]">
+            {isPipelineContext
+              ? 'Personalize contato, atribuição e cadências deste pipeline. Regras de permanência continuam dentro de cada coluna.'
+              : 'Configure cada relógio sem alterar ciclos que já estão em andamento.'}
+          </p>
         </div>
-        <Button onClick={() => setCreateOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Nova regra
-        </Button>
+        {availablePolicyTypes.length > 0 ? (
+          <Button className="rounded-[6px] text-xs font-light" onClick={() => setCreateOpen(true)}>
+            <Plus className="mr-2 h-3.5 w-3.5" />
+            Nova regra
+          </Button>
+        ) : null}
       </div>
 
+      {inheritedPolicies.length > 0 ? (
+        <div className="rounded-[8px] bg-[var(--app-surface-solid)] p-1.5 sm:p-2">
+          <div className="px-2 pb-1.5 pt-1 sm:px-3">
+            <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">
+              Herdadas da organização
+            </p>
+          </div>
+          <div className="divide-y divide-border/30">
+            {inheritedPolicies.map((policy) => (
+              <InheritedPolicyRow key={`${policy.id}:${policy.updatedAt}`} policy={policy} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       {isLoading ? (
-        <div className="grid gap-4 xl:grid-cols-2">
-          {[0, 1, 2, 3].map((index) => <Skeleton key={index} className="h-96 rounded-xl" />)}
+        <div className="space-y-2">
+          {[0, 1, 2, 3].map((index) => <Skeleton key={index} className="h-16 rounded-[8px]" />)}
         </div>
       ) : isError ? (
-        <Card className="app-card">
+        <Card className="app-card border-0 shadow-none">
           <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
-            <AlertTriangle className="h-10 w-10 text-destructive" />
+            <span className="flex h-10 w-10 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]"><AlertTriangle className="h-4 w-4" /></span>
             <div>
-              <p className="font-medium">Não foi possível carregar as regras.</p>
-              <p className="text-sm text-muted-foreground">Confira se a API local está rodando e tente novamente.</p>
+              <p className="text-sm font-normal">Não foi possível carregar as regras.</p>
+              <p className="mt-1 text-[12px] font-light text-[var(--app-text-tertiary)]">Tente novamente. As outras configurações continuam disponíveis.</p>
             </div>
-            <Button variant="outline" onClick={() => refetch()}>Tentar novamente</Button>
+            <Button variant="ghost" className="rounded-[6px] text-xs font-light" onClick={() => refetch()}>Tentar novamente</Button>
           </CardContent>
         </Card>
-      ) : policies.length === 0 ? (
-        <Card className="app-card">
+      ) : scopedPolicies.length === 0 ? (
+        <Card className="app-card border-0 shadow-none">
           <CardContent className="flex flex-col items-center gap-4 py-14 text-center">
-            <Clock3 className="h-12 w-12 text-muted-foreground" />
+            <span className="flex h-10 w-10 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]"><Clock3 className="h-4 w-4" /></span>
             <div className="max-w-xl">
-              <h3 className="font-semibold">Nenhuma regra configurada</h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Crie primeiro uma regra de contato ou de etapa em modo de observação para validar o comportamento com dados reais.
+              <h3 className="text-sm font-normal">
+                {isPipelineContext ? 'Nenhuma regra específica neste pipeline' : 'Nenhuma regra configurada'}
+              </h3>
+              <p className="mt-1 text-[12px] font-light leading-5 text-[var(--app-text-tertiary)]">
+                {isPipelineContext
+                  ? 'Enquanto não houver uma personalização, este pipeline continua usando as regras da organização e as exceções configuradas em cada coluna.'
+                  : 'Crie uma regra de contato ou de etapa em observação para validar o comportamento com dados reais.'}
               </p>
             </div>
-            <Button onClick={() => setCreateOpen(true)}><Plus className="mr-2 h-4 w-4" />Criar primeira regra</Button>
+            {availablePolicyTypes.length > 0 ? (
+              <Button className="rounded-[6px] text-xs font-light" onClick={() => setCreateOpen(true)}><Plus className="mr-2 h-3.5 w-3.5" />Criar regra do pipeline</Button>
+            ) : null}
           </CardContent>
         </Card>
       ) : (
-        <div className="grid items-start gap-4 xl:grid-cols-2">
-          {policies.map((policy) => (
+        <div className="space-y-2">
+          {scopedPolicies.map((policy) => (
             <PolicyCard key={`${policy.id}:${policy.updatedAt}`} policy={policy} />
           ))}
         </div>
       )}
 
-      <CreatePolicyDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <CreatePolicyDialog
+        key={[pipelineId || 'organization', ...availablePolicyTypes].join(':')}
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        lockedPipelineId={pipelineId}
+        lockedPipelineName={pipelineName}
+        availablePolicyTypes={availablePolicyTypes}
+      />
     </div>
   )
 }

@@ -1,4 +1,4 @@
- import { useState } from "react";
+ import { useEffect, useState } from "react";
  import { Button } from "@/components/ui/button";
  import { Mic, Square, X, Send, Loader2 } from "lucide-react";
  import { useAudioRecorder } from "@/hooks/use-audio-recorder";
@@ -10,6 +10,9 @@
    disabled?: boolean;
    className?: string;
  }
+
+ const MAX_RECORDING_SECONDS = 4 * 60;
+ const MAX_RECORDING_BYTES = 5 * 1024 * 1024;
 
  export function AudioRecorderButton({ onSend, disabled, className }: AudioRecorderButtonProps) {
    const [isSending, setIsSending] = useState(false);
@@ -26,6 +29,20 @@
      formatDuration,
    } = useAudioRecorder();
 
+   useEffect(() => {
+     if (!isRecording || duration < MAX_RECORDING_SECONDS) return;
+     stopRecording();
+     toast({
+       title: "Limite da gravação atingido",
+       description: "O áudio foi encerrado em 4 minutos para permitir o envio.",
+     });
+   }, [duration, isRecording, stopRecording]);
+
+   useEffect(() => {
+     if (!disabled || !isRecording) return;
+     cancelRecording();
+   }, [cancelRecording, disabled, isRecording]);
+
    const handleStartRecording = async () => {
      try {
        await startRecording();
@@ -39,7 +56,15 @@
    };
 
    const handleSendAudio = async () => {
-      if (!base64) return;
+      if (!base64 || disabled) return;
+      if ((audioBlob?.size || 0) > MAX_RECORDING_BYTES) {
+        toast({
+          title: "Áudio muito grande",
+          description: "Grave um áudio menor para enviar pelo WhatsApp.",
+          variant: "destructive",
+        });
+        return;
+      }
 
       setIsSending(true);
       try {
@@ -71,16 +96,18 @@
          <Button
            variant="ghost"
            size="icon"
-           className="h-8 w-8 text-muted-foreground hover:text-foreground"
-           onClick={cancelRecording}
+         className="h-8 w-8 text-muted-foreground hover:text-foreground"
+         onClick={cancelRecording}
+         aria-label="Cancelar gravação"
          >
            <X className="h-4 w-4" />
          </Button>
          <Button
            variant="default"
            size="icon"
-           className="h-8 w-8"
-           onClick={stopRecording}
+         className="h-8 w-8"
+         onClick={stopRecording}
+         aria-label="Parar gravação"
          >
            <Square className="h-3 w-3 fill-current" />
          </Button>
@@ -98,8 +125,9 @@
          <Button
            variant="ghost"
            size="icon"
-           className="h-8 w-8 text-muted-foreground hover:text-foreground"
-           onClick={clearRecording}
+         className="h-8 w-8 text-muted-foreground hover:text-foreground"
+         onClick={clearRecording}
+         aria-label="Descartar áudio gravado"
          >
            <X className="h-4 w-4" />
          </Button>
@@ -107,8 +135,9 @@
            variant="default"
            size="icon"
            className="h-8 w-8"
-           onClick={handleSendAudio}
-           disabled={isSending}
+         onClick={handleSendAudio}
+         disabled={isSending || disabled}
+         aria-label="Enviar áudio gravado"
          >
            {isSending ? (
              <Loader2 className="h-4 w-4 animate-spin" />
@@ -129,6 +158,7 @@
        onClick={handleStartRecording}
        disabled={disabled}
        title="Gravar áudio"
+       aria-label="Gravar áudio"
      >
         <Mic className="h-4 w-4" />
      </Button>

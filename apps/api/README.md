@@ -43,10 +43,26 @@ Backend principal do Vimob CRM.
 - `POST /v1/properties` - cria imovel com validacao, geracao transacional de codigo, activity de captacao e limpeza de imoveis demo da organizacao.
 - `PATCH /v1/properties/{id}` - atualiza imovel, regenerando codigo quando o tipo muda.
 - `DELETE /v1/properties/{id}` - exclui imovel com permissao de delete.
+- `GET /v1/properties/{id}/workspace` - carrega imovel e dados normalizados no mesmo snapshot com o predicado canonico own/team/all, em uma projecao allowlist por papel; leitores recebem apenas ofertas ativas, sem chaves, movimentos ou dados internos, e os contatos seguem a politica da organizacao.
+- `PUT /v1/properties/{id}/offers/{sale|rent|seasonal}` - cria oferta sem versao ou altera com `expected_updated_at`; retry identico nao avanca a versao e precondicao ausente/obsoleta retorna `409`. A projecao legada mantem `preco` para venda e prioriza aluguel sobre temporada em `valor_locacao`.
+- `POST /v1/properties/{id}/ownerships`, `PATCH /v1/properties/{id}/ownerships/{ownershipId}` e `POST /v1/properties/{id}/ownerships/{ownershipId}/end` - gerenciam proprietarios e coproprietarios com versao otimista e vigencia temporal semiaberta `[valid_from, valid_to)`; trocar o principal preserva o historico e a participacao vigente do anterior.
+- `POST|PATCH|DELETE /v1/properties/{id}/assets[...]`, `PUT /v1/properties/{id}/assets/order` e `PUT /v1/properties/{id}/assets/{assetId}/primary` - gerenciam midias e documentos, ordem e capa de forma atomica com `expected_updated_at`.
+- `POST /v1/properties/{id}/assets/upload-intents` - autoriza o imovel e gera URL/token de upload por duas horas no bucket privado `property-private`; o cliente envia o binario direto ao Storage e depois cadastra o `storage_path`. Leituras recebem `access_url` assinada de curta duracao sem persistir a URL.
+- `POST /v1/properties/{id}/keys` - cadastra uma chave fisica e o movimento inicial de registro na mesma transacao.
+- `POST /v1/properties/{id}/keys/{keyId}/movements` - registra transicoes de custodia atomicamente; exige `Idempotency-Key` opaca (1-200 caracteres), repete com seguranca o mesmo payload e retorna `409` se a chave for reutilizada com outro conteudo.
+- Todos os endpoints do workspace de imoveis respondem com `Cache-Control: private, no-store` e variam por `Authorization` e `X-Organization-ID` para impedir cache compartilhado entre papeis ou organizacoes.
 - `POST /v1/property-images` - envia imagens de imoveis para o Supabase Storage pelo backend, com validacao de tipo/tamanho e escopo de organizacao.
 - `GET /v1/property-captors/{id}` - busca dados minimos do captador no escopo da organizacao.
 - `GET /v1/property-site-info` - busca dominio/subdominio ativo da organizacao para links de imoveis.
 - `GET /v1/property-summaries?ids=...` - busca resumos de imoveis por id para funil e analytics.
+- `GET|POST /v1/property-developments` - lista e cria empreendimentos no escopo da organizacao.
+- `GET /v1/property-developments/{id}/workspace` e `GET /v1/property-developments/{id}/units` - carregam o workspace e o estoque paginado do empreendimento.
+- `PUT /v1/property-developments/{id}/units/{unitId}/price` - edita o preco da unidade em uma tabela draft versionada, com precondicao otimista.
+- `GET /v1/property-developments/{id}/reservations` - lista reservas com filtros, paginacao e indicadores globais do empreendimento.
+- `POST /v1/property-developments/{id}/units/{unitId}/reservations` - cria uma reserva idempotente com snapshot da tabela ativa; exige `Idempotency-Key` UUID.
+- `POST /v1/property-developments/{id}/reservations/{reservationId}/cancel` - cancela e libera a unidade com controle otimista.
+- `POST /v1/property-developments/{id}/reservations/{reservationId}/convert` - converte a reserva ativa em venda e retira a unidade da publicacao.
+- `POST /v1/property-developments/{id}/reservations/{reservationId}/extend` - prorroga uma reserva ativa dentro da janela maxima de 30 dias.
 - `GET /v1/user-summaries?ids=...` - busca resumos minimos de usuarios visiveis na organizacao.
 - `GET|POST /v1/property-types` - lista e cria tipos de imovel da organizacao.
 - `GET|POST /v1/property-features` e `POST /v1/property-features/seed-defaults` - lista/cria/seed de caracteristicas.
@@ -74,22 +90,35 @@ Backend principal do Vimob CRM.
 
 ## Variaveis operacionais opcionais
 
+- `NOTIFICATION_DISPATCH_WORKER_ENABLED` - inicia o consumidor da fila duravel de notificacoes e os lembretes de agenda. Padrao seguro: `false`; habilite explicitamente apenas depois de validar o backlog e os provedores do ambiente.
 - `AUTOMATION_RUNTIME_WORKER_ENABLED` - liga/desliga o coordenador backend de automacoes. Padrao: `true`.
 - `AUTOMATION_RUNTIME_WORKER_INTERVAL` - intervalo do runner de eventos/execucoes. Padrao: `30s`.
 - `AUTOMATION_INACTIVITY_WORKER_INTERVAL` - intervalo do scanner de inatividade. Padrao: `5m`.
 - `AUTOMATION_WORKER_RUN_TIMEOUT` - timeout maximo de cada ciclo. Padrao: `25s`.
 - `AUTOMATION_WORKER_LOCK_TIMEOUT` - timeout para obter a trava distribuida no Postgres. Padrao: `2s`.
+- `PROPERTY_DEVELOPMENT_RESERVATION_WORKER_ENABLED` - liga/desliga a expiracao automatica de reservas. Padrao: `true`.
+- `PROPERTY_DEVELOPMENT_RESERVATION_WORKER_INTERVAL` - intervalo entre ciclos; cada ciclo drena o backlog em lotes curtos. Padrao: `1m`.
+- `PROPERTY_DEVELOPMENT_RESERVATION_WORKER_BATCH` - quantidade maxima por transacao concorrente com `SKIP LOCKED`. Padrao: `100`.
 
-## Meta Lead Ads
+## Meta (backend Go)
 
-O webhook backend da Meta usa:
+OAuth, Lead Ads, formulários, sincronização de Marketing e mensagens usam o mesmo aplicativo Meta e passam exclusivamente pela API Go. O banco persiste fatos e guarda credenciais no Vault; ele não chama a Meta.
 
+O backend usa:
+
+- `META_APP_ID` e `META_APP_SECRET` para OAuth e chamadas autenticadas.
+- `META_LOGIN_CONFIG_ID` opcional para Facebook Login for Business. Vazio preserva o fluxo OAuth atual; preenchido adiciona `config_id` e força o code grant com `override_default_response_type=true`.
 - `META_APP_SECRET` para validar `X-Hub-Signature-256`.
 - `META_WEBHOOK_VERIFY_TOKEN` para o challenge de verificacao da Meta.
 - `META_GRAPH_VERSION` opcional, padrao `v25.0`.
 - `META_GRAPH_BASE_URL` opcional, padrao `https://graph.facebook.com`.
+- `META_OAUTH_CALLBACK_URL` para o callback público exato da API.
+- `META_OAUTH_ALLOWED_ORIGINS` para as origens exatas que podem iniciar o fluxo.
 
-URL publica esperada no deploy: `https://api.vimobcrm.com.br/v1/public/integrations/meta/webhook`.
+URLs públicas esperadas no deploy:
+
+- Webhook: `https://api.vimobcrm.com.br/v1/public/integrations/meta/webhook`.
+- OAuth: `https://api.vimobcrm.com.br/v1/public/integrations/meta/oauth/callback`.
 
 ## Desenvolvimento
 

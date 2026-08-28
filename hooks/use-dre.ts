@@ -75,8 +75,8 @@ interface UseDREParams {
 }
 
 export function useDRE({ startDate, endDate, regime, compareWithPrevious = false }: UseDREParams) {
-  const { profile } = useAuth();
-  const organizationId = profile?.organization_id;
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
 
   return useQuery({
     queryKey: ['dre', organizationId, startDate.toISOString(), endDate.toISOString(), regime, compareWithPrevious],
@@ -199,8 +199,8 @@ export function useDRE({ startDate, endDate, regime, compareWithPrevious = false
 }
 
 export function useDREGroups() {
-  const { profile } = useAuth();
-  const organizationId = profile?.organization_id;
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
 
   return useQuery({
     queryKey: ['dre-groups', organizationId],
@@ -210,8 +210,8 @@ export function useDREGroups() {
 }
 
 export function useDREMappings() {
-  const { profile } = useAuth();
-  const organizationId = profile?.organization_id;
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
 
   return useQuery({
     queryKey: ['dre-mappings', organizationId],
@@ -221,11 +221,14 @@ export function useDREMappings() {
 }
 
 export function useInitializeDREGroups() {
-  const { profile } = useAuth();
+  const { profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id;
 
   const initializeGroups = async () => {
-    if (!profile?.organization_id) return;
-    await financialAPI.initializeDREGroups(profile.organization_id);
+    if (!organizationId) {
+      throw new Error('Organização não encontrada.');
+    }
+    await financialAPI.initializeDREGroups(organizationId);
   };
 
   return { initializeGroups };

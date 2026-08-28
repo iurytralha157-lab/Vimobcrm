@@ -1,7 +1,23 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(32);
+select plan(35);
+
+select is(
+  has_table_privilege('authenticated', 'public.automations', 'insert'),
+  false,
+  'authenticated clients cannot insert automations directly'
+);
+select is(
+  has_table_privilege('authenticated', 'public.automations', 'update'),
+  false,
+  'authenticated clients cannot update automations directly'
+);
+select is(
+  has_table_privilege('authenticated', 'public.automations', 'delete'),
+  false,
+  'authenticated clients cannot delete automations directly'
+);
 
 do $compat_local_whatsapp_session_name$
 begin

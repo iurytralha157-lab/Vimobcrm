@@ -1,10 +1,17 @@
 export const runtime = 'nodejs'
 
+const PLANS_BACKEND_TIMEOUT_MS = 10_000
+
 type PublicPlan = {
   id?: string
   slug?: string
   name?: string
   price?: number
+  reference_price?: number | null
+  discount_percentage?: number | null
+  display_features?: string[] | null
+  display_order?: number | null
+  billing_periods?: number[] | null
   billing_cycle?: string | null
   description?: string | null
   trial_enabled?: boolean | null
@@ -16,6 +23,17 @@ type PublicPlan = {
 
 type PlansEnvelope = {
   data?: PublicPlan[]
+  error?: string
+}
+
+const legacyPublicPlanSlugs = new Set(['trial', 'plan-05ec0d1c'])
+const legacyPublicPlanNames = new Set(['trial', 'básico', 'basico'])
+
+function isLegacyPublicPlan(plan: PublicPlan) {
+  const slug = plan.slug?.trim().toLowerCase() || ''
+  const name = plan.name?.trim().toLowerCase() || ''
+
+  return legacyPublicPlanSlugs.has(slug) || legacyPublicPlanNames.has(name)
 }
 
 function getAPIBaseURL() {
@@ -31,16 +49,26 @@ export async function GET() {
       next: {
         revalidate: 300,
       },
+      signal: AbortSignal.timeout(PLANS_BACKEND_TIMEOUT_MS),
     })
     const payload = (await response.json().catch(() => null)) as PlansEnvelope | PublicPlan[] | null
     const plans = Array.isArray(payload) ? payload : payload?.data
 
     if (!response.ok || !Array.isArray(plans)) {
-      return Response.json({ data: [] }, { status: 200 })
+      return Response.json(
+        { data: [], error: 'Não foi possível carregar os planos agora.' },
+        { status: 502 },
+      )
     }
 
-    return Response.json({ data: plans }, { status: 200 })
+    return Response.json(
+      { data: plans.filter((plan) => !isLegacyPublicPlan(plan)) },
+      { status: 200 },
+    )
   } catch {
-    return Response.json({ data: [] }, { status: 200 })
+    return Response.json(
+      { data: [], error: 'Não foi possível carregar os planos agora.' },
+      { status: 503 },
+    )
   }
 }

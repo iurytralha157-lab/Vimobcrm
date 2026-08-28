@@ -3,6 +3,12 @@
 // Browser callers never receive the Evolution Go API key; every action is scoped
 // to a CRM WhatsApp session.
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { authorizePrivateWorkerRequest } from "../_shared/private-worker-auth.ts";
+import {
+  readSupabaseSecretKeyEnvironment,
+  selectSupabaseAdminSecretKey,
+  type SupabaseSecretKeyEnvironment,
+} from "../_shared/supabase-secret-keys.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -12,13 +18,28 @@ const corsHeaders = {
 
 type JsonRecord = Record<string, any>;
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const EVOLUTION_GO_API_URL = (Deno.env.get("EVOLUTION_GO_API_URL") || "").replace(/\/+$/, "");
 const EVOLUTION_GO_API_KEY = Deno.env.get("EVOLUTION_GO_API_KEY") || "";
+const EVOLUTION_GO_REQUEST_TIMEOUT_MS = 20_000;
 
-const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
+type SupabaseAdminClient = ReturnType<typeof createClient>;
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// Mirrors deterministicProviderMessageID in the canonical Go WhatsApp API:
+// SHA-256(clientMessageId), truncated to 128 bits and encoded as uppercase hex.
+const PROVIDER_MESSAGE_ID_RE = /^[0-9A-F]{32}$/;
+
+class InvalidEvolutionPayloadError extends Error {}
+
+function createSupabaseAdminClient(
+  secretEnvironment: SupabaseSecretKeyEnvironment,
+) {
+  const supabaseAdminKey = selectSupabaseAdminSecretKey(secretEnvironment);
+  return SUPABASE_URL && supabaseAdminKey
+    ? createClient(SUPABASE_URL, supabaseAdminKey)
+    : null;
+}
 
 function json(body: JsonRecord, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -52,6 +73,17 @@ function normalizeMentionedJids(value: any) {
   if (Array.isArray(value)) return value.filter(Boolean);
   if (typeof value === "string") return value.split(",").map((item) => item.trim()).filter(Boolean);
   return undefined;
+}
+
+function providerMessageId(body: JsonRecord, allowProviderMessageId: boolean) {
+  const candidate = firstPresent(body.id, body.messageId, body.clientMessageId);
+  if (candidate === undefined) return undefined;
+  if (typeof candidate !== "string" || !PROVIDER_MESSAGE_ID_RE.test(candidate)) {
+    throw new InvalidEvolutionPayloadError(
+      "Evolution Go message id must be 32 uppercase hexadecimal characters",
+    );
+  }
+  return allowProviderMessageId ? candidate : undefined;
 }
 
 function normalizeQr(data: any) {
@@ -160,8 +192,9 @@ function extractInstanceId(data: any) {
   return null;
 }
 
-function sendCommonBody(body: JsonRecord) {
+function sendCommonBody(body: JsonRecord, allowProviderMessageId: boolean) {
   return withoutEmpty({
+    id: providerMessageId(body, allowProviderMessageId),
     number: firstPresent(body.number, body.phone, body.jid, body.remoteJid),
     delay: body.delay,
     quoted: body.quoted,
@@ -170,20 +203,20 @@ function sendCommonBody(body: JsonRecord) {
   });
 }
 
-function sendTextBody(body: JsonRecord) {
+function sendTextBody(body: JsonRecord, allowProviderMessageId: boolean) {
   return withoutEmpty({
-    ...sendCommonBody(body),
+    ...sendCommonBody(body, allowProviderMessageId),
     text: firstPresent(body.text, body.message, body.body, body.caption),
   });
 }
 
-function sendMediaBody(body: JsonRecord, forcedType?: string) {
+function sendMediaBody(body: JsonRecord, allowProviderMessageId: boolean, forcedType?: string) {
   const type = firstPresent(forcedType, body.type, body.mediatype, body.mediaType, body.kind);
   const media = firstPresent(body.url, body.mediaUrl, body.media, body.base64, body.path, body.file);
   const filename = firstPresent(body.filename, body.fileName, body.name);
 
   return withoutEmpty({
-    ...sendCommonBody(body),
+    ...sendCommonBody(body, allowProviderMessageId),
     type,
     mediatype: type,
     mediaType: type,
@@ -239,24 +272,30 @@ function getSessionToken(session: any, payload: any) {
   return token && token !== "default_token" ? token : EVOLUTION_GO_API_KEY;
 }
 
-async function authenticate(req: Request) {
+async function authenticate(
+  req: Request,
+  secretEnvironment: SupabaseSecretKeyEnvironment,
+  supabaseAdmin: SupabaseAdminClient,
+) {
+  if (authorizePrivateWorkerRequest(req, secretEnvironment)) {
+    return { serviceRole: true, userId: "service_role" };
+  }
+
   const authHeader = req.headers.get("Authorization") || "";
   if (!authHeader.startsWith("Bearer ")) return { error: "Unauthorized" };
 
   const bearer = authHeader.replace("Bearer ", "").trim();
-  if (bearer === SERVICE_KEY) return { serviceRole: true, userId: "service_role" };
-
-  const { data, error } = await supabase.auth.getUser(bearer);
+  const { data, error } = await supabaseAdmin.auth.getUser(bearer);
   if (error || !data?.user) return { error: "Unauthorized" };
 
   return { serviceRole: false, userId: data.user.id };
 }
 
-async function getSession(payload: JsonRecord) {
+async function getSession(payload: JsonRecord, supabaseAdmin: SupabaseAdminClient) {
   const sessionId = optionalUuid(firstPresent(payload.session_id, payload.sessionId));
   if (!sessionId) return null;
 
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from("whatsapp_sessions")
     .select("*")
     .eq("id", sessionId)
@@ -283,6 +322,7 @@ async function evolutionFetch(
     query?: Record<string, string | number | undefined | null>;
     instanceId?: string;
     token?: string;
+    markBackendFetchAttempted?: () => void;
   } = {},
 ) {
   if (!EVOLUTION_GO_API_URL || !EVOLUTION_GO_API_KEY) {
@@ -300,27 +340,46 @@ async function evolutionFetch(
   };
   if (options.instanceId) headers.instanceId = options.instanceId;
 
-  const response = await fetch(url.toString(), {
-    method,
-    headers,
-    body: options.body !== undefined && method !== "GET" && method !== "HEAD"
-      ? JSON.stringify(options.body)
-      : undefined,
-  });
+  const requestBody = options.body !== undefined && method !== "GET" && method !== "HEAD"
+    ? JSON.stringify(options.body)
+    : undefined;
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), EVOLUTION_GO_REQUEST_TIMEOUT_MS);
 
-  const rawText = await response.text();
-  let data: any = null;
+  // This is the effect boundary. Errors before this callback prove that the
+  // provider was not contacted; errors at or after it are outcome-unknown.
   try {
-    data = rawText ? JSON.parse(rawText) : null;
-  } catch {
-    data = { raw: rawText };
-  }
+    options.markBackendFetchAttempted?.();
+    const response = await fetch(url.toString(), {
+      method,
+      headers,
+      body: requestBody,
+      signal: abortController.signal,
+    });
 
-  return { ok: response.ok, status: response.status, data, rawText };
+    const rawText = await response.text();
+    let data: any = null;
+    try {
+      data = rawText ? JSON.parse(rawText) : null;
+    } catch {
+      data = { raw: rawText };
+    }
+
+    return { ok: response.ok, status: response.status, data, rawText };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
-async function smartFetch(method: string, primaryPath: string, fallbackPath: string, instanceKey: string, token: string) {
-  let result = await evolutionFetch(method, primaryPath, { token });
+async function smartFetch(
+  method: string,
+  primaryPath: string,
+  fallbackPath: string,
+  instanceKey: string,
+  token: string,
+  markBackendFetchAttempted: () => void,
+) {
+  let result = await evolutionFetch(method, primaryPath, { token, markBackendFetchAttempted });
   let endpointUsed = primaryPath;
 
   if (result.status === 404) {
@@ -328,6 +387,7 @@ async function smartFetch(method: string, primaryPath: string, fallbackPath: str
       token,
       instanceId: instanceKey,
       query: { instanceId: instanceKey },
+      markBackendFetchAttempted,
     });
     endpointUsed = fallbackPath;
   }
@@ -335,7 +395,12 @@ async function smartFetch(method: string, primaryPath: string, fallbackPath: str
   return { ...result, endpointUsed };
 }
 
-function endpointFor(action: string, body: JsonRecord, instanceKey: string) {
+function endpointFor(
+  action: string,
+  body: JsonRecord,
+  instanceKey: string,
+  allowProviderMessageId = false,
+) {
   switch (action) {
     case "instance.create":
       return {
@@ -374,11 +439,11 @@ function endpointFor(action: string, body: JsonRecord, instanceKey: string) {
     case "instance.logout":
       return { method: "DELETE", path: "/instance/logout", query: { instanceId: instanceKey } };
     case "send.text":
-      return { method: "POST", path: "/send/text", body: sendTextBody(body) };
+      return { method: "POST", path: "/send/text", body: sendTextBody(body, allowProviderMessageId) };
     case "send.media":
-      return { method: "POST", path: "/send/media", body: sendMediaBody(body) };
+      return { method: "POST", path: "/send/media", body: sendMediaBody(body, allowProviderMessageId) };
     case "send.audio":
-      return { method: "POST", path: "/send/media", body: sendMediaBody(body, "audio") };
+      return { method: "POST", path: "/send/media", body: sendMediaBody(body, allowProviderMessageId, "audio") };
     case "send.sticker":
       return { method: "POST", path: "/send/sticker", body };
     case "message.delete":
@@ -437,15 +502,31 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ ok: false, error: "Method not allowed" }, 405);
 
+  let backendFetchAttempted = false;
+  const markBackendFetchAttempted = () => {
+    backendFetchAttempted = true;
+  };
+
   try {
-    const auth = await authenticate(req);
+    const secretEnvironment = readSupabaseSecretKeyEnvironment();
+    const supabaseAdmin = createSupabaseAdminClient(secretEnvironment);
+    if (!supabaseAdmin) {
+      console.error("Evolution Go proxy configuration unavailable");
+      return json({
+        ok: false,
+        error: "Worker configuration unavailable",
+        effect_not_attempted: true,
+      }, 500);
+    }
+
+    const auth = await authenticate(req, secretEnvironment, supabaseAdmin);
     if (auth.error) return json({ ok: false, error: auth.error }, 401);
 
     const payload = await req.json().catch(() => ({}));
     const action = String(payload.action || "");
     if (!action) return json({ ok: false, error: "Missing action" }, 400);
 
-    const session = await getSession(payload);
+    const session = await getSession(payload, supabaseAdmin);
     const body = payload.body || {};
     const instanceKey = getInstanceKey(session, payload);
     const token = getSessionToken(session, payload);
@@ -467,6 +548,7 @@ Deno.serve(async (req) => {
         "/instance/status",
         instanceKey,
         token,
+        markBackendFetchAttempted,
       );
       const normalizedStatus = result.ok ? normalizeStatus(result.data) : null;
 
@@ -481,16 +563,14 @@ Deno.serve(async (req) => {
           if (jid) update.phone_number = String(jid).split("@")[0];
         }
 
-        await supabase.from("whatsapp_sessions").update(update).eq("id", session.id);
+        await supabaseAdmin.from("whatsapp_sessions").update(update).eq("id", session.id);
       }
 
       return json({
         ok: result.ok,
         status: result.status,
-        data: result.data,
         normalizedStatus,
-        rawResponse: result.rawText,
-        diagnostics: { endpointUsed: result.endpointUsed, instanceKey },
+        error: result.ok ? undefined : "Unable to read WhatsApp status",
       });
     }
 
@@ -501,11 +581,12 @@ Deno.serve(async (req) => {
         "/instance/qr",
         instanceKey,
         token,
+        markBackendFetchAttempted,
       );
       const qrcode = normalizeQr(result.data);
 
       if (session?.id && qrcode) {
-        await supabase
+        await supabaseAdmin
           .from("whatsapp_sessions")
           .update({
             status: "qr_ready",
@@ -522,12 +603,16 @@ Deno.serve(async (req) => {
       return json({
         ok: result.ok && !!qrcode,
         status: result.status,
-        data: qrcode ? { qrcode, instanceKey, sourceEndpoint: result.endpointUsed } : result.data,
+        data: qrcode ? { qrcode } : undefined,
         error: qrcode ? undefined : "QR Code ainda nao disponivel.",
       });
     }
 
-    const endpoint = endpointFor(action, body, instanceKey);
+    // Only the private worker may choose the deterministic provider stanza ID.
+    // Browser calls keep their historical send behavior, but cannot inject an
+    // ID that could collide with a different provider message.
+    const allowProviderMessageId = auth.serviceRole === true && !!session?.id;
+    const endpoint = endpointFor(action, body, instanceKey, allowProviderMessageId);
     if ("skipped" in endpoint) return json({ ok: true, ...endpoint });
 
     const result = await evolutionFetch(endpoint.method!, endpoint.path!, {
@@ -535,6 +620,7 @@ Deno.serve(async (req) => {
       query: endpoint.query,
       instanceId: instanceKey,
       token,
+      markBackendFetchAttempted,
     });
 
     const sentMessageId = isSendAction(action) ? extractSentMessageId(result.data) : null;
@@ -545,7 +631,7 @@ Deno.serve(async (req) => {
     if (session?.id && action === "instance.create" && result.ok) {
       const instanceId = extractInstanceId(result.data);
       if (instanceId) {
-        await supabase
+        await supabaseAdmin
           .from("whatsapp_sessions")
           .update({ instance_id: instanceId, updated_at: new Date().toISOString() })
           .eq("id", session.id);
@@ -553,7 +639,7 @@ Deno.serve(async (req) => {
     }
 
     if (session?.id && ["instance.delete", "instance.logout", "instance.disconnect"].includes(action) && result.ok) {
-      await supabase
+      await supabaseAdmin
         .from("whatsapp_sessions")
         .update({ status: "disconnected", updated_at: new Date().toISOString() })
         .eq("id", session.id);
@@ -569,11 +655,23 @@ Deno.serve(async (req) => {
     return json({
       ok,
       status: result.status,
-      data: responseData,
-      error: ok ? undefined : firstPresent(result.data?.error, result.data?.message, result.data?.data?.error, result.rawText),
+      data: ok ? responseData : undefined,
+      error: ok ? undefined : "WhatsApp provider request failed",
     });
   } catch (error) {
     console.error("evolution-go-proxy error:", error);
-    return json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);
+    const status = error instanceof InvalidEvolutionPayloadError ? 400 : 500;
+    return json(
+      {
+        ok: false,
+        error: error instanceof InvalidEvolutionPayloadError
+          ? error.message
+          : "Internal worker error",
+        ...(status >= 500 && !backendFetchAttempted
+          ? { effect_not_attempted: true }
+          : {}),
+      },
+      status,
+    );
   }
 });

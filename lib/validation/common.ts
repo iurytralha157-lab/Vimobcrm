@@ -50,13 +50,14 @@ export function parseDomainInput<T extends z.ZodTypeAny>(
   return result.data
 }
 
-export function validateDomainResponse(
-  schema: z.ZodTypeAny,
+export function validateDomainResponse<T extends z.ZodTypeAny>(
+  schema: T,
   response: unknown,
   context: string,
-) {
+): z.infer<T> {
   const result = schema.safeParse(response)
   if (!result.success) {
     throw new DomainValidationError(context, 'response', result.error)
   }
+  return result.data
 }

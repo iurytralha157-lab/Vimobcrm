@@ -55,3 +55,122 @@ export const apiSwitchLeadCadenceResponseSchema = apiEnvelopeSchema(z.object({
   lead_id: uuidSchema,
   cadence_template_id: uuidSchema,
 }))
+
+const positiveMinutesSchema = z.number().int().min(1)
+const optionalTaskTextSchema = (max: number) => (
+  z.string().trim().max(max).nullish().transform((value) => value || undefined)
+)
+
+export const stageOperationalCadenceTaskSchema = z.object({
+  id: uuidSchema.optional(),
+  position: nonNegativeIntegerSchema,
+  type: cadenceTaskTypeSchema,
+  title: z.string().trim().min(1, 'Informe o título da tarefa.').max(180),
+  description: optionalTaskTextSchema(2_000),
+  observation: optionalTaskTextSchema(2_000),
+  recommended_message: optionalTaskTextSchema(4_000),
+  due_minutes: nonNegativeIntegerSchema,
+  warning_minutes: nonNegativeIntegerSchema.optional(),
+  is_required: z.boolean(),
+  outcome_required: z.boolean(),
+}).strict().superRefine((task, context) => {
+  if (
+    task.warning_minutes != null
+    && task.warning_minutes > 0
+    && task.warning_minutes >= task.due_minutes
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['warning_minutes'],
+      message: 'O aviso da tarefa precisa acontecer antes do prazo.',
+    })
+  }
+
+  if (task.type === 'note' && task.outcome_required) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['outcome_required'],
+      message: 'Anotações não podem exigir resultado de contato.',
+    })
+  }
+})
+
+export const stageOperationalAttentionModeSchema = z.enum(['disabled', 'shadow', 'enabled'])
+export const stageOperationalAttentionSourceModeSchema = z.enum(['inherit', 'local'])
+
+export const stageOperationalAttentionSchema = z.object({
+  source_mode: stageOperationalAttentionSourceModeSchema.default('inherit'),
+  mode: stageOperationalAttentionModeSchema,
+  first_outreach_minutes: positiveMinutesSchema.optional(),
+  first_effective_contact_minutes: positiveMinutesSchema.optional(),
+  stage_inactivity_minutes: positiveMinutesSchema.optional(),
+  stage_max_age_minutes: positiveMinutesSchema.optional(),
+  warning_minutes: nonNegativeIntegerSchema,
+  escalation_minutes: positiveMinutesSchema.optional(),
+  business_hours_only: z.boolean(),
+}).strict().superRefine((attention, context) => {
+  const thresholds = [
+    'first_outreach_minutes',
+    'first_effective_contact_minutes',
+    'stage_inactivity_minutes',
+    'stage_max_age_minutes',
+  ] as const
+
+  thresholds.forEach((field) => {
+    const threshold = attention[field]
+    if (
+      threshold != null
+      && attention.warning_minutes > 0
+      && attention.warning_minutes >= threshold
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['warning_minutes'],
+        message: 'O aviso precisa acontecer antes de cada limite ativo.',
+      })
+    }
+  })
+})
+
+export const stageOperationalLifecycleSchema = z.object({
+  on_stage_move: z.literal('skip_pending'),
+  on_won: z.literal('cancel_pending'),
+  on_lost: z.literal('cancel_pending'),
+  on_reopen: z.literal('new_cycle'),
+}).strict()
+
+export const stageOperationalRulesSchema = z.object({
+  stage_id: uuidSchema,
+  pipeline_id: uuidSchema,
+  revision: nonNegativeIntegerSchema,
+  cadence: z.object({
+    enabled: z.boolean(),
+    template_id: uuidSchema.optional(),
+    tasks: z.array(stageOperationalCadenceTaskSchema).max(100),
+  }).strict(),
+  attention: stageOperationalAttentionSchema,
+  lifecycle: stageOperationalLifecycleSchema,
+}).strict().superRefine((rules, context) => {
+  const positions = new Set<number>()
+  rules.cadence.tasks.forEach((task, index) => {
+    if (positions.has(task.position)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['cadence', 'tasks', index, 'position'],
+        message: 'Cada tarefa precisa ter uma posição única.',
+      })
+    }
+    positions.add(task.position)
+  })
+})
+
+export const updateStageOperationalRulesInputSchema = stageOperationalRulesSchema
+export const apiStageOperationalRulesResponseSchema = apiEnvelopeSchema(stageOperationalRulesSchema)
+
+export type StageOperationalCadenceTask = z.infer<typeof stageOperationalCadenceTaskSchema>
+export type StageOperationalAttentionMode = z.infer<typeof stageOperationalAttentionModeSchema>
+export type StageOperationalAttentionSourceMode = z.infer<typeof stageOperationalAttentionSourceModeSchema>
+export type StageOperationalAttention = z.infer<typeof stageOperationalAttentionSchema>
+export type StageOperationalLifecycle = z.infer<typeof stageOperationalLifecycleSchema>
+export type StageOperationalRules = z.infer<typeof stageOperationalRulesSchema>
+export type UpdateStageOperationalRulesInput = z.input<typeof updateStageOperationalRulesInputSchema>

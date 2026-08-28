@@ -4,6 +4,7 @@ import { PieChart as PieChartIcon, MousePointer2 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { cn } from '@/lib/utils';
 import { sourceLabels } from '@/hooks/use-dashboard-filters';
+import { DASHBOARD_CHART_COLORS } from '@/config/dashboard-chart-colors';
 
 interface SourceDataPoint {
   name: string;
@@ -36,15 +37,7 @@ interface LeadSourcesTooltipProps {
   payload?: LeadSourcesTooltipEntry[];
 }
 
-const COLORS = [
-  'var(--primary)',
-  '#7C3AED',
-  '#3B82F6',
-  '#10B981',
-  '#F59E0B',
-  '#EF4444',
-  '#06B6D4',
-];
+const INITIAL_CHART_DIMENSION = { width: 240, height: 240 };
 
 function getTotalValueClassName(total: number) {
   const digits = Math.abs(total).toString().length;
@@ -82,10 +75,10 @@ function LeadSourcesTooltip({ active, payload }: LeadSourcesTooltipProps) {
   const leadLabel = value === 1 ? 'lead' : 'leads';
 
   return (
-    <div className="min-w-[150px] rounded-xl border-0 bg-[var(--app-surface-solid)] px-3 py-2.5 text-[var(--app-text-primary)] shadow-[0_8px_20px_rgba(0,0,0,0.18)] animate-in fade-in zoom-in-95 duration-150">
+    <div className="min-w-[150px] rounded-[8px] border-0 bg-[var(--app-surface-solid)] px-3 py-2.5 text-[var(--app-text-primary)] shadow-none animate-in fade-in zoom-in-95 duration-150">
       <div className="mb-1 flex items-center gap-2">
         <span
-          className="h-2.5 w-2.5 rounded-full ring-2 ring-[var(--app-surface-solid)]"
+          className="h-2.5 w-2.5 rounded-[4px] ring-2 ring-[var(--app-surface-solid)]"
           style={{ backgroundColor: source?.color || entry.color || entry.fill }}
         />
         <span className="truncate text-[11px] font-light text-[var(--app-text-secondary)]">
@@ -96,7 +89,7 @@ function LeadSourcesTooltip({ active, payload }: LeadSourcesTooltipProps) {
         <span className="text-[11px] font-light text-[var(--app-text-tertiary)]">
           {value} {leadLabel}
         </span>
-        <span className="rounded-full bg-[var(--app-surface-soft)] px-2 py-0.5 text-[11px] font-medium tabular-nums text-[var(--app-text-primary)]">
+        <span className="rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-0.5 text-[11px] font-light tabular-nums text-[var(--app-text-primary)]">
           {percentage}%
         </span>
       </div>
@@ -107,10 +100,12 @@ function LeadSourcesTooltip({ active, payload }: LeadSourcesTooltipProps) {
 export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChange }: LeadSourcesChartProps) {
   if (isLoading) {
     return (
-      <Card className="app-card overflow-hidden h-full flex flex-col">
-        <CardHeader className="pb-1 pt-4 px-4">
-          <CardTitle className="dashboard-card-title flex items-center gap-2 !text-[14px] !font-light !text-[var(--app-text-primary)]">
-            <PieChartIcon className="h-4 w-4 text-primary" />
+      <Card className="flex h-full flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
+        <CardHeader className="px-4 pb-1 pt-4">
+          <CardTitle className="flex items-center gap-2 text-[14px] font-light text-[var(--app-text-primary)]">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+              <PieChartIcon className="h-3.5 w-3.5" />
+            </span>
             Origem dos leads
           </CardTitle>
         </CardHeader>
@@ -131,7 +126,7 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
     .sort((a, b) => b.value - a.value)
     .map((item, index) => ({
       ...item,
-      color: COLORS[index % COLORS.length],
+      color: DASHBOARD_CHART_COLORS[index % DASHBOARD_CHART_COLORS.length],
     }));
 
   const handleSourceClick = (entry: LeadSourceChartPoint) => {
@@ -150,19 +145,21 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
 
   if (total === 0) {
     return (
-      <Card className="app-card overflow-hidden h-full flex flex-col">
-        <CardHeader className="pb-1 pt-4 px-4">
-          <CardTitle className="dashboard-card-title flex items-center gap-2 !text-[14px] !font-light !text-[var(--app-text-primary)]">
-            <PieChartIcon className="h-4 w-4 text-primary" />
+      <Card className="flex h-full flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
+        <CardHeader className="px-4 pb-1 pt-4">
+          <CardTitle className="flex items-center gap-2 text-[14px] font-light text-[var(--app-text-primary)]">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+              <PieChartIcon className="h-3.5 w-3.5" />
+            </span>
             Origem dos leads
           </CardTitle>
         </CardHeader>
         <CardContent className="flex-1 flex items-center justify-center p-8 text-center">
           <div className="space-y-2">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-white/[0.045]">
-              <PieChartIcon className="h-6 w-6 text-muted-foreground" />
+            <div className="mx-auto flex h-8 w-8 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+              <PieChartIcon className="h-3.5 w-3.5" />
             </div>
-            <p className="text-sm font-medium text-muted-foreground">Nenhum dado de origem disponível para este período</p>
+            <p className="text-[12px] font-light text-[var(--app-text-secondary)]">Nenhum dado de origem disponível para este período</p>
           </div>
         </CardContent>
       </Card>
@@ -170,17 +167,19 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
   }
 
   return (
-    <Card className="app-card overflow-hidden h-full flex flex-col">
-      <CardHeader className="pb-0 pt-4 px-4">
+    <Card className="flex h-full flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
+      <CardHeader className="px-4 pb-0 pt-4">
         <div className="flex items-center justify-between">
-          <CardTitle className="dashboard-card-title flex items-center gap-2 !text-[14px] !font-light !text-[var(--app-text-primary)]">
-            <PieChartIcon className="h-3.5 w-3.5 text-primary" />
+          <CardTitle className="flex items-center gap-2 text-[14px] font-light text-[var(--app-text-primary)]">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+              <PieChartIcon className="h-3.5 w-3.5" />
+            </span>
             Origem dos leads
           </CardTitle>
           {selectedSource && (
             <button
               onClick={() => onSourceChange?.(null)}
-              className="text-[10px] font-bold text-primary hover:underline flex items-center gap-1"
+              className="flex items-center gap-1 rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-1 text-[10px] font-light text-[var(--app-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
             >
               <MousePointer2 className="h-2.5 w-2.5" />
               Limpar Filtro
@@ -193,7 +192,13 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
         {/* Donut Chart Container */}
         <div className="flex min-h-0 w-full flex-1 items-center justify-center">
           <div className="dashboard-recharts-focusless relative min-h-0 min-w-[1px] max-w-full" style={{ width: 'min(100%, 280px)', height: 'min(100%, 280px)' }}>
-            <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
+            <ResponsiveContainer
+              width="100%"
+              height="100%"
+              minWidth={1}
+              minHeight={1}
+              initialDimension={INITIAL_CHART_DIMENSION}
+            >
               <PieChart>
                 <Pie
                   data={chartData}
@@ -221,10 +226,18 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
                         stroke="transparent"
                         strokeWidth={0}
                         className={cn(
-                          "transition-all duration-300 hover:opacity-90 origin-center outline-none cursor-pointer",
-                          isSelected && "drop-shadow-md scale-[1.02]"
+                          "cursor-pointer outline-none transition-opacity duration-200 hover:opacity-90 focus-visible:opacity-80",
                         )}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Filtrar por ${entry.name}: ${entry.value} ${entry.value === 1 ? 'lead' : 'leads'}`}
                         onClick={() => handleSourceClick(entry)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            handleSourceClick(entry);
+                          }
+                        }}
                       />
                     );
                   })}
@@ -244,15 +257,15 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
               <div className="relative flex max-w-[52%] items-center justify-center">
                 <span
                   className={cn(
-                    "max-w-full truncate font-medium leading-none text-[var(--app-text-primary)] tabular-nums drop-shadow-sm",
+                    "max-w-full truncate font-normal leading-none text-[var(--app-text-primary)] tabular-nums",
                     totalValueClassName,
                   )}
                 >
                   {total}
                 </span>
-                <div className="absolute -bottom-1 left-1/2 h-1 w-8 -translate-x-1/2 rounded-full bg-[var(--app-surface-soft)] blur-[2px]" />
+                <div className="absolute -bottom-1 left-1/2 h-1 w-8 -translate-x-1/2 rounded-[4px] bg-[var(--app-surface-soft)]" />
               </div>
-              <span className="mt-1 text-[10px] font-light uppercase tracking-[0.2em] text-[var(--app-text-secondary)] sm:text-[11px]">
+              <span className="mt-1 text-[10px] font-light text-[var(--app-text-secondary)] sm:text-[11px]">
                 Leads
               </span>
             </div>

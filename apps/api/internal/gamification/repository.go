@@ -108,22 +108,14 @@ func (repo Repository) Overview(ctx context.Context, tenantContext tenant.Contex
 func (repo Repository) AdminSnapshot(ctx context.Context, tenantContext tenant.Context) (AdminSnapshot, error) {
 	canManage := canManageGamification(tenantContext)
 
-	rules, err := repo.rules(ctx, tenantContext)
-	if err != nil {
-		return AdminSnapshot{}, err
-	}
-	missions, err := repo.missions(ctx, tenantContext, false)
-	if err != nil {
-		return AdminSnapshot{}, err
-	}
 	myEntries, err := repo.manualEntries(ctx, tenantContext, tenantContext.UserID, false)
 	if err != nil {
 		return AdminSnapshot{}, err
 	}
 
 	snapshot := AdminSnapshot{
-		Rules:                rules,
-		Missions:             missions,
+		Rules:                []Rule{},
+		Missions:             []Mission{},
 		Participants:         []Participant{},
 		Seasons:              []Season{},
 		MyManualEntries:      myEntries,
@@ -133,6 +125,14 @@ func (repo Repository) AdminSnapshot(ctx context.Context, tenantContext tenant.C
 	}
 
 	if canManage {
+		rules, err := repo.rules(ctx, tenantContext)
+		if err != nil {
+			return AdminSnapshot{}, err
+		}
+		missions, err := repo.missions(ctx, tenantContext, false)
+		if err != nil {
+			return AdminSnapshot{}, err
+		}
 		participants, err := repo.participants(ctx, tenantContext)
 		if err != nil {
 			return AdminSnapshot{}, err
@@ -149,6 +149,8 @@ func (repo Repository) AdminSnapshot(ctx context.Context, tenantContext tenant.C
 		if err != nil {
 			return AdminSnapshot{}, err
 		}
+		snapshot.Rules = rules
+		snapshot.Missions = missions
 		snapshot.Participants = participants
 		snapshot.Seasons = seasons
 		snapshot.PendingManualEntries = adminQueue

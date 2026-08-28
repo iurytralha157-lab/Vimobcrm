@@ -123,7 +123,7 @@ export function AiAgentsContent() {
         <section className="app-card p-3">
           <div className="mb-3 flex items-center justify-between gap-2">
             <div>
-              <h2 className="text-base font-semibold">Agentes</h2>
+              <h2 className="text-[14px] font-normal">Agentes</h2>
               <p className="text-xs text-muted-foreground">Prompts, ferramentas e handoffs.</p>
             </div>
             <Button size="sm" className="gap-2" onClick={() => setForm(emptyForm())}>
@@ -150,7 +150,7 @@ export function AiAgentsContent() {
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold">{agent.name}</p>
+                      <p className="truncate text-[12px] font-normal">{agent.name}</p>
                       <p className="truncate text-xs text-muted-foreground">{agent.description || agent.config.type}</p>
                     </div>
                     <Badge className={cn("border-0", statusClass(agent.status))}>{statusLabel(agent.status)}</Badge>
@@ -174,7 +174,7 @@ export function AiAgentsContent() {
           <div className="app-card p-4">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-base font-semibold">{form.id ? "Editar agente" : "Novo agente"}</h2>
+                <h2 className="text-[14px] font-normal">{form.id ? "Editar agente" : "Novo agente"}</h2>
                 <p className="text-xs text-muted-foreground">O prompt é liberado, mas a segurança fica fixa no backend.</p>
               </div>
               {form.id && (
@@ -312,7 +312,7 @@ export function AiAgentsContent() {
                 <Bot className="size-4" />
               </div>
               <div>
-                <h2 className="text-base font-semibold">Teste rapido</h2>
+                <h2 className="text-[14px] font-normal">Teste rápido</h2>
                 <p className="text-xs text-muted-foreground">Usa OpenAI quando a chave existir.</p>
               </div>
             </div>
@@ -340,7 +340,7 @@ export function AiAgentsContent() {
               <div className="mt-4 space-y-3">
                 <div className="rounded-md bg-[var(--app-surface-soft)] p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
-                    <span className="text-sm font-semibold">{testResult.agent.name}</span>
+                    <span className="text-[12px] font-normal">{testResult.agent.name}</span>
                     <Badge className="border-0 bg-[var(--app-surface)] text-xs text-muted-foreground">{testResult.mode}</Badge>
                   </div>
                   {testResult.handoff && (
@@ -352,11 +352,11 @@ export function AiAgentsContent() {
                 </div>
                 {testResult.requiresApproval?.length ? (
                   <div className="rounded-md bg-[var(--app-surface-soft)] p-3">
-                    <p className="mb-2 text-xs font-semibold text-muted-foreground">Acoes que exigem aprovacao</p>
+                    <p className="mb-2 text-[12px] font-light text-muted-foreground">Ações que exigem aprovação</p>
                     <div className="space-y-2">
                       {testResult.requiresApproval.map((action) => (
                         <div key={action.type} className="rounded-md bg-[var(--app-surface)] p-2 text-xs">
-                          <p className="font-semibold">{action.label}</p>
+                          <p className="font-normal">{action.label}</p>
                           <p className="text-muted-foreground">{action.description}</p>
                         </div>
                       ))}
@@ -376,7 +376,7 @@ function SummaryCard({ label, value }: { label: string; value: string | number }
   return (
     <div className="app-card p-4">
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-1 text-2xl font-semibold">{value}</p>
+      <p className="mt-1 text-[20px] font-normal">{value}</p>
     </div>
   );
 }

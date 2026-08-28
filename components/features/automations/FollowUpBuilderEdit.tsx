@@ -900,14 +900,14 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="h-9 min-w-[220px] rounded-[8px] border-0 bg-[var(--app-background)] px-3 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus-visible:ring-1"
+              className="h-9 min-w-[220px] rounded-[6px] border-0 bg-[var(--app-background)] px-3 text-[12px] font-normal text-foreground placeholder:text-muted-foreground focus-visible:ring-1"
               placeholder="Nome da automação"
             />
           </div>
         </div>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 rounded-[8px] border border-[var(--app-border)] bg-[var(--app-background)] px-3 py-1.5">
-            <span className={`text-[10px] font-bold uppercase tracking-wider ${isActive ? 'text-green-500' : 'text-muted-foreground'}`}>
+            <span className={`text-[12px] font-light ${isActive ? 'text-success' : 'text-muted-foreground'}`}>
               {isActive ? 'Ativa' : 'Inativa'}
             </span>
             <Switch
@@ -1019,7 +1019,7 @@ function FollowUpBuilderEditInner({ automationId, onBack, onComplete }: FollowUp
           >
             <Controls />
             <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="hsl(var(--muted-foreground) / 0.15)" />
-            <Panel position="bottom-center" className="rounded-[8px] border-0 !bg-[var(--app-surface)] px-4 py-2.5 text-xs text-muted-foreground shadow-sm">
+            <Panel position="bottom-center" className="rounded-[8px] border-0 !bg-[var(--app-surface)] px-4 py-2.5 text-xs text-muted-foreground shadow-none">
               Arraste para conectar • Clique para editar • Ctrl+C/V para copiar/colar
             </Panel>
           </ReactFlow>

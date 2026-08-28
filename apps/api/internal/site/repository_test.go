@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 )
@@ -117,29 +118,34 @@ func TestEnrichTrackingLocationInfersCountryFromBrowserMetadata(t *testing.T) {
 	}
 }
 
-func TestPublicPropertyJSONDoesNotExposeExactLocation(t *testing.T) {
+func TestPublicPropertyJSONGatesExactLocationByVisibility(t *testing.T) {
 	query := publicPropertyJSONSQL()
 
 	for _, field := range []string{
-		"'endereco'",
-		"'numero'",
-		"'complemento'",
-		"'cep'",
 		"'quadra'",
 		"'lote'",
 		"'condominio_nome'",
 		"'metadata'",
-		"'public_address_visibility'",
 	} {
 		if strings.Contains(query, field) {
 			t.Fatalf("public property payload exposes exact location field %s", field)
 		}
 	}
 
-	for _, field := range []string{"'bairro'", "'cidade'", "'estado'"} {
+	for _, field := range []string{"'public_address_visibility'", "'bairro'", "'cidade'", "'estado'"} {
 		if !strings.Contains(query, field) {
 			t.Fatalf("public property payload should preserve approximate location field %s", field)
 		}
+	}
+	visibility := publicAddressVisibilitySQL("p")
+	for _, field := range []string{"endereco", "numero", "complemento", "cep", "latitude", "longitude"} {
+		expected := "'" + field + "', case when " + visibility + " = 'completo'"
+		if !strings.Contains(query, expected) {
+			t.Fatalf("exact field %q is not gated by complete visibility", field)
+		}
+	}
+	if !strings.Contains(query, "'bairro', case when "+visibility+" = 'minimo' then null") {
+		t.Fatal("minimum visibility can leak neighborhood")
 	}
 }
 
@@ -153,6 +159,108 @@ func TestPublicPropertySearchCannotProbeExactLocation(t *testing.T) {
 	for _, fragment := range []string{"p.endereco", "p.condominium_id", "property_condominiums"} {
 		if strings.Contains(clauses, fragment) {
 			t.Fatalf("public property search can probe exact location through %s", fragment)
+		}
+	}
+}
+
+func TestPublicContactReentryKeepsTheLeadLockAtTheTransactionTail(t *testing.T) {
+	raw, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatalf("read repository: %v", err)
+	}
+	repository := string(raw)
+	start := strings.Index(repository, "func (repo Repository) CreatePublicContact(")
+	if start < 0 {
+		t.Fatal("could not find CreatePublicContact")
+	}
+	end := strings.Index(repository[start:], "func phoneDigits(")
+	if end < 0 {
+		t.Fatal("could not isolate CreatePublicContact")
+	}
+	createContact := repository[start : start+end]
+
+	for _, forbidden := range []string{"pg_advisory_xact_lock", "limit 1 for update"} {
+		if strings.Contains(strings.ToLower(createContact), forbidden) {
+			t.Fatalf("public contact still serializes the full transaction through %q", forbidden)
+		}
+	}
+	for _, required := range []string{
+		"on conflict do nothing",
+		"tag.RowsAffected() != 1",
+		"publicingress.Allow(",
+		"distribution.Distribute(",
+	} {
+		if !strings.Contains(createContact, required) {
+			t.Fatalf("public contact is missing concurrency contract %q", required)
+		}
+	}
+	if count := strings.Count(createContact, "and btrim(phone) <> ''"); count != 2 {
+		t.Fatalf("normalized-phone lookups matching the partial unique index = %d, want 2", count)
+	}
+
+	analyticsWrite := strings.Index(createContact, "insert into public.site_analytics_events")
+	rateLimit := strings.Index(createContact, "publicingress.Allow(")
+	reentryUpdate := strings.LastIndex(createContact, "update public.leads set")
+	distributionCall := strings.Index(createContact, "distribution.Distribute(")
+	idempotentReturn := strings.Index(createContact, `"idempotent": true`)
+	if analyticsWrite < 0 || rateLimit < 0 || reentryUpdate < 0 || distributionCall < 0 || idempotentReturn < 0 {
+		t.Fatal("could not locate public contact transaction phases")
+	}
+	if idempotentReturn >= rateLimit {
+		t.Fatal("idempotent retries must return before consuming a public ingress budget")
+	}
+	if !(analyticsWrite < reentryUpdate && reentryUpdate < distributionCall) {
+		t.Fatalf(
+			"lead lock order is unsafe: analytics=%d reentry_update=%d distribution=%d",
+			analyticsWrite,
+			reentryUpdate,
+			distributionCall,
+		)
+	}
+}
+
+func TestPublicPropertyEligibilityMakesCanonicalStateAuthoritative(t *testing.T) {
+	eligibility := publicPropertyEligibilitySQL()
+	for _, required := range []string{
+		"publication_snapshot.payload is not null",
+		"coalesce(p.published_on_site, false) = true",
+		"not exists",
+		"publication_state.channel = 'site'",
+	} {
+		if !strings.Contains(strings.ToLower(eligibility), strings.ToLower(required)) {
+			t.Fatalf("eligibility is missing %q: %s", required, eligibility)
+		}
+	}
+	if !strings.Contains(publicPropertySnapshotJoinSQL(), "version.payload->'property'") {
+		t.Fatal("public property projection does not read the immutable version payload")
+	}
+	if output := publicPropertyOutputSQL(); !strings.HasPrefix(output, "coalesce(publication_snapshot.payload") {
+		t.Fatalf("public output does not prefer the central snapshot: %s", output)
+	}
+}
+
+func TestPublicPropertyCodeLookupUsesVersionedSnapshot(t *testing.T) {
+	raw, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatalf("read repository: %v", err)
+	}
+	repository := string(raw)
+	start := strings.Index(repository, "func (repo Repository) getPublicProperty(")
+	if start < 0 {
+		t.Fatal("could not find getPublicProperty")
+	}
+	end := strings.Index(repository[start:], "func (repo Repository) listPublicPropertyTypes(")
+	if end < 0 {
+		t.Fatal("could not isolate getPublicProperty")
+	}
+	getProperty := repository[start : start+end]
+	for _, required := range []string{
+		"publicPropertyOutputSQL()",
+		"publicPropertySnapshotJoinSQL()",
+		"publicPropertyTextSQL(\"codigo\", \"p.code\")",
+	} {
+		if !strings.Contains(getProperty, required) {
+			t.Fatalf("snapshot property lookup is missing %q", required)
 		}
 	}
 }

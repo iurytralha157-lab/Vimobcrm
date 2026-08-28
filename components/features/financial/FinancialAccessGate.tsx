@@ -7,6 +7,7 @@ import { LockKeyhole } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { canUseFinancialModule } from '@/lib/financial-access';
+import { DEFAULT_AUTHENTICATED_ROUTE } from '@/config/constants';
 
 export function FinancialAccessGate({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -35,10 +36,10 @@ export function FinancialAccessGate({ children }: { children: ReactNode }) {
           </p>
           <Button
             type="button"
-            className="mt-6 h-10 w-full rounded-[6px] bg-[#FF4529] text-white shadow-none hover:bg-[#f63e24]"
-            onClick={() => router.replace('/dashboard')}
+            className="mt-6 h-10 w-full rounded-[6px] bg-primary/50 text-primary-foreground shadow-none hover:bg-primary"
+            onClick={() => router.replace(DEFAULT_AUTHENTICATED_ROUTE)}
           >
-            Voltar ao dashboard
+            Voltar à página inicial
           </Button>
         </section>
       </main>

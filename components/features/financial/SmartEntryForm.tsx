@@ -126,7 +126,6 @@ export function SmartEntryForm({ onSuccess, onCancel, initialData }: SmartEntryF
         is_recurring: values.is_recurring,
         recurring_type: values.recurring_type,
         notes: values.notes,
-        status: 'pending',
       });
       form.reset();
       setDetection(null);

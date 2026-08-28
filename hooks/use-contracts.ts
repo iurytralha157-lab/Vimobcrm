@@ -46,23 +46,45 @@ export interface Contract {
   brokers?: ContractBroker[];
 }
 
-type CreateContractInput = Omit<Partial<Contract>, 'brokers'> & {
-  brokers?: { user_id: string; commission_percentage: number }[];
+type ContractBrokerInput = {
+  user_id: string;
+  commission_percentage: number;
 };
 
-type UpdateContractInput = Omit<Partial<Contract>, 'brokers'> & {
+type ContractMutationFields = Omit<
+  Partial<Contract>,
+  | "id"
+  | "organization_id"
+  | "contract_number"
+  | "status"
+  | "created_by"
+  | "created_at"
+  | "updated_at"
+  | "property"
+  | "lead"
+  | "brokers"
+>;
+
+type CreateContractInput = ContractMutationFields & {
+  brokers?: ContractBrokerInput[];
+};
+
+type UpdateContractInput = ContractMutationFields & {
   id: string;
-  brokers?: { user_id: string; commission_percentage: number }[];
+  brokers?: ContractBrokerInput[];
 };
 
-export function useContracts(filters?: { status?: string; type?: string }) {
+export function useContracts(
+  filters?: { status?: string; type?: string; limit?: number; offset?: number },
+  options: { enabled?: boolean } = {},
+) {
   const { profile, organization } = useAuth();
   const organizationId = organization?.id || profile?.organization_id;
 
   return useQuery({
     queryKey: ['contracts', organizationId, filters],
     queryFn: () => financialAPI.listContracts<Contract[]>(filters, organizationId),
-    enabled: !!organizationId,
+    enabled: !!organizationId && options.enabled !== false,
   });
 }
 
@@ -71,7 +93,7 @@ export function useContract(id: string | undefined) {
   const organizationId = organization?.id || profile?.organization_id;
 
   return useQuery({
-    queryKey: ['contract', id],
+    queryKey: ['contract', organizationId, id],
     queryFn: () => (id ? financialAPI.getContract<Contract>(id, organizationId) : null),
     enabled: !!id && !!organizationId,
   });
@@ -106,6 +128,7 @@ export function useUpdateContract() {
   return useMutation({
     mutationFn: ({ id, ...data }: UpdateContractInput) => {
       const orgId = organization?.id || profile?.organization_id;
+      if (!orgId) throw new Error('Organização não encontrada');
       return financialAPI.updateContract<Contract>(id, data, orgId);
     },
     onSuccess: () => {
@@ -127,6 +150,7 @@ export function useActivateContract() {
   return useMutation({
     mutationFn: ({ contractId, skipCommissions = false }: { contractId: string; skipCommissions?: boolean }) => {
       const orgId = organization?.id || profile?.organization_id;
+      if (!orgId) throw new Error('Organização não encontrada');
       return financialAPI.activateContract<Contract>(contractId, { skipCommissions }, orgId);
     },
     onSuccess: () => {
@@ -138,6 +162,7 @@ export function useActivateContract() {
       toast({ title: "Contrato ativado com sucesso", description: "Lancamentos financeiros gerados." });
     },
     onError: (error: Error) => {
+      if (error.message === 'NO_BROKERS') return;
       toast({ title: "Erro ao ativar contrato", description: error.message, variant: "destructive" });
     },
   });
@@ -151,6 +176,7 @@ export function useRegenerateCommissions() {
   return useMutation({
     mutationFn: (contractId: string) => {
       const orgId = organization?.id || profile?.organization_id;
+      if (!orgId) throw new Error('Organização não encontrada');
       return financialAPI.regenerateCommissions<{ commissionsCount: number; totalValue: number }>(contractId, orgId);
     },
     onSuccess: (data) => {
@@ -178,6 +204,7 @@ export function useDeleteContract() {
   return useMutation({
     mutationFn: (id: string) => {
       const orgId = organization?.id || profile?.organization_id;
+      if (!orgId) throw new Error('Organização não encontrada');
       return financialAPI.deleteContract(id, orgId);
     },
     onSuccess: () => {

@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
+	"log/slog"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -18,56 +19,65 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
 type ExternalConfig struct {
-	ProjectURL        string
-	APIKey            string
-	ResendAPIKey      string
-	FromEmail         string
-	ReplyTo           string
-	SupportEmail      string
-	AppURL            string
-	EvolutionGoURL    string
-	EvolutionGoAPIKey string
-	AsaasURL          string
-	AsaasAPIKey       string
+	Environment          string
+	ProjectURL           string
+	APIKey               string
+	ResendAPIKey         string
+	FromEmail            string
+	ReplyTo              string
+	SupportEmail         string
+	AppURL               string
+	EvolutionGoURL       string
+	EvolutionGoAPIKey    string
+	AsaasURL             string
+	AsaasAPIKey          string
+	SignupRecoverySecret string
 }
 
 type Repository struct {
-	db                *dbpkg.Postgres
-	projectURL        string
-	apiKey            string
-	resendAPIKey      string
-	fromEmail         string
-	replyTo           string
-	supportEmail      string
-	appURL            string
-	evolutionGoURL    string
-	evolutionGoAPIKey string
-	asaasURL          string
-	asaasAPIKey       string
-	httpClient        *http.Client
+	db                   *dbpkg.Postgres
+	environment          string
+	projectURL           string
+	apiKey               string
+	resendAPIKey         string
+	fromEmail            string
+	replyTo              string
+	supportEmail         string
+	appURL               string
+	evolutionGoURL       string
+	evolutionGoAPIKey    string
+	asaasURL             string
+	asaasAPIKey          string
+	signupRecoverySecret string
+	httpClient           *http.Client
 }
+
+const organizationAuthCleanupTimeout = 10 * time.Second
 
 func NewRepository(db *dbpkg.Postgres, externalConfig ExternalConfig) Repository {
 	return Repository{
-		db:                db,
-		projectURL:        strings.TrimRight(strings.TrimSpace(externalConfig.ProjectURL), "/"),
-		apiKey:            strings.TrimSpace(externalConfig.APIKey),
-		resendAPIKey:      strings.TrimSpace(externalConfig.ResendAPIKey),
-		fromEmail:         cleanEmailHeader(firstNonEmpty(externalConfig.FromEmail, "Vimob CRM <naoresponde@vimobcrm.com.br>")),
-		replyTo:           cleanEmailHeader(firstNonEmpty(externalConfig.ReplyTo, "contato@vimobcrm.com.br")),
-		supportEmail:      cleanEmailHeader(firstNonEmpty(externalConfig.SupportEmail, "contato@vimobcrm.com.br")),
-		appURL:            strings.TrimRight(firstNonEmpty(externalConfig.AppURL, "https://app.vimobcrm.com.br"), "/"),
-		evolutionGoURL:    strings.TrimRight(strings.TrimSpace(externalConfig.EvolutionGoURL), "/"),
-		evolutionGoAPIKey: strings.TrimSpace(externalConfig.EvolutionGoAPIKey),
-		asaasURL:          strings.TrimRight(strings.TrimSpace(externalConfig.AsaasURL), "/"),
-		asaasAPIKey:       strings.TrimSpace(externalConfig.AsaasAPIKey),
-		httpClient:        &http.Client{Timeout: 30 * time.Second},
+		db:                   db,
+		environment:          strings.ToLower(strings.TrimSpace(externalConfig.Environment)),
+		projectURL:           strings.TrimRight(strings.TrimSpace(externalConfig.ProjectURL), "/"),
+		apiKey:               strings.TrimSpace(externalConfig.APIKey),
+		resendAPIKey:         strings.TrimSpace(externalConfig.ResendAPIKey),
+		fromEmail:            cleanEmailHeader(firstNonEmpty(externalConfig.FromEmail, "Vimob CRM <naoresponde@vimobcrm.com.br>")),
+		replyTo:              cleanEmailHeader(firstNonEmpty(externalConfig.ReplyTo, "contato@vimobcrm.com.br")),
+		supportEmail:         cleanEmailHeader(firstNonEmpty(externalConfig.SupportEmail, "contato@vimobcrm.com.br")),
+		appURL:               strings.TrimRight(firstNonEmpty(externalConfig.AppURL, "https://app.vimobcrm.com.br"), "/"),
+		evolutionGoURL:       strings.TrimRight(strings.TrimSpace(externalConfig.EvolutionGoURL), "/"),
+		evolutionGoAPIKey:    strings.TrimSpace(externalConfig.EvolutionGoAPIKey),
+		asaasURL:             strings.TrimRight(strings.TrimSpace(externalConfig.AsaasURL), "/"),
+		asaasAPIKey:          strings.TrimSpace(externalConfig.AsaasAPIKey),
+		signupRecoverySecret: strings.TrimSpace(externalConfig.SignupRecoverySecret),
+		httpClient:           &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -147,14 +157,40 @@ func (repo Repository) ListUsers(ctx context.Context, tenantContext tenant.Conte
 }
 
 func (repo Repository) ListActiveAnnouncements(ctx context.Context, tenantContext tenant.Context) ([]map[string]any, error) {
+	isAdminAudience := tenantContext.IsSuperAdmin || tenantContext.HasRole("owner", "admin")
+	isBrokerAudience := !tenantContext.IsSuperAdmin && tenantContext.HasRole("user")
 	return repo.queryJSONRows(ctx, `
-		select to_jsonb(a)
-		from public.announcements a
+		select a.record
+		from (
+			select announcement.*, to_jsonb(announcement) as record
+			from public.announcements announcement
+		) a
 		where coalesce(a.is_active, false) = true
 		  and coalesce(a.show_banner, false) = true
+		  and (
+			nullif(a.record->>'starts_at', '') is null
+			or nullif(a.record->>'starts_at', '')::timestamptz <= now()
+		  )
+		  and (
+			nullif(a.record->>'ends_at', '') is null
+			or nullif(a.record->>'ends_at', '')::timestamptz >= now()
+		  )
+		  and (
+			a.target_type = 'all'
+			or (
+				a.target_type = 'specific'
+				and nullif($2, '')::uuid = any(coalesce(a.target_user_ids, '{}'::uuid[]))
+			)
+			or (
+				a.target_type = 'organizations'
+				and nullif($1, '')::uuid = any(coalesce(a.target_organization_ids, '{}'::uuid[]))
+			)
+			or (a.target_type = 'admins' and $3::boolean)
+			or (a.target_type = 'brokers' and $4::boolean)
+		  )
 		order by a.created_at desc
 		limit 30
-	`)
+	`, tenantContext.OrganizationID, tenantContext.UserID, isAdminAudience, isBrokerAudience)
 }
 
 func (repo Repository) ListMyFeatureRequests(ctx context.Context, tenantContext tenant.Context) ([]map[string]any, error) {
@@ -235,10 +271,32 @@ func (repo Repository) ListInvitations(ctx context.Context, tenantContext tenant
 		return nil, err
 	}
 	return repo.queryJSONRows(ctx, `
-		select to_jsonb(i) || jsonb_build_object('is_expired', i.expires_at <= now())
+		select (to_jsonb(i) - 'token' - 'token_hash') || jsonb_build_object(
+			'is_expired', i.expires_at <= now(),
+			'email_status', delivery.status,
+			'email_provider_message_id', delivery.provider_message_id,
+			'email_accepted_at', delivery.accepted_at,
+			'email_delivered_at', delivery.delivered_at,
+			'email_last_event_at', delivery.last_event_at
+		)
 		from public.invitations i
+		left join lateral (
+			select
+				logs.status,
+				logs.provider_message_id,
+				logs.accepted_at,
+				logs.delivered_at,
+				logs.last_event_at
+			from public.email_logs logs
+			where logs.organization_id = i.organization_id
+			  and logs.provider = 'resend'
+			  and logs.template_key = 'invitation'
+			  and logs.metadata ->> 'invitation_id' = i.id::text
+			order by logs.created_at desc
+			limit 1
+		) delivery on true
 		where i.organization_id = $1::uuid
-		  and i.used_at is null
+		  and (i.used_at is null or i.used_at >= now() - interval '90 days')
 		order by i.created_at desc
 	`, organizationID)
 }
@@ -259,8 +317,12 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 	default:
 		return nil, ErrInvalidInput
 	}
+	if (role == "admin" || role == "manager") && !canCreatePrivilegedInvitation(tenantContext) {
+		return nil, tenant.ErrOrganizationAccessDenied
+	}
 
 	var email *string
+	var recipientUserID *string
 	existingAccount := false
 	if request.Email != nil {
 		normalizedEmail, err := normalizeEmail(*request.Email)
@@ -271,6 +333,7 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 		existingUserID, lookupErr := repo.userIDByEmail(ctx, normalizedEmail)
 		if lookupErr == nil && existingUserID != "" {
 			existingAccount = true
+			recipientUserID = &existingUserID
 			alreadyMember, memberErr := repo.userBelongsToOrganization(ctx, existingUserID, resolvedOrganizationID)
 			if memberErr != nil {
 				return nil, memberErr
@@ -300,6 +363,11 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 			return nil, ErrInvitationAlreadyPending
 		}
 	}
+	plaintextToken, err := randomInvitationToken()
+	if err != nil {
+		return nil, err
+	}
+	tokenHash := invitationTokenHash(plaintextToken)
 
 	item, err := repo.queryJSONObject(ctx, `
 		insert into public.invitations (
@@ -307,23 +375,29 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 			email,
 			role,
 			created_by,
-			expires_at
+			expires_at,
+			token,
+			token_hash
 		)
 		values (
 			$1::uuid,
 			$2,
 			$3,
 			$4::uuid,
-			coalesce($5::timestamptz, now() + interval '7 days')
+			coalesce($5::timestamptz, now() + interval '7 days'),
+			$6,
+			$7
 		)
-		returning to_jsonb(invitations)
-	`, resolvedOrganizationID, email, role, tenantContext.UserID, cleanString(request.ExpiresAt))
+		returning to_jsonb(invitations) - 'token' - 'token_hash'
+	`, resolvedOrganizationID, email, role, tenantContext.UserID, cleanString(request.ExpiresAt), plaintextToken, tokenHash)
 	if err != nil {
 		if isPendingInvitationUniqueViolation(err) {
 			return nil, ErrInvitationAlreadyPending
 		}
 		return nil, err
 	}
+	invitationID, _ := item["id"].(string)
+	stripInvitationToken(item)
 
 	emailSent := false
 	if email != nil {
@@ -331,21 +405,36 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 		if orgErr != nil {
 			return nil, orgErr
 		}
-		token, _ := item["token"].(string)
-		if token != "" {
-			if err := repo.sendInvitationEmail(ctx, invitationEmailInput{
+		if plaintextToken != "" {
+			delivery, sendErr := repo.sendInvitationEmail(ctx, invitationEmailInput{
+				InvitationID:     invitationID,
+				OrganizationID:   resolvedOrganizationID,
+				UserID:           recipientUserID,
 				Email:            *email,
 				OrganizationName: organizationName,
 				Role:             role,
-				InviteURL:        repo.invitationURL(token),
+				InviteURL:        repo.invitationURL(plaintextToken),
 				ExistingAccount:  existingAccount,
-			}); err != nil {
-				if id, _ := item["id"].(string); id != "" {
-					_, _ = repo.db.Pool().Exec(ctx, `delete from public.invitations where id = $1::uuid`, id)
-				}
-				return nil, fmt.Errorf("%w: %v", ErrInvitationEmailFailed, err)
+				IdempotencyKey:   invitationEmailIdempotencyKey(invitationID, tokenHash),
+			})
+			if sendErr != nil {
+				// Keep the token valid when delivery is rejected or its outcome is
+				// ambiguous. The UI can show the pending invite and safely retry it;
+				// deleting it here could turn an already accepted Resend request into
+				// an email containing a dead link.
+				slog.Error(
+					"invitation created but email delivery failed",
+					"invitation_id", invitationID,
+					"organization_id", resolvedOrganizationID,
+					"error", sendErr,
+				)
+				item["email_sent"] = false
+				item["existing_account"] = existingAccount
+				return item, nil
 			}
 			emailSent = true
+			item["email_status"] = delivery.Status
+			item["email_provider_message_id"] = delivery.ProviderMessageID
 		}
 	}
 	item["email_sent"] = emailSent
@@ -373,9 +462,10 @@ func (repo Repository) ResendInvitation(ctx context.Context, tenantContext tenan
 	var email pgtype.Text
 	var role string
 	var previousToken string
+	var previousTokenHash string
 	var previousExpiresAt time.Time
 	err := repo.db.Pool().QueryRow(ctx, `
-		select organization_id::text, email, coalesce(nullif(role, ''), 'user'), token, expires_at
+		select organization_id::text, email, coalesce(nullif(role, ''), 'user'), token, token_hash, expires_at
 		from public.invitations
 		where id = $1::uuid
 		  and used_at is null
@@ -385,6 +475,7 @@ func (repo Repository) ResendInvitation(ctx context.Context, tenantContext tenan
 		&email,
 		&role,
 		&previousToken,
+		&previousTokenHash,
 		&previousExpiresAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -396,15 +487,20 @@ func (repo Repository) ResendInvitation(ctx context.Context, tenantContext tenan
 	if !email.Valid || strings.TrimSpace(email.String) == "" {
 		return nil, ErrInvitationEmailMissing
 	}
+	if (role == "admin" || role == "manager") && !canCreatePrivilegedInvitation(tenantContext) {
+		return nil, tenant.ErrOrganizationAccessDenied
+	}
 
 	normalizedEmail, err := normalizeEmail(email.String)
 	if err != nil {
 		return nil, err
 	}
 	existingAccount := false
+	var recipientUserID *string
 	existingUserID, lookupErr := repo.userIDByEmail(ctx, normalizedEmail)
 	if lookupErr == nil && existingUserID != "" {
 		existingAccount = true
+		recipientUserID = &existingUserID
 		alreadyMember, memberErr := repo.userBelongsToOrganization(ctx, existingUserID, organizationID)
 		if memberErr != nil {
 			return nil, memberErr
@@ -424,44 +520,117 @@ func (repo Repository) ResendInvitation(ctx context.Context, tenantContext tenan
 	if err != nil {
 		return nil, err
 	}
+	newTokenHash := invitationTokenHash(newToken)
 
 	item, err := repo.queryJSONObject(ctx, `
 		update public.invitations
 		set token = $2,
+		    token_hash = $3,
 		    expires_at = now() + interval '7 days'
 		where id = $1::uuid
 		  and used_at is null
-		  and token = $3
-		returning to_jsonb(invitations)
-	`, invitationID, newToken, previousToken)
+		  and token = $4
+		  and token_hash = $5
+		returning to_jsonb(invitations) - 'token' - 'token_hash'
+	`, invitationID, newToken, newTokenHash, previousToken, previousTokenHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	stripInvitationToken(item)
 
-	if err := repo.sendInvitationEmail(ctx, invitationEmailInput{
+	delivery, sendErr := repo.sendInvitationEmail(ctx, invitationEmailInput{
+		InvitationID:     invitationID,
+		OrganizationID:   organizationID,
+		UserID:           recipientUserID,
 		Email:            normalizedEmail,
 		OrganizationName: organizationName,
 		Role:             role,
 		InviteURL:        repo.invitationURL(newToken),
 		ExistingAccount:  existingAccount,
-	}); err != nil {
-		// Preserve the prior link when the delivery provider rejects the resend.
-		_, _ = repo.db.Pool().Exec(ctx, `
-			update public.invitations
-			set token = $2,
-			    expires_at = $3
-			where id = $1::uuid
-			  and token = $4
-		`, invitationID, previousToken, previousExpiresAt, newToken)
-		return nil, fmt.Errorf("%w: %v", ErrInvitationEmailFailed, err)
+		IdempotencyKey:   invitationEmailIdempotencyKey(invitationID, newTokenHash),
+	})
+	if sendErr != nil {
+		if !errors.Is(sendErr, errInvitationEmailDefinitelyNotAccepted) {
+			// A timeout, a truncated response or an acceptance-log failure can
+			// happen after Resend accepted the message. Keep the new token valid
+			// so an eventually delivered email never contains a dead link.
+			slog.Error(
+				"invitation resend delivery outcome is unknown",
+				"invitation_id", invitationID,
+				"organization_id", organizationID,
+				"error", sendErr,
+			)
+			item["email_sent"] = false
+			item["email_status"] = "delivery_unknown"
+			item["existing_account"] = existingAccount
+			return item, nil
+		}
+
+		restoreContext, cancelRestore := context.WithTimeout(context.WithoutCancel(ctx), invitationEmailLogTimeout)
+		defer cancelRestore()
+		restoreErr := repo.restoreInvitationTokenPair(
+			restoreContext,
+			invitationID,
+			previousToken,
+			previousTokenHash,
+			previousExpiresAt,
+			newToken,
+			newTokenHash,
+		)
+		deliveryErr := fmt.Errorf("%w: %v", ErrInvitationEmailFailed, sendErr)
+		if restoreErr != nil {
+			return nil, errors.Join(deliveryErr, fmt.Errorf("restore invitation token pair: %w", restoreErr))
+		}
+		return nil, deliveryErr
 	}
 
 	item["email_sent"] = true
+	item["email_status"] = delivery.Status
+	item["email_provider_message_id"] = delivery.ProviderMessageID
 	item["existing_account"] = existingAccount
 	return item, nil
+}
+
+func (repo Repository) restoreInvitationTokenPair(
+	ctx context.Context,
+	invitationID string,
+	previousToken string,
+	previousTokenHash string,
+	previousExpiresAt time.Time,
+	failedToken string,
+	failedTokenHash string,
+) error {
+	tag, err := repo.db.Pool().Exec(ctx, `
+		update public.invitations
+		set token = $2,
+		    token_hash = $3,
+		    expires_at = $4
+		where id = $1::uuid
+		  and used_at is null
+		  and token = $5
+		  and token_hash = $6
+	`, invitationID, previousToken, previousTokenHash, previousExpiresAt, failedToken, failedTokenHash)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("invitation token pair changed concurrently")
+	}
+	return nil
+}
+
+func stripInvitationToken(item map[string]any) {
+	delete(item, "token")
+	delete(item, "token_hash")
+}
+
+func canCreatePrivilegedInvitation(tenantContext tenant.Context) bool {
+	return tenantContext.IsSuperAdmin ||
+		(tenantContext.HasRole("owner", "admin") &&
+			tenantContext.HasPermission(permissions.PermissionsManage))
 }
 
 func (repo Repository) userBelongsToOrganization(ctx context.Context, userID string, organizationID string) (bool, error) {
@@ -532,7 +701,8 @@ func (repo Repository) DeleteInvitation(ctx context.Context, tenantContext tenan
 		delete from public.invitations
 		where id = $1::uuid
 		  and organization_id = $2::uuid
-	`, invitationID, tenantContext.OrganizationID)
+		  and (coalesce(nullif(role, ''), 'user') not in ('admin', 'manager') or $3)
+	`, invitationID, tenantContext.OrganizationID, canCreatePrivilegedInvitation(tenantContext))
 	if err != nil {
 		return err
 	}
@@ -547,6 +717,7 @@ func (repo Repository) ShowInvitationByToken(ctx context.Context, token string) 
 	if token == "" {
 		return nil, ErrInvalidInput
 	}
+	tokenHash := invitationTokenHash(token)
 	item, err := repo.queryJSONObject(ctx, `
 		select jsonb_build_object(
 			'id', i.id::text,
@@ -557,18 +728,19 @@ func (repo Repository) ShowInvitationByToken(ctx context.Context, token string) 
 			'expires_at', i.expires_at,
 			'existing_account', exists (
 				select 1
-				from public.users u
-				where lower(u.email) = lower(i.email)
+				from auth.users au
+				where lower(au.email) = lower(i.email)
+				  and au.deleted_at is null
 				limit 1
 			)
 		)
 		from public.invitations i
 		join public.organizations o on o.id = i.organization_id
-		where i.token = $1
+		where i.token_hash = $1
 		  and i.used_at is null
 		  and i.expires_at > now()
 		limit 1
-	`, token)
+	`, tokenHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -681,8 +853,13 @@ func (repo Repository) ListActiveSubscriptionPlans(ctx context.Context) ([]map[s
 			'slug', p.slug,
 			'name', p.name,
 			'price', p.price,
+			'reference_price', p.reference_price,
+			'discount_percentage', p.discount_percentage,
 			'billing_cycle', p.billing_cycle,
+			'billing_periods', p.billing_periods,
 			'description', p.description,
+			'display_features', p.display_features,
+			'display_order', p.display_order,
 			'trial_enabled', p.trial_enabled,
 			'trial_days', p.trial_days,
 			'max_users', p.max_users,
@@ -693,19 +870,23 @@ func (repo Repository) ListActiveSubscriptionPlans(ctx context.Context) ([]map[s
 		)
 		from public.admin_subscription_plans p
 		where coalesce(p.is_active, true) = true
-		order by p.price asc, p.name asc
+		order by p.display_order asc, p.price asc, p.name asc
 	`)
 }
 
-func (repo Repository) ListPublicSubscriptionPlans(ctx context.Context) ([]map[string]any, error) {
-	return repo.queryJSONRows(ctx, `
+const listPublicSubscriptionPlansSQL = `
 		select jsonb_build_object(
 			'id', p.id::text,
 			'slug', p.slug,
 			'name', p.name,
 			'price', p.price,
+			'reference_price', p.reference_price,
+			'discount_percentage', p.discount_percentage,
 			'billing_cycle', p.billing_cycle,
+			'billing_periods', p.billing_periods,
 			'description', p.description,
+			'display_features', p.display_features,
+			'display_order', p.display_order,
 			'trial_enabled', p.trial_enabled,
 			'trial_days', p.trial_days,
 			'max_users', p.max_users,
@@ -715,19 +896,36 @@ func (repo Repository) ListPublicSubscriptionPlans(ctx context.Context) ([]map[s
 		from public.admin_subscription_plans p
 		where coalesce(p.is_active, true) = true
 		  and coalesce(p.is_public, true) = true
-		order by p.price asc, p.name asc
-	`)
+		order by p.display_order asc, p.price asc, p.name asc
+	`
+
+func (repo Repository) ListPublicSubscriptionPlans(ctx context.Context) ([]map[string]any, error) {
+	return repo.queryJSONRows(ctx, listPublicSubscriptionPlansSQL)
 }
 
 func (repo Repository) ListTableRows(ctx context.Context, tenantContext tenant.Context, table string, limit int) ([]map[string]any, error) {
 	if !tenantContext.IsSuperAdmin {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
-	if !isAllowedAdminTable(table) {
+	if !isAllowedAdminReadTable(table) {
 		return nil, ErrInvalidInput
 	}
 	if limit < 1 || limit > 200 {
 		limit = 60
+	}
+	if strings.TrimSpace(table) == "notifications" {
+		return repo.queryJSONRows(ctx, `
+			select jsonb_build_object(
+			  'id', notification.id,
+			  'title', '[redigido]',
+			  'type', coalesce(notification.type, 'info'),
+			  'is_read', notification.is_read,
+			  'created_at', notification.created_at
+			)
+			from public.notifications as notification
+			order by notification.created_at desc, notification.id
+			limit $1
+		`, limit)
 	}
 	identifier := pgx.Identifier{"public", table}.Sanitize()
 	return repo.queryJSONRows(ctx, fmt.Sprintf(`select to_jsonb(t) from (select * from %s limit $1) t`, identifier), limit)
@@ -737,7 +935,7 @@ func (repo Repository) CountTableRows(ctx context.Context, tenantContext tenant.
 	if !tenantContext.IsSuperAdmin {
 		return 0, tenant.ErrOrganizationAccessDenied
 	}
-	if !isAllowedAdminTable(table) {
+	if !isAllowedAdminReadTable(table) {
 		return 0, ErrInvalidInput
 	}
 	identifier := pgx.Identifier{"public", table}.Sanitize()
@@ -752,6 +950,9 @@ func (repo Repository) CreateTableRow(ctx context.Context, tenantContext tenant.
 	}
 	if !isAllowedAdminTable(table) || len(payload) == 0 {
 		return nil, ErrInvalidInput
+	}
+	if strings.TrimSpace(table) == "announcements" {
+		return repo.createAnnouncementWithNotifications(ctx, payload)
 	}
 	columns, placeholders, args, err := buildAdminPayload(payload, 0)
 	if err != nil {
@@ -859,6 +1060,23 @@ func (repo Repository) ListOrganizationModules(ctx context.Context, tenantContex
 	`, organizationID)
 }
 
+const listOrganizationPaymentsSQL = `
+	select jsonb_build_object(
+		'id', p.id::text,
+		'status', coalesce(p.status, ''),
+		'value', p.value,
+		'billing_type', p.billing_type,
+		'due_date', p.due_date,
+		'payment_date', p.payment_date,
+		'created_at', p.created_at,
+		'updated_at', p.updated_at
+	)
+	from public.asaas_payments p
+	where p.organization_id = $1::uuid
+	order by p.due_date desc nulls last, p.created_at desc
+	limit 80
+`
+
 func (repo Repository) ListOrganizationPayments(ctx context.Context, tenantContext tenant.Context, organizationID string) ([]map[string]any, error) {
 	if !tenantContext.IsSuperAdmin {
 		return nil, tenant.ErrOrganizationAccessDenied
@@ -867,13 +1085,7 @@ func (repo Repository) ListOrganizationPayments(ctx context.Context, tenantConte
 	if !ok {
 		return nil, ErrInvalidInput
 	}
-	return repo.queryJSONRows(ctx, `
-		select to_jsonb(p)
-		from public.asaas_payments p
-		where p.organization_id = $1::uuid
-		order by p.due_date desc nulls last, p.created_at desc
-		limit 80
-	`, organizationID)
+	return repo.queryJSONRows(ctx, listOrganizationPaymentsSQL, organizationID)
 }
 
 func (repo Repository) DashboardOverview(ctx context.Context, tenantContext tenant.Context, period int) (map[string]any, error) {
@@ -1220,66 +1432,17 @@ func (repo Repository) DashboardPending(ctx context.Context, tenantContext tenan
 }
 
 func (repo Repository) CreateOrganization(ctx context.Context, tenantContext tenant.Context, request CreateOrganizationRequest) (map[string]any, error) {
-	if !tenantContext.IsSuperAdmin {
-		return nil, tenant.ErrOrganizationAccessDenied
-	}
-	name := strings.TrimSpace(request.Name)
-	adminName := strings.TrimSpace(request.AdminName)
-	adminEmail, err := normalizeEmail(request.AdminEmail)
-	if err != nil || name == "" || adminName == "" || len(strings.TrimSpace(request.AdminPassword)) < 8 {
-		return nil, ErrInvalidInput
-	}
+	return repo.createOrganizationWithAdminInvitation(ctx, tenantContext, request)
+}
 
-	authUserID, err := repo.createAuthUser(ctx, adminEmail, request.AdminPassword, adminName)
-	if err != nil {
-		return nil, err
-	}
-
-	tx, err := repo.db.Pool().Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
-
-	var orgID string
-	err = tx.QueryRow(ctx, `
-		insert into public.organizations (
-			name, segment, whatsapp, telefone, cnpj, creci, plan_id, endereco, cidade, bairro, numero, complemento, created_by
-		)
-		values ($1, coalesce($2, 'imobiliario'), $3, $4, $5, $6, $7::uuid, $8, $9, $10, $11, $12, $13::uuid)
-		returning id::text
-	`, name, cleanString(request.Segment), cleanString(request.Whatsapp), cleanString(request.Phone), cleanString(request.CNPJ), cleanString(request.Creci), cleanString(request.PlanID), cleanString(request.Address), cleanString(request.City), cleanString(request.Neighborhood), cleanString(request.Number), cleanString(request.Complement), tenantContext.UserID).Scan(&orgID)
-	if err != nil {
-		return nil, err
-	}
-
-	if _, err := tx.Exec(ctx, `
-		insert into public.users (id, organization_id, name, email, role, whatsapp, cpf, is_active)
-		values ($1::uuid, $2::uuid, $3, $4, 'user', $5, $6, true)
-		on conflict (id) do update set
-			organization_id = excluded.organization_id,
-			name = excluded.name,
-			email = excluded.email,
-			role = case when public.users.role = 'super_admin' then public.users.role else 'user' end,
-			is_active = true,
-			updated_at = now()
-	`, authUserID, orgID, adminName, adminEmail, cleanString(request.Whatsapp), cleanString(request.CPF)); err != nil {
-		return nil, err
-	}
-
-	if _, err := tx.Exec(ctx, `
-		insert into public.organization_members (organization_id, user_id, role, is_active)
-		values ($1::uuid, $2::uuid, 'admin', true)
-		on conflict (user_id, organization_id)
-		do update set role = 'admin', is_active = true, updated_at = now()
-	`, orgID, authUserID); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
-
-	return repo.getOrganizationByID(ctx, orgID)
+func runOrganizationProvisioningForNewAuthUser(
+	ctx context.Context,
+	persist func(context.Context) error,
+) error {
+	// Auth identities are global principals and may gain a membership in
+	// another tenant while persistence is failing. Never compensate a database
+	// failure by deleting the principal; preserve it for an idempotent retry.
+	return persist(ctx)
 }
 
 func (repo Repository) UpdateOrganization(ctx context.Context, tenantContext tenant.Context, organizationID string, request OrganizationUpdateRequest) error {
@@ -1323,6 +1486,7 @@ func (repo Repository) UpdateOrganizationAccess(ctx context.Context, tenantConte
 	if err := repo.UpdateOrganization(ctx, tenantContext, organizationID, request.OrganizationUpdates); err != nil {
 		return err
 	}
+	modules := organizationModulesWithCore(request.Modules)
 	if _, err := repo.db.Pool().Exec(ctx, `
 		update public.organization_modules
 		set is_enabled = false,
@@ -1331,7 +1495,7 @@ func (repo Repository) UpdateOrganizationAccess(ctx context.Context, tenantConte
 	`, organizationID); err != nil {
 		return err
 	}
-	for _, moduleName := range request.Modules {
+	for _, moduleName := range modules {
 		if err := repo.UpdateModuleAccess(ctx, tenantContext, ModuleAccessRequest{
 			OrganizationID: organizationID,
 			ModuleName:     moduleName,
@@ -1348,16 +1512,17 @@ func (repo Repository) UpdateModuleAccess(ctx context.Context, tenantContext ten
 		return tenant.ErrOrganizationAccessDenied
 	}
 	organizationID, ok := normalizeUUID(request.OrganizationID)
-	moduleName := strings.TrimSpace(request.ModuleName)
+	moduleName := canonicalOrganizationModuleName(request.ModuleName)
 	if !ok || moduleName == "" {
 		return ErrInvalidInput
 	}
+	isEnabled := request.IsEnabled || isCoreOrganizationModule(moduleName)
 	_, err := repo.db.Pool().Exec(ctx, `
 		insert into public.organization_modules (organization_id, module_name, is_enabled)
 		values ($1::uuid, $2, $3)
 		on conflict (organization_id, module_name)
 		do update set is_enabled = excluded.is_enabled, updated_at = now()
-	`, organizationID, moduleName, request.IsEnabled)
+	`, organizationID, moduleName, isEnabled)
 	return err
 }
 
@@ -1401,9 +1566,13 @@ func (repo Repository) ResetUserPassword(ctx context.Context, tenantContext tena
 
 	var name, email string
 	err := repo.db.Pool().QueryRow(ctx, `
-		select name, email
-		from public.users
-		where id = $1::uuid
+		select
+			coalesce(nullif(btrim(app_user.name), ''), split_part(auth_user.email, '@', 1)),
+			auth_user.email
+		from auth.users auth_user
+		left join public.users app_user on app_user.id = auth_user.id
+		where auth_user.id = $1::uuid
+		  and auth_user.deleted_at is null
 	`, userID).Scan(&name, &email)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -1416,11 +1585,7 @@ func (repo Repository) ResetUserPassword(ctx context.Context, tenantContext tena
 		return nil, ErrInvalidInput
 	}
 
-	password, err := generateTemporaryPassword()
-	if err != nil {
-		return nil, err
-	}
-	if err := repo.updateAuthUserPassword(ctx, userID, password); err != nil {
+	if err := repo.sendAuthPasswordRecovery(ctx, email); err != nil {
 		return nil, err
 	}
 
@@ -1433,15 +1598,24 @@ func (repo Repository) ResetUserPassword(ctx context.Context, tenantContext tena
 		)
 	`, userID, tenantContext.UserID)
 	if err != nil {
-		return nil, err
+		// The recovery email has already been accepted by Auth. Do not turn a
+		// successful security action into a false failure because only its audit
+		// trail could not be persisted.
+		slog.Error(
+			"password recovery email sent but audit event failed",
+			"user_id", userID,
+			"reset_by", tenantContext.UserID,
+			"error", err,
+		)
 	}
 
 	return map[string]any{
-		"user_id":            userID,
-		"name":               name,
-		"email":              email,
-		"temporary_password": password,
-		"updated_at":         time.Now().UTC().Format(time.RFC3339),
+		"user_id":      userID,
+		"name":         name,
+		"email":        email,
+		"delivery":     "email",
+		"email_sent":   true,
+		"requested_at": time.Now().UTC().Format(time.RFC3339),
 	}, nil
 }
 
@@ -1505,9 +1679,7 @@ func (repo Repository) createAuthUser(ctx context.Context, email string, passwor
 	if err != nil {
 		return "", err
 	}
-	request.Header.Set("apikey", repo.apiKey)
-	request.Header.Set("Authorization", "Bearer "+repo.apiKey)
-	request.Header.Set("Content-Type", "application/json")
+	setAuthAdminHeaders(request, repo.apiKey)
 	response, err := repo.httpClient.Do(request)
 	if err != nil {
 		return "", err
@@ -1527,47 +1699,6 @@ func (repo Repository) createAuthUser(ctx context.Context, email string, passwor
 		return "", ErrInvalidInput
 	}
 	return parsed.ID, nil
-}
-
-func (repo Repository) updateAuthUserPassword(ctx context.Context, userID string, password string) error {
-	if repo.projectURL == "" || repo.apiKey == "" {
-		return ErrInvalidInput
-	}
-	payload, _ := json.Marshal(map[string]any{"password": password})
-	request, err := http.NewRequestWithContext(ctx, http.MethodPatch, repo.projectURL+"/auth/v1/admin/users/"+userID, bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	request.Header.Set("apikey", repo.apiKey)
-	request.Header.Set("Authorization", "Bearer "+repo.apiKey)
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/json")
-	response, err := repo.httpClient.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("auth admin update password failed: %s", strings.TrimSpace(string(raw)))
-	}
-	return nil
-}
-
-func generateTemporaryPassword() (string, error) {
-	const alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*"
-	var builder strings.Builder
-	builder.Grow(14)
-
-	for builder.Len() < 14 {
-		index, err := rand.Int(rand.Reader, big.NewInt(int64(len(alphabet))))
-		if err != nil {
-			return "", err
-		}
-		builder.WriteByte(alphabet[index.Int64()])
-	}
-
-	return builder.String(), nil
 }
 
 func normalizeEmail(value string) (string, error) {
@@ -1702,15 +1833,17 @@ func isAllowedAdminTable(table string) bool {
 		"announcements",
 		"help_articles",
 		"audit_logs",
-		"notifications",
 		"email_templates",
 		"email_logs",
-		"system_settings",
 		"organization_modules":
 		return true
 	default:
 		return false
 	}
+}
+
+func isAllowedAdminReadTable(table string) bool {
+	return strings.TrimSpace(table) == "notifications" || isAllowedAdminTable(table)
 }
 
 func isAllowedOnboardingField(field string) bool {
@@ -1767,4 +1900,13 @@ func randomInvitationToken() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(bytes[:]), nil
+}
+
+func invitationTokenHash(token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(digest[:])
 }

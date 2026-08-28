@@ -117,7 +117,7 @@ export function SiteGeneralDashboard({
             </div>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h2 id="site-control-center-title" className="truncate text-base font-semibold">
+                <h2 id="site-control-center-title" className="truncate text-[14px] font-normal">
                   {domainConnected
                     ? values.custom_domain
                     : publicUrl
@@ -232,7 +232,7 @@ export function SiteGeneralDashboard({
         <section className="app-card p-5 md:p-6" aria-labelledby="site-essentials-title">
           <div className="flex items-center gap-2">
             <Settings2 className="h-4 w-4 text-primary" />
-            <h2 id="site-essentials-title" className="text-base font-semibold">Essenciais</h2>
+            <h2 id="site-essentials-title" className="text-[14px] font-normal">Essenciais</h2>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
             O necessário para identificar, publicar e acessar o site.
@@ -390,7 +390,7 @@ export function SiteGeneralDashboard({
 
       <section className="app-card mt-4 p-5 md:p-6" aria-labelledby="site-identity-title">
         <div>
-          <h2 id="site-identity-title" className="text-base font-semibold">Identidade do site</h2>
+          <h2 id="site-identity-title" className="text-[14px] font-normal">Identidade do site</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Logo principal e ícone exibido na aba do navegador.
           </p>

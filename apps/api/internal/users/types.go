@@ -10,6 +10,7 @@ var (
 	ErrUserConflict           = errors.New("user conflict")
 	ErrAuthAdminNotConfigured = errors.New("auth admin is not configured")
 	ErrAuthAdminOperation     = errors.New("auth admin operation failed")
+	ErrInvitationRequired     = errors.New("user creation requires invitation")
 )
 
 type Summary struct {

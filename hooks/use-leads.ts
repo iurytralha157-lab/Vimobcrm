@@ -6,8 +6,9 @@ import type { Tables } from '@/integrations/supabase/types';
 import { enforceClientActionRateLimit, getClientRateLimitMessage } from '@/lib/client-action-rate-limit';
 import { VimobAPIError } from '@/lib/api/vimob-client';
 import { invalidateLeadHistorySoon } from '@/hooks/use-optimistic-lead-history';
+import { runLeadImportBatch } from '@/lib/lead-import-batch';
 type LeadTag = Pick<Tables<'tags'>, 'id' | 'name' | 'color'>;
-type CreateLeadInput = {
+export type CreateLeadInput = {
   name: string;
   phone?: string;
   email?: string;
@@ -53,6 +54,17 @@ type CreateLeadInput = {
   };
 };
 type CreateLeadResult = Lead & { reentry?: boolean; assignedUserName?: string };
+
+export type ImportLeadsResult = {
+  success: number;
+  failed: number;
+  failures: Array<{ index: number; name: string; message: string }>;
+};
+
+export type BulkDeleteLeadsResult = {
+  deletedIds: string[];
+  failures: Array<{ id: string; message: string }>;
+};
 
 const getErrorMessage = (error: unknown) => {
   if (error instanceof Error) return error.message;
@@ -172,7 +184,7 @@ export function useCreateLead() {
 
       if (error) throw error;
       if (!data) {
-        throw new Error('API nao retornou o lead criado');
+        throw new Error('Não foi possível concluir a criação do lead. Tente novamente.');
       }
 
       return { ...data, reentry, assignedUserName };
@@ -204,6 +216,52 @@ export function useCreateLead() {
         return;
       }
       toast.error('Erro ao criar lead: ' + getErrorMessage(error));
+    },
+  });
+}
+
+export function useImportLeads() {
+  const queryClient = useQueryClient();
+  const { user, profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id || undefined;
+
+  return useMutation<ImportLeadsResult, Error, CreateLeadInput[]>({
+    mutationFn: async (rows) => {
+      if (!user?.id) throw new Error('Usuário não autenticado');
+      if (!organizationId) throw new Error('Usuário não possui organização');
+      if (rows.length === 0) throw new Error('Nenhum contato válido para importar');
+      if (rows.length > 2_000) throw new Error('A importação aceita até 2.000 contatos por arquivo');
+
+      const batch = await runLeadImportBatch(
+        rows,
+        async (row) => {
+          await leadsAPI.createLead(organizationId, {
+            ...row,
+            import_mode: true,
+          });
+        },
+        3,
+      );
+      const failures: ImportLeadsResult['failures'] = batch.failures.map(
+        ({ index, error }) => ({
+          index,
+          name: rows[index].name,
+          message: getErrorMessage(error),
+        }),
+      );
+
+      return {
+        success: batch.successIndexes.length,
+        failed: failures.length,
+        failures,
+      };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
+      queryClient.invalidateQueries({ queryKey: ['contacts-list'] });
+      queryClient.invalidateQueries({ queryKey: ['shared-filter-contacts'] });
+      queryClient.invalidateQueries({ queryKey: ['stages'] });
+      queryClient.invalidateQueries({ queryKey: ['stages-with-leads'] });
     },
   });
 }
@@ -240,6 +298,10 @@ export function useUpdateLead() {
           if (!Array.isArray(current)) return current;
           return current.map((lead) => lead.id === data.id ? { ...lead, ...data } : lead);
         });
+        queryClient.setQueriesData<Lead[]>({ queryKey: ['contacts-list'] }, (current) => {
+          if (!Array.isArray(current)) return current;
+          return current.map((lead) => lead.id === data.id ? { ...lead, ...data } : lead);
+        });
         queryClient.setQueriesData<Array<{ leads?: Array<Partial<Lead> & { id: string }> }>>(
           { queryKey: ['stages-with-leads'] },
           (current) => {
@@ -259,6 +321,7 @@ export function useUpdateLead() {
       }
 
       queryClient.invalidateQueries({ queryKey: ['leads'] });
+      queryClient.invalidateQueries({ queryKey: ['contacts-list'], refetchType: 'active' });
       queryClient.invalidateQueries({ queryKey: ['stages-with-leads'] });
       queryClient.invalidateQueries({ queryKey: ['activities'], refetchType: 'none' });
     },
@@ -305,6 +368,55 @@ export function useDeleteLead() {
         return;
       }
       toast.error('Erro ao excluir lead: ' + error.message);
+    },
+  });
+}
+
+export function useBulkDeleteLeads() {
+  const queryClient = useQueryClient();
+  const { user, profile, organization } = useAuth();
+  const organizationId = organization?.id || profile?.organization_id || undefined;
+
+  return useMutation<BulkDeleteLeadsResult, Error, string[]>({
+    mutationFn: async (inputIds) => {
+      if (!user?.id) throw new Error('Usuário não autenticado');
+      if (!organizationId) throw new Error('Usuário não possui organização');
+
+      const ids = Array.from(new Set(inputIds.filter(Boolean)));
+      if (ids.length === 0) throw new Error('Nenhum contato selecionado');
+      if (ids.length > 500) throw new Error('Selecione no máximo 500 contatos por operação');
+
+      let cursor = 0;
+      const deletedIds: string[] = [];
+      const failures: BulkDeleteLeadsResult['failures'] = [];
+
+      const deleteNext = async () => {
+        while (cursor < ids.length) {
+          const id = ids[cursor];
+          cursor += 1;
+
+          try {
+            await leadsAPI.deleteLead(id, organizationId);
+            deletedIds.push(id);
+          } catch (error) {
+            failures.push({ id, message: getErrorMessage(error) });
+          }
+        }
+      };
+
+      await Promise.all(
+        Array.from({ length: Math.min(3, ids.length) }, () => deleteNext()),
+      );
+
+      return { deletedIds, failures };
+    },
+    onSuccess: (result) => {
+      if (result.deletedIds.length === 0) return;
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
+      queryClient.invalidateQueries({ queryKey: ['contacts-list'] });
+      queryClient.invalidateQueries({ queryKey: ['shared-filter-contacts'] });
+      queryClient.invalidateQueries({ queryKey: ['stages'] });
+      queryClient.invalidateQueries({ queryKey: ['stages-with-leads'] });
     },
   });
 }

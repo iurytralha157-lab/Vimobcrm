@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(16);
+select plan(18);
 
 select has_function(
   'public',
@@ -54,8 +54,17 @@ select ok(
 select ok(
   position('member.team_id is null' in lower(pg_get_functiondef(
     'public.handle_managed_whatsapp_message_lead(uuid)'::regprocedure
+  ))) > 0
+  and position('contextual_team_member.user_id = member.user_id' in lower(pg_get_functiondef(
+    'public.handle_managed_whatsapp_message_lead(uuid)'::regprocedure
+  ))) > 0
+  and position('member_team.id is not null and contextual_team_member.id is not null' in lower(pg_get_functiondef(
+    'public.handle_managed_whatsapp_message_lead(uuid)'::regprocedure
+  ))) > 0
+  and position('team_member.user_id is null' in lower(pg_get_functiondef(
+    'public.handle_managed_whatsapp_message_lead(uuid)'::regprocedure
   ))) > 0,
-  'managed assignment only considers direct members'
+  'managed assignment accepts direct users with valid team context and rejects team-only queue entries'
 );
 
 select ok(
@@ -98,6 +107,13 @@ select has_function(
   'the routed intake dispatcher exists'
 );
 
+select ok(
+  position('if not v_marker then' in lower(pg_get_functiondef(
+    'public.handle_managed_whatsapp_message_lead(uuid)'::regprocedure
+  ))) > 0,
+  'the managed handler refuses to distribute an unmarked lead'
+);
+
 select is(
   has_function_privilege(
     'authenticated',
@@ -122,17 +138,33 @@ select ok(
   position('handle_managed_whatsapp_message_lead' in lower(pg_get_functiondef(
     'public.handle_routed_lead_intake(uuid)'::regprocedure
   ))) > 0
-  and position('handle_lead_intake' in lower(pg_get_functiondef(
+  and position('private.distribute_lead' in lower(pg_get_functiondef(
+    'public.handle_routed_lead_intake(uuid)'::regprocedure
+  ))) > 0
+  and position('public.handle_lead_intake' in lower(pg_get_functiondef(
+    'public.handle_routed_lead_intake(uuid)'::regprocedure
+  ))) = 0,
+  'the dispatcher fails managed leads closed and sends generic intake through canonical distribution'
+);
+
+select ok(
+  position('distribution_deferred' in lower(pg_get_functiondef(
     'public.handle_routed_lead_intake(uuid)'::regprocedure
   ))) > 0,
-  'the dispatcher routes managed leads and retains the generic intake path'
+  'direct dispatcher calls preserve deferred non-managed leads'
 );
 
 select ok(
   position('handle_routed_lead_intake' in lower(pg_get_functiondef(
     'public.trigger_handle_lead_intake()'::regprocedure
+  ))) > 0
+  and position('distribution_deferred' in lower(pg_get_functiondef(
+    'public.trigger_handle_lead_intake()'::regprocedure
+  ))) > 0
+  and position('managed_whatsapp_message_distribution' in lower(pg_get_functiondef(
+    'public.trigger_handle_lead_intake()'::regprocedure
   ))) > 0,
-  'the insert trigger always uses the routed intake dispatcher'
+  'the insert trigger routes through the dispatcher while preserving explicit deferred intake'
 );
 
 select * from finish();

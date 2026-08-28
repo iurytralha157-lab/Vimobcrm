@@ -3,6 +3,7 @@ import {
   adminInvitationInputSchema,
   adminListLimitSchema,
   adminModuleAccessInputSchema,
+  adminNotificationDispatchSettingsInputSchema,
   adminOrganizationAccessInputSchema,
   adminOrganizationDeleteInputSchema,
   adminOrganizationMutationInputSchema,
@@ -10,13 +11,14 @@ import {
   adminPeriodSchema,
   adminUserMutationInputSchema,
   apiAdminOrganizationMutationResponseSchema,
+  apiAdminNotificationDispatchSettingsResponseSchema,
   apiCountResponseSchema,
   apiDynamicRecordListResponseSchema,
   apiDynamicRecordResponseSchema,
   apiOptionalDynamicRecordResponseSchema,
   nonEmptyDynamicRecordSchema,
   okResponseSchema,
-  opaqueTokenSchema,
+  invitationTokenSchema,
   parseDomainInput,
   safePathSegmentSchema,
   uuidSchema,
@@ -33,6 +35,19 @@ export type AdminOrganizationDeleteResponse = {
   ok: boolean;
   deleted_users?: number;
   cleanup_warnings?: string[];
+};
+
+export type AdminNotificationDispatchSettings = {
+  enabled: boolean;
+  mode: 'webhook' | 'evolution_go_instance';
+  instanceName: string;
+  senderNumber: string;
+  webhookUrl: string;
+  headerName: string;
+  timeoutSeconds: number;
+  instanceTokenConfigured: boolean;
+  headerValueConfigured: boolean;
+  updatedAt?: string;
 };
 
 export const adminAPI = {
@@ -92,51 +107,55 @@ export const adminAPI = {
 
   async listInvitations<T = AdminJSON>(organizationId?: string | null) {
     const response = await vimobAPIRequest<Envelope<T[]>>('/v1/invitations', {
+      organizationId,
       query: { organizationId },
     });
     validateDomainResponse(apiDynamicRecordListResponseSchema, response, 'admin.invitations.list');
     return response.data;
   },
 
-  async createInvitation<T = AdminJSON>(body: AdminJSON) {
+  async createInvitation<T = AdminJSON>(body: AdminJSON, organizationId?: string | null) {
     const validatedBody = parseDomainInput(adminInvitationInputSchema, body, 'admin.invitations.create');
     const response = await vimobAPIRequest<Envelope<T>>('/v1/invitations', {
       method: 'POST',
+      organizationId,
       body: validatedBody,
     });
     validateDomainResponse(apiDynamicRecordResponseSchema, response, 'admin.invitations.create');
     return response.data;
   },
 
-  async deleteInvitation(id: string) {
+  async deleteInvitation(id: string, organizationId?: string | null) {
     const validatedId = parseDomainInput(uuidSchema, id, 'admin.invitations.delete');
     const response = await vimobAPIRequest<{ ok: boolean }>(`/v1/invitations/${validatedId}`, {
       method: 'DELETE',
+      organizationId,
     });
     validateDomainResponse(okResponseSchema, response, 'admin.invitations.delete');
     return response;
   },
 
-  async resendInvitation<T = AdminJSON>(id: string) {
+  async resendInvitation<T = AdminJSON>(id: string, organizationId?: string | null) {
     const validatedId = parseDomainInput(uuidSchema, id, 'admin.invitations.resend');
     const response = await vimobAPIRequest<Envelope<T>>(`/v1/invitations/${validatedId}/resend`, {
       method: 'POST',
+      organizationId,
     });
     validateDomainResponse(apiDynamicRecordResponseSchema, response, 'admin.invitations.resend');
     return response.data;
   },
 
   async invitationByToken<T = AdminJSON>(token: string) {
-    const validatedToken = parseDomainInput(opaqueTokenSchema, token, 'admin.invitations.token');
-    const response = await vimobPublicAPIRequest<Envelope<T | null>>(`/v1/public/invitations/${validatedToken}`);
+    const validatedToken = parseDomainInput(invitationTokenSchema, token, 'admin.invitations.token');
+    const response = await vimobPublicAPIRequest<Envelope<T | null>>(`/v1/public/invitations/${encodeURIComponent(validatedToken)}`);
     validateDomainResponse(apiOptionalDynamicRecordResponseSchema, response, 'admin.invitations.token');
     return response.data;
   },
 
   async acceptInvitationPublic<T = AdminJSON>(token: string, body: AdminJSON) {
-    const validatedToken = parseDomainInput(opaqueTokenSchema, token, 'admin.invitations.accept-public.token');
+    const validatedToken = parseDomainInput(invitationTokenSchema, token, 'admin.invitations.accept-public.token');
     const validatedBody = parseDomainInput(nonEmptyDynamicRecordSchema, body, 'admin.invitations.accept-public');
-    const response = await vimobPublicAPIRequest<Envelope<T>>(`/v1/public/invitations/${validatedToken}/accept`, {
+    const response = await vimobPublicAPIRequest<Envelope<T>>(`/v1/public/invitations/${encodeURIComponent(validatedToken)}/accept`, {
       method: 'POST',
       body: validatedBody,
     });
@@ -144,10 +163,12 @@ export const adminAPI = {
     return response.data;
   },
 
-  async acceptInvitationAuthenticated<T = AdminJSON>(token: string) {
-    const validatedToken = parseDomainInput(opaqueTokenSchema, token, 'admin.invitations.accept.token');
-    const response = await vimobAPIRequest<Envelope<T>>(`/v1/invitations/${validatedToken}/accept`, {
+  async acceptInvitationAuthenticated<T = AdminJSON>(token: string, body: AdminJSON) {
+    const validatedToken = parseDomainInput(invitationTokenSchema, token, 'admin.invitations.accept.token');
+    const validatedBody = parseDomainInput(nonEmptyDynamicRecordSchema, body, 'admin.invitations.accept');
+    const response = await vimobAPIRequest<Envelope<T>>(`/v1/invitations/${encodeURIComponent(validatedToken)}/accept`, {
       method: 'POST',
+      body: validatedBody,
     });
     validateDomainResponse(apiDynamicRecordResponseSchema, response, 'admin.invitations.accept');
     return response.data;
@@ -240,6 +261,26 @@ export const adminAPI = {
     });
     validateDomainResponse(okResponseSchema, response, 'admin.tables.delete');
     return response;
+  },
+
+  async getNotificationDispatchSettings() {
+    const response = await vimobAPIRequest<Envelope<AdminNotificationDispatchSettings>>('/v1/admin/system-settings/notification-dispatch');
+    validateDomainResponse(apiAdminNotificationDispatchSettingsResponseSchema, response, 'admin.system-settings.notification-dispatch.get');
+    return response.data;
+  },
+
+  async updateNotificationDispatchSettings(input: unknown) {
+    const body = parseDomainInput(
+      adminNotificationDispatchSettingsInputSchema,
+      input,
+      'admin.system-settings.notification-dispatch.update',
+    );
+    const response = await vimobAPIRequest<Envelope<AdminNotificationDispatchSettings>>('/v1/admin/system-settings/notification-dispatch', {
+      method: 'PUT',
+      body,
+    });
+    validateDomainResponse(apiAdminNotificationDispatchSettingsResponseSchema, response, 'admin.system-settings.notification-dispatch.update');
+    return response.data;
   },
 
   async orphanMemberStats<T = AdminJSON>() {

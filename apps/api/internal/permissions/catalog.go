@@ -64,7 +64,7 @@ var catalog = []Definition{
 	{LeadDelete, "Excluir leads", "Excluir leads visíveis", "leads"},
 	{LeadImport, "Importar leads", "Importar leads em massa", "leads"},
 	{LeadExport, "Exportar leads", "Exportar leads e contatos", "leads"},
-	{AttentionView, "Ver central de atenção", "Acessar alertas dos leads visíveis", "crm"},
+	{AttentionView, "Ver prioridades e atenções", "Acessar alertas e pendências dos leads visíveis", "crm"},
 	{WhatsAppView, "Ver conversas", "Visualizar conversas autorizadas", "conversations"},
 	{WhatsAppOperate, "Operar conversas", "Enviar mensagens e organizar conversas autorizadas", "conversations"},
 	{WhatsAppManage, "Gerenciar conexões", "Criar e administrar conexões do WhatsApp", "conversations"},

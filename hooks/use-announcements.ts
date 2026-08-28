@@ -1,11 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
-import { toast } from 'sonner';
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
-import { useAuth } from '@/contexts/AuthContext';
-import { adminAPI } from '@/lib/api/admin';
+import { useAuth } from "@/contexts/AuthContext";
+import { adminAPI } from "@/lib/api/admin";
 
-export type AnnouncementTargetType = 'all' | 'brokers' | 'specific' | 'organizations' | 'admins';
+export type AnnouncementTargetType =
+  "all" | "brokers" | "specific" | "organizations" | "admins";
 
 export interface Announcement {
   id: string;
@@ -40,20 +41,22 @@ interface PublishAnnouncementParams {
   displayDurationSeconds?: number | null;
 }
 
-const BROKER_ROLES = new Set(['corretor', 'broker', 'agent', 'user']);
+const BROKER_ROLES = new Set(["corretor", "broker", "agent", "user"]);
 const ANNOUNCEMENTS_INITIAL_LOAD_DELAY_MS = 2000;
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
-  if (typeof error === 'object' && error && 'message' in error) {
+  if (typeof error === "object" && error && "message" in error) {
     const message = (error as { message?: unknown }).message;
-    if (typeof message === 'string') return message;
+    if (typeof message === "string") return message;
   }
-  return 'Erro desconhecido';
+  return "Erro desconhecido";
 }
 
 function isWithinSchedule(announcement: Announcement, now = new Date()) {
-  const startsAt = announcement.starts_at ? new Date(announcement.starts_at) : null;
+  const startsAt = announcement.starts_at
+    ? new Date(announcement.starts_at)
+    : null;
   const endsAt = announcement.ends_at ? new Date(announcement.ends_at) : null;
 
   if (startsAt && startsAt > now) return false;
@@ -68,14 +71,22 @@ function isAnnouncementTargeted(
   currentOrgId?: string | null,
   isSuperAdmin?: boolean,
 ) {
-  if (announcement.target_type === 'all') return true;
-  if (announcement.target_type === 'admins') return isSuperAdmin || currentRole === 'admin' || currentRole === 'owner';
-  if (announcement.target_type === 'brokers') return BROKER_ROLES.has((currentRole || '').toLowerCase());
-  if (announcement.target_type === 'organizations') {
-    return !!currentOrgId && (announcement.target_organization_ids || []).includes(currentOrgId);
+  if (announcement.target_type === "all") return true;
+  if (announcement.target_type === "admins")
+    return isSuperAdmin || currentRole === "admin" || currentRole === "owner";
+  if (announcement.target_type === "brokers")
+    return BROKER_ROLES.has((currentRole || "").toLowerCase());
+  if (announcement.target_type === "organizations") {
+    return (
+      !!currentOrgId &&
+      (announcement.target_organization_ids || []).includes(currentOrgId)
+    );
   }
-  if (announcement.target_type === 'specific') {
-    return !!currentUserId && (announcement.target_user_ids || []).includes(currentUserId);
+  if (announcement.target_type === "specific") {
+    return (
+      !!currentUserId &&
+      (announcement.target_user_ids || []).includes(currentUserId)
+    );
   }
   return false;
 }
@@ -87,23 +98,42 @@ export function useActiveAnnouncements() {
   useEffect(() => {
     if (!profile?.id) return undefined;
 
-    const timeout = setTimeout(() => setReadyProfileId(profile.id), ANNOUNCEMENTS_INITIAL_LOAD_DELAY_MS);
+    const timeout = setTimeout(
+      () => setReadyProfileId(profile.id),
+      ANNOUNCEMENTS_INITIAL_LOAD_DELAY_MS,
+    );
     return () => clearTimeout(timeout);
   }, [profile?.id]);
   const ready = !!profile?.id && readyProfileId === profile.id;
 
   return useQuery({
-    queryKey: ['active-announcements', profile?.id, isSuperAdmin, organization?.id, userOrganizations],
+    queryKey: [
+      "active-announcements",
+      profile?.id,
+      isSuperAdmin,
+      organization?.id,
+      userOrganizations,
+    ],
     queryFn: async () => {
       const data = await adminAPI.listActiveAnnouncements<Announcement>();
       const currentUserId = profile?.id;
       const currentOrgId = organization?.id || profile?.organization_id;
-      const currentRole = userOrganizations.find((org) => org.organization_id === currentOrgId)?.member_role;
+      const currentRole = userOrganizations.find(
+        (org) => org.organization_id === currentOrgId,
+      )?.member_role;
       const now = new Date();
 
       return data
         .filter((announcement) => isWithinSchedule(announcement, now))
-        .filter((announcement) => isAnnouncementTargeted(announcement, currentUserId, currentRole, currentOrgId, isSuperAdmin));
+        .filter((announcement) =>
+          isAnnouncementTargeted(
+            announcement,
+            currentUserId,
+            currentRole,
+            currentOrgId,
+            isSuperAdmin,
+          ),
+        );
     },
     enabled: ready && !!profile?.id,
     staleTime: 1000 * 60,
@@ -125,64 +155,83 @@ export function useAnnouncements() {
   const queryClient = useQueryClient();
   const { profile } = useAuth();
 
-  const { data: allAnnouncements = [], isLoading: isLoadingAll } = useQuery({
-    queryKey: ['all-announcements'],
+  const allAnnouncementsQuery = useQuery({
+    queryKey: ["all-announcements", profile?.id],
     queryFn: async () => {
-      const items = await adminAPI.listTableRows('announcements', 50);
+      const items = await adminAPI.listTableRows("announcements", 50);
       return items as unknown as Announcement[];
     },
+    enabled: Boolean(profile?.id),
   });
+  const allAnnouncements = allAnnouncementsQuery.data ?? [];
 
-  const currentAnnouncement = allAnnouncements.find((announcement) => announcement.is_active) || null;
+  const currentAnnouncement =
+    allAnnouncements.find((announcement) => announcement.is_active) || null;
 
   const publishMutation = useMutation({
     mutationFn: async (params: PublishAnnouncementParams) => {
-      return adminAPI.createTableRow<Announcement>('announcements', {
+      return adminAPI.createTableRow<Announcement>("announcements", {
         message: params.message,
         button_text: params.buttonText || null,
         button_url: params.buttonUrl || null,
         is_active: true,
         show_banner: params.showBanner ?? true,
         send_notification: params.sendNotification ?? false,
-        target_type: params.targetType || 'all',
-        target_organization_ids: params.targetOrganizationIds?.length ? params.targetOrganizationIds : null,
-        target_user_ids: params.targetUserIds?.length ? params.targetUserIds : null,
-        starts_at: params.startsAt || null,
-        ends_at: params.endsAt || null,
-        display_duration_seconds: params.displayDurationSeconds || null,
+        target_type: params.targetType || "all",
+        target_organization_ids: params.targetOrganizationIds?.length
+          ? params.targetOrganizationIds
+          : null,
+        target_user_ids: params.targetUserIds?.length
+          ? params.targetUserIds
+          : null,
+        ...(params.startsAt ? { starts_at: params.startsAt } : {}),
+        ...(params.endsAt ? { ends_at: params.endsAt } : {}),
+        ...(params.displayDurationSeconds
+          ? {
+              display_duration_seconds: params.displayDurationSeconds,
+            }
+          : {}),
         created_by: profile?.id || null,
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['active-announcements'] });
-      queryClient.invalidateQueries({ queryKey: ['active-announcement'] });
-      queryClient.invalidateQueries({ queryKey: ['all-announcements'] });
-      toast.success('Comunicado publicado!');
+      queryClient.invalidateQueries({ queryKey: ["active-announcements"] });
+      queryClient.invalidateQueries({ queryKey: ["active-announcement"] });
+      queryClient.invalidateQueries({ queryKey: ["all-announcements"] });
+      toast.success("Comunicado publicado!");
     },
     onError: (error: unknown) => {
-      toast.error('Erro ao publicar: ' + getErrorMessage(error));
+      toast.error("Erro ao publicar: " + getErrorMessage(error));
     },
   });
 
   const deactivateMutation = useMutation({
     mutationFn: async (announcementId: string) => {
-      return adminAPI.updateTableRow<Announcement>('announcements', announcementId, { is_active: false });
+      return adminAPI.updateTableRow<Announcement>(
+        "announcements",
+        announcementId,
+        { is_active: false },
+      );
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['active-announcements'] });
-      queryClient.invalidateQueries({ queryKey: ['active-announcement'] });
-      queryClient.invalidateQueries({ queryKey: ['all-announcements'] });
-      toast.success('Comunicado desativado!');
+      queryClient.invalidateQueries({ queryKey: ["active-announcements"] });
+      queryClient.invalidateQueries({ queryKey: ["active-announcement"] });
+      queryClient.invalidateQueries({ queryKey: ["all-announcements"] });
+      toast.success("Comunicado desativado!");
     },
     onError: (error: unknown) => {
-      toast.error('Erro ao desativar: ' + getErrorMessage(error));
+      toast.error("Erro ao desativar: " + getErrorMessage(error));
     },
   });
 
   return {
     currentAnnouncement,
     allAnnouncements,
-    isLoading: isLoadingAll,
+    isLoading: !profile?.id || allAnnouncementsQuery.isLoading,
+    isError: allAnnouncementsQuery.isError,
+    isFetching: allAnnouncementsQuery.isFetching,
+    error: allAnnouncementsQuery.error,
+    refetch: allAnnouncementsQuery.refetch,
     publish: publishMutation,
     deactivate: deactivateMutation,
   };

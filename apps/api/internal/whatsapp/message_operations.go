@@ -48,8 +48,7 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 	clientMessageID = stripNullBytes(clientMessageID)
 	providerRequestID := deterministicProviderMessageID(clientMessageID)
 
-	rawPhone := strings.NewReplacer("@c.us", "", "@s.whatsapp.net", "", "@g.us", "").Replace(conversation.RemoteJID)
-	phone := formatPhoneForWhatsApp(rawPhone)
+	phone := whatsAppDestinationPhone(conversation.RemoteJID)
 	destination := phone
 	if conversation.IsGroup {
 		destination = conversation.RemoteJID

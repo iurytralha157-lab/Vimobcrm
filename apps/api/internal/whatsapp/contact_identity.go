@@ -137,7 +137,16 @@ func phoneFromIdentityValue(value string) (string, bool) {
 	if hasDomain {
 		return digits, true
 	}
-	return formatPhoneForWhatsApp(digits), true
+	phone := formatPhoneForWhatsApp(left)
+	return phone, phone != ""
+}
+
+func whatsAppDestinationPhone(value string) string {
+	phone, ok := phoneFromIdentityValue(value)
+	if !ok {
+		return ""
+	}
+	return phone
 }
 
 func canonicalWhatsAppSelfJID(value string) (string, bool) {

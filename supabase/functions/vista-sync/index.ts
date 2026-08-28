@@ -221,7 +221,7 @@ function getCategoryPrefix(categoria: string): string {
   const cat = (categoria || "").toLowerCase();
   if (cat.includes("casa") || cat.includes("sobrado")) return "CA";
   if (cat.includes("cobertura")) return "CB";
-  if (cat.includes("comercial") || cat.includes("sala") || cat.includes("loja") || cat.includes("galpao") || cat.includes("galpão")) return "CO";
+  if (cat.includes("comercial") || cat.includes("sala") || cat.includes("loja") || cat.includes("galpao") || cat.includes("galpÃ£o")) return "CO";
   if (cat.includes("terreno") || cat.includes("lote")) return "TE";
   return "AP";
 }
@@ -268,7 +268,7 @@ async function testConnection(apiUrl: string, apiKey: string) {
     return { success: false, error: `API returned ${res.status}: ${text}` };
   }
   const data = await res.json();
-  return { success: true, message: "Conexão válida", sample: data };
+  return { success: true, message: "ConexÃ£o vÃ¡lida", sample: data };
 }
 
 function normalizeUrl(url: string): string {
@@ -280,7 +280,7 @@ function parseMobilia(value: unknown): string | null {
   const v = String(value).toLowerCase().trim();
   if (v === "sim" || v === "mobiliado" || v === "completo") return "Mobiliado";
   if (v.includes("semi") || v === "parcial" || v === "parcialmente") return "Semi-mobiliado";
-  if (v === "nao" || v === "não" || v === "nenhum" || v === "sem") return "Sem mobília";
+  if (v === "nao" || v === "nÃ£o" || v === "nenhum" || v === "sem") return "Sem mobÃ­lia";
   return null;
 }
 
@@ -397,7 +397,7 @@ async function syncProperties(supabase: SupabaseClient, apiUrl: string, apiKey: 
     // Time guard - stop before timeout
     if (Date.now() - startTime > MAX_RUNTIME_MS) {
       console.log(`Time limit reached at page ${page}. Synced ${totalSynced} so far.`);
-      errors.push(`Timeout: processou até página ${page - 1}. Sincronize novamente para continuar.`);
+      errors.push(`Timeout: processou atÃ© pÃ¡gina ${page - 1}. Sincronize novamente para continuar.`);
       break;
     }
 
@@ -516,7 +516,7 @@ async function syncProperties(supabase: SupabaseClient, apiUrl: string, apiKey: 
         const propertyData: Record<string, unknown> = {
           organization_id: organizationId,
           vista_codigo: codigo,
-          title: item.TituloSite || item.Categoria || `Imóvel ${codigo}`,
+          title: item.TituloSite || item.Categoria || `ImÃ³vel ${codigo}`,
           tipo_de_imovel: categoria,
           tipo_de_negocio: tipoNegocio,
           status,

@@ -217,7 +217,7 @@ export function useDealStatusChange() {
       const { data: lead, error } = await leadsAPI.updateLead(leadId, updateData, params.organizationId);
 
       if (error) throw error;
-      if (!lead) throw new Error('API nao retornou o lead atualizado');
+      if (!lead) throw new Error('Não foi possível atualizar o lead agora. Tente novamente.');
 
       return { lead, newStatus };
     },
@@ -293,6 +293,7 @@ export function useDealStatusChange() {
       queryClient.invalidateQueries({ queryKey: ['activities'], refetchType: 'inactive' });
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'], refetchType: 'inactive' });
       queryClient.invalidateQueries({ queryKey: ['enhanced-dashboard-stats'], refetchType: 'inactive' });
+      queryClient.invalidateQueries({ queryKey: ['home'] });
 
       const propertyAvailabilityChanged = newStatus === 'won' || newStatus === 'open';
       if (propertyAvailabilityChanged) {

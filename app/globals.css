@@ -13,6 +13,15 @@
   --app-surface-soft: rgb(255 255 255 / 0.045);
   --app-surface-muted: rgb(255 255 255 / 0.032);
   --app-surface-hover: rgb(255 255 255 / 0.07);
+  --app-overlay-soft: rgb(0 0 0 / 0.3);
+  --app-overlay: rgb(0 0 0 / 0.45);
+  --app-overlay-strong: rgb(0 0 0 / 0.6);
+  --app-media-backdrop: rgb(0 0 0 / 0.95);
+  --app-media-scrim: rgb(0 0 0 / 0.55);
+  --app-media-scrim-strong: rgb(0 0 0 / 0.75);
+  --app-media-control: rgb(255 255 255 / 0.2);
+  --app-media-control-hover: rgb(255 255 255 / 0.3);
+  --app-on-media: #ffffff;
   --app-lead-card: #1a1a1a;
   --app-lead-card-hover: #202020;
   --app-lead-card-divider: rgb(255 255 255 / 0.026);
@@ -104,7 +113,8 @@
   --public-background: #f7f8f6;
   --public-surface: #ffffff;
   --public-foreground: #151515;
-  --public-muted: #626872;
+  --public-muted: rgb(21 21 21 / 0.68);
+  --public-tertiary: rgb(21 21 21 / 0.46);
   --public-border: #e5e7eb;
   --public-soft: #eef1f4;
   --public-accent: var(--vimob-accent);
@@ -342,7 +352,26 @@ body {
   letter-spacing: 0;
 }
 
-.app-shell :where(h1, h2, h3, h4, h5, h6, p, span, label, button, a, input, textarea, select, th, td, li) {
+.app-shell
+  :where(
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    p,
+    span,
+    label,
+    button,
+    a,
+    input,
+    textarea,
+    select,
+    th,
+    td,
+    li
+  ) {
   letter-spacing: 0 !important;
 }
 
@@ -434,7 +463,8 @@ body {
   line-height: var(--app-line-height-body) !important;
 }
 
-.app-shell :where(.tracking-tight, .tracking-wide, .tracking-wider, .tracking-widest) {
+.app-shell
+  :where(.tracking-tight, .tracking-wide, .tracking-wider, .tracking-widest) {
   letter-spacing: 0 !important;
 }
 
@@ -458,7 +488,11 @@ body {
 .vimob-dialog-content,
 .vimob-popover-content {
   background: var(--app-surface-solid) !important;
-  background: color-mix(in srgb, var(--app-surface-solid) 88%, transparent) !important;
+  background: color-mix(
+    in srgb,
+    var(--app-surface-solid) 88%,
+    transparent
+  ) !important;
   border: 0 !important;
   border-radius: 8px !important;
   color: var(--app-text-primary) !important;
@@ -469,7 +503,11 @@ body {
 }
 
 .vimob-popover-content {
-  background: color-mix(in srgb, var(--app-surface-solid) 92%, transparent) !important;
+  background: color-mix(
+    in srgb,
+    var(--app-surface-solid) 92%,
+    transparent
+  ) !important;
   box-shadow: 0 12px 34px rgb(0 0 0 / 0.2) !important;
 }
 
@@ -480,12 +518,66 @@ body {
   box-shadow: 0 18px 48px rgb(15 23 42 / 0.14) !important;
 }
 
-.vimob-dialog-content :where(h1, h2, h3, h4, h5, h6, p, span, label, button, input, textarea, select, th, td, li),
-.vimob-popover-content :where(p, span, label, button, input, textarea, select, div) {
+.vimob-popover-content:is(.app-header-popover, .app-sidebar-popover) {
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.084) !important;
+}
+
+.light .vimob-popover-content:is(.app-header-popover, .app-sidebar-popover) {
+  box-shadow: 0 13px 34px rgb(15 23 42 / 0.06) !important;
+}
+
+.vimob-popover-content.notification-popover {
+  background: var(--app-surface-solid) !important;
+  backdrop-filter: none !important;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.08) !important;
+}
+
+.light .vimob-popover-content.notification-popover {
+  box-shadow: 0 8px 24px rgb(15 23 42 / 0.055) !important;
+}
+
+.app-shell .notification-title,
+.vimob-popover-content .notification-title {
+  font-size: var(--app-font-size-card-title) !important;
+  font-weight: var(--app-font-weight-title) !important;
+  line-height: 1.25rem;
+}
+
+.vimob-dialog-content
+  :where(
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    p,
+    span,
+    label,
+    button,
+    input,
+    textarea,
+    select,
+    th,
+    td,
+    li
+  ),
+.vimob-popover-content
+  :where(p, span, label, button, input, textarea, select, div) {
   letter-spacing: 0 !important;
 }
 
-.vimob-dialog-content :is(h1, h2, h3, h4, h5, h6, [data-radix-dialog-title], [data-radix-alert-dialog-title]) {
+.vimob-dialog-content
+  :is(
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    [data-radix-dialog-title],
+    [data-radix-alert-dialog-title]
+  ) {
   color: var(--app-text-primary) !important;
   font-weight: var(--app-font-weight-title) !important;
   line-height: var(--app-line-height-title);
@@ -496,13 +588,25 @@ body {
   font-weight: var(--app-font-weight-body) !important;
 }
 
-.vimob-dialog-content :where(.font-thin, .font-extralight, .font-light, .font-normal),
-.vimob-popover-content :where(.font-thin, .font-extralight, .font-light, .font-normal) {
+.vimob-dialog-content
+  :where(.font-thin, .font-extralight, .font-light, .font-normal),
+.vimob-popover-content
+  :where(.font-thin, .font-extralight, .font-light, .font-normal) {
   font-weight: var(--app-font-weight-body) !important;
 }
 
-.vimob-dialog-content:is(.font-thin, .font-extralight, .font-light, .font-normal),
-.vimob-popover-content:is(.font-thin, .font-extralight, .font-light, .font-normal) {
+.vimob-dialog-content:is(
+  .font-thin,
+  .font-extralight,
+  .font-light,
+  .font-normal
+),
+.vimob-popover-content:is(
+  .font-thin,
+  .font-extralight,
+  .font-light,
+  .font-normal
+) {
   font-weight: var(--app-font-weight-body) !important;
 }
 
@@ -538,7 +642,12 @@ body {
   font-weight: var(--app-font-weight-display) !important;
 }
 
-.vimob-dialog-content :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), textarea, button[role="combobox"]) {
+.vimob-dialog-content
+  :where(
+    input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+    textarea,
+    button[role="combobox"]
+  ) {
   background: rgb(18 18 18 / 0.9) !important;
   border: 0 !important;
   border-radius: 6px !important;
@@ -547,7 +656,13 @@ body {
   box-shadow: none !important;
 }
 
-.light .vimob-dialog-content :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), textarea, button[role="combobox"]) {
+.light
+  .vimob-dialog-content
+  :where(
+    input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+    textarea,
+    button[role="combobox"]
+  ) {
   background: rgb(255 255 255 / 0.86) !important;
   color: var(--app-text-primary) !important;
 }
@@ -556,8 +671,18 @@ body {
   color: var(--app-text-muted) !important;
 }
 
-.vimob-dialog-content :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), textarea, button[role="combobox"]):focus,
-.vimob-dialog-content :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), textarea, button[role="combobox"]):focus-visible {
+.vimob-dialog-content
+  :where(
+    input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+    textarea,
+    button[role="combobox"]
+  ):focus,
+.vimob-dialog-content
+  :where(
+    input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+    textarea,
+    button[role="combobox"]
+  ):focus-visible {
   outline: none !important;
   box-shadow: 0 0 0 1px rgb(255 69 41 / 0.45) !important;
 }
@@ -574,11 +699,17 @@ body {
   letter-spacing: 0 !important;
 }
 
-:where([role="tooltip"], .toaster .toast) :where(.font-thin, .font-extralight, .font-light, .font-normal) {
+:where([role="tooltip"], .toaster .toast)
+  :where(.font-thin, .font-extralight, .font-light, .font-normal) {
   font-weight: var(--app-font-weight-body) !important;
 }
 
-:where([role="tooltip"], .toaster .toast):where(.font-thin, .font-extralight, .font-light, .font-normal) {
+:where([role="tooltip"], .toaster .toast):where(
+  .font-thin,
+  .font-extralight,
+  .font-light,
+  .font-normal
+) {
   font-weight: var(--app-font-weight-body) !important;
 }
 
@@ -598,18 +729,36 @@ body {
   font-weight: var(--app-font-weight-strong) !important;
 }
 
-.vimob-dialog-content :where(.border, .border-t, .border-b, .border-l, .border-r, [class*="border-white/"], [class*="border-white\\["]) {
+.vimob-dialog-content
+  :where(
+    .border,
+    .border-t,
+    .border-b,
+    .border-l,
+    .border-r,
+    [class*="border-white/"],
+    [class*="border-white\\["]
+  ) {
   border-color: transparent !important;
 }
 
-.vimob-dialog-content :where(.shadow-sm, .shadow-md, .shadow-lg, .shadow-xl, .shadow-2xl) {
+.vimob-dialog-content
+  :where(.shadow-sm, .shadow-md, .shadow-lg, .shadow-xl, .shadow-2xl) {
   box-shadow: none !important;
 }
 
-.vimob-popover-content :where([data-highlighted], [data-state="checked"], [data-state="open"]),
+.vimob-popover-content
+  :where([data-highlighted], [data-state="checked"], [data-state="open"]),
 .vimob-popover-content :where([role="option"]:focus, [role="menuitem"]:focus) {
   background: var(--app-surface-hover) !important;
   color: var(--app-text-primary) !important;
+}
+
+.vimob-popover-content
+  .app-header-logout:is(:hover, :focus, [data-highlighted]) {
+  background: var(--vimob-accent) !important;
+  color: #ffffff !important;
+  opacity: 1;
 }
 
 .app-card {
@@ -680,7 +829,10 @@ body {
   font-size: var(--lead-stage-step-font-size, 0.75rem);
   line-height: 1;
   outline: none;
-  transition: background-color 160ms ease, color 160ms ease, opacity 160ms ease;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease;
 }
 
 .lead-detail-dialog .stage-tab-link:hover,
@@ -728,7 +880,9 @@ body {
   line-height: 1;
   white-space: nowrap;
   outline: none;
-  transition: background-color 160ms ease, color 160ms ease;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
 }
 
 .lead-detail-dialog .animated-tab-link:hover,
@@ -773,7 +927,8 @@ body {
 .app-scrollbar,
 .scrollbar-thin {
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--primary) 42%, transparent) transparent;
+  scrollbar-color: color-mix(in srgb, var(--primary) 42%, transparent)
+    transparent;
 }
 
 .scrollbar-hidden {
@@ -818,32 +973,65 @@ body {
   background: transparent;
 }
 
+.vimob-dialog-content.dashboard-dialog-shell {
+  background: var(--app-surface-solid) !important;
+  border-radius: 0 !important;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.1) !important;
+  backdrop-filter: none !important;
+}
+
+.light .vimob-dialog-content.dashboard-dialog-shell {
+  background: var(--app-surface-solid) !important;
+  box-shadow: 0 12px 32px rgb(15 23 42 / 0.07) !important;
+}
+
+@media (min-width: 640px) {
+  .vimob-dialog-content.dashboard-dialog-shell {
+    border-radius: 8px !important;
+  }
+}
+
 .dashboard-dialog-scroll {
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--primary) 36%, var(--app-text-primary) 10%) transparent;
+  scrollbar-color: color-mix(
+      in srgb,
+      var(--primary) 22%,
+      var(--app-text-primary) 6%
+    )
+    transparent;
 }
 
 .dashboard-dialog-scroll [data-radix-scroll-area-viewport] {
   scroll-padding-top: 0.25rem;
+  overscroll-behavior: contain;
 }
 
 .dashboard-dialog-scroll [data-orientation="vertical"] {
-  width: 0.375rem;
+  width: 0.25rem;
   padding: 0.125rem 0.0625rem 0.125rem 0;
 }
 
 .dashboard-dialog-scroll [data-orientation="vertical"] > div {
-  background: color-mix(in srgb, var(--primary) 36%, var(--app-text-primary) 12%);
-  opacity: 0.78;
+  background: color-mix(
+    in srgb,
+    var(--primary) 22%,
+    var(--app-text-primary) 8%
+  );
+  opacity: 0.6;
 }
 
 .dashboard-dialog-scroll [data-orientation="vertical"] > div:hover {
-  background: color-mix(in srgb, var(--primary) 54%, var(--app-text-primary) 12%);
+  background: color-mix(
+    in srgb,
+    var(--primary) 54%,
+    var(--app-text-primary) 8%
+  );
   opacity: 1;
 }
 
 .dashboard-dialog-list-row {
-  border-bottom: 1px solid color-mix(in srgb, var(--app-text-primary) 5%, transparent);
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--app-text-primary) 5%, transparent);
 }
 
 .dashboard-dialog-list-row:last-child {
@@ -1039,18 +1227,6 @@ body {
   line-height: 1.2 !important;
 }
 
-.app-shell .dashboard-borderless :is([data-tour="dashboard-date-filter"], [data-tour="dashboard-advanced-filters"]) {
-  color: var(--app-text-primary) !important;
-  font-size: 10px !important;
-  font-weight: var(--app-font-weight-body) !important;
-}
-
-.app-shell .dashboard-borderless :is([data-tour="dashboard-date-filter"], [data-tour="dashboard-advanced-filters"]) :where(span) {
-  color: var(--app-text-primary) !important;
-  font-size: 10px !important;
-  font-weight: var(--app-font-weight-body) !important;
-}
-
 .dashboard-recharts-focusless .recharts-wrapper,
 .dashboard-recharts-focusless .recharts-surface,
 .dashboard-recharts-focusless .recharts-layer,
@@ -1072,17 +1248,32 @@ body {
   box-shadow: none !important;
 }
 
+.vimob-calendar {
+  --schedule-grid-border: color-mix(
+    in srgb,
+    var(--app-border) 50%,
+    transparent
+  );
+}
 .vimob-calendar .border-white\/\[0\.025\] {
-  border-color: rgb(255 255 255 / 0.012) !important;
+  border-color: color-mix(
+    in srgb,
+    var(--app-text-primary) 4%,
+    transparent
+  ) !important;
 }
 
 .vimob-calendar .border-white\/\[0\.045\],
 .vimob-calendar .border-white\/\[0\.055\] {
-  border-color: rgb(255 255 255 / 0.018) !important;
+  border-color: color-mix(
+    in srgb,
+    var(--app-text-primary) 6%,
+    transparent
+  ) !important;
 }
 
 .vimob-calendar .bg-white\/\[0\.045\] {
-  background-color: rgb(255 255 255 / 0.018) !important;
+  background-color: var(--app-surface-soft) !important;
 }
 
 .app-data-table th {
@@ -1104,28 +1295,8 @@ body {
   box-shadow: none !important;
 }
 
-.contacts-period-first > div {
-  flex-direction: row-reverse;
-}
-
-.contacts-period-first > div > div:first-child > button:first-child {
-  background-color: var(--app-background) !important;
-}
-
-.contacts-period-first > div > div:first-child > button:first-child:hover {
-  background-color: var(--app-surface-hover) !important;
-}
-
-.contacts-period-first button[aria-haspopup="dialog"] {
-  background-color: var(--app-background) !important;
-}
-
-.contacts-period-first button[aria-haspopup="dialog"]:hover {
-  background-color: var(--app-surface-hover) !important;
-}
-
 .contacts-table-card {
-  background: var(--app-surface);
+  background: var(--app-surface-solid);
 }
 
 .contacts-table tr,
@@ -1143,7 +1314,13 @@ body {
   border-bottom-width: 1px !important;
   border-bottom-style: solid !important;
   border-bottom-color: transparent !important;
-  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--app-border) 58%, transparent);
+  box-shadow: inset 0 -1px 0
+    color-mix(in srgb, var(--app-border) 58%, transparent);
+}
+
+.contacts-table thead tr {
+  background: var(--app-surface-solid);
+  box-shadow: none;
 }
 
 .contacts-table tbody tr,
@@ -1151,11 +1328,12 @@ body {
   border-bottom-width: 1px !important;
   border-bottom-style: solid !important;
   border-bottom-color: transparent !important;
-  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--app-border) 42%, transparent);
+  box-shadow: inset 0 -1px 0
+    color-mix(in srgb, var(--app-border) 42%, transparent);
 }
 
 .contacts-table tbody tr {
-  --contacts-row-bg: var(--app-surface);
+  --contacts-row-bg: var(--app-surface-solid);
 }
 
 .contacts-table tbody tr:hover {
@@ -1182,12 +1360,27 @@ body {
   position: sticky;
   right: 0;
   z-index: 10;
-  background-color: var(--contacts-row-bg, var(--app-surface));
-  box-shadow: -12px 0 18px -18px rgb(0 0 0 / 0.45);
+  isolation: isolate;
+  background-color: var(--app-surface-solid);
+  box-shadow: none;
+}
+
+.contacts-table .contacts-actions-cell::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  background: var(--contacts-row-bg, var(--app-surface-solid));
+  content: "";
+  pointer-events: none;
+}
+
+.contacts-table .contacts-actions-cell > * {
+  position: relative;
+  z-index: 1;
 }
 
 .contacts-table thead .contacts-actions-cell {
-  --contacts-row-bg: var(--app-surface-soft);
+  --contacts-row-bg: var(--app-surface-solid);
   z-index: 20;
 }
 
@@ -1197,35 +1390,35 @@ body {
 }
 
 .crm-management-surface {
-  font-size: 0.94rem;
+  color: var(--app-text-primary);
+  font-size: 0.75rem;
+  font-weight: 300;
 }
 
-.crm-management-surface h2 {
-  font-size: 1.05rem;
-  line-height: 1.35;
-  letter-spacing: 0;
-}
-
+.crm-management-surface h2,
 .crm-management-surface h3 {
-  font-size: 0.98rem;
+  font-size: 0.875rem;
+  font-weight: 400;
   line-height: 1.35;
   letter-spacing: 0;
 }
 
 .crm-management-surface table {
-  font-size: 0.86rem;
+  font-size: 0.75rem;
+  font-weight: 300;
 }
 
 .crm-management-surface th {
-  height: 2.5rem;
+  height: 2rem;
   color: var(--app-text-tertiary);
-  font-size: 0.68rem;
+  font-size: 0.625rem;
+  font-weight: 300;
   letter-spacing: 0;
 }
 
 .crm-management-surface td {
-  padding-bottom: 0.75rem;
-  padding-top: 0.75rem;
+  padding-bottom: 0.625rem;
+  padding-top: 0.625rem;
 }
 
 .crm-management-surface thead tr,
@@ -1256,8 +1449,13 @@ body {
 }
 
 .automation-palette-card {
-  background: color-mix(in srgb, var(--app-surface-solid) 88%, var(--app-surface-soft));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-border) 42%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--app-surface-solid) 88%,
+    var(--app-surface-soft)
+  );
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--app-border) 42%, transparent);
 }
 
 .automation-palette-card:hover {
@@ -1266,21 +1464,37 @@ body {
 
 .automation-canvas {
   background:
-    radial-gradient(circle at 24px 24px, var(--app-border-strong) 1px, transparent 1px),
+    radial-gradient(
+      circle at 24px 24px,
+      var(--app-border-strong) 1px,
+      transparent 1px
+    ),
     linear-gradient(180deg, var(--app-background), var(--app-background));
-  background-size: 24px 24px, 100% 100%;
+  background-size:
+    24px 24px,
+    100% 100%;
 }
 
 .automation-node {
-  border: 1px solid color-mix(in srgb, var(--node-accent, var(--primary)) 86%, transparent);
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--node-accent, var(--primary)) 86%, var(--app-surface-solid)) 0%,
-      color-mix(in srgb, var(--node-accent, var(--primary)) 68%, var(--app-surface-solid)) 100%
-    );
-  box-shadow:
-    0 14px 32px color-mix(in srgb, var(--node-accent, var(--primary)) 22%, transparent);
+  border: 1px solid
+    color-mix(in srgb, var(--node-accent, var(--primary)) 86%, transparent);
+  background: linear-gradient(
+    135deg,
+    color-mix(
+        in srgb,
+        var(--node-accent, var(--primary)) 86%,
+        var(--app-surface-solid)
+      )
+      0%,
+    color-mix(
+        in srgb,
+        var(--node-accent, var(--primary)) 68%,
+        var(--app-surface-solid)
+      )
+      100%
+  );
+  box-shadow: 0 14px 32px
+    color-mix(in srgb, var(--node-accent, var(--primary)) 22%, transparent);
   color: white;
 }
 
@@ -1292,22 +1506,23 @@ body {
   color: rgb(255 255 255 / 0.88) !important;
 }
 
-.automation-node :where(
-  .text-blue-600,
-  .text-amber-600,
-  .text-cyan-600,
-  .text-emerald-600,
-  .text-green-600,
-  .text-indigo-600,
-  .text-orange-600,
-  .text-pink-600,
-  .text-purple-600,
-  .text-rose-600,
-  .text-sky-600,
-  .text-teal-600,
-  .text-violet-600,
-  .text-yellow-600
-) {
+.automation-node
+  :where(
+    .text-blue-600,
+    .text-amber-600,
+    .text-cyan-600,
+    .text-emerald-600,
+    .text-green-600,
+    .text-indigo-600,
+    .text-orange-600,
+    .text-pink-600,
+    .text-purple-600,
+    .text-rose-600,
+    .text-sky-600,
+    .text-teal-600,
+    .text-violet-600,
+    .text-yellow-600
+  ) {
   color: rgb(255 255 255 / 0.92) !important;
 }
 
@@ -1317,12 +1532,21 @@ body {
 }
 
 .automation-node:hover {
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--node-accent, var(--primary)) 94%, var(--app-surface-solid)) 0%,
-      color-mix(in srgb, var(--node-accent, var(--primary)) 74%, var(--app-surface-solid)) 100%
-    );
+  background: linear-gradient(
+    135deg,
+    color-mix(
+        in srgb,
+        var(--node-accent, var(--primary)) 94%,
+        var(--app-surface-solid)
+      )
+      0%,
+    color-mix(
+        in srgb,
+        var(--node-accent, var(--primary)) 74%,
+        var(--app-surface-solid)
+      )
+      100%
+  );
 }
 
 .automation-node :where(.text-muted-foreground) {
@@ -1400,12 +1624,19 @@ body {
 }
 
 .lead-detail-v2 {
-  --lead-detail-column: color-mix(in srgb, var(--app-surface-solid) 82%, var(--app-surface-soft));
+  --lead-detail-column: color-mix(
+    in srgb,
+    var(--app-surface-solid) 82%,
+    var(--app-surface-soft)
+  );
 }
 
 .lead-mobile-drawer {
   height: min(88dvh, calc(100dvh - max(5rem, env(safe-area-inset-top, 0px))));
-  max-height: min(88dvh, calc(100dvh - max(5rem, env(safe-area-inset-top, 0px))));
+  max-height: min(
+    88dvh,
+    calc(100dvh - max(5rem, env(safe-area-inset-top, 0px)))
+  );
 }
 
 .lead-mobile-drawer-header {
@@ -1415,20 +1646,29 @@ body {
 @supports not (height: 100dvh) {
   .lead-mobile-drawer {
     height: min(88vh, calc(100vh - max(5rem, env(safe-area-inset-top, 0px))));
-    max-height: min(88vh, calc(100vh - max(5rem, env(safe-area-inset-top, 0px))));
+    max-height: min(
+      88vh,
+      calc(100vh - max(5rem, env(safe-area-inset-top, 0px)))
+    );
   }
 }
 
 @media (max-width: 480px) {
   .lead-mobile-drawer {
     height: min(90dvh, calc(100dvh - max(5rem, env(safe-area-inset-top, 0px))));
-    max-height: min(90dvh, calc(100dvh - max(5rem, env(safe-area-inset-top, 0px))));
+    max-height: min(
+      90dvh,
+      calc(100dvh - max(5rem, env(safe-area-inset-top, 0px)))
+    );
   }
 
   @supports not (height: 100dvh) {
     .lead-mobile-drawer {
       height: min(90vh, calc(100vh - max(5rem, env(safe-area-inset-top, 0px))));
-      max-height: min(90vh, calc(100vh - max(5rem, env(safe-area-inset-top, 0px))));
+      max-height: min(
+        90vh,
+        calc(100vh - max(5rem, env(safe-area-inset-top, 0px)))
+      );
     }
   }
 }
@@ -1464,14 +1704,22 @@ body {
 .lead-detail-subtle-action {
   gap: 0.25rem !important;
   border: 0 !important;
-  background: color-mix(in srgb, var(--app-text-primary) 8%, transparent) !important;
+  background: color-mix(
+    in srgb,
+    var(--app-text-primary) 8%,
+    transparent
+  ) !important;
   color: var(--app-text-secondary) !important;
   box-shadow: none !important;
   font-weight: 400;
 }
 
 .lead-detail-subtle-action:not(:disabled):hover {
-  background: color-mix(in srgb, var(--app-text-primary) 14%, transparent) !important;
+  background: color-mix(
+    in srgb,
+    var(--app-text-primary) 14%,
+    transparent
+  ) !important;
   color: var(--app-text-primary) !important;
 }
 
@@ -1572,10 +1820,71 @@ body {
 
 .auth-page {
   --auth-background: #121212;
+  --auth-hero-background: #171717;
+  --auth-hero-panel: rgb(18 18 18 / 0.4);
+  --auth-hero-panel-hover: rgb(18 18 18 / 0.5);
+  --auth-hero-panel-strong: rgb(21 21 21 / 0.56);
   background: var(--auth-background);
   color: #ffffff;
   font-weight: var(--app-font-weight-body);
   letter-spacing: 0;
+}
+
+.auth-login-page {
+  --auth-background: var(--app-background);
+  background: var(--app-background);
+  color: var(--app-text-primary);
+}
+
+.auth-login-page .auth-login-hero-title {
+  font-weight: var(--app-font-weight-body) !important;
+}
+
+@keyframes auth-login-type-cursor-blink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+
+  50%,
+  100% {
+    opacity: 0.18;
+  }
+}
+
+.auth-login-page .auth-login-type-cursor {
+  animation: auth-login-type-cursor-blink 900ms steps(1, end) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-login-page .auth-login-type-cursor {
+    display: none;
+  }
+}
+
+.auth-login-page .auth-login-legal,
+.auth-login-page .auth-login-legal a {
+  font-weight: var(--app-font-weight-body) !important;
+}
+
+@media (min-width: 1024px) {
+  .auth-login-page .auth-login-legal,
+  .auth-login-page .auth-login-legal a {
+    font-weight: 100 !important;
+  }
+}
+
+.auth-login-page .auth-login-field {
+  font-weight: var(--app-font-weight-body) !important;
+}
+
+.auth-login-page .auth-login-field::placeholder {
+  font-weight: var(--app-font-weight-body) !important;
+}
+
+.auth-signup-page .auth-signup-legal,
+.auth-signup-page .auth-signup-legal a {
+  font-weight: 100 !important;
 }
 
 .auth-page :where(p, span, label, button, a, input, textarea, select, li) {
@@ -1604,23 +1913,47 @@ body {
 }
 
 .auth-page .auth-primary-action {
-  background-color: #d9341f;
+  background-color: rgb(255 69 41 / 0.5);
   color: #ffffff;
 }
 
 .auth-page .auth-primary-action:hover,
 .auth-page .auth-primary-action:focus-visible {
-  background-color: #cf301a;
+  background-color: var(--vimob-accent);
   opacity: 1;
 }
 
 .auth-page .auth-primary-action:focus-visible {
-  outline: 2px solid #ffffff;
+  outline: 2px solid rgb(255 69 41 / 0.34);
   outline-offset: 2px;
 }
 
 .auth-page .auth-primary-action:disabled {
   opacity: 0.55;
+}
+
+.auth-login-page .auth-primary-action {
+  background-color: color-mix(in srgb, var(--vimob-accent) 62%, transparent);
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease;
+}
+
+.auth-login-page .auth-primary-action:disabled {
+  background-color: color-mix(in srgb, var(--vimob-accent) 24%, transparent);
+  color: rgb(255 255 255 / 0.7);
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .auth-login-page .auth-primary-action:not(:disabled) {
+    background-color: color-mix(in srgb, var(--vimob-accent) 72%, transparent);
+  }
+
+  .auth-login-page .auth-primary-action:not(:disabled):active {
+    background-color: var(--vimob-accent);
+  }
 }
 
 .auth-page:not(.auth-page-light) input {
@@ -1646,6 +1979,36 @@ body {
   caret-color: #ffffff;
   outline: none;
   box-shadow: 0 0 0 1000px #121212 inset;
+}
+
+.light .auth-login-page input {
+  color-scheme: light;
+}
+
+.dark .auth-login-page input {
+  color-scheme: dark;
+}
+
+.light .auth-login-page input:-webkit-autofill,
+.light .auth-login-page input:-webkit-autofill:hover,
+.light .auth-login-page input:-webkit-autofill:focus,
+.light .auth-login-page input:-webkit-autofill:active {
+  -webkit-text-fill-color: #151515;
+  border-color: transparent !important;
+  caret-color: #151515;
+  -webkit-box-shadow: 0 0 0 1000px #ffffff inset;
+  box-shadow: 0 0 0 1000px #ffffff inset;
+}
+
+.dark .auth-login-page input:-webkit-autofill,
+.dark .auth-login-page input:-webkit-autofill:hover,
+.dark .auth-login-page input:-webkit-autofill:focus,
+.dark .auth-login-page input:-webkit-autofill:active {
+  -webkit-text-fill-color: #ffffff;
+  border-color: transparent !important;
+  caret-color: #ffffff;
+  -webkit-box-shadow: 0 0 0 1000px #171717 inset;
+  box-shadow: 0 0 0 1000px #171717 inset;
 }
 
 .auth-page-light {
@@ -1690,14 +2053,57 @@ body {
 }
 
 .public-light {
-  background:
-    radial-gradient(circle at 12% 8%, rgb(255 69 41 / 0.09), transparent 26rem),
-    linear-gradient(180deg, var(--public-background) 0%, #ffffff 42%, var(--public-background) 100%);
+  background: var(--public-background);
   color: var(--public-foreground);
+  font-weight: var(--app-font-weight-body);
+  letter-spacing: 0;
+}
+
+.public-light
+  :where(
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    p,
+    span,
+    label,
+    button,
+    a,
+    input,
+    textarea,
+    select,
+    th,
+    td,
+    li
+  ) {
+  letter-spacing: 0 !important;
+}
+
+.public-light :where(.font-thin, .font-extralight, .font-light, .font-normal) {
+  font-weight: var(--app-font-weight-body) !important;
+}
+
+.public-light :where(.font-medium, .font-semibold) {
+  font-weight: var(--app-font-weight-emphasis) !important;
+}
+
+.public-light .font-bold {
+  font-weight: var(--app-font-weight-strong) !important;
+}
+
+.public-light .font-black {
+  font-weight: var(--app-font-weight-display) !important;
+}
+
+.public-light svg.lucide {
+  stroke-width: var(--app-icon-stroke) !important;
 }
 
 .public-light-plain {
-  background: #ffffff;
+  background: var(--public-background);
 }
 
 .public-light ::selection {
@@ -1768,4 +2174,203 @@ body {
   border-color: transparent !important;
   outline: none !important;
   box-shadow: none !important;
+}
+
+/* Properties workspace */
+.properties-filter-panel input,
+.properties-filter-panel button[role="combobox"] {
+  min-height: 36px;
+  border-radius: 6px;
+  background: var(--app-surface-soft);
+  font-size: 12px;
+  font-weight: var(--app-font-weight-body);
+  box-shadow: none;
+}
+
+.properties-filter-panel button,
+.properties-filter-panel label {
+  font-size: 12px;
+  font-weight: var(--app-font-weight-body);
+}
+
+.properties-filter-panel input:focus-visible,
+.properties-filter-panel button[role="combobox"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px rgb(255 69 41 / 0.3);
+}
+
+.property-form-surface input,
+.property-form-surface textarea,
+.property-form-surface button[role="combobox"] {
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: var(--app-font-weight-body);
+}
+
+.property-form-surface label,
+.property-form-surface p {
+  font-weight: var(--app-font-weight-body);
+}
+
+.property-form-surface .app-card h3 {
+  font-size: 14px;
+  font-weight: var(--app-font-weight-title);
+  line-height: 20px;
+}
+
+.property-preview-surface h3,
+.property-history-surface h3 {
+  font-size: 12px;
+  font-weight: var(--app-font-weight-title);
+  letter-spacing: 0;
+  text-transform: none;
+}
+/* Responsive page-level tab rails */
+.app-responsive-tab-list {
+  container-type: inline-size;
+  scrollbar-width: none;
+}
+
+.app-responsive-tab-list::-webkit-scrollbar {
+  display: none;
+}
+
+.app-responsive-tab-list [data-responsive-tab-scroll] {
+  column-gap: 0.25rem;
+  height: auto;
+  scrollbar-width: none;
+}
+
+.app-responsive-tab-list
+  [data-responsive-tab-scroll]
+  > :not([data-responsive-tab]) {
+  column-gap: 0.25rem;
+}
+
+.app-responsive-tab-list [data-responsive-tab-scroll]::-webkit-scrollbar {
+  display: none;
+}
+
+.app-responsive-tab-list [data-responsive-tab] {
+  position: relative;
+  flex-shrink: 0;
+  column-gap: 0.375rem;
+  height: 2rem;
+  margin-inline: 0;
+  min-width: 0;
+  padding-block: 0.375rem;
+  padding-inline: 0.75rem;
+  white-space: nowrap;
+}
+
+.app-responsive-tab-list
+  [data-responsive-tab]:not([data-state="active"]):not(
+    [aria-selected="true"]
+  ):not([aria-current="page"]):not([aria-pressed="true"]):hover {
+  background-color: var(--app-surface-hover);
+  color: var(--app-text-primary);
+}
+
+.app-responsive-tab-label {
+  white-space: nowrap;
+}
+
+@container (max-width: 959px) {
+  .app-responsive-tab-list[data-collapse="wide"] [data-responsive-tab] {
+    width: 2rem;
+    height: 2rem;
+    min-width: 2rem;
+    justify-content: center;
+    gap: 0;
+    padding-block: 0;
+    padding-inline: 0;
+  }
+
+  .app-responsive-tab-list[data-collapse="wide"]
+    :is(.app-responsive-tab-label, [data-responsive-tab-badge]) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+/* Property forms use a compact icon-only segmented rail at every width. */
+.property-form-surface .property-form-tabs-icon-only [data-responsive-tab] {
+  width: 2rem;
+  height: 2rem;
+  min-width: 2rem;
+  justify-content: center;
+  gap: 0;
+  padding-block: 0;
+  padding-inline: 0;
+}
+
+.property-form-surface
+  .property-form-tabs-icon-only
+  [data-responsive-tab][aria-selected="true"] {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.property-form-surface
+  .property-form-tabs-icon-only
+  [data-responsive-tab][aria-selected="true"]
+  [data-responsive-tab-badge] {
+  background: var(--primary-foreground);
+}
+
+@container (max-width: 639px) {
+  .app-responsive-tab-list[data-collapse="standard"] [data-responsive-tab] {
+    width: 2rem;
+    height: 2rem;
+    min-width: 2rem;
+    justify-content: center;
+    gap: 0;
+    padding-block: 0;
+    padding-inline: 0;
+  }
+
+  .app-responsive-tab-list[data-collapse="standard"]
+    :is(.app-responsive-tab-label, [data-responsive-tab-badge]) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+@container (max-width: 419px) {
+  .app-responsive-tab-list[data-collapse="compact"] [data-responsive-tab] {
+    width: 2rem;
+    height: 2rem;
+    min-width: 2rem;
+    justify-content: center;
+    gap: 0;
+    padding-block: 0;
+    padding-inline: 0;
+  }
+
+  .app-responsive-tab-list[data-collapse="compact"]
+    :is(.app-responsive-tab-label, [data-responsive-tab-badge]) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
 }

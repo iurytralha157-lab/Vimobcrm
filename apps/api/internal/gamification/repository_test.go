@@ -168,3 +168,56 @@ func TestFilteredRankingRejectsUnknownActionsBeforeDatabaseAccess(t *testing.T) 
 		t.Fatalf("unknown ranking action error = %v, want invalid input", err)
 	}
 }
+
+func TestGamificationManagementBoundaryByPersona(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		context tenant.Context
+		want    bool
+	}{
+		{
+			name: "organization admin",
+			context: tenant.Context{
+				MemberRole: "admin",
+			},
+			want: true,
+		},
+		{
+			name: "explicit manager permission",
+			context: tenant.Context{
+				MemberRole:  "manager",
+				Permissions: []string{"gamification_manage"},
+			},
+			want: true,
+		},
+		{
+			name: "team leader with view permission",
+			context: tenant.Context{
+				MemberRole:   "user",
+				IsTeamLeader: true,
+				Permissions:  []string{"gamification_view"},
+			},
+			want: false,
+		},
+		{
+			name: "ordinary user",
+			context: tenant.Context{
+				MemberRole:  "user",
+				Permissions: []string{"gamification_view"},
+			},
+			want: false,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := canManageGamification(test.context); got != test.want {
+				t.Fatalf("canManageGamification() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}

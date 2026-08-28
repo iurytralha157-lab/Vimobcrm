@@ -79,6 +79,7 @@ func (handler Handler) Show(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) History(w http.ResponseWriter, r *http.Request) {
+	setPropertyWorkspacePrivateHeaders(w)
 	tenantContext, ok := tenant.FromContext(r.Context())
 	if !ok || tenantContext.OrganizationID == "" {
 		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
@@ -181,6 +182,18 @@ func writePropertyError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "no_property_changes", "No property changes were provided.")
 	case errors.Is(err, ErrPropertyNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "property_not_found", "Property was not found.")
+	case errors.Is(err, ErrPropertyHasLinkedLeads):
+		httpserver.WriteError(w, r, http.StatusConflict, "property_has_linked_leads", "N\u00e3o \u00e9 poss\u00edvel excluir este im\u00f3vel porque h\u00e1 leads vinculados a ele. Desvincule o im\u00f3vel desses leads e tente novamente.")
+	case errors.Is(err, ErrPropertyOwnerNotFound):
+		httpserver.WriteError(w, r, http.StatusNotFound, "property_owner_not_found", "Property owner was not found.")
+	case errors.Is(err, ErrPropertyOwnershipNotFound):
+		httpserver.WriteError(w, r, http.StatusNotFound, "property_ownership_not_found", "Property ownership was not found.")
+	case errors.Is(err, ErrPropertyAssetNotFound):
+		httpserver.WriteError(w, r, http.StatusNotFound, "property_asset_not_found", "Property asset was not found.")
+	case errors.Is(err, ErrPropertyAssetPublished):
+		httpserver.WriteError(w, r, http.StatusConflict, "property_asset_published", "A mídia integra uma versão publicada. Despublique os canais antes de alterar sua visibilidade, conteúdo ou excluí-la.")
+	case errors.Is(err, ErrPropertyWorkspaceConflict):
+		httpserver.WriteError(w, r, http.StatusConflict, "property_workspace_conflict", "The property workspace changed. Refresh and try again.")
 	case errors.Is(err, tenant.ErrOrganizationAccessDenied):
 		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
 	case errors.Is(err, ErrStorageNotConfigured):

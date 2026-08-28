@@ -2,7 +2,17 @@
  * Utility to perform deep cache clearing and force system updates
  */
 
-const SUPABASE_STORAGE_KEY = 'sb-iemalzlfnbouobyjwlwi-auth-token';
+export function getSupabaseAuthStorageKey(supabaseURL: string | undefined): string | null {
+  const normalizedURL = supabaseURL?.trim();
+  if (!normalizedURL) return null;
+
+  try {
+    const projectRef = new URL(normalizedURL).hostname.split('.')[0]?.trim();
+    return projectRef ? `sb-${projectRef}-auth-token` : null;
+  } catch {
+    return null;
+  }
+}
 
 export async function performFullCacheClear(options: {
   clearAuth?: boolean;
@@ -16,7 +26,7 @@ export async function performFullCacheClear(options: {
   console.log('[CacheUtils] Starting full cache clear...', { clearAuth, reload, redirectTo });
 
   // Prevent cache clear + redirect/reload on public routes
-  const publicRoutes = ['/login', '/cadastro', '/reset-password', '/onboarding', '/checkout', '/termos-de-uso', '/politica-de-privacidade'];
+  const publicRoutes = ['/login', '/cadastro', '/reset-password', '/onboarding', '/checkout', '/help', '/termos-de-uso', '/politica-de-privacidade'];
   const isPublicRoute = typeof window !== 'undefined' && publicRoutes.some(route => window.location.pathname.startsWith(route));
 
   if (isPublicRoute && (redirectTo || reload)) {
@@ -25,15 +35,22 @@ export async function performFullCacheClear(options: {
     reload = false;
   }
 
-  // 1. Unregister all Service Workers
+  // 1. Preserve the app worker during routine cache refreshes. Re-registering
+  // it would orphan the current push endpoint and create duplicate devices.
   if ('serviceWorker' in navigator) {
     try {
       const registrations = await navigator.serviceWorker.getRegistrations();
       for (const registration of registrations) {
-        await registration.unregister();
+        if (clearAuth) {
+          const subscription = await registration.pushManager?.getSubscription();
+          await subscription?.unsubscribe();
+          await registration.unregister();
+        } else {
+          await registration.update();
+        }
       }
     } catch (err) {
-      console.error('[CacheUtils] Error unregistering service workers:', err);
+      console.error('[CacheUtils] Error refreshing service workers:', err);
     }
   }
 
@@ -50,9 +67,26 @@ export async function performFullCacheClear(options: {
   }
 
   // 3. Clear localStorage
-  const authKeysToKeep = clearAuth 
-    ? ['remember_me', 'remembered_email'] 
-    : [SUPABASE_STORAGE_KEY, 'impersonating', 'remember_me', 'remembered_email'];
+  const supabaseStorageKey = getSupabaseAuthStorageKey(
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+  );
+  const activeSessionKeysToKeep = [
+    'vimob-web-push-opt-out',
+    'vimob-web-push-vapid-key',
+    'vimob-current-push-endpoint',
+    'web-push-prompt-dismissed',
+    'pwa-install-prompt-dismissed',
+  ];
+  const authKeysToKeep = clearAuth
+    ? ['remember_me', 'remembered_email', 'theme']
+    : [
+        ...(supabaseStorageKey ? [supabaseStorageKey] : []),
+        'impersonating',
+        'remember_me',
+        'remembered_email',
+        'theme',
+        ...activeSessionKeysToKeep,
+      ];
   const keysToRemove: string[] = [];
   
   for (let i = 0; i < localStorage.length; i++) {
