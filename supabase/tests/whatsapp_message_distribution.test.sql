@@ -1,7 +1,24 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(18);
+select plan(20);
+
+select has_function(
+  'public',
+  'whatsapp_webhook_has_lead_creation_context',
+  array['jsonb'],
+  'the WhatsApp lead-creation context guard exists'
+);
+
+select ok(
+  position('inbound_rule.session_id = managed_context.session_id' in lower(pg_get_functiondef(
+    'public.whatsapp_webhook_has_lead_creation_context(jsonb)'::regprocedure
+  ))) > 0
+  and position('contextual_team_member.user_id = direct_member.user_id' in lower(pg_get_functiondef(
+    'public.whatsapp_webhook_has_lead_creation_context(jsonb)'::regprocedure
+  ))) > 0,
+  'lead creation requires the exact active session and accepts only a valid contextual team'
+);
 
 select has_function(
   'public',
@@ -136,6 +153,9 @@ select is(
 
 select ok(
   position('handle_managed_whatsapp_message_lead' in lower(pg_get_functiondef(
+    'public.handle_routed_lead_intake(uuid)'::regprocedure
+  ))) > 0
+  and position('whatsapp_webhook_has_lead_creation_context' in lower(pg_get_functiondef(
     'public.handle_routed_lead_intake(uuid)'::regprocedure
   ))) > 0
   and position('private.distribute_lead' in lower(pg_get_functiondef(

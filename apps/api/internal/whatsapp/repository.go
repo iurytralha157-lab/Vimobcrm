@@ -925,7 +925,7 @@ func conversationSelectFields() string {
 func leadHistoryConversationSelectFields() string {
 	return `
 		wc.id::text,
-		coalesce(wc.session_id::text, ''),
+		ws.id::text,
 		$5::uuid::text,
 		coalesce(history.remote_jid, case when wc.lead_id = $5::uuid then wc.remote_jid end, ''),
 		l.name,
@@ -1094,6 +1094,7 @@ func scanSessionAccess(row scanner) (SessionAccess, error) {
 
 func scanConversation(row scanner) (Conversation, error) {
 	var conversation Conversation
+	var conversationSessionID pgtype.Text
 	var leadID, contactName, contactPhone, contactPicture, contactPresence, lastMessage pgtype.Text
 	var presenceUpdatedAt, lastMessageAt, archivedAt, deletedAt pgtype.Timestamptz
 	var sessionID, sessionInstanceName, sessionPhone, sessionStatus, sessionOrgID, sessionProvider pgtype.Text
@@ -1104,7 +1105,7 @@ func scanConversation(row scanner) (Conversation, error) {
 
 	if err := row.Scan(
 		&conversation.ID,
-		&conversation.SessionID,
+		&conversationSessionID,
 		&leadID,
 		&conversation.RemoteJID,
 		&contactName,
@@ -1145,6 +1146,7 @@ func scanConversation(row scanner) (Conversation, error) {
 	}
 
 	conversation.LeadID = textPtr(leadID)
+	conversation.SessionID = textValue(conversationSessionID)
 	conversation.ContactName = textPtr(contactName)
 	conversation.ContactPhone = textPtr(contactPhone)
 	conversation.ContactPicture = textPtr(contactPicture)

@@ -7,6 +7,7 @@ import {
   reactWhatsAppMessageResponseSchema,
   sendWhatsAppMessageResponseSchema,
   sendWhatsAppMessageInputSchema,
+  whatsAppConversationResponseSchema,
   whatsAppHistoryResponseSchema,
   whatsAppMessagesResponseSchema,
   whatsAppSessionsResponseSchema,
@@ -116,6 +117,32 @@ test('valida lista de sessoes e cota', () => {
       last_connected_at: null,
     }],
     meta: { maxSessions: 2, currentSessions: 1, canCreate: true },
+  })
+
+  assert.equal(result.success, true)
+})
+
+test('aceita conversa historica sem sessao confiavel', () => {
+  const result = whatsAppConversationResponseSchema.safeParse({
+    data: {
+      id: ID,
+      session_id: null,
+      lead_id: ORG_ID,
+      remote_jid: '5511999999999@s.whatsapp.net',
+      contact_name: 'Historico legado',
+      contact_phone: '5511999999999',
+      contact_picture: null,
+      contact_presence: null,
+      presence_updated_at: null,
+      last_message: 'Mensagem historica',
+      last_message_at: '2026-07-12T12:00:00Z',
+      unread_count: 0,
+      is_group: false,
+      archived_at: null,
+      deleted_at: null,
+      created_at: '2026-07-12T12:00:00Z',
+      updated_at: '2026-07-12T12:00:00Z',
+    },
   })
 
   assert.equal(result.success, true)

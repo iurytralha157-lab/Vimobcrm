@@ -1223,17 +1223,19 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
                         : undefined)
                         || reactionsByMessageId.get(item.message.id)
                         || []}
-                      onReact={canOperateWhatsApp ? (emoji) => reactToMessage.mutateAsync({
+                      onReact={canOperateWhatsApp && item.message.session_id
+                        ? (emoji) => reactToMessage.mutateAsync({
                         conversation: {
                           ...(conversation || {}),
                           id: item.message.conversation_id,
-                          session_id: item.message.session_id,
+                          session_id: conversation?.session_id ?? item.message.session_id,
                           lead_id: leadId,
                           remote_jid: item.message.remote_jid || conversation?.remote_jid || '',
                         } as WhatsAppConversation,
                         targetMessage: item.message as WhatsAppMessage,
                         emoji,
-                      }) : undefined}
+                      })
+                        : undefined}
                       isReacting={reactToMessage.isPending}
                     />
                   </MessageErrorBoundary>

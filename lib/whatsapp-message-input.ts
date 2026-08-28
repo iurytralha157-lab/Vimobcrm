@@ -1,4 +1,5 @@
 type MessageInputConversation = {
+  id?: string | null;
   lead_id?: string | null;
   session_id?: string | null;
   contact_phone?: string | null;
@@ -69,6 +70,12 @@ export function getWhatsAppSendSessionId(
   selectedSessionId?: string | null,
   sessions?: MessageInputSession[] | null,
 ) {
+  // A persisted conversation without a trusted session is historical-only.
+  // Never redirect it through another connected account.
+  if (conversation?.id && !conversation.session_id) {
+    return undefined;
+  }
+
   if (selectedSessionId && selectedSessionId !== "all") {
     return selectedSessionId;
   }

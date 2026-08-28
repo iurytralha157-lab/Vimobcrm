@@ -112,7 +112,7 @@ const whatsAppConversationLeadSchema = z.object({
 
 export const whatsAppConversationSchema = z.object({
   id: uuidSchema,
-  session_id: uuidSchema,
+  session_id: uuidSchema.nullable(),
   lead_id: uuidSchema.nullable(),
   remote_jid: z.string().min(1),
   contact_name: z.string().nullable(),

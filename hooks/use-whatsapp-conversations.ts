@@ -37,7 +37,7 @@ const WHATSAPP_REALTIME_DIAGNOSTIC_THROTTLE_MS = 60_000;
 
 export interface WhatsAppConversation {
   id: string;
-  session_id: string;
+  session_id: string | null;
   lead_id: string | null;
   remote_jid: string;
   contact_name: string | null;
@@ -94,7 +94,7 @@ export interface WhatsAppConversation {
 export interface WhatsAppMessage {
   id: string;
   conversation_id: string;
-  session_id: string;
+  session_id: string | null;
   message_id: string;
   client_message_id?: string | null;
   from_me: boolean;
@@ -379,6 +379,10 @@ export function useSendWhatsAppMessage() {
       previewMediaUrl?: string;
       _optimisticId?: string;
     }): Promise<SendWhatsAppMessageResult> => {
+      if (!conversation.session_id) {
+        throw new Error("WHATSAPP_SESSION_UNAVAILABLE");
+      }
+
       const rateLimitUserId = profile?.id || "anonymous";
       const now = Date.now();
       const lastSendAt = lastWhatsAppSendByUser.get(rateLimitUserId) || 0;
@@ -405,6 +409,10 @@ export function useSendWhatsAppMessage() {
       );
     },
     onMutate: async (variables) => {
+      if (!variables.conversation.session_id) {
+        throw new Error("WHATSAPP_SESSION_UNAVAILABLE");
+      }
+
       const conversationId = variables.conversation.id;
       const leadId = getConversationLeadId(variables.conversation);
       const optimisticId = createClientId('message');
@@ -781,6 +789,10 @@ export function useReactToWhatsAppMessage() {
 
   return useMutation({
     mutationFn: async (variables: ReactToWhatsAppMessageVariables) => {
+      if (!variables.conversation.session_id || !variables.targetMessage.session_id) {
+        throw new Error("WHATSAPP_SESSION_UNAVAILABLE");
+      }
+
       return whatsappAPI.reactToMessage(
         variables.conversation.id,
         variables.targetMessage.id,
@@ -792,6 +804,10 @@ export function useReactToWhatsAppMessage() {
       );
     },
     onMutate: async (variables) => {
+      if (!variables.conversation.session_id || !variables.targetMessage.session_id) {
+        throw new Error("WHATSAPP_SESSION_UNAVAILABLE");
+      }
+
       const conversationId = variables.conversation.id;
       const leadId = getConversationLeadId(variables.conversation);
       const clientReactionId = createClientId('reaction');

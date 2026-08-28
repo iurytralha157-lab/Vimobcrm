@@ -69,3 +69,34 @@ func TestParseHistoryAccessFilterRejectsUnboundedLimit(t *testing.T) {
 		t.Fatal("ParseHistoryAccessFilter() expected invalid limit error")
 	}
 }
+
+func TestParseHistoryAccessFilterKeepsLegacyAllMessagesCompatibility(t *testing.T) {
+	t.Parallel()
+
+	filter, err := ParseHistoryAccessFilter(url.Values{
+		"leadId":      {"00000000-0000-4000-8000-000000000001"},
+		"allMessages": {"true"},
+	})
+	if err != nil {
+		t.Fatalf("ParseHistoryAccessFilter() error = %v", err)
+	}
+	if !filter.AllMessages || filter.Limit != legacyAllMessagesLimit {
+		t.Fatalf("legacy allMessages filter = %#v", filter)
+	}
+}
+
+func TestParseHistoryAccessFilterPrefersExplicitPagination(t *testing.T) {
+	t.Parallel()
+
+	filter, err := ParseHistoryAccessFilter(url.Values{
+		"leadId":      {"00000000-0000-4000-8000-000000000001"},
+		"allMessages": {"true"},
+		"limit":       {"40"},
+	})
+	if err != nil {
+		t.Fatalf("ParseHistoryAccessFilter() error = %v", err)
+	}
+	if filter.Limit != 40 {
+		t.Fatalf("explicit history limit = %d, want 40", filter.Limit)
+	}
+}

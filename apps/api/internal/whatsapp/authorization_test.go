@@ -2,12 +2,50 @@ package whatsapp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
+
+func TestConversationJSONUsesNullForUnavailableHistoricalSession(t *testing.T) {
+	payload, err := json.Marshal(Conversation{
+		ID:        "50000000-0000-4000-8000-000000000001",
+		SessionID: "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if value, exists := decoded["session_id"]; !exists || value != nil {
+		t.Fatalf("session_id = %#v (exists=%t), want explicit null", value, exists)
+	}
+}
+
+func TestConversationJSONKeepsAuthorizedSessionUUID(t *testing.T) {
+	sessionID := "40000000-0000-4000-8000-000000000001"
+	payload, err := json.Marshal(Conversation{
+		ID:        "50000000-0000-4000-8000-000000000001",
+		SessionID: sessionID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["session_id"] != sessionID {
+		t.Fatalf("session_id = %#v, want %q", decoded["session_id"], sessionID)
+	}
+}
 
 func TestConversationAuthorizationScopeArguments(t *testing.T) {
 	broker := tenant.Context{

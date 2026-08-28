@@ -372,6 +372,7 @@ const DEFINITIVE_SEND_FAILURES = [
   'rate_limit_local',
   'rate_limit_exceeded',
   'muitas requisi',
+  'whatsapp_session_unavailable',
   'whatsapp_disconnected',
   'desconectada',
   'qr code',

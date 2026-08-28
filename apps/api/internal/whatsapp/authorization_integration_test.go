@@ -92,7 +92,7 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	otherBrokerID := createUser(organizationID, "user", "other-broker")
 	foreignBrokerID := createUser(foreignOrganizationID, "user", "foreign-broker")
 
-	var sessionID, ownLeadID, otherLeadID, thirdLeadID, claimLeadID, foreignLeadID string
+	var sessionID, foreignSessionID, ownLeadID, otherLeadID, thirdLeadID, claimLeadID, sessionMismatchLeadID, foreignLeadID string
 	if err := postgres.Pool().QueryRow(ctx, `
 		insert into public.whatsapp_sessions (
 			organization_id, instance_name, owner_user_id,
@@ -100,6 +100,15 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 		) values ($1::uuid, $2, $3::uuid, 'evolution_go', 'connected', true)
 		returning id::text
 	`, organizationID, fixtureSuffix, otherBrokerID).Scan(&sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.whatsapp_sessions (
+			organization_id, instance_name, owner_user_id,
+			provider, status, phone_number, is_active
+		) values ($1::uuid, $2, $3::uuid, 'evolution_go', 'connected', '5511999990000', true)
+		returning id::text
+	`, foreignOrganizationID, fixtureSuffix+"-foreign-session-secret", foreignBrokerID).Scan(&foreignSessionID); err != nil {
 		t.Fatal(err)
 	}
 	createLead := func(orgID, assigneeID, name string) string {
@@ -118,6 +127,7 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	otherLeadID = createLead(organizationID, otherBrokerID, fixtureSuffix+"-other")
 	thirdLeadID = createLead(organizationID, otherBrokerID, fixtureSuffix+"-third")
 	claimLeadID = createLead(organizationID, otherBrokerID, fixtureSuffix+"-claim")
+	sessionMismatchLeadID = createLead(organizationID, brokerID, fixtureSuffix+"-session-mismatch")
 	foreignLeadID = createLead(foreignOrganizationID, foreignBrokerID, fixtureSuffix+"-foreign")
 
 	createConversation := func(leadID, remoteJID string) string {
@@ -170,8 +180,51 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	mismatchedOwnConversationMessageID := insertMessage(ownConversationID, thirdLeadID, "text")
 	mismatchedOtherConversationMediaID := insertMessage(otherConversationID, thirdLeadID, "image")
 
+	var crossOrganizationSessionConversationID string
+	legacyFixtureTx, err := postgres.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacyFixtureTx.Exec(ctx, `set local session_replication_role = replica`); err != nil {
+		_ = legacyFixtureTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := legacyFixtureTx.QueryRow(ctx, `
+		insert into public.whatsapp_conversations (
+			organization_id, session_id, lead_id, remote_jid, contact_name
+		) values ($1::uuid, $2::uuid, $3::uuid, $4, $4)
+		returning id::text
+	`, organizationID, foreignSessionID, sessionMismatchLeadID, fixtureSuffix+"-session-mismatch@s.whatsapp.net").Scan(&crossOrganizationSessionConversationID); err != nil {
+		_ = legacyFixtureTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := legacyFixtureTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	insertMessage(crossOrganizationSessionConversationID, sessionMismatchLeadID, "text")
+
 	repo := NewRepository(postgres, nil, StorageConfig{})
 	broker := tenant.Context{OrganizationID: organizationID, UserID: brokerID, MemberRole: "user"}
+
+	sessionMismatchHistory, err := repo.GetHistoryAccess(ctx, broker, HistoryAccessFilter{LeadID: sessionMismatchLeadID})
+	if err != nil {
+		t.Fatalf("cross-organization historical session: %v", err)
+	}
+	if len(sessionMismatchHistory.Conversations) != 1 {
+		t.Fatalf("cross-organization historical session conversations = %#v, want one", sessionMismatchHistory.Conversations)
+	}
+	safeSessionMismatchConversation := sessionMismatchHistory.Conversations[0]
+	if safeSessionMismatchConversation.ID != crossOrganizationSessionConversationID ||
+		safeSessionMismatchConversation.SessionID != "" ||
+		safeSessionMismatchConversation.Session != nil {
+		t.Fatalf("history exposed a cross-organization session reference: %#v", safeSessionMismatchConversation)
+	}
+	serializedSessionMismatch := fmt.Sprintf("%#v", safeSessionMismatchConversation)
+	if strings.Contains(serializedSessionMismatch, foreignSessionID) ||
+		strings.Contains(serializedSessionMismatch, fixtureSuffix+"-foreign-session-secret") ||
+		strings.Contains(serializedSessionMismatch, "5511999990000") {
+		t.Fatalf("history leaked cross-organization session metadata: %s", serializedSessionMismatch)
+	}
 
 	access, err := repo.GetHistoryAccess(ctx, broker, HistoryAccessFilter{LeadID: ownLeadID})
 	if err != nil {

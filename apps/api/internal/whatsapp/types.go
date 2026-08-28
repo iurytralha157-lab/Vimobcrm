@@ -127,6 +127,26 @@ type Conversation struct {
 	Lead              *LeadLite    `json:"lead,omitempty"`
 }
 
+// MarshalJSON keeps the operational Go model ergonomic while making missing
+// historical session references explicit on the wire. An empty or fabricated
+// UUID would break strict clients and could be mistaken for real provenance.
+func (conversation Conversation) MarshalJSON() ([]byte, error) {
+	type conversationJSON Conversation
+	var sessionID *string
+	if strings.TrimSpace(conversation.SessionID) != "" {
+		value := conversation.SessionID
+		sessionID = &value
+	}
+
+	return json.Marshal(struct {
+		conversationJSON
+		SessionID *string `json:"session_id"`
+	}{
+		conversationJSON: conversationJSON(conversation),
+		SessionID:        sessionID,
+	})
+}
+
 type SessionLite struct {
 	ID             string  `json:"id"`
 	InstanceName   string  `json:"instance_name"`
@@ -266,6 +286,12 @@ type HistoryAccessFilter struct {
 	AllMessages    bool
 	MessageFilter
 }
+
+// Legacy web clients request the complete lead history with allMessages=true.
+// The paginated client no longer uses this path, but keeping a bounded bridge
+// prevents an API-first rolling deploy from silently truncating existing CRM
+// history. The current production maximum is below this ceiling.
+const legacyAllMessagesLimit = 10_000
 
 type GrantAccessRequest struct {
 	UserID     string `json:"userId"`
@@ -596,6 +622,9 @@ func ParseHistoryAccessFilter(values url.Values) (HistoryAccessFilter, error) {
 	filter := HistoryAccessFilter{
 		AllMessages:   parseBool(values.Get("allMessages")),
 		MessageFilter: messageFilter,
+	}
+	if filter.AllMessages && strings.TrimSpace(values.Get("limit")) == "" && strings.TrimSpace(values.Get("cursor")) == "" {
+		filter.MessageFilter.Limit = legacyAllMessagesLimit
 	}
 	if raw := strings.TrimSpace(values.Get("conversationId")); raw != "" {
 		value, ok := normalizeUUID(raw)

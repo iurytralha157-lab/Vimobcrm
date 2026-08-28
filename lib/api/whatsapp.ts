@@ -86,7 +86,7 @@ export interface WhatsAppSessionAccess {
 
 export interface WhatsAppConversation {
   id: string
-  session_id: string
+  session_id: string | null
   lead_id: string | null
   remote_jid: string
   contact_name: string | null
@@ -143,7 +143,7 @@ export interface WhatsAppConversation {
 export interface WhatsAppMessage {
   id: string
   conversation_id: string
-  session_id: string
+  session_id: string | null
   message_id: string
   client_message_id?: string | null
   from_me: boolean

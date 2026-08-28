@@ -134,6 +134,7 @@ type DisplayMessage = Pick<
       | "reaction_sender_jid"
       | "reaction_sender_name"
       | "reaction_to_message_id"
+      | "session_id"
       | "sender_jid"
       | "sender_name"
     >
@@ -922,7 +923,10 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                               conversationRemoteJid={selectedConversation.remote_jid}
                               conversationSessionId={selectedConversation.session_id}
                               reactions={(msg.message_id ? reactionsByMessageId.get(msg.message_id) : undefined) || reactionsByMessageId.get(msg.id) || []}
-                              onReact={activePlatform === 'whatsapp' && canOperateWhatsApp
+                              onReact={activePlatform === 'whatsapp'
+                                && canOperateWhatsApp
+                                && Boolean(selectedConversation.session_id)
+                                && Boolean(msg.session_id)
                                 ? (emoji) => reactToMessage.mutateAsync({
                                     conversation: selectedConversation,
                                     targetMessage: msg as WhatsAppMessage,
@@ -1596,7 +1600,10 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                               conversationRemoteJid={selectedConversation.remote_jid}
                               conversationSessionId={selectedConversation.session_id}
                               reactions={(msg.message_id ? reactionsByMessageId.get(msg.message_id) : undefined) || reactionsByMessageId.get(msg.id) || []}
-                              onReact={activePlatform === 'whatsapp' && canOperateWhatsApp
+                              onReact={activePlatform === 'whatsapp'
+                                && canOperateWhatsApp
+                                && Boolean(selectedConversation.session_id)
+                                && Boolean(msg.session_id)
                                 ? (emoji) => reactToMessage.mutateAsync({
                                     conversation: selectedConversation,
                                     targetMessage: msg as WhatsAppMessage,

@@ -14,6 +14,164 @@ begin
 end;
 $$;
 
+create or replace function public.whatsapp_webhook_has_lead_creation_context(p_metadata jsonb)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  with managed_context as (
+    select
+      lower(btrim(coalesce(
+        p_metadata->>'managed_whatsapp_message_distribution',
+        'false'
+      ))) in ('true', '1', 'yes') as is_managed,
+      case
+        when btrim(coalesce(p_metadata->>'matched_rule_id', ''))
+          ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        then btrim(p_metadata->>'matched_rule_id')::uuid
+        else null
+      end as rule_id,
+      case
+        when btrim(coalesce(p_metadata->>'whatsapp_session_id', ''))
+          ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        then btrim(p_metadata->>'whatsapp_session_id')::uuid
+        else null
+      end as session_id,
+      case
+        when btrim(coalesce(p_metadata->>'target_round_robin_id', ''))
+          ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        then btrim(p_metadata->>'target_round_robin_id')::uuid
+        else null
+      end as round_robin_id
+  )
+  select case
+    when managed_context.is_managed then coalesce(
+      managed_context.rule_id is not null
+      and managed_context.session_id is not null
+      and managed_context.round_robin_id is not null
+      and exists (
+        select 1
+        from public.whatsapp_inbound_rules as inbound_rule
+        join public.round_robin_rules as round_robin_rule
+          on round_robin_rule.organization_id = inbound_rule.organization_id
+         and round_robin_rule.id = inbound_rule.id
+         and round_robin_rule.round_robin_id = inbound_rule.target_round_robin_id
+        join public.round_robins as queue
+          on queue.organization_id = round_robin_rule.organization_id
+         and queue.id = round_robin_rule.round_robin_id
+        join public.whatsapp_sessions as whatsapp_session
+          on whatsapp_session.organization_id = inbound_rule.organization_id
+         and whatsapp_session.id = inbound_rule.session_id
+        where inbound_rule.id = managed_context.rule_id
+          and inbound_rule.session_id = managed_context.session_id
+          and queue.id = managed_context.round_robin_id
+          and coalesce(
+            nullif(round_robin_rule.match_type, ''),
+            round_robin_rule.conditions->>'match_type',
+            round_robin_rule.name,
+            ''
+          ) = 'whatsapp_message_contains'
+          and coalesce(
+            nullif(btrim(round_robin_rule.match->>'whatsapp_session_id'), ''),
+            nullif(btrim(round_robin_rule.conditions->'match'->>'whatsapp_session_id'), '')
+          ) = managed_context.session_id::text
+          and coalesce(queue.is_active, true) = true
+          and coalesce(round_robin_rule.is_active, true) = true
+          and coalesce(inbound_rule.is_active, true) = true
+          and whatsapp_session.provider = 'evolution_go'
+          and coalesce(whatsapp_session.is_active, true) = true
+          and lower(btrim(coalesce(whatsapp_session.status, ''))) not in ('deleted', 'disabled')
+          and lower(btrim(coalesce(inbound_rule.match_type, ''))) = 'contains'
+          and lower(btrim(coalesce(inbound_rule.match_field, 'message'))) = 'message'
+          and btrim(coalesce(inbound_rule.match_value, '')) <> ''
+          and lower(btrim(inbound_rule.match_value)) = lower(btrim(coalesce(
+            nullif(round_robin_rule.match_value, ''),
+            round_robin_rule.conditions->>'match_value',
+            ''
+          )))
+          and lower(btrim(coalesce(nullif(queue.strategy, ''), 'simple'))) = 'simple'
+          and lower(btrim(coalesce(queue.settings->>'enable_redistribution', 'false'))) not in ('true', '1', 'yes')
+          and lower(btrim(coalesce(queue.settings->>'require_checkin', 'false'))) not in ('true', '1', 'yes')
+          and lower(btrim(coalesce(queue.settings->>'ignore_availability', 'false'))) = 'true'
+          and not exists (
+            select 1
+            from public.round_robin_rules as other_rule
+            where other_rule.organization_id = queue.organization_id
+              and other_rule.round_robin_id = queue.id
+              and coalesce(other_rule.is_active, true) = true
+              and coalesce(
+                nullif(other_rule.match_type, ''),
+                other_rule.conditions->>'match_type',
+                other_rule.name,
+                ''
+              ) <> 'whatsapp_message_contains'
+          )
+          and not exists (
+            select 1
+            from public.round_robin_members as team_entry
+            where team_entry.organization_id = queue.organization_id
+              and team_entry.round_robin_id = queue.id
+              and coalesce(team_entry.is_active, true) = true
+              and team_entry.user_id is null
+              and team_entry.team_id is not null
+          )
+          and exists (
+            select 1
+            from public.round_robin_members as direct_member
+            join public.users as user_account
+              on user_account.id = direct_member.user_id
+             and user_account.organization_id = direct_member.organization_id
+             and coalesce(user_account.is_active, false) = true
+            join public.organization_members as organization_member
+              on organization_member.organization_id = direct_member.organization_id
+             and organization_member.user_id = direct_member.user_id
+             and coalesce(organization_member.is_active, false) = true
+            left join public.teams as member_team
+              on member_team.organization_id = direct_member.organization_id
+             and member_team.id = direct_member.team_id
+             and coalesce(member_team.is_active, false) = true
+            left join public.team_members as contextual_team_member
+              on contextual_team_member.organization_id = direct_member.organization_id
+             and contextual_team_member.team_id = direct_member.team_id
+             and contextual_team_member.user_id = direct_member.user_id
+             and coalesce(contextual_team_member.is_active, false) = true
+            where direct_member.organization_id = queue.organization_id
+              and direct_member.round_robin_id = queue.id
+              and coalesce(direct_member.is_active, true) = true
+              and direct_member.user_id is not null
+              and (
+                direct_member.team_id is null
+                or (member_team.id is not null and contextual_team_member.id is not null)
+              )
+          )
+      ),
+      false
+    )
+    else coalesce(
+      lower(btrim(
+        p_metadata #>> '{whatsapp_attribution,source_referral,explicit_source_type}'
+      )) = 'ad'
+      and coalesce(
+        nullif(btrim(p_metadata #>> '{whatsapp_attribution,ad_id}'), ''),
+        nullif(btrim(p_metadata #>> '{whatsapp_attribution,source_id}'), ''),
+        nullif(btrim(p_metadata #>> '{whatsapp_attribution,source_referral,source_id}'), '')
+      ) ~ '^[0-9]{5,40}$',
+      false
+    )
+  end
+  from managed_context;
+$$;
+
+revoke all on function public.whatsapp_webhook_has_lead_creation_context(jsonb)
+from public, anon, authenticated;
+grant execute on function public.whatsapp_webhook_has_lead_creation_context(jsonb)
+to service_role;
+
+comment on function public.whatsapp_webhook_has_lead_creation_context(jsonb) is
+'Allows automatic WhatsApp lead creation only for a verified Meta ad referral or an active managed rule bound to the exact Evolution Go session and queue.';
+
 create or replace function public.handle_managed_whatsapp_message_lead(p_lead_id uuid)
 returns jsonb
 language plpgsql
@@ -24,6 +182,8 @@ declare
   v_lead public.leads%rowtype;
   v_rule_id_text text;
   v_rule_id uuid;
+  v_session_id_text text;
+  v_session_id uuid;
   v_marker boolean := false;
   v_queue_id uuid;
   v_queue_name text;
@@ -45,10 +205,16 @@ begin
 
   v_marker := lower(btrim(coalesce(v_lead.metadata->>'managed_whatsapp_message_distribution', 'false'))) in ('true', '1', 'yes');
   v_rule_id_text := btrim(coalesce(v_lead.metadata->>'matched_rule_id', ''));
+  v_session_id_text := btrim(coalesce(v_lead.metadata->>'whatsapp_session_id', ''));
 
   if not v_marker then
     return jsonb_build_object('handled', false, 'success', false, 'reason', 'not_managed');
   end if;
+
+  if v_session_id_text !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+    return jsonb_build_object('handled', true, 'success', false, 'reason', 'managed_whatsapp_session_invalid');
+  end if;
+  v_session_id := v_session_id_text::uuid;
 
   if v_marker then
     insert into public.lead_timeline_events (
@@ -98,7 +264,7 @@ begin
       and lower(btrim(coalesce(inbound_rule.match_field, 'message'))) = 'message'
       and normalized.keyword <> ''
       and lower(btrim(coalesce(inbound_rule.match_value, ''))) = lower(normalized.keyword)
-      and (inbound_rule.session_id is null or inbound_rule.session_id = v_lead.source_session_id)
+      and inbound_rule.session_id = v_session_id
       and position(
         lower(normalized.keyword)
         in lower(coalesce(nullif(v_lead.initial_message, ''), v_lead.message, ''))
@@ -142,6 +308,10 @@ begin
       on inbound_rule.organization_id = round_robin_rule.organization_id
      and inbound_rule.id = round_robin_rule.id
      and inbound_rule.target_round_robin_id = round_robin_rule.round_robin_id
+     and inbound_rule.session_id = v_session_id
+    join public.whatsapp_sessions whatsapp_session
+      on whatsapp_session.organization_id = inbound_rule.organization_id
+     and whatsapp_session.id = inbound_rule.session_id
     join public.round_robins queue
       on queue.organization_id = round_robin_rule.organization_id
      and queue.id = round_robin_rule.round_robin_id
@@ -154,6 +324,14 @@ begin
     ) normalized
    where round_robin_rule.organization_id = v_lead.organization_id
      and round_robin_rule.id = v_rule_id
+     and v_lead.source_session_id = v_session_id
+     and whatsapp_session.provider = 'evolution_go'
+     and coalesce(whatsapp_session.is_active, true) = true
+     and lower(btrim(coalesce(whatsapp_session.status, ''))) not in ('deleted', 'disabled')
+     and coalesce(
+       nullif(btrim(round_robin_rule.match->>'whatsapp_session_id'), ''),
+       nullif(btrim(round_robin_rule.conditions->'match'->>'whatsapp_session_id'), '')
+     ) = v_session_id::text
      and coalesce(
        nullif(round_robin_rule.match_type, ''),
        round_robin_rule.conditions->>'match_type',
@@ -161,7 +339,7 @@ begin
        ''
      ) = 'whatsapp_message_contains'
    limit 1
-   for update of queue, round_robin_rule, inbound_rule;
+   for update of queue, round_robin_rule, inbound_rule, whatsapp_session;
 
   if not found then
     if v_marker then
@@ -462,6 +640,15 @@ begin
        in ('true', '1', 'yes') then
     -- Never fall through to generic distribution for a lead explicitly marked
     -- as campaign-managed, even if its rule or queue is unavailable.
+    if not public.whatsapp_webhook_has_lead_creation_context(
+      coalesce(v_lead.metadata, '{}'::jsonb)
+    ) then
+      return jsonb_build_object(
+        'handled', true,
+        'success', false,
+        'reason', 'managed_whatsapp_session_invalid'
+      );
+    end if;
     return public.handle_managed_whatsapp_message_lead(p_lead_id);
   end if;
 

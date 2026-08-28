@@ -513,7 +513,9 @@ func (repo Repository) listLeadHistoryConversations(ctx context.Context, tenantC
 		  order by coalesce(wm.sent_at, wm.created_at) desc, wm.id desc
 		  limit 1
 		) history on true
-		left join public.whatsapp_sessions ws on ws.id = wc.session_id
+		left join public.whatsapp_sessions ws
+		  on ws.id = wc.session_id
+		 and ws.organization_id = wc.organization_id
 		left join public.leads l
 		  on l.id = $5::uuid
 		 and l.organization_id = wc.organization_id
@@ -584,7 +586,6 @@ func (repo Repository) listLeadHistoryMessages(ctx context.Context, tenantContex
 		select `+messageSelectFieldsWithSession("historical_ws.id")+`
 		from public.whatsapp_messages wm
 		join public.whatsapp_conversations wc on wc.id = wm.conversation_id
-		left join public.whatsapp_sessions ws on ws.id = wc.session_id
 		left join public.whatsapp_sessions historical_ws
 		  on historical_ws.id = wm.session_id
 		 and historical_ws.organization_id = wm.organization_id
