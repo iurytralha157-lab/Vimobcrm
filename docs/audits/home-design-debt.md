@@ -7,13 +7,13 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 ## Resumo
 
 - Arquivos analisados: 362
-- Arquivos com achados: 4
-- Achados: 16
-- Arquivos protegidos/mistos com achados: 3
-- Achados alcançáveis pelo CRM protegido: 15
-- Distribuição por superfície: protected-only 15, protected-and-public 0, public-only 1, infraestrutura 0
+- Arquivos com achados: 5
+- Achados: 18
+- Arquivos protegidos/mistos com achados: 4
+- Achados alcançáveis pelo CRM protegido: 17
+- Distribuição por superfície: protected-only 17, protected-and-public 0, public-only 1, infraestrutura 0
 - P1: 1
-- P2: 0
+- P2: 2
 - P3: 15
 
 ## Regras
@@ -25,7 +25,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | P1 | Raio acima de 8px | 1 | Blocos usam 8px; controles 6px; microelementos 4px. |
 | P1 | Tipografia pesada | 0 | Texto normal usa 300; títulos usam 400. |
 | P1 | Cor hardcoded | 0 | Usar tokens --app-* ou cores semânticas do domínio. |
-| P2 | Superfície branca/preta fixa | 0 | Usar --app-surface-solid, --app-surface-soft ou --app-surface-hover. |
+| P2 | Superfície branca/preta fixa | 2 | Usar --app-surface-solid, --app-surface-soft ou --app-surface-hover. |
 | P2 | Movimento agressivo | 0 | Remover scale/translate decorativo de cards e ações operacionais. |
 | P3 | Caixa alta/tracking | 15 | Preferir texto natural em 10–12px e peso 300. |
 | P2 | Blur no painel | 0 | O overlay pode escurecer; o painel deve usar superfície sólida. |
@@ -38,6 +38,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | --- | ---: | ---: | --- |
 | `components/features/properties/detail/PropertyWorkspaceSections.tsx` | 8 | 8 | uppercase-tracking: 8 |
 | `components/features/properties/detail/PropertyWorkspaceOverview.tsx` | 4 | 4 | uppercase-tracking: 4 |
+| `components/features/round-robin/DistributionQueueEditor.tsx` | 4 | 2 | hardcoded-surface: 2 |
 | `components/features/properties/PropertyWorkspaceScreen.tsx` | 3 | 3 | uppercase-tracking: 3 |
 
 ### Todas as superfícies
@@ -46,5 +47,6 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | --- | ---: | ---: | --- |
 | `components/features/properties/detail/PropertyWorkspaceSections.tsx` | 8 | 8 | uppercase-tracking: 8 |
 | `components/features/properties/detail/PropertyWorkspaceOverview.tsx` | 4 | 4 | uppercase-tracking: 4 |
+| `components/features/round-robin/DistributionQueueEditor.tsx` | 4 | 2 | hardcoded-surface: 2 |
 | `components/features/properties/PropertyWorkspaceScreen.tsx` | 3 | 3 | uppercase-tracking: 3 |
 | `components/features/auth/AuthSplitLayout.tsx` | 3 | 1 | oversized-radius: 1 |

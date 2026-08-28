@@ -10,33 +10,42 @@ insert into auth.users (
 )
 values (
   '00000000-0000-0000-0000-000000000000',
-  'd1000000-0000-4000-8000-000000000001',
+  'c8100000-0000-4000-8000-000000000001',
   'authenticated', 'authenticated', 'wa-context@example.test', '', now(),
   '{}', '{}', now(), now(), '', '', '', ''
 );
 
 insert into public.organizations (id, name, slug, is_active)
-values ('d2000000-0000-4000-8000-000000000001', 'WhatsApp Context Org', 'whatsapp-context-org', true);
+values ('c8200000-0000-4000-8000-000000000001', 'WhatsApp Context Org', 'whatsapp-context-org', true);
 
 insert into public.users (id, organization_id, name, email, role, is_active)
 values (
-  'd1000000-0000-4000-8000-000000000001',
-  'd2000000-0000-4000-8000-000000000001',
+  'c8100000-0000-4000-8000-000000000001',
+  'c8200000-0000-4000-8000-000000000001',
   'Context Broker', 'wa-context@example.test', 'user', true
-);
+)
+on conflict (id) do update
+set organization_id = excluded.organization_id,
+    name = excluded.name,
+    email = excluded.email,
+    role = excluded.role,
+    is_active = excluded.is_active;
 
 insert into public.organization_members (organization_id, user_id, role, is_active)
 values (
-  'd2000000-0000-4000-8000-000000000001',
-  'd1000000-0000-4000-8000-000000000001',
+  'c8200000-0000-4000-8000-000000000001',
+  'c8100000-0000-4000-8000-000000000001',
   'user', true
-);
+)
+on conflict (user_id, organization_id) do update
+set role = excluded.role,
+    is_active = excluded.is_active;
 
 insert into public.leads (id, organization_id, assigned_user_id, name, source)
 values (
-  'd3000000-0000-4000-8000-000000000001',
-  'd2000000-0000-4000-8000-000000000001',
-  'd1000000-0000-4000-8000-000000000001',
+  'c8300000-0000-4000-8000-000000000001',
+  'c8200000-0000-4000-8000-000000000001',
+  'c8100000-0000-4000-8000-000000000001',
   'Context Lead', 'meta_ads'
 );
 
@@ -45,15 +54,15 @@ insert into public.whatsapp_sessions (
 )
 values
   (
-    'd4000000-0000-4000-8000-000000000001',
-    'd2000000-0000-4000-8000-000000000001',
-    'd1000000-0000-4000-8000-000000000001',
+    'c8400000-0000-4000-8000-000000000001',
+    'c8200000-0000-4000-8000-000000000001',
+    'c8100000-0000-4000-8000-000000000001',
     'whatsapp-context-original', 'evolution_go', 'connected', true
   ),
   (
-    'd4000000-0000-4000-8000-000000000002',
-    'd2000000-0000-4000-8000-000000000001',
-    'd1000000-0000-4000-8000-000000000001',
+    'c8400000-0000-4000-8000-000000000002',
+    'c8200000-0000-4000-8000-000000000001',
+    'c8100000-0000-4000-8000-000000000001',
     'whatsapp-context-current', 'evolution_go', 'connected', true
   );
 
@@ -61,9 +70,9 @@ insert into public.whatsapp_conversations (
   id, organization_id, session_id, remote_jid, contact_name
 )
 values (
-  'd5000000-0000-4000-8000-000000000001',
-  'd2000000-0000-4000-8000-000000000001',
-  'd4000000-0000-4000-8000-000000000001',
+  'c8500000-0000-4000-8000-000000000001',
+  'c8200000-0000-4000-8000-000000000001',
+  'c8400000-0000-4000-8000-000000000001',
   '5511999900100@s.whatsapp.net', 'Context Contact'
 );
 
@@ -93,10 +102,10 @@ insert into public.whatsapp_messages (
   message_type, content, remote_jid, status
 )
 values (
-  'd6000000-0000-4000-8000-000000000001',
-  'd2000000-0000-4000-8000-000000000001',
-  'd5000000-0000-4000-8000-000000000001',
-  'd4000000-0000-4000-8000-000000000001',
+  'c8600000-0000-4000-8000-000000000001',
+  'c8200000-0000-4000-8000-000000000001',
+  'c8500000-0000-4000-8000-000000000001',
+  'c8400000-0000-4000-8000-000000000001',
   null,
   'provider-context-original', 'provider-context-original',
   false, 'inbound', 'text', 'Original historical message',
@@ -104,20 +113,20 @@ values (
 );
 
 update public.whatsapp_conversations
-set session_id = 'd4000000-0000-4000-8000-000000000002'
-where id = 'd5000000-0000-4000-8000-000000000001';
+set session_id = 'c8400000-0000-4000-8000-000000000002'
+where id = 'c8500000-0000-4000-8000-000000000001';
 
 select lives_ok(
   $$
     update public.whatsapp_messages
-    set lead_id = 'd3000000-0000-4000-8000-000000000001'
-    where id = 'd6000000-0000-4000-8000-000000000001'
+    set lead_id = 'c8300000-0000-4000-8000-000000000001'
+    where id = 'c8600000-0000-4000-8000-000000000001'
   $$,
   'linking a lead after conversation rebind remains valid'
 );
 select is(
-  (select session_id from public.whatsapp_messages where id = 'd6000000-0000-4000-8000-000000000001'),
-  'd4000000-0000-4000-8000-000000000001'::uuid,
+  (select session_id from public.whatsapp_messages where id = 'c8600000-0000-4000-8000-000000000001'),
+  'c8400000-0000-4000-8000-000000000001'::uuid,
   'linking a lead does not rewrite historical session provenance'
 );
 
@@ -128,10 +137,10 @@ select lives_ok(
       provider_message_id, message_id, from_me, direction,
       message_type, content, remote_jid, status
     ) values (
-      'd6000000-0000-4000-8000-000000000002',
-      'd2000000-0000-4000-8000-000000000001',
-      'd5000000-0000-4000-8000-000000000001',
-      'd4000000-0000-4000-8000-000000000001',
+      'c8600000-0000-4000-8000-000000000002',
+      'c8200000-0000-4000-8000-000000000001',
+      'c8500000-0000-4000-8000-000000000001',
+      'c8400000-0000-4000-8000-000000000001',
       null,
       'provider-context-explicit', 'provider-context-explicit',
       false, 'inbound', 'text', 'Explicit provider session',
@@ -141,8 +150,8 @@ select lives_ok(
   'an explicit same-tenant provider session remains valid on insert'
 );
 select is(
-  (select session_id from public.whatsapp_messages where id = 'd6000000-0000-4000-8000-000000000002'),
-  'd4000000-0000-4000-8000-000000000001'::uuid,
+  (select session_id from public.whatsapp_messages where id = 'c8600000-0000-4000-8000-000000000002'),
+  'c8400000-0000-4000-8000-000000000001'::uuid,
   'insert does not overwrite an explicit provider session'
 );
 

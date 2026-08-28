@@ -163,13 +163,21 @@ select ok(
 select ok(
   (
     select
-      lower(procedure.prosrc) like '%private.distribute_lead(%'
+      lower(procedure.prosrc) like '%public.handle_routed_lead_intake(%'
       and lower(procedure.prosrc) not like '%public.handle_lead_intake(%'
     from pg_catalog.pg_proc as procedure
     where procedure.oid =
       'public.trigger_handle_lead_intake()'::regprocedure
+  )
+  and (
+    select
+      lower(procedure.prosrc) like '%private.distribute_lead(%'
+      and lower(procedure.prosrc) not like '%public.handle_lead_intake(%'
+    from pg_catalog.pg_proc as procedure
+    where procedure.oid =
+      'public.handle_routed_lead_intake(uuid)'::regprocedure
   ),
-  'unmarked lead inserts enter the canonical distributor instead of the legacy path'
+  'unmarked lead inserts reach canonical distribution through routed intake instead of the legacy path'
 );
 
 select ok(

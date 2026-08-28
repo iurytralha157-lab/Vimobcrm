@@ -67,7 +67,13 @@ select is(
 
 select ok(
   position(
-    'whatsapp_session.id = managed_context.session_id'
+    'whatsapp_session.id = inbound_rule.session_id'
+    in pg_get_functiondef(
+      'public.whatsapp_webhook_has_lead_creation_context(jsonb)'::regprocedure
+    )
+  ) > 0
+  and position(
+    'inbound_rule.session_id = managed_context.session_id'
     in pg_get_functiondef(
       'public.whatsapp_webhook_has_lead_creation_context(jsonb)'::regprocedure
     )

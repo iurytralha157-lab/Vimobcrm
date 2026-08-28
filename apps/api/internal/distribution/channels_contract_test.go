@@ -90,9 +90,10 @@ func TestCanonicalDistributionChannelContracts(t *testing.T) {
 	})
 
 	t.Run("whatsapp native", func(t *testing.T) {
-		process := goFunctionSource(t, filepath.Join("..", "whatsapp", "webhook_native_processor.go"), "createVerifiedNativeCampaignLead")
+		process := goFunctionSource(t, filepath.Join("..", "whatsapp", "webhook_native_processor.go"), "createAuthorizedNativeLead")
 		requireContains(t, process,
-			`"distribution_deferred": true`,
+			`metadataPayload["distribution_deferred"] = true`,
+			`if !rule.ManagedMessageDistribution`,
 			`distribution.StableKey("whatsapp-native", session.ID, message.ProviderMessageID)`,
 			"distribution.Distribute(ctx, tx",
 			"PreserveAssignee: true",

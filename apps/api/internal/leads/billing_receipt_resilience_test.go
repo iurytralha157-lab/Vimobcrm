@@ -67,7 +67,7 @@ func TestBillingReceiptMigrationKeepsDeliveryAndVerificationFailClosed(t *testin
 	if err != nil {
 		t.Fatalf("read billing receipt migration: %v", err)
 	}
-	source := string(raw)
+	source := strings.ReplaceAll(string(raw), "\r\n", "\n")
 
 	for _, required := range []string{
 		"alter column user_id drop not null",

@@ -10,7 +10,7 @@ test('gestao de usuarios solicita inativos sem contaminar caches de outras organ
   const hookSource = readSource('hooks/use-users.ts')
 
   assert.match(teamSource, /scope:\s*canManageUsers \? 'management' : 'active'/)
-  assert.match(teamSource, /grid-cols-1[^"']*sm:grid-cols-2[^"']*xl:grid-cols-3[^"']*2xl:grid-cols-4/)
+  assert.match(teamSource, /users\.filter\(user => user\.role !== 'super_admin'\)\.map/)
   assert.match(hookSource, /\['organization-users',\s*orgId,\s*scope\]/)
   assert.match(hookSource, /setQueriesData<User\[]>\(\{ queryKey: \['organization-users', orgId\] \}/)
 })
@@ -22,7 +22,7 @@ test('filtros historicos incluem inativos sem liberar novas atribuicoes', () => 
   const propertyFormSource = readSource('components/features/properties/PropertyFormScreen.tsx')
 
   assert.match(sharedFiltersSource, /scope:\s*'filters'/)
-  assert.match(propertiesSource, /useUsers\(\{ scope: 'filters' \}\)/)
+  assert.match(propertiesSource, /useUsers\(\{ scope: ["']filters["'] \}\)/)
   assert.match(sharedFiltersSource, /getUserFilterLabel/)
   assert.match(propertiesSource, /getUserFilterLabel/)
   assert.doesNotMatch(createLeadSource, /scope:\s*'filters'/)

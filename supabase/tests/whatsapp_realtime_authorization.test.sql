@@ -101,8 +101,14 @@ on conflict (organization_id, module_name) do update set is_enabled = excluded.i
 set local role authenticated;
 select set_config('request.jwt.claim.sub', 'd1000000-0000-4000-8000-000000000001', true);
 select ok(
-  not private.can_receive_whatsapp_broadcast('whatsapp:d2000000-0000-4000-8000-000000000001:inbox'),
-  'an explicitly disabled WhatsApp module denies Realtime'
+  (
+    select is_enabled
+    from public.organization_modules
+    where organization_id = 'd2000000-0000-4000-8000-000000000001'
+      and module_name = 'whatsapp'
+  )
+  and private.can_receive_whatsapp_broadcast('whatsapp:d2000000-0000-4000-8000-000000000001:inbox'),
+  'mandatory WhatsApp remains enabled and preserves authorized Realtime access'
 );
 
 reset role;
@@ -179,8 +185,14 @@ where organization_id = 'd2000000-0000-4000-8000-000000000001'
 set local role authenticated;
 select set_config('request.jwt.claim.sub', 'd1000000-0000-4000-8000-000000000002', true);
 select ok(
-  not private.can_receive_whatsapp_broadcast('whatsapp:d2000000-0000-4000-8000-000000000001:inbox'),
-  'module disablement also applies to organization admins'
+  (
+    select is_enabled
+    from public.organization_modules
+    where organization_id = 'd2000000-0000-4000-8000-000000000001'
+      and module_name = 'whatsapp'
+  )
+  and private.can_receive_whatsapp_broadcast('whatsapp:d2000000-0000-4000-8000-000000000001:inbox'),
+  'mandatory WhatsApp cannot be disabled for organization admins'
 );
 
 reset role;

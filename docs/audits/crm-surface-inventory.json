@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "946ba4b501222a7952e81c4ef81ee9e4049676708abba02a6f778a1dd05f502a",
+  "sourceDigestSha256": "1953a1cc8f0496d73067993af1b8461ef9493ec804442eb5656c7f41372267ca",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -1150,10 +1150,10 @@
           "kind": "sheet"
         },
         {
-          "id": "overlay:97270a873a651e8cbf01",
+          "id": "overlay:e3aa0f66afb520af100c",
           "column": 9,
           "file": "components/features/crm-management/DistributionTab.tsx",
-          "line": 606,
+          "line": 622,
           "owner": "DistributionTab",
           "routes": [
             "/crm/management"
@@ -2106,10 +2106,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:bdd621ad4424fff7ca6c",
+          "id": "overlay:930719646dc9bfad8696",
           "column": 9,
           "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 1161,
+          "line": 1163,
           "owner": "Properties",
           "routes": [
             "/properties",
@@ -2119,10 +2119,10 @@
           "kind": "sheet"
         },
         {
-          "id": "overlay:5d8de46d48f275a4383e",
+          "id": "overlay:d3ccce21bac989420790",
           "column": 9,
           "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 1189,
+          "line": 1191,
           "owner": "Properties",
           "routes": [
             "/properties",
@@ -2455,10 +2455,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:f812082d444409a9a3db",
+          "id": "overlay:b720819472ac9be8797f",
           "column": 5,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1161,
+          "line": 1596,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management",
@@ -2727,10 +2727,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:09093201654fa2ee5d96",
+          "id": "overlay:8119c65b799665386946",
           "column": 15,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 249,
+          "line": 247,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -2738,10 +2738,10 @@
           "kind": "sheet"
         },
         {
-          "id": "overlay:33505f81b5c575f31f65",
+          "id": "overlay:d1231287075e8738d828",
           "column": 7,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 566,
+          "line": 565,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -2749,10 +2749,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:4d7bf002a265578c7f5e",
+          "id": "overlay:f7d7c4153c69edf017cb",
           "column": 7,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 679,
+          "line": 678,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -2804,10 +2804,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:49be10d9384add0357f1",
+          "id": "overlay:9228d651b059b944ffbd",
           "column": 9,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 591,
+          "line": 604,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings"
@@ -2815,10 +2815,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:43b9c653fbad0b06a5dd",
+          "id": "overlay:5a800a2c591324265720",
           "column": 9,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 621,
+          "line": 634,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings"
@@ -2826,10 +2826,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:b3239f4105a143028706",
+          "id": "overlay:3ce2c9f9bfcac8ee477e",
           "column": 9,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 684,
+          "line": 697,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings"
@@ -2837,10 +2837,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:ea182c63709c472c4656",
+          "id": "overlay:41e7e07b51cec1a8b259",
           "column": 9,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 718,
+          "line": 731,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings"
@@ -3040,10 +3040,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:71a00ec2a043877082ba",
+          "id": "overlay:afc5512da1c84c968866",
           "column": 5,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 780,
+          "line": 781,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -3051,10 +3051,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:9f8e3892aa5191fd12e6",
+          "id": "overlay:853f42c760e28937ab34",
           "column": 42,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 847,
+          "line": 848,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -3062,10 +3062,10 @@
           "kind": "dropdownMenu"
         },
         {
-          "id": "overlay:d6943f7d6018ebb48328",
+          "id": "overlay:9e712944e10cf6d7e7bf",
           "column": 19,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 997,
+          "line": 1001,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -3073,10 +3073,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:d9a35721acbd96005d34",
+          "id": "overlay:3097fe22950b6030fb62",
           "column": 15,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1228,
+          "line": 1232,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -3084,10 +3084,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:dea42d0fcca8815ad555",
+          "id": "overlay:4e6f3a95a9a8db56af69",
           "column": 22,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1913,
+          "line": 1920,
           "owner": "ConversationItem",
           "routes": [
             "/crm/conversas"
@@ -3536,10 +3536,10 @@
           "kind": "sheet"
         },
         {
-          "id": "overlay:13ef80480e50ed58e6db",
+          "id": "overlay:23a08008279492a09213",
           "column": 9,
           "file": "components/shared/SharedFilters.tsx",
-          "line": 343,
+          "line": 347,
           "owner": "SharedFilters",
           "routes": [
             "/crm/contacts",
@@ -3550,10 +3550,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:764d43fd6828e2197e44",
+          "id": "overlay:c597dc22ca1a9ed39a8f",
           "column": 19,
           "file": "components/shared/SharedFilters.tsx",
-          "line": 524,
+          "line": 528,
           "owner": "SharedFilters",
           "routes": [
             "/crm/contacts",
@@ -4167,10 +4167,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:5764dc83a6638746bb7a",
+          "id": "form:1bbe949a13d77d79f389",
           "column": 7,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1476,
+          "line": 1471,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -9797,10 +9797,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:7af42eaca7d8a6133e0d",
+          "id": "cta:373407fa27953acf856f",
           "column": 11,
           "file": "components/features/crm-management/DistributionTab.tsx",
-          "line": 324,
+          "line": 340,
           "owner": "DistributionTab",
           "routes": [
             "/crm/management"
@@ -9809,10 +9809,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c0fddf60e15039ebc1bf",
+          "id": "cta:790ba5e62b64d93b7ea9",
           "column": 11,
           "file": "components/features/crm-management/DistributionTab.tsx",
-          "line": 344,
+          "line": 360,
           "owner": "DistributionTab",
           "routes": [
             "/crm/management"
@@ -9821,10 +9821,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ee4922b24e34a6db8a9b",
+          "id": "cta:b8cabc5db94d5275c65a",
           "column": 27,
           "file": "components/features/crm-management/DistributionTab.tsx",
-          "line": 576,
+          "line": 592,
           "owner": "DistributionTab",
           "routes": [
             "/crm/management"
@@ -9833,10 +9833,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:e4eeb7a2f576b11d34cf",
+          "id": "cta:73896041b75dc39e51f7",
           "column": 29,
           "file": "components/features/crm-management/DistributionTab.tsx",
-          "line": 586,
+          "line": 602,
           "owner": "DistributionTab",
           "routes": [
             "/crm/management"
@@ -13101,10 +13101,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:be2e4e02fe41684c8b92",
+          "id": "cta:9770649fff6af7f99977",
           "column": 17,
           "file": "components/features/leads/LeadUnifiedThread.tsx",
-          "line": 1274,
+          "line": 1276,
           "owner": "LeadUnifiedThread",
           "routes": [
             "/crm/contacts",
@@ -15216,10 +15216,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2f59ccdb96dd4c4e7907",
+          "id": "cta:44acc10d2cbbd7e69392",
           "column": 11,
           "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 356,
+          "line": 358,
           "owner": "Properties",
           "routes": [
             "/properties",
@@ -15230,10 +15230,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:119860c3b88fefb0f4c4",
+          "id": "cta:85832de95f25e7e6c3a8",
           "column": 9,
           "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 574,
+          "line": 576,
           "owner": "Properties",
           "routes": [
             "/properties",
@@ -15244,10 +15244,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:ff2b70d41cec733f70b5",
+          "id": "cta:6d907d3bdc69c19d7523",
           "column": 11,
           "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 938,
+          "line": 940,
           "owner": "Properties",
           "routes": [
             "/properties",
@@ -15258,10 +15258,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:b22423cafa9b182229ef",
+          "id": "cta:0f39070763dcd07744d1",
           "column": 17,
           "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 992,
+          "line": 994,
           "owner": "Properties",
           "routes": [
             "/properties",
@@ -15272,10 +15272,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:cfac222c7290170b4a1f",
+          "id": "cta:55773518e6edef338222",
           "column": 19,
           "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 1005,
+          "line": 1007,
           "owner": "Properties",
           "routes": [
             "/properties",
@@ -15286,10 +15286,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a652a4338747b5cc0d52",
+          "id": "cta:2febf1372cf9106071f0",
           "column": 19,
           "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 1046,
+          "line": 1048,
           "owner": "Properties",
           "routes": [
             "/properties",
@@ -15300,10 +15300,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:6a94bdd8ecf341369398",
+          "id": "cta:8b73c8933c1a3962c02e",
           "column": 23,
           "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 1075,
+          "line": 1077,
           "owner": "Properties",
           "routes": [
             "/properties",
@@ -15314,10 +15314,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f55947fe0a79d64e3e39",
+          "id": "cta:73da6e190b0d62dcf80e",
           "column": 23,
           "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 1085,
+          "line": 1087,
           "owner": "Properties",
           "routes": [
             "/properties",
@@ -15328,10 +15328,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:3b3ad2bb2f93e1c6c87e",
+          "id": "cta:65d9c214f58e0279ac07",
           "column": 19,
           "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 1140,
+          "line": 1142,
           "owner": "Properties",
           "routes": [
             "/properties",
@@ -15402,10 +15402,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:ca316a00637f3e9c221b",
+          "id": "cta:690f2a88bb23f6fbeff2",
           "column": 15,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1517,
+          "line": 1512,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -15417,10 +15417,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:8dcde3b90b46f7fbbf5e",
+          "id": "cta:5fe50cc6d6b662e6657d",
           "column": 15,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1585,
+          "line": 1580,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -15432,10 +15432,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:4eb8146679b18f4e9b86",
+          "id": "cta:2869813bfd4cd2243105",
           "column": 15,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1596,
+          "line": 1591,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -15447,10 +15447,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ad1c9674de9dc5374862",
+          "id": "cta:7999a36874fc916dacd4",
           "column": 23,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1688,
+          "line": 1683,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -15462,10 +15462,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:029cc7e93fa73714c131",
+          "id": "cta:c3a2ea92f217a40ae64e",
           "column": 25,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1829,
+          "line": 1824,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -15477,10 +15477,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:fc1d4e96edfb05e283f9",
+          "id": "cta:89a062e91a6bd2458200",
           "column": 27,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1847,
+          "line": 1842,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -15492,10 +15492,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d8248fc12e744c34b69c",
+          "id": "cta:c32167d8e370f32db84c",
           "column": 27,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1881,
+          "line": 1876,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -15507,10 +15507,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:91b6c76df72436dc2a7f",
+          "id": "cta:c576d71fdf217b5ce93d",
           "column": 27,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1900,
+          "line": 1895,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -15522,10 +15522,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:e0a90a850a3626b8eadd",
+          "id": "cta:3feec6c4bd00b9800cfb",
           "column": 25,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1943,
+          "line": 1938,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -15537,10 +15537,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:706be9c39f08d30ed5cf",
+          "id": "cta:e0790f958d01de9a68fd",
           "column": 27,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1961,
+          "line": 1956,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -15552,10 +15552,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:081544b372fda5e093c9",
+          "id": "cta:8e3a683e6a3288b9875b",
           "column": 25,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 2105,
+          "line": 2100,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -15567,10 +15567,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:34e6575fefc1776bef87",
+          "id": "cta:39c30b6ba36eafd1c35d",
           "column": 27,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 2180,
+          "line": 2175,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -15582,10 +15582,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:04dbcfa52aa24032ccba",
+          "id": "cta:955cbc2c2856e3eefe17",
           "column": 25,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 2195,
+          "line": 2190,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -15597,10 +15597,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:3b37dcf64fb01d824e1c",
+          "id": "cta:ac3389f4e7dbefa2b964",
           "column": 27,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 2266,
+          "line": 2261,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -15612,10 +15612,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f23f345a312d0df0bef2",
+          "id": "cta:7e78310c0b4d0f476279",
           "column": 25,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 2281,
+          "line": 2276,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -15627,10 +15627,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a9bb26395c8a38b0df03",
+          "id": "cta:deca45173d4cb95e12ea",
           "column": 25,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 2444,
+          "line": 2439,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -15642,10 +15642,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:e738e38bc511ce4b8fd4",
+          "id": "cta:b23e8c08e480eb0d84c5",
           "column": 25,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 3163,
+          "line": 3158,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -17717,10 +17717,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:b682e1d5d57513f45423",
+          "id": "cta:2770f21949f2c34af884",
           "column": 9,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 285,
+          "line": 300,
           "owner": "SortableMemberRow",
           "routes": [
             "/crm/management",
@@ -17730,10 +17730,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:ed137fff24559f1be1df",
+          "id": "cta:04114b45c15274a7f7c4",
           "column": 9,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 378,
+          "line": 393,
           "owner": "SortableMemberRow",
           "routes": [
             "/crm/management",
@@ -17743,10 +17743,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c8988395e85df591f9f5",
+          "id": "cta:a993aa429364018f26b5",
           "column": 25,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1356,
+          "line": 1869,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management",
@@ -17756,10 +17756,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:81352c329dad59dc2933",
+          "id": "cta:8aacfbb78c9cec20b341",
           "column": 19,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1374,
+          "line": 1916,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management",
@@ -17769,10 +17769,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:433644ab7cc1af41e8a4",
+          "id": "cta:f1cd5a66687e1c85dd95",
           "column": 11,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1722,
+          "line": 2277,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management",
@@ -17782,10 +17782,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:1e8a7315929fc5459a7f",
+          "id": "cta:b6063d4bb72238a4fd92",
           "column": 11,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1729,
+          "line": 2284,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management",
@@ -19185,10 +19185,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:1e3c97dfb883f0ea2458",
+          "id": "cta:cb5bc8b742ca86223936",
           "column": 19,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 254,
+          "line": 252,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -19197,10 +19197,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:42139e5d7432943283b8",
+          "id": "cta:fdfd89aa2021578f63de",
           "column": 23,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 309,
+          "line": 308,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -19209,10 +19209,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:fadf931fe4277f0a66f0",
+          "id": "cta:412e42fe168ea118d194",
           "column": 23,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 312,
+          "line": 311,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -19221,10 +19221,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:bd71e15d50177d7c6aa5",
+          "id": "cta:e195047d1631f6d42f33",
           "column": 17,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 330,
+          "line": 329,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -19233,10 +19233,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:18ed3549b8ac8dab282a",
+          "id": "cta:72ded1a9db015638007b",
           "column": 27,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 407,
+          "line": 406,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -19245,10 +19245,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ded2f6c323eec97d12d1",
+          "id": "cta:6275cef43a1bcaa8769e",
           "column": 27,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 419,
+          "line": 418,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -19257,10 +19257,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f7c7a4f13fc66f465f66",
+          "id": "cta:bf99f326a6e5fb17d275",
           "column": 31,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 493,
+          "line": 492,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -19270,10 +19270,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:95d256678819c2b345be",
+          "id": "cta:d868c8017aa7c4ee45c9",
           "column": 27,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 516,
+          "line": 515,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -19282,10 +19282,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d764838cd70c705b01cd",
+          "id": "cta:4749709e56eb862c480d",
           "column": 31,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 546,
+          "line": 545,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -19452,10 +19452,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a1443561dadbacafbf28",
+          "id": "cta:a80889746a20cd7833fc",
           "column": 7,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 404,
+          "line": 417,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings"
@@ -19464,10 +19464,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ae0847c522040bfef7b9",
+          "id": "cta:ccdf99caf74173a717dc",
           "column": 13,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 434,
+          "line": 447,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings"
@@ -19476,10 +19476,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:051dbd1b9e8242d21dd7",
+          "id": "cta:247d4757cd644b7508c5",
           "column": 13,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 457,
+          "line": 470,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings"
@@ -19488,10 +19488,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:7a8bca1111abae7024d6",
+          "id": "cta:3c237175ccd39d4ea8ae",
           "column": 13,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 468,
+          "line": 481,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings"
@@ -19500,20 +19500,8 @@
           "tag": "Button"
         },
         {
-          "id": "cta:84293ef78d415955d479",
+          "id": "cta:2bdbe1be767e9be85562",
           "column": 21,
-          "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 537,
-          "owner": "WhatsAppTab",
-          "routes": [
-            "/settings"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:fb1d7628d411148cafb1",
-          "column": 25,
           "file": "components/features/settings/WhatsAppTab.tsx",
           "line": 550,
           "owner": "WhatsAppTab",
@@ -19524,10 +19512,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:15bba78ea508aec12c1a",
+          "id": "cta:61e2098ab8a0ca85a719",
           "column": 25,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 554,
+          "line": 563,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings"
@@ -19548,10 +19536,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:5624deddc9d1dbe2019f",
+          "id": "cta:711d2d268fcac16ef29d",
           "column": 25,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 571,
+          "line": 580,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings"
@@ -19560,10 +19548,22 @@
           "tag": "Button"
         },
         {
-          "id": "cta:409f5f6e7930c110fce4",
+          "id": "cta:a36d1b67d60d7234b4db",
+          "column": 25,
+          "file": "components/features/settings/WhatsAppTab.tsx",
+          "line": 584,
+          "owner": "WhatsAppTab",
+          "routes": [
+            "/settings"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:1136c4ede7cbfe02b294",
           "column": 15,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 607,
+          "line": 620,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings"
@@ -19572,10 +19572,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:63b2c03558d9790c7ea6",
+          "id": "cta:829b57fdda3b97e09bac",
           "column": 15,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 610,
+          "line": 623,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings"
@@ -19584,10 +19584,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0410ac86913829e7cc14",
+          "id": "cta:7f3c8bdad97fb29194be",
           "column": 17,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 664,
+          "line": 677,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings"
@@ -19596,10 +19596,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d87535e1c4d5593f0618",
+          "id": "cta:24a89044cf1c1e631539",
           "column": 17,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 672,
+          "line": 685,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings"
@@ -21665,10 +21665,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ea96f24ca7a05dfe252d",
+          "id": "cta:61143ef3ec1ebcd3e99f",
           "column": 19,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 821,
+          "line": 822,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21677,10 +21677,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:505f29029b8e719364be",
+          "id": "cta:e188cd9c32572f548cb3",
           "column": 23,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 843,
+          "line": 844,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21690,10 +21690,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:4a8c47da5e86a5e47cd0",
+          "id": "cta:9d671c7c5cdbc99a93f0",
           "column": 23,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 849,
+          "line": 850,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21702,10 +21702,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:5c9a230261837a455f1e",
+          "id": "cta:a8e2dbe50b0e154c3aa3",
           "column": 25,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 874,
+          "line": 875,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21714,10 +21714,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:1d24493f7e0b7021add1",
+          "id": "cta:3156672830e67dd20c4c",
           "column": 25,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 895,
+          "line": 896,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21726,20 +21726,8 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d6572a39b4b4f2248d5a",
+          "id": "cta:1399c9ceed16030de999",
           "column": 23,
-          "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 956,
-          "owner": "Conversations",
-          "routes": [
-            "/crm/conversas"
-          ],
-          "kind": "actionButton",
-          "tag": "button"
-        },
-        {
-          "id": "cta:dee03b97a5d153e48662",
-          "column": 25,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
           "line": 960,
           "owner": "Conversations",
@@ -21750,10 +21738,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:180d3fdda7d3c686f347",
+          "id": "cta:5cffe39d6c932ffb0cec",
           "column": 25,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 965,
+          "line": 964,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21762,10 +21750,22 @@
           "tag": "button"
         },
         {
-          "id": "cta:2c5ddc7b4f6d1d8a610c",
+          "id": "cta:b525f75cc30cb522f354",
+          "column": 25,
+          "file": "components/features/whatsapp/ConversationsScreen.tsx",
+          "line": 969,
+          "owner": "Conversations",
+          "routes": [
+            "/crm/conversas"
+          ],
+          "kind": "actionButton",
+          "tag": "button"
+        },
+        {
+          "id": "cta:256f0f08430749a21ddb",
           "column": 21,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 986,
+          "line": 990,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21774,10 +21774,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:cbb9dc193f667dcc360d",
+          "id": "cta:7240bea3b92779453f07",
           "column": 23,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 999,
+          "line": 1003,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21786,10 +21786,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:31935e7787867e2a1d5a",
+          "id": "cta:a81b82b9e3688f5d8f8e",
           "column": 27,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1074,
+          "line": 1078,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21798,10 +21798,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:5d15ec6f90f19c303f2b",
+          "id": "cta:4a5ac9944cf52eb3f4d5",
           "column": 23,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1117,
+          "line": 1121,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21810,10 +21810,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0545750c860226dc9d4c",
+          "id": "cta:9c054e79dcb2220c62ec",
           "column": 49,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1132,
+          "line": 1136,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21822,10 +21822,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:7f4c10eec4201fecf414",
+          "id": "cta:515e32024a5d536f157b",
           "column": 23,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1178,
+          "line": 1182,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21834,10 +21834,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:6de1adab24d987b2875f",
+          "id": "cta:1bd45c41feaf379c39cb",
           "column": 17,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1217,
+          "line": 1221,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21846,10 +21846,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f45e495de46046c0bfe7",
+          "id": "cta:0643f5c76a6e56bd306a",
           "column": 19,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1230,
+          "line": 1234,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21858,10 +21858,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:fb11a2c2f25e2122a827",
+          "id": "cta:3ac9bc9a1fb7a45b91b0",
           "column": 23,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1305,
+          "line": 1309,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21870,10 +21870,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:b42d53a3a7732f2b1d24",
+          "id": "cta:0a3bc2f29bf96922362b",
           "column": 21,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1396,
+          "line": 1400,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21882,10 +21882,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ef63c0c5dc7fcb835b25",
+          "id": "cta:c9a28272202096714f27",
           "column": 19,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1482,
+          "line": 1486,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21894,10 +21894,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:230f459a8e3559a14883",
+          "id": "cta:cb84410397c5f1f9bff0",
           "column": 25,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1548,
+          "line": 1552,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21906,10 +21906,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:78379d13e6a6b9d3002d",
+          "id": "cta:cdcec340c16573b24fd5",
           "column": 25,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1569,
+          "line": 1573,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21918,10 +21918,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:88fd7c62f7634475f217",
+          "id": "cta:dc12f18c89c0cc0501fc",
           "column": 23,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1631,
+          "line": 1638,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21930,10 +21930,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:92fa230e085d47cf0ab7",
+          "id": "cta:61270a7d15d08ffacd77",
           "column": 25,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1635,
+          "line": 1642,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21942,10 +21942,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:89d875d6911be3a660f4",
+          "id": "cta:4ae6fe8d215e65aa1d0a",
           "column": 25,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1640,
+          "line": 1647,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21954,10 +21954,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:9158503128108ab6cd04",
+          "id": "cta:b450b85ee399d188cc28",
           "column": 43,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1674,
+          "line": 1681,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21966,10 +21966,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0446450d0a28c1288b52",
+          "id": "cta:73293904f9c97814ee1c",
           "column": 21,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1678,
+          "line": 1685,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -21978,10 +21978,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:e12489c16eed1a1bf4fc",
+          "id": "cta:971c3efa560c0abd00e8",
           "column": 7,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1828,
+          "line": 1835,
           "owner": "ConversationItem",
           "routes": [
             "/crm/conversas"
@@ -21990,10 +21990,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:1c3834550ecf2e429620",
+          "id": "cta:934d77ade377f0965a80",
           "column": 11,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1915,
+          "line": 1922,
           "owner": "ConversationItem",
           "routes": [
             "/crm/conversas"
@@ -24459,10 +24459,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:5c1706840a5285661c8e",
+          "id": "cta:ef2093dd544311eaa1f1",
           "column": 13,
           "file": "components/shared/SharedFilters.tsx",
-          "line": 345,
+          "line": 349,
           "owner": "SharedFilters",
           "routes": [
             "/crm/contacts",
@@ -24474,10 +24474,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:dbeb8a9ce00a39284861",
+          "id": "cta:b2373a978ba6bcbcf692",
           "column": 19,
           "file": "components/shared/SharedFilters.tsx",
-          "line": 406,
+          "line": 410,
           "owner": "SharedFilters",
           "routes": [
             "/crm/contacts",
@@ -24489,10 +24489,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:abf6cd52fa0a139bb97d",
+          "id": "cta:b0ee4d6041980235dccc",
           "column": 23,
           "file": "components/shared/SharedFilters.tsx",
-          "line": 526,
+          "line": 530,
           "owner": "SharedFilters",
           "routes": [
             "/crm/contacts",
@@ -24504,10 +24504,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:954cf6d3362585797a2e",
+          "id": "cta:25a8cbf6a7f2d10c827a",
           "column": 11,
           "file": "components/shared/SharedFilters.tsx",
-          "line": 812,
+          "line": 814,
           "owner": "SharedFilters",
           "routes": [
             "/crm/contacts",
@@ -25293,10 +25293,10 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:0b8ff78d7bd2c39678de",
+          "id": "control:b41fb7c8d7c549a2db09",
           "column": 15,
           "file": "components/features/crm-management/DistributionTab.tsx",
-          "line": 621,
+          "line": 637,
           "owner": "DistributionTab",
           "routes": [
             "/crm/management"
@@ -25305,10 +25305,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:5e7549d5232a414beb2e",
+          "id": "control:86643c984d663a647988",
           "column": 15,
           "file": "components/features/crm-management/DistributionTab.tsx",
-          "line": 624,
+          "line": 640,
           "owner": "DistributionTab",
           "routes": [
             "/crm/management"
@@ -26761,10 +26761,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:491f611f997453c7cd43",
+          "id": "control:67244c10288609c626c3",
           "column": 15,
           "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 1208,
+          "line": 1210,
           "owner": "Properties",
           "routes": [
             "/properties",
@@ -26775,10 +26775,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:c4e874409d376631dc3f",
+          "id": "control:a9bbf4b19615fbc04582",
           "column": 15,
           "file": "components/features/properties/PropertiesScreen.tsx",
-          "line": 1211,
+          "line": 1213,
           "owner": "Properties",
           "routes": [
             "/properties",
@@ -26969,10 +26969,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:d2b3680e708047a084dd",
+          "id": "control:06b7661af17b2c2e7587",
           "column": 27,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1555,
+          "line": 1550,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -27540,10 +27540,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:db1d5004660b88b338a5",
+          "id": "control:a20b429e2c38d173f7b7",
           "column": 13,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 663,
+          "line": 662,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -27552,10 +27552,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:856bfcebe68750ce1a99",
+          "id": "control:db1d5004660b88b338a5",
           "column": 13,
           "file": "components/features/settings/TeamTab.tsx",
-          "line": 664,
+          "line": 663,
           "owner": "TeamTab",
           "routes": [
             "/settings"
@@ -27648,10 +27648,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:684dc2c94399c5be5759",
+          "id": "control:caee2b15619eb752f497",
           "column": 15,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 701,
+          "line": 714,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings"
@@ -27660,10 +27660,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:ac28ec67c0e36c15e873",
+          "id": "control:15ac7b7ba32dec373c4e",
           "column": 15,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 704,
+          "line": 717,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings"
@@ -27672,10 +27672,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:3eb775d0a6de349b5c57",
+          "id": "control:374c5d5dd248731eacde",
           "column": 15,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 730,
+          "line": 743,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings"
@@ -27684,10 +27684,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:d90890fea9f76d7d62b1",
+          "id": "control:0f5342fed4331f2619f3",
           "column": 15,
           "file": "components/features/settings/WhatsAppTab.tsx",
-          "line": 731,
+          "line": 744,
           "owner": "WhatsAppTab",
           "routes": [
             "/settings"
@@ -27840,18 +27840,6 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:838fb4d4783d5737c375",
-          "column": 11,
-          "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 794,
-          "owner": "Conversations",
-          "routes": [
-            "/crm/conversas"
-          ],
-          "kind": "AlertDialogCancel",
-          "tag": "AlertDialogCancel"
-        },
-        {
           "id": "control:3de16cc8dcbddb43b17d",
           "column": 11,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
@@ -27860,14 +27848,26 @@
           "routes": [
             "/crm/conversas"
           ],
+          "kind": "AlertDialogCancel",
+          "tag": "AlertDialogCancel"
+        },
+        {
+          "id": "control:64b40df77ed57a51e51d",
+          "column": 11,
+          "file": "components/features/whatsapp/ConversationsScreen.tsx",
+          "line": 796,
+          "owner": "Conversations",
+          "routes": [
+            "/crm/conversas"
+          ],
           "kind": "AlertDialogAction",
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:f22cc16696e395d5753d",
+          "id": "control:fe17a845e701ff66e547",
           "column": 23,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 854,
+          "line": 855,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -27876,10 +27876,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:ab43cbf19f1d86b9ef3f",
+          "id": "control:e46c60b715f008adbb7e",
           "column": 23,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 859,
+          "line": 860,
           "owner": "Conversations",
           "routes": [
             "/crm/conversas"
@@ -27888,10 +27888,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:aeb8fd43b29ec4618645",
+          "id": "control:75887ba7f1ab4d91e6a5",
           "column": 15,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1922,
+          "line": 1929,
           "owner": "ConversationItem",
           "routes": [
             "/crm/conversas"
@@ -27900,10 +27900,10 @@
           "tag": "DropdownMenuSubTrigger"
         },
         {
-          "id": "control:41db473f30632b53ce2b",
+          "id": "control:16cf432ffa227d3be955",
           "column": 41,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1929,
+          "line": 1936,
           "owner": "ConversationItem",
           "routes": [
             "/crm/conversas"
@@ -27912,10 +27912,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:7f74a67b1d8270d87543",
+          "id": "control:9dee08e78c9461556cbd",
           "column": 48,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1940,
+          "line": 1947,
           "owner": "ConversationItem",
           "routes": [
             "/crm/conversas"
@@ -27924,10 +27924,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:1bf258f642ce94f576fe",
+          "id": "control:232844b46d1ac30f2c76",
           "column": 41,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1952,
+          "line": 1959,
           "owner": "ConversationItem",
           "routes": [
             "/crm/conversas"
@@ -27936,10 +27936,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:26e77bcd19edd26f8973",
+          "id": "control:acc129242d69a76afae6",
           "column": 11,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1956,
+          "line": 1963,
           "owner": "ConversationItem",
           "routes": [
             "/crm/conversas"
@@ -27948,10 +27948,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:43f5d9b26ad0b9bad71d",
+          "id": "control:c79636108d2c5b27e1c9",
           "column": 11,
           "file": "components/features/whatsapp/ConversationsScreen.tsx",
-          "line": 1961,
+          "line": 1968,
           "owner": "ConversationItem",
           "routes": [
             "/crm/conversas"
@@ -28611,7 +28611,7 @@
         }
       ]
     },
-    "digestSha256": "bc796d827e18980b1c3eac65518f187f508ceabefbfded2a176812f6d558f2d8"
+    "digestSha256": "ffaed169fc1dd7dcf91760eea8140cc1f47ca518fd0d68aa3ae377eeb65151a5"
   },
   "routes": [
     {

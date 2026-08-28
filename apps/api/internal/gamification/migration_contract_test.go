@@ -36,7 +36,8 @@ func TestCanonicalMigrationContract(t *testing.T) {
 	// The production migration is a schema snapshot and quotes every
 	// identifier. Normalize it so this test validates the migration a fresh
 	// environment actually applies, not the retired pre-squash source file.
-	sql := strings.ToLower(strings.ReplaceAll(migrationSQL.String(), `"`, ""))
+	normalizedSQL := strings.ReplaceAll(migrationSQL.String(), "\r\n", "\n")
+	sql := strings.ToLower(strings.ReplaceAll(normalizedSQL, `"`, ""))
 
 	required := []string{
 		"create table if not exists public.gamification_outbox",

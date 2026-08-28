@@ -1,26 +1,26 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "91d2f8cf6b503c5ad7f969c2cf5c3dcf50e6cec66f96e8397ac98e5973c1c00c",
-  "surfaceInventoryDigestSha256": "946ba4b501222a7952e81c4ef81ee9e4049676708abba02a6f778a1dd05f502a",
+  "sourceDigestSha256": "7960680b35e34d7efbfad55c6c849a4a7e5403200177a54e18b9900524ab7549",
+  "surfaceInventoryDigestSha256": "1953a1cc8f0496d73067993af1b8461ef9493ec804442eb5656c7f41372267ca",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
     "filesScanned": 362,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
-    "filesWithFindings": 4,
-    "findings": 16,
-    "protectedReachableFilesWithFindings": 3,
-    "protectedReachableFindings": 15,
+    "filesWithFindings": 5,
+    "findings": 18,
+    "protectedReachableFilesWithFindings": 4,
+    "protectedReachableFindings": 17,
     "bySurfaceScope": {
-      "protected-only": 15,
+      "protected-only": 17,
       "protected-and-public": 0,
       "public-only": 1,
       "infrastructure": 0
     },
     "byPriority": {
       "P1": 1,
-      "P2": 0,
+      "P2": 2,
       "P3": 15
     },
     "byRule": {
@@ -55,7 +55,7 @@
         "priority": "P1"
       },
       "hardcoded-surface": {
-        "count": 0,
+        "count": 2,
         "guidance": "Usar --app-surface-solid, --app-surface-soft ou --app-surface-hover.",
         "label": "Superfície branca/preta fixa",
         "priority": "P2"
@@ -98,6 +98,14 @@
       }
     },
     {
+      "file": "components/features/round-robin/DistributionQueueEditor.tsx",
+      "count": 2,
+      "score": 4,
+      "rules": {
+        "hardcoded-surface": 2
+      }
+    },
+    {
       "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
       "count": 3,
       "score": 3,
@@ -129,6 +137,14 @@
       "score": 4,
       "rules": {
         "uppercase-tracking": 4
+      }
+    },
+    {
+      "file": "components/features/round-robin/DistributionQueueEditor.tsx",
+      "count": 2,
+      "score": 4,
+      "rules": {
+        "hardcoded-surface": 2
       }
     },
     {
@@ -284,6 +300,24 @@
       "rule": "uppercase-tracking",
       "surfaceScope": "protected-only",
       "weight": 1
+    },
+    {
+      "file": "components/features/round-robin/DistributionQueueEditor.tsx",
+      "line": 1320,
+      "match": "bg-black/10",
+      "priority": "P2",
+      "rule": "hardcoded-surface",
+      "surfaceScope": "protected-only",
+      "weight": 2
+    },
+    {
+      "file": "components/features/round-robin/DistributionQueueEditor.tsx",
+      "line": 1354,
+      "match": "bg-black/10",
+      "priority": "P2",
+      "rule": "hardcoded-surface",
+      "surfaceScope": "protected-only",
+      "weight": 2
     }
   ]
 }
