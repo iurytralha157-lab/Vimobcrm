@@ -688,6 +688,17 @@ func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFi
 		args = append(args, value)
 		where = append(where, fmt.Sprintf(clause, len(args)))
 	}
+	addOperationalDate := func(operator string, value any) {
+		args = append(args, value)
+		placeholder := fmt.Sprintf("$%d", len(args))
+		where = append(where, fmt.Sprintf(
+			"(l.stage_entered_at %s %s or (l.stage_entered_at is null and l.created_at %s %s))",
+			operator,
+			placeholder,
+			operator,
+			placeholder,
+		))
+	}
 
 	if strings.TrimSpace(filter.PipelineID) != "" {
 		value, ok := normalizeUUID(filter.PipelineID)
@@ -780,10 +791,10 @@ func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFi
 
 	var occurredFrom any
 	var occurredTo any
-	if !hasSearch && filter.DateFrom != nil {
+	if filter.DateFrom != nil {
 		occurredFrom = *filter.DateFrom
 	}
-	if !hasSearch && filter.DateTo != nil {
+	if filter.DateTo != nil {
 		occurredTo = *filter.DateTo
 	}
 	hasAttributionFilter := addLeadAttributionFilterCondition(&args, &where, "l", "lm", leadAttributionFilter{
@@ -793,12 +804,12 @@ func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFi
 		OccurredFrom: occurredFrom,
 		OccurredTo:   occurredTo,
 	})
-	if !hasSearch && !hasAttributionFilter {
+	if !hasAttributionFilter {
 		if filter.DateFrom != nil {
-			add("l.created_at >= $%d", *filter.DateFrom)
+			addOperationalDate(">=", *filter.DateFrom)
 		}
 		if filter.DateTo != nil {
-			add("l.created_at <= $%d", *filter.DateTo)
+			addOperationalDate("<=", *filter.DateTo)
 		}
 	}
 

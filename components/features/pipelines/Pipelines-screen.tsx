@@ -1079,7 +1079,9 @@ export default function Pipelines() {
         const searchedStages = await getPipelineBoard({
           organizationId: activeOrganizationId,
           pipelineId: selectedPipelineId,
+          filterUserId: effectivePipelineFilterUser,
           filters: {
+            dateRange,
             searchQuery: deferredSearch,
             filterTag: filterTag && filterTag !== 'all' ? filterTag : undefined,
             filterDealStatus: filterDealStatus && filterDealStatus !== 'all' ? filterDealStatus : undefined,
@@ -1103,7 +1105,7 @@ export default function Pipelines() {
 
     doSearch();
     return () => { cancelled = true; };
-  }, [activeOrganizationId, deferredSearch, hasMoreLeads, selectedPipelineId, filterTag, filterDealStatus, filterCampaign, filterAdSet, filterAd, filterSource, effectivePipelineFilterUserIds]);
+  }, [activeOrganizationId, deferredSearch, hasMoreLeads, selectedPipelineId, effectivePipelineFilterUser, dateRange, filterTag, filterDealStatus, filterCampaign, filterAdSet, filterAd, filterSource, effectivePipelineFilterUserIds]);
 
   const filteredStages = useMemo<StageWithLeads[]>(() => {
     return stages.map(stage => {

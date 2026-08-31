@@ -103,6 +103,7 @@ func TestBuildPipelineLeadWhereUsesEntryDateForAttributionFilter(t *testing.T) {
 
 	where, _, err := buildPipelineLeadWhere(tenantContext, PipelineBoardFilter{
 		FilterCampaign: "campaign-alpha",
+		Search:         "Camila K",
 		DateFrom:       &dateFrom,
 		DateTo:         &dateTo,
 	})
@@ -123,24 +124,70 @@ func TestBuildPipelineLeadWhereUsesEntryDateForAttributionFilter(t *testing.T) {
 	}
 }
 
-func TestBuildPipelineLeadWhereKeepsCreatedDateWithoutAttribution(t *testing.T) {
+func TestBuildPipelineLeadWhereUsesStageEntryDateWithoutAttribution(t *testing.T) {
 	tenantContext := tenant.Context{
 		UserID:         "10000000-0000-0000-0000-000000000001",
 		OrganizationID: "20000000-0000-0000-0000-000000000001",
 		MemberRole:     "admin",
 	}
 	dateFrom := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	dateTo := time.Date(2026, 7, 31, 23, 59, 59, 0, time.UTC)
 
-	where, _, err := buildPipelineLeadWhere(tenantContext, PipelineBoardFilter{DateFrom: &dateFrom})
+	where, _, err := buildPipelineLeadWhere(tenantContext, PipelineBoardFilter{
+		DateFrom: &dateFrom,
+		DateTo:   &dateTo,
+	})
 	if err != nil {
 		t.Fatalf("buildPipelineLeadWhere() error = %v", err)
 	}
 
 	joined := strings.Join(where, "\n")
-	if !strings.Contains(joined, "l.created_at >= $") {
-		t.Fatalf("buildPipelineLeadWhere() must preserve lead-created date filtering:\n%s", joined)
+	for _, want := range []string{
+		"l.stage_entered_at >= $",
+		"l.stage_entered_at <= $",
+		"l.stage_entered_at is null and l.created_at >= $",
+		"l.stage_entered_at is null and l.created_at <= $",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("buildPipelineLeadWhere() SQL missing %q in:\n%s", want, joined)
+		}
 	}
 	if strings.Contains(joined, "entry.occurred_at") {
-		t.Fatalf("buildPipelineLeadWhere() must not switch dates without an attribution filter:\n%s", joined)
+		t.Fatalf("buildPipelineLeadWhere() must not use entry dates without an attribution filter:\n%s", joined)
+	}
+}
+
+func TestBuildPipelineLeadWhereSearchKeepsOperationalDate(t *testing.T) {
+	tenantContext := tenant.Context{
+		UserID:         "10000000-0000-0000-0000-000000000001",
+		OrganizationID: "20000000-0000-0000-0000-000000000001",
+		MemberRole:     "admin",
+	}
+	dateFrom := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	dateTo := time.Date(2026, 7, 31, 23, 59, 59, 0, time.UTC)
+
+	where, _, err := buildPipelineLeadWhere(tenantContext, PipelineBoardFilter{
+		FilterUserID:     "30000000-0000-0000-0000-000000000001",
+		FilterDealStatus: "open",
+		FilterSource:     "manual",
+		Search:           "Camila K",
+		DateFrom:         &dateFrom,
+		DateTo:           &dateTo,
+	})
+	if err != nil {
+		t.Fatalf("buildPipelineLeadWhere() error = %v", err)
+	}
+
+	joined := strings.Join(where, "\n")
+	for _, want := range []string{
+		"l.assigned_user_id = $",
+		"l.deal_status = $",
+		"l.source = $",
+		"l.stage_entered_at >= $",
+		"l.stage_entered_at <= $",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("buildPipelineLeadWhere() search SQL missing %q in:\n%s", want, joined)
+		}
 	}
 }

@@ -1441,8 +1441,7 @@ export function LeadDetailDialog({
   };
 
   const refreshPipelineInBackground = () => {
-    queryClient.invalidateQueries({ queryKey: ['stages-with-leads'], refetchType: 'inactive' });
-    refetchStages();
+    void queryClient.invalidateQueries({ queryKey: ['stages-with-leads'], refetchType: 'active' });
   };
 
   const handleAddTag = async (tagId: string) => {
