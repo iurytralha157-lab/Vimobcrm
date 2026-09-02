@@ -110,16 +110,9 @@ const (
 
 type whatsappMessageDistributionState struct {
 	QueueActive             bool
-	Strategy                string
-	EnableRedistribution    bool
 	RequireCheckIn          bool
-	IgnoreAvailability      bool
 	HasActiveRule           bool
 	InvalidSessionRuleCount int
-	ActiveOtherRuleCount    int
-	ActiveTeamCount         int
-	ActiveDirectMemberCount int
-	EligibleUserCount       int
 }
 
 type metaFormLinkState struct {
@@ -133,36 +126,11 @@ func validateWhatsAppMessageDistributionState(state whatsappMessageDistributionS
 		return nil
 	}
 
-	strategy := strings.ToLower(strings.TrimSpace(state.Strategy))
-	if strategy == "" {
-		strategy = "simple"
-	}
-	if strategy != "simple" {
-		return fmt.Errorf("%w: active WhatsApp message distribution requires the simple strategy", ErrInvalidInput)
-	}
 	if state.InvalidSessionRuleCount > 0 {
 		return fmt.Errorf("%w: active WhatsApp message distribution requires a valid active connection", ErrInvalidInput)
 	}
-	if state.EnableRedistribution {
-		return fmt.Errorf("%w: active WhatsApp message distribution does not support automatic redistribution", ErrInvalidInput)
-	}
-	if state.ActiveOtherRuleCount > 0 {
-		return fmt.Errorf("%w: active WhatsApp message distribution requires a dedicated queue without other rule types", ErrInvalidInput)
-	}
-	if state.ActiveTeamCount > 0 {
-		return fmt.Errorf("%w: active WhatsApp message distribution only supports direct user members", ErrInvalidInput)
-	}
-	if state.ActiveDirectMemberCount == 0 {
-		return fmt.Errorf("%w: active WhatsApp message distribution requires at least one active user member", ErrInvalidInput)
-	}
-	if state.EligibleUserCount != state.ActiveDirectMemberCount {
-		return fmt.Errorf("%w: active WhatsApp message distribution requires every direct member to be an active organization user", ErrInvalidInput)
-	}
 	if state.RequireCheckIn {
 		return fmt.Errorf("%w: active WhatsApp message distribution does not support required check-in", ErrInvalidInput)
-	}
-	if !state.IgnoreAvailability {
-		return fmt.Errorf("%w: active WhatsApp message distribution requires availability schedules to be explicitly ignored", ErrInvalidInput)
 	}
 
 	return nil
@@ -1608,10 +1576,7 @@ func (repo Repository) validateWhatsAppMessageDistribution(ctx context.Context, 
 	err := q.QueryRow(ctx, `
 		select
 			coalesce(round_robin.is_active, true),
-			coalesce(nullif(btrim(round_robin.strategy), ''), 'simple'),
-			lower(btrim(coalesce(round_robin.settings->>'enable_redistribution', 'false'))) in ('true', '1', 'yes'),
 			lower(btrim(coalesce(round_robin.settings->>'require_checkin', 'false'))) in ('true', '1', 'yes'),
-			lower(btrim(coalesce(round_robin.settings->>'ignore_availability', 'false'))) = 'true',
 			exists (
 				select 1
 				from public.round_robin_rules rule
@@ -1641,76 +1606,15 @@ func (repo Repository) validateWhatsAppMessageDistribution(ctx context.Context, 
 				  and coalesce(nullif(rule.match_type, ''), rule.conditions->>'match_type', rule.name, '') = $3
 				  and btrim(coalesce(nullif(rule.match_value, ''), rule.conditions->>'match_value', '')) <> ''
 				  and session.id is null
-			),
-			(
-				select count(*)::int
-				from public.round_robin_rules rule
-				where rule.organization_id = round_robin.organization_id
-				  and rule.round_robin_id = round_robin.id
-				  and coalesce(rule.is_active, true) = true
-				  and coalesce(nullif(rule.match_type, ''), rule.conditions->>'match_type', rule.name, '') <> $3
-			),
-			(
-				select count(*)::int
-				from public.round_robin_members member
-				where member.organization_id = round_robin.organization_id
-				  and member.round_robin_id = round_robin.id
-				  and coalesce(member.is_active, true) = true
-				  and member.user_id is null
-				  and member.team_id is not null
-			),
-			(
-				select count(*)::int
-				from public.round_robin_members member
-				where member.organization_id = round_robin.organization_id
-				  and member.round_robin_id = round_robin.id
-				  and coalesce(member.is_active, true) = true
-				  and member.user_id is not null
-			),
-			(
-				select count(*)::int
-				from public.round_robin_members member
-				join public.users user_account
-				  on user_account.id = member.user_id
-				 and user_account.organization_id = member.organization_id
-				 and coalesce(user_account.is_active, false) = true
-				join public.organization_members organization_member
-				  on organization_member.organization_id = member.organization_id
-				 and organization_member.user_id = member.user_id
-				 and coalesce(organization_member.is_active, false) = true
-				left join public.teams member_team
-				  on member_team.organization_id = member.organization_id
-				 and member_team.id = member.team_id
-				 and coalesce(member_team.is_active, false) = true
-				left join public.team_members team_member
-				  on team_member.organization_id = member.organization_id
-				 and team_member.team_id = member.team_id
-				 and team_member.user_id = member.user_id
-				 and coalesce(team_member.is_active, false) = true
-				where member.organization_id = round_robin.organization_id
-				  and member.round_robin_id = round_robin.id
-				  and coalesce(member.is_active, true) = true
-				  and member.user_id is not null
-				  and (
-					member.team_id is null
-					or (member_team.id is not null and team_member.user_id is not null)
-				  )
 			)
 		from public.round_robins round_robin
 		where round_robin.organization_id = $1::uuid
 		  and round_robin.id = $2::uuid
 	`, organizationID, roundRobinID, whatsappMessageContainsConditionType, whatsappSessionMatchKey).Scan(
 		&state.QueueActive,
-		&state.Strategy,
-		&state.EnableRedistribution,
 		&state.RequireCheckIn,
-		&state.IgnoreAvailability,
 		&state.HasActiveRule,
 		&state.InvalidSessionRuleCount,
-		&state.ActiveOtherRuleCount,
-		&state.ActiveTeamCount,
-		&state.ActiveDirectMemberCount,
-		&state.EligibleUserCount,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrRoundRobinNotFound

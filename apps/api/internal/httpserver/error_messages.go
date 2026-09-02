@@ -58,10 +58,14 @@ func userFacingErrorMessage(code string, original string, status int) string {
 	if code == "round_robin_condition_conflict" {
 		return strings.TrimSpace(original)
 	}
-	if code == "invalid_round_robin_input" && strings.Contains(strings.ToLower(original), "whatsapp message distribution") {
-		return "Para ativar a campanha do WhatsApp, escolha uma conexão válida, use uma fila dedicada com distribuição sequencial, adicione os corretores individualmente, desative o check-in e a redistribuição automática, e ative “Ignorar escala dos corretores”."
+	normalizedOriginal := strings.ToLower(original)
+	if code == "invalid_round_robin_input" && strings.Contains(normalizedOriginal, "whatsapp message distribution") && strings.Contains(normalizedOriginal, "required check-in") {
+		return "O check-in obrigatório ainda não é compatível com esta regra do WhatsApp. Desative essa configuração para ativar a fila."
 	}
-	if code == "invalid_lead_input" && strings.Contains(strings.ToLower(original), "managed whatsapp message distribution") {
+	if code == "invalid_round_robin_input" && strings.Contains(normalizedOriginal, "whatsapp message distribution") {
+		return "Para ativar esta regra do WhatsApp, escolha uma conexão válida e ativa."
+	}
+	if code == "invalid_lead_input" && strings.Contains(normalizedOriginal, "managed whatsapp message distribution") {
 		return "Este lead pertence a uma campanha do WhatsApp e não pode usar a redistribuição genérica. Você ainda pode transferi-lo manualmente para outro corretor."
 	}
 	if strings.HasPrefix(code, "no_") && strings.HasSuffix(code, "_changes") {
