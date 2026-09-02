@@ -607,10 +607,6 @@ export function DistributionQueueEditor({
 
   const addMember = (type: 'user' | 'team', entityId: string, name: string) => {
     if (!entityId.trim()) return;
-    if (type === 'team' && hasWhatsAppMessageCondition) {
-      toast.error('Campanhas do WhatsApp exigem corretores adicionados individualmente.');
-      return;
-    }
 
     setFormData(prev => ({
       ...prev,
@@ -714,37 +710,20 @@ export function DistributionQueueEditor({
       toast.error('Selecione uma conexão do WhatsApp ativa para esta campanha.');
       return;
     }
-    const hasConfiguredNonWhatsAppCondition = formData.conditions.some(condition =>
-      condition.type !== 'whatsapp_message_contains'
-      && condition.values.some(value => value.trim())
-    );
+    if (hasConfiguredWhatsAppMessageCondition && formData.settings.require_checkin) {
+      setFormData(prev => ({
+        ...prev,
+        settings: { ...prev.settings, require_checkin: false },
+      }));
+      toast.info('O check-in obrigatório foi desativado no rascunho desta fila porque a regra do WhatsApp ainda não é compatível com ele. Revise e salve novamente.');
+      return;
+    }
     if (formData.is_active && hasConfiguredWhatsAppMessageCondition) {
-      if (hasConfiguredNonWhatsAppCondition) {
-        toast.error('Crie uma fila dedicada para campanhas do WhatsApp, sem outros critérios de entrada.');
-        return;
-      }
-      if (formData.strategy !== 'simple') {
-        toast.error('Campanhas do WhatsApp usam distribuição sequencial.');
-        return;
-      }
-      if (formData.settings.enable_redistribution) {
-        toast.error('Desative a redistribuição automática nesta fila de campanha do WhatsApp.');
-        return;
-      }
-      if (validMembers.some(member => member.type === 'team')) {
-        toast.error('Campanhas do WhatsApp exigem corretores adicionados individualmente.');
-        return;
-      }
-      if (!validMembers.some(member => member.type === 'user')) {
-        toast.error('Adicione pelo menos um corretor para distribuir a campanha do WhatsApp.');
-        return;
-      }
-      if (formData.settings.require_checkin) {
-        toast.error('Campanhas do WhatsApp não podem usar check-in obrigatório nesta fila.');
-        return;
-      }
-      if (!formData.settings.ignore_availability) {
-        toast.error('Ative “Ignorar escala dos corretores” para distribuir a campanha do WhatsApp.');
+      if (
+        !formData.settings.ignore_availability
+        && validMembers.some(member => member.type === 'user')
+      ) {
+        toast.error('Para respeitar a escala nesta versão, adicione uma equipe à fila. Corretores individuais exigem “Ignorar escala dos corretores”.');
         return;
       }
     }
@@ -815,7 +794,11 @@ export function DistributionQueueEditor({
     const payload: QueueFormData = {
       ...formData,
       settings: sanitizedHasWhatsAppMessageCondition
-        ? formData.settings
+        ? {
+            ...formData.settings,
+            // Check-in ainda não possui elegibilidade canônica para este fluxo.
+            require_checkin: false,
+          }
         : { ...formData.settings, ignore_availability: queue?.settings?.ignore_availability },
       conditions: sanitizedConditions,
       members: validMembers,
@@ -1135,7 +1118,12 @@ export function DistributionQueueEditor({
                 Selecione a conexão que receberá a mensagem e criará o lead automaticamente.
               </p>
             )}
-            <p className="text-xs text-muted-foreground">Nesta fila, adicione os corretores individualmente e use distribuição sequencial.</p>
+            <p className="text-xs text-muted-foreground">
+              A atribuição inicial respeita a estratégia e os participantes da fila. Para aplicar os horários nesta versão, use participantes do tipo equipe.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              O check-in obrigatório permanece desativado para toda fila enquanto esta regra do WhatsApp estiver configurada.
+            </p>
           </div>
         );
       }
@@ -1236,10 +1224,6 @@ export function DistributionQueueEditor({
                         value={formData.strategy}
                         onValueChange={(value) => {
                           if (isQueueStrategy(value)) {
-                            if (value === 'weighted' && hasWhatsAppMessageCondition) {
-                              toast.error('Campanhas do WhatsApp usam distribuição sequencial.');
-                              return;
-                            }
                             setFormData(prev => ({ ...prev, strategy: value }));
                           }
                         }}
@@ -1249,7 +1233,7 @@ export function DistributionQueueEditor({
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="simple">Sequencial</SelectItem>
-                          <SelectItem value="weighted" disabled={hasWhatsAppMessageCondition}>Ponderada</SelectItem>
+                          <SelectItem value="weighted">Ponderada</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -1322,43 +1306,6 @@ export function DistributionQueueEditor({
                           value={condition.type}
                           onValueChange={(value) => {
                             if (isRuleConditionType(value)) {
-                              if (value === 'whatsapp_message_contains') {
-                                const hasOtherConfiguredCondition = formData.conditions.some(candidate =>
-                                  candidate.id !== condition.id
-                                  && candidate.type !== 'whatsapp_message_contains'
-                                  && candidate.values.some(item => item.trim())
-                                );
-                                if (hasOtherConfiguredCondition) {
-                                  toast.error('Crie uma fila dedicada para campanhas do WhatsApp.');
-                                  return;
-                                }
-                                if (formData.strategy !== 'simple') {
-                                  toast.error('Campanhas do WhatsApp usam distribuição sequencial.');
-                                  return;
-                                }
-                                if (formData.settings.enable_redistribution) {
-                                  toast.error('Desative a redistribuição automática antes de usar uma campanha do WhatsApp.');
-                                  return;
-                                }
-                                if (formData.settings.require_checkin) {
-                                  toast.error('Use uma fila sem check-in obrigatório para campanhas do WhatsApp.');
-                                  return;
-                                }
-                                if (formData.members.some(member => member.type === 'team')) {
-                                  toast.error('Remova as equipes e adicione os corretores individualmente.');
-                                  return;
-                                }
-                              } else {
-                                const hasOtherConfiguredWhatsAppCondition = formData.conditions.some(candidate =>
-                                  candidate.id !== condition.id
-                                  && candidate.type === 'whatsapp_message_contains'
-                                  && candidate.values.some(item => item.trim())
-                                );
-                                if (hasOtherConfiguredWhatsAppCondition) {
-                                  toast.error('Crie uma fila dedicada para campanhas do WhatsApp.');
-                                  return;
-                                }
-                              }
                               updateCondition(condition.id, { type: value, values: [], sessionId: undefined });
                             }
                           }}
@@ -1382,9 +1329,9 @@ export function DistributionQueueEditor({
                   {hasWhatsAppMessageCondition && (
                     <div className="flex items-start justify-between gap-4 rounded-lg bg-[var(--app-surface-soft)] p-3">
                       <div className="space-y-1">
-                        <Label htmlFor="distribution-ignore-availability">Ignorar escala dos corretores *</Label>
+                        <Label htmlFor="distribution-ignore-availability">Ignorar escala dos corretores</Label>
                         <p className="text-xs text-muted-foreground">
-                          Obrigatório nesta campanha. A fila distribui entre os corretores ativos mesmo fora dos dias e horários definidos na escala.
+                          Na atribuição inicial, deixe desativado para considerar os horários dos membros da equipe. Ative para distribuir fora da escala.
                         </p>
                       </div>
                       <Switch
@@ -1464,10 +1411,13 @@ export function DistributionQueueEditor({
                   )}
 
                   <div className="flex flex-col gap-2 sm:flex-row">
-                    <Select onValueChange={v => {
-                      const user = visibleUsers.find(u => u.id === v);
-                      if (user) addMember('user', v, user.name);
-                    }}>
+                    <Select
+                      disabled={hasWhatsAppMessageCondition && !formData.settings.ignore_availability}
+                      onValueChange={v => {
+                        const user = visibleUsers.find(u => u.id === v);
+                        if (user) addMember('user', v, user.name);
+                      }}
+                    >
                       <SelectTrigger className="flex-1">
                         <SelectValue placeholder="Adicionar corretor..." />
                       </SelectTrigger>
@@ -1482,7 +1432,7 @@ export function DistributionQueueEditor({
                         ))}
                       </SelectContent>
                     </Select>
-                    <Select disabled={hasWhatsAppMessageCondition} onValueChange={v => {
+                    <Select onValueChange={v => {
                       const team = visibleTeams.find(t => t.id === v);
                       if (team) addMember('team', v, team.name);
                     }}>
@@ -1501,9 +1451,14 @@ export function DistributionQueueEditor({
                       </SelectContent>
                     </Select>
                   </div>
-                  {hasWhatsAppMessageCondition && (
-                    <p className="text-xs text-muted-foreground">
-                      Para campanhas do WhatsApp, os corretores são adicionados individualmente.
+                  {hasWhatsAppMessageCondition && !formData.settings.ignore_availability && (
+                    <p className={cn(
+                      'text-xs',
+                      formData.members.some(member => member.type === 'user')
+                        ? 'text-destructive'
+                        : 'text-muted-foreground',
+                    )}>
+                      Para respeitar os horários nesta versão, adicione a equipe. Corretores adicionados diretamente não possuem contexto de escala.
                     </p>
                   )}
                   {teams.length > 0 && activeTeams.length === 0 && (
@@ -1532,18 +1487,12 @@ export function DistributionQueueEditor({
                       <div className="space-y-1">
                         <Label>Ativar redistribuicao de lead parado</Label>
                         <p className="text-xs text-muted-foreground">
-                          {hasWhatsAppMessageCondition
-                            ? 'Campanhas do WhatsApp usam somente a distribuição inicial desta fila.'
-                            : 'Se o responsavel nao fizer contato nem movimentar o proprio lead no prazo, o sistema envia para o proximo participante da fila.'}
+                          Se o responsavel nao fizer contato nem movimentar o proprio lead no prazo, o sistema envia para o proximo participante elegivel. Quando o lead pertence a uma equipe, a redistribuicao permanece nela, que precisa ter pelo menos dois corretores elegiveis.
                         </p>
                       </div>
                       <Switch
                         checked={!!formData.settings.enable_redistribution}
                         onCheckedChange={(checked) => {
-                          if (checked && hasWhatsAppMessageCondition) {
-                            toast.error('A redistribuição automática não está disponível para campanhas do WhatsApp.');
-                            return;
-                          }
                           setFormData(prev => ({
                             ...prev,
                             settings: {

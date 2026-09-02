@@ -48,20 +48,15 @@ func (queryer *stateRecordingQueryer) QueryRow(_ context.Context, query string, 
 type validWhatsAppMessageDistributionRow struct{}
 
 func (validWhatsAppMessageDistributionRow) Scan(dest ...any) error {
-	if len(dest) != 11 {
+	if len(dest) != 6 {
 		return fmt.Errorf("unexpected destination count: %d", len(dest))
 	}
 	*dest[0].(*bool) = true
-	*dest[1].(*string) = "simple"
-	*dest[2].(*bool) = false
-	*dest[3].(*bool) = false
-	*dest[4].(*bool) = true
-	*dest[5].(*bool) = true
-	*dest[6].(*int) = 0
-	*dest[7].(*int) = 0
-	*dest[8].(*int) = 0
-	*dest[9].(*int) = 1
-	*dest[10].(*int) = 1
+	*dest[1].(*bool) = false
+	*dest[2].(*bool) = true
+	*dest[3].(*bool) = true
+	*dest[4].(*int) = 0
+	*dest[5].(*int) = 0
 	return nil
 }
 
@@ -155,161 +150,63 @@ func TestValidateWhatsAppMessageDistributionState(t *testing.T) {
 		{
 			name: "inactive queue remains an editable draft",
 			state: whatsappMessageDistributionState{
-				Strategy:        "weighted",
-				RequireCheckIn:  true,
-				HasActiveRule:   true,
-				ActiveTeamCount: 1,
+				RequireCheckIn:                     true,
+				HasActiveRule:                      true,
+				ActiveDirectWithoutTeamMemberCount: 1,
 			},
 		},
 		{
 			name: "inactive rule remains an editable draft",
 			state: whatsappMessageDistributionState{
-				QueueActive:     true,
-				Strategy:        "weighted",
-				RequireCheckIn:  true,
-				ActiveTeamCount: 1,
+				QueueActive:                        true,
+				RequireCheckIn:                     true,
+				ActiveDirectWithoutTeamMemberCount: 1,
 			},
 		},
 		{
-			name: "active simple queue with direct member is valid",
+			name: "active queue may use a direct member when schedules are ignored",
 			state: whatsappMessageDistributionState{
-				QueueActive:             true,
-				Strategy:                "simple",
-				IgnoreAvailability:      true,
-				HasActiveRule:           true,
-				ActiveDirectMemberCount: 1,
-				EligibleUserCount:       1,
+				QueueActive:                        true,
+				IgnoreAvailability:                 true,
+				HasActiveRule:                      true,
+				ActiveDirectWithoutTeamMemberCount: 1,
 			},
 		},
 		{
-			name: "empty strategy uses the simple default",
+			name: "active queue may enforce schedules with team entries",
 			state: whatsappMessageDistributionState{
-				QueueActive:             true,
-				IgnoreAvailability:      true,
-				HasActiveRule:           true,
-				ActiveDirectMemberCount: 1,
-				EligibleUserCount:       1,
+				QueueActive:   true,
+				HasActiveRule: true,
 			},
 		},
 		{
 			name: "missing WhatsApp connection is rejected",
 			state: whatsappMessageDistributionState{
 				QueueActive:             true,
-				Strategy:                "simple",
 				IgnoreAvailability:      true,
 				HasActiveRule:           true,
 				InvalidSessionRuleCount: 1,
-				ActiveDirectMemberCount: 1,
-				EligibleUserCount:       1,
 			},
 			wantError: "valid active connection",
 		},
 		{
-			name: "weighted strategy is rejected",
+			name: "required check-in is rejected until the canonical engine supports it",
 			state: whatsappMessageDistributionState{
-				QueueActive:             true,
-				Strategy:                "weighted",
-				IgnoreAvailability:      true,
-				HasActiveRule:           true,
-				ActiveDirectMemberCount: 1,
-				EligibleUserCount:       1,
-			},
-			wantError: "simple strategy",
-		},
-		{
-			name: "automatic redistribution is rejected",
-			state: whatsappMessageDistributionState{
-				QueueActive:             true,
-				Strategy:                "simple",
-				EnableRedistribution:    true,
-				IgnoreAvailability:      true,
-				HasActiveRule:           true,
-				ActiveDirectMemberCount: 1,
-				EligibleUserCount:       1,
-			},
-			wantError: "automatic redistribution",
-		},
-		{
-			name: "other active rule type is rejected",
-			state: whatsappMessageDistributionState{
-				QueueActive:             true,
-				Strategy:                "simple",
-				IgnoreAvailability:      true,
-				HasActiveRule:           true,
-				ActiveOtherRuleCount:    1,
-				ActiveDirectMemberCount: 1,
-				EligibleUserCount:       1,
-			},
-			wantError: "dedicated queue",
-		},
-		{
-			name: "active team member is rejected",
-			state: whatsappMessageDistributionState{
-				QueueActive:             true,
-				Strategy:                "simple",
-				IgnoreAvailability:      true,
-				HasActiveRule:           true,
-				ActiveTeamCount:         1,
-				ActiveDirectMemberCount: 1,
-				EligibleUserCount:       1,
-			},
-			wantError: "direct user members",
-		},
-		{
-			name: "queue without an active direct member is rejected",
-			state: whatsappMessageDistributionState{
-				QueueActive:   true,
-				Strategy:      "simple",
-				HasActiveRule: true,
-			},
-			wantError: "at least one active user member",
-		},
-		{
-			name: "inactive organization member is rejected",
-			state: whatsappMessageDistributionState{
-				QueueActive:             true,
-				Strategy:                "simple",
-				IgnoreAvailability:      true,
-				HasActiveRule:           true,
-				ActiveDirectMemberCount: 2,
-				EligibleUserCount:       1,
-			},
-			wantError: "every direct member",
-		},
-		{
-			name: "required check-in is rejected",
-			state: whatsappMessageDistributionState{
-				QueueActive:             true,
-				Strategy:                "simple",
-				RequireCheckIn:          true,
-				IgnoreAvailability:      true,
-				HasActiveRule:           true,
-				ActiveDirectMemberCount: 1,
-				EligibleUserCount:       1,
+				QueueActive:        true,
+				RequireCheckIn:     true,
+				IgnoreAvailability: true,
+				HasActiveRule:      true,
 			},
 			wantError: "required check-in",
 		},
 		{
-			name: "availability must be explicitly ignored",
+			name: "direct member without team context is rejected when schedules are enforced",
 			state: whatsappMessageDistributionState{
-				QueueActive:             true,
-				Strategy:                "simple",
-				HasActiveRule:           true,
-				ActiveDirectMemberCount: 1,
-				EligibleUserCount:       1,
+				QueueActive:                        true,
+				HasActiveRule:                      true,
+				ActiveDirectWithoutTeamMemberCount: 1,
 			},
-			wantError: "explicitly ignored",
-		},
-		{
-			name: "availability schedule is allowed when ignored",
-			state: whatsappMessageDistributionState{
-				QueueActive:             true,
-				Strategy:                "simple",
-				IgnoreAvailability:      true,
-				HasActiveRule:           true,
-				ActiveDirectMemberCount: 1,
-				EligibleUserCount:       1,
-			},
+			wantError: "requires team entries",
 		},
 	}
 
@@ -394,26 +291,31 @@ func TestWhatsAppMessageDistributionStateQueryMatchesCanonicalRuntime(t *testing
 	}
 
 	for _, fragment := range []string{
-		"round_robin.settings->>'enable_redistribution'",
+		"coalesce(round_robin.is_active, true)",
+		"round_robin.settings->>'require_checkin'",
+		"round_robin.settings->>'ignore_availability'",
 		"btrim(coalesce(nullif(rule.match_value, ''), rule.conditions->>'match_value', '')) <> ''",
 		"left join public.whatsapp_sessions session",
 		"rule.match->>$4",
-		"coalesce(nullif(rule.match_type, ''), rule.conditions->>'match_type', rule.name, '') <> $3",
-		"join public.users user_account",
-		"coalesce(user_account.is_active, false) = true",
-		"join public.organization_members organization_member",
-		"coalesce(organization_member.is_active, false) = true",
+		"session.provider = 'evolution_go'",
+		"coalesce(session.is_active, true) = true",
+		"not in ('deleted', 'disabled')",
+		"from public.round_robin_members member",
+		"and member.user_id is not null",
 		"and member.team_id is null",
 	} {
 		if !strings.Contains(queryer.query, fragment) {
 			t.Errorf("state query does not contain %q", fragment)
 		}
 	}
-	teamCountEnd := strings.Index(queryer.query, "and member.team_id is not null")
-	directCountEnd := strings.Index(queryer.query, "and member.team_id is null")
-	activeUserJoin := strings.Index(queryer.query, "join public.users user_account")
-	if teamCountEnd < 0 || directCountEnd < teamCountEnd || activeUserJoin < directCountEnd {
-		t.Error("eligible user joins must belong to EligibleUserCount after the direct member count")
+	for _, forbidden := range []string{
+		"round_robin.settings->>'enable_redistribution'",
+		"round_robin.strategy",
+		"coalesce(nullif(rule.match_type, ''), rule.conditions->>'match_type', rule.name, '') <> $3",
+	} {
+		if strings.Contains(queryer.query, forbidden) {
+			t.Errorf("state query must leave ordinary queue behavior to the canonical distributor; found %q", forbidden)
+		}
 	}
 
 	wantArgs := []any{organizationID, roundRobinID, whatsappMessageContainsConditionType, whatsappSessionMatchKey}
