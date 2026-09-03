@@ -42,7 +42,7 @@ func TestEvolutionGoEdgeManagedDistributionFailsClosedAndRetries(t *testing.T) {
 		`legacy_non_managed_retry`,
 		`data.quarantine === true || data.quarantined === true || data.incomplete === true`,
 		`managed_whatsapp_message_distribution: managedMessageDistribution`,
-		`target_round_robin_id: rule?.target_round_robin_id || null`,
+		`target_round_robin_id: targetRoundRobinId`,
 		`message_fingerprint: messageFingerprint`,
 		`${session.organization_id}\u001f${session.id}\u001f${message.messageId}\u001f${message.content || ""}`,
 		`process_managed_whatsapp_lead_entry`,
@@ -57,8 +57,9 @@ func TestEvolutionGoEdgeManagedDistributionFailsClosedAndRetries(t *testing.T) {
 		`new TextEncoder().encode(content).byteLength > 65_536`,
 		`reconcileHandledWhatsAppMessageTransport`,
 		`managedEntryWasPending = true;`,
-		`if (!managedMessageDistribution) {`,
+		`if (result.inserted && !managedMessageDistribution && !isReactionEvent) {`,
 		`await processManagedWhatsAppLeadEntry(session, attachedLead, rule, message);`,
+		`await enrichManagedWhatsAppLeadEntryAttribution(session, attachedLead?.id, message);`,
 		`if (updateError) throw updateError;`,
 		`if (insertError) throw insertError;`,
 	} {
@@ -73,15 +74,14 @@ func TestEvolutionGoEdgeManagedDistributionFailsClosedAndRetries(t *testing.T) {
 		`(?s)lead resolution failed; durable delivery will retry.*?throw error;`,
 		`(?s)if \(data\.quarantine === true \|\| data\.quarantined === true \|\| data\.incomplete === true\).*?throw new Error.*?if \(data\.handled === true\).*?if \(data\.legacy_non_managed_retry === true\) \{\s*return \{ \.\.\.data, handled: true, pending: false, legacy_non_managed_retry: true \};\s*\}.*?managed_whatsapp_entry_lookup_handled_context_invalid`,
 		`(?s)async function handleConnection\(.*?const \{ data, error \} = await supabase.*?\.from\("whatsapp_sessions"\).*?\.update\(update\).*?\.eq\("updated_at", session\.updated_at\).*?if \(error\) throw error;`,
-		`(?s)const firstRule = matchingRules\[0\].*?firstMatchType !== "all".*?for \(const rule of matchingRules\.slice\(1\)\).*?return \{ \.\.\.rule, __managed_whatsapp_message_distribution: true \};`,
 		`(?s)if \(existing\).*?if \(managedMessageDistribution\).*?return \{.*?is_new_lead: false.*?is_managed_whatsapp_message_distribution: true.*?\};`,
 		`(?s)async function resolveAttachableLeadId\(.*?\.eq\("organization_id", session\.organization_id\).*?\.eq\("session_id", session\.id\).*?\.eq\("lead_id", candidateLeadId\)`,
 		`(?s)const conversation = await ensureConversation\(session, message, lead\);.*?await logInbound\(session, conversation, attachedLead, rule, message\);.*?const result = await insertMessage\(session, conversation, attachedLead, message\);`,
 		`(?s)const providerMessageId = \[.*?message\.provider_message_id,\s*\]\s*\.map\(\(value\) => normalizeText\(value\)\.replace\(/\\u0000/g, ""\)\.trim\(\)\)\s*\.find\(Boolean\) \|\| "";\s*const providerMessageIdSynthetic = !providerMessageId;`,
 		`(?s)async function reconcileHandledWhatsAppMessageTransport\(.*?for \(const providerIdentityColumn of \["message_id", "provider_message_id"\]\).*?\.from\("whatsapp_messages"\).*?\.eq\("organization_id", session\.organization_id\).*?\.eq\("session_id", session\.id\).*?\.eq\(providerIdentityColumn, message\.messageId\).*?\.eq\("from_me", false\).*?\.update\(\{.*?media_storage_path: mediaStoragePath,.*?media_status: "ready",.*?media_error: null,.*?\}\).*?\.eq\("id", existing\.id\).*?\.eq\("from_me", false\);`,
-		`(?s)managedEntryLookup = await lookupManagedWhatsAppLeadEntry\(session, message\).*?if \(managedEntryLookup\?\.handled === true\) \{\s*await reconcileHandledWhatsAppMessageTransport\(session, message\);.*?managedEntryAlreadyHandled = true;.*?loadPendingManagedWhatsAppLead\(session, managedEntryLookup\).*?\} else if \(managedEntryLookup\?\.pending === true\) \{.*?managedEntryWasPending = true;.*?loadPendingManagedWhatsAppLead\(session, managedEntryLookup\).*?\} else \{\s*try \{\s*rule = await findInboundRule\(session, message\);.*?if \(managedRuleMatched\) \{.*?validateNewManagedWhatsAppProviderEvent\(message\);\s*\}.*?lead = await ensureLead\(session, message, rule, managedRuleMatched\);`,
-		`(?s)function validateNewManagedWhatsAppProviderEvent\(.*?message\.providerMessageIdSynthetic.*?Array\.from\(providerMessageId\)\.length.*?providerMessageIdCharacters < 1 \|\| providerMessageIdCharacters > 500.*?if \(!content\.trim\(\)\).*?new TextEncoder\(\)\.encode\(content\)\.byteLength > 65_536`,
-		`(?s)if \(managedMessageDistribution && \(!managedEntryAlreadyHandled \|\| managedEntryWasPending\)\) \{\s*await processManagedWhatsAppLeadEntry\(session, attachedLead, rule, message\);\s*\}.*?await triggerAutoReply\(session, conversation, result\.message, message\);.*?await completeStoredMessageEffects\(`,
+		`(?s)managedEntryLookup = await lookupManagedWhatsAppLeadEntry\(session, message\).*?if \(managedEntryLookup\?\.handled === true\) \{.*?await reconcileHandledWhatsAppMessageTransport\(session, message\);.*?managedEntryAlreadyHandled = true;.*?loadPendingManagedWhatsAppLead\(session, managedEntryLookup\).*?\} else if \(managedEntryLookup\?\.pending === true\) \{.*?managedEntryWasPending = true;.*?loadPendingManagedWhatsAppLead\(session, managedEntryLookup\).*?\} else \{\s*try \{\s*rule = await findInboundRule\(session, message\);.*?if \(managedRuleMatched \|\| confirmedCtwaAd\) \{.*?validateNewWhatsAppLeadProviderEvent\(message\);\s*\}.*?lead = await ensureLead\(session, message, rule, managedRuleMatched\);`,
+		`(?s)function validateNewWhatsAppLeadProviderEvent\(.*?message\.providerMessageIdSynthetic.*?Array\.from\(providerMessageId\)\.length.*?providerMessageIdCharacters < 1 \|\| providerMessageIdCharacters > 500.*?if \(!content\.trim\(\)\).*?new TextEncoder\(\)\.encode\(content\)\.byteLength > 65_536`,
+		`(?s)if \(managedMessageDistribution\) \{\s*if \(!managedEntryAlreadyHandled \|\| managedEntryWasPending\) \{\s*await processManagedWhatsAppLeadEntry\(session, attachedLead, rule, message\);\s*\}\s*await enrichManagedWhatsAppLeadEntryAttribution\(session, attachedLead\?\.id, message\);\s*\}.*?await triggerAutoReply\(session, conversation, result\.message, message\);.*?await completeStoredMessageEffects\(`,
 	} {
 		if !regexp.MustCompile(pattern).MatchString(source) {
 			t.Fatalf("Edge Function must propagate operational failure matching %q", pattern)

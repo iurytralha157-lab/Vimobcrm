@@ -2,6 +2,7 @@ package whatsapp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -32,6 +33,41 @@ type nativeHandledAutoReplyTestRow struct {
 	messageID      string
 	text           string
 	err            error
+}
+
+type nativeManagedAttributionTestQuerier struct {
+	calls    int
+	query    string
+	args     []any
+	enriched bool
+	err      error
+}
+
+type nativeManagedAttributionTestRow struct {
+	enriched bool
+	err      error
+}
+
+func (querier *nativeManagedAttributionTestQuerier) QueryRow(_ context.Context, query string, args ...any) pgx.Row {
+	querier.calls++
+	querier.query = query
+	querier.args = args
+	return nativeManagedAttributionTestRow{enriched: querier.enriched, err: querier.err}
+}
+
+func (row nativeManagedAttributionTestRow) Scan(dest ...any) error {
+	if row.err != nil {
+		return row.err
+	}
+	if len(dest) != 1 {
+		return fmt.Errorf("scan destinations = %d, want 1", len(dest))
+	}
+	target, ok := dest[0].(*bool)
+	if !ok {
+		return fmt.Errorf("scan destination is %T, want *bool", dest[0])
+	}
+	*target = row.enriched
+	return nil
 }
 
 func (querier *nativeHandledAutoReplyTestQuerier) QueryRow(_ context.Context, query string, args ...any) pgx.Row {
@@ -89,8 +125,7 @@ func TestNativeInboundRuleMatchesWhatsAppMessageCaseInsensitive(t *testing.T) {
 	}
 }
 
-func TestSelectNativeInboundRuleRespectsPriorityAndCatchAllException(t *testing.T) {
-	message := nativeEvolutionMessage{Content: "Olá, quero conhecer o imóvel"}
+func TestSelectNativeInboundRuleSeparatesCTWAManagedMirrorsFromManualRules(t *testing.T) {
 	managed := func(id string) nativeInboundRule {
 		return nativeInboundRule{
 			ID:                         id,
@@ -111,46 +146,53 @@ func TestSelectNativeInboundRuleRespectsPriorityAndCatchAllException(t *testing.
 	manualCatchAll := nativeInboundRule{ID: "manual-catch-all", MatchType: "all"}
 
 	tests := []struct {
-		name   string
-		rules  []nativeInboundRule
-		wantID string
+		name     string
+		isCTWAAd bool
+		rules    []nativeInboundRule
+		wantID   string
 	}{
 		{
-			name:   "first matching managed rule wins",
+			name:     "CTWA takes matching managed rule",
+			isCTWAAd: true,
+			rules:    []nativeInboundRule{managed("managed-high"), manualSpecific("manual-low")},
+			wantID:   "managed-high",
+		},
+		{
+			name:     "CTWA managed mirror overtakes higher manual rule",
+			isCTWAAd: true,
+			rules:    []nativeInboundRule{manualSpecific("manual-high"), managed("managed-low")},
+			wantID:   "managed-low",
+		},
+		{
+			name:     "CTWA without managed mirror keeps first manual match",
+			isCTWAAd: true,
+			rules:    []nativeInboundRule{manualCatchAll, manualSpecific("manual-specific-low")},
+			wantID:   "manual-catch-all",
+		},
+		{
+			name:   "normal WhatsApp ignores managed mirror",
 			rules:  []nativeInboundRule{managed("managed-high"), manualSpecific("manual-low")},
-			wantID: "managed-high",
+			wantID: "manual-low",
 		},
 		{
-			name:   "first matching specific manual rule is preserved",
-			rules:  []nativeInboundRule{manualSpecific("manual-high"), managed("managed-low")},
-			wantID: "manual-high",
+			name:   "normal WhatsApp with only managed mirror has no rule",
+			rules:  []nativeInboundRule{managed("managed-only")},
+			wantID: "",
 		},
 		{
-			name: "manual catch-all yields only to lower managed rule",
-			rules: []nativeInboundRule{
-				manualCatchAll,
-				manualSpecific("manual-specific-low"),
-				managed("managed-low"),
-			},
-			wantID: "managed-low",
-		},
-		{
-			name:   "lower specific manual rule never overtakes catch-all",
-			rules:  []nativeInboundRule{manualCatchAll, manualSpecific("manual-specific-low")},
-			wantID: "manual-catch-all",
-		},
-		{
-			name: "higher non-matching rule does not block next matching rule",
+			name: "normal WhatsApp preserves manual priority",
 			rules: []nativeInboundRule{
 				{ID: "manual-non-match", MatchType: "contains", MatchField: "message", MatchValue: "outro texto"},
-				managed("managed-match"),
+				manualSpecific("manual-match"),
+				managed("managed-low"),
 			},
-			wantID: "managed-match",
+			wantID: "manual-match",
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			message := nativeEvolutionMessage{Content: "Olá, quero conhecer o imóvel", IsCTWAAd: test.isCTWAAd}
 			if got := selectNativeInboundRule(test.rules, message); got.ID != test.wantID {
 				t.Fatalf("selectNativeInboundRule() ID = %q, want %q", got.ID, test.wantID)
 			}
@@ -257,6 +299,18 @@ func TestParseNativeManagedWhatsAppEntryLookup(t *testing.T) {
 	}
 }
 
+func TestNativeInboundRulePreservesLegacyNonManagedRetry(t *testing.T) {
+	rule, recovered := nativeInboundRuleFromManagedLookup(nativeManagedWhatsAppEntryLookup{
+		Handled:               true,
+		LegacyNonManagedRetry: true,
+		LeadID:                "lead-id",
+	})
+	if !recovered || !rule.ManagedProviderEventHandled || !rule.LegacyNonManagedRetry ||
+		rule.ManagedProviderEventLeadID != "lead-id" || rule.ManagedMessageDistribution {
+		t.Fatalf("legacy non-managed retry mapping = %#v, recovered=%t", rule, recovered)
+	}
+}
+
 func TestNativeManagedWhatsAppLookupUsesImmutableProviderIdentity(t *testing.T) {
 	for _, fragment := range []string{
 		"public.lookup_managed_whatsapp_lead_entry",
@@ -286,7 +340,7 @@ func TestNativeManagedWhatsAppLookupFailsClosedBeforeRuleSelection(t *testing.T)
 	}
 }
 
-func TestNativeManagedWhatsAppDistributionRequiresRealProviderMessageID(t *testing.T) {
+func TestNativeCTWALeadCreationRequiresBoundedRealProviderMessageID(t *testing.T) {
 	managed := nativeInboundRule{ManagedMessageDistribution: true}
 	if err := validateNativeManagedProviderMessageIdentity(nativeEvolutionMessage{
 		ProviderMessageID:          "native-synthetic",
@@ -302,8 +356,27 @@ func TestNativeManagedWhatsAppDistributionRequiresRealProviderMessageID(t *testi
 	if err := validateNativeManagedProviderMessageIdentity(nativeEvolutionMessage{
 		ProviderMessageID:          "native-synthetic",
 		ProviderMessageIDSynthetic: true,
+		IsCTWAAd:                   true,
+	}, nativeInboundRule{}); err == nil {
+		t.Fatal("owner-fallback CTWA with a synthetic provider id must fail closed")
+	}
+	if err := validateNativeManagedProviderMessageIdentity(nativeEvolutionMessage{
+		ProviderMessageID: strings.Repeat("a", 501),
+		IsCTWAAd:          true,
+	}, nativeInboundRule{}); err == nil {
+		t.Fatal("owner-fallback CTWA with an oversized provider id must fail closed")
+	}
+	if err := validateNativeManagedProviderMessageIdentity(nativeEvolutionMessage{
+		ProviderMessageID: strings.Repeat("a", 500),
+		IsCTWAAd:          true,
 	}, nativeInboundRule{}); err != nil {
-		t.Fatalf("legacy non-managed behavior must remain unchanged: %v", err)
+		t.Fatalf("500-character provider id was rejected: %v", err)
+	}
+	if err := validateNativeManagedProviderMessageIdentity(nativeEvolutionMessage{
+		ProviderMessageID:          "native-synthetic",
+		ProviderMessageIDSynthetic: true,
+	}, nativeInboundRule{}); err != nil {
+		t.Fatalf("ordinary non-CTWA message behavior must remain unchanged: %v", err)
 	}
 }
 
@@ -353,6 +426,36 @@ func TestReconcileNativeHandledMessageTransportOnlyUpdatesExistingInboundMedia(t
 	}
 	if len(executor.args) != 7 || executor.args[0] != session.OrganizationID || executor.args[1] != session.ID || executor.args[2] != "provider-media" {
 		t.Fatalf("unexpected transport reconciliation scope: %#v", executor.args)
+	}
+}
+
+func TestNativeHandledManagedRetryRepairsAttributionAllowingLegacyMiss(t *testing.T) {
+	session := nativeEvolutionSession{
+		OrganizationID: "11111111-1111-4111-8111-111111111111",
+		ID:             "22222222-2222-4222-8222-222222222222",
+	}
+	message := nativeEvolutionMessage{ProviderMessageID: "provider-ctwa-1", IsCTWAAd: true}
+	querier := &nativeManagedAttributionTestQuerier{enriched: false}
+	if err := enrichNativeManagedWhatsAppLeadEntryAttribution(
+		context.Background(), querier, session, "33333333-3333-4333-8333-333333333333", message, true,
+	); err != nil {
+		t.Fatalf("allow-missing handled enrichment failed: %v", err)
+	}
+	if querier.calls != 1 || !strings.Contains(querier.query, "enrich_whatsapp_lead_entry_attribution") || len(querier.args) != 4 {
+		t.Fatalf("handled enrichment call = calls:%d query:%q args:%#v", querier.calls, querier.query, querier.args)
+	}
+	if err := enrichNativeManagedWhatsAppLeadEntryAttribution(
+		context.Background(), &nativeManagedAttributionTestQuerier{enriched: false}, session,
+		"33333333-3333-4333-8333-333333333333", message, false,
+	); err == nil {
+		t.Fatal("pending managed enrichment must fail when the persisted entry is missing")
+	}
+	wantErr := errors.New("database unavailable")
+	if err := enrichNativeManagedWhatsAppLeadEntryAttribution(
+		context.Background(), &nativeManagedAttributionTestQuerier{err: wantErr}, session,
+		"33333333-3333-4333-8333-333333333333", message, true,
+	); !errors.Is(err, wantErr) {
+		t.Fatalf("RPC error = %v, want %v", err, wantErr)
 	}
 }
 
@@ -547,7 +650,7 @@ func TestValidateNativeManagedWhatsAppLeadEntryResult(t *testing.T) {
 }
 
 func TestManagedWhatsAppDistributionFailsClosedForLegacyWildcardSession(t *testing.T) {
-	if !strings.Contains(nativeInboundRulesQuery, "coalesce(session_id = $2::uuid, false) and (") {
+	if !strings.Contains(nativeInboundRulesQuery, "coalesce(whatsapp_inbound_rules.session_id = $2::uuid, false)") {
 		t.Fatal("managed WhatsApp distribution must treat a legacy NULL session as false")
 	}
 	if !strings.Contains(nativeInboundRulesQuery, "and (session_id is null or session_id = $2::uuid)") {
@@ -555,5 +658,69 @@ func TestManagedWhatsAppDistributionFailsClosedForLegacyWildcardSession(t *testi
 	}
 	if !strings.Contains(nativeInboundRulesQuery, "order by priority desc") {
 		t.Fatal("specific inbound rules must preserve their configured priority")
+	}
+	for _, fragment := range []string{
+		"from public.round_robins managed_queue",
+		"coalesce(managed_queue.is_active, true) = true",
+		"managed_queue.settings->>'require_checkin'",
+		"not in ('true', '1', 'yes')",
+		"coalesce(managed_rule.is_active, true) = true",
+		"lower(btrim(coalesce(whatsapp_inbound_rules.match_type, ''))) = 'contains'",
+		"lower(btrim(coalesce(whatsapp_inbound_rules.match_field, 'message'))) = 'message'",
+		"btrim(coalesce(whatsapp_inbound_rules.match_value, '')) <> ''",
+		"managed_rule.match->>'whatsapp_session_id'",
+		"managed_rule.conditions->'match'->>'whatsapp_session_id'",
+		") = $2::uuid::text",
+		"lower(btrim(whatsapp_inbound_rules.match_value)) = lower(btrim(coalesce(",
+		"managed_rule.conditions->>'match_value'",
+	} {
+		if !strings.Contains(nativeInboundRulesQuery, fragment) {
+			t.Fatalf("invalid managed queues must fall back to the active session owner; query missing %q", fragment)
+		}
+	}
+	if strings.Contains(nativeInboundRulesQuery, "whatsapp_inbound_rules.priority <= -1000000000") ||
+		strings.Contains(nativeInboundRulesQuery, "whatsapp_inbound_rules.name like 'Distribuição: %'") {
+		t.Fatal("legacy mirror shape must not promote a divergent persisted round-robin rule to managed")
+	}
+	if !strings.Contains(nativeInboundRulesQuery,
+		"coalesce(nullif(managed_rule.match_type, ''), managed_rule.conditions->>'match_type', managed_rule.name, '') = 'whatsapp_message_contains'") {
+		t.Fatal("managed WhatsApp mirror must require the canonical persisted match type")
+	}
+}
+
+func TestNativeNonManagedProviderEventUsesSeparateIdempotencyNamespace(t *testing.T) {
+	session := nativeEvolutionSession{ID: "22222222-2222-4222-8222-222222222222"}
+	message := nativeEvolutionMessage{ProviderMessageID: "provider-message-id"}
+	if got := nativeWhatsAppProviderEventID(session, message); got != session.ID+":provider-message-id" {
+		t.Fatalf("canonical provider event id = %q", got)
+	}
+	if got := nativeNonManagedWhatsAppProviderEventID(session, message); got != "nonmanaged:"+session.ID+":provider-message-id" {
+		t.Fatalf("non-managed provider event id = %q", got)
+	}
+	for _, fragment := range []string{
+		"provider_event_id, occurred_at",
+		"on conflict (organization_id, provider, provider_event_id)",
+		"where provider_event_id is not null and is_countable = true",
+		"where existing_entry.lead_id = excluded.lead_id",
+	} {
+		if !strings.Contains(nativeNonManagedLeadReentryUpsertQuery, fragment) {
+			t.Fatalf("non-managed reentry upsert query missing %q", fragment)
+		}
+	}
+}
+
+func TestNativeLeadMetaAttributionMatchesEdgeTrackingColumns(t *testing.T) {
+	for _, fragment := range []string{
+		"creative_url",
+		"creative_video_url",
+		"creative_instagram_url",
+		"utm_source",
+		"utm_medium",
+		"utm_campaign",
+		"'click_to_whatsapp'",
+	} {
+		if !strings.Contains(nativeLeadMetaAttributionUpsertQuery, fragment) {
+			t.Fatalf("lead_meta attribution query missing %q", fragment)
+		}
 	}
 }

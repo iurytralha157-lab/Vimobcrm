@@ -109,11 +109,38 @@ func TestNativeEvolutionFixtures(t *testing.T) {
 		}
 	})
 
-	t.Run("verified campaign fields", func(t *testing.T) {
+	t.Run("legacy ad fields are not sufficient for CTWA", func(t *testing.T) {
 		payload := decodeNativeFixture(t, "meta_referral_verified.json")
 		messages := extractNativeEvolutionMessages(payload)
 		if len(messages) != 1 || messages[0].CampaignSourceType != "ad" || messages[0].CampaignSourceID != "123456789012345" || messages[0].CampaignPropertyCode != "PROP-META-1" {
-			t.Fatalf("verified campaign fields were not normalized: %#v", messages)
+			t.Fatalf("legacy campaign fields were not normalized: %#v", messages)
+		}
+		if messages[0].IsCTWAAd {
+			t.Fatal("source_type=ad without entryPointConversionSource=ctwa_ad was accepted as CTWA")
+		}
+	})
+
+	t.Run("confirmed Instagram CTWA attribution", func(t *testing.T) {
+		payload := decodeNativeFixture(t, "meta_ctwa_instagram.json")
+		messages := extractNativeEvolutionMessages(payload)
+		if len(messages) != 1 {
+			t.Fatalf("messages = %d, want 1", len(messages))
+		}
+		message := messages[0]
+		if !message.IsCTWAAd || message.ContactName != "Luana" || message.ContactPhone != "559491298288" {
+			t.Fatalf("CTWA identity was not normalized: %#v", message)
+		}
+		if message.CampaignEntryPointConversionSource != "ctwa_ad" || message.CampaignEntryPointConversionApp != "instagram" ||
+			message.CampaignConversionSource != "FB_Ads" || message.CampaignSourceApp != "instagram" {
+			t.Fatalf("CTWA conversion fields were not preserved: %#v", message)
+		}
+		if message.CampaignShowAdAttribution == nil || !*message.CampaignShowAdAttribution {
+			t.Fatalf("showAdAttribution was not preserved: %#v", message.CampaignShowAdAttribution)
+		}
+		if message.Content != "Olá, gostaria de saber mais informações sobre o Lançamento Lumy Penha." ||
+			message.CampaignHeadline != "Lumy Penha" || message.CampaignSourceID != "120249512922100328" ||
+			message.CampaignSourceURL != "https://www.instagram.com/p/Dcyi6FjgAeQ/" {
+			t.Fatalf("CTWA content and attribution were not normalized: %#v", message)
 		}
 	})
 
@@ -155,6 +182,241 @@ func TestNativeEvolutionFixtures(t *testing.T) {
 			t.Fatalf("connection = %q, %v, %q", status, recognized, connectionErr)
 		}
 	})
+}
+
+func TestNativeCTWAConfirmationRequiresEntryPointAndCompatibleExplicitSourceType(t *testing.T) {
+	tests := []struct {
+		name       string
+		entryPoint string
+		sourceType string
+		want       bool
+	}{
+		{name: "entry point with absent source type", entryPoint: "ctwa_ad", want: true},
+		{name: "entry point with ad", entryPoint: "CTWA_AD", sourceType: "AD", want: true},
+		{name: "entry point with non ad", entryPoint: "ctwa_ad", sourceType: "post", want: false},
+		{name: "ad without entry point", sourceType: "ad", want: false},
+		{name: "lookalike entry point", entryPoint: "ctwa_ads", sourceType: "ad", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := nativeIsCTWAAdReferral(test.entryPoint, test.sourceType); got != test.want {
+				t.Fatalf("nativeIsCTWAAdReferral(%q, %q) = %v, want %v", test.entryPoint, test.sourceType, got, test.want)
+			}
+		})
+	}
+}
+
+func TestNativeCampaignSourceURLAllowsOnlyAbsoluteHTTPURLs(t *testing.T) {
+	for _, unsafeURL := range []string{"javascript:alert(1)", "data:text/html,unsafe", "//example.com/relative", "not a url"} {
+		normalized := nativeNormalizeCampaignReferralCandidate(map[string]any{
+			"entryPointConversionSource": "ctwa_ad",
+			"sourceUrl":                  unsafeURL,
+		})
+		if got := stringFromAny(normalized["source_url"]); got != "" {
+			t.Fatalf("unsafe source URL %q was preserved as %q", unsafeURL, got)
+		}
+	}
+	const instagramURL = "https://www.instagram.com/p/Dcyi6FjgAeQ/"
+	normalized := nativeNormalizeCampaignReferralCandidate(map[string]any{
+		"entryPointConversionSource": "ctwa_ad",
+		"sourceUrl":                  instagramURL,
+	})
+	if got := stringFromAny(normalized["source_url"]); got != instagramURL {
+		t.Fatalf("Instagram HTTPS URL = %q, want %q", got, instagramURL)
+	}
+}
+
+func TestNativeCampaignReferralMergesSiblingCandidates(t *testing.T) {
+	referral := nativeCampaignReferral(map[string]any{
+		"contextInfo": map[string]any{
+			"entryPointConversionSource": "ctwa_ad",
+		},
+		"referral": map[string]any{
+			"sourceType": "ad",
+			"sourceApp":  "instagram",
+			"sourceUrl":  "https://www.instagram.com/p/Dcyi6FjgAeQ/",
+		},
+	})
+	if referral["entry_point_conversion_source"] != "ctwa_ad" || referral["source_type"] != "ad" ||
+		referral["source_app"] != "instagram" || referral["source_url"] != "https://www.instagram.com/p/Dcyi6FjgAeQ/" {
+		t.Fatalf("sibling referral candidates were not merged: %#v", referral)
+	}
+}
+
+func TestNativeCTWAReferralIgnoresQuotedMessageAttribution(t *testing.T) {
+	raw := map[string]any{
+		"Info": map[string]any{
+			"ID":       "provider-organic-reply-1",
+			"Chat":     "5511999991111@s.whatsapp.net",
+			"SenderPN": "5511999991111@s.whatsapp.net",
+		},
+		"message": map[string]any{
+			"extendedTextMessage": map[string]any{
+				"text": "Tenho outra dúvida",
+				"contextInfo": map[string]any{
+					"quotedMessage": map[string]any{
+						"extendedTextMessage": map[string]any{
+							"text": "Mensagem antiga do anúncio",
+							"contextInfo": map[string]any{
+								"entryPointConversionSource": "ctwa_ad",
+								"externalAdReply": map[string]any{
+									"sourceType": "ad",
+									"sourceId":   "quoted-ad-id",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	message, ok := normalizeNativeEvolutionMessage(raw)
+	if !ok {
+		t.Fatal("organic reply was not normalized")
+	}
+	if message.IsCTWAAd || message.CampaignEntryPointConversionSource != "" || message.CampaignSourceID != "" {
+		t.Fatalf("quoted CTWA attribution authorized the current message: %#v", message)
+	}
+	if !message.HasCampaignSignal {
+		t.Fatal("quoted campaign shape should remain fail-closed for native fallback detection")
+	}
+}
+
+func TestNativeCTWAReferralSupportsCrossCasedStructuredContext(t *testing.T) {
+	referral := nativeCampaignReferral(map[string]any{
+		"Message": map[string]any{
+			"ExtendedTextMessage": map[string]any{
+				"contextInfo": map[string]any{
+					"entryPointConversionSource": "ctwa_ad",
+					"ExternalAdReply": map[string]any{
+						"sourceType": "ad",
+						"sourceId":   "cross-case-ad",
+					},
+				},
+			},
+		},
+	})
+	if referral["entry_point_conversion_source"] != "ctwa_ad" || referral["source_id"] != "cross-case-ad" {
+		t.Fatalf("cross-cased structured referral was not normalized: %#v", referral)
+	}
+}
+
+func TestNativeCTWAAttributionAndMessageMetadataPreserveNormalizedReferral(t *testing.T) {
+	message := extractNativeEvolutionMessages(decodeNativeFixture(t, "meta_ctwa_instagram.json"))[0]
+	attribution := nativeCampaignAttribution(message)
+	for key, want := range map[string]any{
+		"creative_link_url":             "https://www.instagram.com/p/Dcyi6FjgAeQ/",
+		"creative_destination_url":      "https://www.instagram.com/p/Dcyi6FjgAeQ/",
+		"creative_instagram_url":        "https://www.instagram.com/p/Dcyi6FjgAeQ/",
+		"entry_point_conversion_source": "ctwa_ad",
+		"entry_point_conversion_app":    "instagram",
+		"conversion_source":             "FB_Ads",
+		"source_app":                    "instagram",
+		"show_ad_attribution":           true,
+	} {
+		if got := attribution[key]; got != want {
+			t.Fatalf("attribution[%q] = %#v, want %#v", key, got, want)
+		}
+	}
+	referral, ok := attribution["source_referral"].(map[string]any)
+	if !ok || referral["explicit_source_type"] != "ad" || referral["entry_point_conversion_source"] != "ctwa_ad" {
+		t.Fatalf("normalized source_referral = %#v", attribution["source_referral"])
+	}
+	metadata := nativeEvolutionMessageMetadata(message)
+	if metadata["source"] != "evolution_go_webhook" {
+		t.Fatalf("message metadata source = %#v", metadata["source"])
+	}
+	storedReferral, ok := metadata["whatsapp_referral"].(map[string]any)
+	if !ok || storedReferral["source_app"] != "instagram" || storedReferral["show_ad_attribution"] != true {
+		t.Fatalf("message whatsapp_referral = %#v", metadata["whatsapp_referral"])
+	}
+	if got := nativeCampaignAttributionUTMSource(message); got != "instagram" {
+		t.Fatalf("UTM source = %q, want instagram", got)
+	}
+}
+
+func TestNativeAmbiguousPhoneMatchFailsClosed(t *testing.T) {
+	if _, err := nativeSingleEvolutionLeadMatch([]nativeEvolutionLead{{ID: "lead-a"}, {ID: "lead-b"}}); !errors.Is(err, errNativeEvolutionLeadPhoneAmbiguous) {
+		t.Fatalf("ambiguous lead lookup error = %v", err)
+	}
+	lead, err := nativeSingleEvolutionLeadMatch([]nativeEvolutionLead{{ID: "lead-a"}})
+	if err != nil || lead.ID != "lead-a" {
+		t.Fatalf("single lead lookup = %#v, %v", lead, err)
+	}
+}
+
+func TestNativeExistingConversationLeadSkipsGlobalPhoneResolution(t *testing.T) {
+	linked := nativeEvolutionConversation{ID: "conversation-id", LeadID: "lead-id"}
+	if !nativeConversationHasAttachedLead(linked, false) {
+		t.Fatal("existing scoped conversation/lead link must be reused")
+	}
+	if nativeConversationHasAttachedLead(linked, true) ||
+		nativeConversationHasAttachedLead(nativeEvolutionConversation{ID: "conversation-id"}, false) {
+		t.Fatal("missing conversation or lead must still use normal scoped resolution")
+	}
+}
+
+func TestNativeLegacyRecoveryUsesPersistedAttribution(t *testing.T) {
+	incoming := nativeEvolutionMessage{
+		ProviderMessageID:                  "provider-retry-1",
+		CampaignEntryPointConversionSource: "ctwa_ad",
+		CampaignSourceType:                 "ad",
+		CampaignSourceID:                   "untrusted-replay-ad",
+		IsCTWAAd:                           true,
+	}
+	persisted := nativeMessageWithPersistedCampaignAttribution(incoming, map[string]any{
+		"whatsapp_referral": map[string]any{
+			"entry_point_conversion_source": "ctwa_ad",
+			"explicit_source_type":          "ad",
+			"source_id":                     "persisted-ad",
+			"source_url":                    "https://www.instagram.com/p/persisted/",
+			"source_app":                    "instagram",
+			"headline":                      "Campanha persistida",
+		},
+	})
+	if !persisted.IsCTWAAd || persisted.CampaignSourceID != "persisted-ad" ||
+		persisted.CampaignHeadline != "Campanha persistida" ||
+		persisted.CampaignSourceURL != "https://www.instagram.com/p/persisted/" {
+		t.Fatalf("persisted attribution was not recovered: %#v", persisted)
+	}
+	if persisted.CampaignSourceID == incoming.CampaignSourceID {
+		t.Fatal("legacy recovery trusted mutable replay attribution")
+	}
+	for _, fragment := range []string{
+		"from public.whatsapp_messages as message",
+		"message.organization_id = $1::uuid",
+		"message.session_id = $2::uuid",
+		"coalesce(message.from_me, false) = false",
+		"for update of message, conversation",
+	} {
+		if !strings.Contains(nativeLegacyNonManagedRecoveryQuery, fragment) {
+			t.Fatalf("legacy recovery query missing %q", fragment)
+		}
+	}
+	if !strings.Contains(nativeLegacyNonManagedConversationRecoveryQuery,
+		"conversation.last_message_at is null or conversation.last_message_at < $4::timestamptz") {
+		t.Fatal("legacy conversation recovery must be replay-idempotent")
+	}
+}
+
+func TestNativeCTWAWithoutManagedRuleDropsLegacyAssignmentTargets(t *testing.T) {
+	legacy := nativeInboundRule{
+		ID:                 "legacy-rule",
+		TargetUserID:       "legacy-user",
+		TargetTeamID:       "legacy-team",
+		TargetPipelineID:   "legacy-pipeline",
+		TargetStageID:      "legacy-stage",
+		TargetRoundRobinID: "legacy-round-robin",
+	}
+	if got := nativeCTWALeadAssignmentRule(legacy); got.ID != "" || got.TargetUserID != "" || got.TargetTeamID != "" ||
+		got.TargetPipelineID != "" || got.TargetStageID != "" || got.TargetRoundRobinID != "" {
+		t.Fatalf("owner-fallback assignment retained legacy targets: %#v", got)
+	}
+	managed := legacy
+	managed.ManagedMessageDistribution = true
+	if got := nativeCTWALeadAssignmentRule(managed); got.ID != managed.ID || !got.ManagedMessageDistribution {
+		t.Fatalf("managed assignment context was not preserved: %#v", got)
+	}
 }
 
 func TestNativeEvolutionConnectionStatusUsesTransportAndLoginState(t *testing.T) {

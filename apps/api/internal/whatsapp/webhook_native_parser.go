@@ -12,39 +12,47 @@ import (
 )
 
 type nativeEvolutionMessage struct {
-	ProviderMessageID          string
-	ProviderMessageIDSynthetic bool
-	RemoteJID                  string
-	RemoteAliases              []string
-	ContactPhone               string
-	ContactName                string
-	SenderJID                  string
-	SenderName                 string
-	Content                    string
-	MessageType                string
-	FromMe                     bool
-	IsGroup                    bool
-	SentAt                     time.Time
-	MediaURL                   string
-	MediaBase64                string
-	MediaMimeType              string
-	MediaStoragePath           string
-	MediaSize                  int64
-	ReactionTargetID           string
-	ReactionEmoji              string
-	IsReaction                 bool
-	DeletionTargetID           string
-	IsDeletion                 bool
-	HasCampaignSignal          bool
-	CampaignSourceType         string
-	CampaignSourceID           string
-	CampaignSourceURL          string
-	CampaignCTWAClid           string
-	CampaignHeadline           string
-	CampaignPropertyCode       string
-	UnsupportedID              bool
-	UnsupportedMessage         bool
-	Raw                        map[string]any
+	ProviderMessageID                  string
+	ProviderMessageIDSynthetic         bool
+	RemoteJID                          string
+	RemoteAliases                      []string
+	ContactPhone                       string
+	ContactName                        string
+	SenderJID                          string
+	SenderName                         string
+	Content                            string
+	MessageType                        string
+	FromMe                             bool
+	IsGroup                            bool
+	SentAt                             time.Time
+	MediaURL                           string
+	MediaBase64                        string
+	MediaMimeType                      string
+	MediaStoragePath                   string
+	MediaSize                          int64
+	ReactionTargetID                   string
+	ReactionEmoji                      string
+	IsReaction                         bool
+	DeletionTargetID                   string
+	IsDeletion                         bool
+	HasCampaignSignal                  bool
+	IsCTWAAd                           bool
+	CampaignSourceType                 string
+	CampaignSourceID                   string
+	CampaignSourceURL                  string
+	CampaignCreativeURL                string
+	CampaignCreativeVideoURL           string
+	CampaignCTWAClid                   string
+	CampaignHeadline                   string
+	CampaignEntryPointConversionSource string
+	CampaignEntryPointConversionApp    string
+	CampaignConversionSource           string
+	CampaignSourceApp                  string
+	CampaignShowAdAttribution          *bool
+	CampaignPropertyCode               string
+	UnsupportedID                      bool
+	UnsupportedMessage                 bool
+	Raw                                map[string]any
 }
 
 type nativeEvolutionStatus struct {
@@ -206,7 +214,19 @@ func normalizeNativeEvolutionMessage(raw map[string]any) (nativeEvolutionMessage
 		content = ""
 	}
 	referral := nativeCampaignReferral(raw)
-	referralSourceURL := firstString(referral, "source_url", "sourceUrl", "SourceURL", "url", "link")
+	referralSourceURL := nativeFirstHTTPURL(referral, "source_url", "sourceUrl", "SourceURL", "url", "link")
+	referralSourceType := firstString(referral, "source_type", "sourceType", "SourceType")
+	entryPointSource := firstString(referral,
+		"entry_point_conversion_source", "entryPointConversionSource", "EntryPointConversionSource",
+	)
+	entryPointApp := firstString(referral,
+		"entry_point_conversion_app", "entryPointConversionApp", "EntryPointConversionApp",
+	)
+	conversionSource := firstString(referral, "conversion_source", "conversionSource", "ConversionSource")
+	sourceApp := firstString(referral, "source_app", "sourceApp", "SourceApp")
+	showAdAttribution := nativeOptionalBool(nativeFirstValue(referral,
+		"show_ad_attribution", "showAdAttribution", "ShowAdAttribution",
+	))
 
 	sentAt := nativeTimestamp(nativeFirstValue(
 		info,
@@ -275,38 +295,46 @@ func normalizeNativeEvolutionMessage(raw map[string]any) (nativeEvolutionMessage
 		)
 	}
 	return nativeEvolutionMessage{
-		ProviderMessageID:          providerMessageID,
-		ProviderMessageIDSynthetic: providerIDSynthetic,
-		RemoteJID:                  identity.RemoteJID,
-		RemoteAliases:              aliases,
-		ContactPhone:               identity.ContactPhone,
-		ContactName:                firstNonEmpty(contactName, identity.ContactPhone),
-		SenderJID:                  senderJID,
-		SenderName:                 firstNonEmpty(firstString(info, "PushName", "pushName"), firstString(raw, "pushName", "senderName", "notifyName")),
-		Content:                    stripNullBytes(content),
-		MessageType:                mediaType,
-		FromMe:                     fromMe,
-		IsGroup:                    identity.IsGroup,
-		SentAt:                     sentAt.UTC(),
-		MediaURL:                   mediaURL,
-		MediaBase64:                mediaBase64,
-		MediaMimeType:              mediaMimeType,
-		MediaSize:                  nativeInt64(nativeFirstValue(mediaBlock, "fileLength", "FileLength", "fileSize", "mediaSize")),
-		ReactionTargetID:           reactionTarget,
-		ReactionEmoji:              reactionEmoji,
-		IsReaction:                 isReaction,
-		DeletionTargetID:           deletionTarget,
-		IsDeletion:                 isDeletion,
-		HasCampaignSignal:          nativeHasCampaignSignal(raw),
-		CampaignSourceType:         firstString(referral, "source_type", "sourceType", "SourceType"),
-		CampaignSourceID:           firstString(referral, "source_id", "sourceId", "SourceID", "ad_id", "adId", "AdID"),
-		CampaignSourceURL:          referralSourceURL,
-		CampaignCTWAClid:           firstString(referral, "ctwa_clid", "ctwaClid", "CTWAClid", "click_id", "clickId"),
-		CampaignHeadline:           firstString(referral, "headline", "title", "Title", "body", "description"),
-		CampaignPropertyCode:       nativeCampaignPropertyCode(content, referralSourceURL),
-		UnsupportedID:              unsupportedIdentity,
-		UnsupportedMessage:         len(protocolMessage) > 0 && !isDeletion,
-		Raw:                        raw,
+		ProviderMessageID:                  providerMessageID,
+		ProviderMessageIDSynthetic:         providerIDSynthetic,
+		RemoteJID:                          identity.RemoteJID,
+		RemoteAliases:                      aliases,
+		ContactPhone:                       identity.ContactPhone,
+		ContactName:                        firstNonEmpty(contactName, identity.ContactPhone),
+		SenderJID:                          senderJID,
+		SenderName:                         firstNonEmpty(firstString(info, "PushName", "pushName"), firstString(raw, "pushName", "senderName", "notifyName")),
+		Content:                            stripNullBytes(content),
+		MessageType:                        mediaType,
+		FromMe:                             fromMe,
+		IsGroup:                            identity.IsGroup,
+		SentAt:                             sentAt.UTC(),
+		MediaURL:                           mediaURL,
+		MediaBase64:                        mediaBase64,
+		MediaMimeType:                      mediaMimeType,
+		MediaSize:                          nativeInt64(nativeFirstValue(mediaBlock, "fileLength", "FileLength", "fileSize", "mediaSize")),
+		ReactionTargetID:                   reactionTarget,
+		ReactionEmoji:                      reactionEmoji,
+		IsReaction:                         isReaction,
+		DeletionTargetID:                   deletionTarget,
+		IsDeletion:                         isDeletion,
+		HasCampaignSignal:                  nativeHasCampaignSignal(raw),
+		IsCTWAAd:                           !fromMe && !identity.IsGroup && nativeIsCTWAAdReferral(entryPointSource, referralSourceType),
+		CampaignSourceType:                 referralSourceType,
+		CampaignSourceID:                   firstString(referral, "source_id", "sourceId", "SourceID", "ad_id", "adId", "AdID"),
+		CampaignSourceURL:                  referralSourceURL,
+		CampaignCreativeURL:                firstString(referral, "image_url", "thumbnail_url"),
+		CampaignCreativeVideoURL:           firstString(referral, "video_url"),
+		CampaignCTWAClid:                   firstString(referral, "ctwa_clid", "ctwaClid", "CTWAClid", "click_id", "clickId"),
+		CampaignHeadline:                   firstString(referral, "headline", "title", "Title", "body", "description"),
+		CampaignEntryPointConversionSource: entryPointSource,
+		CampaignEntryPointConversionApp:    entryPointApp,
+		CampaignConversionSource:           conversionSource,
+		CampaignSourceApp:                  sourceApp,
+		CampaignShowAdAttribution:          showAdAttribution,
+		CampaignPropertyCode:               nativeCampaignPropertyCode(content, referralSourceURL),
+		UnsupportedID:                      unsupportedIdentity,
+		UnsupportedMessage:                 len(protocolMessage) > 0 && !isDeletion,
+		Raw:                                raw,
 	}, true
 }
 
@@ -434,7 +462,7 @@ func nativeHasCampaignSignal(value any) bool {
 		case map[string]any:
 			for key, item := range typed {
 				normalized := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(key, "_", ""), "-", ""))
-				if normalized == "referral" || normalized == "externaladreply" || normalized == "ctwa" || normalized == "adsource" {
+				if normalized == "referral" || normalized == "externaladreply" || normalized == "ctwa" || normalized == "adsource" || normalized == "ad" {
 					return true
 				}
 				if walk(item, depth+1) {
@@ -454,42 +482,167 @@ func nativeHasCampaignSignal(value any) bool {
 }
 
 func nativeCampaignReferral(value any) map[string]any {
-	var walk func(any, int) map[string]any
-	walk = func(current any, depth int) map[string]any {
-		if depth > 10 || current == nil {
-			return nil
-		}
-		switch typed := current.(type) {
-		case map[string]any:
-			for _, key := range []string{"externalAdReply", "ExternalAdReply", "externalAdReplyInfo", "quotedAd", "ad", "referral", "Referral"} {
-				if nested, ok := typed[key].(map[string]any); ok {
-					if candidate := walk(nested, depth+1); candidate != nil {
-						return candidate
-					}
-				}
-			}
-			if firstString(typed,
-				"source_type", "sourceType", "SourceType",
-				"source_id", "sourceId", "SourceID", "ad_id", "adId", "AdID",
-				"ctwa_clid", "ctwaClid", "source_url", "sourceUrl",
-			) != "" {
-				return typed
-			}
-			for _, nested := range typed {
-				if candidate := walk(nested, depth+1); candidate != nil {
-					return candidate
-				}
-			}
-		case []any:
-			for _, nested := range typed {
-				if candidate := walk(nested, depth+1); candidate != nil {
-					return candidate
-				}
-			}
-		}
+	merged := map[string]any{}
+	root, ok := value.(map[string]any)
+	if !ok || len(root) == 0 {
 		return nil
 	}
-	return walk(value, 0)
+
+	appendCandidate := func(candidate map[string]any) {
+		if normalized := nativeNormalizeCampaignReferralCandidate(candidate); len(normalized) > 0 {
+			merged = nativeMergeCampaignReferral(merged, normalized)
+		}
+	}
+	appendContainer := func(container map[string]any) {
+		if len(container) == 0 {
+			return
+		}
+		appendCandidate(container)
+		appendCandidate(nativeFirstMap(container,
+			"externalAdReply", "ExternalAdReply", "externalAdReplyInfo", "externalAdReplyMessage",
+		))
+		appendCandidate(nativeFirstMap(container, "referral", "Referral"))
+	}
+
+	messageNode := nativeFirstMap(root, "message", "Message")
+	if len(messageNode) == 0 {
+		messageNode = root
+	}
+	info := nativeFirstMap(root, "info", "Info")
+
+	// Campaign authorization is intentionally limited to provider-owned
+	// referral/context fields on the current message. In particular, never walk
+	// quotedMessage recursively: an ad referral quoted by a later organic
+	// message is historical content, not a fresh CTWA entry point.
+	for _, container := range []map[string]any{
+		nativeFirstMap(root, "referral", "Referral"),
+		nativeFirstMap(messageNode, "referral", "Referral"),
+		nativeFirstMap(info, "referral", "Referral"),
+		nativeFirstMap(root, "contextInfo", "ContextInfo"),
+		nativeFirstMap(messageNode, "contextInfo", "ContextInfo"),
+		nativeFirstMap(info, "contextInfo", "ContextInfo"),
+		nativeFirstMap(messageNode, "extendedTextMessage.contextInfo", "extendedTextMessage.ContextInfo", "ExtendedTextMessage.contextInfo", "ExtendedTextMessage.ContextInfo"),
+		nativeFirstMap(messageNode, "imageMessage.contextInfo", "imageMessage.ContextInfo", "ImageMessage.contextInfo", "ImageMessage.ContextInfo"),
+		nativeFirstMap(messageNode, "videoMessage.contextInfo", "videoMessage.ContextInfo", "VideoMessage.contextInfo", "VideoMessage.ContextInfo"),
+		nativeFirstMap(messageNode, "audioMessage.contextInfo", "audioMessage.ContextInfo", "AudioMessage.contextInfo", "AudioMessage.ContextInfo"),
+		nativeFirstMap(messageNode, "documentMessage.contextInfo", "documentMessage.ContextInfo", "DocumentMessage.contextInfo", "DocumentMessage.ContextInfo"),
+		nativeFirstMap(messageNode, "stickerMessage.contextInfo", "stickerMessage.ContextInfo", "StickerMessage.contextInfo", "StickerMessage.ContextInfo"),
+		nativeFirstMap(root, "externalAdReply", "ExternalAdReply"),
+		nativeFirstMap(messageNode, "externalAdReply", "ExternalAdReply"),
+	} {
+		appendContainer(container)
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}
+
+func nativeNormalizeCampaignReferralCandidate(value map[string]any) map[string]any {
+	if len(value) == 0 {
+		return nil
+	}
+	normalized := map[string]any{}
+	fields := []struct {
+		canonical string
+		paths     []string
+	}{
+		{canonical: "source_type", paths: []string{"source_type", "sourceType", "SourceType"}},
+		{canonical: "source_id", paths: []string{"source_id", "sourceId", "SourceID", "ad_id", "adId", "AdID"}},
+		{canonical: "ctwa_clid", paths: []string{"ctwa_clid", "ctwaClid", "CTWAClid", "click_id", "clickId"}},
+		{canonical: "entry_point_conversion_source", paths: []string{"entry_point_conversion_source", "entryPointConversionSource", "EntryPointConversionSource"}},
+		{canonical: "entry_point_conversion_app", paths: []string{"entry_point_conversion_app", "entryPointConversionApp", "EntryPointConversionApp"}},
+		{canonical: "conversion_source", paths: []string{"conversion_source", "conversionSource", "ConversionSource"}},
+		{canonical: "source_app", paths: []string{"source_app", "sourceApp", "SourceApp"}},
+	}
+	for _, field := range fields {
+		if item := firstString(value, field.paths...); item != "" {
+			normalized[field.canonical] = item
+		}
+	}
+	if sourceURL := nativeFirstHTTPURL(value, "source_url", "sourceUrl", "SourceURL"); sourceURL != "" {
+		normalized["source_url"] = sourceURL
+	}
+	if show, present := nativeBool(nativeFirstValue(value,
+		"show_ad_attribution", "showAdAttribution", "ShowAdAttribution",
+	)); present {
+		normalized["show_ad_attribution"] = show
+	}
+	if normalized["source_url"] == nil {
+		if sourceURL := nativeFirstHTTPURL(value, "url", "link"); sourceURL != "" {
+			normalized["source_url"] = sourceURL
+		}
+	}
+	if headline := firstString(value, "headline", "title", "Title"); headline != "" {
+		normalized["headline"] = headline
+	}
+	if body := firstString(value, "body", "description", "text", "Body"); body != "" {
+		normalized["body"] = body
+	}
+	if thumbnailURL := nativeFirstHTTPURL(value, "thumbnail_url", "thumbnailUrl", "ThumbnailURL", "preview_url"); thumbnailURL != "" {
+		normalized["thumbnail_url"] = thumbnailURL
+	}
+	if imageURL := nativeFirstHTTPURL(value, "image_url", "imageUrl", "ImageURL", "picture"); imageURL != "" {
+		normalized["image_url"] = imageURL
+	}
+	if videoURL := nativeFirstHTTPURL(value, "video_url", "videoUrl", "VideoURL", "media_url", "mediaUrl"); videoURL != "" {
+		normalized["video_url"] = videoURL
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
+}
+
+func nativeMergeCampaignReferral(primary map[string]any, fallback map[string]any) map[string]any {
+	if len(primary) == 0 && len(fallback) == 0 {
+		return nil
+	}
+	merged := make(map[string]any, len(primary)+len(fallback))
+	for key, value := range primary {
+		merged[key] = value
+	}
+	for key, value := range fallback {
+		current, exists := merged[key]
+		if !exists || current == nil || strings.TrimSpace(stringFromAny(current)) == "" {
+			merged[key] = value
+		}
+	}
+	return merged
+}
+
+func nativeOptionalBool(value any) *bool {
+	parsed, ok := nativeBool(value)
+	if !ok {
+		return nil
+	}
+	return &parsed
+}
+
+func nativeIsCTWAAdReferral(entryPointConversionSource string, explicitSourceType string) bool {
+	if !strings.EqualFold(strings.TrimSpace(entryPointConversionSource), "ctwa_ad") {
+		return false
+	}
+	sourceType := strings.ToLower(strings.TrimSpace(explicitSourceType))
+	return sourceType == "" || sourceType == "ad"
+}
+
+func nativeFirstHTTPURL(value map[string]any, paths ...string) string {
+	for _, path := range paths {
+		candidate := strings.TrimSpace(firstString(value, path))
+		if candidate == "" {
+			continue
+		}
+		parsed, err := url.Parse(candidate)
+		if err != nil || parsed.Host == "" {
+			continue
+		}
+		scheme := strings.ToLower(parsed.Scheme)
+		if scheme == "http" || scheme == "https" {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func nativeIsDeletionProtocolType(value string) bool {
