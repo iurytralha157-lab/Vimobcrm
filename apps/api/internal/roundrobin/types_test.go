@@ -177,6 +177,64 @@ func TestCreateRequestValidatePreservesTeamMember(t *testing.T) {
 	}
 }
 
+func TestCreateRequestValidateNormalizesAutoTagIDs(t *testing.T) {
+	const firstTagID = "11111111-1111-4111-8111-111111111111"
+	const secondTagID = "22222222-2222-4222-8222-222222222222"
+	var request CreateRequest
+	payload := []byte(`{"name":"Fila com tags","settings":{"auto_tag_ids":[" 11111111-1111-4111-8111-111111111111 ","22222222-2222-4222-8222-222222222222","11111111-1111-4111-8111-111111111111"]}}`)
+	if err := json.Unmarshal(payload, &request); err != nil {
+		t.Fatalf("UnmarshalJSON() error = %v", err)
+	}
+
+	input, err := request.Validate()
+	if err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	tagIDs, ok := input.Settings[autoTagIDsSettingKey].([]string)
+	if !ok {
+		t.Fatalf("expected normalized []string, got %T", input.Settings[autoTagIDsSettingKey])
+	}
+	if len(tagIDs) != 2 || tagIDs[0] != firstTagID || tagIDs[1] != secondTagID {
+		t.Fatalf("unexpected normalized auto tags: %#v", tagIDs)
+	}
+}
+
+func TestCreateRequestValidateRejectsInvalidAutoTagIDs(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		value any
+	}{
+		{name: "not an array", value: "11111111-1111-4111-8111-111111111111"},
+		{name: "non string entry", value: []any{42}},
+		{name: "invalid UUID", value: []any{"not-a-uuid"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := (CreateRequest{
+				Name:     "Fila inválida",
+				Settings: map[string]any{autoTagIDsSettingKey: test.value},
+			}).Validate()
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("expected ErrInvalidInput, got %v", err)
+			}
+		})
+	}
+}
+
+func TestCreateRequestValidateLimitsAutoTagIDs(t *testing.T) {
+	tagIDs := make([]string, maxQueueAutoTagIDs+1)
+	for index := range tagIDs {
+		tagIDs[index] = "11111111-1111-4111-8111-111111111111"
+	}
+
+	_, err := (CreateRequest{
+		Name:     "Fila acima do limite",
+		Settings: map[string]any{autoTagIDsSettingKey: tagIDs},
+	}).Validate()
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+}
+
 func assertMatchList(t *testing.T, match map[string]any, key string, expected []string) {
 	t.Helper()
 	if expected == nil {

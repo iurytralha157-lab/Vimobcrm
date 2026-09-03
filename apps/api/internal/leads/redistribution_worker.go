@@ -1,10 +1,14 @@
 package leads
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -14,28 +18,41 @@ import (
 )
 
 const (
-	leadRedistributionWorkerInterval = 30 * time.Second
-	leadRedistributionBatchLimit     = 50
-	leadRedistributionLockKey        = int64(860421704)
-	leadRedistributionNoMemberDelay  = 24 * time.Hour
+	leadRedistributionWorkerInterval  = 30 * time.Second
+	leadRedistributionBatchLimit      = 50
+	leadRedistributionLockKey         = int64(860421704)
+	leadRedistributionNoMemberDelay   = 24 * time.Hour
+	leadInitialDistributionRetryDelay = 5 * time.Minute
 )
 
 type redistributionJob struct {
-	ID                    string
-	OrganizationID        string
-	LeadID                string
-	RoundRobinID          string
-	CurrentAssignedUserID string
-	AttemptCount          int
-	MaxAttempts           int
-	TimeoutMinutes        int
-	WarningMinutes        int
-	EnrolledAt            time.Time
-	LeadName              string
+	ID                          string
+	OrganizationID              string
+	LeadID                      string
+	RoundRobinID                string
+	CurrentAssignedUserID       string
+	AttemptCount                int
+	MaxAttempts                 int
+	TimeoutMinutes              int
+	WarningMinutes              int
+	EnrolledAt                  time.Time
+	LeadName                    string
+	InitialDistributionPending  bool
+	AllowAssignedRedistribution bool
+}
+
+type backendDistributionResult struct {
+	Success        bool
+	AssignedUserID string
 }
 
 type leadRedistributionExecutor interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+}
+
+type leadRedistributionQueryExecutor interface {
+	leadTeamQueryer
+	leadRedistributionExecutor
 }
 
 func (repo Repository) StartRedistributionWorker(ctx context.Context, logger *slog.Logger) {
@@ -93,6 +110,10 @@ func (repo Repository) processRedistributionWarnings(ctx context.Context, tx pgx
 	}
 
 	for _, job := range jobs {
+		if !redistributionJobShouldReceiveWarning(job) {
+			continue
+		}
+
 		current, err := repo.getLeadSnapshotForUpdate(ctx, tx, job.OrganizationID, job.LeadID)
 		if err != nil {
 			if errors.Is(err, ErrLeadNotFound) {
@@ -158,6 +179,343 @@ func (repo Repository) processRedistributionWarnings(ctx context.Context, tx pgx
 	return nil
 }
 
+func redistributionJobShouldReceiveWarning(job redistributionJob) bool {
+	return !job.InitialDistributionPending
+}
+
+func (repo Repository) processManagedWhatsAppInitialDistribution(
+	ctx context.Context,
+	store leadRedistributionQueryExecutor,
+	job redistributionJob,
+	current leadSnapshot,
+) error {
+	if current.AssignedUserID != "" && (!job.AllowAssignedRedistribution || current.AssignedUserID != job.CurrentAssignedUserID) {
+		return repo.stopRedistributionJob(ctx, store, job.ID, "assignee_changed")
+	}
+	if current.DealStatus != "" && current.DealStatus != "open" {
+		return repo.stopRedistributionJob(ctx, store, job.ID, "deal_closed")
+	}
+	if job.AllowAssignedRedistribution {
+		hasHumanAction, err := repo.redistributionHasHumanActivity(ctx, store, job)
+		if err != nil {
+			return err
+		}
+		if hasHumanAction {
+			return repo.stopRedistributionJob(ctx, store, job.ID, "human_action")
+		}
+	}
+	queueActive, queueActiveErr := repo.managedWhatsAppDistributionQueueActive(
+		ctx,
+		store,
+		job.OrganizationID,
+		job.RoundRobinID,
+	)
+	if queueActiveErr != nil {
+		return queueActiveErr
+	}
+	if !queueActive {
+		return repo.stopRedistributionJob(ctx, store, job.ID, "round_robin_inactive")
+	}
+
+	excludedUserID := ""
+	if job.AllowAssignedRedistribution {
+		excludedUserID = job.CurrentAssignedUserID
+	}
+
+	selection, _, err := repo.selectRoundRobinMemberForRedistribution(
+		ctx,
+		store,
+		job.OrganizationID,
+		job.RoundRobinID,
+		excludedUserID,
+		"",
+	)
+	if err != nil {
+		return err
+	}
+	if selection.UserID == "" {
+		retryAt, retryErr := repo.nextManagedWhatsAppInitialDistributionAttempt(ctx, store, job)
+		if retryErr != nil {
+			return retryErr
+		}
+		return repo.reopenManagedWhatsAppInitialDistribution(
+			ctx,
+			store,
+			job.ID,
+			retryAt,
+			job.AttemptCount+1,
+			[]byte(`{"success":false,"reason":"no_available_members"}`),
+		)
+	}
+
+	attemptedAt := time.Now().UTC()
+	if err := repo.stopRedistributionJob(ctx, store, job.ID, "initial_distribution_completed"); err != nil {
+		return err
+	}
+
+	var rawResult []byte
+	err = store.QueryRow(ctx, `
+		select public.distribute_lead_from_backend(
+			$1::uuid,
+			$2::uuid,
+			$3::text,
+			$4::uuid,
+			$5::boolean,
+			$6::text,
+			$7::timestamptz
+		)
+	`,
+		job.OrganizationID,
+		job.LeadID,
+		fmt.Sprintf("managed-whatsapp-pending:%s:attempt_%d", job.ID, job.AttemptCount+1),
+		job.RoundRobinID,
+		false,
+		"whatsapp",
+		attemptedAt,
+	).Scan(&rawResult)
+	if err != nil {
+		return err
+	}
+
+	distributionResult, err := parseBackendDistributionResult(rawResult)
+	if err != nil {
+		return err
+	}
+	if distributionResult.Success && (!job.AllowAssignedRedistribution ||
+		(distributionResult.AssignedUserID != "" && !strings.EqualFold(distributionResult.AssignedUserID, job.CurrentAssignedUserID))) {
+		return nil
+	}
+
+	// The canonical distributor can create its own active retry job even when it
+	// reports no assignment. Consolidate onto that job before reopening this
+	// special one so the one-active-job index is respected and a retry owner is
+	// never silently lost.
+	activeJobID, activeJobExists, activeJobErr := repo.otherActiveRedistributionJob(
+		ctx,
+		store,
+		job.OrganizationID,
+		job.LeadID,
+		job.ID,
+	)
+	if activeJobErr != nil {
+		return activeJobErr
+	}
+	if activeJobExists {
+		accelerated, accelerateErr := repo.accelerateRedistributionJob(
+			ctx,
+			store,
+			job.OrganizationID,
+			job.LeadID,
+			activeJobID,
+		)
+		if accelerateErr != nil {
+			return accelerateErr
+		}
+		if accelerated {
+			return nil
+		}
+	}
+	retryAt, err := repo.nextManagedWhatsAppInitialDistributionAttempt(ctx, store, job)
+	if err != nil {
+		return err
+	}
+	return repo.reopenManagedWhatsAppInitialDistribution(ctx, store, job.ID, retryAt, job.AttemptCount+1, rawResult)
+}
+
+func (repo Repository) managedWhatsAppDistributionQueueActive(
+	ctx context.Context,
+	queryer leadTeamQueryer,
+	organizationID string,
+	roundRobinID string,
+) (bool, error) {
+	var active bool
+	err := queryer.QueryRow(ctx, `
+		select true
+		from public.round_robins queue
+		where queue.organization_id = $1::uuid
+		  and queue.id = $2::uuid
+		  and coalesce(queue.is_active, true) = true
+		for share
+	`, organizationID, roundRobinID).Scan(&active)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return active, err
+}
+
+func (repo Repository) otherActiveRedistributionJob(
+	ctx context.Context,
+	queryer leadTeamQueryer,
+	organizationID string,
+	leadID string,
+	excludedJobID string,
+) (string, bool, error) {
+	var activeJobID string
+	err := queryer.QueryRow(ctx, `
+		select job.id::text
+		from public.lead_redistribution_jobs job
+		where job.organization_id = $1::uuid
+		  and job.lead_id = $2::uuid
+		  and job.id <> $3::uuid
+		  and job.status in ('pending', 'warning_sent')
+		order by job.created_at, job.id
+		limit 1
+		for update
+	`, organizationID, leadID, excludedJobID).Scan(&activeJobID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return activeJobID, true, nil
+}
+
+func (repo Repository) accelerateRedistributionJob(
+	ctx context.Context,
+	executor leadRedistributionExecutor,
+	organizationID string,
+	leadID string,
+	jobID string,
+) (bool, error) {
+	tag, err := executor.Exec(ctx, `
+		update public.lead_redistribution_jobs
+		set status = 'pending',
+		    due_at = now(),
+		    warning_due_at = null,
+		    warning_sent_at = null,
+		    stopped_at = null,
+		    stopped_reason = null,
+		    metadata = coalesce(metadata, '{}'::jsonb)
+		      - 'waiting_for_available_member'
+		      - 'next_candidate_check_at',
+		    updated_at = now()
+		where organization_id = $1::uuid
+		  and lead_id = $2::uuid
+		  and id = $3::uuid
+		  and status in ('pending', 'warning_sent')
+	`, organizationID, leadID, jobID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+func (repo Repository) nextManagedWhatsAppInitialDistributionAttempt(
+	ctx context.Context,
+	queryer leadTeamQueryer,
+	job redistributionJob,
+) (time.Time, error) {
+	excludedUserID := ""
+	if job.AllowAssignedRedistribution {
+		excludedUserID = job.CurrentAssignedUserID
+	}
+	nextAvailableAt, hasAlternative, err := repo.nextRoundRobinMemberAvailability(
+		ctx,
+		queryer,
+		job.OrganizationID,
+		job.RoundRobinID,
+		excludedUserID,
+		"",
+		leadInitialDistributionRetryDelay,
+	)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if hasAlternative {
+		return nextAvailableAt, nil
+	}
+	return time.Now().UTC().Add(leadInitialDistributionRetryDelay), nil
+}
+
+func parseBackendDistributionSuccess(raw []byte) (bool, error) {
+	result, err := parseBackendDistributionResult(raw)
+	if err != nil {
+		return false, err
+	}
+	return result.Success, nil
+}
+
+func parseBackendDistributionResult(raw []byte) (backendDistributionResult, error) {
+	payload, err := decodeJSONObject(raw)
+	if err != nil {
+		return backendDistributionResult{}, fmt.Errorf("decode backend distribution result: %w", err)
+	}
+	rawSuccess, ok := payload["success"]
+	if !ok {
+		return backendDistributionResult{}, nil
+	}
+	success, valid := parseFlexibleJSONBoolean(rawSuccess)
+	if !valid {
+		return backendDistributionResult{}, fmt.Errorf("decode backend distribution result: success must be boolean")
+	}
+
+	result := backendDistributionResult{Success: success}
+	if rawAssignedUserID, exists := payload["assigned_user_id"]; exists && !bytes.Equal(bytes.TrimSpace(rawAssignedUserID), []byte("null")) {
+		if err := json.Unmarshal(rawAssignedUserID, &result.AssignedUserID); err != nil {
+			return backendDistributionResult{}, fmt.Errorf("decode backend distribution result: assigned_user_id must be a string")
+		}
+		result.AssignedUserID = strings.TrimSpace(result.AssignedUserID)
+	}
+	return result, nil
+}
+
+func decodeJSONObject(raw []byte) (map[string]json.RawMessage, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil, errors.New("empty JSON object")
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	var payload map[string]json.RawMessage
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, err
+	}
+	if payload == nil {
+		return nil, errors.New("expected JSON object")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err == nil {
+		return nil, errors.New("unexpected trailing JSON value")
+	} else if !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	return payload, nil
+}
+
+func parseFlexibleJSONBoolean(raw json.RawMessage) (bool, bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return false, false
+	}
+
+	var value bool
+	if err := json.Unmarshal(trimmed, &value); err == nil {
+		return value, true
+	}
+	var intValue int
+	if err := json.Unmarshal(trimmed, &intValue); err == nil {
+		switch intValue {
+		case 1:
+			return true, true
+		case 0:
+			return false, true
+		}
+	}
+
+	var textValue string
+	if err := json.Unmarshal(trimmed, &textValue); err != nil {
+		return false, false
+	}
+	switch strings.ToLower(strings.TrimSpace(textValue)) {
+	case "true", "1", "yes":
+		return true, true
+	case "false", "0", "no":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
 func redistributionWarningDedupeKey(job redistributionJob) string {
 	return notificationDedupeKey(
 		"lead_redistribution_warning",
@@ -190,6 +548,12 @@ func (repo Repository) processDueRedistributions(ctx context.Context, tx pgx.Tx)
 			return err
 		}
 		if !locked {
+			continue
+		}
+		if job.InitialDistributionPending {
+			if err := repo.processManagedWhatsAppInitialDistribution(ctx, tx, job, current); err != nil {
+				return err
+			}
 			continue
 		}
 
@@ -311,6 +675,7 @@ func (repo Repository) selectOrDeferRedistribution(
 		job.RoundRobinID,
 		current.AssignedUserID,
 		current.TeamID,
+		leadRedistributionNoMemberDelay,
 	)
 	if err != nil {
 		return roundRobinSelection{}, false, err
@@ -348,7 +713,8 @@ func (repo Repository) listWarningRedistributionJobs(ctx context.Context, tx pgx
 			j.timeout_minutes,
 			j.warning_minutes,
 			j.enrolled_at,
-			coalesce(nullif(l.name, ''), 'Lead')
+			coalesce(nullif(l.name, ''), 'Lead'),
+			coalesce(j.metadata, '{}'::jsonb)::text
 		from public.lead_redistribution_jobs j
 		join public.leads l
 		  on l.organization_id = j.organization_id
@@ -358,6 +724,7 @@ func (repo Repository) listWarningRedistributionJobs(ctx context.Context, tx pgx
 		  and j.warning_due_at <= now()
 		  and j.due_at > now()
 		  and j.warning_sent_at is null
+		  and lower(coalesce(j.metadata->>'initial_distribution_pending', 'false')) not in ('true', '1', 'yes')
 		order by j.warning_due_at asc
 		limit $1
 	`, leadRedistributionBatchLimit)
@@ -382,7 +749,8 @@ func (repo Repository) listDueRedistributionJobs(ctx context.Context, tx pgx.Tx)
 			j.timeout_minutes,
 			j.warning_minutes,
 			j.enrolled_at,
-			coalesce(nullif(l.name, ''), 'Lead')
+			coalesce(nullif(l.name, ''), 'Lead'),
+			coalesce(j.metadata, '{}'::jsonb)::text
 		from public.lead_redistribution_jobs j
 		join public.leads l
 		  on l.organization_id = j.organization_id
@@ -443,6 +811,7 @@ func scanRedistributionJobs(rows pgx.Rows) ([]redistributionJob, error) {
 	jobs := []redistributionJob{}
 	for rows.Next() {
 		var job redistributionJob
+		var rawMetadata []byte
 		if err := rows.Scan(
 			&job.ID,
 			&job.OrganizationID,
@@ -455,12 +824,30 @@ func scanRedistributionJobs(rows pgx.Rows) ([]redistributionJob, error) {
 			&job.WarningMinutes,
 			&job.EnrolledAt,
 			&job.LeadName,
+			&rawMetadata,
 		); err != nil {
 			return nil, err
 		}
+		job.InitialDistributionPending, job.AllowAssignedRedistribution = redistributionJobFlagsFromMetadata(rawMetadata)
 		jobs = append(jobs, job)
 	}
 	return jobs, rows.Err()
+}
+
+func redistributionJobFlagsFromMetadata(raw []byte) (bool, bool) {
+	payload, err := decodeJSONObject(raw)
+	if err != nil {
+		return false, false
+	}
+	initialPending, initialPendingValid := parseFlexibleJSONBoolean(payload["initial_distribution_pending"])
+	allowAssigned, allowAssignedValid := parseFlexibleJSONBoolean(payload["allow_assigned_redistribution"])
+	if !initialPendingValid {
+		initialPending = false
+	}
+	if !allowAssignedValid {
+		allowAssigned = false
+	}
+	return initialPending, allowAssigned
 }
 
 func (repo Repository) redistributionStopReason(ctx context.Context, tx pgx.Tx, job redistributionJob, current leadSnapshot) (string, error) {
@@ -493,8 +880,7 @@ func (repo Repository) redistributionHasHumanActivity(ctx context.Context, query
 				l.id,
 				l.organization_id,
 				l.first_response_at,
-				l.first_response_is_automation,
-				l.last_contact_at
+				l.first_response_is_automation
 			from public.leads l
 			where l.organization_id = $1::uuid and l.id = $2::uuid
 			limit 1
@@ -507,25 +893,34 @@ func (repo Repository) redistributionHasHumanActivity(ctx context.Context, query
 			 and l.id = f.lead_id
 			where f.occurred_at >= $3::timestamptz
 			  and f.is_automated = false
+			  and f.is_inbound = false
+			  and not (
+			    lower(coalesce(f.source_type, '')) = 'activity'
+			    and exists (
+			      select 1
+			      from public.activities system_activity
+			      join public.round_robin_logs system_distribution
+			        on system_distribution.organization_id = system_activity.organization_id
+			       and system_distribution.lead_id = system_activity.lead_id
+			       and system_distribution.round_robin_id = nullif($4, '')::uuid
+			       and system_distribution.assigned_user_id = nullif($5, '')::uuid
+			       and system_distribution.created_at between system_activity.created_at - interval '1 second' and system_activity.created_at + interval '1 second'
+			      where system_activity.organization_id = f.organization_id
+			        and system_activity.lead_id = f.lead_id
+			        and system_activity.id::text = f.source_id
+			        and lower(coalesce(system_activity.type, '')) in ('assignee_changed', 'stage_change')
+			    )
+			  )
 			  and (
-			    f.is_inbound = true
-			    or f.actor_user_id is not null
-			    or f.qualifies_first_outreach = true
-			    or f.qualifies_stage_inactivity = true
-			    or f.is_effective_contact = true
+			    f.actor_user_id is not null
+			    or lower(coalesce(f.action_type, '')) = 'whatsapp_outbound'
 			  )
 		) or exists (
 			select 1
 			from target_lead l
-			where (
-				l.first_response_at is not null
-				and l.first_response_at >= $3::timestamptz
-				and coalesce(l.first_response_is_automation, false) = false
-			) or (
-				l.last_contact_at is not null
-				and l.last_contact_at >= $3::timestamptz
-				and coalesce(l.first_response_is_automation, false) = false
-			)
+			where l.first_response_at is not null
+			  and l.first_response_at >= $3::timestamptz
+			  and coalesce(l.first_response_is_automation, false) = false
 		) or exists (
 			select 1
 			from public.activities a
@@ -534,6 +929,18 @@ func (repo Repository) redistributionHasHumanActivity(ctx context.Context, query
 			 and l.id = a.lead_id
 			where a.created_at >= $3::timestamptz
 			  and a.user_id is not null
+			  and not (
+			    lower(coalesce(a.type, '')) in ('assignee_changed', 'stage_change')
+			    and exists (
+			      select 1
+			      from public.round_robin_logs system_distribution
+			      where system_distribution.organization_id = a.organization_id
+			        and system_distribution.lead_id = a.lead_id
+			        and system_distribution.round_robin_id = nullif($4, '')::uuid
+			        and system_distribution.assigned_user_id = nullif($5, '')::uuid
+			        and system_distribution.created_at between a.created_at - interval '1 second' and a.created_at + interval '1 second'
+			    )
+			  )
 			  and not (
 			    lower(coalesce(a.metadata->>'is_automation', a.metadata->>'is_automated', a.metadata->>'automated', 'false')) in ('true', '1', 'yes')
 			    or lower(btrim(coalesce(a.metadata->>'origin', ''))) in ('ai', 'openai', 'automation', 'bot', 'ai_autoreply', 'ai_followup')
@@ -549,6 +956,15 @@ func (repo Repository) redistributionHasHumanActivity(ctx context.Context, query
 			where lte.created_at >= $3::timestamptz
 			  and coalesce(lte.actor_user_id, lte.user_id) is not null
 			  and not (
+			    lower(coalesce(lte.event_type, '')) = 'lead_assigned'
+			    and (
+			      nullif(btrim(coalesce(lte.metadata->>'distribution_type', '')), '') is not null
+			      or nullif(btrim(coalesce(lte.metadata->>'distribution_queue_id', '')), '') is not null
+			      or nullif(btrim(coalesce(lte.metadata->>'distribution_event_id', '')), '') is not null
+			      or lower(btrim(coalesce(lte.metadata->>'reason', ''))) in ('no_available_members', 'no_matching_queue')
+			    )
+			  )
+			  and not (
 			    lower(coalesce(lte.metadata->>'is_automation', lte.metadata->>'is_automated', lte.metadata->>'automated', 'false')) in ('true', '1', 'yes')
 			    or lower(btrim(coalesce(lte.metadata->>'origin', ''))) in ('ai', 'openai', 'automation', 'bot', 'ai_autoreply', 'ai_followup')
 			    or lower(btrim(coalesce(lte.metadata->>'origin', ''))) ~ '^(ai|automation)[_.]'
@@ -561,22 +977,13 @@ func (repo Repository) redistributionHasHumanActivity(ctx context.Context, query
 			  on l.organization_id = wm.organization_id
 			 and l.id = wm.lead_id
 			where coalesce(wm.sent_at, wm.received_at, wm.created_at) >= $3::timestamptz
-			  and (
-			    (
-			      coalesce(wm.from_me, false) = false
-			      and lower(coalesce(wm.direction, 'inbound')) <> 'outbound'
-			    )
-			    or (
-			      (coalesce(wm.from_me, false) = true or lower(coalesce(wm.direction, '')) = 'outbound')
-			      and wm.sender_user_id is not null
-			      and not (
-			        lower(coalesce(wm.metadata->>'is_automation', wm.metadata->>'is_automated', wm.metadata->>'automated', 'false')) in ('true', '1', 'yes')
-			        or lower(btrim(coalesce(wm.metadata->>'origin', ''))) in ('ai', 'openai', 'automation', 'bot', 'ai_autoreply', 'ai_followup')
-			        or lower(btrim(coalesce(wm.metadata->>'origin', ''))) ~ '^(ai|automation)[_.]'
-			        or lower(coalesce(wm.metadata->>'sender_type', '')) in ('ai', 'automation', 'bot')
-			        or lower(coalesce(wm.client_message_id, '')) like 'ai-%'
-			      )
-			    )
+			  and (coalesce(wm.from_me, false) = true or lower(coalesce(wm.direction, '')) = 'outbound')
+			  and not (
+			    lower(coalesce(wm.metadata->>'is_automation', wm.metadata->>'is_automated', wm.metadata->>'automated', 'false')) in ('true', '1', 'yes')
+			    or lower(btrim(coalesce(wm.metadata->>'origin', ''))) in ('ai', 'openai', 'automation', 'bot', 'ai_autoreply', 'ai_followup')
+			    or lower(btrim(coalesce(wm.metadata->>'origin', ''))) ~ '^(ai|automation)[_.]'
+			    or lower(coalesce(wm.metadata->>'sender_type', '')) in ('ai', 'automation', 'bot')
+			    or lower(coalesce(wm.client_message_id, '')) like 'ai-%'
 			  )
 		) or exists (
 			select 1
@@ -611,19 +1018,31 @@ func (repo Repository) redistributionHasHumanActivity(ctx context.Context, query
 			where al.entity_type = 'lead'
 			  and al.user_id is not null
 			  and al.created_at >= $3::timestamptz
+			  and not (
+			    lower(coalesce(al.source, '')) = 'database_trigger'
+			    and exists (
+			      select 1
+			      from public.round_robin_logs system_distribution
+			      where system_distribution.organization_id = al.organization_id
+			        and system_distribution.lead_id::text = al.entity_id
+			        and system_distribution.round_robin_id = nullif($4, '')::uuid
+			        and system_distribution.assigned_user_id = nullif($5, '')::uuid
+			        and system_distribution.created_at between al.created_at - interval '1 second' and al.created_at + interval '1 second'
+			    )
+			  )
 		)
-	`, job.OrganizationID, job.LeadID, job.EnrolledAt).Scan(&hasHumanAction)
+	`, job.OrganizationID, job.LeadID, job.EnrolledAt, job.RoundRobinID, job.CurrentAssignedUserID).Scan(&hasHumanAction)
 	if err != nil {
 		return false, err
 	}
 	return hasHumanAction, nil
 }
 
-func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Context, tx pgx.Tx, organizationID string, roundRobinID string, excludedUserID string, requiredTeamID string) (roundRobinSelection, string, error) {
+func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Context, queryer leadTeamQueryer, organizationID string, roundRobinID string, excludedUserID string, requiredTeamID string) (roundRobinSelection, string, error) {
 	var selection roundRobinSelection
 	selection.RoundRobinID = roundRobinID
 
-	err := tx.QueryRow(ctx, `
+	err := queryer.QueryRow(ctx, `
 		with entries as (
 			select
 				rrm.id,
@@ -633,11 +1052,27 @@ func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Conte
 				rrm.team_id,
 				coalesce(rrm.position, 0) as position,
 				rrm.created_at,
-				coalesce(entry_logs.total, 0) as entry_total
+				coalesce(entry_logs.total, 0) as entry_total,
+				lower(coalesce(rr.settings->>'ignore_availability', 'false')) in ('true', '1', 'yes') as ignore_availability,
+				case
+				  when exists (
+				    select 1 from pg_catalog.pg_timezone_names
+				    where name = timezone_config.configured_timezone
+				  ) then timezone_config.configured_timezone
+				  else 'America/Sao_Paulo'
+				end as timezone
 			from public.round_robin_members rrm
 			join public.round_robins rr
 			  on rr.id = rrm.round_robin_id
 			 and rr.organization_id = rrm.organization_id
+			left join public.organization_attention_settings attention_settings
+			  on attention_settings.organization_id = rrm.organization_id
+			left join lateral (
+				select coalesce(
+					nullif(btrim(rr.settings->>'timezone'), ''),
+					nullif(btrim(attention_settings.timezone), '')
+				) as configured_timezone
+			) timezone_config on true
 			left join lateral (
 				select count(*)::bigint as total
 				from public.round_robin_logs rrl
@@ -651,6 +1086,7 @@ func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Conte
 			where rrm.organization_id = $1::uuid
 			  and rrm.round_robin_id = $2::uuid
 			  and coalesce(rrm.is_active, true) = true
+			  and coalesce(rr.is_active, true) = true
 		),
 		candidates as (
 			select
@@ -661,6 +1097,8 @@ func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Conte
 				entries.position,
 				entries.created_at,
 				entries.entry_total,
+				entries.ignore_availability,
+				entries.timezone,
 				tm.id as team_member_id,
 				tm.created_at as team_member_created_at
 			from entries
@@ -681,6 +1119,8 @@ func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Conte
 				entries.position,
 				entries.created_at,
 				entries.entry_total,
+				entries.ignore_availability,
+				entries.timezone,
 				tm.id as team_member_id,
 				tm.created_at as team_member_created_at
 			from entries
@@ -724,7 +1164,8 @@ func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Conte
 		    )
 		  )
 		  and (
-		    candidates.team_member_id is null
+		    candidates.ignore_availability
+		    or candidates.team_member_id is null
 		    or not exists (
 		      select 1
 		      from public.member_availability ma_any
@@ -736,7 +1177,7 @@ func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Conte
 		      from public.member_availability ma
 		      where ma.organization_id = candidates.organization_id
 		        and ma.team_member_id = candidates.team_member_id
-		        and ma.day_of_week = extract(dow from now() at time zone 'America/Sao_Paulo')::int
+		        and ma.day_of_week = extract(dow from now() at time zone candidates.timezone)::int
 		        and coalesce(ma.is_active, true) = true
 		        and (
 		          coalesce(ma.is_all_day, false) = true
@@ -744,8 +1185,8 @@ func (repo Repository) selectRoundRobinMemberForRedistribution(ctx context.Conte
 		            ma.start_time is not null
 		            and ma.end_time is not null
 		            and (
-		              (ma.start_time <= ma.end_time and (now() at time zone 'America/Sao_Paulo')::time >= ma.start_time and (now() at time zone 'America/Sao_Paulo')::time <= ma.end_time)
-		              or (ma.start_time > ma.end_time and ((now() at time zone 'America/Sao_Paulo')::time >= ma.start_time or (now() at time zone 'America/Sao_Paulo')::time <= ma.end_time))
+		              (ma.start_time <= ma.end_time and (now() at time zone candidates.timezone)::time >= ma.start_time and (now() at time zone candidates.timezone)::time <= ma.end_time)
+		              or (ma.start_time > ma.end_time and ((now() at time zone candidates.timezone)::time >= ma.start_time or (now() at time zone candidates.timezone)::time <= ma.end_time))
 		            )
 		          )
 		        )
@@ -771,6 +1212,7 @@ func (repo Repository) nextRoundRobinMemberAvailability(
 	roundRobinID string,
 	excludedUserID string,
 	requiredTeamID string,
+	fallbackDelay time.Duration,
 ) (time.Time, bool, error) {
 	var hasAlternative bool
 	var nextAvailability pgtype.Timestamptz
@@ -783,11 +1225,27 @@ func (repo Repository) nextRoundRobinMemberAvailability(
 				rrm.organization_id,
 				rrm.user_id,
 				rrm.team_id,
-				rrm.created_at
+				rrm.created_at,
+				lower(coalesce(rr.settings->>'ignore_availability', 'false')) in ('true', '1', 'yes') as ignore_availability,
+				case
+				  when exists (
+				    select 1 from pg_catalog.pg_timezone_names
+				    where name = timezone_config.configured_timezone
+				  ) then timezone_config.configured_timezone
+				  else 'America/Sao_Paulo'
+				end as timezone
 			from public.round_robin_members rrm
 			join public.round_robins rr
 			  on rr.id = rrm.round_robin_id
 			 and rr.organization_id = rrm.organization_id
+			left join public.organization_attention_settings attention_settings
+			  on attention_settings.organization_id = rrm.organization_id
+			left join lateral (
+				select coalesce(
+					nullif(btrim(rr.settings->>'timezone'), ''),
+					nullif(btrim(attention_settings.timezone), '')
+				) as configured_timezone
+			) timezone_config on true
 			where rrm.organization_id = $1::uuid
 			  and rrm.round_robin_id = $2::uuid
 			  and coalesce(rrm.is_active, true) = true
@@ -797,6 +1255,8 @@ func (repo Repository) nextRoundRobinMemberAvailability(
 			select
 				entries.organization_id,
 				entries.user_id,
+				entries.ignore_availability,
+				entries.timezone,
 				tm.id as team_member_id
 			from entries
 			left join public.team_members tm
@@ -811,6 +1271,8 @@ func (repo Repository) nextRoundRobinMemberAvailability(
 			select
 				entries.organization_id,
 				tm.user_id,
+				entries.ignore_availability,
+				entries.timezone,
 				tm.id as team_member_id
 			from entries
 			join public.teams t
@@ -828,6 +1290,8 @@ func (repo Repository) nextRoundRobinMemberAvailability(
 			select distinct
 				candidates.organization_id,
 				candidates.user_id,
+				candidates.ignore_availability,
+				candidates.timezone,
 				candidates.team_member_id
 			from candidates
 			join public.organization_members om
@@ -851,7 +1315,11 @@ func (repo Repository) nextRoundRobinMemberAvailability(
 			  )
 		),
 		clock as (
-			select now() at time zone 'America/Sao_Paulo' as local_now
+			select
+				eligible.timezone,
+				now() at time zone eligible.timezone as local_now
+			from eligible
+			limit 1
 		),
 		next_windows as (
 			select
@@ -862,7 +1330,7 @@ func (repo Repository) nextRoundRobinMemberAvailability(
 						    when coalesce(ma.is_all_day, false) then time '00:00'
 						    else ma.start_time
 						  end
-					) at time zone 'America/Sao_Paulo'
+					) at time zone clock.timezone
 				) as starts_at
 			from eligible
 			join public.member_availability ma
@@ -871,7 +1339,8 @@ func (repo Repository) nextRoundRobinMemberAvailability(
 			 and coalesce(ma.is_active, true) = true
 			cross join clock
 			cross join generate_series(0, 7) as offsets(day_offset)
-			where extract(dow from (clock.local_now::date + offsets.day_offset)::date)::int = ma.day_of_week
+			where eligible.ignore_availability = false
+			  and extract(dow from (clock.local_now::date + offsets.day_offset)::date)::int = ma.day_of_week
 			  and (coalesce(ma.is_all_day, false) = true or ma.start_time is not null)
 		)
 		select
@@ -894,7 +1363,7 @@ func (repo Repository) nextRoundRobinMemberAvailability(
 	if nextAvailability.Valid && nextAvailability.Time.After(now) {
 		return nextAvailability.Time, true, nil
 	}
-	return now.Add(leadRedistributionNoMemberDelay), true, nil
+	return now.Add(fallbackDelay), true, nil
 }
 
 func (repo Repository) insertAutoRedistributionLog(ctx context.Context, tx pgx.Tx, job redistributionJob, selection roundRobinSelection, previousUserID string) error {
@@ -1012,12 +1481,47 @@ func (repo Repository) deferRedistributionJobUntilAvailability(
 	return err
 }
 
-func (repo Repository) stopRedistributionJob(ctx context.Context, tx pgx.Tx, jobID string, reason string) error {
-	return repo.finishRedistributionJob(ctx, tx, jobID, "stopped", reason)
+func (repo Repository) reopenManagedWhatsAppInitialDistribution(
+	ctx context.Context,
+	executor leadRedistributionExecutor,
+	jobID string,
+	retryAt time.Time,
+	attemptCount int,
+	resultJSON []byte,
+) error {
+	tag, err := executor.Exec(ctx, `
+		update public.lead_redistribution_jobs
+		set status = 'pending',
+		    due_at = $2::timestamptz,
+		    attempt_count = $3,
+		    warning_due_at = null,
+		    warning_sent_at = null,
+		    stopped_at = null,
+		    stopped_reason = null,
+		    metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
+		      'initial_distribution_pending', true,
+		      'initial_distribution_last_attempt_at', now(),
+		      'initial_distribution_last_result', $4::jsonb
+		    ),
+		    updated_at = now()
+		where id = $1::uuid
+		  and status in ('pending', 'warning_sent', 'stopped')
+	`, jobID, retryAt, attemptCount, string(resultJSON))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errors.New("managed WhatsApp initial distribution job could not be reopened")
+	}
+	return nil
 }
 
-func (repo Repository) finishRedistributionJob(ctx context.Context, tx pgx.Tx, jobID string, status string, reason string) error {
-	_, err := tx.Exec(ctx, `
+func (repo Repository) stopRedistributionJob(ctx context.Context, executor leadRedistributionExecutor, jobID string, reason string) error {
+	return repo.finishRedistributionJob(ctx, executor, jobID, "stopped", reason)
+}
+
+func (repo Repository) finishRedistributionJob(ctx context.Context, executor leadRedistributionExecutor, jobID string, status string, reason string) error {
+	_, err := executor.Exec(ctx, `
 		update public.lead_redistribution_jobs
 		set status = $2,
 		    stopped_reason = $3,

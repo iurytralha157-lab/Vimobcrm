@@ -2,28 +2,57 @@ package whatsapp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type nativeInboundRule struct {
-	ID                         string
-	MatchType                  string
-	MatchField                 string
-	MatchValue                 string
-	SourceLabel                string
-	CampaignLabel              string
-	TargetUserID               string
-	TargetTeamID               string
-	TargetPipelineID           string
-	TargetStageID              string
-	TargetRoundRobinID         string
-	ManagedMessageDistribution bool
-	Conditions                 map[string]any
+	ID                          string
+	MatchType                   string
+	MatchField                  string
+	MatchValue                  string
+	SourceLabel                 string
+	CampaignLabel               string
+	TargetUserID                string
+	TargetTeamID                string
+	TargetPipelineID            string
+	TargetStageID               string
+	TargetRoundRobinID          string
+	ManagedMessageDistribution  bool
+	ManagedProviderEventHandled bool
+	ManagedProviderEventPending bool
+	ManagedProviderEventLeadID  string
+	Conditions                  map[string]any
 }
+
+type nativeManagedWhatsAppEntryLookup struct {
+	Handled               bool   `json:"handled"`
+	Pending               bool   `json:"pending"`
+	LegacyNonManagedRetry bool   `json:"legacy_non_managed_retry"`
+	Quarantine            bool   `json:"quarantine"`
+	Quarantined           bool   `json:"quarantined"`
+	Incomplete            bool   `json:"incomplete"`
+	Reason                string `json:"reason"`
+	MatchedRuleID         string `json:"matched_rule_id"`
+	TargetQueueID         string `json:"target_round_robin_id"`
+	LeadID                string `json:"lead_id"`
+}
+
+const nativeManagedWhatsAppEntryLookupQuery = `
+	select public.lookup_managed_whatsapp_lead_entry(
+		p_organization_id => $1::uuid,
+		p_session_id => $2::uuid,
+		p_provider_message_id => $3,
+		p_message => $4
+	)
+`
 
 const nativeLegacyRoundRobinMembersQuery = `
 	select member.user_id::text
@@ -84,11 +113,37 @@ const nativeInboundRulesQuery = `
 `
 
 func findNativeInboundRule(ctx context.Context, tx pgx.Tx, session nativeEvolutionSession, message nativeEvolutionMessage) (nativeInboundRule, error) {
+	if !message.FromMe && !message.IsGroup && strings.TrimSpace(message.ProviderMessageID) != "" {
+		lookup, err := lookupNativeManagedWhatsAppLeadEntry(ctx, tx, session, message)
+		if err != nil {
+			return nativeInboundRule{}, err
+		}
+		if err := nativeManagedWhatsAppEntryLookupFailure(lookup); err != nil {
+			return nativeInboundRule{}, err
+		}
+		if lookup.Pending {
+			return nativeInboundRule{
+				ID:                          lookup.MatchedRuleID,
+				TargetRoundRobinID:          lookup.TargetQueueID,
+				ManagedMessageDistribution:  true,
+				ManagedProviderEventPending: true,
+				ManagedProviderEventLeadID:  lookup.LeadID,
+			}, nil
+		}
+		if lookup.Handled {
+			return nativeInboundRule{
+				ManagedProviderEventHandled: true,
+				ManagedProviderEventLeadID:  lookup.LeadID,
+			}, nil
+		}
+	}
+
 	rows, err := tx.Query(ctx, nativeInboundRulesQuery, session.OrganizationID, session.ID)
 	if err != nil {
 		return nativeInboundRule{}, err
 	}
 	defer rows.Close()
+	rules := make([]nativeInboundRule, 0)
 	for rows.Next() {
 		var rule nativeInboundRule
 		var conditions string
@@ -110,11 +165,115 @@ func findNativeInboundRule(ctx context.Context, tx pgx.Tx, session nativeEvoluti
 			return nativeInboundRule{}, err
 		}
 		rule.Conditions = decodeObjectJSON(conditions)
-		if nativeInboundRuleMatches(rule, message) {
-			return rule, nil
+		rules = append(rules, rule)
+	}
+	if err := rows.Err(); err != nil {
+		return nativeInboundRule{}, err
+	}
+	selected := selectNativeInboundRule(rules, message)
+	if err := validateNativeManagedProviderMessageIdentity(message, selected); err != nil {
+		return nativeInboundRule{}, err
+	}
+	return selected, nil
+}
+
+func lookupNativeManagedWhatsAppLeadEntry(
+	ctx context.Context,
+	tx pgx.Tx,
+	session nativeEvolutionSession,
+	message nativeEvolutionMessage,
+) (nativeManagedWhatsAppEntryLookup, error) {
+	var raw []byte
+	if err := tx.QueryRow(
+		ctx,
+		nativeManagedWhatsAppEntryLookupQuery,
+		session.OrganizationID,
+		session.ID,
+		message.ProviderMessageID,
+		message.Content,
+	).Scan(&raw); err != nil {
+		return nativeManagedWhatsAppEntryLookup{}, err
+	}
+	return parseNativeManagedWhatsAppEntryLookup(raw)
+}
+
+func parseNativeManagedWhatsAppEntryLookup(raw []byte) (nativeManagedWhatsAppEntryLookup, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" || !strings.HasPrefix(trimmed, "{") {
+		return nativeManagedWhatsAppEntryLookup{}, errors.New("invalid managed WhatsApp entry lookup result: expected JSON object")
+	}
+	var lookup nativeManagedWhatsAppEntryLookup
+	if err := json.Unmarshal(raw, &lookup); err != nil {
+		return nativeManagedWhatsAppEntryLookup{}, fmt.Errorf("invalid managed WhatsApp entry lookup result: %w", err)
+	}
+	if lookup.Pending {
+		if lookup.Handled || strings.TrimSpace(lookup.MatchedRuleID) == "" ||
+			strings.TrimSpace(lookup.TargetQueueID) == "" || strings.TrimSpace(lookup.LeadID) == "" {
+			return nativeManagedWhatsAppEntryLookup{}, errors.New("invalid pending managed WhatsApp entry lookup result")
 		}
 	}
-	return nativeInboundRule{}, rows.Err()
+	if lookup.LegacyNonManagedRetry && !lookup.Handled {
+		return nativeManagedWhatsAppEntryLookup{}, errors.New("invalid legacy non-managed WhatsApp retry lookup result")
+	}
+	if lookup.Handled && !lookup.LegacyNonManagedRetry && (strings.TrimSpace(lookup.LeadID) == "" ||
+		strings.TrimSpace(lookup.MatchedRuleID) == "" || strings.TrimSpace(lookup.TargetQueueID) == "") {
+		return nativeManagedWhatsAppEntryLookup{}, errors.New("invalid handled managed WhatsApp entry lookup result")
+	}
+	if (lookup.Quarantine || lookup.Quarantined || lookup.Incomplete) && (lookup.Handled || lookup.Pending) {
+		return nativeManagedWhatsAppEntryLookup{}, errors.New("invalid quarantined managed WhatsApp entry lookup result")
+	}
+	return lookup, nil
+}
+
+func nativeManagedWhatsAppEntryLookupFailure(lookup nativeManagedWhatsAppEntryLookup) error {
+	if !lookup.Quarantine && !lookup.Quarantined && !lookup.Incomplete {
+		return nil
+	}
+	reason := strings.TrimSpace(lookup.Reason)
+	if reason == "" {
+		reason = "managed_whatsapp_provider_event_requires_quarantine"
+	}
+	return fmt.Errorf("managed WhatsApp provider event cannot be routed: %s", reason)
+}
+
+func validateNativeManagedProviderMessageIdentity(message nativeEvolutionMessage, rule nativeInboundRule) error {
+	if !rule.ManagedMessageDistribution || !message.ProviderMessageIDSynthetic {
+		return nil
+	}
+	return errors.New("managed WhatsApp distribution requires a provider message id")
+}
+
+// selectNativeInboundRule expects the same priority order enforced by
+// nativeInboundRulesQuery. The first matching rule always wins unless it is a
+// manual catch-all; only a lower managed rule may overtake that broad fallback.
+func selectNativeInboundRule(rules []nativeInboundRule, message nativeEvolutionMessage) nativeInboundRule {
+	for index, rule := range rules {
+		if !nativeInboundRuleMatches(rule, message) {
+			continue
+		}
+		if rule.ManagedMessageDistribution || !nativeInboundRuleIsCatchAll(rule) {
+			return rule
+		}
+
+		for _, candidate := range rules[index+1:] {
+			if !candidate.ManagedMessageDistribution {
+				continue
+			}
+			if nativeInboundRuleMatches(candidate, message) {
+				return candidate
+			}
+		}
+		return rule
+	}
+	return nativeInboundRule{}
+}
+
+func nativeInboundRuleIsCatchAll(rule nativeInboundRule) bool {
+	return strings.EqualFold(strings.TrimSpace(rule.MatchType), "all")
+}
+
+func nativeManagedProviderEventAlreadyHandled(rule nativeInboundRule) bool {
+	return rule.ManagedProviderEventHandled
 }
 
 func nativeInboundRuleMatches(rule nativeInboundRule, message nativeEvolutionMessage) bool {
@@ -308,16 +467,21 @@ func applyNativeInboundBusinessEffects(
 	messageRowID string,
 	rule nativeInboundRule,
 ) error {
+	if rule.ManagedProviderEventHandled {
+		if rule.ManagedProviderEventLeadID != "" && conversation.LeadID != "" &&
+			conversation.LeadID != rule.ManagedProviderEventLeadID {
+			return errors.New("managed WhatsApp provider event lead mismatch")
+		}
+		return nil
+	}
+	if rule.ManagedProviderEventPending &&
+		(conversation.LeadID == "" || conversation.LeadID != rule.ManagedProviderEventLeadID) {
+		return errors.New("pending managed WhatsApp provider event lead mismatch")
+	}
+
 	attribution := nativeCampaignAttribution(message)
-	details := jsonb(map[string]any{
-		"remote_jid":           conversation.RemoteJID,
-		"message_id":           message.ProviderMessageID,
-		"message_row_id":       messageRowID,
-		"match_field":          rule.MatchField,
-		"match_value":          rule.MatchValue,
-		"campaign_label":       firstNonEmpty(rule.CampaignLabel, message.CampaignHeadline),
-		"whatsapp_attribution": attribution,
-	})
+	detailsPayload := nativeInboundLogDetailsPayload(session, conversation, message, messageRowID, rule, attribution)
+	details := jsonb(detailsPayload)
 	if _, err := tx.Exec(ctx, `
 		insert into public.whatsapp_inbound_logs (
 		  organization_id, session_id, conversation_id, lead_id,
@@ -347,27 +511,35 @@ func applyNativeInboundBusinessEffects(
 		return err
 	}
 	if conversation.LeadID == "" {
+		if rule.ManagedMessageDistribution {
+			return errors.New("managed WhatsApp lead identity unresolved")
+		}
 		return nil
 	}
 
-	leadMetadata := map[string]any{
-		"last_whatsapp_session_id": session.ID,
-		"last_whatsapp_remote_jid": conversation.RemoteJID,
-	}
-	if message.HasCampaignSignal {
-		leadMetadata["whatsapp_attribution"] = attribution
-	}
-	metadataPatch := jsonb(leadMetadata)
-	if _, err := tx.Exec(ctx, `
-		update public.leads
-		set last_contact_at = greatest(coalesce(last_contact_at, $3::timestamptz), $3::timestamptz),
-		    metadata = coalesce(metadata, '{}'::jsonb) || $4::jsonb,
-		    updated_at = now()
-		where organization_id = $1::uuid and id = $2::uuid
-	`, session.OrganizationID, conversation.LeadID, message.SentAt, metadataPatch); err != nil {
-		return err
+	if !rule.ManagedMessageDistribution {
+		leadMetadata := map[string]any{
+			"last_whatsapp_session_id": session.ID,
+			"last_whatsapp_remote_jid": conversation.RemoteJID,
+		}
+		if message.HasCampaignSignal {
+			leadMetadata["whatsapp_attribution"] = attribution
+		}
+		metadataPatch := jsonb(leadMetadata)
+		if _, err := tx.Exec(ctx, `
+			update public.leads
+			set last_contact_at = greatest(coalesce(last_contact_at, $3::timestamptz), $3::timestamptz),
+			    metadata = coalesce(metadata, '{}'::jsonb) || $4::jsonb,
+			    updated_at = now()
+			where organization_id = $1::uuid and id = $2::uuid
+		`, session.OrganizationID, conversation.LeadID, message.SentAt, metadataPatch); err != nil {
+			return err
+		}
 	}
 	if !message.HasCampaignSignal {
+		if rule.ManagedMessageDistribution {
+			return processNativeManagedWhatsAppLeadEntry(ctx, tx, session, conversation, message, rule)
+		}
 		return nil
 	}
 
@@ -409,7 +581,7 @@ func applyNativeInboundBusinessEffects(
 		"ctwa_clid":           message.CampaignCTWAClid,
 		"property_code":       message.CampaignPropertyCode,
 	})
-	if conversation.LeadIsNew {
+	if !rule.ManagedMessageDistribution && conversation.LeadIsNew {
 		if _, err := tx.Exec(ctx, `
 			update public.lead_entry_events
 			set source = 'whatsapp',
@@ -438,7 +610,8 @@ func applyNativeInboundBusinessEffects(
 		`, session.OrganizationID, conversation.LeadID, message.ProviderMessageID, message.SentAt, message.CampaignHeadline, message.CampaignSourceID, effectMetadata); err != nil {
 			return err
 		}
-	} else if _, err := tx.Exec(ctx, `
+	} else if !rule.ManagedMessageDistribution {
+		if _, err := tx.Exec(ctx, `
 		insert into public.lead_entry_events (
 		  organization_id, lead_id, source, provider, provider_event_id,
 		  occurred_at, is_countable, source_detail, entry_type, campaign_name,
@@ -453,8 +626,9 @@ func applyNativeInboundBusinessEffects(
 		on conflict (organization_id, provider, provider_event_id)
 			where provider_event_id is not null and is_countable = true
 		do nothing
-	`, session.OrganizationID, conversation.LeadID, message.ProviderMessageID, message.SentAt, message.CampaignHeadline, message.CampaignSourceID, effectMetadata); err != nil {
-		return err
+		`, session.OrganizationID, conversation.LeadID, message.ProviderMessageID, message.SentAt, message.CampaignHeadline, message.CampaignSourceID, effectMetadata); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.Exec(ctx, `
 		insert into public.activities (organization_id, lead_id, user_id, type, content, metadata)
@@ -467,7 +641,148 @@ func applyNativeInboundBusinessEffects(
 	`, session.OrganizationID, conversation.LeadID, firstNonEmpty(message.CampaignHeadline, "Criativo do anuncio"), effectMetadata, message.ProviderMessageID); err != nil {
 		return err
 	}
+	if rule.ManagedMessageDistribution {
+		return processNativeManagedWhatsAppLeadEntry(ctx, tx, session, conversation, message, rule)
+	}
 	return nil
+}
+
+func nativeManagedWhatsAppMessageFingerprint(
+	organizationID string,
+	sessionID string,
+	providerMessageID string,
+	message string,
+) string {
+	payload := organizationID + string(rune(31)) + sessionID + string(rune(31)) + providerMessageID + string(rune(31)) + message
+	digest := sha256.Sum256([]byte(payload))
+	return fmt.Sprintf("%x", digest)
+}
+
+type nativeHandledMessageTransportExecutor interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+}
+
+const nativeHandledMessageTransportReconcileQuery = `
+	update public.whatsapp_messages as message
+	set media_url = coalesce(message.media_url, nullif($4, '')),
+	    media_mime_type = coalesce(message.media_mime_type, nullif($5, '')),
+	    media_storage_path = coalesce(message.media_storage_path, nullif($6, '')),
+	    media_status = case
+	      when coalesce(message.media_storage_path, nullif($6, '')) is not null then 'ready'
+	      else message.media_status
+	    end,
+	    media_error = case
+	      when coalesce(message.media_storage_path, nullif($6, '')) is not null then null
+	      else message.media_error
+	    end,
+	    media_size = coalesce(message.media_size, nullif($7, 0)),
+	    updated_at = now()
+	where message.organization_id = $1::uuid
+	  and message.session_id = $2::uuid
+	  and (message.provider_message_id = $3 or message.message_id = $3)
+	  and coalesce(message.from_me, false) = false
+	  and lower(coalesce(message.direction, 'inbound')) <> 'outbound'
+`
+
+// A completed lifecycle ledger is a no-op for lead/routing effects, but the
+// native media pipeline intentionally replays the message after Storage has
+// succeeded. Reconcile only transport fields on the existing row so that the
+// second pass cannot create a lead, rerun a rule or increment an entry.
+func reconcileNativeHandledMessageTransport(
+	ctx context.Context,
+	executor nativeHandledMessageTransportExecutor,
+	session nativeEvolutionSession,
+	message nativeEvolutionMessage,
+) error {
+	if !nativeIsMediaType(message.MessageType) || strings.TrimSpace(message.MediaStoragePath) == "" {
+		return nil
+	}
+	_, err := executor.Exec(
+		ctx,
+		nativeHandledMessageTransportReconcileQuery,
+		session.OrganizationID,
+		session.ID,
+		message.ProviderMessageID,
+		message.MediaURL,
+		message.MediaMimeType,
+		message.MediaStoragePath,
+		message.MediaSize,
+	)
+	return err
+}
+
+func nativeInboundLogDetailsPayload(
+	session nativeEvolutionSession,
+	conversation nativeEvolutionConversation,
+	message nativeEvolutionMessage,
+	messageRowID string,
+	rule nativeInboundRule,
+	attribution map[string]any,
+) map[string]any {
+	details := map[string]any{
+		"remote_jid":           conversation.RemoteJID,
+		"message_id":           message.ProviderMessageID,
+		"message_row_id":       messageRowID,
+		"match_field":          rule.MatchField,
+		"match_value":          rule.MatchValue,
+		"campaign_label":       firstNonEmpty(rule.CampaignLabel, message.CampaignHeadline),
+		"whatsapp_attribution": attribution,
+	}
+	if rule.ManagedMessageDistribution {
+		details["managed_whatsapp_message_distribution"] = true
+		details["target_round_robin_id"] = rule.TargetRoundRobinID
+		details["message_fingerprint"] = nativeManagedWhatsAppMessageFingerprint(
+			session.OrganizationID,
+			session.ID,
+			message.ProviderMessageID,
+			message.Content,
+		)
+	}
+	return details
+}
+
+func processNativeManagedWhatsAppLeadEntry(
+	ctx context.Context,
+	tx pgx.Tx,
+	session nativeEvolutionSession,
+	conversation nativeEvolutionConversation,
+	message nativeEvolutionMessage,
+	rule nativeInboundRule,
+) error {
+	var result []byte
+	if err := tx.QueryRow(ctx, `
+		select public.process_managed_whatsapp_lead_entry(
+			p_organization_id => $1::uuid,
+			p_lead_id => $2::uuid,
+			p_session_id => $3::uuid,
+			p_rule_id => $4::uuid,
+			p_provider_message_id => $5,
+			p_message => $6,
+			p_occurred_at => $7::timestamptz
+		)
+	`, session.OrganizationID, conversation.LeadID, session.ID, rule.ID,
+		message.ProviderMessageID, message.Content, message.SentAt).Scan(&result); err != nil {
+		return err
+	}
+	return validateNativeManagedWhatsAppLeadEntryResult(result)
+}
+
+func validateNativeManagedWhatsAppLeadEntryResult(raw []byte) error {
+	var result struct {
+		Handled bool   `json:"handled"`
+		Reason  string `json:"reason"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return fmt.Errorf("invalid managed WhatsApp lead entry result: %w", err)
+	}
+	if result.Handled {
+		return nil
+	}
+	reason := strings.TrimSpace(result.Reason)
+	if reason == "" {
+		reason = "unknown"
+	}
+	return fmt.Errorf("managed WhatsApp lead entry was not handled: %s", reason)
 }
 
 func nativeConversationAssignedUser(ctx context.Context, tx pgx.Tx, organizationID string, conversationID string) string {

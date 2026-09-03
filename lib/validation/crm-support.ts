@@ -200,13 +200,16 @@ const roundRobinConditionInputSchema = z.object({
     })
   }
 })
+const roundRobinSettingsSchema = z.object({
+  auto_tag_ids: z.array(uuidSchema).max(50).transform((tagIds) => Array.from(new Set(tagIds))).optional(),
+}).passthrough()
 const roundRobinShape = {
   name: z.string().trim().min(2).max(120).optional(),
   strategy: z.enum(['simple', 'weighted']).optional(),
   targetPipelineId: uuidSchema.nullish(),
   targetStageId: uuidSchema.nullish(),
   isActive: z.boolean().nullish(),
-  settings: z.record(z.unknown()).optional(),
+  settings: roundRobinSettingsSchema.optional(),
   reentryBehavior: z.enum(['redistribute', 'keep_assignee']).optional(),
   conditions: z.array(roundRobinConditionInputSchema).optional(),
   rules: z.array(roundRobinRuleInputSchema).max(200).optional(),

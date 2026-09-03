@@ -542,6 +542,30 @@ test('suporte de CRM valida filtros, disponibilidade e distribuicao', () => {
   }).success, true)
 })
 
+test('fila normaliza e limita tags automáticas sem confundir com regra de entrada', () => {
+  const parsed = createRoundRobinInputSchema.safeParse({
+    name: 'Fila com tags',
+    settings: {
+      auto_tag_ids: [ID, ID],
+      preserve_position: true,
+    },
+  })
+  assert.equal(parsed.success, true)
+  if (parsed.success) {
+    assert.deepEqual(parsed.data.settings?.auto_tag_ids, [ID])
+    assert.equal(parsed.data.settings?.preserve_position, true)
+  }
+
+  assert.equal(createRoundRobinInputSchema.safeParse({
+    name: 'Fila com tag inválida',
+    settings: { auto_tag_ids: ['invalido'] },
+  }).success, false)
+  assert.equal(createRoundRobinInputSchema.safeParse({
+    name: 'Fila acima do limite',
+    settings: { auto_tag_ids: Array.from({ length: 51 }, () => ID) },
+  }).success, false)
+})
+
 test('notificacao exige organizacao e canais conhecidos', () => {
   assert.equal(dispatchNotificationInputSchema.safeParse({
     organization_id: 'invalido',

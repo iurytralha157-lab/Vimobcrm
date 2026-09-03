@@ -48,15 +48,13 @@ func (queryer *stateRecordingQueryer) QueryRow(_ context.Context, query string, 
 type validWhatsAppMessageDistributionRow struct{}
 
 func (validWhatsAppMessageDistributionRow) Scan(dest ...any) error {
-	if len(dest) != 6 {
+	if len(dest) != 4 {
 		return fmt.Errorf("unexpected destination count: %d", len(dest))
 	}
 	*dest[0].(*bool) = true
 	*dest[1].(*bool) = false
 	*dest[2].(*bool) = true
-	*dest[3].(*bool) = true
-	*dest[4].(*int) = 0
-	*dest[5].(*int) = 0
+	*dest[3].(*int) = 0
 	return nil
 }
 
@@ -150,26 +148,22 @@ func TestValidateWhatsAppMessageDistributionState(t *testing.T) {
 		{
 			name: "inactive queue remains an editable draft",
 			state: whatsappMessageDistributionState{
-				RequireCheckIn:                     true,
-				HasActiveRule:                      true,
-				ActiveDirectWithoutTeamMemberCount: 1,
+				RequireCheckIn: true,
+				HasActiveRule:  true,
 			},
 		},
 		{
 			name: "inactive rule remains an editable draft",
 			state: whatsappMessageDistributionState{
-				QueueActive:                        true,
-				RequireCheckIn:                     true,
-				ActiveDirectWithoutTeamMemberCount: 1,
+				QueueActive:    true,
+				RequireCheckIn: true,
 			},
 		},
 		{
-			name: "active queue may use a direct member when schedules are ignored",
+			name: "active queue may use a direct member without forcing schedule bypass",
 			state: whatsappMessageDistributionState{
-				QueueActive:                        true,
-				IgnoreAvailability:                 true,
-				HasActiveRule:                      true,
-				ActiveDirectWithoutTeamMemberCount: 1,
+				QueueActive:   true,
+				HasActiveRule: true,
 			},
 		},
 		{
@@ -183,7 +177,6 @@ func TestValidateWhatsAppMessageDistributionState(t *testing.T) {
 			name: "missing WhatsApp connection is rejected",
 			state: whatsappMessageDistributionState{
 				QueueActive:             true,
-				IgnoreAvailability:      true,
 				HasActiveRule:           true,
 				InvalidSessionRuleCount: 1,
 			},
@@ -192,21 +185,11 @@ func TestValidateWhatsAppMessageDistributionState(t *testing.T) {
 		{
 			name: "required check-in is rejected until the canonical engine supports it",
 			state: whatsappMessageDistributionState{
-				QueueActive:        true,
-				RequireCheckIn:     true,
-				IgnoreAvailability: true,
-				HasActiveRule:      true,
+				QueueActive:    true,
+				RequireCheckIn: true,
+				HasActiveRule:  true,
 			},
 			wantError: "required check-in",
-		},
-		{
-			name: "direct member without team context is rejected when schedules are enforced",
-			state: whatsappMessageDistributionState{
-				QueueActive:                        true,
-				HasActiveRule:                      true,
-				ActiveDirectWithoutTeamMemberCount: 1,
-			},
-			wantError: "requires team entries",
 		},
 	}
 
@@ -293,16 +276,12 @@ func TestWhatsAppMessageDistributionStateQueryMatchesCanonicalRuntime(t *testing
 	for _, fragment := range []string{
 		"coalesce(round_robin.is_active, true)",
 		"round_robin.settings->>'require_checkin'",
-		"round_robin.settings->>'ignore_availability'",
 		"btrim(coalesce(nullif(rule.match_value, ''), rule.conditions->>'match_value', '')) <> ''",
 		"left join public.whatsapp_sessions session",
 		"rule.match->>$4",
 		"session.provider = 'evolution_go'",
 		"coalesce(session.is_active, true) = true",
 		"not in ('deleted', 'disabled')",
-		"from public.round_robin_members member",
-		"and member.user_id is not null",
-		"and member.team_id is null",
 	} {
 		if !strings.Contains(queryer.query, fragment) {
 			t.Errorf("state query does not contain %q", fragment)
@@ -310,7 +289,9 @@ func TestWhatsAppMessageDistributionStateQueryMatchesCanonicalRuntime(t *testing
 	}
 	for _, forbidden := range []string{
 		"round_robin.settings->>'enable_redistribution'",
+		"round_robin.settings->>'ignore_availability'",
 		"round_robin.strategy",
+		"from public.round_robin_members member",
 		"coalesce(nullif(rule.match_type, ''), rule.conditions->>'match_type', rule.name, '') <> $3",
 	} {
 		if strings.Contains(queryer.query, forbidden) {

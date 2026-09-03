@@ -37,6 +37,7 @@ export interface RoundRobin {
   target_pipeline_id: string | null;
   target_stage_id: string | null;
   settings: {
+    auto_tag_ids?: string[];
     enable_redistribution?: boolean;
     redistribution_timeout_minutes?: number;
     redistribution_warning_minutes?: number;

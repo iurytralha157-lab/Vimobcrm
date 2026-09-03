@@ -37,3 +37,19 @@ test('distribuicao reconhece formularios Meta por uma leitura propria e limitada
     assert.doesNotMatch(source, /useMetaFormConfigs|useMetaIntegrations/)
   }
 })
+
+test('editor preserva a politica canonica de reentrada ao atualizar uma fila', () => {
+  const editorSource = readFileSync(
+    resolve(process.cwd(), 'components/features/round-robin/DistributionQueueEditor.tsx'),
+    'utf8',
+  )
+
+  assert.match(
+    editorSource,
+    /reentry_behavior\?: 'redistribute' \| 'keep_assignee' \| null;/,
+  )
+  assert.match(
+    editorSource,
+    /\.\.\.\(queue\.settings \|\| \{\}\),[\s\S]*?reentry_behavior: queue\.reentry_behavior\s*\?\? queue\.settings\?\.reentry_behavior\s*\?\? 'redistribute',/,
+  )
+})

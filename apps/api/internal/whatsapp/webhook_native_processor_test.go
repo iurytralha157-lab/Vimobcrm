@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -21,6 +22,35 @@ func TestNativeEvolutionFixtures(t *testing.T) {
 		message := messages[0]
 		if message.ProviderMessageID != "provider-inbound-text-1" || message.RemoteJID != "5511999991111@s.whatsapp.net" || message.Content != "Mensagem recebida pelo backend" || message.FromMe {
 			t.Fatalf("unexpected normalized text message: %#v", message)
+		}
+		if message.ProviderMessageIDSynthetic {
+			t.Fatal("provider-supplied message id must not be marked synthetic")
+		}
+	})
+
+	t.Run("synthetic id preserves exact conversation whitespace", func(t *testing.T) {
+		raw := map[string]any{
+			"Info": map[string]any{
+				"Sender":    "5511999991111@s.whatsapp.net",
+				"Timestamp": float64(1_725_000_000),
+			},
+			"key": map[string]any{
+				"remoteJid": "5511999991111@s.whatsapp.net",
+			},
+			"Message": map[string]any{
+				"conversation": "  Olá\x00\r\nMundo  ",
+			},
+		}
+
+		message, ok := normalizeNativeEvolutionMessage(raw)
+		if !ok {
+			t.Fatal("message was not normalized")
+		}
+		if !message.ProviderMessageIDSynthetic || !strings.HasPrefix(message.ProviderMessageID, "native-") {
+			t.Fatalf("synthetic provider identity was not marked: %#v", message)
+		}
+		if message.Content != "  Olá\r\nMundo  " {
+			t.Fatalf("content = %q, want exact whitespace with only NUL removed", message.Content)
 		}
 	})
 

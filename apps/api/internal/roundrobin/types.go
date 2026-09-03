@@ -21,6 +21,11 @@ var (
 	ErrConditionConflict  = errors.New("round robin condition conflict")
 )
 
+const (
+	autoTagIDsSettingKey = "auto_tag_ids"
+	maxQueueAutoTagIDs   = 50
+)
+
 type ConditionConflictError struct {
 	QueueName string
 }
@@ -381,7 +386,7 @@ func (request CreateRequest) Validate() (createInput, error) {
 		Settings:        normalizeObject(request.Settings),
 		ReentryBehavior: normalizeReentryBehavior(request.ReentryBehavior),
 	}
-	settings, err := normalizeRedistributionSettings(input.Settings)
+	settings, err := normalizeQueueSettings(input.Settings)
 	if err != nil {
 		return createInput{}, err
 	}
@@ -459,7 +464,7 @@ func (request UpdateRequest) Validate() (updateInput, error) {
 		input.ReentryBehavior.Value = &value
 	}
 	if input.Settings.Set {
-		settings, err := normalizeRedistributionSettings(input.Settings.Value)
+		settings, err := normalizeQueueSettings(input.Settings.Value)
 		if err != nil {
 			return updateInput{}, err
 		}
@@ -876,6 +881,56 @@ func normalizeReentryBehavior(value string) string {
 		return "redistribute"
 	}
 	return value
+}
+
+func normalizeQueueSettings(value map[string]any) (map[string]any, error) {
+	settings := normalizeObject(value)
+	if rawTagIDs, ok := settings[autoTagIDsSettingKey]; ok {
+		tagIDs, err := normalizeAutoTagIDs(rawTagIDs)
+		if err != nil {
+			return nil, err
+		}
+		settings[autoTagIDsSettingKey] = tagIDs
+	}
+	return normalizeRedistributionSettings(settings)
+}
+
+func normalizeAutoTagIDs(value any) ([]string, error) {
+	var rawValues []any
+	switch typed := value.(type) {
+	case []any:
+		rawValues = typed
+	case []string:
+		rawValues = make([]any, len(typed))
+		for index := range typed {
+			rawValues[index] = typed[index]
+		}
+	default:
+		return nil, fmt.Errorf("%w: %s must be an array of UUIDs", ErrInvalidInput, autoTagIDsSettingKey)
+	}
+
+	if len(rawValues) > maxQueueAutoTagIDs {
+		return nil, fmt.Errorf("%w: %s supports at most %d UUIDs", ErrInvalidInput, autoTagIDsSettingKey, maxQueueAutoTagIDs)
+	}
+
+	tagIDs := make([]string, 0, len(rawValues))
+	seen := make(map[string]struct{}, len(rawValues))
+	for _, rawValue := range rawValues {
+		value, ok := rawValue.(string)
+		if !ok {
+			return nil, fmt.Errorf("%w: %s must contain only UUIDs", ErrInvalidInput, autoTagIDsSettingKey)
+		}
+		tagID, ok := normalizeUUID(value)
+		if !ok {
+			return nil, fmt.Errorf("%w: %s contains an invalid UUID", ErrInvalidInput, autoTagIDsSettingKey)
+		}
+		if _, exists := seen[tagID]; exists {
+			continue
+		}
+		seen[tagID] = struct{}{}
+		tagIDs = append(tagIDs, tagID)
+	}
+	return tagIDs, nil
 }
 
 func normalizeRedistributionSettings(value map[string]any) (map[string]any, error) {

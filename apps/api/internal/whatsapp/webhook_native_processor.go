@@ -579,6 +579,27 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 		if err != nil {
 			return err
 		}
+		if nativeManagedProviderEventAlreadyHandled(rule) {
+			if err := reconcileNativeHandledMessageTransport(ctx, tx, session, message); err != nil {
+				return err
+			}
+			if boolFromObject(session.AdvancedSettings, "ai_auto_reply_enabled") {
+				recoveredInput, ok, err := recoverNativeHandledAutoReplyInput(
+					ctx,
+					tx,
+					session,
+					message.ProviderMessageID,
+					rule.ManagedProviderEventLeadID,
+				)
+				if err != nil {
+					return err
+				}
+				if ok {
+					autoReplyInputs = append(autoReplyInputs, recoveredInput)
+				}
+			}
+			continue
+		}
 		conversation, err := ensureNativeEvolutionConversation(ctx, tx, session, message, rule)
 		if err != nil {
 			return err
@@ -621,6 +642,71 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 		}
 	}
 	return nil
+}
+
+type nativeHandledAutoReplyQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+const nativeHandledAutoReplyInputQuery = `
+	select message.conversation_id::text, message.id::text, coalesce(message.content, '')
+	from public.whatsapp_messages as message
+	join public.whatsapp_conversations as conversation
+	  on conversation.organization_id = message.organization_id
+	 and conversation.session_id = message.session_id
+	 and conversation.id = message.conversation_id
+	where message.organization_id = $1::uuid
+	  and message.session_id = $2::uuid
+	  and (
+	    message.provider_message_id = $3
+	    or (message.provider_message_id is null and message.message_id = $3)
+	  )
+	  and coalesce(message.from_me, false) = false
+	  and lower(coalesce(message.direction, 'inbound')) <> 'outbound'
+	  and message.lead_id = $4::uuid
+	  and conversation.lead_id = $4::uuid
+	limit 1
+`
+
+// A provider retry can arrive after the message/lifecycle transaction committed
+// but before the separate auto-reply job insert succeeded. Recover only the
+// already-persisted transport identity; the caller still skips every lead,
+// inbound-rule, attribution and distribution effect.
+func recoverNativeHandledAutoReplyInput(
+	ctx context.Context,
+	querier nativeHandledAutoReplyQuerier,
+	session nativeEvolutionSession,
+	providerMessageID string,
+	leadID string,
+) (autoReplyInput, bool, error) {
+	providerMessageID = strings.TrimSpace(providerMessageID)
+	leadID = strings.TrimSpace(leadID)
+	if providerMessageID == "" || leadID == "" {
+		return autoReplyInput{}, false, nil
+	}
+
+	input := autoReplyInput{
+		OrganizationID: session.OrganizationID,
+		SessionID:      session.ID,
+	}
+	err := querier.QueryRow(
+		ctx,
+		nativeHandledAutoReplyInputQuery,
+		session.OrganizationID,
+		session.ID,
+		providerMessageID,
+		leadID,
+	).Scan(&input.ConversationID, &input.MessageID, &input.Text)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return autoReplyInput{}, false, nil
+	}
+	if err != nil {
+		return autoReplyInput{}, false, err
+	}
+	if strings.TrimSpace(input.Text) == "" {
+		return autoReplyInput{}, false, nil
+	}
+	return input, true, nil
 }
 
 // reconcileNativeOutboundOutbox turns a late signed outbound webhook into the
@@ -837,14 +923,29 @@ func ensureNativeEvolutionConversation(ctx context.Context, tx pgx.Tx, session n
 
 	lead := nativeEvolutionLead{}
 	if !message.IsGroup {
-		lead, err = findSingleNativeEvolutionLead(ctx, tx, session.OrganizationID, message)
-		if err != nil {
-			return nativeEvolutionConversation{}, err
-		}
-		if lead.ID == "" && !message.FromMe && (message.HasCampaignSignal || rule.ManagedMessageDistribution) {
-			lead, err = createAuthorizedNativeLead(ctx, tx, session, message, rule)
+		if rule.ManagedProviderEventPending {
+			lead, err = findScopedNativeEvolutionLeadByID(
+				ctx,
+				tx,
+				session.OrganizationID,
+				rule.ManagedProviderEventLeadID,
+			)
 			if err != nil {
 				return nativeEvolutionConversation{}, err
+			}
+			if conversation.LeadID != "" && conversation.LeadID != lead.ID {
+				return nativeEvolutionConversation{}, errors.New("pending managed WhatsApp provider event conversation lead mismatch")
+			}
+		} else {
+			lead, err = findSingleNativeEvolutionLead(ctx, tx, session.OrganizationID, message)
+			if err != nil {
+				return nativeEvolutionConversation{}, err
+			}
+			if lead.ID == "" && !message.FromMe && (message.HasCampaignSignal || rule.ManagedMessageDistribution) {
+				lead, err = createAuthorizedNativeLead(ctx, tx, session, message, rule)
+				if err != nil {
+					return nativeEvolutionConversation{}, err
+				}
 			}
 		}
 	}
@@ -904,6 +1005,9 @@ func ensureNativeEvolutionConversation(ctx context.Context, tx pgx.Tx, session n
 		conversation.LeadID = lead.ID
 	}
 	conversation.LeadIsNew = lead.IsNew && conversation.LeadID == lead.ID
+	if rule.ManagedProviderEventPending && conversation.LeadID != lead.ID {
+		return nativeEvolutionConversation{}, errors.New("pending managed WhatsApp provider event lead mismatch")
+	}
 
 	for _, alias := range aliases {
 		if strings.TrimSpace(alias) == "" {
@@ -927,6 +1031,35 @@ func ensureNativeEvolutionConversation(ctx context.Context, tx pgx.Tx, session n
 		}
 	}
 	return conversation, nil
+}
+
+const nativeScopedManagedPendingLeadQuery = `
+	select lead.id::text, coalesce(lead.assigned_user_id::text, ''), coalesce(lead.name, '')
+	from public.leads lead
+	where lead.organization_id = $1::uuid
+	  and lead.id = $2::uuid
+	limit 1
+`
+
+func findScopedNativeEvolutionLeadByID(
+	ctx context.Context,
+	tx pgx.Tx,
+	organizationID string,
+	leadID string,
+) (nativeEvolutionLead, error) {
+	if strings.TrimSpace(leadID) == "" {
+		return nativeEvolutionLead{}, errors.New("pending managed WhatsApp provider event lead is missing")
+	}
+	var lead nativeEvolutionLead
+	err := tx.QueryRow(ctx, nativeScopedManagedPendingLeadQuery, organizationID, leadID).Scan(
+		&lead.ID,
+		&lead.AssignedUserID,
+		&lead.Name,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nativeEvolutionLead{}, errors.New("pending managed WhatsApp provider event lead was not found in organization")
+	}
+	return lead, err
 }
 
 func reconcileNativeEvolutionConversationIdentity(
@@ -1401,6 +1534,9 @@ func createAuthorizedNativeLead(ctx context.Context, tx pgx.Tx, session nativeEv
 		"managed_whatsapp_message_distribution": rule.ManagedMessageDistribution,
 		"target_team_id":                        assignment.TeamID,
 		"target_round_robin_id":                 nativeTargetRoundRobinID(rule, assignment),
+	}
+	if rule.ManagedMessageDistribution {
+		metadataPayload["managed_whatsapp_initial_provider_event_id"] = session.ID + ":" + message.ProviderMessageID
 	}
 	if sourceType == "ad" && nativeMetaAdIDPattern.MatchString(sourceID) {
 		metadataPayload["whatsapp_attribution"] = map[string]any{
