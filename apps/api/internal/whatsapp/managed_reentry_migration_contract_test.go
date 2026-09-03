@@ -86,6 +86,8 @@ func TestManagedWhatsAppReentryMigrationContract(t *testing.T) {
 		"grant execute on function public.lookup_managed_whatsapp_lead_entry",
 		"grant execute on function public.distribute_lead_from_backend",
 		"revoke all on function public.distribute_lead_from_backend( uuid, uuid, text, uuid, boolean, text, timestamptz ) from public, anon, authenticated, service_role",
+		"revoke all on function public.upsert_whatsapp_webhook_lead( uuid, text, text, text, text, timestamptz, text, uuid, text, text, text, uuid, uuid, uuid, timestamptz, uuid, uuid, uuid, timestamptz, text, timestamptz, jsonb ) from public, anon, authenticated",
+		"grant execute on function public.upsert_whatsapp_webhook_lead( uuid, text, text, text, text, timestamptz, text, uuid, text, text, text, uuid, uuid, uuid, timestamptz, uuid, uuid, uuid, timestamptz, text, timestamptz, jsonb ) to service_role",
 		") to service_role",
 	}
 	for _, fragment := range required {

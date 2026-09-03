@@ -128,6 +128,22 @@ grant execute on function public.distribute_lead_from_backend(
   uuid, uuid, text, uuid, boolean, text, timestamptz
 ) to service_role;
 
+-- The consolidated production snapshot can retain explicit browser grants on
+-- this legacy privileged upsert even after revoking PUBLIC. Reassert the
+-- backend-only contract here so both upgraded and freshly restored databases
+-- expose the same boundary.
+revoke all on function public.upsert_whatsapp_webhook_lead(
+  uuid, text, text, text, text, timestamptz, text, uuid, text, text, text,
+  uuid, uuid, uuid, timestamptz, uuid, uuid, uuid, timestamptz, text,
+  timestamptz, jsonb
+) from public, anon, authenticated;
+
+grant execute on function public.upsert_whatsapp_webhook_lead(
+  uuid, text, text, text, text, timestamptz, text, uuid, text, text, text,
+  uuid, uuid, uuid, timestamptz, uuid, uuid, uuid, timestamptz, text,
+  timestamptz, jsonb
+) to service_role;
+
 -- The provider delivery identity deliberately excludes mutable routing state.
 -- A rule edit cannot change whether the same org/session/provider message was
 -- already accepted, while different payload content remains a hard collision.
