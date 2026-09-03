@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -44,9 +43,55 @@ type nativeEvolutionLead struct {
 	IsNew          bool
 }
 
-var nativeMetaAdIDPattern = regexp.MustCompile(`^[0-9]{5,40}$`)
+const nativeLegacyNonManagedRecoveryQuery = `
+	select
+	  message.id::text,
+	  message.conversation_id::text,
+	  coalesce(message.lead_id::text, ''),
+	  coalesce(conversation.lead_id::text, ''),
+	  conversation.remote_jid,
+	  coalesce(message.provider_message_id, message.message_id, ''),
+	  coalesce(message.content, ''),
+	  coalesce(message.message_type, 'text'),
+	  coalesce(message.sent_at, message.received_at, message.created_at),
+	  coalesce(message.metadata, '{}'::jsonb)::text,
+	  coalesce(lead.metadata, '{}'::jsonb)::text
+	from public.whatsapp_messages as message
+	join public.whatsapp_conversations as conversation
+	  on conversation.organization_id = message.organization_id
+	 and conversation.session_id = message.session_id
+	 and conversation.id = message.conversation_id
+	left join public.leads as lead
+	  on lead.organization_id = message.organization_id
+	 and lead.id = message.lead_id
+	where message.organization_id = $1::uuid
+	  and message.session_id = $2::uuid
+	  and (
+	    message.provider_message_id = $3
+	    or (message.provider_message_id is null and message.message_id = $3)
+	  )
+	  and coalesce(message.from_me, false) = false
+	  and lower(coalesce(message.direction, 'inbound')) <> 'outbound'
+	order by message.created_at, message.id
+	limit 1
+	for update of message, conversation
+`
+
+const nativeLegacyNonManagedConversationRecoveryQuery = `
+	update public.whatsapp_conversations as conversation
+	set last_message = $5,
+	    last_message_preview = $5,
+	    last_message_at = $4::timestamptz,
+	    unread_count = greatest(0, coalesce(conversation.unread_count, 0) + 1),
+	    updated_at = now()
+	where conversation.organization_id = $1::uuid
+	  and conversation.session_id = $2::uuid
+	  and conversation.id = $3::uuid
+	  and (conversation.last_message_at is null or conversation.last_message_at < $4::timestamptz)
+`
 
 var errNativeWebhookMessageLikeUnsupported = errors.New("native WhatsApp processor rejected an unsupported message-like event")
+var errNativeEvolutionLeadPhoneAmbiguous = errors.New("native WhatsApp lead phone matches multiple leads")
 
 func normalizeEvolutionWebhookProcessorMode(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
@@ -583,6 +628,25 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 			if err := reconcileNativeHandledMessageTransport(ctx, tx, session, message); err != nil {
 				return err
 			}
+			if rule.LegacyNonManagedRetry {
+				if err := recoverNativeLegacyNonManagedRetry(ctx, tx, session, message, rule); err != nil {
+					return err
+				}
+			} else if message.IsCTWAAd {
+				// Edge may have committed the managed ledger before a transient
+				// attribution failure. A native retry repairs that metadata, while
+				// tolerating older handled rows that predate attribution support.
+				if err := enrichNativeManagedWhatsAppLeadEntryAttribution(
+					ctx,
+					tx,
+					session,
+					rule.ManagedProviderEventLeadID,
+					message,
+					true,
+				); err != nil {
+					return err
+				}
+			}
 			if boolFromObject(session.AdvancedSettings, "ai_auto_reply_enabled") {
 				recoveredInput, ok, err := recoverNativeHandledAutoReplyInput(
 					ctx,
@@ -619,10 +683,13 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 			}
 		}
 		if !message.FromMe && !message.IsGroup {
-			if err := applyNativeInboundBusinessEffects(ctx, tx, session, conversation, message, messageRowID, rule); err != nil {
-				return err
+			applyInboundEffects := inserted || rule.ManagedProviderEventPending
+			if applyInboundEffects {
+				if err := applyNativeInboundBusinessEffects(ctx, tx, session, conversation, message, messageRowID, rule); err != nil {
+					return err
+				}
 			}
-			if conversation.LeadID != "" && boolFromObject(session.AdvancedSettings, "ai_auto_reply_enabled") && strings.TrimSpace(message.Content) != "" {
+			if applyInboundEffects && conversation.LeadID != "" && boolFromObject(session.AdvancedSettings, "ai_auto_reply_enabled") && strings.TrimSpace(message.Content) != "" {
 				autoReplyInputs = append(autoReplyInputs, autoReplyInput{
 					OrganizationID: session.OrganizationID,
 					SessionID:      session.ID,
@@ -642,6 +709,169 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 		}
 	}
 	return nil
+}
+
+func recoverNativeLegacyNonManagedRetry(
+	ctx context.Context,
+	tx pgx.Tx,
+	session nativeEvolutionSession,
+	incoming nativeEvolutionMessage,
+	rule nativeInboundRule,
+) error {
+	var messageRowID string
+	var conversationID string
+	var messageLeadID string
+	var conversationLeadID string
+	var remoteJID string
+	var providerMessageID string
+	var content string
+	var messageType string
+	var sentAt time.Time
+	var messageMetadataJSON string
+	var leadMetadataJSON string
+	if err := tx.QueryRow(
+		ctx,
+		nativeLegacyNonManagedRecoveryQuery,
+		session.OrganizationID,
+		session.ID,
+		incoming.ProviderMessageID,
+	).Scan(
+		&messageRowID,
+		&conversationID,
+		&messageLeadID,
+		&conversationLeadID,
+		&remoteJID,
+		&providerMessageID,
+		&content,
+		&messageType,
+		&sentAt,
+		&messageMetadataJSON,
+		&leadMetadataJSON,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errors.New("legacy non-managed WhatsApp retry message was not found")
+		}
+		return err
+	}
+	if providerMessageID != strings.TrimSpace(incoming.ProviderMessageID) {
+		return errors.New("legacy non-managed WhatsApp retry provider identity mismatch")
+	}
+	if messageLeadID != "" && conversationLeadID != "" && messageLeadID != conversationLeadID {
+		return errors.New("legacy non-managed WhatsApp retry conversation lead mismatch")
+	}
+	if rule.ManagedProviderEventLeadID != "" && rule.ManagedProviderEventLeadID != messageLeadID {
+		return errors.New("legacy non-managed WhatsApp retry lead mismatch")
+	}
+
+	persistedMessage := nativeEvolutionMessage{
+		ProviderMessageID: providerMessageID,
+		RemoteJID:         remoteJID,
+		Content:           content,
+		MessageType:       firstNonEmpty(messageType, "text"),
+		SentAt:            sentAt.UTC(),
+	}
+	persistedMessage = nativeMessageWithPersistedCampaignAttribution(
+		persistedMessage,
+		decodeObjectJSON(messageMetadataJSON),
+	)
+	conversation := nativeEvolutionConversation{
+		ID:        conversationID,
+		LeadID:    messageLeadID,
+		RemoteJID: remoteJID,
+	}
+	leadMetadata := decodeObjectJSON(leadMetadataJSON)
+	conversation.LeadIsNew = messageLeadID != "" && strings.TrimSpace(stringFromAny(
+		leadMetadata["whatsapp_initial_provider_event_id"],
+	)) == nativeWhatsAppProviderEventID(session, persistedMessage)
+
+	if _, err := tx.Exec(
+		ctx,
+		nativeLegacyNonManagedConversationRecoveryQuery,
+		session.OrganizationID,
+		session.ID,
+		conversation.ID,
+		persistedMessage.SentAt,
+		nativeEvolutionPreview(persistedMessage),
+	); err != nil {
+		return err
+	}
+	return applyNativeInboundBusinessEffects(
+		ctx,
+		tx,
+		session,
+		conversation,
+		persistedMessage,
+		messageRowID,
+		nativeInboundRule{},
+	)
+}
+
+func nativeMessageWithPersistedCampaignAttribution(
+	message nativeEvolutionMessage,
+	metadata map[string]any,
+) nativeEvolutionMessage {
+	attribution := mapFromAny(metadata["whatsapp_attribution"])
+	referral := nativeMergeCampaignReferral(
+		mapFromAny(metadata["whatsapp_referral"]),
+		mapFromAny(attribution["source_referral"]),
+	)
+
+	message.CampaignSourceType = firstString(referral, "explicit_source_type", "source_type", "sourceType")
+	message.CampaignSourceID = firstNonEmpty(
+		firstString(referral, "source_id", "sourceId", "ad_id", "adId"),
+		firstString(attribution, "source_id", "ad_id"),
+	)
+	message.CampaignSourceURL = firstNonEmpty(
+		nativeFirstHTTPURL(referral, "source_url", "sourceUrl"),
+		nativeFirstHTTPURL(attribution, "source_url", "creative_link_url", "creative_destination_url"),
+	)
+	message.CampaignCreativeURL = firstNonEmpty(
+		nativeFirstHTTPURL(referral, "image_url", "thumbnail_url"),
+		nativeFirstHTTPURL(attribution, "creative_url"),
+	)
+	message.CampaignCreativeVideoURL = firstNonEmpty(
+		nativeFirstHTTPURL(referral, "video_url"),
+		nativeFirstHTTPURL(attribution, "creative_video_url"),
+	)
+	message.CampaignCTWAClid = firstNonEmpty(
+		firstString(referral, "ctwa_clid", "ctwaClid"),
+		firstString(attribution, "ctwa_clid"),
+	)
+	message.CampaignHeadline = firstNonEmpty(
+		firstString(referral, "headline", "title", "body"),
+		firstString(attribution, "campaign_name", "ad_name", "creative_name", "source_referral_title"),
+	)
+	message.CampaignEntryPointConversionSource = firstNonEmpty(
+		firstString(referral, "entry_point_conversion_source", "entryPointConversionSource"),
+		firstString(attribution, "entry_point_conversion_source"),
+	)
+	message.CampaignEntryPointConversionApp = firstNonEmpty(
+		firstString(referral, "entry_point_conversion_app", "entryPointConversionApp"),
+		firstString(attribution, "entry_point_conversion_app"),
+	)
+	message.CampaignConversionSource = firstNonEmpty(
+		firstString(referral, "conversion_source", "conversionSource"),
+		firstString(attribution, "conversion_source"),
+	)
+	message.CampaignSourceApp = firstNonEmpty(
+		firstString(referral, "source_app", "sourceApp"),
+		firstString(attribution, "source_app"),
+	)
+	showAdAttribution := nativeFirstValue(referral, "show_ad_attribution", "showAdAttribution")
+	if showAdAttribution == nil {
+		showAdAttribution = nativeFirstValue(attribution, "show_ad_attribution")
+	}
+	message.CampaignShowAdAttribution = nativeOptionalBool(showAdAttribution)
+	message.CampaignPropertyCode = firstNonEmpty(
+		firstString(referral, "property_code"),
+		firstString(attribution, "property_code"),
+	)
+	message.HasCampaignSignal = len(referral) > 0 || len(attribution) > 0
+	message.IsCTWAAd = nativeIsCTWAAdReferral(
+		message.CampaignEntryPointConversionSource,
+		message.CampaignSourceType,
+	)
+	return message
 }
 
 type nativeHandledAutoReplyQuerier interface {
@@ -936,12 +1166,32 @@ func ensureNativeEvolutionConversation(ctx context.Context, tx pgx.Tx, session n
 			if conversation.LeadID != "" && conversation.LeadID != lead.ID {
 				return nativeEvolutionConversation{}, errors.New("pending managed WhatsApp provider event conversation lead mismatch")
 			}
-		} else {
-			lead, err = findSingleNativeEvolutionLead(ctx, tx, session.OrganizationID, message)
+		} else if nativeConversationHasAttachedLead(conversation, conversationMissing) {
+			// The conversation link is already scoped by organization and session.
+			// Re-load that exact lead in the same organization instead of resolving
+			// the phone globally again; legacy duplicate WhatsApp-only values must
+			// not block an otherwise valid established chat.
+			lead, err = findScopedNativeEvolutionLeadByID(
+				ctx,
+				tx,
+				session.OrganizationID,
+				conversation.LeadID,
+			)
 			if err != nil {
 				return nativeEvolutionConversation{}, err
 			}
-			if lead.ID == "" && !message.FromMe && (message.HasCampaignSignal || rule.ManagedMessageDistribution) {
+		} else {
+			lead, err = findSingleNativeEvolutionLead(ctx, tx, session.OrganizationID, message)
+			if errors.Is(err, errNativeEvolutionLeadPhoneAmbiguous) && !message.IsCTWAAd {
+				// Preserve ordinary chat delivery without guessing which historical
+				// duplicate owns the phone. CTWA creation still fails closed below.
+				lead = nativeEvolutionLead{}
+				err = nil
+			}
+			if err != nil {
+				return nativeEvolutionConversation{}, err
+			}
+			if lead.ID == "" && !message.FromMe && message.IsCTWAAd {
 				lead, err = createAuthorizedNativeLead(ctx, tx, session, message, rule)
 				if err != nil {
 					return nativeEvolutionConversation{}, err
@@ -1033,6 +1283,10 @@ func ensureNativeEvolutionConversation(ctx context.Context, tx pgx.Tx, session n
 	return conversation, nil
 }
 
+func nativeConversationHasAttachedLead(conversation nativeEvolutionConversation, conversationMissing bool) bool {
+	return !conversationMissing && strings.TrimSpace(conversation.ID) != "" && strings.TrimSpace(conversation.LeadID) != ""
+}
+
 const nativeScopedManagedPendingLeadQuery = `
 	select lead.id::text, coalesce(lead.assigned_user_id::text, ''), coalesce(lead.name, '')
 	from public.leads lead
@@ -1048,7 +1302,7 @@ func findScopedNativeEvolutionLeadByID(
 	leadID string,
 ) (nativeEvolutionLead, error) {
 	if strings.TrimSpace(leadID) == "" {
-		return nativeEvolutionLead{}, errors.New("pending managed WhatsApp provider event lead is missing")
+		return nativeEvolutionLead{}, errors.New("scoped WhatsApp conversation lead is missing")
 	}
 	var lead nativeEvolutionLead
 	err := tx.QueryRow(ctx, nativeScopedManagedPendingLeadQuery, organizationID, leadID).Scan(
@@ -1057,7 +1311,7 @@ func findScopedNativeEvolutionLeadByID(
 		&lead.Name,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nativeEvolutionLead{}, errors.New("pending managed WhatsApp provider event lead was not found in organization")
+		return nativeEvolutionLead{}, errors.New("scoped WhatsApp conversation lead was not found in organization")
 	}
 	return lead, err
 }
@@ -1449,17 +1703,12 @@ func findSingleNativeEvolutionLead(ctx context.Context, tx pgx.Tx, organizationI
 		select l.id::text, coalesce(l.assigned_user_id::text, ''), coalesce(l.name, '')
 		from public.leads l
 		where l.organization_id = $1::uuid
+		  and l.phone is not null
 		  and exists (
 		    select 1
 		    from unnest($2::text[]) candidate(value)
 		    where normalize_phone(candidate.value) <> ''
-		      and (
-		        (l.phone is not null and normalize_phone(l.phone) = normalize_phone(candidate.value))
-		        or (
-		          nullif(to_jsonb(l)->>'whatsapp', '') is not null
-		          and normalize_phone(to_jsonb(l)->>'whatsapp') = normalize_phone(candidate.value)
-		        )
-		      )
+		      and normalize_phone(l.phone) = normalize_phone(candidate.value)
 		  )
 		order by case when l.deal_status = 'open' then 0 else 1 end, l.created_at desc
 		limit 2
@@ -1479,53 +1728,44 @@ func findSingleNativeEvolutionLead(ctx context.Context, tx pgx.Tx, organizationI
 	if err := rows.Err(); err != nil {
 		return nativeEvolutionLead{}, err
 	}
-	// Ambiguous phone ownership stays quarantined instead of exposing one
-	// person's messages through another lead.
-	if len(matches) != 1 {
+	return nativeSingleEvolutionLeadMatch(matches)
+}
+
+func nativeSingleEvolutionLeadMatch(matches []nativeEvolutionLead) (nativeEvolutionLead, error) {
+	switch len(matches) {
+	case 0:
 		return nativeEvolutionLead{}, nil
+	case 1:
+		return matches[0], nil
+	default:
+		// Ambiguous phone ownership must stop before upsert. Treating ambiguity
+		// as "not found" could create or attach a third lead for the same phone.
+		return nativeEvolutionLead{}, errNativeEvolutionLeadPhoneAmbiguous
 	}
-	return matches[0], nil
 }
 
 func createAuthorizedNativeLead(ctx context.Context, tx pgx.Tx, session nativeEvolutionSession, message nativeEvolutionMessage, rule nativeInboundRule) (nativeEvolutionLead, error) {
-	sourceType := strings.ToLower(strings.TrimSpace(message.CampaignSourceType))
-	sourceID := strings.TrimSpace(message.CampaignSourceID)
-	if message.ContactPhone == "" {
+	if message.ContactPhone == "" || !message.IsCTWAAd {
 		return nativeEvolutionLead{}, nil
-	}
-
-	if !rule.ManagedMessageDistribution {
-		if sourceType != "ad" || !nativeMetaAdIDPattern.MatchString(sourceID) {
-			return nativeEvolutionLead{}, nil
-		}
-		var imported bool
-		if err := tx.QueryRow(ctx, `
-		select
-		  exists (
-		    select 1 from public.meta_campaign_insights insight
-		    where insight.organization_id = $1::uuid and insight.ad_id = $2
-		  )
-		  or exists (
-		    select 1 from public.meta_creative_assets creative
-		    where creative.organization_id = $1::uuid and creative.ad_id = $2
-		  )
-		`, session.OrganizationID, sourceID).Scan(&imported); err != nil {
-			return nativeEvolutionLead{}, err
-		}
-		if !imported {
-			return nativeEvolutionLead{}, nil
-		}
 	}
 	propertyID, err := resolveNativeCampaignProperty(ctx, tx, session.OrganizationID, message.CampaignPropertyCode)
 	if err != nil {
 		return nativeEvolutionLead{}, err
 	}
 
-	assignment, err := resolveNativeLeadAssignment(ctx, tx, session, rule)
+	assignmentRule := nativeCTWALeadAssignmentRule(rule)
+	assignment, err := resolveNativeLeadAssignment(ctx, tx, session, assignmentRule)
 	if err != nil {
 		return nativeEvolutionLead{}, err
 	}
-	createdBy := firstNonEmpty(session.OwnerUserID, session.CreatedBy, assignment.UserID)
+	createdBy := assignment.UserID
+	if createdBy == "" {
+		createdBy, err = resolveNativeActiveSessionOwner(ctx, tx, session)
+		if err != nil {
+			return nativeEvolutionLead{}, err
+		}
+	}
+	attribution := nativeCampaignAttribution(message)
 	metadataPayload := map[string]any{
 		"source":                                "whatsapp",
 		"whatsapp_session_id":                   session.ID,
@@ -1534,35 +1774,17 @@ func createAuthorizedNativeLead(ctx context.Context, tx pgx.Tx, session nativeEv
 		"managed_whatsapp_message_distribution": rule.ManagedMessageDistribution,
 		"target_team_id":                        assignment.TeamID,
 		"target_round_robin_id":                 nativeTargetRoundRobinID(rule, assignment),
+		"campaign_label":                        firstNonEmpty(rule.CampaignLabel, message.CampaignHeadline),
+		"ctwa_ad_confirmed":                     true,
+		"whatsapp_lead_creation_contract":       "ctwa_ad_v1",
+		"whatsapp_attribution":                  attribution,
+		"property_id":                           propertyID,
 	}
 	if rule.ManagedMessageDistribution {
 		metadataPayload["managed_whatsapp_initial_provider_event_id"] = session.ID + ":" + message.ProviderMessageID
 	}
-	if sourceType == "ad" && nativeMetaAdIDPattern.MatchString(sourceID) {
-		metadataPayload["whatsapp_attribution"] = map[string]any{
-			"source":        "whatsapp",
-			"source_type":   "whatsapp_click_to_message",
-			"platform":      "meta",
-			"ad_id":         sourceID,
-			"source_id":     sourceID,
-			"source_url":    message.CampaignSourceURL,
-			"ctwa_clid":     message.CampaignCTWAClid,
-			"ad_name":       message.CampaignHeadline,
-			"property_code": message.CampaignPropertyCode,
-			"source_referral": map[string]any{
-				"explicit_source_type": sourceType,
-				"source_id":            sourceID,
-				"source_url":           message.CampaignSourceURL,
-				"ctwa_clid":            message.CampaignCTWAClid,
-				"headline":             message.CampaignHeadline,
-			},
-		}
-	}
 	metadata := jsonb(metadataPayload)
-	sourceDetailFallback := "WhatsApp"
-	if !rule.ManagedMessageDistribution {
-		sourceDetailFallback = "WhatsApp Meta Ads"
-	}
+	sourceDetailFallback := "WhatsApp Meta Ads"
 
 	var lead nativeEvolutionLead
 	err = tx.QueryRow(ctx, `
@@ -1599,11 +1821,10 @@ func createAuthorizedNativeLead(ctx context.Context, tx pgx.Tx, session nativeEv
 		&lead.IsNew,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// The database guard is intentionally a second fail-closed layer.
-		if rule.ManagedMessageDistribution {
-			return nativeEvolutionLead{}, errors.New("managed WhatsApp lead creation context was rejected")
-		}
-		return nativeEvolutionLead{}, nil
+		// The database guard is intentionally a second fail-closed layer for
+		// every CTWA creation mode. Committing a conversation/message without the
+		// requested lead would consume the provider event and lose the lead.
+		return nativeEvolutionLead{}, errors.New("WhatsApp CTWA lead creation context was rejected")
 	}
 	if err != nil {
 		return nativeEvolutionLead{}, err
@@ -1645,6 +1866,16 @@ func createAuthorizedNativeLead(ctx context.Context, tx pgx.Tx, session nativeEv
 		}
 	}
 	return lead, nil
+}
+
+func nativeCTWALeadAssignmentRule(rule nativeInboundRule) nativeInboundRule {
+	if rule.ManagedMessageDistribution {
+		return rule
+	}
+	// CTWA without a canonical managed queue falls back only to the active
+	// session owner. Legacy rule users, teams, pipelines and round robins must
+	// not bypass canonical schedules, tags or redistribution.
+	return nativeInboundRule{}
 }
 
 func nativeTargetRoundRobinID(rule nativeInboundRule, assignment nativeLeadAssignment) string {
@@ -1698,6 +1929,7 @@ func resolveNativeCampaignProperty(ctx context.Context, tx pgx.Tx, organizationI
 }
 
 func insertNativeEvolutionMessage(ctx context.Context, tx pgx.Tx, session nativeEvolutionSession, conversation nativeEvolutionConversation, message nativeEvolutionMessage) (bool, string, string, error) {
+	messageMetadata := jsonb(nativeEvolutionMessageMetadata(message))
 	var existingID, existingConversationID, existingStatus string
 	err := tx.QueryRow(ctx, `
 		select id::text, conversation_id::text, status
@@ -1736,9 +1968,10 @@ func insertNativeEvolutionMessage(ctx context.Context, tx pgx.Tx, session native
 			    media_size = coalesce(media_size, nullif($11, 0)),
 			    sent_at = coalesce(sent_at, $10),
 			    received_at = case when from_me then received_at else coalesce(received_at, now()) end,
+			    metadata = coalesce(metadata, '{}'::jsonb) || $12::jsonb,
 			    updated_at = now()
 			where organization_id = $1::uuid and session_id = $2::uuid and id = $3::uuid
-		`, session.OrganizationID, session.ID, existingID, message.ProviderMessageID, status, message.Content, message.MediaURL, message.MediaMimeType, message.MediaStoragePath, message.SentAt, message.MediaSize)
+		`, session.OrganizationID, session.ID, existingID, message.ProviderMessageID, status, message.Content, message.MediaURL, message.MediaMimeType, message.MediaStoragePath, message.SentAt, message.MediaSize, messageMetadata)
 		return false, existingConversationID, existingID, err
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -1775,7 +2008,7 @@ func insertNativeEvolutionMessage(ctx context.Context, tx pgx.Tx, session native
 			$9, nullif($10, ''), nullif($11, ''), nullif($12, ''),
 			nullif($13, ''), nullif($14, ''), nullif($15, 0), $16, nullif($17, ''),
 			nullif($18, ''), $19, $20, case when $6 then null else now() end,
-			jsonb_build_object('source', 'evolution_go_native')
+			$21::jsonb
 		)
 		on conflict (conversation_id, message_id) do nothing
 		returning id::text
@@ -1783,7 +2016,7 @@ func insertNativeEvolutionMessage(ctx context.Context, tx pgx.Tx, session native
 		message.ProviderMessageID, message.FromMe, direction, message.Content,
 		message.MessageType, message.MediaURL, message.MediaMimeType, message.MediaStoragePath,
 		mediaStatus, mediaError, message.MediaSize, conversation.RemoteJID, message.SenderJID,
-		message.SenderName, status, message.SentAt).Scan(&insertedID)
+		message.SenderName, status, message.SentAt, messageMetadata).Scan(&insertedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := tx.QueryRow(ctx, `
 			select id::text from public.whatsapp_messages
@@ -1796,6 +2029,14 @@ func insertNativeEvolutionMessage(ctx context.Context, tx pgx.Tx, session native
 		return false, conversation.ID, insertedID, nil
 	}
 	return err == nil, conversation.ID, insertedID, err
+}
+
+func nativeEvolutionMessageMetadata(message nativeEvolutionMessage) map[string]any {
+	return map[string]any{
+		"source":               "evolution_go_webhook",
+		"whatsapp_attribution": nativeCampaignAttribution(message),
+		"whatsapp_referral":    nativeCampaignReferralSnapshot(message),
+	}
 }
 
 func updateNativeEvolutionConversation(ctx context.Context, tx pgx.Tx, session nativeEvolutionSession, conversation nativeEvolutionConversation, message nativeEvolutionMessage) error {

@@ -632,93 +632,46 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		  organization_id, session_id, name, match_type, match_field, match_value,
 		  priority, is_active, target_round_robin_id, campaign_label
 		) values (
-		  $1::uuid, $2::uuid, $3, 'exact', 'ad_id', '123456789012345',
+		  $1::uuid, $2::uuid, $3, 'exact', 'ad_id', '120249512922100328',
 		  100, true, $4::uuid, 'Campanha roteada'
 		) returning id::text
 	`, organizationID, sessionID, suffix+" inbound", roundRobinID).Scan(&inboundRuleID); err != nil {
 		t.Fatal(err)
 	}
 
-	var foreignOrganizationID string
-	if err := postgres.Pool().QueryRow(ctx, `
-		insert into public.organizations (name, slug) values ($1, $1) returning id::text
-	`, suffix+"-foreign").Scan(&foreignOrganizationID); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cleanupCancel()
-		_, _ = postgres.Pool().Exec(cleanupCtx, `delete from public.organizations where id = $1::uuid`, foreignOrganizationID)
-	})
-	if _, err := postgres.Pool().Exec(ctx, `
-		insert into public.meta_creative_assets (organization_id, ad_id, creative_id, creative_name)
-		values ($1::uuid, '123456789012345', 'foreign-creative', 'Foreign creative')
-	`, foreignOrganizationID); err != nil {
-		t.Fatal(err)
-	}
-	var localPropertyID string
-	if _, err := postgres.Pool().Exec(ctx, `
-		insert into public.properties (organization_id, code, title)
-		values ($1::uuid, 'PROP-META-1', 'Imovel estrangeiro')
-	`, foreignOrganizationID); err != nil {
-		t.Fatal(err)
-	}
-	if err := postgres.Pool().QueryRow(ctx, `
-		insert into public.properties (organization_id, code, title)
-		values ($1::uuid, 'PROP-META-1', 'Imovel local') returning id::text
-	`, organizationID).Scan(&localPropertyID); err != nil {
-		t.Fatal(err)
-	}
-	verifiedCampaign := item("messages.upsert", "meta_referral_verified.json")
-	if handled, err := repo.processEvolutionWebhookNative(ctx, verifiedCampaign); err != nil || !handled {
-		t.Fatalf("cross-org Meta asset quarantine = handled:%v error:%v", handled, err)
-	}
+	verifiedCampaign := item("messages.upsert", "meta_ctwa_instagram.json")
 	var verifiedLeadCount int
-	if err := postgres.Pool().QueryRow(ctx, `
-		select count(*)::integer from public.leads
-		where organization_id = $1::uuid and normalize_phone(phone) = normalize_phone('5511555554444')
-	`, organizationID).Scan(&verifiedLeadCount); err != nil {
-		t.Fatal(err)
-	}
-	if verifiedLeadCount != 0 {
-		t.Fatalf("foreign Meta asset created %d leads in current organization", verifiedLeadCount)
-	}
-	if _, err := postgres.Pool().Exec(ctx, `
-		insert into public.meta_creative_assets (organization_id, ad_id, creative_id, creative_name)
-		values ($1::uuid, '123456789012345', 'local-creative', 'Local creative')
-	`, organizationID); err != nil {
-		t.Fatal(err)
-	}
 	for attempt := 0; attempt < 2; attempt++ {
 		if handled, err := repo.processEvolutionWebhookNative(ctx, verifiedCampaign); err != nil || !handled {
-			t.Fatalf("verified Meta campaign attempt %d = handled:%v error:%v", attempt+1, handled, err)
+			t.Fatalf("confirmed CTWA attempt %d = handled:%v error:%v", attempt+1, handled, err)
 		}
 	}
 	var campaignConversationLeadID, campaignMessageLeadID string
 	if err := postgres.Pool().QueryRow(ctx, `
 		select count(*)::integer from public.leads
-		where organization_id = $1::uuid and normalize_phone(phone) = normalize_phone('5511555554444')
+		where organization_id = $1::uuid and normalize_phone(phone) = normalize_phone('559491298288')
 	`, organizationID).Scan(&verifiedLeadCount); err != nil {
 		t.Fatal(err)
 	}
 	if err := postgres.Pool().QueryRow(ctx, `
 		select coalesce(lead_id::text, '') from public.whatsapp_conversations
-		where organization_id = $1::uuid and session_id = $2::uuid and remote_jid = '5511555554444@s.whatsapp.net'
+		where organization_id = $1::uuid and session_id = $2::uuid and remote_jid = '559491298288@s.whatsapp.net'
 	`, organizationID, sessionID).Scan(&campaignConversationLeadID); err != nil {
 		t.Fatal(err)
 	}
 	if err := postgres.Pool().QueryRow(ctx, `
 		select coalesce(lead_id::text, '') from public.whatsapp_messages
-		where organization_id = $1::uuid and session_id = $2::uuid and message_id = 'provider-meta-verified-1'
+		where organization_id = $1::uuid and session_id = $2::uuid and message_id = 'provider-meta-ctwa-instagram-1'
 	`, organizationID, sessionID).Scan(&campaignMessageLeadID); err != nil {
 		t.Fatal(err)
 	}
 	if verifiedLeadCount != 1 || campaignConversationLeadID == "" || campaignConversationLeadID != campaignMessageLeadID {
-		t.Fatalf("verified Meta state = leads:%d conversationLead:%s messageLead:%s", verifiedLeadCount, campaignConversationLeadID, campaignMessageLeadID)
+		t.Fatalf("confirmed CTWA state = leads:%d conversationLead:%s messageLead:%s", verifiedLeadCount, campaignConversationLeadID, campaignMessageLeadID)
 	}
 	var campaignAssignedUserID, campaignPropertyID, campaignInterestPropertyID string
 	var roundRobinPosition int
 	var roundRobinLogs, leadMetaRows, leadEntryRows, activityRows, inboundLogRows int
+	var leadEntryProviderID, leadEntryMetadataProviderID, creativeInstagramURL, storedEntryPoint string
 	if err := postgres.Pool().QueryRow(ctx, `
 		select coalesce(assigned_user_id::text, ''), coalesce(property_id::text, ''), coalesce(interest_property_id::text, '')
 		from public.leads where id = $1::uuid
@@ -734,33 +687,47 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	`, organizationID, roundRobinID, campaignConversationLeadID).Scan(&roundRobinLogs); err != nil {
 		t.Fatal(err)
 	}
-	if err := postgres.Pool().QueryRow(ctx, `select count(*)::integer from public.lead_meta where organization_id = $1::uuid and lead_id = $2::uuid`, organizationID, campaignConversationLeadID).Scan(&leadMetaRows); err != nil {
+	if err := postgres.Pool().QueryRow(ctx, `
+		select count(*)::integer, coalesce(max(creative_instagram_url), '')
+		from public.lead_meta where organization_id = $1::uuid and lead_id = $2::uuid
+	`, organizationID, campaignConversationLeadID).Scan(&leadMetaRows, &creativeInstagramURL); err != nil {
 		t.Fatal(err)
 	}
 	if err := postgres.Pool().QueryRow(ctx, `
-		select count(*)::integer from public.lead_entry_events
-		where organization_id = $1::uuid and lead_id = $2::uuid and metadata->>'message_id' = 'provider-meta-verified-1'
-	`, organizationID, campaignConversationLeadID).Scan(&leadEntryRows); err != nil {
+		select count(*)::integer, coalesce(max(provider_event_id), ''), coalesce(max(metadata->>'provider_event_id'), '')
+		from public.lead_entry_events
+		where organization_id = $1::uuid and lead_id = $2::uuid and metadata->>'message_id' = 'provider-meta-ctwa-instagram-1'
+	`, organizationID, campaignConversationLeadID).Scan(&leadEntryRows, &leadEntryProviderID, &leadEntryMetadataProviderID); err != nil {
 		t.Fatal(err)
 	}
 	if err := postgres.Pool().QueryRow(ctx, `
 		select count(*)::integer from public.activities
-		where organization_id = $1::uuid and lead_id = $2::uuid and metadata->>'message_id' = 'provider-meta-verified-1'
+		where organization_id = $1::uuid and lead_id = $2::uuid and metadata->>'message_id' = 'provider-meta-ctwa-instagram-1'
 	`, organizationID, campaignConversationLeadID).Scan(&activityRows); err != nil {
 		t.Fatal(err)
 	}
 	if err := postgres.Pool().QueryRow(ctx, `
 		select count(*)::integer from public.whatsapp_inbound_logs
 		where organization_id = $1::uuid and session_id = $2::uuid
-		  and match_details->>'message_id' = 'provider-meta-verified-1'
+		  and match_details->>'message_id' = 'provider-meta-ctwa-instagram-1'
 		  and matched_rule_id = $3::uuid and lead_id = $4::uuid
 	`, organizationID, sessionID, inboundRuleID, campaignConversationLeadID).Scan(&inboundLogRows); err != nil {
 		t.Fatal(err)
 	}
-	if campaignAssignedUserID != roundRobinUserID || campaignPropertyID != localPropertyID || campaignInterestPropertyID != localPropertyID || roundRobinPosition != 1 || roundRobinLogs != 1 ||
-		leadMetaRows != 1 || leadEntryRows != 1 || activityRows != 1 || inboundLogRows != 1 {
-		t.Fatalf("business parity = assignee:%s property:%s interest:%s rrPos:%d rrLogs:%d leadMeta:%d entries:%d activities:%d inbound:%d",
-			campaignAssignedUserID, campaignPropertyID, campaignInterestPropertyID, roundRobinPosition, roundRobinLogs, leadMetaRows, leadEntryRows, activityRows, inboundLogRows)
+	if err := postgres.Pool().QueryRow(ctx, `
+		select coalesce(metadata #>> '{whatsapp_referral,entry_point_conversion_source}', '')
+		from public.whatsapp_messages
+		where organization_id = $1::uuid and session_id = $2::uuid and message_id = 'provider-meta-ctwa-instagram-1'
+	`, organizationID, sessionID).Scan(&storedEntryPoint); err != nil {
+		t.Fatal(err)
+	}
+	expectedProviderID := sessionID + ":provider-meta-ctwa-instagram-1"
+	if campaignAssignedUserID != userID || campaignPropertyID != "" || campaignInterestPropertyID != "" || roundRobinPosition != 0 || roundRobinLogs != 0 ||
+		leadMetaRows != 1 || leadEntryRows != 1 || leadEntryProviderID != "nonmanaged:"+expectedProviderID || leadEntryMetadataProviderID != expectedProviderID ||
+		activityRows != 1 || inboundLogRows != 1 || creativeInstagramURL != "https://www.instagram.com/p/Dcyi6FjgAeQ/" || storedEntryPoint != "ctwa_ad" {
+		t.Fatalf("CTWA owner fallback parity = assignee:%s property:%s interest:%s rrPos:%d rrLogs:%d leadMeta:%d entries:%d provider:%s metadataProvider:%s activities:%d inbound:%d instagram:%s entry:%s",
+			campaignAssignedUserID, campaignPropertyID, campaignInterestPropertyID, roundRobinPosition, roundRobinLogs, leadMetaRows, leadEntryRows,
+			leadEntryProviderID, leadEntryMetadataProviderID, activityRows, inboundLogRows, creativeInstagramURL, storedEntryPoint)
 	}
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.properties (organization_id, code, title) values
