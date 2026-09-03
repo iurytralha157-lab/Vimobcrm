@@ -49,6 +49,7 @@ import {
   Webhook,
   MessageSquare,
   GripVertical,
+  Tag as TagIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { usePipelines, useStages } from "@/hooks/use-stages";
@@ -95,6 +96,7 @@ import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 
 interface QueueSettings {
   ignore_availability?: boolean;
+  auto_tag_ids?: string[];
   enable_redistribution?: boolean;
   redistribution_timeout_minutes?: number;
   redistribution_warning_minutes?: number;
@@ -163,7 +165,7 @@ interface ExistingDistributionQueue {
   target_stage_id?: string | null;
   is_active?: boolean | null;
   settings?: Partial<QueueSettings> | null;
-  reentry_behavior?: "redistribute" | "keep_assignee";
+  reentry_behavior?: "redistribute" | "keep_assignee" | null;
   rules?: ExistingQueueRule[] | null;
   members?: ExistingQueueMember[] | null;
 }
@@ -179,6 +181,23 @@ interface DistributionQueueEditorProps {
 }
 
 const EMPTY_RESTRICTION_IDS: string[] = [];
+const MAX_QUEUE_AUTO_TAGS = 50;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function normalizeQueueAutoTagIDs(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const rawValue of value) {
+    if (typeof rawValue !== 'string') continue;
+    const tagID = rawValue.trim().toLowerCase();
+    if (!UUID_PATTERN.test(tagID) || seen.has(tagID)) continue;
+    seen.add(tagID);
+    normalized.push(tagID);
+  }
+  return normalized;
+}
 
 const SOURCE_OPTIONS = [
   { value: "meta_ads", label: "Meta Ads" },
@@ -197,7 +216,7 @@ const CONDITION_TYPES = [
   { value: "website_category", label: "Categoria do site" },
   { value: "campaign_contains", label: "Nome da campanha contem" },
   { value: "whatsapp_message_contains", label: "Campanha de WhatsApp" },
-  { value: "tag", label: "Tag" },
+  { value: "tag", label: "Tag já existente (filtro)" },
   { value: "city", label: "Cidade" },
   { value: "interest_property", label: "Interesse em imóvel" },
 ];
@@ -420,7 +439,11 @@ export function DistributionQueueEditor({
   });
   const { data: users = [], isPending: usersLoading } =
     useOrganizationUsers();
-  const { data: tags = [] } = useTags();
+  const {
+    data: tags = [],
+    isLoading: tagsLoading,
+    isError: tagsError,
+  } = useTags();
   const { data: properties = [] } = useProperties(
     undefined,
     {},
@@ -515,6 +538,7 @@ export function DistributionQueueEditor({
     target_stage_id: "",
     is_active: true,
     settings: {
+      auto_tag_ids: [],
       enable_redistribution: false,
       redistribution_timeout_minutes: 20,
       redistribution_warning_minutes: 5,
@@ -530,6 +554,14 @@ export function DistributionQueueEditor({
   const hasWhatsAppMessageCondition = formData.conditions.some(
     (condition) => condition.type === "whatsapp_message_contains",
   );
+  const selectedAutoTagIDs = formData.settings.auto_tag_ids ?? [];
+  const knownAutoTagIDs = useMemo(
+    () => new Set(tags.flatMap((tag) => normalizeQueueAutoTagIDs([tag.id]))),
+    [tags],
+  );
+  const unavailableAutoTagIDs = tagsLoading
+    ? []
+    : selectedAutoTagIDs.filter((tagID) => !knownAutoTagIDs.has(tagID));
 
   const selectableUsers = useMemo(
     () =>
@@ -635,6 +667,7 @@ export function DistributionQueueEditor({
           preserve_position: true,
           require_checkin: false,
           ...(queue.settings || {}),
+          auto_tag_ids: normalizeQueueAutoTagIDs(queue.settings?.auto_tag_ids),
           reentry_behavior:
             queue.reentry_behavior ??
             queue.settings?.reentry_behavior ??
@@ -652,6 +685,7 @@ export function DistributionQueueEditor({
         target_stage_id: "",
         is_active: true,
         settings: {
+          auto_tag_ids: [],
           enable_redistribution: false,
           redistribution_timeout_minutes: 20,
           redistribution_warning_minutes: 5,
@@ -821,6 +855,34 @@ export function DistributionQueueEditor({
     }));
   };
 
+  const toggleAutoTag = (tagID: string) => {
+    const normalizedTagID = normalizeQueueAutoTagIDs([tagID])[0];
+    if (!normalizedTagID) return;
+
+    const currentTagIDs = normalizeQueueAutoTagIDs(formData.settings.auto_tag_ids);
+    const isSelected = currentTagIDs.includes(normalizedTagID);
+    if (!isSelected && currentTagIDs.length >= MAX_QUEUE_AUTO_TAGS) {
+      toast.error(`Selecione no máximo ${MAX_QUEUE_AUTO_TAGS} tags automáticas.`);
+      return;
+    }
+
+    setFormData(prev => {
+      const autoTagIDs = normalizeQueueAutoTagIDs(prev.settings.auto_tag_ids);
+      if (!autoTagIDs.includes(normalizedTagID) && autoTagIDs.length >= MAX_QUEUE_AUTO_TAGS) {
+        return prev;
+      }
+      return {
+        ...prev,
+        settings: {
+          ...prev.settings,
+          auto_tag_ids: autoTagIDs.includes(normalizedTagID)
+            ? autoTagIDs.filter((currentTagID) => currentTagID !== normalizedTagID)
+            : [...autoTagIDs, normalizedTagID],
+        },
+      };
+    });
+  };
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
@@ -966,6 +1028,19 @@ export function DistributionQueueEditor({
       );
       return;
     }
+    if (
+      configuredWhatsAppMessageConditions.length > 0 &&
+      formData.settings.require_checkin
+    ) {
+      setFormData((prev) => ({
+        ...prev,
+        settings: { ...prev.settings, require_checkin: false },
+      }));
+      toast.info(
+        "O check-in obrigatório foi desativado no rascunho desta fila porque a regra do WhatsApp ainda não é compatível com ele. Revise e salve novamente.",
+      );
+      return;
+    }
     const hasValidCriteria = formData.conditions.some(
       (condition) =>
         condition.values.some((value) => value.trim()) &&
@@ -1044,17 +1119,21 @@ export function DistributionQueueEditor({
     const sanitizedHasWhatsAppMessageCondition = sanitizedConditions.some(
       (condition) => condition.type === "whatsapp_message_contains",
     );
+    const sanitizedSettings: QueueSettings = {
+      ...formData.settings,
+      auto_tag_ids: normalizeQueueAutoTagIDs(formData.settings.auto_tag_ids),
+    };
     const payload: QueueFormData = {
       ...formData,
       settings: sanitizedHasWhatsAppMessageCondition
         ? {
-            ...formData.settings,
+            ...sanitizedSettings,
             // Check-in has no canonical eligibility implementation yet. Keep
             // managed WhatsApp queues explicit instead of persisting a no-op.
             require_checkin: false,
           }
         : {
-            ...formData.settings,
+            ...sanitizedSettings,
             ignore_availability: queue?.settings?.ignore_availability,
           },
       conditions: sanitizedConditions,
@@ -1759,9 +1838,9 @@ export function DistributionQueueEditor({
                           Ignorar escala dos corretores
                         </Label>
                         <p className="text-xs text-muted-foreground">
-                          Desativado, o lead é distribuído somente para quem
-                          está dentro da escala. Ative para permitir
-                          distribuição fora dos dias e horários configurados.
+                          Deixe desativado para respeitar os horários da equipe.
+                          Corretores adicionados diretamente usam a equipe
+                          vinculada selecionada para avaliar a escala.
                         </p>
                       </div>
                       <Switch
@@ -1794,6 +1873,81 @@ export function DistributionQueueEditor({
                   >
                     <Plus className="h-4 w-4" /> Nova condicao
                   </Button>
+                </CollapsibleContent>
+              </Collapsible>
+
+              <Collapsible data-tour="distribution-queue-auto-tags" open={openSections.includes('auto-tags')} onOpenChange={() => toggleSection('auto-tags')}>
+                <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border-0 bg-[var(--app-surface-soft)] p-4 text-left transition-colors hover:bg-[var(--app-surface-hover)]">
+                  <div className="flex items-center gap-2">
+                    <TagIcon className="h-4 w-4 text-primary" />
+                    <span className="font-medium">Tags automáticas</span>
+                    {selectedAutoTagIDs.length > 0 && (
+                      <Badge variant="secondary" className="text-xs">{selectedAutoTagIDs.length}/{MAX_QUEUE_AUTO_TAGS}</Badge>
+                    )}
+                  </div>
+                  <ChevronDown className={cn('h-4 w-4 transition-transform', openSections.includes('auto-tags') && 'rotate-180')} />
+                </CollapsibleTrigger>
+                <CollapsibleContent className="space-y-3 px-1 pt-4">
+                  <p className="rounded-lg bg-[var(--app-surface-soft)] px-3 py-2 text-xs text-muted-foreground">
+                    Estas tags são adicionadas ao lead quando esta fila for aplicada. O comportamento é aditivo: nenhuma tag que já esteja no lead será removida.
+                  </p>
+                  <div className="flex flex-wrap gap-1 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-soft)] p-3">
+                    {tagsLoading && tags.length === 0 && (
+                      <span className="text-xs text-muted-foreground">Carregando tags...</span>
+                    )}
+                    {tagsError && (
+                      <span className="text-xs text-destructive">Não foi possível carregar as tags. As seleções salvas foram preservadas.</span>
+                    )}
+                    {!tagsLoading && !tagsError && tags.length === 0 && unavailableAutoTagIDs.length === 0 && (
+                      <span className="text-xs text-muted-foreground">Nenhuma tag cadastrada nesta organização.</span>
+                    )}
+                    {tags.map((tag) => {
+                      const normalizedTagID = normalizeQueueAutoTagIDs([tag.id])[0] || tag.id;
+                      const selected = selectedAutoTagIDs.includes(normalizedTagID);
+                      const toggleTag = () => toggleAutoTag(tag.id);
+                      return (
+                        <Badge
+                          key={tag.id}
+                          variant="outline"
+                          role="button"
+                          aria-pressed={selected}
+                          tabIndex={0}
+                          className={conditionOptionBadgeClass(selected)}
+                          style={selected ? { backgroundColor: tag.color, borderColor: tag.color } : {}}
+                          onClick={toggleTag}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              toggleTag();
+                            }
+                          }}
+                        >
+                          {tag.name}
+                        </Badge>
+                      );
+                    })}
+                    {unavailableAutoTagIDs.map((tagID) => (
+                      <Badge
+                        key={tagID}
+                        variant="outline"
+                        role="button"
+                        aria-pressed={true}
+                        tabIndex={0}
+                        title="Esta tag salva não está mais disponível. Clique para removê-la da fila."
+                        className={cn(conditionOptionBadgeClass(true), 'gap-1')}
+                        onClick={() => toggleAutoTag(tagID)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            toggleAutoTag(tagID);
+                          }
+                        }}
+                      >
+                        {tagID}
+                        <span className="rounded bg-black/10 px-1 text-[10px] font-normal">Indisponível — remover</span>
+                      </Badge>
+                    ))}
+                  </div>
                 </CollapsibleContent>
               </Collapsible>
             </div>
@@ -1964,6 +2118,15 @@ export function DistributionQueueEditor({
                     <p className="text-xs text-muted-foreground">
                       Esta fila está configurada para ignorar disponibilidade.
                       Corretores sem equipe ativa continuam elegíveis.
+                    </p>
+                  )}
+                  {hasWhatsAppMessageCondition &&
+                    !queueIgnoresAvailability(
+                      formData.settings.ignore_availability,
+                    ) && (
+                    <p className="text-xs text-muted-foreground">
+                      Participantes adicionados como equipe e corretores diretos
+                      respeitam a escala da equipe vinculada nesta fila.
                     </p>
                   )}
                   {teams.length > 0 && activeTeams.length === 0 && (

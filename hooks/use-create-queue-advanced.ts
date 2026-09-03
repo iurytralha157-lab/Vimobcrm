@@ -28,6 +28,7 @@ interface QueueMember {
 
 interface QueueSettings {
   ignore_availability?: boolean;
+  auto_tag_ids?: string[];
   enable_redistribution?: boolean;
   redistribution_timeout_minutes?: number;
   redistribution_warning_minutes?: number;

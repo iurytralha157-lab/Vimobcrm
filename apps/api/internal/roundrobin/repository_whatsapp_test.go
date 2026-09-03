@@ -149,17 +149,27 @@ func TestValidateWhatsAppMessageDistributionState(t *testing.T) {
 			name: "inactive queue remains an editable draft",
 			state: whatsappMessageDistributionState{
 				HasActiveRule:           true,
+				RequireCheckIn:          true,
 				InvalidSessionRuleCount: 1,
 			},
 		},
 		{
 			name: "inactive rule remains an editable draft",
 			state: whatsappMessageDistributionState{
-				QueueActive: true,
+				QueueActive:             true,
+				RequireCheckIn:          true,
+				InvalidSessionRuleCount: 1,
 			},
 		},
 		{
 			name: "active queue with a valid connection is valid",
+			state: whatsappMessageDistributionState{
+				QueueActive:   true,
+				HasActiveRule: true,
+			},
+		},
+		{
+			name: "active queue may use direct or team members without forcing schedule bypass",
 			state: whatsappMessageDistributionState{
 				QueueActive:   true,
 				HasActiveRule: true,
@@ -284,6 +294,7 @@ func TestWhatsAppMessageDistributionStateQueryMatchesCanonicalRuntime(t *testing
 		"round_robin.settings->>'ignore_availability'",
 		"round_robin.strategy",
 		"public.round_robin_members",
+		"coalesce(nullif(rule.match_type, ''), rule.conditions->>'match_type', rule.name, '') <> $3",
 	} {
 		if strings.Contains(queryer.query, forbidden) {
 			t.Errorf("state query must leave ordinary queue behavior to the canonical distributor; found %q", forbidden)

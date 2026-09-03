@@ -106,6 +106,17 @@ const (
 		order by form_config.form_id asc
 		for update of form_config
 	`
+	validateAutoTagIDsQuery = `
+		with locked_tags as materialized (
+			select tag.id
+			from public.tags as tag
+			where tag.organization_id = $1::uuid
+			  and tag.id = any($2::uuid[])
+			order by tag.id
+		)
+		select count(*)::int
+		from locked_tags
+	`
 )
 
 type whatsappMessageDistributionState struct {
@@ -132,7 +143,6 @@ func validateWhatsAppMessageDistributionState(state whatsappMessageDistributionS
 	if state.RequireCheckIn {
 		return fmt.Errorf("%w: active WhatsApp message distribution does not support required check-in", ErrInvalidInput)
 	}
-
 	return nil
 }
 
@@ -549,6 +559,9 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	if err := repo.validateDestination(ctx, tx, tenantContext.OrganizationID, input.TargetPipelineID, input.TargetStageID); err != nil {
 		return RoundRobin{}, err
 	}
+	if err := repo.validateAutoTagIDs(ctx, tx, tenantContext.OrganizationID, queueAutoTagIDs(input.Settings)); err != nil {
+		return RoundRobin{}, err
+	}
 	if err := ensureRoundRobinInputInScope(tenantContext, input.TargetPipelineID, input.Members, true, true); err != nil {
 		return RoundRobin{}, err
 	}
@@ -653,6 +666,15 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	current, err := repo.getStateForUpdate(ctx, tx, tenantContext.OrganizationID, roundRobinID)
 	if err != nil {
 		return RoundRobin{}, err
+	}
+	if input.Settings.Set {
+		currentSettings := objectFromObject(current.Metadata, "settings")
+		// Revalidate only additions so a deleted or legacy tag can always be removed
+		// from an existing queue without making the whole update impossible.
+		newTagIDs := addedQueueAutoTagIDs(currentSettings, input.Settings.Value)
+		if err := repo.validateAutoTagIDs(ctx, tx, tenantContext.OrganizationID, newTagIDs); err != nil {
+			return RoundRobin{}, err
+		}
 	}
 
 	metadata := cloneObject(current.Metadata)
@@ -1530,6 +1552,77 @@ func (repo Repository) validateDestination(ctx context.Context, q queryer, organ
 		}
 	}
 	return nil
+}
+
+func (repo Repository) validateAutoTagIDs(ctx context.Context, q queryer, organizationID string, tagIDs []string) error {
+	if len(tagIDs) == 0 {
+		return nil
+	}
+
+	var matchingTags int
+	if err := q.QueryRow(ctx, validateAutoTagIDsQuery, organizationID, tagIDs).Scan(&matchingTags); err != nil {
+		return err
+	}
+	if matchingTags != len(tagIDs) {
+		return fmt.Errorf("%w: %s must reference tags from this organization", ErrInvalidReference, autoTagIDsSettingKey)
+	}
+	return nil
+}
+
+func addedQueueAutoTagIDs(currentSettings map[string]any, nextSettings map[string]any) []string {
+	currentTagIDs := queueAutoTagIDs(currentSettings)
+	currentSet := make(map[string]struct{}, len(currentTagIDs))
+	for _, tagID := range currentTagIDs {
+		currentSet[tagID] = struct{}{}
+	}
+
+	added := make([]string, 0)
+	for _, tagID := range queueAutoTagIDs(nextSettings) {
+		if _, exists := currentSet[tagID]; exists {
+			continue
+		}
+		added = append(added, tagID)
+	}
+	return added
+}
+
+func queueAutoTagIDs(settings map[string]any) []string {
+	raw, ok := settings[autoTagIDsSettingKey]
+	if !ok {
+		return nil
+	}
+
+	var rawTagIDs []any
+	switch typed := raw.(type) {
+	case []any:
+		rawTagIDs = typed
+	case []string:
+		rawTagIDs = make([]any, len(typed))
+		for index := range typed {
+			rawTagIDs[index] = typed[index]
+		}
+	default:
+		return nil
+	}
+
+	tagIDs := make([]string, 0, len(rawTagIDs))
+	seen := make(map[string]struct{}, len(rawTagIDs))
+	for _, rawTagID := range rawTagIDs {
+		value, ok := rawTagID.(string)
+		if !ok {
+			continue
+		}
+		tagID, ok := normalizeUUID(value)
+		if !ok {
+			continue
+		}
+		if _, exists := seen[tagID]; exists {
+			continue
+		}
+		seen[tagID] = struct{}{}
+		tagIDs = append(tagIDs, tagID)
+	}
+	return tagIDs
 }
 
 func (repo Repository) validateRedistributionCapacity(ctx context.Context, q queryer, organizationID string, roundRobinID string, settings map[string]any) error {

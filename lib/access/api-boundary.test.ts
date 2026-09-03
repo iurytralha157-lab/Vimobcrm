@@ -173,6 +173,10 @@ test("editor preserva keep_assignee ao editar uma fila", () => {
 
   assert.match(
     editor,
+    /reentry_behavior\?:\s*["']redistribute["']\s*\|\s*["']keep_assignee["']\s*\|\s*null;/,
+  );
+  assert.match(
+    editor,
     /reentry_behavior:\s*queue\.reentry_behavior\s*\?\?\s*queue\.settings\?\.reentry_behavior\s*\?\?\s*["']redistribute["']/,
   );
   assert.match(

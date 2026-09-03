@@ -12,38 +12,39 @@ import (
 )
 
 type nativeEvolutionMessage struct {
-	ProviderMessageID    string
-	RemoteJID            string
-	RemoteAliases        []string
-	ContactPhone         string
-	ContactName          string
-	SenderJID            string
-	SenderName           string
-	Content              string
-	MessageType          string
-	FromMe               bool
-	IsGroup              bool
-	SentAt               time.Time
-	MediaURL             string
-	MediaBase64          string
-	MediaMimeType        string
-	MediaStoragePath     string
-	MediaSize            int64
-	ReactionTargetID     string
-	ReactionEmoji        string
-	IsReaction           bool
-	DeletionTargetID     string
-	IsDeletion           bool
-	HasCampaignSignal    bool
-	CampaignSourceType   string
-	CampaignSourceID     string
-	CampaignSourceURL    string
-	CampaignCTWAClid     string
-	CampaignHeadline     string
-	CampaignPropertyCode string
-	UnsupportedID        bool
-	UnsupportedMessage   bool
-	Raw                  map[string]any
+	ProviderMessageID          string
+	ProviderMessageIDSynthetic bool
+	RemoteJID                  string
+	RemoteAliases              []string
+	ContactPhone               string
+	ContactName                string
+	SenderJID                  string
+	SenderName                 string
+	Content                    string
+	MessageType                string
+	FromMe                     bool
+	IsGroup                    bool
+	SentAt                     time.Time
+	MediaURL                   string
+	MediaBase64                string
+	MediaMimeType              string
+	MediaStoragePath           string
+	MediaSize                  int64
+	ReactionTargetID           string
+	ReactionEmoji              string
+	IsReaction                 bool
+	DeletionTargetID           string
+	IsDeletion                 bool
+	HasCampaignSignal          bool
+	CampaignSourceType         string
+	CampaignSourceID           string
+	CampaignSourceURL          string
+	CampaignCTWAClid           string
+	CampaignHeadline           string
+	CampaignPropertyCode       string
+	UnsupportedID              bool
+	UnsupportedMessage         bool
+	Raw                        map[string]any
 }
 
 type nativeEvolutionStatus struct {
@@ -173,8 +174,8 @@ func normalizeNativeEvolutionMessage(raw map[string]any) (nativeEvolutionMessage
 
 	mediaType, mediaBlock := nativeMediaBlock(messageNode, raw, info)
 	content := firstNonEmpty(
-		nativeStringValue(messageNode["conversation"]),
-		nativeStringValue(messageNode["Conversation"]),
+		firstString(messageNode, "conversation"),
+		firstString(messageNode, "Conversation"),
 		firstString(messageNode, "extendedTextMessage.text", "ExtendedTextMessage.Text"),
 		firstString(mediaBlock, "caption", "Caption"),
 		firstString(raw, "text", "body", "content", "caption"),
@@ -223,6 +224,8 @@ func normalizeNativeEvolutionMessage(raw map[string]any) (nativeEvolutionMessage
 		firstString(key, "id", "ID"),
 		firstString(raw, "id", "ID", "messageId", "message_id", "provider_message_id"),
 	)
+	providerMessageID = stripNullBytes(strings.TrimSpace(providerMessageID))
+	providerIDSynthetic := providerMessageID == ""
 	if providerMessageID == "" {
 		encoded, _ := json.Marshal(raw)
 		digest := sha256.Sum256(encoded)
@@ -272,37 +275,38 @@ func normalizeNativeEvolutionMessage(raw map[string]any) (nativeEvolutionMessage
 		)
 	}
 	return nativeEvolutionMessage{
-		ProviderMessageID:    stripNullBytes(strings.TrimSpace(providerMessageID)),
-		RemoteJID:            identity.RemoteJID,
-		RemoteAliases:        aliases,
-		ContactPhone:         identity.ContactPhone,
-		ContactName:          firstNonEmpty(contactName, identity.ContactPhone),
-		SenderJID:            senderJID,
-		SenderName:           firstNonEmpty(firstString(info, "PushName", "pushName"), firstString(raw, "pushName", "senderName", "notifyName")),
-		Content:              stripNullBytes(content),
-		MessageType:          mediaType,
-		FromMe:               fromMe,
-		IsGroup:              identity.IsGroup,
-		SentAt:               sentAt.UTC(),
-		MediaURL:             mediaURL,
-		MediaBase64:          mediaBase64,
-		MediaMimeType:        mediaMimeType,
-		MediaSize:            nativeInt64(nativeFirstValue(mediaBlock, "fileLength", "FileLength", "fileSize", "mediaSize")),
-		ReactionTargetID:     reactionTarget,
-		ReactionEmoji:        reactionEmoji,
-		IsReaction:           isReaction,
-		DeletionTargetID:     deletionTarget,
-		IsDeletion:           isDeletion,
-		HasCampaignSignal:    nativeHasCampaignSignal(raw),
-		CampaignSourceType:   firstString(referral, "source_type", "sourceType", "SourceType"),
-		CampaignSourceID:     firstString(referral, "source_id", "sourceId", "SourceID", "ad_id", "adId", "AdID"),
-		CampaignSourceURL:    referralSourceURL,
-		CampaignCTWAClid:     firstString(referral, "ctwa_clid", "ctwaClid", "CTWAClid", "click_id", "clickId"),
-		CampaignHeadline:     firstString(referral, "headline", "title", "Title", "body", "description"),
-		CampaignPropertyCode: nativeCampaignPropertyCode(content, referralSourceURL),
-		UnsupportedID:        unsupportedIdentity,
-		UnsupportedMessage:   len(protocolMessage) > 0 && !isDeletion,
-		Raw:                  raw,
+		ProviderMessageID:          providerMessageID,
+		ProviderMessageIDSynthetic: providerIDSynthetic,
+		RemoteJID:                  identity.RemoteJID,
+		RemoteAliases:              aliases,
+		ContactPhone:               identity.ContactPhone,
+		ContactName:                firstNonEmpty(contactName, identity.ContactPhone),
+		SenderJID:                  senderJID,
+		SenderName:                 firstNonEmpty(firstString(info, "PushName", "pushName"), firstString(raw, "pushName", "senderName", "notifyName")),
+		Content:                    stripNullBytes(content),
+		MessageType:                mediaType,
+		FromMe:                     fromMe,
+		IsGroup:                    identity.IsGroup,
+		SentAt:                     sentAt.UTC(),
+		MediaURL:                   mediaURL,
+		MediaBase64:                mediaBase64,
+		MediaMimeType:              mediaMimeType,
+		MediaSize:                  nativeInt64(nativeFirstValue(mediaBlock, "fileLength", "FileLength", "fileSize", "mediaSize")),
+		ReactionTargetID:           reactionTarget,
+		ReactionEmoji:              reactionEmoji,
+		IsReaction:                 isReaction,
+		DeletionTargetID:           deletionTarget,
+		IsDeletion:                 isDeletion,
+		HasCampaignSignal:          nativeHasCampaignSignal(raw),
+		CampaignSourceType:         firstString(referral, "source_type", "sourceType", "SourceType"),
+		CampaignSourceID:           firstString(referral, "source_id", "sourceId", "SourceID", "ad_id", "adId", "AdID"),
+		CampaignSourceURL:          referralSourceURL,
+		CampaignCTWAClid:           firstString(referral, "ctwa_clid", "ctwaClid", "CTWAClid", "click_id", "clickId"),
+		CampaignHeadline:           firstString(referral, "headline", "title", "Title", "body", "description"),
+		CampaignPropertyCode:       nativeCampaignPropertyCode(content, referralSourceURL),
+		UnsupportedID:              unsupportedIdentity,
+		UnsupportedMessage:         len(protocolMessage) > 0 && !isDeletion,
+		Raw:                        raw,
 	}, true
 }
 

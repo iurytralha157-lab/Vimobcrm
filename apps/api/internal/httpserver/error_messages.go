@@ -62,6 +62,9 @@ func userFacingErrorMessage(code string, original string, status int) string {
 	if code == "invalid_round_robin_input" && strings.Contains(normalizedOriginal, "whatsapp message distribution") && strings.Contains(normalizedOriginal, "required check-in") {
 		return "O check-in obrigatório ainda não é compatível com esta regra do WhatsApp. Desative essa configuração para ativar a fila."
 	}
+	if code == "invalid_round_robin_input" && strings.Contains(normalizedOriginal, "whatsapp message distribution") && strings.Contains(normalizedOriginal, "requires team entries") {
+		return "Não foi possível validar os participantes desta fila. Revise os corretores e as equipes e tente novamente."
+	}
 	if code == "invalid_round_robin_input" && strings.Contains(normalizedOriginal, "whatsapp message distribution") {
 		return "Para ativar esta regra do WhatsApp, escolha uma conexão válida e ativa."
 	}
