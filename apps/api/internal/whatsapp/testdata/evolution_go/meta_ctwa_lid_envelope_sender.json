@@ -1,0 +1,40 @@
+{
+  "event": "messages.upsert",
+  "sender": "551188887777@s.whatsapp.net",
+  "data": {
+    "sender": "559491298288@s.whatsapp.net",
+    "referral": {
+      "entry_point_conversion_source": "ctwa_ad",
+      "entry_point_conversion_app": "instagram",
+      "conversion_source": "FB_Ads",
+      "external_ad_reply": {
+        "source_type": "ad",
+        "source_id": "120249512922100328",
+        "source_url": "https://www.instagram.com/p/Dcyi6FjgAeQ/",
+        "source_app": "instagram",
+        "ctwa_clid": "AR_fake_ctwa_lid_click_id",
+        "show_ad_attribution": true,
+        "title": "Lumy Penha"
+      }
+    },
+    "message": {
+      "Info": {
+        "ID": "provider-meta-ctwa-lid-envelope-1",
+        "Chat": "987654321012345@lid",
+        "IsFromMe": false,
+        "PushName": "Luana",
+        "Timestamp": 1788388430
+      },
+      "key": {
+        "id": "provider-meta-ctwa-lid-envelope-1",
+        "remoteJid": "987654321012345@lid",
+        "fromMe": false
+      },
+      "message": {
+        "extendedTextMessage": {
+          "text": "Olá, gostaria de saber mais informações sobre o Lançamento Lumy Penha."
+        }
+      }
+    }
+  }
+}

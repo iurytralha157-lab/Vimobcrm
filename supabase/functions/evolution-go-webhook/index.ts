@@ -6,6 +6,7 @@ import {
   monotonicWhatsAppMessageStatus as monotonicMessageStatus,
   monotonicWhatsAppOutboxStatus as monotonicOutboxStatus,
 } from "../_shared/whatsapp-message-status.ts";
+import { whatsappCTWAConfirmationMethod } from "../_shared/whatsapp-ctwa.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -51,6 +52,10 @@ function getNested(obj: any, path: string) {
 
 function firstPresent(...values: any[]) {
   return values.find((value) => value !== undefined && value !== null && value !== "");
+}
+
+function firstDefined(...values: any[]) {
+  return values.find((value) => value !== undefined && value !== null);
 }
 
 function normalizeText(value: unknown) {
@@ -575,30 +580,70 @@ function isMessageLike(value: any) {
   );
 }
 
+function wrapsEvolutionMessage(value: any) {
+  if (!isRecord(value)) return false;
+  const hasStructuralIdentity = (candidate: any) => [
+    candidate?.Info,
+    candidate?.info,
+    candidate?.key,
+    candidate?.Key,
+  ].some((identity) => isRecord(identity) && Object.keys(identity).length > 0);
+  // A scalar ID may identify the Evolution instance/envelope. Structural
+  // message identity (Info/key) is the deciding signal so the envelope is not
+  // normalized as a second message.
+  if (hasStructuralIdentity(value)) {
+    return false;
+  }
+  return toArray(firstPresent(value.message, value.Message)).some((nested) => (
+    isRecord(nested) && hasStructuralIdentity(nested)
+  ));
+}
+
+function inboundEnvelopeContactCandidates(envelope: any) {
+  if (!isRecord(envelope)) return [];
+  return [
+    envelope.SenderPN,
+    envelope.senderPN,
+    envelope.SenderPn,
+    envelope.senderJid,
+    envelope.sender_jid,
+    envelope.senderPhone,
+    envelope.sender_phone,
+    envelope.phone,
+    envelope.number,
+    envelope.sender,
+  ];
+}
+
 function extractMessages(payload: any) {
   const data = payload?.data || payload?.Data;
+  const dataMessage = firstPresent(data?.message, data?.Message);
+  const dataMessageEnvelope = isRecord(dataMessage) ? data : null;
   const candidates = [
-    payload?.messages,
-    payload?.Messages,
-    payload?.message,
-    payload?.Message,
-    data?.messages,
-    data?.Messages,
-    data?.message,
-    data?.Message,
-    data,
-    payload,
+    { value: payload?.messages, envelope: null },
+    { value: payload?.Messages, envelope: null },
+    { value: payload?.message, envelope: null },
+    { value: payload?.Message, envelope: null },
+    // A shared data envelope is ambiguous for a batch. Every item in
+    // data.messages must carry its own identity and referral.
+    { value: data?.messages, envelope: null },
+    { value: data?.Messages, envelope: null },
+    { value: dataMessage, envelope: dataMessageEnvelope },
+    { value: data, envelope: null },
+    { value: payload, envelope: null },
   ];
 
-  const messages: any[] = [];
+  const messages: Array<{ rawMessage: any; envelope: JsonRecord | null }> = [];
   for (const candidate of candidates) {
-    for (const item of toArray(candidate)) {
-      if (isMessageLike(item)) messages.push(item);
+    for (const item of toArray(candidate.value)) {
+      if (isMessageLike(item) && !wrapsEvolutionMessage(item)) {
+        messages.push({ rawMessage: item, envelope: isRecord(candidate.envelope) ? candidate.envelope : null });
+      }
     }
   }
 
   const seen = new Set<string>();
-  return messages.filter((message) => {
+  return messages.filter(({ rawMessage: message }) => {
     const key = JSON.stringify([
       firstPresent(message?.Info?.ID, message?.info?.id, message?.key?.id, message?.Key?.ID, message?.id, message?.messageId),
       firstPresent(message?.Info?.Chat, message?.key?.remoteJid, message?.remoteJid, message?.from, message?.to),
@@ -630,6 +675,33 @@ function mediaTypeLabel(value: unknown) {
   return raw;
 }
 
+function normalizeProviderProofText(value: unknown) {
+  if (value === undefined || value === null || value === "") {
+    return { value: null, invalid: false };
+  }
+  if (typeof value !== "string") {
+    return { value: null, invalid: true };
+  }
+  return { value: cleanText(value), invalid: false };
+}
+
+function normalizeProviderOptionalBoolean(value: unknown) {
+  if (value === undefined || value === null) {
+    return { value: null, invalid: false };
+  }
+  if (typeof value === "boolean") return { value, invalid: false };
+  if (typeof value === "number") {
+    if (value === 0 || value === 1) return { value: value === 1, invalid: false };
+    return { value: null, invalid: true };
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "sim"].includes(normalized)) return { value: true, invalid: false };
+    if (["false", "0", "no", "nao", "não"].includes(normalized)) return { value: false, invalid: false };
+  }
+  return { value: null, invalid: true };
+}
+
 function normalizeReferralCandidate(candidate: JsonRecord | null | undefined) {
   if (!candidate) return null;
 
@@ -649,18 +721,20 @@ function normalizeReferralCandidate(candidate: JsonRecord | null | undefined) {
     candidate.adId,
     candidate.AdID,
   ));
-  const ctwaClid = cleanText(firstPresent(
+  const ctwaClidProof = normalizeProviderProofText(firstPresent(
     candidate.ctwa_clid,
     candidate.ctwaClid,
     candidate.CTWAClid,
     candidate.click_id,
     candidate.clickId,
   ));
-  const entryPointConversionSource = cleanText(firstPresent(
+  const ctwaClid = ctwaClidProof.value;
+  const entryPointProof = normalizeProviderProofText(firstPresent(
     candidate.entry_point_conversion_source,
     candidate.entryPointConversionSource,
     candidate.EntryPointConversionSource,
   ));
+  const entryPointConversionSource = entryPointProof.value;
   const entryPointConversionApp = cleanText(firstPresent(
     candidate.entry_point_conversion_app,
     candidate.entryPointConversionApp,
@@ -676,14 +750,13 @@ function normalizeReferralCandidate(candidate: JsonRecord | null | undefined) {
     candidate.sourceApp,
     candidate.SourceApp,
   ));
-  const rawShowAdAttribution = firstPresent(
+  const rawShowAdAttribution = firstDefined(
     candidate.show_ad_attribution,
     candidate.showAdAttribution,
     candidate.ShowAdAttribution,
   );
-  const showAdAttribution = rawShowAdAttribution === undefined
-    ? null
-    : parseBoolean(rawShowAdAttribution);
+  const showAdAttributionProof = normalizeProviderOptionalBoolean(rawShowAdAttribution);
+  const showAdAttribution = showAdAttributionProof.value;
   const headline = cleanText(firstPresent(candidate.headline, candidate.title, candidate.Title));
   const body = cleanText(firstPresent(candidate.body, candidate.description, candidate.text, candidate.Body));
   const mediaType = mediaTypeLabel(firstPresent(candidate.media_type, candidate.mediaType, candidate.MediaType));
@@ -697,14 +770,31 @@ function normalizeReferralCandidate(candidate: JsonRecord | null | undefined) {
   const imageUrl = firstUrl(candidate.image_url, candidate.imageUrl, candidate.ImageURL, candidate.picture, thumbnailUrl);
   const rawVideoUrl = firstUrl(candidate.video_url, candidate.videoUrl, candidate.VideoURL, candidate.media_url, candidate.mediaUrl);
   const videoUrl = mediaType === "video" ? rawVideoUrl : firstUrl(candidate.video_url, candidate.videoUrl, candidate.VideoURL);
-  const explicitSourceType = cleanText(firstPresent(candidate.source_type, candidate.sourceType, candidate.SourceType));
+  const explicitSourceTypeProof = normalizeProviderProofText(firstPresent(
+    candidate.explicit_source_type,
+    candidate.source_type,
+    candidate.sourceType,
+    candidate.SourceType,
+  ));
+  const explicitSourceType = explicitSourceTypeProof.value;
   const sourceType = explicitSourceType || (sourceId || sourceUrl || ctwaClid ? "ad" : null);
+  const proofConflict = entryPointProof.invalid
+    || explicitSourceTypeProof.invalid
+    || ctwaClidProof.invalid
+    || (candidate.ctwa_proof_conflict !== undefined
+    && candidate.ctwa_proof_conflict !== null
+    && candidate.ctwa_proof_conflict !== false);
+  const showAdAttributionInvalid = showAdAttributionProof.invalid
+    || (candidate.ctwa_show_ad_attribution_invalid !== undefined
+    && candidate.ctwa_show_ad_attribution_invalid !== null
+    && candidate.ctwa_show_ad_attribution_invalid !== false);
 
   if (
     !sourceUrl && !sourceId && !ctwaClid && !entryPointConversionSource
     && !entryPointConversionApp && !conversionSource && !sourceApp
     && rawShowAdAttribution === undefined
     && !headline && !body && !imageUrl && !videoUrl && !thumbnailUrl
+    && !explicitSourceType && !proofConflict && !showAdAttributionInvalid
   ) {
     return null;
   }
@@ -726,25 +816,83 @@ function normalizeReferralCandidate(candidate: JsonRecord | null | undefined) {
     source_app: sourceApp,
     show_ad_attribution: showAdAttribution,
     explicit_source_type: explicitSourceType,
+    ctwa_proof_conflict: proofConflict || null,
+    ctwa_show_ad_attribution_invalid: showAdAttributionInvalid || null,
   };
+}
+
+function normalizePersistedReferralCandidate(candidate: JsonRecord | null | undefined) {
+  if (!candidate) return null;
+  const normalized = normalizeReferralCandidate(candidate);
+  // Persisted source_type may have been inferred from a click id. Only the
+  // canonical explicit_source_type field retains provider provenance on retry.
+  const explicitSourceType = cleanText(candidate.explicit_source_type);
+  const proofConflict = candidate.ctwa_proof_conflict !== undefined
+    && candidate.ctwa_proof_conflict !== null
+    && candidate.ctwa_proof_conflict !== false;
+  const showAdAttributionInvalid = candidate.ctwa_show_ad_attribution_invalid !== undefined
+    && candidate.ctwa_show_ad_attribution_invalid !== null
+    && candidate.ctwa_show_ad_attribution_invalid !== false;
+  if (!normalized && !explicitSourceType && !proofConflict && !showAdAttributionInvalid) return null;
+  return {
+    ...(normalized || {}),
+    source_type: normalized?.source_type || explicitSourceType || null,
+    explicit_source_type: explicitSourceType,
+    ctwa_proof_conflict: proofConflict || normalized?.ctwa_proof_conflict || null,
+    ctwa_show_ad_attribution_invalid: showAdAttributionInvalid
+      || normalized?.ctwa_show_ad_attribution_invalid
+      || null,
+  };
+}
+
+const referralProofKeys = [
+  "entry_point_conversion_source",
+  "explicit_source_type",
+  "ctwa_clid",
+  "show_ad_attribution",
+] as const;
+
+function normalizedReferralProofValue(candidate: JsonRecord, key: typeof referralProofKeys[number]) {
+  const value = candidate[key];
+  if (value === undefined || value === null || value === "") return null;
+  if (key === "show_ad_attribution") return value;
+  const text = cleanText(value);
+  if (!text) return null;
+  return key === "ctwa_clid" ? text : text.toLowerCase();
 }
 
 function mergeReferralCandidates(...candidates: Array<JsonRecord | null | undefined>) {
   const merged: JsonRecord = {};
   let found = false;
+  let proofConflict = false;
   for (const candidate of candidates) {
     if (!candidate) continue;
     found = true;
+    if (
+      candidate.ctwa_proof_conflict !== undefined
+      && candidate.ctwa_proof_conflict !== null
+      && candidate.ctwa_proof_conflict !== false
+    ) {
+      proofConflict = true;
+    }
+    for (const key of referralProofKeys) {
+      const current = normalizedReferralProofValue(merged, key);
+      const next = normalizedReferralProofValue(candidate, key);
+      if (current !== null && next !== null && current !== next) {
+        proofConflict = true;
+      }
+    }
     for (const [key, value] of Object.entries(candidate)) {
       if (merged[key] === undefined || merged[key] === null || merged[key] === "") {
         merged[key] = value;
       }
     }
   }
+  if (proofConflict) merged.ctwa_proof_conflict = true;
   return found ? merged : null;
 }
 
-function extractWhatsAppReferral(messageNode: any, message: any, mediaBlock: any) {
+function extractWhatsAppReferral(messageNode: any, message: any, mediaBlock: any, currentEnvelope: any = null) {
   const normalizedCandidates: JsonRecord[] = [];
   const seenContainers = new Set<JsonRecord>();
   const appendNormalizedContainer = (candidate: unknown) => {
@@ -795,6 +943,7 @@ function extractWhatsAppReferral(messageNode: any, message: any, mediaBlock: any
 
   appendStructuredContainers(message);
   appendStructuredContainers(messageNode);
+  appendStructuredContainers(firstPresent(message?.Info, message?.info));
 
   const messageBlocks = [
     messageNode?.extendedTextMessage,
@@ -814,6 +963,9 @@ function extractWhatsAppReferral(messageNode: any, message: any, mediaBlock: any
     appendStructuredContainers(block);
   }
   appendStructuredContainers(mediaBlock);
+  // The current message owns descriptive attribution. Its immediate envelope
+  // may fill gaps, while proof-field conflicts are retained fail-closed.
+  appendStructuredContainers(currentEnvelope);
 
   return mergeReferralCandidates(...normalizedCandidates);
 }
@@ -1074,7 +1226,7 @@ async function reconcileHandledWhatsAppMessageTransport(
   if (updateError) throw updateError;
 }
 
-function normalizeMessage(message: any) {
+function normalizeMessage(message: any, currentEnvelope: JsonRecord | null = null) {
   const info = firstPresent(message.Info, message.info, {});
   const key = firstPresent(message.key, message.Key, {});
   const messageNode = getMessageNode(message);
@@ -1083,6 +1235,22 @@ function normalizeMessage(message: any) {
   const isGroupHint = normalizeText(firstPresent(info.IsGroup, message.isGroup, message.is_group)).toLowerCase() === "true";
   const fromMe = parseBoolean(firstPresent(info.IsFromMe, info.fromMe, key.fromMe, message.fromMe, message.from_me));
 
+  const chatCandidates = [
+    key.remoteJid,
+    key.RemoteJID,
+    message.remoteJid,
+    message.remote_jid,
+    message.chat,
+    message.chatId,
+    message.chatJid,
+    message.chat_jid,
+    info.Chat,
+    info.chat,
+    info.JID,
+    info.jid,
+    message.jid,
+  ];
+  const hasLidInboundChat = !fromMe && normalizeJidList(chatCandidates, isGroupHint).some(isLidJid);
   const receivedFallbackJids = [
     info.SenderPN,
     info.senderPN,
@@ -1096,6 +1264,7 @@ function normalizeMessage(message: any) {
     message.from,
     message.phone,
     message.number,
+    ...(hasLidInboundChat ? inboundEnvelopeContactCandidates(currentEnvelope) : []),
   ];
   const sentFallbackJids = [
     info.RecipientPN,
@@ -1115,21 +1284,7 @@ function normalizeMessage(message: any) {
   const remoteJid = resolveRemoteJid({
     fromMe,
     isGroupHint,
-    chatCandidates: [
-      key.remoteJid,
-      key.RemoteJID,
-      message.remoteJid,
-      message.remote_jid,
-      message.chat,
-      message.chatId,
-      message.chatJid,
-      message.chat_jid,
-      info.Chat,
-      info.chat,
-      info.JID,
-      info.jid,
-      message.jid,
-    ],
+    chatCandidates,
     inboundCandidates: receivedFallbackJids,
     outboundCandidates: sentFallbackJids,
   });
@@ -1260,7 +1415,7 @@ function normalizeMessage(message: any) {
   const isReaction = isRecord(reaction) || isRecord(encryptedReaction);
   const reactionPayload = isRecord(reaction) ? reaction : (isRecord(encryptedReaction) ? encryptedReaction : null);
   const deletedMessageId = extractDeletedMessageId(messageNode, message);
-  const referral = extractWhatsAppReferral(messageNode, message, mediaBlock);
+  const referral = extractWhatsAppReferral(messageNode, message, mediaBlock, currentEnvelope);
 
   const senderName = normalizeText(firstPresent(info.PushName, info.pushName, message.pushName, message.senderName, message.notifyName)) || null;
   const directContactName = isGroup
@@ -1359,10 +1514,28 @@ function campaignLabelForMessage(message: ReturnType<typeof normalizeMessage>, r
   ));
 }
 
+function clickToWhatsAppAdConfirmationMethod(message: ReturnType<typeof normalizeMessage>) {
+  if (!message || message.fromMe || message.isGroup) return null;
+  const referral = message.referral;
+  if (!referral) return null;
+  return whatsappCTWAConfirmationMethod({
+    fromMe: message.fromMe,
+    isGroup: message.isGroup,
+    providerMessageIdSynthetic: message.providerMessageIdSynthetic,
+    entryPointConversionSource: referral.entry_point_conversion_source,
+    explicitSourceType: referral.explicit_source_type,
+    ctwaClid: referral.ctwa_clid,
+    showAdAttribution: referral.show_ad_attribution,
+    showAdAttributionInvalid: referral.ctwa_show_ad_attribution_invalid,
+    proofConflict: referral.ctwa_proof_conflict,
+  });
+}
+
 function whatsappAttribution(message: ReturnType<typeof normalizeMessage>) {
   if (!message?.referral) return null;
   const referral = message.referral;
   const propertyCode = detectPropertyCode(message);
+  const confirmationMethod = clickToWhatsAppAdConfirmationMethod(message);
   const attribution = {
     source: "whatsapp",
     source_type: "whatsapp_click_to_message",
@@ -1386,6 +1559,9 @@ function whatsappAttribution(message: ReturnType<typeof normalizeMessage>) {
     entry_point_conversion_source: referral.entry_point_conversion_source,
     entry_point_conversion_app: referral.entry_point_conversion_app,
     show_ad_attribution: referral.show_ad_attribution,
+    ctwa_proof_conflict: referral.ctwa_proof_conflict === true ? true : null,
+    ctwa_show_ad_attribution_invalid: referral.ctwa_show_ad_attribution_invalid === true ? true : null,
+    ctwa_confirmation_method: confirmationMethod,
     source_referral: referral,
     property_code: propertyCode,
   };
@@ -1396,13 +1572,7 @@ function whatsappAttribution(message: ReturnType<typeof normalizeMessage>) {
 }
 
 function isConfirmedClickToWhatsAppAd(message: ReturnType<typeof normalizeMessage>) {
-  if (!message || message.fromMe || message.isGroup) return false;
-  const referral = message?.referral;
-  if (!referral) return false;
-  const entryPointConversionSource = cleanText(referral.entry_point_conversion_source)?.toLowerCase() || "";
-  const explicitSourceType = cleanText(referral.explicit_source_type)?.toLowerCase() || "";
-  return entryPointConversionSource === "ctwa_ad"
-    && (!explicitSourceType || explicitSourceType === "ad");
+  return Boolean(clickToWhatsAppAdConfirmationMethod(message));
 }
 
 function whatsappAttributionUtmSource(message: ReturnType<typeof normalizeMessage>) {
@@ -1815,7 +1985,8 @@ async function ensureLead(
   if (!message || message.isGroup) return null;
 
   const identity = whatsappIdentityForMessage(message);
-  const confirmedCtwaAd = isConfirmedClickToWhatsAppAd(message);
+  const ctwaConfirmationMethod = clickToWhatsAppAdConfirmationMethod(message);
+  const confirmedCtwaAd = Boolean(ctwaConfirmationMethod);
   let phone = identity.contactPhone || phoneFromJidLike(message.remoteJid) || phoneFromJidLike(message.senderJid);
   let aliasLead = await findEstablishedWhatsAppConversationLead(session, message, identity);
   if (!aliasLead) {
@@ -1960,7 +2131,8 @@ async function ensureLead(
       p_last_contact_at: now,
       p_metadata: {
         source: "whatsapp",
-        whatsapp_lead_creation_contract: "ctwa_ad_v1",
+        whatsapp_lead_creation_contract: "ctwa_ad_v2",
+        ctwa_confirmation_method: ctwaConfirmationMethod,
         whatsapp_session_id: session.id,
         remote_jid: identity.remoteJid || message.remoteJid,
         matched_rule_id: rule?.id || null,
@@ -2448,10 +2620,9 @@ async function recoverPersistedNonManagedWhatsAppMessage(
       storedAttribution.creative_link_url,
       storedAttribution.creative_destination_url,
     ),
-    source_type: firstPresent(
-      storedSourceReferral?.explicit_source_type,
-      storedSourceReferral?.source_type,
-    ),
+    // Only the provider's raw source type may authorize the CTWA v2 fallback.
+    // source_type can be inferred from ctwa_clid during normalization.
+    source_type: storedSourceReferral?.explicit_source_type,
     headline: firstPresent(
       storedAttribution.source_referral_title,
       storedAttribution.campaign_name,
@@ -2464,10 +2635,12 @@ async function recoverPersistedNonManagedWhatsAppMessage(
     conversion_source: storedAttribution.conversion_source,
     source_app: storedAttribution.source_app,
     show_ad_attribution: storedAttribution.show_ad_attribution,
+    ctwa_proof_conflict: storedAttribution.ctwa_proof_conflict,
+    ctwa_show_ad_attribution_invalid: storedAttribution.ctwa_show_ad_attribution_invalid,
   });
   const persistedReferral = mergeReferralCandidates(
-    normalizeReferralCandidate(storedReferral),
-    normalizeReferralCandidate(storedSourceReferral),
+    normalizePersistedReferralCandidate(storedReferral),
+    normalizePersistedReferralCandidate(storedSourceReferral),
     attributionReferral,
   );
   const persistedMessage = {
@@ -3156,8 +3329,8 @@ async function handleMessages(session: JsonRecord, payload: any) {
   const messages = extractMessages(payload);
   let processed = 0;
 
-  for (const rawMessage of messages) {
-    const message = normalizeMessage(rawMessage);
+  for (const { rawMessage, envelope } of messages) {
+    const message = normalizeMessage(rawMessage, envelope);
     if (!message) continue;
     if (message.messageType === "deleted_event") {
       if (await markMessageDeleted(session, message)) processed += 1;

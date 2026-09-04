@@ -1,0 +1,32 @@
+{
+  "event": "messages.upsert",
+  "data": {
+    "message": {
+      "Info": {
+        "ID": "provider-meta-ctwa-evolution-clid-1",
+        "Chat": "5511940179176@s.whatsapp.net",
+        "SenderPN": "5511940179176@s.whatsapp.net",
+        "IsFromMe": false,
+        "PushName": "Contato Lumy",
+        "Timestamp": 1788489772
+      },
+      "key": {
+        "id": "provider-meta-ctwa-evolution-clid-1",
+        "remoteJid": "5511940179176@s.whatsapp.net",
+        "fromMe": false
+      },
+      "message": {
+        "extendedTextMessage": {
+          "text": "Olá, gostaria de mais informações sobre o Lançamento Lumy Penha.",
+          "contextInfo": {
+            "externalAdReply": {
+              "sourceType": "ad",
+              "ctwaClid": "AfjGD28_TndSXnbFSjURxTw0AR29Ih0M0q3ZYwpb",
+              "title": "api.whatsapp.com"
+            }
+          }
+        }
+      }
+    }
+  }
+}

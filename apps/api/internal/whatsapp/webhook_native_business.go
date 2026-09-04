@@ -954,10 +954,17 @@ func nativeCampaignAttribution(message nativeEvolutionMessage) map[string]any {
 		"entry_point_conversion_app":    message.CampaignEntryPointConversionApp,
 		"conversion_source":             message.CampaignConversionSource,
 		"source_app":                    message.CampaignSourceApp,
+		"ctwa_confirmation_method":      message.CTWAConfirmationMethod,
 		"source_referral":               referral,
 	}
 	if message.CampaignShowAdAttribution != nil {
 		attribution["show_ad_attribution"] = *message.CampaignShowAdAttribution
+	}
+	if message.CampaignShowAdAttributionInvalid {
+		attribution["ctwa_show_ad_attribution_invalid"] = true
+	}
+	if message.CampaignCTWAProofConflict {
+		attribution["ctwa_proof_conflict"] = true
 	}
 	if instagramURL := nativeCampaignInstagramURL(message); instagramURL != "" {
 		attribution["creative_instagram_url"] = instagramURL
@@ -984,6 +991,7 @@ func nativeCampaignReferralSnapshot(message nativeEvolutionMessage) map[string]a
 		"entry_point_conversion_app":    strings.TrimSpace(message.CampaignEntryPointConversionApp),
 		"conversion_source":             strings.TrimSpace(message.CampaignConversionSource),
 		"source_app":                    strings.TrimSpace(message.CampaignSourceApp),
+		"ctwa_confirmation_method":      strings.TrimSpace(message.CTWAConfirmationMethod),
 	}
 	for key, value := range values {
 		if value != "" {
@@ -997,6 +1005,12 @@ func nativeCampaignReferralSnapshot(message nativeEvolutionMessage) map[string]a
 	}
 	if message.CampaignShowAdAttribution != nil {
 		referral["show_ad_attribution"] = *message.CampaignShowAdAttribution
+	}
+	if message.CampaignShowAdAttributionInvalid {
+		referral["ctwa_show_ad_attribution_invalid"] = true
+	}
+	if message.CampaignCTWAProofConflict {
+		referral["ctwa_proof_conflict"] = true
 	}
 	return referral
 }

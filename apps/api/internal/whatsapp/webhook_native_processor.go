@@ -764,11 +764,12 @@ func recoverNativeLegacyNonManagedRetry(
 	}
 
 	persistedMessage := nativeEvolutionMessage{
-		ProviderMessageID: providerMessageID,
-		RemoteJID:         remoteJID,
-		Content:           content,
-		MessageType:       firstNonEmpty(messageType, "text"),
-		SentAt:            sentAt.UTC(),
+		ProviderMessageID:          providerMessageID,
+		ProviderMessageIDSynthetic: incoming.ProviderMessageIDSynthetic,
+		RemoteJID:                  remoteJID,
+		Content:                    content,
+		MessageType:                firstNonEmpty(messageType, "text"),
+		SentAt:                     sentAt.UTC(),
 	}
 	persistedMessage = nativeMessageWithPersistedCampaignAttribution(
 		persistedMessage,
@@ -812,11 +813,30 @@ func nativeMessageWithPersistedCampaignAttribution(
 ) nativeEvolutionMessage {
 	attribution := mapFromAny(metadata["whatsapp_attribution"])
 	referral := nativeMergeCampaignReferral(
-		mapFromAny(metadata["whatsapp_referral"]),
-		mapFromAny(attribution["source_referral"]),
+		nativeNormalizePersistedCampaignReferralCandidate(mapFromAny(metadata["whatsapp_referral"])),
+		nativeNormalizePersistedCampaignReferralCandidate(mapFromAny(attribution["source_referral"])),
+	)
+	attributionProof := map[string]any{}
+	for _, key := range []string{
+		"entry_point_conversion_source",
+		"explicit_source_type",
+		"ctwa_clid",
+		"show_ad_attribution",
+		"ctwa_proof_conflict",
+		"ctwa_show_ad_attribution_invalid",
+	} {
+		if value := nativeFirstValue(attribution, key); value != nil {
+			attributionProof[key] = value
+		}
+	}
+	referral = nativeMergeCampaignReferral(
+		referral,
+		nativeNormalizePersistedCampaignReferralCandidate(attributionProof),
 	)
 
-	message.CampaignSourceType = firstString(referral, "explicit_source_type", "source_type", "sourceType")
+	// source_type may have been inferred from ctwa_clid. Only the provider's
+	// explicitly persisted source type can authorize the CTWA v2 fallback.
+	message.CampaignSourceType = firstString(referral, "explicit_source_type")
 	message.CampaignSourceID = firstNonEmpty(
 		firstString(referral, "source_id", "sourceId", "ad_id", "adId"),
 		firstString(attribution, "source_id", "ad_id"),
@@ -857,21 +877,82 @@ func nativeMessageWithPersistedCampaignAttribution(
 		firstString(referral, "source_app", "sourceApp"),
 		firstString(attribution, "source_app"),
 	)
-	showAdAttribution := nativeFirstValue(referral, "show_ad_attribution", "showAdAttribution")
-	if showAdAttribution == nil {
-		showAdAttribution = nativeFirstValue(attribution, "show_ad_attribution")
-	}
-	message.CampaignShowAdAttribution = nativeOptionalBool(showAdAttribution)
+	message.CampaignShowAdAttribution, message.CampaignShowAdAttributionInvalid = nativeOptionalStrictBool(
+		nativeFirstValue(referral, "show_ad_attribution", "showAdAttribution"),
+	)
+	message.CampaignShowAdAttributionInvalid = message.CampaignShowAdAttributionInvalid || nativeFailClosedMarker(
+		nativeFirstValue(referral, "ctwa_show_ad_attribution_invalid"),
+	)
+	message.CampaignCTWAProofConflict = nativeFailClosedMarker(
+		nativeFirstValue(referral, "ctwa_proof_conflict"),
+	)
 	message.CampaignPropertyCode = firstNonEmpty(
 		firstString(referral, "property_code"),
 		firstString(attribution, "property_code"),
 	)
 	message.HasCampaignSignal = len(referral) > 0 || len(attribution) > 0
-	message.IsCTWAAd = nativeIsCTWAAdReferral(
-		message.CampaignEntryPointConversionSource,
-		message.CampaignSourceType,
-	)
+	message.CTWAConfirmationMethod = nativeCTWAAdConfirmationMethod(message)
+	message.IsCTWAAd = message.CTWAConfirmationMethod != ""
 	return message
+}
+
+func nativeNormalizePersistedCampaignReferralCandidate(value map[string]any) map[string]any {
+	if len(value) == 0 {
+		return nil
+	}
+	normalized := make(map[string]any, len(value)+2)
+	for key, item := range value {
+		normalized[key] = item
+	}
+
+	proofConflict := nativeFailClosedMarker(nativeFirstValue(value, "ctwa_proof_conflict"))
+	showInvalid := nativeFailClosedMarker(nativeFirstValue(value, "ctwa_show_ad_attribution_invalid"))
+
+	explicitSourceType, explicitInvalid := nativeStrictCampaignProofText(value, "explicit_source_type")
+	entryPoint, entryInvalid := nativeStrictCampaignProofText(value,
+		"entry_point_conversion_source", "entryPointConversionSource", "EntryPointConversionSource",
+	)
+	ctwaClid, clidInvalid := nativeStrictCampaignProofText(value,
+		"ctwa_clid", "ctwaClid", "CTWAClid", "click_id", "clickId",
+	)
+	showRaw := nativeFirstValue(value,
+		"show_ad_attribution", "showAdAttribution", "ShowAdAttribution",
+	)
+	show, parsedShowInvalid := nativeOptionalStrictBool(showRaw)
+	proofConflict = proofConflict || explicitInvalid || entryInvalid || clidInvalid
+	showInvalid = showInvalid || parsedShowInvalid
+
+	for _, key := range []string{
+		"explicit_source_type",
+		"entry_point_conversion_source", "entryPointConversionSource", "EntryPointConversionSource",
+		"ctwa_clid", "ctwaClid", "CTWAClid", "click_id", "clickId",
+		"show_ad_attribution", "showAdAttribution", "ShowAdAttribution",
+		"ctwa_proof_conflict", "ctwa_show_ad_attribution_invalid",
+	} {
+		delete(normalized, key)
+	}
+	if explicitSourceType != "" {
+		normalized["explicit_source_type"] = explicitSourceType
+	}
+	if entryPoint != "" {
+		normalized["entry_point_conversion_source"] = entryPoint
+	}
+	if ctwaClid != "" {
+		normalized["ctwa_clid"] = ctwaClid
+	}
+	if show != nil {
+		normalized["show_ad_attribution"] = *show
+	}
+	if proofConflict {
+		normalized["ctwa_proof_conflict"] = true
+	}
+	if showInvalid {
+		normalized["ctwa_show_ad_attribution_invalid"] = true
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
 }
 
 type nativeHandledAutoReplyQuerier interface {
@@ -1748,6 +1829,10 @@ func createAuthorizedNativeLead(ctx context.Context, tx pgx.Tx, session nativeEv
 	if message.ContactPhone == "" || !message.IsCTWAAd {
 		return nativeEvolutionLead{}, nil
 	}
+	ctwaConfirmationMethod := nativeCTWAAdConfirmationMethod(message)
+	if ctwaConfirmationMethod == "" {
+		return nativeEvolutionLead{}, nil
+	}
 	propertyID, err := resolveNativeCampaignProperty(ctx, tx, session.OrganizationID, message.CampaignPropertyCode)
 	if err != nil {
 		return nativeEvolutionLead{}, err
@@ -1776,7 +1861,9 @@ func createAuthorizedNativeLead(ctx context.Context, tx pgx.Tx, session nativeEv
 		"target_round_robin_id":                 nativeTargetRoundRobinID(rule, assignment),
 		"campaign_label":                        firstNonEmpty(rule.CampaignLabel, message.CampaignHeadline),
 		"ctwa_ad_confirmed":                     true,
-		"whatsapp_lead_creation_contract":       "ctwa_ad_v1",
+		"whatsapp_lead_creation_contract":       "ctwa_ad_v2",
+		"ctwa_confirmation_method":              ctwaConfirmationMethod,
+		"whatsapp_initial_provider_event_id":    session.ID + ":" + message.ProviderMessageID,
 		"whatsapp_attribution":                  attribution,
 		"property_id":                           propertyID,
 	}

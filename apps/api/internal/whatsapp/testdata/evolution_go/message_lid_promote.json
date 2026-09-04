@@ -5,7 +5,8 @@
       "Info": {
         "ID": "provider-lid-promote-2",
         "Chat": "987654321012345@lid",
-        "SenderPN": "5511666665555@s.whatsapp.net",
+        "Sender": "987654321012345@lid",
+        "SenderAlt": "5511666665555@s.whatsapp.net",
         "IsFromMe": false,
         "IsGroup": false,
         "PushName": "Contato LID"

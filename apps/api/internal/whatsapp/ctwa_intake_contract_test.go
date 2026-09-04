@@ -249,7 +249,7 @@ func TestEvolutionGoEdgeUsesProviderCTWASignalBeforeManagedRoutingOrLeadCreation
 	normalizer := sectionCTWAContract(
 		t,
 		source,
-		"function normalizeReferralCandidate(",
+		"function normalizeProviderProofText(",
 		"function mergeReferralCandidates(",
 	)
 	for _, fragment := range []string{
@@ -302,20 +302,63 @@ func TestEvolutionGoEdgeUsesProviderCTWASignalBeforeManagedRoutingOrLeadCreation
 		}
 	}
 
-	confirmation := compactCTWAContract(sectionCTWAContract(
+	confirmationMapping := compactCTWAContract(sectionCTWAContract(
+		t,
+		source,
+		"function clickToWhatsAppAdConfirmationMethod(",
+		"function whatsappAttribution(",
+	))
+	for _, fragment := range []string{
+		"whatsappCTWAConfirmationMethod({",
+		"providerMessageIdSynthetic: message.providerMessageIdSynthetic",
+		"entryPointConversionSource: referral.entry_point_conversion_source",
+		"explicitSourceType: referral.explicit_source_type",
+		"ctwaClid: referral.ctwa_clid",
+		"showAdAttribution: referral.show_ad_attribution",
+		"showAdAttributionInvalid: referral.ctwa_show_ad_attribution_invalid",
+		"proofConflict: referral.ctwa_proof_conflict",
+	} {
+		requireCTWAContractContains(t, confirmationMapping, fragment)
+	}
+
+	confirmation := compactCTWAContract(strings.ToLower(readCTWAContractFile(t,
+		"supabase", "functions", "_shared", "whatsapp-ctwa.ts",
+	)))
+	for _, fragment := range []string{
+		"if (input.fromme || input.isgroup) return null",
+		"normalizedtext(input.entrypointconversionsource).tolowercase()",
+		"entrypoint === \"ctwa_ad\"",
+		"(!explicitsourcetype || explicitsourcetype === \"ad\")",
+		"if (entrypoint)",
+		"input.providermessageidsynthetic === false",
+		"explicitsourcetype === \"ad\"",
+		"validwhatsappctwaclickidentifier(input.ctwaclid)",
+		"showadattributionallowed",
+		"input.showadattributioninvalid !== false",
+		"input.proofconflict !== false",
+		"return \"evolution_ctwa_clid_v1\"",
+	} {
+		requireCTWAContractContains(t, confirmation, fragment)
+	}
+	for _, forbiddenFallback := range []string{
+		"input.sourcetype",
+		"source_type",
+		"sourceid",
+		"sourceurl",
+		"content",
+	} {
+		if strings.Contains(confirmation, forbiddenFallback) {
+			t.Fatalf("CTWA v2 fallback must not authorize from %q", forbiddenFallback)
+		}
+	}
+	confirmationWrapper := compactCTWAContract(sectionCTWAContract(
 		t,
 		source,
 		"function isConfirmedClickToWhatsAppAd(",
 		"function whatsappAttributionUtmSource(",
 	))
-	for _, fragment := range []string{
-		"if (!message || message.fromme || message.isgroup) return false",
-		"cleantext(referral.entry_point_conversion_source)?.tolowercase()",
-		"entrypointconversionsource === \"ctwa_ad\"",
-		"(!explicitsourcetype || explicitsourcetype === \"ad\")",
-	} {
-		requireCTWAContractContains(t, strings.ToLower(confirmation), fragment)
-	}
+	requireCTWAContractContains(t, strings.ToLower(confirmationWrapper),
+		"return boolean(clicktowhatsappadconfirmationmethod(message))")
 
 	ruleSelection := compactCTWAContract(sectionCTWAContract(
 		t,
@@ -370,14 +413,16 @@ func TestEvolutionGoEdgeUsesProviderCTWASignalBeforeManagedRoutingOrLeadCreation
 		t.Fatal("new automatic leads must be CTWA-gated after existing-lead resolution and before upsert")
 	}
 	for _, fragment := range []string{
-		"const confirmedCtwaAd = isConfirmedClickToWhatsAppAd(message)",
+		"const ctwaConfirmationMethod = clickToWhatsAppAdConfirmationMethod(message)",
+		"const confirmedCtwaAd = Boolean(ctwaConfirmationMethod)",
 		"await findEstablishedWhatsAppConversationLead(session, message, identity)",
 		"if (!confirmedCtwaAd && isAmbiguousWhatsAppLeadPhone(error))",
 		"return null",
 		"const targetRoundRobinId = managedMessageDistribution ? optionalUuid(rule?.target_round_robin_id) : null",
 		"const ownerUserId = await resolveActiveSessionOwner(session)",
 		"const assignedUserId = managedMessageDistribution ? null : ownerUserId",
-		`whatsapp_lead_creation_contract: "ctwa_ad_v1"`,
+		`whatsapp_lead_creation_contract: "ctwa_ad_v2"`,
+		"ctwa_confirmation_method: ctwaConfirmationMethod",
 		"ctwa_ad_confirmed: true",
 	} {
 		requireCTWAContractContains(t, leadCreation, fragment)
@@ -447,11 +492,11 @@ func TestEvolutionGoEdgeRejectsCTWASignalInsideQuotedMessage(t *testing.T) {
 	confirmation := compactCTWAContract(sectionCTWAContract(
 		t,
 		source,
-		"function isConfirmedClickToWhatsAppAd(",
-		"function whatsappAttributionUtmSource(",
+		"function clickToWhatsAppAdConfirmationMethod(",
+		"function whatsappAttribution(",
 	))
-	requireCTWAContractContains(t, confirmation, "const referral = message?.referral")
-	requireCTWAContractContains(t, confirmation, `entryPointConversionSource === "ctwa_ad"`)
+	requireCTWAContractContains(t, confirmation, "const referral = message.referral")
+	requireCTWAContractContains(t, confirmation, "whatsappCTWAConfirmationMethod({")
 
 	leadCreation := compactCTWAContract(sectionCTWAContract(
 		t,
@@ -459,8 +504,80 @@ func TestEvolutionGoEdgeRejectsCTWASignalInsideQuotedMessage(t *testing.T) {
 		"async function ensureLead(",
 		"async function processManagedWhatsAppLeadEntry(",
 	))
-	requireCTWAContractContains(t, leadCreation, "const confirmedCtwaAd = isConfirmedClickToWhatsAppAd(message)")
+	requireCTWAContractContains(t, leadCreation,
+		"const ctwaConfirmationMethod = clickToWhatsAppAdConfirmationMethod(message)")
+	requireCTWAContractContains(t, leadCreation,
+		"const confirmedCtwaAd = Boolean(ctwaConfirmationMethod)")
 	requireCTWAContractContains(t, leadCreation, "if (!confirmedCtwaAd)")
+}
+
+func TestEvolutionGoEdgeUsesOnlyTheImmediateSingularLIDEnvelope(t *testing.T) {
+	source := readCTWAContractFile(t,
+		"supabase", "functions", "evolution-go-webhook", "index.ts",
+	)
+	extraction := compactCTWAContract(sectionCTWAContract(
+		t,
+		source,
+		"function wrapsEvolutionMessage(",
+		"function getMessageNode(",
+	))
+	for _, fragment := range []string{
+		"{ value: data?.messages, envelope: null }",
+		"const dataMessageEnvelope = isRecord(dataMessage) ? data : null",
+		"{ value: dataMessage, envelope: dataMessageEnvelope }",
+		"!wrapsEvolutionMessage(item)",
+		"isRecord(identity) && Object.keys(identity).length > 0",
+		"isRecord(nested) && hasStructuralIdentity(nested)",
+	} {
+		requireCTWAContractContains(t, extraction, fragment)
+	}
+	wrapper := sectionCTWAContract(t, source, "function wrapsEvolutionMessage(", "function inboundEnvelopeContactCandidates(")
+	if strings.Contains(wrapper, "value.message_id") || strings.Contains(wrapper, "value.messageId") || strings.Contains(wrapper, "value.ID") {
+		t.Fatal("a scalar envelope ID must not prevent structural wrapper detection")
+	}
+
+	normalization := sectionCTWAContract(
+		t,
+		source,
+		"function normalizeMessage(",
+		"function previewForMessage(",
+	)
+	for _, fragment := range []string{
+		"const hasLidInboundChat = !fromMe",
+		".some(isLidJid)",
+		"...(hasLidInboundChat ? inboundEnvelopeContactCandidates(currentEnvelope) : [])",
+	} {
+		requireCTWAContractContains(t, normalization, fragment)
+	}
+	if strings.Contains(normalization, ".some(isOpaqueJid)") {
+		t.Fatal("newsletter, broadcast and status chats must never inherit a contact phone from the LID envelope fallback")
+	}
+
+	referralExtraction := sectionCTWAContract(
+		t,
+		source,
+		"function normalizeProviderProofText(",
+		"function detectMediaBlock(",
+	)
+	for _, fragment := range []string{
+		"const referralProofKeys = [",
+		"typeof value !== \"string\"",
+		"const showAdAttributionProof = normalizeProviderOptionalBoolean(rawShowAdAttribution)",
+		"const rawShowAdAttribution = firstDefined(",
+		"ctwa_show_ad_attribution_invalid: showAdAttributionInvalid || null",
+		`"entry_point_conversion_source"`,
+		`"explicit_source_type"`,
+		`"ctwa_clid"`,
+		`"show_ad_attribution"`,
+		"if (proofConflict) merged.ctwa_proof_conflict = true",
+	} {
+		requireCTWAContractContains(t, referralExtraction, fragment)
+	}
+	messageBlocks := strings.Index(referralExtraction, "for (const block of messageBlocks)")
+	envelope := strings.LastIndex(referralExtraction, "appendStructuredContainers(currentEnvelope)")
+	if messageBlocks < 0 || envelope < 0 || messageBlocks >= envelope {
+		t.Fatal("current-message referral blocks must precede the immediate envelope")
+	}
 }
 
 func TestEvolutionGoEdgePersistsCTWAAttributionAcrossManagedRetryLifecycle(t *testing.T) {
@@ -525,11 +642,30 @@ func TestEvolutionGoEdgePersistsCTWAAttributionAcrossManagedRetryLifecycle(t *te
 		"content: normalizeText(storedMessage.content)",
 		"sentAt: persistedSentAt",
 		"referral: persistedReferral",
+		"normalizePersistedReferralCandidate(storedReferral)",
+		"normalizePersistedReferralCandidate(storedSourceReferral)",
+		"ctwa_show_ad_attribution_invalid: storedAttribution.ctwa_show_ad_attribution_invalid",
 		"await logInbound(session, conversation, lead, null, persistedMessage)",
 		"isConfirmedClickToWhatsAppAd(persistedMessage)",
 	} {
 		requireCTWAContractContains(t, recovery, fragment)
 	}
+	if strings.Contains(recovery, "normalizeReferralCandidate(storedReferral)") ||
+		strings.Contains(recovery, "normalizeReferralCandidate(storedSourceReferral)") {
+		t.Fatal("persisted inferred source_type must not be promoted to explicit provenance")
+	}
+
+	nativeSource := compactCTWAContract(readCTWAContractFile(t,
+		"apps", "api", "internal", "whatsapp", "webhook_native_processor.go",
+	))
+	nativeRecovery := sectionCTWAContract(
+		t,
+		nativeSource,
+		"func recoverNativeLegacyNonManagedRetry(",
+		"func nativeMessageWithPersistedCampaignAttribution(",
+	)
+	requireCTWAContractContains(t, nativeRecovery,
+		"ProviderMessageIDSynthetic: incoming.ProviderMessageIDSynthetic")
 
 	enrichmentCall := compactCTWAContract(sectionCTWAContract(
 		t,
