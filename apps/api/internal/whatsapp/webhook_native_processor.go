@@ -2306,14 +2306,21 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 		}
 		outboxRows.Close()
 		for _, target := range outboxTargets {
-			status := nativeMonotonicStatus(target.current, receipt.Status)
+			status := nativeMonotonicOutboxStatus(target.current, receipt.Status)
 			if _, err := tx.Exec(ctx, `
 				update public.whatsapp_outbox
 				set status = $4,
+				    sent_at = case when $4 = 'sent' then coalesce(sent_at, $5) else sent_at end,
 				    delivered_at = case when $4 = 'delivered' then coalesce(delivered_at, $5) else delivered_at end,
 				    read_at = case when $4 = 'read' then coalesce(read_at, $5) else read_at end,
 				    failed_at = case when $4 = 'failed' then coalesce(failed_at, $5) else failed_at end,
-				    last_error = case when $4 = 'failed' then nullif($6, '') else last_error end,
+				    last_error = case
+				      when $4 = 'failed' then nullif($6, '')
+				      when $4 in ('sent', 'delivered', 'read') then null
+				      else last_error
+				    end,
+				    locked_at = case when $4 in ('sent', 'delivered', 'read', 'failed') then null else locked_at end,
+				    locked_by = case when $4 in ('sent', 'delivered', 'read', 'failed') then null else locked_by end,
 				    updated_at = now()
 				where organization_id = $1::uuid and session_id = $2::uuid and id = $3::uuid
 			`, session.OrganizationID, session.ID, target.id, status, receipt.OccurredAt, receipt.Error); err != nil {

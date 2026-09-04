@@ -37,6 +37,8 @@
     "lib/schedule-event-segments.test.ts",
     "supabase/functions/_shared/google-calendar-event.ts",
     "supabase/functions/_shared/google-calendar-event.test.ts",
+    "supabase/functions/_shared/whatsapp-message-status.ts",
+    "supabase/functions/_shared/whatsapp-message-status.test.ts",
     "lib/automations/index.ts",
     "lib/automations/engine.ts",
     "lib/automations/engine.test.ts"

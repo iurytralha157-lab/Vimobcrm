@@ -8,6 +8,7 @@ import {
   isWhatsAppQueryKeyForScope,
   isWhatsAppInboxWakePayload,
   matchesLeadMessagesQueryKey,
+  matchesWhatsAppMessageRefreshQueryKey,
   matchesWhatsAppMessagesQueryKey,
   mergeWhatsAppMessagesWithLocalState,
   resolveWhatsAppConversationSessionFilter,
@@ -58,6 +59,35 @@ test('segrega o historico paginado do lead pelo mesmo escopo de acesso', () => {
   assert.equal(matchesLeadMessagesQueryKey(keyA, scopeA, 'lead-a'), true)
   assert.equal(matchesLeadMessagesQueryKey(keyA, scopeA, 'lead-b'), false)
   assert.equal(matchesLeadMessagesQueryKey(keyA, scopeB, 'lead-a'), false)
+})
+
+test('reconcilia o envio nas consultas simples e paginadas da conversa ativa', () => {
+  const conversationIds = ['conversation-a', 'conversation-canonical']
+  const simpleKey = whatsappQueryKeys.messages(scopeA, {
+    conversationId: 'conversation-a',
+    leadId: 'lead-a',
+    limit: 50,
+    includeLeadHistory: false,
+  })
+  const paginatedKey = whatsappQueryKeys.paginatedMessages(scopeA, 'conversation-canonical', 50)
+  const unrelatedKey = whatsappQueryKeys.paginatedMessages(scopeA, 'conversation-b', 50)
+
+  assert.equal(
+    matchesWhatsAppMessageRefreshQueryKey(simpleKey, scopeA, conversationIds, 'lead-a'),
+    true,
+  )
+  assert.equal(
+    matchesWhatsAppMessageRefreshQueryKey(paginatedKey, scopeA, conversationIds, 'lead-a'),
+    true,
+  )
+  assert.equal(
+    matchesWhatsAppMessageRefreshQueryKey(unrelatedKey, scopeA, conversationIds, 'lead-a'),
+    false,
+  )
+  assert.equal(
+    matchesWhatsAppMessageRefreshQueryKey(paginatedKey, scopeB, conversationIds, 'lead-a'),
+    false,
+  )
 })
 
 test('segrega sessoes e acesso por organizacao, usuario e permissoes', () => {

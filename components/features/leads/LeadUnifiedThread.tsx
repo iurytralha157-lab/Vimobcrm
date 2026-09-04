@@ -1222,7 +1222,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
               multiline
               inputRef={textareaRef}
               compact
-              showRightActionsWhenEmpty
+              showRightActionsWhenEmpty={!isSendingMessage}
               leftActions={
                 <button
                   type="button"

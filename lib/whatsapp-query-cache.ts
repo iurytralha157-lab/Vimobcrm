@@ -220,6 +220,18 @@ export function matchesPaginatedWhatsAppMessagesQueryKey(
     && queryKey[5] === conversationId
 }
 
+export function matchesWhatsAppMessageRefreshQueryKey(
+  queryKey: QueryKey,
+  scope: WhatsAppQueryScope,
+  conversationIds: readonly string[],
+  leadId?: string | null,
+): boolean {
+  return conversationIds.some((conversationId) => (
+    matchesWhatsAppMessagesQueryKey(queryKey, scope, conversationId, leadId)
+      || matchesPaginatedWhatsAppMessagesQueryKey(queryKey, scope, conversationId)
+  ))
+}
+
 export function matchesLeadMessagesQueryKey(
   queryKey: QueryKey,
   scope: WhatsAppQueryScope,

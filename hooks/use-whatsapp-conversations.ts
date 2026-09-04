@@ -9,6 +9,7 @@ import {
   getWhatsAppSendFailureStatus,
   matchesLeadMessagesQueryKey,
   matchesPaginatedWhatsAppMessagesQueryKey,
+  matchesWhatsAppMessageRefreshQueryKey,
   matchesWhatsAppMessagesQueryKey,
   isWhatsAppInboxWakePayload,
   mergeWhatsAppMessagesWithLocalState,
@@ -19,6 +20,7 @@ import {
 import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
 
 const WHATSAPP_SEND_COOLDOWN_MS = 1000;
+const WHATSAPP_SEND_RECONCILE_DELAYS_MS = [4_000, 15_000] as const;
 const WHATSAPP_CONVERSATIONS_REFETCH_MS = 90_000;
 const WHATSAPP_ACTIVE_MESSAGES_REFETCH_MS = 30_000;
 const WHATSAPP_ACTIVE_MESSAGES_STALE_MS = 10_000;
@@ -529,9 +531,13 @@ export function useSendWhatsAppMessage() {
       queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
       const refreshMessages = () => {
         void queryClient.invalidateQueries({
-          predicate: (q) => [...messageKeys].some((messageConversationId) =>
-            matchesWhatsAppMessagesQuery(q, scope, messageConversationId, leadId),
+          predicate: (q) => matchesWhatsAppMessageRefreshQueryKey(
+            q.queryKey,
+            scope,
+            [...messageKeys],
+            leadId,
           ),
+          refetchType: "active",
         });
         if (leadId) {
           void queryClient.invalidateQueries({
@@ -542,7 +548,9 @@ export function useSendWhatsAppMessage() {
       if (typeof window === "undefined") {
         refreshMessages();
       } else {
-        window.setTimeout(refreshMessages, 4_000);
+        WHATSAPP_SEND_RECONCILE_DELAYS_MS.forEach((delay) => {
+          window.setTimeout(refreshMessages, delay);
+        });
       }
     },
     onError: (error: Error, variables, context) => {

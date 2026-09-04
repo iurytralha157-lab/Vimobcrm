@@ -404,25 +404,52 @@ func nativeMonotonicStatus(current string, incoming string) string {
 	if current == "" {
 		return incoming
 	}
-	if incoming == "" || current == incoming || current == "read" {
+	if incoming == "" || current == incoming || current == "read" || current == "failed" {
 		return current
 	}
 	if incoming == "read" {
 		return incoming
 	}
-	if (current == "sent" || current == "delivered") && (incoming == "pending" || incoming == "queued") {
-		return current
-	}
-	if current == "delivered" && incoming == "sent" {
-		return current
-	}
-	if current == "failed" && (incoming == "pending" || incoming == "sent" || incoming == "queued") {
-		return current
-	}
 	if incoming == "failed" && (current == "delivered" || current == "read") {
 		return current
 	}
+	currentRank, currentRanked := nativeDeliveryStatusRank(current)
+	incomingRank, incomingRanked := nativeDeliveryStatusRank(incoming)
+	if currentRanked && incomingRanked && incomingRank < currentRank {
+		return current
+	}
 	return incoming
+}
+
+func nativeDeliveryStatusRank(status string) (int, bool) {
+	switch status {
+	case "received":
+		return 0, true
+	case "queued", "pending", "retry":
+		return 1, true
+	case "processing", "sending":
+		return 2, true
+	case "sent":
+		return 3, true
+	case "delivered":
+		return 4, true
+	case "read":
+		return 5, true
+	default:
+		return 0, false
+	}
+}
+
+func nativeMonotonicOutboxStatus(current string, incoming string) string {
+	current = strings.ToLower(strings.TrimSpace(current))
+	incoming = strings.ToLower(strings.TrimSpace(incoming))
+	if current == "dead" {
+		return current
+	}
+	if current != "" && (incoming == "received" || incoming == "queued" || incoming == "pending") {
+		return current
+	}
+	return nativeMonotonicStatus(current, incoming)
 }
 
 func nativeMediaBlock(messageNode map[string]any, raw map[string]any, info map[string]any) (string, map[string]any) {

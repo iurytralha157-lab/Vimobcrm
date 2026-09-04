@@ -2,6 +2,10 @@
 // Evolution Go webhook for the Vimob WhatsApp module.
 // All writes are scoped by a resolved whatsapp_sessions.id before touching CRM data.
 import { createClient } from "npm:@supabase/supabase-js@2";
+import {
+  monotonicWhatsAppMessageStatus as monotonicMessageStatus,
+  monotonicWhatsAppOutboxStatus as monotonicOutboxStatus,
+} from "../_shared/whatsapp-message-status.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -3315,19 +3319,6 @@ function statusFromProvider(value: unknown) {
   return null;
 }
 
-function monotonicMessageStatus(currentValue: unknown, incomingValue: unknown) {
-  const current = normalizeText(currentValue).toLowerCase();
-  const incoming = normalizeText(incomingValue).toLowerCase();
-  if (!current) return incoming || "received";
-  if (!incoming || current === incoming) return current;
-  if (current === "read") return current;
-  if (incoming === "read") return incoming;
-  if (current === "delivered" && ["queued", "pending", "sent", "received"].includes(incoming)) return current;
-  if (current === "failed" && ["queued", "pending", "sent", "received"].includes(incoming)) return current;
-  if (incoming === "failed" && ["delivered", "read"].includes(current)) return current;
-  return incoming;
-}
-
 async function handleMessageStatus(session: JsonRecord, payload: any) {
   const data = payload?.data || payload?.Data || payload;
   const entries = [
@@ -3399,17 +3390,24 @@ async function handleMessageStatus(session: JsonRecord, payload: any) {
     const outboxTargetIds = outboxTargets
       ?.filter((target: JsonRecord) => (
         normalizeText(target.status).toLowerCase() !== status
-        && monotonicMessageStatus(target.status, status) === status
+        && monotonicOutboxStatus(target.status, status) === status
       ))
       .map((target: JsonRecord) => target.id);
 
     if (outboxTargetIds?.length) {
       const outboxUpdate: JsonRecord = { status };
+      if (status === "sent") outboxUpdate.sent_at = receiptAt;
       if (status === "delivered") outboxUpdate.delivered_at = receiptAt;
       if (status === "read") outboxUpdate.read_at = receiptAt;
       if (status === "failed") {
         outboxUpdate.failed_at = receiptAt;
         outboxUpdate.last_error = failureReason;
+      } else if (["sent", "delivered", "read"].includes(status)) {
+        outboxUpdate.last_error = null;
+      }
+      if (["sent", "delivered", "read", "failed"].includes(status)) {
+        outboxUpdate.locked_at = null;
+        outboxUpdate.locked_by = null;
       }
       const { error: outboxError } = await supabase
         .from("whatsapp_outbox")

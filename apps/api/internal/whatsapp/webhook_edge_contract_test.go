@@ -26,6 +26,8 @@ func TestEvolutionGoEdgeManagedDistributionFailsClosedAndRetries(t *testing.T) {
 	source := string(raw)
 
 	for _, fragment := range []string{
+		`monotonicWhatsAppMessageStatus as monotonicMessageStatus`,
+		`monotonicWhatsAppOutboxStatus as monotonicOutboxStatus`,
 		"boundSessionId !== sessionId",
 		`["deleted", "disabled"].includes(resolvedSessionStatus)`,
 		`if (loggedIn && connected) return "connected";`,

@@ -1405,7 +1405,7 @@ export default function Conversations() {
                   disabled={messageInputDisabled}
                   isSending={sendMessage.isPending}
                   multiline
-                  showRightActionsWhenEmpty
+                  showRightActionsWhenEmpty={!sendMessage.isPending}
                   leftActions={
                     <>
                       <button type="button" onClick={() => fileInputRef.current?.click()} disabled={messageInputDisabled}>
