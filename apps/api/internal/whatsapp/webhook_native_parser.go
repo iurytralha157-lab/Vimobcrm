@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type nativeEvolutionMessage struct {
@@ -37,6 +38,7 @@ type nativeEvolutionMessage struct {
 	IsDeletion                         bool
 	HasCampaignSignal                  bool
 	IsCTWAAd                           bool
+	CTWAConfirmationMethod             string
 	CampaignSourceType                 string
 	CampaignSourceID                   string
 	CampaignSourceURL                  string
@@ -49,6 +51,8 @@ type nativeEvolutionMessage struct {
 	CampaignConversionSource           string
 	CampaignSourceApp                  string
 	CampaignShowAdAttribution          *bool
+	CampaignShowAdAttributionInvalid   bool
+	CampaignCTWAProofConflict          bool
 	CampaignPropertyCode               string
 	UnsupportedID                      bool
 	UnsupportedMessage                 bool
@@ -79,23 +83,40 @@ func nativeEvolutionEventName(payload map[string]any, fallback string) string {
 
 func extractNativeEvolutionMessages(payload map[string]any) []nativeEvolutionMessage {
 	data := nativeFirstValue(payload, "data", "Data")
-	candidates := []any{
-		nativeFirstValue(payload, "messages", "Messages"),
-		nativeFirstValue(payload, "message", "Message"),
-		nativeFirstValue(mapFromAny(data), "messages", "Messages"),
-		nativeFirstValue(mapFromAny(data), "message", "Message"),
-		data,
-		payload,
+	dataMap := mapFromAny(data)
+	dataMessage := nativeFirstValue(dataMap, "message", "Message")
+	var dataMessageEnvelope map[string]any
+	if _, singular := dataMessage.(map[string]any); singular {
+		dataMessageEnvelope = dataMap
+	}
+	type messageCandidate struct {
+		value    any
+		envelope map[string]any
+	}
+	candidates := []messageCandidate{
+		{value: nativeFirstValue(payload, "messages", "Messages")},
+		{value: nativeFirstValue(payload, "message", "Message")},
+		// A shared data envelope is ambiguous for a batch. Every item in
+		// data.messages must carry its own identity and referral.
+		{value: nativeFirstValue(dataMap, "messages", "Messages")},
+		{value: dataMessage, envelope: dataMessageEnvelope},
+		{value: data},
+		{value: payload},
 	}
 
 	seen := map[string]bool{}
 	result := make([]nativeEvolutionMessage, 0, 1)
 	for _, candidate := range candidates {
-		for _, raw := range nativeObjectList(candidate) {
+		for _, raw := range nativeObjectList(candidate.value) {
 			if !nativeLooksLikeMessage(raw) {
 				continue
 			}
-			message, ok := normalizeNativeEvolutionMessage(raw)
+			// A wrapper such as data.message may carry the contact phone next to
+			// the actual message. It is an envelope, not a second message.
+			if nativeWrapsEvolutionMessage(raw) {
+				continue
+			}
+			message, ok := normalizeNativeEvolutionMessageWithEnvelope(raw, candidate.envelope)
 			if !ok {
 				continue
 			}
@@ -111,6 +132,10 @@ func extractNativeEvolutionMessages(payload map[string]any) []nativeEvolutionMes
 }
 
 func normalizeNativeEvolutionMessage(raw map[string]any) (nativeEvolutionMessage, bool) {
+	return normalizeNativeEvolutionMessageWithEnvelope(raw, nil)
+}
+
+func normalizeNativeEvolutionMessageWithEnvelope(raw map[string]any, envelope map[string]any) (nativeEvolutionMessage, bool) {
 	info := nativeFirstMap(raw, "Info", "info")
 	key := nativeFirstMap(raw, "key", "Key")
 	messageNode := nativeFirstMap(raw, "message", "Message")
@@ -151,9 +176,14 @@ func normalizeNativeEvolutionMessage(raw map[string]any) (nativeEvolutionMessage
 			remoteCandidate,
 		)
 	} else {
+		envelopePhone := ""
+		if strings.HasSuffix(strings.ToLower(strings.TrimSpace(remoteCandidate)), "@lid") {
+			envelopePhone = nativeInboundEnvelopePhone(envelope)
+		}
 		phoneCandidate = firstNonEmpty(
-			firstString(info, "SenderPN", "senderPN", "SenderPn", "Sender", "sender", "SenderAlt", "senderAlt"),
-			firstString(raw, "sender", "senderJid", "from", "phone", "number"),
+			nativeFirstPhoneIdentity(info, "SenderPN", "senderPN", "SenderPn", "Sender", "sender", "SenderAlt", "senderAlt"),
+			nativeFirstPhoneIdentity(raw, "sender", "senderJid", "from", "phone", "number"),
+			envelopePhone,
 			remoteCandidate,
 		)
 	}
@@ -214,8 +244,11 @@ func normalizeNativeEvolutionMessage(raw map[string]any) (nativeEvolutionMessage
 		content = ""
 	}
 	referral := nativeCampaignReferral(raw)
+	if len(envelope) > 0 {
+		referral = nativeMergeCampaignReferral(referral, nativeCampaignReferral(envelope))
+	}
 	referralSourceURL := nativeFirstHTTPURL(referral, "source_url", "sourceUrl", "SourceURL", "url", "link")
-	referralSourceType := firstString(referral, "source_type", "sourceType", "SourceType")
+	referralSourceType := firstString(referral, "explicit_source_type", "source_type", "sourceType", "SourceType")
 	entryPointSource := firstString(referral,
 		"entry_point_conversion_source", "entryPointConversionSource", "EntryPointConversionSource",
 	)
@@ -224,9 +257,13 @@ func normalizeNativeEvolutionMessage(raw map[string]any) (nativeEvolutionMessage
 	)
 	conversionSource := firstString(referral, "conversion_source", "conversionSource", "ConversionSource")
 	sourceApp := firstString(referral, "source_app", "sourceApp", "SourceApp")
-	showAdAttribution := nativeOptionalBool(nativeFirstValue(referral,
+	showAdAttribution, showAdAttributionInvalid := nativeOptionalStrictBool(nativeFirstValue(referral,
 		"show_ad_attribution", "showAdAttribution", "ShowAdAttribution",
 	))
+	showAdAttributionInvalid = showAdAttributionInvalid || nativeFailClosedMarker(
+		nativeFirstValue(referral, "ctwa_show_ad_attribution_invalid"),
+	)
+	ctwaProofConflict := nativeFailClosedMarker(nativeFirstValue(referral, "ctwa_proof_conflict"))
 
 	sentAt := nativeTimestamp(nativeFirstValue(
 		info,
@@ -294,6 +331,19 @@ func normalizeNativeEvolutionMessage(raw map[string]any) (nativeEvolutionMessage
 			firstString(raw, "pushName", "contactName", "notifyName", "chatName", "name"),
 		)
 	}
+	campaignCTWAClid := firstString(referral, "ctwa_clid", "ctwaClid", "CTWAClid", "click_id", "clickId")
+	ctwaConfirmationMethod := nativeCTWAAdConfirmationMethod(nativeEvolutionMessage{
+		ProviderMessageID:                  providerMessageID,
+		ProviderMessageIDSynthetic:         providerIDSynthetic,
+		FromMe:                             fromMe,
+		IsGroup:                            identity.IsGroup,
+		CampaignSourceType:                 referralSourceType,
+		CampaignCTWAClid:                   campaignCTWAClid,
+		CampaignEntryPointConversionSource: entryPointSource,
+		CampaignShowAdAttribution:          showAdAttribution,
+		CampaignShowAdAttributionInvalid:   showAdAttributionInvalid,
+		CampaignCTWAProofConflict:          ctwaProofConflict,
+	})
 	return nativeEvolutionMessage{
 		ProviderMessageID:                  providerMessageID,
 		ProviderMessageIDSynthetic:         providerIDSynthetic,
@@ -317,20 +367,23 @@ func normalizeNativeEvolutionMessage(raw map[string]any) (nativeEvolutionMessage
 		IsReaction:                         isReaction,
 		DeletionTargetID:                   deletionTarget,
 		IsDeletion:                         isDeletion,
-		HasCampaignSignal:                  nativeHasCampaignSignal(raw),
-		IsCTWAAd:                           !fromMe && !identity.IsGroup && nativeIsCTWAAdReferral(entryPointSource, referralSourceType),
+		HasCampaignSignal:                  nativeHasCampaignSignal(raw) || len(referral) > 0,
+		IsCTWAAd:                           ctwaConfirmationMethod != "",
+		CTWAConfirmationMethod:             ctwaConfirmationMethod,
 		CampaignSourceType:                 referralSourceType,
 		CampaignSourceID:                   firstString(referral, "source_id", "sourceId", "SourceID", "ad_id", "adId", "AdID"),
 		CampaignSourceURL:                  referralSourceURL,
 		CampaignCreativeURL:                firstString(referral, "image_url", "thumbnail_url"),
 		CampaignCreativeVideoURL:           firstString(referral, "video_url"),
-		CampaignCTWAClid:                   firstString(referral, "ctwa_clid", "ctwaClid", "CTWAClid", "click_id", "clickId"),
+		CampaignCTWAClid:                   campaignCTWAClid,
 		CampaignHeadline:                   firstString(referral, "headline", "title", "Title", "body", "description"),
 		CampaignEntryPointConversionSource: entryPointSource,
 		CampaignEntryPointConversionApp:    entryPointApp,
 		CampaignConversionSource:           conversionSource,
 		CampaignSourceApp:                  sourceApp,
 		CampaignShowAdAttribution:          showAdAttribution,
+		CampaignShowAdAttributionInvalid:   showAdAttributionInvalid,
+		CampaignCTWAProofConflict:          ctwaProofConflict,
 		CampaignPropertyCode:               nativeCampaignPropertyCode(content, referralSourceURL),
 		UnsupportedID:                      unsupportedIdentity,
 		UnsupportedMessage:                 len(protocolMessage) > 0 && !isDeletion,
@@ -526,7 +579,9 @@ func nativeCampaignReferral(value any) map[string]any {
 		}
 		appendCandidate(container)
 		appendCandidate(nativeFirstMap(container,
-			"externalAdReply", "ExternalAdReply", "externalAdReplyInfo", "externalAdReplyMessage",
+			"externalAdReply", "ExternalAdReply", "external_ad_reply",
+			"externalAdReplyInfo", "ExternalAdReplyInfo",
+			"externalAdReplyMessage", "ExternalAdReplyMessage",
 		))
 		appendCandidate(nativeFirstMap(container, "referral", "Referral"))
 	}
@@ -545,17 +600,17 @@ func nativeCampaignReferral(value any) map[string]any {
 		nativeFirstMap(root, "referral", "Referral"),
 		nativeFirstMap(messageNode, "referral", "Referral"),
 		nativeFirstMap(info, "referral", "Referral"),
-		nativeFirstMap(root, "contextInfo", "ContextInfo"),
-		nativeFirstMap(messageNode, "contextInfo", "ContextInfo"),
-		nativeFirstMap(info, "contextInfo", "ContextInfo"),
-		nativeFirstMap(messageNode, "extendedTextMessage.contextInfo", "extendedTextMessage.ContextInfo", "ExtendedTextMessage.contextInfo", "ExtendedTextMessage.ContextInfo"),
-		nativeFirstMap(messageNode, "imageMessage.contextInfo", "imageMessage.ContextInfo", "ImageMessage.contextInfo", "ImageMessage.ContextInfo"),
-		nativeFirstMap(messageNode, "videoMessage.contextInfo", "videoMessage.ContextInfo", "VideoMessage.contextInfo", "VideoMessage.ContextInfo"),
-		nativeFirstMap(messageNode, "audioMessage.contextInfo", "audioMessage.ContextInfo", "AudioMessage.contextInfo", "AudioMessage.ContextInfo"),
-		nativeFirstMap(messageNode, "documentMessage.contextInfo", "documentMessage.ContextInfo", "DocumentMessage.contextInfo", "DocumentMessage.ContextInfo"),
-		nativeFirstMap(messageNode, "stickerMessage.contextInfo", "stickerMessage.ContextInfo", "StickerMessage.contextInfo", "StickerMessage.ContextInfo"),
-		nativeFirstMap(root, "externalAdReply", "ExternalAdReply"),
-		nativeFirstMap(messageNode, "externalAdReply", "ExternalAdReply"),
+		nativeFirstMap(root, "contextInfo", "ContextInfo", "context_info"),
+		nativeFirstMap(messageNode, "contextInfo", "ContextInfo", "context_info"),
+		nativeFirstMap(info, "contextInfo", "ContextInfo", "context_info"),
+		nativeFirstMap(messageNode, "extendedTextMessage.contextInfo", "extendedTextMessage.ContextInfo", "extendedTextMessage.context_info", "ExtendedTextMessage.contextInfo", "ExtendedTextMessage.ContextInfo", "ExtendedTextMessage.context_info"),
+		nativeFirstMap(messageNode, "imageMessage.contextInfo", "imageMessage.ContextInfo", "imageMessage.context_info", "ImageMessage.contextInfo", "ImageMessage.ContextInfo", "ImageMessage.context_info"),
+		nativeFirstMap(messageNode, "videoMessage.contextInfo", "videoMessage.ContextInfo", "videoMessage.context_info", "VideoMessage.contextInfo", "VideoMessage.ContextInfo", "VideoMessage.context_info"),
+		nativeFirstMap(messageNode, "audioMessage.contextInfo", "audioMessage.ContextInfo", "audioMessage.context_info", "AudioMessage.contextInfo", "AudioMessage.ContextInfo", "AudioMessage.context_info"),
+		nativeFirstMap(messageNode, "documentMessage.contextInfo", "documentMessage.ContextInfo", "documentMessage.context_info", "DocumentMessage.contextInfo", "DocumentMessage.ContextInfo", "DocumentMessage.context_info"),
+		nativeFirstMap(messageNode, "stickerMessage.contextInfo", "stickerMessage.ContextInfo", "stickerMessage.context_info", "StickerMessage.contextInfo", "StickerMessage.ContextInfo", "StickerMessage.context_info"),
+		nativeFirstMap(root, "externalAdReply", "ExternalAdReply", "external_ad_reply"),
+		nativeFirstMap(messageNode, "externalAdReply", "ExternalAdReply", "external_ad_reply"),
 	} {
 		appendContainer(container)
 	}
@@ -574,10 +629,7 @@ func nativeNormalizeCampaignReferralCandidate(value map[string]any) map[string]a
 		canonical string
 		paths     []string
 	}{
-		{canonical: "source_type", paths: []string{"source_type", "sourceType", "SourceType"}},
 		{canonical: "source_id", paths: []string{"source_id", "sourceId", "SourceID", "ad_id", "adId", "AdID"}},
-		{canonical: "ctwa_clid", paths: []string{"ctwa_clid", "ctwaClid", "CTWAClid", "click_id", "clickId"}},
-		{canonical: "entry_point_conversion_source", paths: []string{"entry_point_conversion_source", "entryPointConversionSource", "EntryPointConversionSource"}},
 		{canonical: "entry_point_conversion_app", paths: []string{"entry_point_conversion_app", "entryPointConversionApp", "EntryPointConversionApp"}},
 		{canonical: "conversion_source", paths: []string{"conversion_source", "conversionSource", "ConversionSource"}},
 		{canonical: "source_app", paths: []string{"source_app", "sourceApp", "SourceApp"}},
@@ -587,13 +639,50 @@ func nativeNormalizeCampaignReferralCandidate(value map[string]any) map[string]a
 			normalized[field.canonical] = item
 		}
 	}
+	proofInvalid := false
+	if explicitSourceType, invalid := nativeStrictCampaignProofText(value,
+		"explicit_source_type", "source_type", "sourceType", "SourceType",
+	); invalid {
+		proofInvalid = true
+	} else if explicitSourceType != "" {
+		normalized["explicit_source_type"] = explicitSourceType
+		normalized["source_type"] = explicitSourceType
+	}
+	if ctwaClid, invalid := nativeStrictCampaignProofText(value,
+		"ctwa_clid", "ctwaClid", "CTWAClid", "click_id", "clickId",
+	); invalid {
+		proofInvalid = true
+	} else if ctwaClid != "" {
+		normalized["ctwa_clid"] = ctwaClid
+	}
+	if entryPoint, invalid := nativeStrictCampaignProofText(value,
+		"entry_point_conversion_source", "entryPointConversionSource", "EntryPointConversionSource",
+	); invalid {
+		proofInvalid = true
+	} else if entryPoint != "" {
+		normalized["entry_point_conversion_source"] = entryPoint
+	}
 	if sourceURL := nativeFirstHTTPURL(value, "source_url", "sourceUrl", "SourceURL"); sourceURL != "" {
 		normalized["source_url"] = sourceURL
 	}
-	if show, present := nativeBool(nativeFirstValue(value,
+	if rawShow := nativeFirstValue(value,
 		"show_ad_attribution", "showAdAttribution", "ShowAdAttribution",
-	)); present {
-		normalized["show_ad_attribution"] = show
+	); rawShow != nil {
+		show, invalid := nativeOptionalStrictBool(rawShow)
+		if invalid {
+			normalized["ctwa_show_ad_attribution_invalid"] = true
+		} else if show != nil {
+			normalized["show_ad_attribution"] = *show
+		}
+	}
+	if nativeFailClosedMarker(nativeFirstValue(value, "ctwa_proof_conflict")) {
+		proofInvalid = true
+	}
+	if proofInvalid {
+		normalized["ctwa_proof_conflict"] = true
+	}
+	if nativeFailClosedMarker(nativeFirstValue(value, "ctwa_show_ad_attribution_invalid")) {
+		normalized["ctwa_show_ad_attribution_invalid"] = true
 	}
 	if normalized["source_url"] == nil {
 		if sourceURL := nativeFirstHTTPURL(value, "url", "link"); sourceURL != "" {
@@ -626,6 +715,7 @@ func nativeMergeCampaignReferral(primary map[string]any, fallback map[string]any
 		return nil
 	}
 	merged := make(map[string]any, len(primary)+len(fallback))
+	proofConflict := nativeCampaignReferralProofConflict(primary, fallback)
 	for key, value := range primary {
 		merged[key] = value
 	}
@@ -635,23 +725,168 @@ func nativeMergeCampaignReferral(primary map[string]any, fallback map[string]any
 			merged[key] = value
 		}
 	}
+	if proofConflict {
+		merged["ctwa_proof_conflict"] = true
+	}
 	return merged
 }
 
-func nativeOptionalBool(value any) *bool {
-	parsed, ok := nativeBool(value)
-	if !ok {
-		return nil
+func nativeOptionalStrictBool(value any) (*bool, bool) {
+	if value == nil {
+		return nil, false
 	}
-	return &parsed
+	var parsed bool
+	switch typed := value.(type) {
+	case bool:
+		parsed = typed
+	case string:
+		switch strings.ToLower(strings.TrimSpace(typed)) {
+		case "true", "1", "yes", "sim":
+			parsed = true
+		case "false", "0", "no", "nao", "não":
+			parsed = false
+		default:
+			return nil, true
+		}
+	case float64:
+		if typed != 0 && typed != 1 {
+			return nil, true
+		}
+		parsed = typed == 1
+	case int:
+		if typed != 0 && typed != 1 {
+			return nil, true
+		}
+		parsed = typed == 1
+	case int64:
+		if typed != 0 && typed != 1 {
+			return nil, true
+		}
+		parsed = typed == 1
+	default:
+		return nil, true
+	}
+	return &parsed, false
+}
+
+func nativeStrictCampaignProofText(value map[string]any, paths ...string) (string, bool) {
+	for _, path := range paths {
+		raw := nativeValueAt(value, path)
+		if raw == nil {
+			continue
+		}
+		text, ok := raw.(string)
+		if !ok {
+			return "", true
+		}
+		if text = strings.TrimSpace(text); text != "" {
+			return text, false
+		}
+	}
+	return "", false
+}
+
+func nativeFailClosedMarker(value any) bool {
+	if value == nil || value == false {
+		return false
+	}
+	return true
+}
+
+func nativeCampaignProofText(value map[string]any, key string, foldCase bool) (string, bool) {
+	raw := nativeFirstValue(value, key)
+	if raw == nil {
+		return "", false
+	}
+	text := strings.TrimSpace(stringFromAny(raw))
+	if text == "" {
+		return "", false
+	}
+	if foldCase {
+		text = strings.ToLower(text)
+	}
+	return text, true
+}
+
+func nativeCampaignReferralProofConflict(primary map[string]any, fallback map[string]any) bool {
+	if nativeFailClosedMarker(nativeFirstValue(primary, "ctwa_proof_conflict")) ||
+		nativeFailClosedMarker(nativeFirstValue(fallback, "ctwa_proof_conflict")) {
+		return true
+	}
+	for _, field := range []struct {
+		key      string
+		foldCase bool
+	}{
+		{key: "entry_point_conversion_source", foldCase: true},
+		{key: "explicit_source_type", foldCase: true},
+		{key: "ctwa_clid"},
+	} {
+		left, leftPresent := nativeCampaignProofText(primary, field.key, field.foldCase)
+		right, rightPresent := nativeCampaignProofText(fallback, field.key, field.foldCase)
+		if leftPresent && rightPresent && left != right {
+			return true
+		}
+	}
+	leftRaw := nativeFirstValue(primary, "show_ad_attribution")
+	rightRaw := nativeFirstValue(fallback, "show_ad_attribution")
+	if leftRaw != nil && rightRaw != nil {
+		left, leftInvalid := nativeOptionalStrictBool(leftRaw)
+		right, rightInvalid := nativeOptionalStrictBool(rightRaw)
+		if leftInvalid || rightInvalid || left == nil || right == nil || *left != *right {
+			return true
+		}
+	}
+	return false
 }
 
 func nativeIsCTWAAdReferral(entryPointConversionSource string, explicitSourceType string) bool {
-	if !strings.EqualFold(strings.TrimSpace(entryPointConversionSource), "ctwa_ad") {
+	return nativeCTWAAdConfirmationMethod(nativeEvolutionMessage{
+		CampaignEntryPointConversionSource: entryPointConversionSource,
+		CampaignSourceType:                 explicitSourceType,
+	}) != ""
+}
+
+func nativeValidCTWAClickIdentifier(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) < 8 || len(value) > 512 {
 		return false
 	}
-	sourceType := strings.ToLower(strings.TrimSpace(explicitSourceType))
-	return sourceType == "" || sourceType == "ad"
+	for _, char := range value {
+		if unicode.IsControl(char) {
+			return false
+		}
+	}
+	return true
+}
+
+func nativeCTWAAdConfirmationMethod(message nativeEvolutionMessage) string {
+	if message.FromMe || message.IsGroup {
+		return ""
+	}
+	if message.CampaignCTWAProofConflict {
+		return ""
+	}
+	if message.CampaignShowAdAttributionInvalid {
+		return ""
+	}
+	entryPoint := strings.ToLower(strings.TrimSpace(message.CampaignEntryPointConversionSource))
+	explicitSourceType := strings.ToLower(strings.TrimSpace(message.CampaignSourceType))
+	if entryPoint != "" {
+		if entryPoint == "ctwa_ad" && (explicitSourceType == "" || explicitSourceType == "ad") {
+			return "entry_point_ctwa_ad"
+		}
+		return ""
+	}
+	if message.ProviderMessageIDSynthetic || strings.TrimSpace(message.ProviderMessageID) == "" {
+		return ""
+	}
+	if explicitSourceType != "ad" || !nativeValidCTWAClickIdentifier(message.CampaignCTWAClid) {
+		return ""
+	}
+	if message.CampaignShowAdAttribution != nil && !*message.CampaignShowAdAttribution {
+		return ""
+	}
+	return "evolution_ctwa_clid_v1"
 }
 
 func nativeFirstHTTPURL(value map[string]any, paths ...string) string {
@@ -707,6 +942,42 @@ func nativeLooksLikeMessage(value map[string]any) bool {
 		}
 	}
 	return false
+}
+
+func nativeWrapsEvolutionMessage(value map[string]any) bool {
+	// Scalar IDs commonly belong to the Evolution instance/envelope. A parent
+	// without Info/key that contains a structurally complete child is a wrapper,
+	// not a second message.
+	if len(nativeFirstMap(value, "Info", "info")) > 0 || len(nativeFirstMap(value, "key", "Key")) > 0 {
+		return false
+	}
+	for _, nested := range nativeObjectList(nativeFirstValue(value, "message", "Message")) {
+		if len(nativeFirstMap(nested, "Info", "info")) > 0 || len(nativeFirstMap(nested, "key", "Key")) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func nativeInboundEnvelopePhone(envelope map[string]any) string {
+	if len(envelope) == 0 {
+		return ""
+	}
+	return nativeFirstPhoneIdentity(envelope,
+		"SenderPN", "senderPN", "SenderPn",
+		"senderJid", "sender_jid", "senderPhone", "sender_phone",
+		"phone", "number", "sender",
+	)
+}
+
+func nativeFirstPhoneIdentity(value map[string]any, paths ...string) string {
+	for _, path := range paths {
+		candidate := firstString(value, path)
+		if _, ok := phoneFromIdentityValue(candidate); ok {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func nativeFirstMap(value map[string]any, paths ...string) map[string]any {
