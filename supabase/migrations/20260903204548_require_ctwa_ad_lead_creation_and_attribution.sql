@@ -314,11 +314,6 @@ $$;
 revoke all on function private.validate_managed_whatsapp_ctwa_ad()
 from public, anon, authenticated, service_role;
 
-drop trigger if exists validate_managed_whatsapp_ctwa_ad on public.leads;
-create trigger validate_managed_whatsapp_ctwa_ad
-before insert or update of metadata on public.leads
-for each row execute function private.validate_managed_whatsapp_ctwa_ad();
-
 -- Provider attribution stored on a WhatsApp message is immutable to browser
 -- sessions. The backend may continue updating transport fields with the
 -- service role or its direct trusted database connection.
@@ -372,11 +367,6 @@ $$;
 revoke all on function private.protect_whatsapp_provider_attribution()
 from public, anon, authenticated, service_role;
 
-drop trigger if exists protect_whatsapp_provider_attribution on public.whatsapp_messages;
-create trigger protect_whatsapp_provider_attribution
-before insert or update of metadata on public.whatsapp_messages
-for each row execute function private.protect_whatsapp_provider_attribution();
-
 -- Reserve an indexed provider-event ledger for creative history. Keeping the
 -- idempotency key outside the hot activities table avoids an expression-index
 -- rollout there and makes every new provider event an O(log n) lookup.
@@ -388,15 +378,11 @@ create table if not exists private.whatsapp_meta_creative_event_ledger (
   activity_id uuid,
   recorded_at timestamptz not null default clock_timestamp(),
   primary key (organization_id, whatsapp_session_id, provider_message_id),
-  constraint whatsapp_meta_creative_event_ledger_organization_fkey
-    foreign key (organization_id) references public.organizations(id) on delete cascade,
-  constraint whatsapp_meta_creative_event_ledger_session_fkey
-    foreign key (whatsapp_session_id) references public.whatsapp_sessions(id) on delete cascade,
-  constraint whatsapp_meta_creative_event_ledger_lead_fkey
-    foreign key (lead_id) references public.leads(id) on delete cascade,
   constraint whatsapp_meta_creative_provider_message_id_length
     check (length(provider_message_id) between 1 and 500)
 );
+
+alter table private.whatsapp_meta_creative_event_ledger enable row level security;
 
 create index if not exists whatsapp_meta_creative_event_ledger_session_idx
   on private.whatsapp_meta_creative_event_ledger (whatsapp_session_id);
@@ -613,11 +599,6 @@ $$;
 revoke all on function private.dedupe_whatsapp_meta_creative_activity()
 from public, anon, authenticated, service_role;
 
-drop trigger if exists dedupe_whatsapp_meta_creative_activity on public.activities;
-create trigger dedupe_whatsapp_meta_creative_activity
-before insert or update or delete on public.activities
-for each row execute function private.dedupe_whatsapp_meta_creative_activity();
-
 -- Enrich the canonical entry ledger from the already persisted, normalized
 -- message row. The caller cannot inject attribution into this SECURITY DEFINER
 -- boundary; org/session/lead/provider identity must all match first.
@@ -777,5 +758,60 @@ comment on function public.enrich_whatsapp_lead_entry_attribution(
   uuid, uuid, uuid, text
 ) is
 'Copies normalized CTWA attribution from the trusted managed inbound log into its canonical lead entry event after validating the persisted message, organization, session, lead and provider identity.';
+
+-- Install foreign keys and hot-table triggers only after all definitions are
+-- ready. PostgreSQL holds DDL locks until transaction end, so keeping these
+-- statements next to COMMIT minimizes the time production writers can wait.
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_catalog.pg_constraint
+    where conrelid = 'private.whatsapp_meta_creative_event_ledger'::regclass
+      and conname = 'whatsapp_meta_creative_event_ledger_organization_fkey'
+  ) then
+    alter table private.whatsapp_meta_creative_event_ledger
+      add constraint whatsapp_meta_creative_event_ledger_organization_fkey
+      foreign key (organization_id) references public.organizations(id) on delete cascade;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_catalog.pg_constraint
+    where conrelid = 'private.whatsapp_meta_creative_event_ledger'::regclass
+      and conname = 'whatsapp_meta_creative_event_ledger_session_fkey'
+  ) then
+    alter table private.whatsapp_meta_creative_event_ledger
+      add constraint whatsapp_meta_creative_event_ledger_session_fkey
+      foreign key (whatsapp_session_id) references public.whatsapp_sessions(id) on delete cascade;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_catalog.pg_constraint
+    where conrelid = 'private.whatsapp_meta_creative_event_ledger'::regclass
+      and conname = 'whatsapp_meta_creative_event_ledger_lead_fkey'
+  ) then
+    alter table private.whatsapp_meta_creative_event_ledger
+      add constraint whatsapp_meta_creative_event_ledger_lead_fkey
+      foreign key (lead_id) references public.leads(id) on delete cascade;
+  end if;
+end;
+$$;
+
+drop trigger if exists validate_managed_whatsapp_ctwa_ad on public.leads;
+create trigger validate_managed_whatsapp_ctwa_ad
+before insert or update of metadata on public.leads
+for each row execute function private.validate_managed_whatsapp_ctwa_ad();
+
+drop trigger if exists protect_whatsapp_provider_attribution on public.whatsapp_messages;
+create trigger protect_whatsapp_provider_attribution
+before insert or update of metadata on public.whatsapp_messages
+for each row execute function private.protect_whatsapp_provider_attribution();
+
+drop trigger if exists dedupe_whatsapp_meta_creative_activity on public.activities;
+create trigger dedupe_whatsapp_meta_creative_activity
+before insert or update or delete on public.activities
+for each row execute function private.dedupe_whatsapp_meta_creative_activity();
 
 commit;
