@@ -462,11 +462,17 @@ func TestNativeMessageStatusIsMonotonic(t *testing.T) {
 	}{
 		{"sent", "pending", "sent"},
 		{"sent", "queued", "sent"},
+		{"sent", "received", "sent"},
+		{"processing", "pending", "processing"},
+		{"processing", "sent", "sent"},
 		{"delivered", "pending", "delivered"},
 		{"delivered", "queued", "delivered"},
 		{"delivered", "sent", "delivered"},
 		{"read", "sent", "read"},
 		{"delivered", "failed", "delivered"},
+		{"failed", "sent", "failed"},
+		{"failed", "delivered", "failed"},
+		{"failed", "read", "failed"},
 		{"sent", "read", "read"},
 	}
 	for _, test := range tests {
@@ -507,6 +513,22 @@ func TestNativeNotificationReceiptUsesExactServiceRPC(t *testing.T) {
 		if !strings.Contains(source, required) {
 			t.Fatalf("notification WhatsApp receipt RPC contract is missing %q", required)
 		}
+	}
+}
+
+func TestNativeOutboxStatusDoesNotReopenFromProviderQueueAck(t *testing.T) {
+	for _, current := range []string{"processing", "retry", "sent", "delivered", "read", "failed", "dead"} {
+		for _, incoming := range []string{"pending", "queued"} {
+			if got := nativeMonotonicOutboxStatus(current, incoming); got != current {
+				t.Fatalf("nativeMonotonicOutboxStatus(%q, %q) = %q, want %q", current, incoming, got, current)
+			}
+		}
+	}
+	if got := nativeMonotonicOutboxStatus("processing", "sent"); got != "sent" {
+		t.Fatalf("processing outbox with sent receipt = %q, want sent", got)
+	}
+	if got := nativeMonotonicOutboxStatus("dead", "read"); got != "dead" {
+		t.Fatalf("dead outbox with read receipt = %q, want dead until full reconciliation", got)
 	}
 }
 

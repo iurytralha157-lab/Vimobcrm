@@ -1632,7 +1632,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                   disabled={messageInputDisabled}
                   isSending={sendMessage.isPending}
                   multiline
-                  showRightActionsWhenEmpty
+                  showRightActionsWhenEmpty={!sendMessage.isPending}
                   leftActions={
                     <>
                       <button aria-label="Anexar arquivo" type="button" onClick={() => fileInputRef.current?.click()} disabled={messageInputDisabled}>

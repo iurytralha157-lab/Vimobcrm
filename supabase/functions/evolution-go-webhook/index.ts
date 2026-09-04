@@ -3,6 +3,10 @@
 // All writes are scoped by a resolved whatsapp_sessions.id before touching CRM data.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import {
+  monotonicWhatsAppMessageStatus as monotonicMessageStatus,
+  monotonicWhatsAppOutboxStatus as monotonicOutboxStatus,
+} from "../_shared/whatsapp-message-status.ts";
+import {
   readSupabaseSecretKeyEnvironment,
   selectSupabaseAdminSecretKey,
 } from "../_shared/supabase-secret-keys.ts";
@@ -3667,11 +3671,12 @@ async function handleMessages(
 
 function statusFromProvider(value: unknown) {
   const raw = normalizeText(value).toLowerCase();
-  if (["read", "played"].includes(raw)) return "read";
-  if (["delivered", "delivery"].includes(raw)) return "delivered";
-  if (["sent", "server_ack", "serverack"].includes(raw)) return "sent";
-  if (["failed", "error"].includes(raw)) return "failed";
-  return raw || null;
+  if (["3", "4", "read", "played"].includes(raw)) return "read";
+  if (["2", "delivered", "delivery", "device_ack", "deviceack"].includes(raw)) return "delivered";
+  if (["1", "sent", "server_ack", "serverack"].includes(raw)) return "sent";
+  if (["0", "queued", "pending"].includes(raw)) return "pending";
+  if (["-1", "failed", "error"].includes(raw)) return "failed";
+  return null;
 }
 
 async function handleMessageStatus(session: JsonRecord, payload: any) {
@@ -3703,19 +3708,85 @@ async function handleMessageStatus(session: JsonRecord, payload: any) {
     ));
     if (messageIds.length === 0 || !status) continue;
 
-    const update: JsonRecord = { status };
-    if (status === "delivered") update.delivered_at = new Date().toISOString();
-    if (status === "read") update.read_at = new Date().toISOString();
-    if (status === "failed") update.error_message = firstPresent(entry.error, entry.message, "Falha no envio");
-
-    const { error } = await supabase
+    const { data: targets, error: targetError } = await supabase
       .from("whatsapp_messages")
-      .update(update)
+      .select("id, message_id, status, delivered_at, read_at")
       .eq("organization_id", session.organization_id)
       .eq("session_id", session.id)
       .in("message_id", messageIds);
-    if (error) throw error;
-    updated += messageIds.length;
+    if (targetError) throw targetError;
+
+    const targetIds = targets
+      ?.filter((target: JsonRecord) => (
+        normalizeText(target.status).toLowerCase() !== status
+        && monotonicMessageStatus(target.status, status) === status
+      ))
+      .map((target: JsonRecord) => target.id);
+    const receiptAt = new Date().toISOString();
+    const failureReason = normalizeText(firstPresent(entry.error, entry.message, "Falha no envio"));
+
+    const update: JsonRecord = { status };
+    if (status === "delivered") update.delivered_at = receiptAt;
+    if (status === "read") update.read_at = receiptAt;
+
+    if (targetIds?.length) {
+      const { error } = await supabase
+        .from("whatsapp_messages")
+        .update(update)
+        .eq("organization_id", session.organization_id)
+        .eq("session_id", session.id)
+        .in("id", targetIds);
+      if (error) throw error;
+    }
+
+    const { data: outboxTargets, error: outboxTargetError } = await supabase
+      .from("whatsapp_outbox")
+      .select("id, provider_message_id, status")
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .in("provider_message_id", messageIds);
+    if (outboxTargetError) throw outboxTargetError;
+
+    const outboxTargetIds = outboxTargets
+      ?.filter((target: JsonRecord) => (
+        normalizeText(target.status).toLowerCase() !== status
+        && monotonicOutboxStatus(target.status, status) === status
+      ))
+      .map((target: JsonRecord) => target.id);
+
+    if (outboxTargetIds?.length) {
+      const outboxUpdate: JsonRecord = { status };
+      if (status === "sent") outboxUpdate.sent_at = receiptAt;
+      if (status === "delivered") outboxUpdate.delivered_at = receiptAt;
+      if (status === "read") outboxUpdate.read_at = receiptAt;
+      if (status === "failed") {
+        outboxUpdate.failed_at = receiptAt;
+        outboxUpdate.last_error = failureReason;
+      } else if (["sent", "delivered", "read"].includes(status)) {
+        outboxUpdate.last_error = null;
+      }
+      if (["sent", "delivered", "read", "failed"].includes(status)) {
+        outboxUpdate.locked_at = null;
+        outboxUpdate.locked_by = null;
+      }
+      const { error: outboxError } = await supabase
+        .from("whatsapp_outbox")
+        .update(outboxUpdate)
+        .eq("organization_id", session.organization_id)
+        .eq("session_id", session.id)
+        .in("id", outboxTargetIds);
+      if (outboxError) throw outboxError;
+    }
+
+    const matchedMessageIds = new Set([
+      ...(targets || []).map((target: JsonRecord) => normalizeText(target.message_id)),
+      ...(outboxTargets || []).map((target: JsonRecord) => normalizeText(target.provider_message_id)),
+    ].filter(Boolean));
+    const missingMessageIds = messageIds.filter((messageId) => !matchedMessageIds.has(messageId));
+    if (missingMessageIds.length > 0) {
+      throw new Error(`MESSAGE_STATUS_TARGET_NOT_FOUND:${missingMessageIds.join(",")}`);
+    }
+    updated += targetIds?.length || 0;
   }
   return updated;
 }

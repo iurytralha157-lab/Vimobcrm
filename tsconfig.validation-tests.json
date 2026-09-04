@@ -104,6 +104,8 @@
     "supabase/functions/_shared/retired-user-mutation.ts",
     "supabase/functions/_shared/retired-user-mutation.test.ts",
     "supabase/functions/_shared/financial-recurring-hardening.test.ts",
+    "supabase/functions/_shared/whatsapp-message-status.ts",
+    "supabase/functions/_shared/whatsapp-message-status.test.ts",
     "lib/automations/index.ts",
     "lib/automations/engine.ts",
     "lib/automations/engine.test.ts"

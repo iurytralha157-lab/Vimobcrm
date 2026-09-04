@@ -1158,7 +1158,7 @@ export function FloatingChat() {
         isSending={sendMessage.isPending}
         multiline
         inputRef={messageInputRef}
-        showRightActionsWhenEmpty
+        showRightActionsWhenEmpty={!sendMessage.isPending}
         leftActions={
           <>
             <button type="button" onClick={() => fileInputRef.current?.click()} disabled={messageInputDisabled}>
