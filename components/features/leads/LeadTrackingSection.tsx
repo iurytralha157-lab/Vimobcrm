@@ -12,21 +12,11 @@ import {
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import type { LeadMeta } from '@/hooks/use-lead-meta';
+import { getSafeAbsoluteHttpUrl } from '@/lib/safe-http-url';
 
 type LeadMetaWithCreativeLinks = LeadMeta & {
   creative_instagram_url?: string | null;
 };
-
-function getSafeExternalUrl(value: unknown) {
-  if (typeof value !== 'string' || !value.trim()) return null;
-
-  try {
-    const url = new URL(value.trim());
-    return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : null;
-  } catch {
-    return null;
-  }
-}
 
 function formatCapturedAt(value: string) {
   const date = new Date(value);
@@ -34,13 +24,16 @@ function formatCapturedAt(value: string) {
   return format(date, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
 }
 
-function openExternalUrl(url: string) {
-  window.open(url, '_blank', 'noopener,noreferrer');
-}
-
 interface LeadTrackingSectionProps {
   leadMeta: LeadMeta | null;
   isLoading?: boolean;
+}
+
+function openSafeExternalUrl(value: unknown) {
+  const url = getSafeAbsoluteHttpUrl(value);
+  if (!url) return;
+
+  window.open(url, '_blank', 'noopener,noreferrer');
 }
 
 export function LeadTrackingSection({ leadMeta, isLoading }: LeadTrackingSectionProps) {
@@ -75,11 +68,12 @@ export function LeadTrackingSection({ leadMeta, isLoading }: LeadTrackingSection
     return null;
   }
 
-  const creativeInstagramUrl = (leadMeta as LeadMetaWithCreativeLinks).creative_instagram_url;
-  const creativeImageUrl = getSafeExternalUrl(leadMeta.creative_url);
-  const creativeVideoUrl = getSafeExternalUrl(leadMeta.creative_video_url);
-  const instagramUrl = getSafeExternalUrl(creativeInstagramUrl);
-  const primaryCreativeUrl = creativeVideoUrl || creativeImageUrl;
+  const safeCreativeImageUrl = getSafeAbsoluteHttpUrl(leadMeta.creative_url);
+  const safeCreativeVideoUrl = getSafeAbsoluteHttpUrl(leadMeta.creative_video_url);
+  const safeCreativeInstagramUrl = getSafeAbsoluteHttpUrl(
+    (leadMeta as LeadMetaWithCreativeLinks).creative_instagram_url,
+  );
+  const safePrimaryCreativeUrl = safeCreativeVideoUrl || safeCreativeImageUrl;
 
   return (
     <div className="space-y-4">
@@ -120,7 +114,7 @@ export function LeadTrackingSection({ leadMeta, isLoading }: LeadTrackingSection
                 label="Anúncio"
                 value={leadMeta.ad_name || leadMeta.ad_id || ''}
                 subValue={leadMeta.ad_name && leadMeta.ad_id ? `ID: ${leadMeta.ad_id}` : undefined}
-                externalUrl={primaryCreativeUrl || undefined}
+                externalUrl={safePrimaryCreativeUrl || undefined}
                 externalUrlLabel="Ver criativo"
               />
             )}
@@ -144,26 +138,26 @@ export function LeadTrackingSection({ leadMeta, isLoading }: LeadTrackingSection
           </div>
 
           {/* Creative Preview (Video or Image) */}
-          {primaryCreativeUrl && (
+          {safePrimaryCreativeUrl && (
             <div className="mt-3 space-y-2 border-t border-[var(--app-border)] pt-3">
-              {creativeVideoUrl ? (
+              {safeCreativeVideoUrl ? (
                 <video
-                  src={creativeVideoUrl}
+                  src={safeCreativeVideoUrl}
                   controls
                   preload="metadata"
                   className="max-h-[240px] w-full rounded-[8px] bg-black"
-                  poster={creativeImageUrl || undefined}
+                  poster={safeCreativeImageUrl || undefined}
                 />
-              ) : creativeImageUrl ? (
+              ) : safeCreativeImageUrl ? (
                 <button
                   type="button"
                   className="block w-full rounded-[8px] outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
-                  onClick={() => openExternalUrl(creativeImageUrl)}
+                  onClick={() => openSafeExternalUrl(safeCreativeImageUrl)}
                   aria-label="Abrir criativo do anúncio"
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element -- Creative URLs come from Meta and may not be covered by Next image domains yet. */}
                   <img
-                    src={creativeImageUrl}
+                    src={safeCreativeImageUrl}
                     alt="Criativo do anúncio"
                     className="max-h-[240px] w-full rounded-[8px] object-cover transition-opacity hover:opacity-90"
                   />
@@ -174,17 +168,17 @@ export function LeadTrackingSection({ leadMeta, isLoading }: LeadTrackingSection
                   variant="ghost"
                   size="sm"
                   className="h-8 flex-1 gap-2 rounded-[6px] bg-[var(--app-surface-solid)] text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]"
-                  onClick={() => openExternalUrl(primaryCreativeUrl)}
+                  onClick={() => openSafeExternalUrl(safePrimaryCreativeUrl)}
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
                   Ver Criativo
                 </Button>
-                {instagramUrl && (
+                {safeCreativeInstagramUrl && (
                   <Button
                     variant="ghost"
                     size="sm"
                     className="h-8 flex-1 gap-2 rounded-[6px] bg-[var(--app-surface-solid)] text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]"
-                    onClick={() => openExternalUrl(instagramUrl)}
+                    onClick={() => openSafeExternalUrl(safeCreativeInstagramUrl)}
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
                     Ver no Instagram
@@ -272,7 +266,7 @@ function TrackingRow({ icon: Icon, label, value, subValue, externalUrl }: Tracki
           variant="ghost"
           size="icon"
           className="h-8 w-8 shrink-0 rounded-[6px] shadow-none hover:bg-[var(--app-surface-hover)]"
-          onClick={() => openExternalUrl(externalUrl)}
+          onClick={() => openSafeExternalUrl(externalUrl)}
           title="Abrir no Meta Ads Manager"
           aria-label="Abrir criativo no Meta Ads Manager"
         >

@@ -109,15 +109,6 @@ function redactLogText(value: unknown) {
     .slice(0, 1000);
 }
 
-function safeUrlForLog(value: unknown) {
-  try {
-    const parsed = new URL(normalizeText(value));
-    return `${parsed.origin}${parsed.pathname}`;
-  } catch {
-    return "[invalid-url]";
-  }
-}
-
 function optionalUuid(value: unknown) {
   const text = normalizeText(value).trim();
   if (!text) return null;
@@ -414,15 +405,6 @@ function stableHash(input: string) {
     hash |= 0;
   }
   return Math.abs(hash).toString(36);
-}
-
-async function stableDistributionKey(prefix: string, ...parts: string[]) {
-  const encodedParts = new TextEncoder().encode(JSON.stringify(parts));
-  const digest = await crypto.subtle.digest("SHA-256", encodedParts);
-  const digestHex = [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-  return `${prefix.trim()}:${digestHex}`;
 }
 
 function normalizeStatus(data: any) {
@@ -2219,36 +2201,6 @@ async function ensureLead(
     is_new_lead: Boolean(lead.is_new_lead),
     is_managed_whatsapp_message_distribution: managedMessageDistribution,
   };
-}
-
-async function distributeLeadFromEdge(params: {
-  organizationId: string;
-  leadId: string;
-  idempotencyKey: string;
-  roundRobinId: string | null;
-  occurredAt: string;
-}) {
-  const { data, error } = await supabase
-    .rpc("distribute_lead_from_backend", {
-      p_organization_id: params.organizationId,
-      p_lead_id: params.leadId,
-      p_idempotency_key: params.idempotencyKey,
-      p_round_robin_id: params.roundRobinId,
-      p_preserve_assignee: true,
-      p_source: "whatsapp",
-      p_now: params.occurredAt,
-    });
-
-  if (error) throw error;
-  if (!isRecord(data)) {
-    throw new Error("Canonical lead distribution returned an invalid result");
-  }
-
-  const reason = normalizeText(data.reason);
-  if (!["assigned", "already_assigned", "no_matching_queue", "no_available_members"].includes(reason)) {
-    throw new Error(`Canonical lead distribution rejected the request: ${reason || "unknown_reason"}`);
-  }
-  return data;
 }
 
 async function processManagedWhatsAppLeadEntry(

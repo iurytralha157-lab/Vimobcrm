@@ -82,6 +82,7 @@ import { leadsAPI } from '@/lib/api/leads';
 import { teamsAPI } from '@/lib/api/teams';
 import { maskCPF, maskRG } from '@/lib/masks';
 import type { LeadCadenceTaskState } from '@/lib/validation';
+import { getSafeAbsoluteHttpUrl } from '@/lib/safe-http-url';
 const sourceLabels: Record<string, string> = {
   meta: 'Meta Ads',
   meta_ads: 'Meta Ads',
@@ -158,6 +159,7 @@ type CampaignTrackingDetails = Omit<Partial<LeadMeta>, 'lead_id' | 'created_at'>
   created_at?: string | null;
   page_name?: string | null;
   leadgen_id?: string | null;
+  creative_link_url?: string | null;
 };
 
 type SelectableLeadProperty = {
@@ -338,6 +340,8 @@ function buildCampaignTrackingDetails(
   const boardMetaRecord = trackingRecord(boardMeta);
   const rawPayload = trackingRecord(leadMeta?.raw_payload);
   const rawDetails = trackingRecord(rawPayload?.lead_details);
+  const rawSourceReferral = trackingRecord(rawPayload?.source_referral);
+  const rawReferral = trackingRecord(rawPayload?.referral);
 
   const details: CampaignTrackingDetails = {
     lead_id: firstTrackingText(leadMeta?.lead_id, lead?.id),
@@ -364,6 +368,15 @@ function buildCampaignTrackingDetails(
     creative_url: firstTrackingText(leadMeta?.creative_url),
     creative_video_url: firstTrackingText(leadMeta?.creative_video_url),
     creative_instagram_url: firstTrackingText(leadMeta?.creative_instagram_url),
+    creative_link_url: firstTrackingText(
+      rawPayload?.source_url,
+      rawPayload?.creative_link_url,
+      rawPayload?.creative_destination_url,
+      rawSourceReferral?.source_url,
+      rawReferral?.source_url,
+      rawDetails?.source_url,
+      leadMeta?.creative_instagram_url,
+    ),
   };
 
   return hasLeadTrackingData(details) ? details : null;
@@ -392,6 +405,7 @@ function hasLeadTrackingData(leadMeta: CampaignTrackingDetails | null | undefine
     leadMeta.creative_url,
     leadMeta.creative_video_url,
     leadMeta.creative_instagram_url,
+    leadMeta.creative_link_url,
     leadMeta.contact_notes,
   ].some((value) => Boolean(metaText(value))) || isTrackedLeadSource(leadMeta.platform) || isTrackedLeadSource(leadMeta.source_type);
 }
@@ -432,11 +446,19 @@ function CampaignTrackingHover({ leadMeta }: { leadMeta: CampaignTrackingDetails
     ['utm_term', leadMeta?.utm_term],
   ] as const;
 
-  const links = [
-    ['Criativo', leadMeta?.creative_url],
-    ['Video', leadMeta?.creative_video_url],
-    ['Instagram', leadMeta?.creative_instagram_url],
-  ] as const;
+  const safeCreativeLink = getSafeAbsoluteHttpUrl(leadMeta?.creative_link_url)
+    || getSafeAbsoluteHttpUrl(leadMeta?.creative_instagram_url);
+  const seenLinks = new Set<string>();
+  const links = ([
+    ['Link do criativo', safeCreativeLink],
+    ['Imagem', getSafeAbsoluteHttpUrl(leadMeta?.creative_url)],
+    ['Video', getSafeAbsoluteHttpUrl(leadMeta?.creative_video_url)],
+  ] as const).flatMap(([label, value]) => {
+    const href = metaText(value);
+    if (!href || seenLinks.has(href)) return [];
+    seenLinks.add(href);
+    return [[label, href] as const];
+  });
 
   const DetailRow = ({ label, value }: { label: string; value: unknown }) => {
     const text = metaText(value);
@@ -451,7 +473,7 @@ function CampaignTrackingHover({ leadMeta }: { leadMeta: CampaignTrackingDetails
   };
 
   const hasUtms = utmRows.some(([, value]) => Boolean(metaText(value)));
-  const hasLinks = links.some(([, value]) => Boolean(metaText(value)));
+  const hasLinks = links.length > 0;
 
   return (
     <HoverCard open={open} onOpenChange={setOpen} openDelay={100} closeDelay={420}>

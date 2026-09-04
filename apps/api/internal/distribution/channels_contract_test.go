@@ -110,22 +110,24 @@ func TestCanonicalDistributionChannelContracts(t *testing.T) {
 	t.Run("whatsapp edge", func(t *testing.T) {
 		source := readSource(t, filepath.Join("..", "..", "..", "..", "supabase", "functions", "evolution-go-webhook", "index.ts"))
 		requireContains(t, source,
-			"async function stableDistributionKey",
-			`crypto.subtle.digest("SHA-256"`,
-			"async function resolveRoundRobinTarget",
-			"async function distributeLeadFromEdge",
-			"parseBoolean(existingMetadata.distribution_deferred)",
-			`normalizeText(existingMetadata.source).toLowerCase() === "whatsapp"`,
-			`/^whatsapp-edge:[0-9a-f]{64}$/.test(persistedKey)`,
-			"existingMetadata.distribution_idempotency_key",
-			"distribution_deferred: true",
-			"distribution_idempotency_key: distributionKey",
-			`.rpc("distribute_lead_from_backend"`,
-			"p_preserve_assignee: true",
-			`p_source: "whatsapp"`,
+			"async function processManagedWhatsAppLeadEntry",
+			`.rpc("process_managed_whatsapp_lead_entry"`,
+			"p_organization_id: session.organization_id",
+			"p_lead_id: lead.id",
+			"p_session_id: session.id",
+			"p_rule_id: rule.id",
+			"p_provider_message_id: message.messageId",
+			"p_message: message.content",
+			"p_occurred_at: message.sentAt",
+			"Managed WhatsApp intake was not handled",
 		)
-		requireOrdered(t, source, `.rpc("upsert_whatsapp_webhook_lead"`, `.rpc("distribute_lead_from_backend"`)
-		requireAbsent(t, source, "resolveRoundRobinAssignee", "round_robin_logs", "current_position")
+		requireOrdered(t, source, `.rpc("upsert_whatsapp_webhook_lead"`, `.rpc("process_managed_whatsapp_lead_entry"`)
+		requireAbsent(t, source,
+			"resolveRoundRobinAssignee",
+			"async function distributeLeadFromEdge",
+			"round_robin_logs",
+			"current_position",
+		)
 	})
 }
 

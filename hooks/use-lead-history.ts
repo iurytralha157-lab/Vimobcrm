@@ -1563,7 +1563,12 @@ export function useLeadHistory(leadId: string | null) {
             is_automation: log.reason !== 'manual_transfer',
           };
           const normalizedReason = metadataString(log.reason)?.toLowerCase();
-          const content = normalizedReason && !['manual_transfer', 'round_robin'].includes(normalizedReason)
+          const content = normalizedReason && ![
+            'manual_transfer',
+            'round_robin',
+            'round_robin_auto',
+            'canonical_round_robin',
+          ].includes(normalizedReason)
             ? `Motivo: ${log.reason}`
             : undefined;
 
