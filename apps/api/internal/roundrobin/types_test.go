@@ -3,6 +3,7 @@ package roundrobin
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -232,6 +233,107 @@ func TestCreateRequestValidateLimitsAutoTagIDs(t *testing.T) {
 	}).Validate()
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+}
+
+func TestNormalizeManagedWhatsAppAutoReplySettingsLeavesUnconfiguredQueuesUntouched(t *testing.T) {
+	t.Parallel()
+
+	settings, err := normalizeManagedWhatsAppAutoReplySettings(map[string]any{
+		"existing_setting": "preserved",
+	})
+	if err != nil {
+		t.Fatalf("normalize settings: %v", err)
+	}
+	for _, key := range []string{
+		whatsAppDistributionAutoReplyEnabledKey,
+		whatsAppDistributionAutoReplyMessageKey,
+		whatsAppDistributionAutoReplyDelayKey,
+	} {
+		if _, exists := settings[key]; exists {
+			t.Fatalf("unconfigured queue must not receive %q: %#v", key, settings)
+		}
+	}
+	if settings["existing_setting"] != "preserved" {
+		t.Fatalf("existing setting was not preserved: %#v", settings)
+	}
+}
+
+func TestNormalizeManagedWhatsAppAutoReplySettingsKeepsOptInDisabled(t *testing.T) {
+	t.Parallel()
+
+	settings, err := normalizeManagedWhatsAppAutoReplySettings(map[string]any{
+		whatsAppDistributionAutoReplyMessageKey: "  Mensagem configurada  ",
+		whatsAppDistributionAutoReplyDelayKey:   float64(15),
+	})
+	if err != nil {
+		t.Fatalf("normalize settings: %v", err)
+	}
+	if enabled, ok := settings[whatsAppDistributionAutoReplyEnabledKey].(bool); !ok || enabled {
+		t.Fatalf("configured fields without explicit opt-in must remain disabled: %#v", settings)
+	}
+	if settings[whatsAppDistributionAutoReplyMessageKey] != "Mensagem configurada" {
+		t.Fatalf("message was not normalized: %#v", settings)
+	}
+	if settings[whatsAppDistributionAutoReplyDelayKey] != 15 {
+		t.Fatalf("delay was not normalized: %#v", settings)
+	}
+
+	disabled, err := normalizeManagedWhatsAppAutoReplySettings(map[string]any{
+		whatsAppDistributionAutoReplyEnabledKey: false,
+	})
+	if err != nil {
+		t.Fatalf("normalize disabled settings: %v", err)
+	}
+	if _, exists := disabled[whatsAppDistributionAutoReplyMessageKey]; exists {
+		t.Fatalf("disabled queue must not receive a default message: %#v", disabled)
+	}
+	if _, exists := disabled[whatsAppDistributionAutoReplyDelayKey]; exists {
+		t.Fatalf("disabled queue must not receive a default delay: %#v", disabled)
+	}
+}
+
+func TestNormalizeManagedWhatsAppAutoReplySettingsDefaultsActivatedFields(t *testing.T) {
+	t.Parallel()
+
+	settings, err := normalizeManagedWhatsAppAutoReplySettings(map[string]any{
+		whatsAppDistributionAutoReplyEnabledKey: true,
+	})
+	if err != nil {
+		t.Fatalf("normalize settings: %v", err)
+	}
+	if settings[whatsAppDistributionAutoReplyMessageKey] != defaultWhatsAppDistributionAutoReply {
+		t.Fatalf("default message mismatch: %#v", settings)
+	}
+	if settings[whatsAppDistributionAutoReplyDelayKey] != defaultWhatsAppDistributionReplyDelay {
+		t.Fatalf("default delay mismatch: %#v", settings)
+	}
+}
+
+func TestNormalizeManagedWhatsAppAutoReplySettingsValidatesConfiguredFields(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		settings map[string]any
+	}{
+		{name: "enabled must be boolean", settings: map[string]any{whatsAppDistributionAutoReplyEnabledKey: "true"}},
+		{name: "message must be string", settings: map[string]any{whatsAppDistributionAutoReplyMessageKey: 42}},
+		{name: "message cannot be blank", settings: map[string]any{whatsAppDistributionAutoReplyMessageKey: "   "}},
+		{name: "message length is bounded", settings: map[string]any{whatsAppDistributionAutoReplyMessageKey: strings.Repeat("a", maxWhatsAppDistributionAutoReplyLength+1)}},
+		{name: "delay must be integer", settings: map[string]any{whatsAppDistributionAutoReplyDelayKey: "30"}},
+		{name: "delay must be positive", settings: map[string]any{whatsAppDistributionAutoReplyDelayKey: 0}},
+		{name: "delay is bounded", settings: map[string]any{whatsAppDistributionAutoReplyDelayKey: maxWhatsAppDistributionReplyDelay + 1}},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := normalizeManagedWhatsAppAutoReplySettings(test.settings); !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("expected ErrInvalidInput, got %v", err)
+			}
+		})
 	}
 }
 

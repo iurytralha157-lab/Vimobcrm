@@ -321,9 +321,13 @@ export const LeadCard = memo(function LeadCard({
 
             // WhatsApp campaign (must precede Meta because CTWA can have platform=meta)
             if (source === 'whatsapp') {
-              const label = campaignName ? `WhatsApp · ${campaignName}` : 'WhatsApp';
               return (
-                <div className="flex items-center gap-1.5 -mt-1 mb-1 min-w-0" title={label}>
+                <div
+                  aria-label={campaignName ? `WhatsApp: ${campaignName}` : 'WhatsApp'}
+                  className="flex items-center gap-1.5 -mt-1 mb-1 min-w-0"
+                  role="img"
+                  title={campaignName || undefined}
+                >
                   <svg
                     aria-hidden="true"
                     className="h-3 w-3 shrink-0 text-[#25D366]"
@@ -333,7 +337,9 @@ export const LeadCard = memo(function LeadCard({
                     <path d="M16.02 3.2c-7.05 0-12.78 5.62-12.78 12.55 0 2.22.6 4.39 1.74 6.29L3.2 28.8l6.96-1.72a12.9 12.9 0 0 0 5.86 1.42c7.05 0 12.78-5.62 12.78-12.55S23.07 3.2 16.02 3.2Zm0 22.98c-1.86 0-3.68-.49-5.27-1.41l-.38-.22-4.13 1.02 1.06-3.97-.25-.41a10.22 10.22 0 0 1-1.49-5.44c0-5.65 4.7-10.24 10.46-10.24 5.77 0 10.46 4.59 10.46 10.24s-4.69 10.43-10.46 10.43Z" />
                     <path d="M21.94 18.55c-.32-.16-1.89-.92-2.18-1.03-.29-.1-.5-.16-.71.16-.21.31-.82 1.02-1 1.23-.18.21-.37.24-.69.08-.32-.16-1.34-.49-2.55-1.55-.94-.83-1.58-1.86-1.76-2.17-.18-.31-.02-.48.14-.64.14-.14.32-.37.48-.55.16-.18.21-.31.32-.52.1-.21.05-.39-.03-.55-.08-.16-.71-1.69-.97-2.32-.26-.61-.52-.53-.71-.54h-.6c-.21 0-.55.08-.84.39-.29.31-1.1 1.07-1.1 2.61s1.13 3.03 1.29 3.24c.16.21 2.22 3.34 5.38 4.68.75.32 1.34.51 1.8.65.76.24 1.45.2 2 .12.61-.09 1.89-.76 2.16-1.5.26-.73.26-1.36.18-1.5-.08-.13-.29-.21-.61-.37Z" />
                   </svg>
-                  <span className="text-[10px] text-muted-foreground/80 truncate leading-none">{label}</span>
+                  {campaignName && (
+                    <span className="text-[10px] text-muted-foreground/80 truncate leading-none">{campaignName}</span>
+                  )}
                 </div>
               );
             }

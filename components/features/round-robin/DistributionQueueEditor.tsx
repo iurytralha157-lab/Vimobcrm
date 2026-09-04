@@ -11,8 +11,23 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
+import { TagSelector } from '@/components/ui/tag-selector';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import {
   Select,
   SelectContent,
@@ -59,7 +74,9 @@ import { useTags } from '@/hooks/use-tags';
 import { useProperties } from '@/hooks/use-properties';
 import { useWebhooks } from '@/hooks/use-webhooks';
 import { useRoundRobinMetaForms, useRoundRobinWhatsAppSessions } from '@/hooks/use-round-robins';
+import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { cn } from '@/lib/utils';
+import { commandSearchFilter } from '@/lib/search-text';
 
 // Drag and Drop imports
 import {
@@ -91,6 +108,9 @@ interface QueueSettings {
   require_checkin?: boolean;
   ignore_availability?: boolean;
   reentry_behavior?: 'redistribute' | 'keep_assignee';
+  whatsapp_distribution_auto_reply_enabled?: boolean;
+  whatsapp_distribution_auto_reply_message?: string;
+  whatsapp_distribution_auto_reply_delay_seconds?: number;
 }
 
 interface RuleCondition {
@@ -165,7 +185,17 @@ interface DistributionQueueEditorProps {
 
 const EMPTY_RESTRICTION_IDS: string[] = [];
 const MAX_QUEUE_AUTO_TAGS = 50;
+const DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY = 'Olá! Recebemos seu interesse em um de nossos imóveis. Um de nossos corretores já foi acionado e falará com você por aqui em breve.';
+const DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS = 30;
+const MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH = 4000;
+const MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS = 3600;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isValidWhatsAppDistributionAutoReplyDelay(value: unknown): value is number {
+  return Number.isInteger(value)
+    && Number(value) >= 1
+    && Number(value) <= MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS;
+}
 
 function normalizeQueueAutoTagIDs(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -355,6 +385,7 @@ export function DistributionQueueEditor({
   const { data: properties = [] } = useProperties();
   const { data: webhooks = [] } = useWebhooks();
   const { data: whatsappSessions = [] } = useRoundRobinWhatsAppSessions();
+  const { hasPermission } = useUserPermissions();
   const {
     data: metaFormConfigs = [],
     isLoading: metaFormsLoading,
@@ -409,6 +440,7 @@ export function DistributionQueueEditor({
 
   const [saving, setSaving] = useState(false);
   const [openSections, setOpenSections] = useState<string[]>([]);
+  const [userPickerOpen, setUserPickerOpen] = useState(false);
 
   const [formData, setFormData] = useState<QueueFormData>({
     name: '',
@@ -424,6 +456,9 @@ export function DistributionQueueEditor({
       redistribution_max_attempts: 10,
       preserve_position: true,
       require_checkin: false,
+      whatsapp_distribution_auto_reply_enabled: false,
+      whatsapp_distribution_auto_reply_message: DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY,
+      whatsapp_distribution_auto_reply_delay_seconds: DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS,
     },
     conditions: [],
     members: [],
@@ -542,6 +577,9 @@ export function DistributionQueueEditor({
           redistribution_max_attempts: 10,
           preserve_position: true,
           require_checkin: false,
+          whatsapp_distribution_auto_reply_enabled: false,
+          whatsapp_distribution_auto_reply_message: DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY,
+          whatsapp_distribution_auto_reply_delay_seconds: DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS,
           ...(queue.settings || {}),
           auto_tag_ids: normalizeQueueAutoTagIDs(queue.settings?.auto_tag_ids),
           reentry_behavior: queue.reentry_behavior
@@ -567,6 +605,9 @@ export function DistributionQueueEditor({
           redistribution_max_attempts: 10,
           preserve_position: true,
           require_checkin: false,
+          whatsapp_distribution_auto_reply_enabled: false,
+          whatsapp_distribution_auto_reply_message: DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY,
+          whatsapp_distribution_auto_reply_delay_seconds: DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS,
         },
         conditions: [],
         members: [],
@@ -616,7 +657,11 @@ export function DistributionQueueEditor({
         ...prev,
         conditions,
         settings: removedLastWhatsAppCondition
-          ? { ...prev.settings, ignore_availability: queue?.settings?.ignore_availability }
+          ? {
+              ...prev.settings,
+              ignore_availability: queue?.settings?.ignore_availability,
+              whatsapp_distribution_auto_reply_enabled: false,
+            }
           : prev.settings,
       };
     });
@@ -633,7 +678,11 @@ export function DistributionQueueEditor({
         ...prev,
         conditions,
         settings: removedLastWhatsAppCondition
-          ? { ...prev.settings, ignore_availability: queue?.settings?.ignore_availability }
+          ? {
+              ...prev.settings,
+              ignore_availability: queue?.settings?.ignore_availability,
+              whatsapp_distribution_auto_reply_enabled: false,
+            }
           : prev.settings,
       };
     });
@@ -772,6 +821,31 @@ export function DistributionQueueEditor({
       toast.error('Selecione uma conexão do WhatsApp ativa para esta campanha.');
       return;
     }
+    const whatsappAutoReplyEnabled = hasConfiguredWhatsAppMessageCondition
+      && formData.settings.whatsapp_distribution_auto_reply_enabled === true;
+    const rawWhatsAppAutoReplyMessage = typeof formData.settings.whatsapp_distribution_auto_reply_message === 'string'
+      ? formData.settings.whatsapp_distribution_auto_reply_message.trim()
+      : '';
+    const whatsappAutoReplyMessageLength = Array.from(rawWhatsAppAutoReplyMessage).length;
+    const rawWhatsAppAutoReplyDelay = formData.settings.whatsapp_distribution_auto_reply_delay_seconds;
+    if (whatsappAutoReplyEnabled && (
+      whatsappAutoReplyMessageLength < 1
+      || whatsappAutoReplyMessageLength > MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH
+    )) {
+      toast.error(`A resposta automática deve conter entre 1 e ${MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH} caracteres.`);
+      return;
+    }
+    if (whatsappAutoReplyEnabled && !isValidWhatsAppDistributionAutoReplyDelay(rawWhatsAppAutoReplyDelay)) {
+      toast.error(`O atraso da resposta automática deve ficar entre 1 e ${MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS} segundos.`);
+      return;
+    }
+    const whatsappAutoReplyMessage = whatsappAutoReplyMessageLength >= 1
+      && whatsappAutoReplyMessageLength <= MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH
+      ? rawWhatsAppAutoReplyMessage
+      : DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY;
+    const whatsappAutoReplyDelay = isValidWhatsAppDistributionAutoReplyDelay(rawWhatsAppAutoReplyDelay)
+      ? rawWhatsAppAutoReplyDelay
+      : DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS;
     if (hasConfiguredWhatsAppMessageCondition && formData.settings.require_checkin) {
       setFormData(prev => ({
         ...prev,
@@ -847,6 +921,9 @@ export function DistributionQueueEditor({
     const sanitizedSettings: QueueSettings = {
       ...formData.settings,
       auto_tag_ids: normalizeQueueAutoTagIDs(formData.settings.auto_tag_ids),
+      whatsapp_distribution_auto_reply_enabled: sanitizedHasWhatsAppMessageCondition && whatsappAutoReplyEnabled,
+      whatsapp_distribution_auto_reply_message: whatsappAutoReplyMessage,
+      whatsapp_distribution_auto_reply_delay_seconds: whatsappAutoReplyDelay,
     };
     const payload: QueueFormData = {
       ...formData,
@@ -856,7 +933,11 @@ export function DistributionQueueEditor({
             // Check-in ainda não possui elegibilidade canônica para este fluxo.
             require_checkin: false,
           }
-        : { ...sanitizedSettings, ignore_availability: queue?.settings?.ignore_availability },
+        : {
+            ...sanitizedSettings,
+            ignore_availability: queue?.settings?.ignore_availability,
+            whatsapp_distribution_auto_reply_enabled: false,
+          },
       conditions: sanitizedConditions,
       members: validMembers,
     };
@@ -1246,7 +1327,13 @@ export function DistributionQueueEditor({
     && !saving;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) setUserPickerOpen(false);
+        onOpenChange(nextOpen);
+      }}
+    >
       <DialogContent data-tour="distribution-queue-editor" className="flex max-h-[90vh] w-[94vw] max-w-6xl flex-col gap-0 overflow-hidden border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-2xl">
         <DialogHeader className="bg-[var(--app-surface-soft)] px-6 py-5">
           <DialogTitle>
@@ -1428,6 +1515,16 @@ export function DistributionQueueEditor({
                   <p className="rounded-lg bg-[var(--app-surface-soft)] px-3 py-2 text-xs text-muted-foreground">
                     Estas tags são adicionadas ao lead quando esta fila for aplicada. O comportamento é aditivo: nenhuma tag que já esteja no lead será removida.
                   </p>
+                  {!tagsError && (
+                    <TagSelector
+                      selectedTagIds={selectedAutoTagIDs}
+                      onSelectTag={toggleAutoTag}
+                      showSelectedBadges={false}
+                      placeholder={hasPermission('tag_manage') ? 'Adicionar ou criar tag...' : 'Adicionar tag...'}
+                      allowCreate={hasPermission('tag_manage')}
+                      disabled={tagsLoading || selectedAutoTagIDs.length >= MAX_QUEUE_AUTO_TAGS}
+                    />
+                  )}
                   <div className="flex flex-wrap gap-1 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-soft)] p-3">
                     {tagsLoading && tags.length === 0 && (
                       <span className="text-xs text-muted-foreground">Carregando tags...</span>
@@ -1543,26 +1640,73 @@ export function DistributionQueueEditor({
                   )}
 
                   <div className="flex flex-col gap-2 sm:flex-row">
-                    <Select
-                      onValueChange={v => {
-                        const user = visibleUsers.find(u => u.id === v);
-                        if (user) addMember('user', v, user.name);
-                      }}
-                    >
-                      <SelectTrigger className="flex-1">
-                        <SelectValue placeholder="Adicionar corretor..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {selectableUsers.length === 0 && (
-                          <SelectItem value="__no_users" disabled>
-                            Nenhum corretor ativo disponível.
-                          </SelectItem>
-                        )}
-                        {selectableUsers.map(user => (
-                          <SelectItem key={user.id} value={user.id}>{user.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Popover open={userPickerOpen} onOpenChange={setUserPickerOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={userPickerOpen}
+                          className="flex-1 justify-between font-normal"
+                        >
+                          <span className="truncate">Adicionar corretor...</span>
+                          <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="start"
+                        className="w-[var(--radix-popover-trigger-width)] min-w-[260px] p-0"
+                      >
+                        <Command filter={commandSearchFilter}>
+                          <CommandInput placeholder="Buscar corretor por nome ou e-mail..." />
+                          <CommandList className="max-h-[260px]">
+                            <CommandEmpty>
+                              {selectableUsers.length === 0
+                                ? 'Nenhum corretor ativo disponível.'
+                                : 'Nenhum corretor encontrado.'}
+                            </CommandEmpty>
+                            <CommandGroup>
+                              {selectableUsers.map(user => {
+                                const displayName = user.name || user.email || 'Usuário';
+                                const initials = displayName
+                                  .split(/\s+/)
+                                  .filter(Boolean)
+                                  .map(part => part[0])
+                                  .join('')
+                                  .slice(0, 2)
+                                  .toUpperCase();
+
+                                return (
+                                  <CommandItem
+                                    key={user.id}
+                                    value={`${user.name || ''} ${user.email || ''} ${user.id}`}
+                                    className="cursor-pointer"
+                                    onSelect={() => {
+                                      addMember('user', user.id, displayName);
+                                      setUserPickerOpen(false);
+                                    }}
+                                  >
+                                    <Avatar className="mr-2 h-7 w-7 shrink-0">
+                                      <AvatarFallback className="text-[10px]">
+                                        {initials || 'U'}
+                                      </AvatarFallback>
+                                    </Avatar>
+                                    <span className="min-w-0">
+                                      <span className="block truncate text-sm">{displayName}</span>
+                                      {user.email && (
+                                        <span className="block truncate text-xs text-muted-foreground">
+                                          {user.email}
+                                        </span>
+                                      )}
+                                    </span>
+                                  </CommandItem>
+                                );
+                              })}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                     <Select onValueChange={v => {
                       const team = visibleTeams.find(t => t.id === v);
                       if (team) addMember('team', v, team.name);
@@ -1695,6 +1839,113 @@ export function DistributionQueueEditor({
                   </div>
                 </CollapsibleContent>
               </Collapsible>
+
+              {hasWhatsAppMessageCondition && (
+                <Collapsible
+                  data-tour="distribution-queue-whatsapp-auto-reply"
+                  open={openSections.includes('whatsapp-auto-reply')}
+                  onOpenChange={() => toggleSection('whatsapp-auto-reply')}
+                >
+                  <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border-0 bg-[var(--app-surface-soft)] p-4 text-left transition-colors hover:bg-[var(--app-surface-hover)]">
+                    <div className="flex items-center gap-2">
+                      <MessageSquare className="h-4 w-4 text-primary" />
+                      <span className="font-medium">Resposta ao lead</span>
+                      {formData.settings.whatsapp_distribution_auto_reply_enabled && (
+                        <Badge variant="secondary" className="text-xs">Ativa</Badge>
+                      )}
+                    </div>
+                    <ChevronDown className={cn('h-4 w-4 transition-transform', openSections.includes('whatsapp-auto-reply') && 'rotate-180')} />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="space-y-4 px-1 pt-4">
+                    <div className="space-y-4 rounded-lg border-0 bg-[var(--app-surface-soft)] p-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="space-y-1">
+                          <Label htmlFor="distribution-whatsapp-auto-reply">Enviar resposta automática após distribuir</Label>
+                          <p className="text-xs text-muted-foreground">
+                            Recurso opcional. Depois que esta fila distribuir o lead, a mesma conexão do WhatsApp enviará a mensagem configurada abaixo.
+                          </p>
+                        </div>
+                        <Switch
+                          id="distribution-whatsapp-auto-reply"
+                          checked={formData.settings.whatsapp_distribution_auto_reply_enabled === true}
+                          onCheckedChange={(checked) => setFormData(prev => {
+                            const currentMessage = typeof prev.settings.whatsapp_distribution_auto_reply_message === 'string'
+                              ? prev.settings.whatsapp_distribution_auto_reply_message.trim()
+                              : '';
+                            const currentDelay = prev.settings.whatsapp_distribution_auto_reply_delay_seconds;
+                            return {
+                              ...prev,
+                              settings: {
+                                ...prev.settings,
+                                whatsapp_distribution_auto_reply_enabled: checked,
+                                whatsapp_distribution_auto_reply_message: currentMessage || DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY,
+                                whatsapp_distribution_auto_reply_delay_seconds: isValidWhatsAppDistributionAutoReplyDelay(currentDelay)
+                                  ? currentDelay
+                                  : DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS,
+                              },
+                            };
+                          })}
+                        />
+                      </div>
+
+                      {formData.settings.whatsapp_distribution_auto_reply_enabled && (
+                        <div className="space-y-4 border-t border-[var(--app-border)] pt-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="distribution-whatsapp-auto-reply-message">Mensagem</Label>
+                            <Textarea
+                              id="distribution-whatsapp-auto-reply-message"
+                              maxLength={MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH}
+                              rows={4}
+                              value={formData.settings.whatsapp_distribution_auto_reply_message ?? DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY}
+                              onChange={(event) => setFormData(prev => ({
+                                ...prev,
+                                settings: {
+                                  ...prev.settings,
+                                  whatsapp_distribution_auto_reply_message: event.target.value,
+                                },
+                              }))}
+                            />
+                            <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                              <span>Use uma mensagem curta e genérica para confirmar o atendimento.</span>
+                              <span className="shrink-0">
+                                {Array.from(formData.settings.whatsapp_distribution_auto_reply_message ?? '').length}/{MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2 sm:max-w-xs">
+                            <Label htmlFor="distribution-whatsapp-auto-reply-delay">Atraso para envio</Label>
+                            <Input
+                              id="distribution-whatsapp-auto-reply-delay"
+                              type="number"
+                              min={1}
+                              max={MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS}
+                              step={1}
+                              value={formData.settings.whatsapp_distribution_auto_reply_delay_seconds ?? DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS}
+                              onChange={(event) => {
+                                const parsedDelay = Number.parseInt(event.target.value, 10);
+                                const nextDelay = Number.isFinite(parsedDelay)
+                                  ? Math.min(MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS, Math.max(1, parsedDelay))
+                                  : DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS;
+                                setFormData(prev => ({
+                                  ...prev,
+                                  settings: {
+                                    ...prev.settings,
+                                    whatsapp_distribution_auto_reply_delay_seconds: nextDelay,
+                                  },
+                                }));
+                              }}
+                            />
+                            <p className="text-[11px] text-muted-foreground">
+                              Segundos após a distribuição concluída. Padrão: {DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS}s.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
+              )}
             </div>
           </div>
         </div>

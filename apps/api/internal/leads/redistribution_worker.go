@@ -30,6 +30,7 @@ type redistributionJob struct {
 	OrganizationID              string
 	LeadID                      string
 	RoundRobinID                string
+	EntryEventID                string
 	CurrentAssignedUserID       string
 	AttemptCount                int
 	MaxAttempts                 int
@@ -42,8 +43,9 @@ type redistributionJob struct {
 }
 
 type backendDistributionResult struct {
-	Success        bool
-	AssignedUserID string
+	Success             bool
+	AssignedUserID      string
+	DistributionEventID string
 }
 
 type leadRedistributionExecutor interface {
@@ -283,6 +285,15 @@ func (repo Repository) processManagedWhatsAppInitialDistribution(
 	}
 	if distributionResult.Success && (!job.AllowAssignedRedistribution ||
 		(distributionResult.AssignedUserID != "" && !strings.EqualFold(distributionResult.AssignedUserID, job.CurrentAssignedUserID))) {
+		if err := repo.enqueueManagedWhatsAppDistributionAutoReply(
+			ctx,
+			store,
+			job,
+			distributionResult.AssignedUserID,
+			distributionResult.DistributionEventID,
+		); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -452,10 +463,14 @@ func parseBackendDistributionResult(raw []byte) (backendDistributionResult, erro
 
 	result := backendDistributionResult{Success: success}
 	if rawAssignedUserID, exists := payload["assigned_user_id"]; exists && !bytes.Equal(bytes.TrimSpace(rawAssignedUserID), []byte("null")) {
-		if err := json.Unmarshal(rawAssignedUserID, &result.AssignedUserID); err != nil {
-			return backendDistributionResult{}, fmt.Errorf("decode backend distribution result: assigned_user_id must be a string")
+		if err := json.Unmarshal(rawAssignedUserID, &result.AssignedUserID); err == nil {
+			result.AssignedUserID = strings.TrimSpace(result.AssignedUserID)
 		}
-		result.AssignedUserID = strings.TrimSpace(result.AssignedUserID)
+	}
+	if rawDistributionEventID, exists := payload["distribution_event_id"]; exists && !bytes.Equal(bytes.TrimSpace(rawDistributionEventID), []byte("null")) {
+		if err := json.Unmarshal(rawDistributionEventID, &result.DistributionEventID); err == nil {
+			result.DistributionEventID = strings.TrimSpace(result.DistributionEventID)
+		}
 	}
 	return result, nil
 }
@@ -828,16 +843,16 @@ func scanRedistributionJobs(rows pgx.Rows) ([]redistributionJob, error) {
 		); err != nil {
 			return nil, err
 		}
-		job.InitialDistributionPending, job.AllowAssignedRedistribution = redistributionJobFlagsFromMetadata(rawMetadata)
+		job.InitialDistributionPending, job.AllowAssignedRedistribution, job.EntryEventID = redistributionJobMetadataFromJSON(rawMetadata)
 		jobs = append(jobs, job)
 	}
 	return jobs, rows.Err()
 }
 
-func redistributionJobFlagsFromMetadata(raw []byte) (bool, bool) {
+func redistributionJobMetadataFromJSON(raw []byte) (bool, bool, string) {
 	payload, err := decodeJSONObject(raw)
 	if err != nil {
-		return false, false
+		return false, false, ""
 	}
 	initialPending, initialPendingValid := parseFlexibleJSONBoolean(payload["initial_distribution_pending"])
 	allowAssigned, allowAssignedValid := parseFlexibleJSONBoolean(payload["allow_assigned_redistribution"])
@@ -847,7 +862,83 @@ func redistributionJobFlagsFromMetadata(raw []byte) (bool, bool) {
 	if !allowAssignedValid {
 		allowAssigned = false
 	}
-	return initialPending, allowAssigned
+
+	entryEventID := ""
+	if rawEntryEventID, exists := payload["entry_event_id"]; exists {
+		var value string
+		if json.Unmarshal(rawEntryEventID, &value) == nil {
+			if normalized, ok := normalizeUUID(value); ok {
+				entryEventID = normalized
+			}
+		}
+	}
+	return initialPending, allowAssigned, entryEventID
+}
+
+func (repo Repository) enqueueManagedWhatsAppDistributionAutoReply(
+	ctx context.Context,
+	store leadRedistributionQueryExecutor,
+	job redistributionJob,
+	assignedUserID string,
+	distributionEventID string,
+) error {
+	if job.AllowAssignedRedistribution {
+		return nil
+	}
+	entryEventID, ok := normalizeUUID(job.EntryEventID)
+	if !ok {
+		return nil
+	}
+	assignedUserID, ok = normalizeUUID(assignedUserID)
+	if !ok {
+		return nil
+	}
+	distributionEventID = strings.TrimSpace(distributionEventID)
+	if distributionEventID == "" {
+		return nil
+	}
+
+	const savepointName = "managed_whatsapp_distribution_auto_reply"
+	if _, err := store.Exec(ctx, "savepoint "+savepointName); err != nil {
+		// The acknowledgement is optional. If it cannot be isolated safely, skip
+		// it and leave the canonical lead distribution as the source of truth.
+		return nil
+	}
+
+	var rawResult []byte
+	if err := store.QueryRow(ctx, `
+		select public.enqueue_managed_whatsapp_distribution_auto_reply(
+			$1::uuid,
+			$2::uuid,
+			$3::uuid,
+			$4::text
+		)
+	`, job.OrganizationID, entryEventID, assignedUserID, distributionEventID).Scan(&rawResult); err != nil {
+		return rollbackManagedWhatsAppAutoReplySavepoint(ctx, store, savepointName)
+	}
+	if _, err := decodeJSONObject(rawResult); err != nil {
+		return rollbackManagedWhatsAppAutoReplySavepoint(ctx, store, savepointName)
+	}
+	if _, err := store.Exec(ctx, "release savepoint "+savepointName); err != nil {
+		return fmt.Errorf("release managed WhatsApp auto reply savepoint: %w", err)
+	}
+	return nil
+}
+
+func rollbackManagedWhatsAppAutoReplySavepoint(
+	ctx context.Context,
+	store leadRedistributionQueryExecutor,
+	savepointName string,
+) error {
+	_, rollbackErr := store.Exec(ctx, "rollback to savepoint "+savepointName)
+	_, releaseErr := store.Exec(ctx, "release savepoint "+savepointName)
+	if rollbackErr != nil {
+		return fmt.Errorf("rollback managed WhatsApp auto reply savepoint: %w", rollbackErr)
+	}
+	if releaseErr != nil {
+		return fmt.Errorf("release managed WhatsApp auto reply savepoint after rollback: %w", releaseErr)
+	}
+	return nil
 }
 
 func (repo Repository) redistributionStopReason(ctx context.Context, tx pgx.Tx, job redistributionJob, current leadSnapshot) (string, error) {

@@ -344,18 +344,41 @@ func (context autoReplyContext) skipReason() string {
 }
 
 func (repo Repository) autoReplyExists(ctx context.Context, context autoReplyContext) (bool, error) {
+	return autoReplyExistsWithQuerier(ctx, repo.db.Pool(), context)
+}
+
+type autoReplyExistsQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func autoReplyExistsWithQuerier(ctx context.Context, querier autoReplyExistsQuerier, context autoReplyContext) (bool, error) {
 	clientMessageID := autoReplyClientMessagePrefix + context.Message.ID
 	var exists bool
-	err := repo.db.Pool().QueryRow(ctx, `
+	err := querier.QueryRow(ctx, `
 		select exists (
 			select 1
 			from public.whatsapp_messages
 			where organization_id = $1::uuid
 			  and conversation_id = $2::uuid
-			  and from_me = true
 			  and (
-			    client_message_id = $3
-			    or metadata->>'ai_reply_to_message_id' = $4
+			    (
+			      from_me = true
+			      and (
+			        client_message_id = $3
+			        or metadata->>'ai_reply_to_message_id' = $4::text
+			        or metadata->>'managed_whatsapp_reply_to_message_id' = $4::text
+			      )
+			    )
+			    or (
+			      id = $4::uuid
+			      and from_me = false
+			      and jsonb_typeof(metadata->'managed_whatsapp_distribution_auto_reply_reservation') = 'object'
+			      and metadata->'managed_whatsapp_distribution_auto_reply_reservation'->>'version' = 'v1'
+			      and btrim(coalesce(
+			        metadata->'managed_whatsapp_distribution_auto_reply_reservation'->>'entry_event_id',
+			        ''
+			      )) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+			    )
 			  )
 		)
 	`, context.Session.OrganizationID, context.Conversation.ID, clientMessageID, context.Message.ID).Scan(&exists)

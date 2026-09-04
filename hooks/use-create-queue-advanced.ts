@@ -34,6 +34,9 @@ interface QueueSettings {
   require_checkin?: boolean;
   ignore_availability?: boolean;
   reentry_behavior?: 'redistribute' | 'keep_assignee';
+  whatsapp_distribution_auto_reply_enabled?: boolean;
+  whatsapp_distribution_auto_reply_message?: string;
+  whatsapp_distribution_auto_reply_delay_seconds?: number;
 }
 
 type QueueSettingsWithSchedule = QueueSettings & {

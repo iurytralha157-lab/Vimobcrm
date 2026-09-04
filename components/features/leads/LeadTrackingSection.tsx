@@ -12,6 +12,7 @@ import {
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import type { LeadMeta } from '@/hooks/use-lead-meta';
+import { getSafeAbsoluteHttpUrl } from '@/lib/safe-http-url';
 
 type LeadMetaWithCreativeLinks = LeadMeta & {
   creative_instagram_url?: string | null;
@@ -20,6 +21,13 @@ type LeadMetaWithCreativeLinks = LeadMeta & {
 interface LeadTrackingSectionProps {
   leadMeta: LeadMeta | null;
   isLoading?: boolean;
+}
+
+function openSafeExternalUrl(value: unknown) {
+  const url = getSafeAbsoluteHttpUrl(value);
+  if (!url) return;
+
+  window.open(url, '_blank', 'noopener,noreferrer');
 }
 
 export function LeadTrackingSection({ leadMeta, isLoading }: LeadTrackingSectionProps) {
@@ -54,7 +62,12 @@ export function LeadTrackingSection({ leadMeta, isLoading }: LeadTrackingSection
     return null;
   }
 
-  const creativeInstagramUrl = (leadMeta as LeadMetaWithCreativeLinks).creative_instagram_url;
+  const safeCreativeImageUrl = getSafeAbsoluteHttpUrl(leadMeta.creative_url);
+  const safeCreativeVideoUrl = getSafeAbsoluteHttpUrl(leadMeta.creative_video_url);
+  const safeCreativeInstagramUrl = getSafeAbsoluteHttpUrl(
+    (leadMeta as LeadMetaWithCreativeLinks).creative_instagram_url,
+  );
+  const safePrimaryCreativeUrl = safeCreativeVideoUrl || safeCreativeImageUrl;
 
   return (
     <div className="space-y-4">
@@ -93,7 +106,7 @@ export function LeadTrackingSection({ leadMeta, isLoading }: LeadTrackingSection
                 label="Anúncio"
                 value={leadMeta.ad_name || leadMeta.ad_id || ''}
                 subValue={leadMeta.ad_name && leadMeta.ad_id ? `ID: ${leadMeta.ad_id}` : undefined}
-                externalUrl={leadMeta.creative_video_url || leadMeta.creative_url || undefined}
+                externalUrl={safePrimaryCreativeUrl || undefined}
                 externalUrlLabel="Ver criativo"
               />
             )}
@@ -117,24 +130,24 @@ export function LeadTrackingSection({ leadMeta, isLoading }: LeadTrackingSection
           </div>
 
           {/* Creative Preview (Video or Image) */}
-          {(leadMeta.creative_video_url || leadMeta.creative_url) && (
+          {safePrimaryCreativeUrl && (
             <div className="mt-3 pt-3 border-t border-white/[0.055] space-y-2">
-              {leadMeta.creative_video_url ? (
+              {safeCreativeVideoUrl ? (
                 <video
-                  src={leadMeta.creative_video_url}
+                  src={safeCreativeVideoUrl}
                   controls
                   preload="metadata"
                   className="w-full rounded-lg max-h-[240px] bg-black"
-                  poster={leadMeta.creative_url || undefined}
+                  poster={safeCreativeImageUrl || undefined}
                 />
-              ) : leadMeta.creative_url ? (
+              ) : safeCreativeImageUrl ? (
                 <>
                 {/* eslint-disable-next-line @next/next/no-img-element -- Creative URLs come from Meta and may not be covered by Next image domains yet. */}
                 <img
-                  src={leadMeta.creative_url}
+                  src={safeCreativeImageUrl}
                   alt="Criativo do anúncio"
                   className="w-full rounded-lg max-h-[240px] object-cover cursor-pointer hover:opacity-90 transition-opacity"
-                  onClick={() => window.open(leadMeta.creative_url!, '_blank')}
+                  onClick={() => openSafeExternalUrl(safeCreativeImageUrl)}
                 />
                 </>
               ) : null}
@@ -143,17 +156,17 @@ export function LeadTrackingSection({ leadMeta, isLoading }: LeadTrackingSection
                   variant="outline"
                   size="sm"
                   className="flex-1 gap-2 text-xs"
-                  onClick={() => window.open(leadMeta.creative_video_url || leadMeta.creative_url!, '_blank')}
+                  onClick={() => openSafeExternalUrl(safePrimaryCreativeUrl)}
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
                   Ver Criativo
                 </Button>
-                {creativeInstagramUrl && (
+                {safeCreativeInstagramUrl && (
                   <Button
                     variant="outline"
                     size="sm"
                     className="flex-1 gap-2 text-xs"
-                    onClick={() => window.open(creativeInstagramUrl, '_blank')}
+                    onClick={() => openSafeExternalUrl(safeCreativeInstagramUrl)}
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
                     Ver no Instagram
@@ -237,7 +250,7 @@ function TrackingRow({ icon: Icon, label, value, subValue, externalUrl }: Tracki
           variant="ghost"
           size="icon"
           className="h-7 w-7 shrink-0"
-          onClick={() => window.open(externalUrl, '_blank')}
+          onClick={() => openSafeExternalUrl(externalUrl)}
           title="Abrir no Meta Ads Manager"
         >
           <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />

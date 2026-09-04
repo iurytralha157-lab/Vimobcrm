@@ -79,10 +79,14 @@ func (row redistributionSelectionRow) Scan(dest ...any) error {
 type redistributionJSONRow struct {
 	value []byte
 	err   error
+	onErr func()
 }
 
 func (row redistributionJSONRow) Scan(dest ...any) error {
 	if row.err != nil {
+		if row.onErr != nil {
+			row.onErr()
+		}
 		return row.err
 	}
 	*(dest[0].(*[]byte)) = append([]byte(nil), row.value...)
@@ -111,6 +115,7 @@ type redistributionQueryExecutor struct {
 	execErrs   []error
 	execTags   []pgconn.CommandTag
 	operations []string
+	txAborted  bool
 }
 
 func (store *redistributionQueryExecutor) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
@@ -139,6 +144,12 @@ func (store *redistributionQueryExecutor) Exec(ctx context.Context, sql string, 
 		err = store.execErrs[0]
 		store.execErrs = store.execErrs[1:]
 	}
+	normalizedSQL := strings.ToLower(strings.TrimSpace(sql))
+	if err == nil && strings.HasPrefix(normalizedSQL, "rollback to savepoint ") {
+		store.txAborted = false
+	} else if err == nil && store.txAborted {
+		err = errors.New("current transaction is aborted")
+	}
 	return tag, err
 }
 
@@ -152,15 +163,19 @@ func TestInitialDistributionMetadataFlagParsingIsSafe(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		raw       string
-		want      bool
-		wantAllow bool
+		name           string
+		raw            string
+		want           bool
+		wantAllow      bool
+		wantEntryEvent string
 	}{
 		{name: "boolean true", raw: `{"initial_distribution_pending":true}`, want: true},
 		{name: "legacy string true", raw: `{"initial_distribution_pending":"yes"}`, want: true},
 		{name: "legacy numeric true", raw: `{"initial_distribution_pending":1}`, want: true},
 		{name: "assigned redistribution", raw: `{"initial_distribution_pending":true,"allow_assigned_redistribution":true}`, want: true, wantAllow: true},
+		{name: "entry event", raw: `{"initial_distribution_pending":true,"entry_event_id":" 11111111-1111-4111-8111-111111111111 "}`, want: true, wantEntryEvent: "11111111-1111-4111-8111-111111111111"},
+		{name: "invalid entry event UUID", raw: `{"initial_distribution_pending":true,"entry_event_id":"not-a-uuid"}`, want: true},
+		{name: "invalid entry event type", raw: `{"initial_distribution_pending":true,"entry_event_id":42}`, want: true},
 		{name: "allow without initial marker", raw: `{"allow_assigned_redistribution":true}`, wantAllow: true},
 		{name: "boolean false", raw: `{"initial_distribution_pending":false}`, want: false},
 		{name: "unknown value", raw: `{"initial_distribution_pending":"sometimes"}`, want: false},
@@ -174,12 +189,15 @@ func TestInitialDistributionMetadataFlagParsingIsSafe(t *testing.T) {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			got, gotAllow := redistributionJobFlagsFromMetadata([]byte(test.raw))
+			got, gotAllow, gotEntryEvent := redistributionJobMetadataFromJSON([]byte(test.raw))
 			if got != test.want {
 				t.Fatalf("initial distribution flag for %q = %t, want %t", test.raw, got, test.want)
 			}
 			if gotAllow != test.wantAllow {
 				t.Fatalf("allowAssignedRedistribution(%q) = %t, want %t", test.raw, gotAllow, test.wantAllow)
+			}
+			if gotEntryEvent != test.wantEntryEvent {
+				t.Fatalf("entryEventID(%q) = %q, want %q", test.raw, gotEntryEvent, test.wantEntryEvent)
 			}
 		})
 	}
@@ -222,21 +240,28 @@ func TestBackendDistributionResultParsingIsSafe(t *testing.T) {
 	}
 }
 
-func TestBackendDistributionResultIncludesCanonicalAssignee(t *testing.T) {
+func TestBackendDistributionResultIncludesCanonicalAssigneeAndEvent(t *testing.T) {
 	t.Parallel()
 
 	result, err := parseBackendDistributionResult([]byte(`{
 		"success": true,
-		"assigned_user_id": "  22222222-2222-4222-8222-222222222222  "
+		"assigned_user_id": "  22222222-2222-4222-8222-222222222222  ",
+		"distribution_event_id": "  opaque-ledger-event:attempt-1  "
 	}`))
 	if err != nil {
 		t.Fatalf("parse backend distribution result: %v", err)
 	}
-	if !result.Success || result.AssignedUserID != "22222222-2222-4222-8222-222222222222" {
+	if !result.Success ||
+		result.AssignedUserID != "22222222-2222-4222-8222-222222222222" ||
+		result.DistributionEventID != "opaque-ledger-event:attempt-1" {
 		t.Fatalf("parsed result = %#v", result)
 	}
-	if _, err := parseBackendDistributionResult([]byte(`{"success":true,"assigned_user_id":[]}`)); err == nil {
-		t.Fatal("non-string assigned_user_id must fail closed")
+	invalidOptionalFields, err := parseBackendDistributionResult([]byte(`{"success":true,"assigned_user_id":[],"distribution_event_id":[]}`))
+	if err != nil {
+		t.Fatalf("invalid optional auto reply fields must not invalidate a completed distribution: %v", err)
+	}
+	if !invalidOptionalFields.Success || invalidOptionalFields.AssignedUserID != "" || invalidOptionalFields.DistributionEventID != "" {
+		t.Fatalf("invalid optional fields = %#v, want successful distribution without auto reply metadata", invalidOptionalFields)
 	}
 }
 
@@ -260,7 +285,7 @@ func TestManagedWhatsAppInitialDistributionStopsBeforeCanonicalSuccess(t *testin
 			memberID: "44444444-4444-4444-8444-444444444444",
 			userID:   "55555555-5555-4555-8555-555555555555",
 		},
-		redistributionJSONRow{value: []byte(`{"success":true}`)},
+		redistributionJSONRow{value: []byte(`{"success":true,"distribution_event_id":"opaque-ledger-event:legacy"}`)},
 	}}
 	job := redistributionJob{
 		ID:                         "11111111-1111-4111-8111-111111111111",
@@ -311,6 +336,221 @@ func TestManagedWhatsAppInitialDistributionStopsBeforeCanonicalSuccess(t *testin
 		if strings.Contains(sql, "public.lead_action_facts") || strings.Contains(sql, "redistribution_count") || strings.Contains(sql, "auto_redistribution") {
 			t.Fatalf("initial assignment must not be treated as redistribution: %q", sql)
 		}
+		if strings.Contains(sql, "enqueue_managed_whatsapp_distribution_auto_reply") {
+			t.Fatalf("legacy job without entry_event_id must skip auto reply safely: %q", sql)
+		}
+	}
+}
+
+func TestManagedWhatsAppInitialDistributionEnqueuesAutoReplyInSameStore(t *testing.T) {
+	t.Parallel()
+
+	const (
+		organizationID      = "22222222-2222-4222-8222-222222222222"
+		entryEventID        = "77777777-7777-4777-8777-777777777777"
+		assignedUserID      = "55555555-5555-4555-8555-555555555555"
+		distributionEventID = "opaque-ledger-event:initial-attempt-1"
+	)
+	store := &redistributionQueryExecutor{rows: []pgx.Row{
+		redistributionBoolRow{value: true},
+		redistributionSelectionRow{
+			memberID: "44444444-4444-4444-8444-444444444444",
+			userID:   assignedUserID,
+		},
+		redistributionJSONRow{value: []byte(`{"success":true,"assigned_user_id":"55555555-5555-4555-8555-555555555555","distribution_event_id":"opaque-ledger-event:initial-attempt-1"}`)},
+		redistributionJSONRow{value: []byte(`{"queued":true}`)},
+	}}
+	job := redistributionJob{
+		ID:                         "11111111-1111-4111-8111-111111111111",
+		OrganizationID:             organizationID,
+		LeadID:                     "33333333-3333-4333-8333-333333333333",
+		RoundRobinID:               "66666666-6666-4666-8666-666666666666",
+		EntryEventID:               entryEventID,
+		InitialDistributionPending: true,
+	}
+
+	err := (Repository{}).processManagedWhatsAppInitialDistribution(
+		context.Background(),
+		store,
+		job,
+		leadSnapshot{DealStatus: "open"},
+	)
+	if err != nil {
+		t.Fatalf("process initial distribution: %v", err)
+	}
+	if len(store.queries) != 4 {
+		t.Fatalf("queries = %d, want queue, selector, distributor and auto reply RPC", len(store.queries))
+	}
+	if !strings.Contains(store.queries[3], "public.enqueue_managed_whatsapp_distribution_auto_reply") {
+		t.Fatalf("expected auto reply RPC, SQL = %q", store.queries[3])
+	}
+	if !strings.Contains(store.queries[3], "$4::text") {
+		t.Fatalf("auto reply RPC must pass the opaque distribution event as text: %q", store.queries[3])
+	}
+	wantArgs := []any{organizationID, entryEventID, assignedUserID, distributionEventID}
+	if len(store.queryArgs[3]) != len(wantArgs) {
+		t.Fatalf("auto reply args = %#v, want %#v", store.queryArgs[3], wantArgs)
+	}
+	for index := range wantArgs {
+		if store.queryArgs[3][index] != wantArgs[index] {
+			t.Fatalf("auto reply args = %#v, want %#v", store.queryArgs[3], wantArgs)
+		}
+	}
+	if len(store.operations) != 7 ||
+		!strings.HasPrefix(strings.ToLower(store.operations[4]), "exec:savepoint managed_whatsapp_distribution_auto_reply") ||
+		!strings.HasPrefix(store.operations[5], "query:") ||
+		!strings.HasPrefix(strings.ToLower(store.operations[6]), "exec:release savepoint managed_whatsapp_distribution_auto_reply") {
+		t.Fatalf("operation order = %#v, auto reply must be isolated in the same transactional store", store.operations)
+	}
+}
+
+func TestManagedWhatsAppInitialDistributionSkipsAutoReplyWithoutValidMetadata(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name         string
+		rawResult    string
+		entryEventID string
+	}{
+		{name: "missing distribution event", rawResult: `{"success":true,"assigned_user_id":"55555555-5555-4555-8555-555555555555"}`, entryEventID: "77777777-7777-4777-8777-777777777777"},
+		{name: "blank distribution event", rawResult: `{"success":true,"assigned_user_id":"55555555-5555-4555-8555-555555555555","distribution_event_id":"   "}`, entryEventID: "77777777-7777-4777-8777-777777777777"},
+		{name: "invalid distribution event type", rawResult: `{"success":true,"assigned_user_id":"55555555-5555-4555-8555-555555555555","distribution_event_id":[]}`, entryEventID: "77777777-7777-4777-8777-777777777777"},
+		{name: "invalid assigned user", rawResult: `{"success":true,"assigned_user_id":"not-a-uuid","distribution_event_id":"opaque-event"}`, entryEventID: "77777777-7777-4777-8777-777777777777"},
+		{name: "invalid entry event", rawResult: `{"success":true,"assigned_user_id":"55555555-5555-4555-8555-555555555555","distribution_event_id":"opaque-event"}`, entryEventID: "not-a-uuid"},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := &redistributionQueryExecutor{rows: []pgx.Row{
+				redistributionBoolRow{value: true},
+				redistributionSelectionRow{
+					memberID: "44444444-4444-4444-8444-444444444444",
+					userID:   "55555555-5555-4555-8555-555555555555",
+				},
+				redistributionJSONRow{value: []byte(test.rawResult)},
+			}}
+			job := redistributionJob{
+				ID:                         "11111111-1111-4111-8111-111111111111",
+				OrganizationID:             "22222222-2222-4222-8222-222222222222",
+				LeadID:                     "33333333-3333-4333-8333-333333333333",
+				RoundRobinID:               "66666666-6666-4666-8666-666666666666",
+				EntryEventID:               test.entryEventID,
+				InitialDistributionPending: true,
+			}
+
+			err := (Repository{}).processManagedWhatsAppInitialDistribution(
+				context.Background(),
+				store,
+				job,
+				leadSnapshot{DealStatus: "open"},
+			)
+			if err != nil {
+				t.Fatalf("optional auto reply metadata must not fail distribution: %v", err)
+			}
+			if len(store.queries) != 3 {
+				t.Fatalf("queries = %d, auto reply RPC must not run without canonical event proof", len(store.queries))
+			}
+			if strings.Contains(strings.Join(store.queries, "\n"), "enqueue_managed_whatsapp_distribution_auto_reply") {
+				t.Fatal("auto reply RPC ran without canonical distribution_event_id")
+			}
+		})
+	}
+}
+
+func TestManagedWhatsAppInitialDistributionRecoversWhenAutoReplyRPCIsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		rpcValue []byte
+		rpcErr   error
+	}{
+		{name: "migration not deployed", rpcErr: &pgconn.PgError{Code: "42883", Message: "function does not exist"}},
+		{name: "RPC query failure", rpcErr: errors.New("auto reply RPC failed")},
+		{name: "invalid RPC response", rpcValue: []byte(`not-json`)},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := &redistributionQueryExecutor{}
+			store.rows = []pgx.Row{
+				redistributionBoolRow{value: true},
+				redistributionSelectionRow{
+					memberID: "44444444-4444-4444-8444-444444444444",
+					userID:   "55555555-5555-4555-8555-555555555555",
+				},
+				redistributionJSONRow{value: []byte(`{"success":true,"assigned_user_id":"55555555-5555-4555-8555-555555555555","distribution_event_id":"opaque-ledger-event:initial-attempt-1"}`)},
+				redistributionJSONRow{
+					value: test.rpcValue,
+					err:   test.rpcErr,
+					onErr: func() { store.txAborted = true },
+				},
+			}
+			job := redistributionJob{
+				ID:                         "11111111-1111-4111-8111-111111111111",
+				OrganizationID:             "22222222-2222-4222-8222-222222222222",
+				LeadID:                     "33333333-3333-4333-8333-333333333333",
+				RoundRobinID:               "66666666-6666-4666-8666-666666666666",
+				EntryEventID:               "77777777-7777-4777-8777-777777777777",
+				InitialDistributionPending: true,
+			}
+
+			err := (Repository{}).processManagedWhatsAppInitialDistribution(
+				context.Background(),
+				store,
+				job,
+				leadSnapshot{DealStatus: "open"},
+			)
+			if err != nil {
+				t.Fatalf("optional auto reply failure must not fail distribution: %v", err)
+			}
+			if len(store.execSQL) < 4 ||
+				!strings.HasPrefix(strings.ToLower(strings.TrimSpace(store.execSQL[1])), "savepoint managed_whatsapp_distribution_auto_reply") ||
+				!strings.HasPrefix(strings.ToLower(strings.TrimSpace(store.execSQL[2])), "rollback to savepoint managed_whatsapp_distribution_auto_reply") ||
+				!strings.HasPrefix(strings.ToLower(strings.TrimSpace(store.execSQL[3])), "release savepoint managed_whatsapp_distribution_auto_reply") {
+				t.Fatalf("savepoint recovery sequence = %#v", store.execSQL)
+			}
+			if store.txAborted {
+				t.Fatal("transaction remained aborted after auto reply recovery")
+			}
+			if _, err := store.Exec(context.Background(), "select 1"); err != nil {
+				t.Fatalf("transaction must remain usable after recovery: %v", err)
+			}
+		})
+	}
+}
+
+func TestManagedWhatsAppAutoReplyRecoveryPropagatesSavepointFailures(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		execErrs []error
+	}{
+		{name: "rollback failure", execErrs: []error{errors.New("rollback failed"), nil}},
+		{name: "release failure", execErrs: []error{nil, errors.New("release failed")}},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := &redistributionQueryExecutor{execErrs: test.execErrs}
+			err := rollbackManagedWhatsAppAutoReplySavepoint(
+				context.Background(),
+				store,
+				"managed_whatsapp_distribution_auto_reply",
+			)
+			if err == nil {
+				t.Fatal("savepoint recovery failure must surface because the transaction may be unusable")
+			}
+			if len(store.execSQL) != 2 ||
+				!strings.HasPrefix(strings.ToLower(strings.TrimSpace(store.execSQL[0])), "rollback to savepoint ") ||
+				!strings.HasPrefix(strings.ToLower(strings.TrimSpace(store.execSQL[1])), "release savepoint ") {
+				t.Fatalf("savepoint recovery sequence = %#v", store.execSQL)
+			}
+		})
 	}
 }
 
@@ -603,6 +843,7 @@ func TestManagedWhatsAppAssignedReentryCanRetryCanonicalDistribution(t *testing.
 		OrganizationID:              "33333333-3333-4333-8333-333333333333",
 		LeadID:                      "66666666-6666-4666-8666-666666666666",
 		RoundRobinID:                "77777777-7777-4777-8777-777777777777",
+		EntryEventID:                "88888888-8888-4888-8888-888888888888",
 		CurrentAssignedUserID:       currentUserID,
 		EnrolledAt:                  enrolledAt,
 		InitialDistributionPending:  true,
@@ -635,6 +876,9 @@ func TestManagedWhatsAppAssignedReentryCanRetryCanonicalDistribution(t *testing.
 	}
 	if !strings.Contains(store.queries[3], "public.distribute_lead_from_backend") || store.queryArgs[3][4] != false {
 		t.Fatalf("assigned reentry must use canonical bridge with preserve=false: SQL=%q args=%#v", store.queries[3], store.queryArgs[3])
+	}
+	if strings.Contains(strings.Join(store.queries, "\n"), "enqueue_managed_whatsapp_distribution_auto_reply") {
+		t.Fatal("a reentry must not enqueue the initial lead acknowledgement")
 	}
 }
 

@@ -566,6 +566,29 @@ test('fila normaliza e limita tags automáticas sem confundir com regra de entra
   }).success, false)
 })
 
+test('fila valida a resposta automática opt-in do WhatsApp', () => {
+  assert.equal(createRoundRobinInputSchema.safeParse({
+    name: 'Fila com resposta automática',
+    settings: {
+      whatsapp_distribution_auto_reply_enabled: false,
+      whatsapp_distribution_auto_reply_message: 'Recebemos seu interesse e responderemos em breve.',
+      whatsapp_distribution_auto_reply_delay_seconds: 30,
+    },
+  }).success, true)
+  assert.equal(createRoundRobinInputSchema.safeParse({
+    name: 'Fila com mensagem vazia',
+    settings: { whatsapp_distribution_auto_reply_message: '   ' },
+  }).success, false)
+  assert.equal(createRoundRobinInputSchema.safeParse({
+    name: 'Fila com atraso abaixo do limite',
+    settings: { whatsapp_distribution_auto_reply_delay_seconds: 0 },
+  }).success, false)
+  assert.equal(createRoundRobinInputSchema.safeParse({
+    name: 'Fila com atraso acima do limite',
+    settings: { whatsapp_distribution_auto_reply_delay_seconds: 3_601 },
+  }).success, false)
+})
+
 test('notificacao exige organizacao e canais conhecidos', () => {
   assert.equal(dispatchNotificationInputSchema.safeParse({
     organization_id: 'invalido',

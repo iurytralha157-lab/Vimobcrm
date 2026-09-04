@@ -202,6 +202,9 @@ const roundRobinConditionInputSchema = z.object({
 })
 const roundRobinSettingsSchema = z.object({
   auto_tag_ids: z.array(uuidSchema).max(50).transform((tagIds) => Array.from(new Set(tagIds))).optional(),
+  whatsapp_distribution_auto_reply_enabled: z.boolean().optional(),
+  whatsapp_distribution_auto_reply_message: z.string().trim().min(1).max(4_000).optional(),
+  whatsapp_distribution_auto_reply_delay_seconds: z.number().int().min(1).max(3_600).optional(),
 }).passthrough()
 const roundRobinShape = {
   name: z.string().trim().min(2).max(120).optional(),

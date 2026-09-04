@@ -22,8 +22,15 @@ var (
 )
 
 const (
-	autoTagIDsSettingKey = "auto_tag_ids"
-	maxQueueAutoTagIDs   = 50
+	autoTagIDsSettingKey                    = "auto_tag_ids"
+	maxQueueAutoTagIDs                      = 50
+	whatsAppDistributionAutoReplyEnabledKey = "whatsapp_distribution_auto_reply_enabled"
+	whatsAppDistributionAutoReplyMessageKey = "whatsapp_distribution_auto_reply_message"
+	whatsAppDistributionAutoReplyDelayKey   = "whatsapp_distribution_auto_reply_delay_seconds"
+	defaultWhatsAppDistributionAutoReply    = "Olá! Recebemos seu interesse em um de nossos imóveis. Um de nossos corretores já foi acionado e falará com você por aqui em breve."
+	defaultWhatsAppDistributionReplyDelay   = 30
+	maxWhatsAppDistributionAutoReplyLength  = 4000
+	maxWhatsAppDistributionReplyDelay       = 3600
 )
 
 type ConditionConflictError struct {
@@ -892,7 +899,62 @@ func normalizeQueueSettings(value map[string]any) (map[string]any, error) {
 		}
 		settings[autoTagIDsSettingKey] = tagIDs
 	}
+	settings, err := normalizeManagedWhatsAppAutoReplySettings(settings)
+	if err != nil {
+		return nil, err
+	}
 	return normalizeRedistributionSettings(settings)
+}
+
+func normalizeManagedWhatsAppAutoReplySettings(value map[string]any) (map[string]any, error) {
+	settings := normalizeObject(value)
+	_, hasEnabled := settings[whatsAppDistributionAutoReplyEnabledKey]
+	_, hasMessage := settings[whatsAppDistributionAutoReplyMessageKey]
+	_, hasDelay := settings[whatsAppDistributionAutoReplyDelayKey]
+	if !hasEnabled && !hasMessage && !hasDelay {
+		return settings, nil
+	}
+
+	enabled := false
+	if raw, exists := settings[whatsAppDistributionAutoReplyEnabledKey]; exists {
+		var ok bool
+		enabled, ok = raw.(bool)
+		if !ok {
+			return nil, fmt.Errorf("%w: %s must be a boolean", ErrInvalidInput, whatsAppDistributionAutoReplyEnabledKey)
+		}
+	}
+	settings[whatsAppDistributionAutoReplyEnabledKey] = enabled
+
+	if hasMessage || enabled {
+		message := defaultWhatsAppDistributionAutoReply
+		if raw, exists := settings[whatsAppDistributionAutoReplyMessageKey]; exists {
+			value, ok := raw.(string)
+			if !ok {
+				return nil, fmt.Errorf("%w: %s must be a string", ErrInvalidInput, whatsAppDistributionAutoReplyMessageKey)
+			}
+			message = strings.TrimSpace(value)
+		}
+		if length := len([]rune(message)); length < 1 || length > maxWhatsAppDistributionAutoReplyLength {
+			return nil, fmt.Errorf("%w: WhatsApp distribution auto reply must contain between 1 and %d characters", ErrInvalidInput, maxWhatsAppDistributionAutoReplyLength)
+		}
+		settings[whatsAppDistributionAutoReplyMessageKey] = message
+	}
+
+	if hasDelay || enabled {
+		delay, exists := integerFromObject(settings, whatsAppDistributionAutoReplyDelayKey)
+		if !exists {
+			if hasDelay {
+				return nil, fmt.Errorf("%w: %s must be an integer", ErrInvalidInput, whatsAppDistributionAutoReplyDelayKey)
+			}
+			delay = defaultWhatsAppDistributionReplyDelay
+		}
+		if delay < 1 || delay > maxWhatsAppDistributionReplyDelay {
+			return nil, fmt.Errorf("%w: WhatsApp distribution auto reply delay must be between 1 and %d seconds", ErrInvalidInput, maxWhatsAppDistributionReplyDelay)
+		}
+		settings[whatsAppDistributionAutoReplyDelayKey] = delay
+	}
+
+	return settings, nil
 }
 
 func normalizeAutoTagIDs(value any) ([]string, error) {

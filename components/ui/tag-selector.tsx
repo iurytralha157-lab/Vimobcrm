@@ -40,6 +40,8 @@ interface TagSelectorProps {
   compact?: boolean;
   /** Disabled state */
   disabled?: boolean;
+  /** Whether the current user may create organization tags */
+  allowCreate?: boolean;
 }
 
 export function TagSelector({
@@ -51,7 +53,8 @@ export function TagSelector({
   placeholder = 'Selecionar tags...',
   triggerClassName,
   compact = false,
-  disabled = false
+  disabled = false,
+  allowCreate = true,
 }: TagSelectorProps) {
   const { data: allTags = [], isLoading: tagsLoading } = useTags();
   const createTag = useCreateTag();
@@ -80,7 +83,7 @@ export function TagSelector({
     : filteredTags;
 
   const handleCreateTag = async () => {
-    if (!searchTerm.trim() || exactMatch) return;
+    if (!allowCreate || !searchTerm.trim() || exactMatch) return;
 
     setIsCreating(true);
     try {
@@ -104,7 +107,7 @@ export function TagSelector({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && searchTerm.trim() && !exactMatch) {
+    if (allowCreate && e.key === 'Enter' && searchTerm.trim() && !exactMatch) {
       e.preventDefault();
       handleCreateTag();
     }
@@ -184,7 +187,7 @@ export function TagSelector({
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
                 ref={inputRef}
-                placeholder="Buscar ou criar tag..."
+                placeholder={allowCreate ? 'Buscar ou criar tag...' : 'Buscar tag...'}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -203,7 +206,7 @@ export function TagSelector({
               ) : (
                 <>
                   {/* Create new tag option */}
-                  {searchTerm.trim() && !exactMatch && (
+                  {allowCreate && searchTerm.trim() && !exactMatch && (
                     <button
                       onClick={handleCreateTag}
                       disabled={isCreating}
@@ -241,11 +244,13 @@ export function TagSelector({
                       </button>
                     ))
                   ) : (
-                    !searchTerm.trim() && (
-                      <p className="text-sm text-muted-foreground text-center py-3 px-2">
-                        Digite acima para criar uma nova tag
-                      </p>
-                    )
+                    <p className="text-sm text-muted-foreground text-center py-3 px-2">
+                      {searchTerm.trim()
+                        ? 'Nenhuma tag encontrada'
+                        : allowCreate
+                          ? 'Digite acima para criar uma nova tag'
+                          : 'Nenhuma tag disponível'}
+                    </p>
                   )}
                 </>
               )}
