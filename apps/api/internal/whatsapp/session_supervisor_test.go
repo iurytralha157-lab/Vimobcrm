@@ -67,7 +67,7 @@ func TestWebhookConfigurationDueOnlyForURLOrVersionChanges(t *testing.T) {
 	}
 }
 
-func TestWebhookConfigurationAllowedIsIndependentFromNativeProcessorRollout(t *testing.T) {
+func TestWebhookConfigurationAllowedRequiresExplicitProcessorRollout(t *testing.T) {
 	const (
 		sessionID  = "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"
 		webhookURL = "https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go"
@@ -78,11 +78,17 @@ func TestWebhookConfigurationAllowedIsIndependentFromNativeProcessorRollout(t *t
 		"webhook_subscription_version": "legacy",
 	}
 
-	if !webhookConfigurationAllowed(nil, sessionID, settings, webhookURL, "connected") {
-		t.Fatal("expected a due tokenless backend URL to be configured without a native processor rollout")
+	if webhookConfigurationAllowed(nil, sessionID, settings, webhookURL, "connected") {
+		t.Fatal("expected webhook reconfiguration to stay disabled without an explicit rollout")
 	}
-	if !webhookConfigurationAllowed([]string{"c15fe784-741b-4764-a60c-c60ffc50d606"}, sessionID, settings, webhookURL, "connected") {
-		t.Fatal("expected a native processor allowlist not to control callback URL security")
+	if webhookConfigurationAllowed([]string{"c15fe784-741b-4764-a60c-c60ffc50d606"}, sessionID, settings, webhookURL, "connected") {
+		t.Fatal("expected a different canary not to reconfigure this session")
+	}
+	if !webhookConfigurationAllowed([]string{sessionID}, sessionID, settings, webhookURL, "connected") {
+		t.Fatal("expected the explicit canary to permit the due webhook configuration")
+	}
+	if !webhookConfigurationAllowed([]string{"*"}, sessionID, settings, webhookURL, "connected") {
+		t.Fatal("expected the global rollout to permit the due webhook configuration")
 	}
 }
 
@@ -124,9 +130,10 @@ func TestEvolutionSupervisorConnectPlanDoesNotUseWebhookMigrationAsRecovery(t *t
 }
 
 func TestEvolutionSupervisorConnectPlanMigratesConnectedSessionWithLegacyURL(t *testing.T) {
+	const sessionID = "c15fe784-741b-4764-a60c-c60ffc50d606"
 	body, shouldConnect, appliesWebhook := evolutionSupervisorConnectPlan(
-		nil,
-		"c15fe784-741b-4764-a60c-c60ffc50d606",
+		[]string{sessionID},
+		sessionID,
 		map[string]any{
 			"webhook_url":                  "https://project.supabase.co/functions/v1/evolution-go-webhook?webhook_token=legacy",
 			"webhook_subscription_version": whatsappWebhookSubscriptionVersion,
@@ -148,7 +155,7 @@ func TestEvolutionSupervisorConnectPlanDoesNothingForConfiguredConnectedSession(
 		"webhook_url":                  backendURL,
 		"webhook_subscription_version": whatsappWebhookSubscriptionVersion,
 	}
-	body, shouldConnect, appliesWebhook := evolutionSupervisorConnectPlan(nil, "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9", settings, backendURL, "connected")
+	body, shouldConnect, appliesWebhook := evolutionSupervisorConnectPlan([]string{"*"}, "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9", settings, backendURL, "connected")
 	if shouldConnect || appliesWebhook || body != nil {
 		t.Fatalf("expected configured connected session not to reconnect, got body=%#v shouldConnect=%v appliesWebhook=%v", body, shouldConnect, appliesWebhook)
 	}

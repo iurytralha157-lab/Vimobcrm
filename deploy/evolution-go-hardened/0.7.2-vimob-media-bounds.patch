@@ -1,0 +1,430 @@
+diff --git a/pkg/message/handler/message_handler.go b/pkg/message/handler/message_handler.go
+index 2eafa64..0a6a5e9 100644
+--- a/pkg/message/handler/message_handler.go
++++ b/pkg/message/handler/message_handler.go
+@@ -240,10 +240,17 @@ func (m *messageHandler) DownloadMedia(ctx *gin.Context) {
+ 		return
+ 	}
+ 
++	ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, message_service.DownloadMediaRequestMaxBytes)
++
+ 	var data *message_service.DownloadMediaStruct
+ 	err := ctx.ShouldBindBodyWithJSON(&data)
+ 	if err != nil {
+-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
++		status := http.StatusBadRequest
++		var maxBytesError *http.MaxBytesError
++		if errors.As(err, &maxBytesError) {
++			status = http.StatusRequestEntityTooLarge
++		}
++		ctx.JSON(status, gin.H{"error": err.Error()})
+ 		return
+ 	}
+ 
+diff --git a/pkg/message/service/download_media_hardening_test.go b/pkg/message/service/download_media_hardening_test.go
+new file mode 100644
+index 0000000..1a9da0d
+--- /dev/null
++++ b/pkg/message/service/download_media_hardening_test.go
+@@ -0,0 +1,108 @@
++package message_service
++
++import (
++	"context"
++	"errors"
++	"os"
++	"testing"
++
++	"go.mau.fi/whatsmeow/proto/waE2E"
++	"google.golang.org/protobuf/proto"
++)
++
++func TestSelectDownloadableMediaRequiresExactlyOnePayload(t *testing.T) {
++	if _, _, _, err := selectDownloadableMedia(&waE2E.Message{}); err == nil {
++		t.Fatal("expected an empty message to be rejected")
++	}
++
++	message := &waE2E.Message{
++		AudioMessage: &waE2E.AudioMessage{
++			Mimetype:   proto.String("audio/ogg; codecs=opus"),
++			FileLength: proto.Uint64(1234),
++		},
++	}
++	media, mimetype, size, err := selectDownloadableMedia(message)
++	if err != nil {
++		t.Fatalf("single audio payload was rejected: %v", err)
++	}
++	if media != message.AudioMessage || mimetype != "audio/ogg; codecs=opus" || size != 1234 {
++		t.Fatalf("unexpected selection: media=%T mimetype=%q size=%d", media, mimetype, size)
++	}
++
++	message.ImageMessage = &waE2E.ImageMessage{
++		Mimetype:   proto.String("image/jpeg"),
++		FileLength: proto.Uint64(321),
++	}
++	if _, _, _, err := selectDownloadableMedia(message); err == nil {
++		t.Fatal("expected multiple media payloads to be rejected")
++	}
++}
++
++func TestNormalizeDownloadMediaMIME(t *testing.T) {
++	tests := map[string]string{
++		"audio/ogg; codecs=opus": "audio/ogg",
++		" IMAGE/JPEG ":           "image/jpeg",
++		"":                       "application/octet-stream",
++		"invalid":                "application/octet-stream",
++		"a/b/c":                  "application/octet-stream",
++	}
++	for input, expected := range tests {
++		if actual := normalizeDownloadMediaMIME(input); actual != expected {
++			t.Errorf("normalizeDownloadMediaMIME(%q)=%q, want %q", input, actual, expected)
++		}
++	}
++}
++
++func TestBoundedMediaFileStopsAtLimitAndCancels(t *testing.T) {
++	file, err := os.CreateTemp("", "bounded-media-test-*")
++	if err != nil {
++		t.Fatal(err)
++	}
++	name := file.Name()
++	t.Cleanup(func() {
++		_ = file.Close()
++		_ = os.Remove(name)
++	})
++
++	ctx, cancel := context.WithCancel(context.Background())
++	bounded := &boundedMediaFile{file: file, maxSize: 4, cancel: cancel}
++	n, err := bounded.Write([]byte("12345"))
++	if n != 4 || !errors.Is(err, ErrDownloadMediaSizeRejected) {
++		t.Fatalf("overflow write returned (%d, %v), want (4, size rejection)", n, err)
++	}
++	if !bounded.overflowed {
++		t.Fatal("overflow flag was not set")
++	}
++	select {
++	case <-ctx.Done():
++	default:
++		t.Fatal("overflow did not cancel the in-flight download")
++	}
++	stat, err := file.Stat()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if stat.Size() != 4 {
++		t.Fatalf("bounded file grew to %d bytes, want 4", stat.Size())
++	}
++}
++
++func TestBoundedMediaFileRejectsOversizedWriteAtAndTruncate(t *testing.T) {
++	file, err := os.CreateTemp("", "bounded-media-test-*")
++	if err != nil {
++		t.Fatal(err)
++	}
++	name := file.Name()
++	t.Cleanup(func() {
++		_ = file.Close()
++		_ = os.Remove(name)
++	})
++
++	bounded := &boundedMediaFile{file: file, maxSize: 4}
++	if _, err := bounded.WriteAt([]byte("x"), 4); !errors.Is(err, ErrDownloadMediaSizeRejected) {
++		t.Fatalf("oversized WriteAt error=%v, want size rejection", err)
++	}
++	if err := bounded.Truncate(5); !errors.Is(err, ErrDownloadMediaSizeRejected) {
++		t.Fatalf("oversized Truncate error=%v, want size rejection", err)
++	}
++}
+diff --git a/pkg/message/service/message_service.go b/pkg/message/service/message_service.go
+index dfc449b..a137a9e 100644
+--- a/pkg/message/service/message_service.go
++++ b/pkg/message/service/message_service.go
+@@ -4,6 +4,8 @@ import (
+ 	"context"
+ 	"errors"
+ 	"fmt"
++	"io"
++	"mime"
+ 	"net/http"
+ 	"os"
+ 	"strings"
+@@ -74,8 +76,10 @@ type DownloadMediaStruct struct {
+ }
+ 
+ const (
+-	downloadMediaMaxBytes = 25 * 1024 * 1024
+-	downloadMediaTimeout  = 90 * time.Second
++	downloadMediaMaxBytes          = 25 * 1024 * 1024
++	downloadMediaTransportMaxBytes = downloadMediaMaxBytes + 26 // AES padding (<=16) + media HMAC (10)
++	downloadMediaTimeout           = 90 * time.Second
++	DownloadMediaRequestMaxBytes   = 2 * 1024 * 1024
+ )
+ 
+ var (
+@@ -83,6 +87,152 @@ var (
+ 	ErrDownloadMediaSizeRejected      = errors.New("media download size is invalid")
+ )
+ 
++type boundedMediaFile struct {
++	file       *os.File
++	maxSize    int64
++	cancel     context.CancelFunc
++	overflowed bool
++}
++
++func (f *boundedMediaFile) rejectOverflow() error {
++	f.overflowed = true
++	if f.cancel != nil {
++		f.cancel()
++	}
++	return ErrDownloadMediaSizeRejected
++}
++
++func (f *boundedMediaFile) Read(p []byte) (int, error)              { return f.file.Read(p) }
++func (f *boundedMediaFile) ReadAt(p []byte, off int64) (int, error) { return f.file.ReadAt(p, off) }
++func (f *boundedMediaFile) Seek(offset int64, whence int) (int64, error) {
++	return f.file.Seek(offset, whence)
++}
++func (f *boundedMediaFile) Stat() (os.FileInfo, error) { return f.file.Stat() }
++
++func (f *boundedMediaFile) Write(p []byte) (int, error) {
++	offset, err := f.file.Seek(0, io.SeekCurrent)
++	if err != nil {
++		return 0, err
++	}
++	if offset < 0 || offset > f.maxSize {
++		return 0, f.rejectOverflow()
++	}
++	if int64(len(p)) > f.maxSize-offset {
++		allowed := f.maxSize - offset
++		if allowed > 0 {
++			n, writeErr := f.file.Write(p[:allowed])
++			if writeErr != nil {
++				return n, writeErr
++			}
++			return n, f.rejectOverflow()
++		}
++		return 0, f.rejectOverflow()
++	}
++	return f.file.Write(p)
++}
++
++func (f *boundedMediaFile) WriteAt(p []byte, off int64) (int, error) {
++	if off < 0 || off > f.maxSize || int64(len(p)) > f.maxSize-off {
++		return 0, f.rejectOverflow()
++	}
++	return f.file.WriteAt(p, off)
++}
++
++func (f *boundedMediaFile) Truncate(size int64) error {
++	if size < 0 || size > f.maxSize {
++		return f.rejectOverflow()
++	}
++	return f.file.Truncate(size)
++}
++
++func selectDownloadableMedia(msg *waE2E.Message) (whatsmeow.DownloadableMessage, string, uint64, error) {
++	if msg == nil {
++		return nil, "", 0, errors.New("message is required")
++	}
++
++	type candidate struct {
++		media    whatsmeow.DownloadableMessage
++		mimetype string
++		size     uint64
++	}
++	candidates := make([]candidate, 0, 1)
++	if media := msg.GetImageMessage(); media != nil {
++		candidates = append(candidates, candidate{media, media.GetMimetype(), media.GetFileLength()})
++	}
++	if media := msg.GetAudioMessage(); media != nil {
++		candidates = append(candidates, candidate{media, media.GetMimetype(), media.GetFileLength()})
++	}
++	if media := msg.GetDocumentMessage(); media != nil {
++		candidates = append(candidates, candidate{media, media.GetMimetype(), media.GetFileLength()})
++	}
++	if media := msg.GetVideoMessage(); media != nil {
++		candidates = append(candidates, candidate{media, media.GetMimetype(), media.GetFileLength()})
++	}
++	if media := msg.GetStickerMessage(); media != nil {
++		candidates = append(candidates, candidate{media, media.GetMimetype(), media.GetFileLength()})
++	}
++	if len(candidates) != 1 {
++		return nil, "", 0, fmt.Errorf("message must contain exactly one downloadable media payload, got %d", len(candidates))
++	}
++	selected := candidates[0]
++	return selected.media, selected.mimetype, selected.size, nil
++}
++
++func normalizeDownloadMediaMIME(value string) string {
++	parsed, _, err := mime.ParseMediaType(strings.TrimSpace(value))
++	if err != nil {
++		return "application/octet-stream"
++	}
++	parts := strings.Split(parsed, "/")
++	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
++		return "application/octet-stream"
++	}
++	return strings.ToLower(parsed)
++}
++
++func downloadMediaBounded(ctx context.Context, cancel context.CancelFunc, client *whatsmeow.Client, media whatsmeow.DownloadableMessage) ([]byte, error) {
++	tempFile, err := os.CreateTemp("", "evolution-go-media-*")
++	if err != nil {
++		return nil, fmt.Errorf("failed to create bounded media file: %w", err)
++	}
++	name := tempFile.Name()
++	defer func() {
++		_ = tempFile.Close()
++		_ = os.Remove(name)
++	}()
++
++	bounded := &boundedMediaFile{
++		file:    tempFile,
++		maxSize: downloadMediaTransportMaxBytes,
++		cancel:  cancel,
++	}
++	if err := client.DownloadToFile(ctx, media, bounded); err != nil {
++		if bounded.overflowed {
++			return nil, fmt.Errorf("%w: transport exceeded %d bytes", ErrDownloadMediaSizeRejected, downloadMediaTransportMaxBytes)
++		}
++		return nil, err
++	}
++
++	stat, err := tempFile.Stat()
++	if err != nil {
++		return nil, fmt.Errorf("failed to inspect downloaded media: %w", err)
++	}
++	if stat.Size() <= 0 || stat.Size() > downloadMediaMaxBytes {
++		return nil, fmt.Errorf("%w: downloaded size must be between 1 and %d bytes", ErrDownloadMediaSizeRejected, downloadMediaMaxBytes)
++	}
++	if _, err := tempFile.Seek(0, io.SeekStart); err != nil {
++		return nil, fmt.Errorf("failed to rewind downloaded media: %w", err)
++	}
++	mediaData, err := io.ReadAll(io.LimitReader(tempFile, downloadMediaMaxBytes+1))
++	if err != nil {
++		return nil, fmt.Errorf("failed to read downloaded media: %w", err)
++	}
++	if len(mediaData) == 0 || len(mediaData) > downloadMediaMaxBytes {
++		return nil, fmt.Errorf("%w: downloaded size must be between 1 and %d bytes", ErrDownloadMediaSizeRejected, downloadMediaMaxBytes)
++	}
++	return mediaData, nil
++}
++
+ type MessageStatusStruct struct {
+ 	Id string `json:"id"`
+ }
+@@ -385,34 +535,9 @@ func (m *messageService) DownloadMedia(data *DownloadMediaStruct, instance *inst
+ 
+ 	var ts time.Time
+ 
+-	msg := data.Message
+-
+-	mimetype := ""
+-	var mediaData []byte
+-	var err error
+-
+-	img := msg.GetImageMessage()
+-	audio := msg.GetAudioMessage()
+-	document := msg.GetDocumentMessage()
+-	video := msg.GetVideoMessage()
+-	sticker := msg.GetStickerMessage()
+-
+-	if img == nil && audio == nil && document == nil && video == nil && sticker == nil {
+-		return nil, "", errors.New("invalid media type")
+-	}
+-
+-	declaredSize := uint64(0)
+-	switch {
+-	case img != nil:
+-		declaredSize = img.GetFileLength()
+-	case audio != nil:
+-		declaredSize = audio.GetFileLength()
+-	case document != nil:
+-		declaredSize = document.GetFileLength()
+-	case video != nil:
+-		declaredSize = video.GetFileLength()
+-	case sticker != nil:
+-		declaredSize = sticker.GetFileLength()
++	media, mimetype, declaredSize, err := selectDownloadableMedia(data.Message)
++	if err != nil {
++		return nil, "", err
+ 	}
+ 	if declaredSize == 0 || declaredSize > downloadMediaMaxBytes {
+ 		return nil, "", fmt.Errorf("%w: declared size must be between 1 and %d bytes", ErrDownloadMediaSizeRejected, downloadMediaMaxBytes)
+@@ -421,70 +546,13 @@ func (m *messageService) DownloadMedia(data *DownloadMediaStruct, instance *inst
+ 	downloadCtx, cancel := context.WithTimeout(request.Context(), downloadMediaTimeout)
+ 	defer cancel()
+ 
+-	userDirectory := fmt.Sprintf(`files/user_%s`, instance.Id)
+-	_, err = os.Stat(userDirectory)
+-	if os.IsNotExist(err) {
+-		errDir := os.MkdirAll(userDirectory, 0751)
+-		if errDir != nil {
+-			m.loggerWrapper.GetLogger(instance.Id).LogError("[%s] Could not create user directory (%s)", instance.Id, userDirectory)
+-			return nil, "", errDir
+-		}
+-	}
+-
+-	if img != nil {
+-		mediaData, err = client.Download(downloadCtx, img)
+-		if err != nil {
+-			m.loggerWrapper.GetLogger(instance.Id).LogError("[%s] Failed to download image", instance.Id)
+-			msg := fmt.Sprintf("Failed to download image %v", err)
+-			return nil, "", errors.New(msg)
+-		}
+-		mimetype = img.GetMimetype()
+-	}
+-
+-	if audio != nil {
+-		mediaData, err = client.Download(downloadCtx, audio)
+-		if err != nil {
+-			m.loggerWrapper.GetLogger(instance.Id).LogError("[%s] Failed to download audio", instance.Id)
+-			msg := fmt.Sprintf("Failed to download audio %v", err)
+-			return nil, "", errors.New(msg)
+-		}
+-		mimetype = audio.GetMimetype()
+-	}
+-
+-	if document != nil {
+-		mediaData, err = client.Download(downloadCtx, document)
+-		if err != nil {
+-			m.loggerWrapper.GetLogger(instance.Id).LogError("[%s] Failed to download document", instance.Id)
+-			msg := fmt.Sprintf("Failed to download document %v", err)
+-			return nil, "", errors.New(msg)
+-		}
+-		mimetype = document.GetMimetype()
+-	}
+-
+-	if video != nil {
+-		mediaData, err = client.Download(downloadCtx, video)
+-		if err != nil {
+-			m.loggerWrapper.GetLogger(instance.Id).LogError("[%s] Failed to download video", instance.Id)
+-			msg := fmt.Sprintf("Failed to download video %v", err)
+-			return nil, "", errors.New(msg)
+-		}
+-		mimetype = video.GetMimetype()
+-	}
+-
+-	if sticker != nil {
+-		mediaData, err = client.Download(downloadCtx, sticker)
+-		if err != nil {
+-			m.loggerWrapper.GetLogger(instance.Id).LogError("[%s] Failed to download sticker", instance.Id)
+-			msg := fmt.Sprintf("Failed to download sticker %v", err)
+-			return nil, "", errors.New(msg)
+-		}
+-		mimetype = sticker.GetMimetype()
+-	}
+-	if len(mediaData) == 0 || len(mediaData) > downloadMediaMaxBytes {
+-		return nil, "", fmt.Errorf("%w: downloaded size must be between 1 and %d bytes", ErrDownloadMediaSizeRejected, downloadMediaMaxBytes)
++	mediaData, err := downloadMediaBounded(downloadCtx, cancel, client, media)
++	if err != nil {
++		m.loggerWrapper.GetLogger(instance.Id).LogError("[%s] Failed to download media: %v", instance.Id, err)
++		return nil, "", fmt.Errorf("failed to download media: %w", err)
+ 	}
+ 
+-	dataURL := dataurl.New(mediaData, mimetype)
++	dataURL := dataurl.New(mediaData, normalizeDownloadMediaMIME(mimetype))
+ 
+ 	return dataURL, ts.String(), nil
+ }

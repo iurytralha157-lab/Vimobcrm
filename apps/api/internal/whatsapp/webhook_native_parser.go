@@ -31,6 +31,8 @@ type nativeEvolutionMessage struct {
 	MediaMimeType                      string
 	MediaStoragePath                   string
 	MediaSize                          int64
+	MediaStatus                        string
+	MediaError                         string
 	ReactionTargetID                   string
 	ReactionEmoji                      string
 	IsReaction                         bool
@@ -295,9 +297,9 @@ func normalizeNativeEvolutionMessageWithEnvelope(raw map[string]any, envelope ma
 		firstString(raw, "mediaUrl", "media_url", "url"),
 	)
 	mediaBase64 := firstNonEmpty(
-		firstString(mediaBlock, "base64", "Base64", "media", "file", "thumbnailBase64", "jpegThumbnail"),
-		firstString(messageNode, "base64", "Base64", "media", "file", "thumbnailBase64", "jpegThumbnail"),
-		firstString(raw, "base64", "Base64", "media", "file", "thumbnailBase64", "jpegThumbnail"),
+		firstString(mediaBlock, "base64", "Base64", "media", "file"),
+		firstString(messageNode, "base64", "Base64", "media", "file"),
+		firstString(raw, "base64", "Base64", "media", "file"),
 	)
 	if strings.HasPrefix(mediaBase64, "http://") || strings.HasPrefix(mediaBase64, "https://") {
 		if mediaURL == "" {
@@ -361,7 +363,7 @@ func normalizeNativeEvolutionMessageWithEnvelope(raw map[string]any, envelope ma
 		MediaURL:                           mediaURL,
 		MediaBase64:                        mediaBase64,
 		MediaMimeType:                      mediaMimeType,
-		MediaSize:                          nativeInt64(nativeFirstValue(mediaBlock, "fileLength", "FileLength", "fileSize", "mediaSize")),
+		MediaSize:                          nativePositiveInt64(nativeFirstValue(mediaBlock, "fileLength", "FileLength", "fileSize", "mediaSize")),
 		ReactionTargetID:                   reactionTarget,
 		ReactionEmoji:                      reactionEmoji,
 		IsReaction:                         isReaction,
@@ -1114,4 +1116,12 @@ func nativeInt64(value any) int64 {
 	default:
 		return 0
 	}
+}
+
+func nativePositiveInt64(value any) int64 {
+	parsed := nativeInt64(value)
+	if parsed <= 0 {
+		return 0
+	}
+	return parsed
 }

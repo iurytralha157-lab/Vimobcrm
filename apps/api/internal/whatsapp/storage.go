@@ -15,6 +15,11 @@ import (
 
 var ErrStorageNotConfigured = errors.New("whatsapp storage is not configured")
 
+const (
+	whatsappStorageRequestTimeout = 20 * time.Second
+	whatsappStorageUploadTimeout  = 90 * time.Second
+)
+
 type StorageConfig struct {
 	ProjectURL  string
 	APIKey      string
@@ -31,16 +36,18 @@ type EvolutionGoConfig struct {
 }
 
 type storageClient struct {
-	projectURL string
-	apiKey     string
-	httpClient *http.Client
+	projectURL       string
+	apiKey           string
+	httpClient       *http.Client
+	uploadHTTPClient *http.Client
 }
 
 func newStorageClient(config StorageConfig) storageClient {
 	return storageClient{
-		projectURL: strings.TrimRight(strings.TrimSpace(config.ProjectURL), "/"),
-		apiKey:     strings.TrimSpace(config.APIKey),
-		httpClient: &http.Client{Timeout: 20 * time.Second},
+		projectURL:       strings.TrimRight(strings.TrimSpace(config.ProjectURL), "/"),
+		apiKey:           strings.TrimSpace(config.APIKey),
+		httpClient:       &http.Client{Timeout: whatsappStorageRequestTimeout},
+		uploadHTTPClient: &http.Client{Timeout: whatsappStorageUploadTimeout},
 	}
 }
 
@@ -65,7 +72,11 @@ func (client storageClient) signedURL(ctx context.Context, bucket string, object
 	request.Header.Set("Authorization", "Bearer "+client.apiKey)
 	request.Header.Set("Content-Type", "application/json")
 
-	response, err := client.httpClient.Do(request)
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	response, err := httpClient.Do(request)
 	if err != nil {
 		return "", err
 	}
@@ -123,7 +134,14 @@ func (client storageClient) upload(ctx context.Context, bucket string, objectPat
 		request.Header.Set("x-upsert", "false")
 	}
 
-	response, err := client.httpClient.Do(request)
+	uploadClient := client.uploadHTTPClient
+	if uploadClient == nil {
+		uploadClient = client.httpClient
+	}
+	if uploadClient == nil {
+		uploadClient = http.DefaultClient
+	}
+	response, err := uploadClient.Do(request)
 	if err != nil {
 		return err
 	}

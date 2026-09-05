@@ -1,6 +1,6 @@
 services:
   web:
-    image: ${VIMOB_WEB_IMAGE:?VIMOB_WEB_IMAGE is required and must use a github.sha tag}
+    image: ${VIMOB_WEB_IMAGE:?VIMOB_WEB_IMAGE is required and must use an immutable image@sha256 digest}
     deploy:
       update_config:
         parallelism: 1
@@ -38,7 +38,7 @@ services:
       - traefik-public
 
   api:
-    image: ${VIMOB_API_IMAGE:?VIMOB_API_IMAGE is required and must use a github.sha tag}
+    image: ${VIMOB_API_IMAGE:?VIMOB_API_IMAGE is required and must use an immutable image@sha256 digest}
     deploy:
       update_config:
         parallelism: 1
@@ -118,6 +118,10 @@ services:
       WHATSAPP_WEBHOOK_WORKER_ENABLED: ${WHATSAPP_WEBHOOK_WORKER_ENABLED:-true}
       WHATSAPP_WEBHOOK_WORKER_INTERVAL: ${WHATSAPP_WEBHOOK_WORKER_INTERVAL:-2s}
       WHATSAPP_WEBHOOK_WORKER_BATCH: ${WHATSAPP_WEBHOOK_WORKER_BATCH:-10}
+      WHATSAPP_MEDIA_WORKER_ENABLED: ${WHATSAPP_MEDIA_WORKER_ENABLED:-false}
+      WHATSAPP_MEDIA_WORKER_INTERVAL: ${WHATSAPP_MEDIA_WORKER_INTERVAL:-2s}
+      WHATSAPP_MEDIA_WORKER_LEASE: ${WHATSAPP_MEDIA_WORKER_LEASE:-5m}
+      WHATSAPP_MEDIA_WORKER_SESSION_IDS: ${WHATSAPP_MEDIA_WORKER_SESSION_IDS:-}
       WHATSAPP_SESSION_SUPERVISOR_ENABLED: ${WHATSAPP_SESSION_SUPERVISOR_ENABLED:-true}
       WHATSAPP_SESSION_SUPERVISOR_INITIAL_DELAY: ${WHATSAPP_SESSION_SUPERVISOR_INITIAL_DELAY:-30s}
       WHATSAPP_SESSION_SUPERVISOR_INTERVAL: ${WHATSAPP_SESSION_SUPERVISOR_INTERVAL:-1m}

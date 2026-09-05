@@ -9,6 +9,8 @@ const (
 	defaultWhatsAppOutboxWorkerBatch             = 5
 	defaultWhatsAppWebhookWorkerInterval         = time.Second
 	defaultWhatsAppWebhookWorkerBatch            = 5
+	defaultWhatsAppMediaWorkerInterval           = 2 * time.Second
+	defaultWhatsAppMediaWorkerLease              = 5 * time.Minute
 	defaultWhatsAppSessionSupervisorInitialDelay = 30 * time.Second
 	defaultWhatsAppSessionSupervisorInterval     = time.Minute
 	defaultWhatsAppSessionSupervisorBatch        = 10
@@ -25,6 +27,10 @@ type WorkerConfig struct {
 	WebhookWorkerEnabled          bool
 	WebhookWorkerInterval         time.Duration
 	WebhookWorkerBatch            int
+	MediaWorkerEnabled            bool
+	MediaWorkerInterval           time.Duration
+	MediaWorkerLease              time.Duration
+	MediaWorkerSessionIDs         []string
 	SessionSupervisorEnabled      bool
 	SessionSupervisorInitialDelay time.Duration
 	SessionSupervisorInterval     time.Duration
@@ -44,6 +50,10 @@ func DefaultWorkerConfig() WorkerConfig {
 		WebhookWorkerEnabled:          true,
 		WebhookWorkerInterval:         defaultWhatsAppWebhookWorkerInterval,
 		WebhookWorkerBatch:            defaultWhatsAppWebhookWorkerBatch,
+		MediaWorkerEnabled:            false,
+		MediaWorkerInterval:           defaultWhatsAppMediaWorkerInterval,
+		MediaWorkerLease:              defaultWhatsAppMediaWorkerLease,
+		MediaWorkerSessionIDs:         nil,
 		SessionSupervisorEnabled:      true,
 		SessionSupervisorInitialDelay: defaultWhatsAppSessionSupervisorInitialDelay,
 		SessionSupervisorInterval:     defaultWhatsAppSessionSupervisorInterval,
@@ -72,6 +82,12 @@ func (config WorkerConfig) normalized() WorkerConfig {
 	}
 	if config.WebhookWorkerBatch <= 0 || config.WebhookWorkerBatch > 100 {
 		config.WebhookWorkerBatch = defaults.WebhookWorkerBatch
+	}
+	if config.MediaWorkerInterval <= 0 {
+		config.MediaWorkerInterval = defaults.MediaWorkerInterval
+	}
+	if config.MediaWorkerLease < 30*time.Second || config.MediaWorkerLease > 30*time.Minute {
+		config.MediaWorkerLease = defaults.MediaWorkerLease
 	}
 	if config.SessionSupervisorInitialDelay <= 0 {
 		config.SessionSupervisorInitialDelay = defaults.SessionSupervisorInitialDelay

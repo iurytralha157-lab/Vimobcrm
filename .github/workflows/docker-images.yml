@@ -14,10 +14,11 @@ env:
   REGISTRY: ghcr.io
   WEB_IMAGE: ${{ github.repository_owner }}/vimob-crm-web
   API_IMAGE: ${{ github.repository_owner }}/vimob-crm-api
+  EVOLUTION_IMAGE: ${{ github.repository_owner }}/vimob-evolution-go
 
 jobs:
   build-and-push:
-    name: Build and push images
+    name: Validate, build, and publish images
     runs-on: ubuntu-latest
     env:
       WEB_NEXT_PUBLIC_SUPABASE_URL: ${{ vars.VIMOB_NEXT_PUBLIC_SUPABASE_URL || secrets.VIMOB_NEXT_PUBLIC_SUPABASE_URL || 'https://supabase.vimobcrm.com.br' }}
@@ -28,6 +29,24 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: |
+            apps/api/go.sum
+            packages/auth/go.sum
+            packages/db/go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: npm
+
+      - name: Install web dependencies
+        run: npm ci
 
       - name: Validate web build variables
         shell: bash
@@ -45,10 +64,119 @@ jobs:
             echo "::error::Missing NEXT_PUBLIC_VIMOB_API_URL in GitHub Actions variables or secrets."
             missing=1
           fi
+          if [ -z "$WEB_NEXT_PUBLIC_SITE_URL" ]; then
+            echo "::error::Missing NEXT_PUBLIC_SITE_URL in GitHub Actions variables or secrets."
+            missing=1
+          fi
           exit "$missing"
+
+      - name: Verify Go formatting
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l \
+            apps/api/internal/app/app.go \
+            apps/api/internal/app/media_worker_contract_test.go \
+            apps/api/internal/config/config.go \
+            apps/api/internal/config/config_test.go \
+            apps/api/internal/config/media_worker_deployment_contract_test.go \
+            apps/api/internal/whatsapp/evolution_go.go \
+            apps/api/internal/whatsapp/media_queue.go \
+            apps/api/internal/whatsapp/media_queue_integration_test.go \
+            apps/api/internal/whatsapp/media_queue_message_key.go \
+            apps/api/internal/whatsapp/media_queue_message_key_test.go \
+            apps/api/internal/whatsapp/media_queue_migration_rerun_integration_test.go \
+            apps/api/internal/whatsapp/media_queue_migration_transition_integration_test.go \
+            apps/api/internal/whatsapp/media_queue_mutation_lock.go \
+            apps/api/internal/whatsapp/media_queue_mutation_lock_test.go \
+            apps/api/internal/whatsapp/media_queue_observability.go \
+            apps/api/internal/whatsapp/media_queue_observability_test.go \
+            apps/api/internal/whatsapp/media_queue_privilege_preflight.go \
+            apps/api/internal/whatsapp/media_queue_privilege_preflight_integration_test.go \
+            apps/api/internal/whatsapp/media_queue_retention_contract_test.go \
+            apps/api/internal/whatsapp/media_queue_test.go \
+            apps/api/internal/whatsapp/media_retry_operations.go \
+            apps/api/internal/whatsapp/session_supervisor.go \
+            apps/api/internal/whatsapp/session_supervisor_test.go \
+            apps/api/internal/whatsapp/storage.go \
+            apps/api/internal/whatsapp/storage_test.go \
+            apps/api/internal/whatsapp/webhook_native_parser.go \
+            apps/api/internal/whatsapp/webhook_native_processor.go \
+            apps/api/internal/whatsapp/worker_config.go)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::Go files are not formatted."
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet API media path
+        run: go vet ./apps/api/internal/whatsapp ./apps/api/internal/config ./apps/api/internal/app
+
+      - name: Test API media path
+        run: go test -skip '^TestManagedWhatsAppReentryMigrationContract$' ./apps/api/internal/whatsapp ./apps/api/internal/config ./apps/api/internal/app
+
+      - name: Test CRM media policy
+        run: node --test components/features/whatsapp/message-media-policy.test.mts
+
+      - name: Test retired Edge media worker
+        run: node --test scripts/tests/media-worker-edge-retirement.test.mjs
+
+      - name: Type-check web
+        run: npx tsc --noEmit
+
+      - name: Lint changed media surfaces
+        run: >-
+          npx eslint
+          components/features/whatsapp/ConversationsScreen.tsx
+          components/features/whatsapp/MessageBubble.tsx
+          components/features/whatsapp/message-media-policy.ts
+          lib/api/whatsapp.ts
+
+      - name: Build web quality gate
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ env.WEB_NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ env.WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_VIMOB_API_URL: ${{ env.WEB_NEXT_PUBLIC_VIMOB_API_URL }}
+          NEXT_PUBLIC_SITE_URL: ${{ env.WEB_NEXT_PUBLIC_SITE_URL }}
+        run: npm run build
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      # Validate every container before logging in or publishing anything. The
+      # later push steps reuse these content-addressed BuildKit caches.
+      - name: Validate hardened Evolution Go image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/evolution-go-hardened/Dockerfile
+          push: false
+          build-args: |
+            VERSION=0.7.2-vimob-media-pool-hardening.2
+          cache-from: type=gha,scope=evolution-go
+          cache-to: type=gha,mode=max,scope=evolution-go
+
+      - name: Validate API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.api
+          push: false
+          cache-from: type=gha,scope=vimob-api
+          cache-to: type=gha,mode=max,scope=vimob-api
+
+      - name: Validate Web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.web
+          push: false
+          build-args: |
+            NEXT_PUBLIC_SUPABASE_URL=${{ env.WEB_NEXT_PUBLIC_SUPABASE_URL }}
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ env.WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+            NEXT_PUBLIC_VIMOB_API_URL=${{ env.WEB_NEXT_PUBLIC_VIMOB_API_URL }}
+            NEXT_PUBLIC_SITE_URL=${{ env.WEB_NEXT_PUBLIC_SITE_URL }}
+          cache-from: type=gha,scope=vimob-web
+          cache-to: type=gha,mode=max,scope=vimob-web
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -57,7 +185,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compute immutable API image tags
+      - name: Compute API image tags
         id: api-meta
         uses: docker/metadata-action@v5
         with:
@@ -66,7 +194,7 @@ jobs:
             type=raw,value=${{ github.sha }}
             type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
-      - name: Compute immutable Web image tags
+      - name: Compute Web image tags
         id: web-meta
         uses: docker/metadata-action@v5
         with:
@@ -75,15 +203,40 @@ jobs:
             type=raw,value=${{ github.sha }}
             type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
-      - name: Build and push API
+      - name: Compute Evolution Go image tags
+        id: evolution-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.EVOLUTION_IMAGE }}
+          tags: |
+            type=raw,value=${{ github.sha }}
+
+      - name: Publish hardened Evolution Go
+        id: push-evolution
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/evolution-go-hardened/Dockerfile
+          push: true
+          build-args: |
+            VERSION=0.7.2-vimob-media-pool-hardening.2
+          tags: ${{ steps.evolution-meta.outputs.tags }}
+          labels: ${{ steps.evolution-meta.outputs.labels }}
+          cache-from: type=gha,scope=evolution-go
+
+      - name: Publish API
+        id: push-api
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.api
           push: true
           tags: ${{ steps.api-meta.outputs.tags }}
+          labels: ${{ steps.api-meta.outputs.labels }}
+          cache-from: type=gha,scope=vimob-api
 
-      - name: Build and push Web
+      - name: Publish Web
+        id: push-web
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -95,3 +248,46 @@ jobs:
             NEXT_PUBLIC_VIMOB_API_URL=${{ env.WEB_NEXT_PUBLIC_VIMOB_API_URL }}
             NEXT_PUBLIC_SITE_URL=${{ env.WEB_NEXT_PUBLIC_SITE_URL }}
           tags: ${{ steps.web-meta.outputs.tags }}
+          labels: ${{ steps.web-meta.outputs.labels }}
+          cache-from: type=gha,scope=vimob-web
+
+      - name: Write immutable release manifest
+        shell: bash
+        env:
+          API_DIGEST: ${{ steps.push-api.outputs.digest }}
+          WEB_DIGEST: ${{ steps.push-web.outputs.digest }}
+          EVOLUTION_DIGEST: ${{ steps.push-evolution.outputs.digest }}
+        run: |
+          for digest_name in API_DIGEST WEB_DIGEST EVOLUTION_DIGEST; do
+            digest="${!digest_name}"
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::${digest_name} is missing or is not an immutable sha256 digest."
+              exit 1
+            fi
+          done
+
+          jq -n \
+            --arg commit "$GITHUB_SHA" \
+            --arg api "${REGISTRY}/${API_IMAGE}@${API_DIGEST}" \
+            --arg web "${REGISTRY}/${WEB_IMAGE}@${WEB_DIGEST}" \
+            --arg evolution "${REGISTRY}/${EVOLUTION_IMAGE}@${EVOLUTION_DIGEST}" \
+            '{commit: $commit, images: {api: $api, web: $web, evolution: $evolution}}' \
+            > release-manifest.json
+
+          {
+            echo "## Immutable release manifest"
+            echo
+            echo "| Image | Digest reference |"
+            echo "| --- | --- |"
+            echo "| API | \`${REGISTRY}/${API_IMAGE}@${API_DIGEST}\` |"
+            echo "| Web | \`${REGISTRY}/${WEB_IMAGE}@${WEB_DIGEST}\` |"
+            echo "| Evolution Go | \`${REGISTRY}/${EVOLUTION_IMAGE}@${EVOLUTION_DIGEST}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload release manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: whatsapp-media-release-${{ github.sha }}
+          path: release-manifest.json
+          if-no-files-found: error
+          retention-days: 30

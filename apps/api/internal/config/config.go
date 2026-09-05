@@ -116,6 +116,10 @@ type WhatsAppConfig struct {
 	WebhookWorkerEnabled          bool
 	WebhookWorkerInterval         time.Duration
 	WebhookWorkerBatch            int
+	MediaWorkerEnabled            bool
+	MediaWorkerInterval           time.Duration
+	MediaWorkerLease              time.Duration
+	MediaWorkerSessionIDs         []string
 	SessionSupervisorEnabled      bool
 	SessionSupervisorInitialDelay time.Duration
 	SessionSupervisorInterval     time.Duration
@@ -210,6 +214,10 @@ func Load() (Config, error) {
 			WebhookWorkerEnabled:          parseBool("WHATSAPP_WEBHOOK_WORKER_ENABLED", true),
 			WebhookWorkerInterval:         parseDuration("WHATSAPP_WEBHOOK_WORKER_INTERVAL", time.Second),
 			WebhookWorkerBatch:            int(parseInt("WHATSAPP_WEBHOOK_WORKER_BATCH", 5)),
+			MediaWorkerEnabled:            parseBool("WHATSAPP_MEDIA_WORKER_ENABLED", false),
+			MediaWorkerInterval:           parseDuration("WHATSAPP_MEDIA_WORKER_INTERVAL", 2*time.Second),
+			MediaWorkerLease:              parseDuration("WHATSAPP_MEDIA_WORKER_LEASE", 5*time.Minute),
+			MediaWorkerSessionIDs:         parseCSV(getEnv("WHATSAPP_MEDIA_WORKER_SESSION_IDS", "")),
 			SessionSupervisorEnabled:      parseBool("WHATSAPP_SESSION_SUPERVISOR_ENABLED", true),
 			SessionSupervisorInitialDelay: parseDuration("WHATSAPP_SESSION_SUPERVISOR_INITIAL_DELAY", 30*time.Second),
 			SessionSupervisorInterval:     parseDuration("WHATSAPP_SESSION_SUPERVISOR_INTERVAL", time.Minute),
@@ -354,6 +362,23 @@ func (cfg Config) Validate() error {
 	if err := validateWebhookRolloutSessionIDs(cfg.EvolutionGo.WebhookRolloutSessionIDs); err != nil {
 		validationErrors = append(validationErrors, err)
 	}
+	if cfg.WhatsApp.MediaWorkerEnabled {
+		if cfg.WhatsApp.MediaWorkerInterval < 250*time.Millisecond || cfg.WhatsApp.MediaWorkerInterval > time.Minute {
+			validationErrors = append(validationErrors, errors.New("WHATSAPP_MEDIA_WORKER_INTERVAL must be between 250ms and 1m"))
+		}
+		if cfg.WhatsApp.MediaWorkerLease < 30*time.Second || cfg.WhatsApp.MediaWorkerLease > 30*time.Minute {
+			validationErrors = append(validationErrors, errors.New("WHATSAPP_MEDIA_WORKER_LEASE must be between 30s and 30m"))
+		}
+		if cfg.EvolutionGo.WebhookProcessorMode != "native" || !sessionIDAllowlistIsGlobal(cfg.EvolutionGo.WebhookRolloutSessionIDs) {
+			validationErrors = append(validationErrors, errors.New("WHATSAPP_MEDIA_WORKER_ENABLED requires WHATSAPP_WEBHOOK_PROCESSOR_MODE=native and WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS=*"))
+		}
+		if len(cfg.WhatsApp.MediaWorkerSessionIDs) == 0 {
+			validationErrors = append(validationErrors, errors.New("WHATSAPP_MEDIA_WORKER_ENABLED requires WHATSAPP_MEDIA_WORKER_SESSION_IDS=* or an explicit UUID allowlist"))
+		}
+	}
+	if err := validateSessionIDAllowlist("WHATSAPP_MEDIA_WORKER_SESSION_IDS", cfg.WhatsApp.MediaWorkerSessionIDs); err != nil {
+		validationErrors = append(validationErrors, err)
+	}
 	if err := validateSessionIDAllowlist("WHATSAPP_SESSION_SUPERVISOR_RECOVERY_SESSION_IDS", cfg.WhatsApp.SessionSupervisorRecoveryIDs); err != nil {
 		validationErrors = append(validationErrors, err)
 	}
@@ -452,6 +477,10 @@ func validateSessionIDAllowlist(name string, values []string) error {
 	}
 
 	return nil
+}
+
+func sessionIDAllowlistIsGlobal(values []string) bool {
+	return len(values) == 1 && strings.TrimSpace(values[0]) == "*"
 }
 
 func getEnv(key string, fallback string) string {

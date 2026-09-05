@@ -1,7 +1,6 @@
 package whatsapp
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -15,7 +14,10 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
-const whatsappMediaMaxBytes = 26 * 1024 * 1024
+const (
+	whatsappMediaMaxBytes               = whatsappMediaAbsoluteMaxBytes
+	whatsappMediaURLDownloadMaxAttempts = 2
+)
 
 type retryMediaMessage struct {
 	ID               string
@@ -27,6 +29,7 @@ type retryMediaMessage struct {
 	MediaURL         string
 	MediaMimeType    string
 	MediaStoragePath string
+	MediaSize        int64
 	Metadata         map[string]any
 }
 
@@ -58,6 +61,7 @@ func (repo Repository) retryStoredMediaDownload(ctx context.Context, tenantConte
 		return map[string]any{
 			"ok":                 true,
 			"message_id":         message.ID,
+			"queued":             false,
 			"media_status":       "ready",
 			"media_url":          signedURL,
 			"media_storage_path": message.MediaStoragePath,
@@ -65,51 +69,73 @@ func (repo Repository) retryStoredMediaDownload(ctx context.Context, tenantConte
 		}, nil
 	}
 
-	media, err := repo.recoverWhatsAppMedia(ctx, message)
-	if err != nil {
-		_ = repo.markMediaRetryFailed(ctx, tenantContext.OrganizationID, message.ID, err)
-		return nil, err
-	}
-
-	contentType := firstNonEmpty(media.contentType, message.MediaMimeType, fallbackWhatsAppMediaMimeType(message.MessageType))
-	extension := mediaExtension(contentType)
-	sessionID := firstNonEmpty(message.SessionID, "no-session")
-	objectName := sanitizeWhatsAppMediaObjectPart(firstNonEmpty(message.MessageID, message.ID))
-	objectPath := fmt.Sprintf("orgs/%s/sessions/%s/incoming/%s.%s", message.OrganizationID, sessionID, objectName, extension)
-
-	if err := repo.storage.upload(ctx, whatsappMediaBucket, objectPath, contentType, bytes.NewReader(media.bytes), true); err != nil {
-		_ = repo.markMediaRetryFailed(ctx, tenantContext.OrganizationID, message.ID, err)
-		return nil, err
-	}
-
-	signedURL, _ := repo.storage.signedURL(ctx, whatsappMediaBucket, objectPath, whatsappMediaSignedURLTTLSeconds)
-	_, err = repo.db.Pool().Exec(ctx, `
-		update public.whatsapp_messages
-		set media_storage_path = $3,
-		    media_url = null,
-		    media_mime_type = nullif($4, ''),
-		    media_status = 'ready',
-		    media_error = null,
-		    media_size = $5,
-		    updated_at = now()
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-	`, tenantContext.OrganizationID, message.ID, objectPath, contentType, int64(len(media.bytes)))
+	result, err := repo.enqueueManualWhatsAppMediaJob(ctx, message)
 	if err != nil {
 		return nil, err
 	}
-	whatsappMediaSignedURLCache.Delete(objectPath)
-
+	if result.alreadyReady {
+		signedURL, _ := repo.storage.signedURL(ctx, whatsappMediaBucket, result.storagePath, whatsappMediaSignedURLTTLSeconds)
+		return map[string]any{
+			"ok":                 true,
+			"message_id":         message.ID,
+			"queued":             false,
+			"media_status":       "ready",
+			"media_url":          signedURL,
+			"media_mime_type":    result.contentType,
+			"media_storage_path": result.storagePath,
+			"media_size":         result.actualSize,
+			"already_ready":      true,
+			"job_id":             result.jobID,
+			"deduplicated":       result.deduplicated,
+		}, nil
+	}
 	return map[string]any{
-		"ok":                 true,
-		"message_id":         message.ID,
-		"media_status":       "ready",
-		"media_url":          signedURL,
-		"media_mime_type":    contentType,
-		"media_storage_path": objectPath,
-		"media_size":         len(media.bytes),
-		"source":             media.source,
+		"ok":           true,
+		"message_id":   message.ID,
+		"queued":       true,
+		"media_status": "pending",
+		"media_error":  mediaErrorManualQueued,
+		"job_id":       result.jobID,
+		"deduplicated": result.deduplicated,
 	}, nil
+}
+
+func loadRetryMediaMessageForUpdate(ctx context.Context, tx pgx.Tx, organizationID string, messageID string) (retryMediaMessage, error) {
+	var message retryMediaMessage
+	var metadata string
+	err := tx.QueryRow(ctx, `
+		select id::text,
+		       organization_id::text,
+		       conversation_id::text,
+		       coalesce(session_id::text, ''),
+		       coalesce(message_id, provider_message_id, id::text),
+		       coalesce(message_type, ''),
+		       coalesce(media_url, ''),
+		       coalesce(media_mime_type, ''),
+		       coalesce(media_storage_path, ''),
+		       case when media_size > 0 then media_size else 0 end,
+		       coalesce(metadata, '{}'::jsonb)::text
+		from public.whatsapp_messages
+		where organization_id = $1::uuid and id = $2::uuid
+		for update
+	`, organizationID, messageID).Scan(
+		&message.ID,
+		&message.OrganizationID,
+		&message.ConversationID,
+		&message.SessionID,
+		&message.MessageID,
+		&message.MessageType,
+		&message.MediaURL,
+		&message.MediaMimeType,
+		&message.MediaStoragePath,
+		&message.MediaSize,
+		&metadata,
+	)
+	if err != nil {
+		return retryMediaMessage{}, err
+	}
+	message.Metadata = decodeObjectJSON(metadata)
+	return message, nil
 }
 
 func (repo Repository) loadRetryMediaMessage(ctx context.Context, tenantContext tenant.Context, messageID string) (retryMediaMessage, error) {
@@ -127,6 +153,7 @@ func (repo Repository) loadRetryMediaMessage(ctx context.Context, tenantContext 
 			coalesce(wm.media_url, ''),
 			coalesce(wm.media_mime_type, ''),
 			coalesce(wm.media_storage_path, ''),
+			case when wm.media_size > 0 then wm.media_size else 0 end,
 			coalesce(wm.metadata, '{}'::jsonb)::text
 		from public.whatsapp_messages wm
 		join public.whatsapp_conversations wc on wc.id = wm.conversation_id
@@ -149,6 +176,7 @@ func (repo Repository) loadRetryMediaMessage(ctx context.Context, tenantContext 
 		&message.MediaURL,
 		&message.MediaMimeType,
 		&message.MediaStoragePath,
+		&message.MediaSize,
 		&metadata,
 	)
 	if err != nil {
@@ -173,12 +201,18 @@ func (repo Repository) recoverWhatsAppMedia(ctx context.Context, message retryMe
 				source:      "metadata_base64",
 			}, nil
 		}
+		if errors.Is(err, ErrInvalidInput) {
+			return recoveredWhatsAppMedia{}, err
+		}
 	}
 
 	for _, candidate := range mediaURLCandidates(raw, message) {
 		media, err := repo.downloadWhatsAppMediaURL(ctx, candidate)
 		if err == nil && len(media.bytes) > 0 {
 			return media, nil
+		}
+		if errors.Is(err, ErrInvalidInput) {
+			return recoveredWhatsAppMedia{}, err
 		}
 	}
 
@@ -193,15 +227,17 @@ func (repo Repository) downloadWhatsAppMediaURL(ctx context.Context, sourceURL s
 		return recoveredWhatsAppMedia{}, fmt.Errorf("%w: URL da midia invalida", ErrProviderFailed)
 	}
 
-	headers := []map[string]string{{}}
+	headers := map[string]string{}
 	if providerHost && repo.functions.evolutionGoAPIKey != "" {
-		headers = append(headers, map[string]string{
-			"apikey":        repo.functions.evolutionGoAPIKey,
-			"Authorization": "Bearer " + repo.functions.evolutionGoAPIKey,
-		})
+		headers["apikey"] = repo.functions.evolutionGoAPIKey
+		headers["Authorization"] = "Bearer " + repo.functions.evolutionGoAPIKey
 	}
 
-	client := *repo.functions.httpClient
+	baseClient := repo.functions.httpClient
+	if baseClient == nil {
+		baseClient = http.DefaultClient
+	}
+	client := *baseClient
 	client.CheckRedirect = func(request *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
 			return fmt.Errorf("too many media redirects")
@@ -221,23 +257,47 @@ func (repo Repository) downloadWhatsAppMediaURL(ctx context.Context, sourceURL s
 		return nil
 	}
 
-	for _, headerSet := range headers {
+	var lastErr error
+	for attempt := 0; attempt < whatsappMediaURLDownloadMaxAttempts; attempt++ {
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
 		if err != nil {
 			return recoveredWhatsAppMedia{}, err
 		}
-		for key, value := range headerSet {
+		for key, value := range headers {
 			request.Header.Set(key, value)
 		}
 
 		response, err := client.Do(request)
 		if err != nil {
-			continue
+			lastErr = fmt.Errorf("%w: media URL request failed: %v", ErrProviderFailed, err)
+			if ctx.Err() == nil && attempt+1 < whatsappMediaURLDownloadMaxAttempts {
+				continue
+			}
+			return recoveredWhatsAppMedia{}, lastErr
+		}
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64*1024))
+			_ = response.Body.Close()
+			if response.StatusCode == http.StatusRequestEntityTooLarge {
+				return recoveredWhatsAppMedia{}, fmt.Errorf("%w: %w: media URL exceeded provider limit", ErrInvalidInput, errWhatsAppMediaTooLarge)
+			}
+			lastErr = fmt.Errorf("%w: media URL returned status %d", ErrProviderFailed, response.StatusCode)
+			if attempt+1 < whatsappMediaURLDownloadMaxAttempts && retryableWhatsAppMediaURLStatus(response.StatusCode) {
+				continue
+			}
+			return recoveredWhatsAppMedia{}, lastErr
 		}
 		payload, readErr := readLimitedWhatsAppMedia(response)
-		response.Body.Close()
-		if readErr != nil || response.StatusCode < 200 || response.StatusCode >= 300 {
-			continue
+		_ = response.Body.Close()
+		if errors.Is(readErr, ErrInvalidInput) {
+			return recoveredWhatsAppMedia{}, readErr
+		}
+		if readErr != nil {
+			lastErr = fmt.Errorf("%w: media URL response read failed: %v", ErrProviderFailed, readErr)
+			if ctx.Err() == nil && attempt+1 < whatsappMediaURLDownloadMaxAttempts {
+				continue
+			}
+			return recoveredWhatsAppMedia{}, lastErr
 		}
 
 		return recoveredWhatsAppMedia{
@@ -247,7 +307,14 @@ func (repo Repository) downloadWhatsAppMediaURL(ctx context.Context, sourceURL s
 		}, nil
 	}
 
-	return recoveredWhatsAppMedia{}, fmt.Errorf("%w: nao foi possivel baixar a midia no provedor", ErrProviderFailed)
+	if lastErr != nil {
+		return recoveredWhatsAppMedia{}, lastErr
+	}
+	return recoveredWhatsAppMedia{}, fmt.Errorf("%w: nao foi possivel baixar a midia pela URL", ErrProviderFailed)
+}
+
+func retryableWhatsAppMediaURLStatus(status int) bool {
+	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
 }
 
 func allowedWhatsAppMediaURL(candidate *url.URL, evolutionURL string, projectURL string) (allowed bool, providerHost bool) {
@@ -363,25 +430,16 @@ func mediaBase64Candidates(raw map[string]any, messageType string) []string {
 		"Base64",
 		"media",
 		"file",
-		"thumbnail",
-		"thumbnailBase64",
-		"jpegThumbnail",
 		"Message.base64",
 		"Message.Base64",
 		"Message.media",
 		"Message.file",
-		"Message.thumbnail",
-		"Message.thumbnailBase64",
-		"Message.jpegThumbnail",
 		"message.base64",
 		"message.media",
 		"message.file",
-		"message.thumbnail",
-		"message.thumbnailBase64",
-		"message.jpegThumbnail",
 		"data.Message.base64",
 		"Data.Message.base64",
-	}, mediaBlockPaths(messageType, "base64", "Base64", "media", "file", "thumbnail", "thumbnailBase64", "jpegThumbnail")...)
+	}, mediaBlockPaths(messageType, "base64", "Base64", "media", "file")...)
 
 	candidates := make([]string, 0, len(paths)+4)
 	for _, path := range paths {
@@ -389,12 +447,7 @@ func mediaBase64Candidates(raw map[string]any, messageType string) []string {
 			candidates = append(candidates, value)
 		}
 	}
-	for _, value := range recursiveMediaStrings(raw, map[string]bool{
-		"base64":          true,
-		"thumbnail":       true,
-		"thumbnailbase64": true,
-		"jpegthumbnail":   true,
-	}) {
+	for _, value := range recursiveMediaStrings(raw, map[string]bool{"base64": true}) {
 		if looksLikeBase64Media(value) {
 			candidates = append(candidates, value)
 		}
@@ -492,6 +545,9 @@ func recursiveMediaStrings(value any, keys map[string]bool) []string {
 }
 
 func decodeFlexibleBase64Media(value string) ([]byte, error) {
+	if err := validateWhatsAppMediaBase64Size(value, whatsappMediaAbsoluteMaxBytes); err != nil {
+		return nil, err
+	}
 	if payload, err := decodeBase64Media(value); err == nil {
 		return payload, nil
 	}

@@ -739,8 +739,12 @@ func webhookConfigurationAllowed(
 	expectedURL string,
 	status string,
 ) bool {
-	_ = allowlist
-	_ = sessionID
+	// Reconfiguring a webhook calls instance.connect on Evolution Go. Keep that
+	// operation inside the explicit rollout so a global processor cutover cannot
+	// reconnect or mutate every active session at once.
+	if !webhookRolloutAllowsSession(allowlist, sessionID) {
+		return false
+	}
 	if strings.TrimSpace(expectedURL) == "" {
 		return false
 	}

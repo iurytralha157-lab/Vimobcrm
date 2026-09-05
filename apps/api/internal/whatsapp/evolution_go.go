@@ -10,9 +10,12 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
+
+const evolutionMediaRecoveryTimeout = 100 * time.Second
 
 type evolutionSessionConfig struct {
 	ID           string
@@ -28,6 +31,7 @@ type evolutionFetchOptions struct {
 	Token            string
 	UseGlobalAPIKey  bool
 	MaxResponseBytes int64
+	RequestTimeout   time.Duration
 }
 
 type evolutionFetchResult struct {
@@ -131,6 +135,7 @@ func (client functionsClient) invokeEvolutionDirect(ctx context.Context, action 
 		Token:            token,
 		UseGlobalAPIKey:  evolutionUsesGlobalAPIKey(action),
 		MaxResponseBytes: evolutionResponseMaxBytes(action),
+		RequestTimeout:   evolutionRequestTimeout(action),
 	})
 	if err != nil {
 		return nil, err
@@ -204,11 +209,18 @@ func evolutionAuthScope(action string) string {
 
 func evolutionResponseMaxBytes(action string) int64 {
 	if stringIn(action, "message.downloadMedia", "message.downloadImage") {
-		// Base64 expands the 26 MiB binary ceiling by roughly 4/3. The extra
+		// Base64 expands the 25 MiB binary ceiling by roughly 4/3. The extra
 		// MiB accounts for the provider's small JSON envelope.
 		return int64(whatsappMediaMaxBytes*4/3 + 1<<20)
 	}
 	return 1 << 20
+}
+
+func evolutionRequestTimeout(action string) time.Duration {
+	if stringIn(action, "message.downloadMedia", "message.downloadImage") {
+		return evolutionMediaRecoveryTimeout
+	}
+	return 0
 }
 
 func (client functionsClient) resolveEvolutionSession(ctx context.Context, payload map[string]any) (evolutionSessionConfig, error) {
@@ -302,7 +314,13 @@ func (client functionsClient) evolutionFetch(ctx context.Context, method string,
 		body = bytes.NewReader(raw)
 	}
 
-	request, err := http.NewRequestWithContext(ctx, method, endpoint.String(), body)
+	requestContext := ctx
+	requestCancel := func() {}
+	if options.RequestTimeout > 0 {
+		requestContext, requestCancel = context.WithTimeout(ctx, options.RequestTimeout)
+	}
+	defer requestCancel()
+	request, err := http.NewRequestWithContext(requestContext, method, endpoint.String(), body)
 	if err != nil {
 		return evolutionFetchResult{}, err
 	}
@@ -317,7 +335,16 @@ func (client functionsClient) evolutionFetch(ctx context.Context, method string,
 		request.Header.Set("instanceId", options.InstanceID)
 	}
 
-	response, err := client.httpClient.Do(request)
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	if options.RequestTimeout > 0 {
+		clonedClient := *httpClient
+		clonedClient.Timeout = options.RequestTimeout
+		httpClient = &clonedClient
+	}
+	response, err := httpClient.Do(request)
 	if err != nil {
 		return evolutionFetchResult{}, fmt.Errorf("%w: %w: %v", ErrProviderFailed, ErrProviderOutcomeUnknown, err)
 	}
@@ -332,7 +359,12 @@ func (client functionsClient) evolutionFetch(ctx context.Context, method string,
 		return evolutionFetchResult{}, fmt.Errorf("%w: %w: response read failed: %v", ErrProviderFailed, ErrProviderOutcomeUnknown, err)
 	}
 	if int64(len(raw)) > responseLimit {
-		return evolutionFetchResult{}, fmt.Errorf("%w: %w: Evolution Go response exceeds the allowed size", ErrProviderFailed, ErrProviderOutcomeUnknown)
+		return evolutionFetchResult{}, fmt.Errorf(
+			"%w: %w: %w: Evolution Go response exceeds the allowed size",
+			ErrProviderFailed,
+			ErrProviderOutcomeUnknown,
+			errWhatsAppMediaTooLarge,
+		)
 	}
 
 	var data any = map[string]any{}

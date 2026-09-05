@@ -169,6 +169,24 @@ export interface WhatsAppMessage {
   sender_name: string | null
 }
 
+export type WhatsAppMediaDownloadRequestData = {
+  ok?: boolean
+  message_id?: string
+  queued?: boolean
+  job_id?: string
+  deduplicated?: boolean
+  media_status?: 'pending' | 'ready' | 'failed'
+  media_error?: string | null
+  media_url?: string | null
+  media_storage_path?: string | null
+  already_ready?: boolean
+}
+
+export type WhatsAppMediaDownloadRequestResult = {
+  ok: boolean
+  data?: WhatsAppMediaDownloadRequestData
+}
+
 export interface ConversationFilters {
   hideGroups?: boolean
   showArchived?: boolean
@@ -571,7 +589,7 @@ export const whatsappAPI = {
   },
 
   async retryMediaDownload(messageId: string, organizationId?: string | null) {
-    return vimobAPIRequest<{ ok: boolean; data?: unknown }>(`/v1/whatsapp/messages/${messageId}/retry-media`, {
+    return vimobAPIRequest<WhatsAppMediaDownloadRequestResult>(`/v1/whatsapp/messages/${messageId}/retry-media`, {
       method: 'POST',
       organizationId,
     })

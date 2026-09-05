@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+	"time"
 
 	authpkg "github.com/vimob-crm/vimob-crm/packages/auth"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
@@ -84,6 +85,102 @@ func TestConfigValidateRejectsInvalidWebhookRolloutSessionID(t *testing.T) {
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS") {
 		t.Fatalf("expected rollout allowlist validation error, got %v", err)
+	}
+}
+
+func TestConfigValidateRejectsUnsafeMediaWorkerTiming(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		interval time.Duration
+		lease    time.Duration
+		want     string
+	}{
+		{name: "too short interval", interval: 100 * time.Millisecond, lease: 5 * time.Minute, want: "WHATSAPP_MEDIA_WORKER_INTERVAL"},
+		{name: "too long interval", interval: 2 * time.Minute, lease: 5 * time.Minute, want: "WHATSAPP_MEDIA_WORKER_INTERVAL"},
+		{name: "too short lease", interval: 2 * time.Second, lease: 10 * time.Second, want: "WHATSAPP_MEDIA_WORKER_LEASE"},
+		{name: "too long lease", interval: 2 * time.Second, lease: time.Hour, want: "WHATSAPP_MEDIA_WORKER_LEASE"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validConfigForWebhookRolloutTest()
+			cfg.WhatsApp.MediaWorkerEnabled = true
+			cfg.WhatsApp.MediaWorkerInterval = test.interval
+			cfg.WhatsApp.MediaWorkerLease = test.lease
+
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("expected %s validation error, got %v", test.want, err)
+			}
+		})
+	}
+
+	cfg := validConfigForWebhookRolloutTest()
+	cfg.WhatsApp.MediaWorkerEnabled = true
+	cfg.WhatsApp.MediaWorkerInterval = 2 * time.Second
+	cfg.WhatsApp.MediaWorkerLease = 5 * time.Minute
+	cfg.WhatsApp.MediaWorkerSessionIDs = []string{"*"}
+	cfg.EvolutionGo.WebhookProcessorMode = "native"
+	cfg.EvolutionGo.WebhookRolloutSessionIDs = []string{"*"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("safe media worker timing rejected: %v", err)
+	}
+}
+
+func TestConfigValidateRequiresGlobalNativeMediaWorkerOwnership(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		mode      string
+		allowlist []string
+		wantErr   bool
+	}{
+		{name: "edge global", mode: "edge", allowlist: []string{"*"}, wantErr: true},
+		{name: "native empty", mode: "native", wantErr: true},
+		{name: "native canary", mode: "native", allowlist: []string{"13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"}, wantErr: true},
+		{name: "fallback canary", mode: "native_fallback", allowlist: []string{"13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"}, wantErr: true},
+		{name: "native global", mode: "native", allowlist: []string{"*"}},
+		{name: "fallback global", mode: "native_fallback", allowlist: []string{"*"}, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validConfigForWebhookRolloutTest()
+			cfg.WhatsApp.MediaWorkerEnabled = true
+			cfg.WhatsApp.MediaWorkerInterval = 2 * time.Second
+			cfg.WhatsApp.MediaWorkerLease = 5 * time.Minute
+			cfg.WhatsApp.MediaWorkerSessionIDs = []string{"*"}
+			cfg.EvolutionGo.WebhookProcessorMode = test.mode
+			cfg.EvolutionGo.WebhookRolloutSessionIDs = test.allowlist
+
+			err := cfg.Validate()
+			if test.wantErr && (err == nil || !strings.Contains(err.Error(), "WHATSAPP_MEDIA_WORKER_ENABLED requires")) {
+				t.Fatalf("expected ownership validation error, got %v", err)
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("global native ownership rejected: %v", err)
+			}
+		})
+	}
+}
+
+func TestConfigValidateRequiresExplicitMediaWorkerSessionAllowlist(t *testing.T) {
+	cfg := validConfigForWebhookRolloutTest()
+	cfg.WhatsApp.MediaWorkerEnabled = true
+	cfg.WhatsApp.MediaWorkerInterval = 2 * time.Second
+	cfg.WhatsApp.MediaWorkerLease = 5 * time.Minute
+	cfg.EvolutionGo.WebhookProcessorMode = "native"
+	cfg.EvolutionGo.WebhookRolloutSessionIDs = []string{"*"}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "WHATSAPP_MEDIA_WORKER_SESSION_IDS") {
+		t.Fatalf("expected empty media worker allowlist rejection, got %v", err)
+	}
+
+	cfg.WhatsApp.MediaWorkerSessionIDs = []string{"not-a-session"}
+	err = cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "WHATSAPP_MEDIA_WORKER_SESSION_IDS") {
+		t.Fatalf("expected invalid media worker session rejection, got %v", err)
+	}
+
+	cfg.WhatsApp.MediaWorkerSessionIDs = []string{"13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("explicit media worker canary rejected: %v", err)
 	}
 }
 

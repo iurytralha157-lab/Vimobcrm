@@ -630,17 +630,19 @@ export default function Conversations() {
   };
   const retryMediaDownload = async (messageId: string) => {
     try {
-      await whatsappAPI.retryMediaDownload(messageId, selectedConversation?.session?.organization_id);
+      const response = await whatsappAPI.retryMediaDownload(messageId, selectedConversation?.session?.organization_id);
       await refetchWhatsAppMessages();
       toast({
-        title: "Tentando novamente",
-        description: "Aguarde enquanto baixamos a mídia..."
+        title: response.data?.already_ready ? "Mídia disponível" : "Download adicionado à fila",
+        description: response.data?.already_ready
+          ? "O arquivo já está pronto para visualização."
+          : "O arquivo aparecerá aqui quando o processamento terminar."
       });
     } catch {
       toast({
         variant: "destructive",
-        title: "Erro",
-        description: "Não foi possível tentar novamente"
+        title: "Download não solicitado",
+        description: "Não foi possível adicionar este arquivo à fila."
       });
     }
   };

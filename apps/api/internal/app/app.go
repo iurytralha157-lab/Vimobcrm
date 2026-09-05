@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -56,6 +57,13 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	postgres, err := dbpkg.NewPostgres(ctx, cfg.Database)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.WhatsApp.MediaWorkerEnabled {
+		if err := whatsapp.ValidateMediaWorkerDatabasePrivileges(ctx, postgres); err != nil {
+			postgres.Close()
+			authVerifier.Close()
+			return nil, fmt.Errorf("WhatsApp media worker database preflight: %w", err)
+		}
 	}
 
 	mux := http.NewServeMux()
@@ -195,6 +203,10 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		WebhookWorkerEnabled:          cfg.WhatsApp.WebhookWorkerEnabled,
 		WebhookWorkerInterval:         cfg.WhatsApp.WebhookWorkerInterval,
 		WebhookWorkerBatch:            cfg.WhatsApp.WebhookWorkerBatch,
+		MediaWorkerEnabled:            cfg.WhatsApp.MediaWorkerEnabled,
+		MediaWorkerInterval:           cfg.WhatsApp.MediaWorkerInterval,
+		MediaWorkerLease:              cfg.WhatsApp.MediaWorkerLease,
+		MediaWorkerSessionIDs:         cfg.WhatsApp.MediaWorkerSessionIDs,
 		SessionSupervisorEnabled:      cfg.WhatsApp.SessionSupervisorEnabled,
 		SessionSupervisorInitialDelay: cfg.WhatsApp.SessionSupervisorInitialDelay,
 		SessionSupervisorInterval:     cfg.WhatsApp.SessionSupervisorInterval,
@@ -204,6 +216,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	whatsappHandler.StartAIWorker(ctx, logger)
 	whatsappHandler.StartOutboxWorker(ctx, logger)
 	whatsappHandler.StartWebhookWorker(ctx, logger)
+	whatsappHandler.StartMediaWorker(ctx, logger)
+	whatsappHandler.StartMediaQueueObservability(ctx, logger)
 	whatsappHandler.StartSessionSupervisor(ctx, logger)
 	webhooksHandler := webhooks.NewHandler(webhooks.NewRepository(postgres), realtimeHub)
 	metaHandler := meta.NewHandler(meta.NewRepository(postgres, meta.Config{

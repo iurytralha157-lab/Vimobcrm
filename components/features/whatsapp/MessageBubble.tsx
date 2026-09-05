@@ -5,6 +5,10 @@ import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { MediaViewer } from "./MediaViewer";
+import {
+  getMessageMediaPolicyPresentation,
+  type MessageMediaPolicyKind,
+} from "./message-media-policy";
 import { useCreateLeadAttachment } from "@/hooks/use-lead-attachments";
 import { useMentionNames } from "@/hooks/use-mention-names";
 import {
@@ -31,7 +35,7 @@ interface MessageBubbleProps {
   sentAt: string;
   senderName: string | null;
   isGroup: boolean;
-  onRetryMedia?: () => void;
+  onRetryMedia?: () => void | Promise<void>;
   messageId: string;
   leadId: string;
   leadName: string;
@@ -220,8 +224,19 @@ export function MessageBubble({
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [blobAttempted, setBlobAttempted] = useState(false);
   const [mediaPendingNowMs, setMediaPendingNowMs] = useState<number | null>(null);
+  const [isRequestingManualDownload, setIsRequestingManualDownload] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const mediaKind = getEffectiveMediaKind(messageType, mediaMimeType, mediaUrl);
+  const messageMediaKind: MessageMediaPolicyKind = mediaKind === "text"
+    || mediaKind === "reaction"
+    || mediaKind === "deleted"
+    ? "document"
+    : mediaKind;
+  const mediaPolicyPresentation = getMessageMediaPolicyPresentation({
+    error: mediaError,
+    kind: messageMediaKind,
+    sizeBytes: mediaSize,
+  });
   const normalizedMediaMimeType = normalizeMediaMimeType(mediaMimeType, mediaKind);
   const safeSenderName = toSafeText(senderName).trim();
   const displaySenderName = safeSenderName || (fromMe ? "Você" : "");
@@ -497,7 +512,61 @@ export function MessageBubble({
     return `Documento-${timestamp}`;
   };
 
+  const handleManualMediaDownload = async () => {
+    if (!onRetryMedia || isRequestingManualDownload) return;
+
+    setIsRequestingManualDownload(true);
+    try {
+      await onRetryMedia();
+    } catch {
+      // A tela proprietaria ja apresenta o erro da requisicao ao usuario.
+    } finally {
+      setIsRequestingManualDownload(false);
+    }
+  };
+
+  const renderMediaPolicyPlaceholder = () => {
+    if (!mediaPolicyPresentation) return null;
+
+    const queued = mediaPolicyPresentation.isQueued || isRequestingManualDownload;
+    return (
+      <div className={cn(
+        "flex min-w-[200px] max-w-[280px] flex-col items-center gap-2 rounded-md p-4 text-center",
+        fromMe ? "bg-primary-foreground/10" : "bg-white/[0.055]"
+      )}>
+        {queued ? (
+          <Loader2 className="h-6 w-6 animate-spin opacity-70" aria-hidden="true" />
+        ) : (
+          <FileText className="h-6 w-6 opacity-70" aria-hidden="true" />
+        )}
+        <span className="text-sm font-medium" role={queued ? "status" : undefined}>
+          {isRequestingManualDownload ? "Solicitando download" : mediaPolicyPresentation.title}
+        </span>
+        <span className="text-xs leading-relaxed opacity-70">
+          {isRequestingManualDownload
+            ? "Estamos colocando o arquivo na fila."
+            : mediaPolicyPresentation.description}
+        </span>
+        {mediaPolicyPresentation.canRequestDownload && onRetryMedia && !queued && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-1"
+            onClick={() => void handleManualMediaDownload()}
+          >
+            <Download className="mr-1 h-3 w-3" aria-hidden="true" />
+            Baixar arquivo
+          </Button>
+        )}
+      </div>
+    );
+  };
+
   const renderMediaPending = () => {
+    if (mediaPolicyPresentation?.isQueued || isRequestingManualDownload) {
+      return renderMediaPolicyPlaceholder();
+    }
+
     // If message is older than 90 seconds and still pending, show retry option
     const sentAtMs = new Date(sentAt).getTime();
     const ageMs = (mediaPendingNowMs ?? sentAtMs) - sentAtMs;
@@ -535,31 +604,37 @@ export function MessageBubble({
     );
   };
 
-  const renderMediaFailed = () => (
-    <div className={cn(
-      "flex flex-col items-center gap-2 p-4 rounded-md min-w-[180px]",
-      fromMe ? "bg-destructive/10" : "bg-destructive/10"
-    )}>
-      <AlertCircle className="w-6 h-6 text-destructive" />
-      <span className="text-sm text-muted-foreground">Mídia não disponível</span>
-      {mediaError && (
-        <span className="text-xs text-muted-foreground/70 text-center max-w-[180px] truncate">
-          {mediaError}
-        </span>
-      )}
-      {onRetryMedia && (
-        <Button
-          size="sm"
-          variant="outline"
-          className="mt-1"
-          onClick={onRetryMedia}
-        >
-          <RefreshCw className="w-3 h-3 mr-1" />
-          Tentar novamente
-        </Button>
-      )}
-    </div>
-  );
+  const renderMediaFailed = () => {
+    if (mediaPolicyPresentation) {
+      return renderMediaPolicyPlaceholder();
+    }
+
+    return (
+      <div className={cn(
+        "flex flex-col items-center gap-2 p-4 rounded-md min-w-[180px]",
+        fromMe ? "bg-destructive/10" : "bg-destructive/10"
+      )}>
+        <AlertCircle className="w-6 h-6 text-destructive" />
+        <span className="text-sm text-muted-foreground">Mídia não disponível</span>
+        {mediaError && (
+          <span className="text-xs text-muted-foreground/70 text-center max-w-[180px] truncate">
+            {mediaError}
+          </span>
+        )}
+        {onRetryMedia && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-1"
+            onClick={onRetryMedia}
+          >
+            <RefreshCw className="w-3 h-3 mr-1" />
+            Tentar novamente
+          </Button>
+        )}
+      </div>
+    );
+  };
 
   const renderMediaTimestamp = () => (
     <div className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/50 flex items-center gap-1.5">

@@ -1,11 +1,11 @@
 package whatsapp
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -232,27 +232,13 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 				return false, nil
 			}
 		}
-		// Persist the conversation and an idempotent message placeholder before
-		// any network I/O. Media recovery may be retried or eventually dead-lettered,
-		// but the inbound message must remain visible in the canonical history.
+		// Persist the conversation, canonical message and media job without any
+		// provider I/O. The separately leased media worker applies type/size policy
+		// and performs at most one download globally.
 		if err := repo.processNativeEvolutionMessages(ctx, item, messages); err != nil {
 			return true, err
 		}
-		hasMedia := nativeEvolutionMessagesContainMedia(messages)
-		if !hasMedia {
-			return true, nil
-		}
-		mediaReady, err := repo.prepareNativeEvolutionMedia(ctx, item, messages)
-		if err != nil {
-			return true, err
-		}
-		if !mediaReady {
-			return false, nil
-		}
-		// Replay the same provider message ids after durable Storage succeeds.
-		// insertNativeEvolutionMessage updates the placeholders in place and does
-		// not increment unread counters for an already persisted message.
-		return true, repo.processNativeEvolutionMessages(ctx, item, messages)
+		return true, nil
 	}
 
 	qrCode := ""
@@ -333,79 +319,6 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 	return true, nil
 }
 
-func nativeEvolutionMessagesContainMedia(messages []nativeEvolutionMessage) bool {
-	for index := range messages {
-		if nativeIsMediaType(messages[index].MessageType) {
-			return true
-		}
-	}
-	return false
-}
-
-func (repo Repository) prepareNativeEvolutionMedia(ctx context.Context, item pendingEvolutionWebhook, messages []nativeEvolutionMessage) (bool, error) {
-	hasMedia := nativeEvolutionMessagesContainMedia(messages)
-	if hasMedia {
-		var scoped bool
-		if err := repo.db.Pool().QueryRow(ctx, `
-			select exists (
-			  select 1 from public.whatsapp_sessions
-			  where organization_id = $1::uuid and id = $2::uuid
-			    and provider = 'evolution_go'
-			    and coalesce(is_active, true) = true
-			    and lower(btrim(coalesce(status, ''))) not in ('deleted', 'disabled')
-			)
-		`, item.OrganizationID, item.SessionID).Scan(&scoped); err != nil {
-			return true, err
-		}
-		if !scoped {
-			return true, ErrSessionNotFound
-		}
-	}
-	for index := range messages {
-		message := &messages[index]
-		if !nativeIsMediaType(message.MessageType) {
-			continue
-		}
-		// Do not acknowledge a media event until its bytes are durably stored.
-		if repo.storage.projectURL == "" || repo.storage.apiKey == "" {
-			return true, fmt.Errorf("%w: WhatsApp media Storage is not configured", ErrProviderFailed)
-		}
-
-		var recovered recoveredWhatsAppMedia
-		var err error
-		if message.MediaBase64 != "" {
-			recovered.bytes, err = decodeFlexibleBase64Media(message.MediaBase64)
-			if err == nil {
-				recovered.contentType = firstNonEmpty(message.MediaMimeType, detectWhatsAppMediaMimeType(recovered.bytes), fallbackWhatsAppMediaMimeType(message.MessageType))
-				recovered.source = "webhook_base64"
-			}
-		} else if message.MediaURL != "" {
-			recovered, err = repo.downloadWhatsAppMediaURL(ctx, message.MediaURL)
-		} else {
-			recovered, err = repo.downloadNativeEvolutionMedia(ctx, item, *message)
-		}
-		if err != nil {
-			return true, err
-		}
-
-		contentType := firstNonEmpty(recovered.contentType, message.MediaMimeType, fallbackWhatsAppMediaMimeType(message.MessageType))
-		objectPath := fmt.Sprintf(
-			"orgs/%s/sessions/%s/incoming/%s.%s",
-			item.OrganizationID,
-			item.SessionID,
-			sanitizeWhatsAppMediaObjectPart(message.ProviderMessageID),
-			mediaExtension(contentType),
-		)
-		if err := repo.storage.upload(ctx, whatsappMediaBucket, objectPath, contentType, bytes.NewReader(recovered.bytes), true); err != nil {
-			return true, err
-		}
-		message.MediaStoragePath = objectPath
-		message.MediaMimeType = contentType
-		message.MediaSize = int64(len(recovered.bytes))
-	}
-	return true, nil
-}
-
 func (repo Repository) downloadNativeEvolutionMedia(ctx context.Context, item pendingEvolutionWebhook, message nativeEvolutionMessage) (recoveredWhatsAppMedia, error) {
 	providerMessage, err := nativeEvolutionProviderMessage(message)
 	if err != nil {
@@ -433,7 +346,7 @@ func (repo Repository) downloadNativeEvolutionMedia(ctx context.Context, item pe
 		}
 	}
 	if !nativeEvolutionResponseOK(response) {
-		return recoveredWhatsAppMedia{}, fmt.Errorf("%w: Evolution Go media recovery failed with status %d", ErrProviderFailed, nativeEvolutionResponseStatus(response))
+		return recoveredWhatsAppMedia{}, nativeEvolutionMediaRejection(nativeEvolutionResponseStatus(response))
 	}
 
 	encoded := firstString(response,
@@ -462,6 +375,17 @@ func (repo Repository) downloadNativeEvolutionMedia(ctx context.Context, item pe
 		contentType: firstNonEmpty(contentType, message.MediaMimeType, detectWhatsAppMediaMimeType(decoded), fallbackWhatsAppMediaMimeType(message.MessageType)),
 		source:      "evolution_go_download",
 	}, nil
+}
+
+func nativeEvolutionMediaRejection(status int64) error {
+	if status == http.StatusRequestEntityTooLarge {
+		return fmt.Errorf(
+			"%w: %w: Evolution Go rejected media above the configured size",
+			ErrProviderFailed,
+			errWhatsAppMediaTooLarge,
+		)
+	}
+	return fmt.Errorf("%w: Evolution Go media recovery failed with status %d", ErrProviderFailed, status)
 }
 
 func nativeEvolutionProviderMessage(message nativeEvolutionMessage) (map[string]any, error) {
@@ -578,12 +502,21 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 		return err
 	}
 	defer tx.Rollback(ctx)
+	for _, message := range messages {
+		if nativeIsMediaType(message.MessageType) {
+			if err := lockWhatsAppMediaMutation(ctx, tx); err != nil {
+				return err
+			}
+			break
+		}
+	}
 	session, err := loadNativeEvolutionSession(ctx, tx, item)
 	if err != nil {
 		return err
 	}
 
 	autoReplyInputs := []autoReplyInput{}
+	mediaQueued := false
 	for _, message := range messages {
 		if message.FromMe {
 			// Some provider status endpoints expose the profile name in the field
@@ -613,6 +546,16 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 				return err
 			}
 			continue
+		}
+		if nativeIsMediaType(message.MessageType) && message.MediaStoragePath == "" {
+			policy := automaticWhatsAppMediaPolicy(message.MessageType, message.MediaMimeType, message.MediaSize)
+			if policy.automatic {
+				message.MediaStatus = "pending"
+				message.MediaError = ""
+			} else {
+				message.MediaStatus = "failed"
+				message.MediaError = policy.errorCode
+			}
 		}
 
 		if _, err := tx.Exec(ctx, `
@@ -672,6 +615,11 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 		if err != nil {
 			return err
 		}
+		queued, err := enqueueNativeEvolutionMediaJob(ctx, tx, session, effectiveConversationID, message, messageRowID)
+		if err != nil {
+			return err
+		}
+		mediaQueued = mediaQueued || queued
 		if message.FromMe {
 			if err := reconcileNativeOutboundOutbox(ctx, tx, session, message, messageRowID); err != nil {
 				return err
@@ -702,6 +650,9 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
+	}
+	if mediaQueued {
+		wakeWhatsAppMediaWorker()
 	}
 	for _, input := range autoReplyInputs {
 		if _, err := repo.enqueueAutoReplyJob(ctx, input); err != nil {
@@ -2046,11 +1997,13 @@ func insertNativeEvolutionMessage(ctx context.Context, tx pgx.Tx, session native
 			    media_storage_path = coalesce(media_storage_path, nullif($9, '')),
 			    media_status = case
 			      when coalesce(media_storage_path, nullif($9, '')) is not null then 'ready'
-			      else media_status
+			      when media_status in ('ready', 'pending') then media_status
+			      else coalesce(nullif($13, ''), media_status)
 			    end,
 			    media_error = case
 			      when coalesce(media_storage_path, nullif($9, '')) is not null then null
-			      else media_error
+			      when media_status in ('ready', 'pending') then media_error
+			      else coalesce(nullif($14, ''), media_error)
 			    end,
 			    media_size = coalesce(media_size, nullif($11, 0)),
 			    sent_at = coalesce(sent_at, $10),
@@ -2058,7 +2011,7 @@ func insertNativeEvolutionMessage(ctx context.Context, tx pgx.Tx, session native
 			    metadata = coalesce(metadata, '{}'::jsonb) || $12::jsonb,
 			    updated_at = now()
 			where organization_id = $1::uuid and session_id = $2::uuid and id = $3::uuid
-		`, session.OrganizationID, session.ID, existingID, message.ProviderMessageID, status, message.Content, message.MediaURL, message.MediaMimeType, message.MediaStoragePath, message.SentAt, message.MediaSize, messageMetadata)
+		`, session.OrganizationID, session.ID, existingID, message.ProviderMessageID, status, message.Content, message.MediaURL, message.MediaMimeType, message.MediaStoragePath, message.SentAt, message.MediaSize, messageMetadata, message.MediaStatus, message.MediaError)
 		return false, existingConversationID, existingID, err
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -2071,14 +2024,14 @@ func insertNativeEvolutionMessage(ctx context.Context, tx pgx.Tx, session native
 		status = "sent"
 		direction = "outbound"
 	}
-	mediaStatus := ""
-	mediaError := ""
+	mediaStatus := message.MediaStatus
+	mediaError := message.MediaError
 	if nativeIsMediaType(message.MessageType) {
 		if message.MediaStoragePath != "" {
 			mediaStatus = "ready"
-		} else {
+			mediaError = ""
+		} else if mediaStatus == "" {
 			mediaStatus = "pending"
-			mediaError = "media_retained_in_webhook_inbox"
 		}
 	}
 	var insertedID string
