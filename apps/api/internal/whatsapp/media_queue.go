@@ -672,8 +672,9 @@ func (repo Repository) completeWhatsAppMediaJob(ctx context.Context, job queuedW
 		  and status = 'processing'
 		  and locked_by = $2
 		  and lease_token = $3::uuid
+		  and asset_key = $4
 		for update
-	`, job.ID, job.LockedBy, job.LeaseToken).Scan(&lockedID); err != nil {
+	`, job.ID, job.LockedBy, job.LeaseToken, job.AssetKey).Scan(&lockedID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errWhatsAppMediaLeaseLost
 		}
@@ -695,6 +696,7 @@ func (repo Repository) completeWhatsAppMediaJob(ctx context.Context, job queuedW
 		    from public.media_jobs as candidate
 		    where candidate.organization_id = $1::uuid
 		      and candidate.asset_key = $2
+		      and candidate.error_code is distinct from 'media_provider_outcome_unknown'
 		      and coalesce(candidate.declared_size, 0) between 1 and $6
 		      and (
 		        candidate.status in ('pending', 'processing')
@@ -726,6 +728,7 @@ func (repo Repository) completeWhatsAppMediaJob(ctx context.Context, job queuedW
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and asset_key = $2
+		  and error_code is distinct from 'media_provider_outcome_unknown'
 		  and coalesce(declared_size, 0) between 1 and $6
 		  and (
 		    status in ('pending', 'processing')
@@ -1202,6 +1205,8 @@ func enqueueNativeEvolutionMediaJob(ctx context.Context, tx pgx.Tx, session nati
 		    end,
 		    updated_at = now()
 		where media_jobs.status not in ('processing', 'completed')
+		  and media_jobs.provider_started_at is null
+		  and media_jobs.error_code is distinct from 'media_provider_outcome_unknown'
 		  and media_jobs.media_type = excluded.media_type
 		returning status,
 		          coalesce(error_code, ''),
@@ -1219,8 +1224,9 @@ func enqueueNativeEvolutionMediaJob(ctx context.Context, tx pgx.Tx, session nati
 		&persistedActualSize,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// A canonical job already exists but is processing/completed, or the
-		// provider redelivered the same message with a different media type.
+		// A canonical job already exists but is immutable because processing or
+		// an irreversible provider/storage effect started, or the provider
+		// redelivered the same message with a different media type.
 		// Reflect its durable state without mutating its identity or lease.
 		err = tx.QueryRow(ctx, `
 			select status,

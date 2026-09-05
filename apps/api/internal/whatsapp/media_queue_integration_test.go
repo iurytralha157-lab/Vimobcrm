@@ -1180,6 +1180,236 @@ func TestWhatsAppMediaQueueIntegrationDeduplicatesNineteenSessions(t *testing.T)
 		t.Fatalf("transport breaker did not survive repository restart = processed:%v error:%v", processed, err)
 	}
 
+	var outcomeUnknownBefore, outcomeUnknownAssetKey string
+	var outcomeUnknownProviderStarted bool
+	if err := postgres.Pool().QueryRow(ctx, `
+		select to_jsonb(job)::text,
+		       job.asset_key,
+		       job.provider_started_at is not null
+		from public.media_jobs as job
+		where job.organization_id = $1::uuid
+		  and job.message_id = $2::uuid
+		  and job.error_code = 'media_provider_outcome_unknown'
+	`, organizationID, transportMessageRowID).Scan(
+		&outcomeUnknownBefore,
+		&outcomeUnknownAssetKey,
+		&outcomeUnknownProviderStarted,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !outcomeUnknownProviderStarted {
+		t.Fatal("outcome-unknown fixture has no irreversible-effect fence")
+	}
+
+	adulteratedRedelivery := transportMessage
+	adulteratedRedelivery.MediaURL = "https://media.invalid/adulterated-redelivery.png"
+	adulteratedRedelivery.MediaSize += 17
+	adulteratedRedelivery.Raw = map[string]any{
+		"message": map[string]any{
+			"imageMessage": map[string]any{
+				"url":           adulteratedRedelivery.MediaURL,
+				"directPath":    "/media/adulterated-redelivery",
+				"fileLength":    adulteratedRedelivery.MediaSize,
+				"fileSha256":    testWhatsAppMediaDigest("adulterated-redelivery-plain"),
+				"fileEncSha256": testWhatsAppMediaDigest("adulterated-redelivery-encrypted"),
+			},
+		},
+	}
+	_, adulteratedAssetKey, _, _ := whatsappMediaQueueKeys(
+		organizationID,
+		enqueueInputs[4].sessionID,
+		adulteratedRedelivery,
+	)
+	if adulteratedAssetKey == outcomeUnknownAssetKey {
+		t.Fatalf("adulterated asset key = original %q", outcomeUnknownAssetKey)
+	}
+
+	tx, err = postgres.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued, enqueueErr = enqueueNativeEvolutionMediaJob(ctx, tx, nativeEvolutionSession{
+		ID:             enqueueInputs[4].sessionID,
+		OrganizationID: organizationID,
+	}, enqueueInputs[4].conversationID, adulteratedRedelivery, transportMessageRowID)
+	if enqueueErr != nil || queued {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("outcome-unknown redelivery = queued:%v error:%v", queued, enqueueErr)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var outcomeUnknownAfterRedelivery string
+	var outcomeUnknownMessageStatus, outcomeUnknownMessageError, outcomeUnknownMessagePath string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select to_jsonb(job)::text
+		from public.media_jobs as job
+		where job.organization_id = $1::uuid
+		  and job.message_id = $2::uuid
+		  and job.error_code = 'media_provider_outcome_unknown'
+	`, organizationID, transportMessageRowID).Scan(&outcomeUnknownAfterRedelivery); err != nil {
+		t.Fatal(err)
+	}
+	if outcomeUnknownAfterRedelivery != outcomeUnknownBefore {
+		t.Fatalf("outcome-unknown redelivery mutated durable job:\nbefore=%s\nafter=%s", outcomeUnknownBefore, outcomeUnknownAfterRedelivery)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		select coalesce(media_status, ''),
+		       coalesce(media_error, ''),
+		       coalesce(media_storage_path, '')
+		from public.whatsapp_messages
+		where organization_id = $1::uuid and id = $2::uuid
+	`, organizationID, transportMessageRowID).Scan(
+		&outcomeUnknownMessageStatus,
+		&outcomeUnknownMessageError,
+		&outcomeUnknownMessagePath,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if outcomeUnknownMessageStatus != "failed" || outcomeUnknownMessageError != mediaErrorOutcomeUnknown || outcomeUnknownMessagePath != "" {
+		t.Fatalf(
+			"outcome-unknown redelivery message = status:%q error:%q path:%q",
+			outcomeUnknownMessageStatus,
+			outcomeUnknownMessageError,
+			outcomeUnknownMessagePath,
+		)
+	}
+
+	// A separate completion using the identity attempted by the adulterated
+	// redelivery must never fan out into the outcome-unknown job. Resetting the
+	// breaker here is deliberate and operator-equivalent; the unknown job itself
+	// remains terminal and fenced.
+	if err := resetMediaBreaker(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fanoutProviderMessageID := "provider-media-outcome-unknown-fanout"
+	var fanoutMessageRowID string
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.whatsapp_messages (
+			organization_id, conversation_id, session_id,
+			provider_message_id, message_id, from_me, direction,
+			message_type, media_mime_type, media_status, media_size, status, sent_at
+		) values (
+			$1::uuid, $2::uuid, $3::uuid,
+			$4, $4, false, 'inbound',
+			'image', 'image/png', 'pending', $5, 'received', now()
+		)
+		returning id::text
+	`, organizationID, enqueueInputs[7].conversationID, enqueueInputs[7].sessionID,
+		fanoutProviderMessageID, len(mediaBytes)).Scan(&fanoutMessageRowID); err != nil {
+		t.Fatal(err)
+	}
+	fanoutMessageKey := jsonb(map[string]any{
+		"message": map[string]any{
+			"imageMessage": map[string]any{
+				"directPath": "/media/outcome-unknown-fanout",
+				"fileLength": len(mediaBytes),
+				"fileSha256": fileSHA256,
+			},
+		},
+	})
+	fanoutWorkerID := "outcome-unknown-fanout-worker"
+	var fanoutJobID, fanoutLeaseToken string
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.media_jobs (
+			organization_id, session_id, conversation_id, message_id,
+			provider_message_id, message_key, media_type, media_mime_type,
+			status, attempts, max_attempts, next_retry_at,
+			dedupe_key, asset_key, declared_size, file_sha256,
+			locked_at, lease_expires_at, lease_duration, locked_by, lease_token,
+			provider_started_at
+		) values (
+			$1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			$5, $6::jsonb, 'image', 'image/png',
+			'processing', 1, 3, now(),
+			$7, $8, $9, $10,
+			now(), now() + interval '5 minutes', interval '5 minutes', $11, gen_random_uuid(),
+			now()
+		)
+		returning id::text, lease_token::text
+	`, organizationID, enqueueInputs[7].sessionID, enqueueInputs[7].conversationID,
+		fanoutMessageRowID, fanoutProviderMessageID, fanoutMessageKey,
+		hashWhatsAppMediaKey("outcome-unknown-fanout", fanoutProviderMessageID),
+		adulteratedAssetKey, len(mediaBytes), fileSHA256, fanoutWorkerID).Scan(
+		&fanoutJobID,
+		&fanoutLeaseToken,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.completeWhatsAppMediaJob(ctx, queuedWhatsAppMediaJob{
+		ID:             fanoutJobID,
+		OrganizationID: organizationID,
+		MessageID:      fanoutMessageRowID,
+		AssetKey:       adulteratedAssetKey,
+		LockedBy:       fanoutWorkerID,
+		LeaseToken:     fanoutLeaseToken,
+	}, completedWhatsAppMediaAsset{
+		storagePath: fmt.Sprintf("orgs/%s/assets/outcome-unknown-fanout.png", organizationID),
+		contentType: "image/png",
+		actualSize:  int64(len(mediaBytes)),
+	}); err != nil {
+		t.Fatalf("controlled colliding-asset completion failed: %v", err)
+	}
+	var fanoutJobStatus, fanoutMessageStatus, fanoutMessagePath string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select job.status,
+		       coalesce(message.media_status, ''),
+		       coalesce(message.media_storage_path, '')
+		from public.media_jobs as job
+		join public.whatsapp_messages as message on message.id = job.message_id
+		where job.organization_id = $1::uuid and job.id = $2::uuid
+	`, organizationID, fanoutJobID).Scan(
+		&fanoutJobStatus,
+		&fanoutMessageStatus,
+		&fanoutMessagePath,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if fanoutJobStatus != "completed" || fanoutMessageStatus != "ready" || fanoutMessagePath == "" {
+		t.Fatalf(
+			"controlled colliding-asset source = job:%q message:%q path:%q",
+			fanoutJobStatus,
+			fanoutMessageStatus,
+			fanoutMessagePath,
+		)
+	}
+
+	var outcomeUnknownAfterFanout string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select to_jsonb(job)::text
+		from public.media_jobs as job
+		where job.organization_id = $1::uuid
+		  and job.message_id = $2::uuid
+		  and job.error_code = 'media_provider_outcome_unknown'
+	`, organizationID, transportMessageRowID).Scan(&outcomeUnknownAfterFanout); err != nil {
+		t.Fatal(err)
+	}
+	if outcomeUnknownAfterFanout != outcomeUnknownBefore {
+		t.Fatalf("colliding-asset completion mutated outcome-unknown job:\nbefore=%s\nafter=%s", outcomeUnknownBefore, outcomeUnknownAfterFanout)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		select coalesce(media_status, ''),
+		       coalesce(media_error, ''),
+		       coalesce(media_storage_path, '')
+		from public.whatsapp_messages
+		where organization_id = $1::uuid and id = $2::uuid
+	`, organizationID, transportMessageRowID).Scan(
+		&outcomeUnknownMessageStatus,
+		&outcomeUnknownMessageError,
+		&outcomeUnknownMessagePath,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if outcomeUnknownMessageStatus != "failed" || outcomeUnknownMessageError != mediaErrorOutcomeUnknown || outcomeUnknownMessagePath != "" {
+		t.Fatalf(
+			"outcome-unknown fanout message = status:%q error:%q path:%q",
+			outcomeUnknownMessageStatus,
+			outcomeUnknownMessageError,
+			outcomeUnknownMessagePath,
+		)
+	}
+
 	legacyProviderMessageID := "provider-media-legacy-manual"
 	var legacyMessageRowID string
 	if err := postgres.Pool().QueryRow(ctx, `

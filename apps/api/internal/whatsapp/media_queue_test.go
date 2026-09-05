@@ -490,6 +490,10 @@ func TestWhatsAppMediaQueueSourceContracts(t *testing.T) {
 		"pg_advisory_xact_lock(hashtextextended('vimob:whatsapp-media:global-claim', 0))",
 		"storage upload outcome is unknown",
 		"storage upload succeeded but database completion is unknown",
+		"and media_jobs.provider_started_at is null",
+		"and media_jobs.error_code is distinct from 'media_provider_outcome_unknown'",
+		"and candidate.error_code is distinct from 'media_provider_outcome_unknown'",
+		"and asset_key = $4",
 	} {
 		if !strings.Contains(queue, required) {
 			t.Fatalf("media queue implementation is missing %q", required)
