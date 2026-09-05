@@ -273,6 +273,24 @@ deploy e sua verificacao.
 2. Escale o Evolution para uma replica. Ele deve subir saudavel, mas sem
    reconectar sessao. Se qualquer sessao conectar automaticamente, escale de
    volta para zero e pare o corte.
+3. Exija no boot a mensagem
+   `CONNECT_ON_STARTUP=false: automatic and lazy instance starts are blocked`.
+   A ausencia desse log torna o gate inconclusivo. Nao pode aparecer
+   `Connecting all instances on startup`, `Starting client for user` nem
+   `Starting websocket connection to Whatsapp for user` antes do canario.
+4. Valide o runtime em duas etapas sem registrar respostas brutas ou tokens:
+
+   - chame `GET /instance/all` com a chave global somente em memoria, confirme
+     HTTP 200, `message=success`, inventario igual ao snapshot e zero itens com
+     `connected=true`;
+   - para cada token retornado, mantido somente em memoria, chame
+     `GET /instance/status` e exija `Connected=false`, `LoggedIn=false` e
+     `Name=""`.
+
+   Registre apenas o resumo sanitizado `total`, `aggregate_connected`,
+   `transport_connected` e `logged_in`. Qualquer HTTP nao-200, ID faltante,
+   contagem divergente ou valor diferente de zero e STOP. `/server/ok` sozinho
+   nao prova ausencia de sessoes.
 
 ## 6. Canario de uma sessao
 

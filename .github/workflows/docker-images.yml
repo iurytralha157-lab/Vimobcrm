@@ -151,7 +151,7 @@ jobs:
           file: deploy/evolution-go-hardened/Dockerfile
           push: false
           build-args: |
-            VERSION=0.7.2-vimob-media-pool-hardening.2
+            VERSION=0.7.2-vimob-media-pool-hardening.3
           cache-from: type=gha,scope=evolution-go
           cache-to: type=gha,mode=max,scope=evolution-go
 
@@ -219,7 +219,7 @@ jobs:
           file: deploy/evolution-go-hardened/Dockerfile
           push: true
           build-args: |
-            VERSION=0.7.2-vimob-media-pool-hardening.2
+            VERSION=0.7.2-vimob-media-pool-hardening.3
           tags: ${{ steps.evolution-meta.outputs.tags }}
           labels: ${{ steps.evolution-meta.outputs.labels }}
           cache-from: type=gha,scope=evolution-go

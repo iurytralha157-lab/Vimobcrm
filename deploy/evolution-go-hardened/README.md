@@ -2,7 +2,7 @@
 
 This image is built from the immutable upstream Evolution Go `0.7.2` commit
 `9337afc47e10b86cc896a6f432240e40fee95dd1` plus narrowly scoped patches for
-the Whatsmeow auth store and `POST /message/downloadmedia`.
+the Whatsmeow auth store, instance startup, and `POST /message/downloadmedia`.
 
 The auth-pool patch is the corrected upstream fix from
 [`f85ea1445373ea142bb12ba0c01dfc85879be212`](https://github.com/evolution-foundation/evolution-go/commit/f85ea1445373ea142bb12ba0c01dfc85879be212)
@@ -11,6 +11,38 @@ The auth-pool patch is the corrected upstream fix from
 It reuses one sqlstore container, caps the Postgres pool at 20 open / 5 idle
 connections, expires connections, closes failed initialization attempts, and
 memoizes only a successful initialization.
+
+The startup patch makes `CONNECT_ON_STARTUP=false` a process-level, fail-closed
+barrier instead of only skipping the bulk-start call in `main.go`:
+
+- a fresh process authorizes zero instances;
+- lazy message, chat, group, label, and similar operations cannot start a
+  WhatsApp client;
+- `StartInstance`, `ReconnectClient`, and the final `StartClient` websocket path
+  all enforce the same gate;
+- each explicit lifecycle request receives a new per-instance authorization
+  epoch; a newer request supersedes the older one, and exact cancellation from
+  an older request cannot revoke the newer attempt;
+- reconnects belonging to the current runtime reuse only that runtime's epoch;
+  they cannot grant authorization to a blocked instance;
+- setup, websocket connect, and readiness waits are bounded and cancelable;
+  readiness is published only after the connected state is persisted;
+- runtime publication/removal is generation-safe, while disconnect, logout,
+  and delete take a terminal lease that excludes concurrent starts;
+- runtime settings are immutable snapshots, so live updates cannot race event
+  handlers;
+- logout and delete remove the Whatsmeow auth device even when no runtime is
+  currently registered;
+- proxy changes may reconnect an already authorized instance but never grant a
+  blocked one; and
+- disconnect, logout, QR timeout, and delete revoke that instance authorization.
+
+Failed starts remove only the client, handler, kill channel, and cache entries
+that still belong to that failed generation. A newer runtime is never deleted,
+and a disconnected stale pointer cannot suppress a later explicit recovery.
+
+The boot log must contain the startup-gate message when the flag is false. No
+session is permitted to start before an explicit lifecycle operation.
 
 The media patches make recovery fail closed:
 
@@ -33,8 +65,9 @@ hard deadline if another caller is already holding that mutex.
 Keep `WEBHOOK_FILES=false`. Incoming webhooks retain the encrypted media
 metadata, while the Vimob API queue decides which files may be recovered.
 
-Builds must run the message and Whatsmeow service tests and production must pin
-the resulting image by immutable SHA/digest, not `latest`.
+Builds must run the message, instance-repository, and Whatsmeow tests plus the
+startup-path vet checks. Production must pin the resulting image by immutable
+SHA/digest, not `latest`.
 
 All build stages are pinned by digest. The runtime uses Alpine 3.22.1 (matching
 the Go builder generation) instead of the upstream 3.19.1 runtime, which is
