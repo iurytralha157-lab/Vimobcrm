@@ -49,6 +49,9 @@ func TestPropertyAssetCleanupWorkerUsesLeasesAndRemovesOnlyPrivateBucketObjects(
 		"propertyPrivateBucket",
 		"repo.storage.remove",
 		"StartAssetCleanupWorker",
+		"to_regclass('public.property_asset_upload_intents')",
+		"to_regclass('public.property_asset_storage_cleanup_queue')",
+		"if !lifecycleSchemaReady",
 	} {
 		if !strings.Contains(source, required) {
 			t.Fatalf("property asset cleanup worker is missing %q", required)

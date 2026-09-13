@@ -268,6 +268,25 @@ func boundedPropertyAssetCleanupError(err error) string {
 // is database-owned, so cascaded property deletions remain recoverable even
 // when the request that caused them has already returned.
 func (repo Repository) StartAssetCleanupWorker(ctx context.Context, logger *slog.Logger) {
+	var lifecycleSchemaReady bool
+	err := repo.db.Pool().QueryRow(ctx, `
+		select
+			to_regclass('public.property_asset_upload_intents') is not null
+			and to_regclass('public.property_asset_storage_cleanup_queue') is not null
+	`).Scan(&lifecycleSchemaReady)
+	if err != nil {
+		if logger != nil && ctx.Err() == nil {
+			logger.Error("property asset cleanup schema check failed", "error", err)
+		}
+		return
+	}
+	if !lifecycleSchemaReady {
+		if logger != nil {
+			logger.Warn("property asset cleanup worker disabled until its schema migration is applied")
+		}
+		return
+	}
+
 	run := func() {
 		workerContext, cancel := context.WithTimeout(ctx, 25*time.Second)
 		defer cancel()
