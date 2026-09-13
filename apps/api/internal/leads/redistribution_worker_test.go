@@ -1297,6 +1297,7 @@ func TestNextRoundRobinMemberAvailabilityUsesConfiguredSchedule(t *testing.T) {
 		"availability_member.user_id = eligible.user_id",
 		"where eligible.team_member_id is null",
 		"or availability_member.id = eligible.team_member_id",
+		"eligible.ignore_availability,\n\t\t\t\tavailability_member.id as team_member_id",
 		"from availability_members eligible",
 		"generate_series(0, 7)",
 		"candidates.user_id <> nullif($3, '')::uuid",

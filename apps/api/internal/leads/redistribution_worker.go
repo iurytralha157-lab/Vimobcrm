@@ -1395,6 +1395,7 @@ func (repo Repository) nextRoundRobinMemberAvailability(
 			select distinct
 				eligible.organization_id,
 				eligible.user_id,
+				eligible.ignore_availability,
 				availability_member.id as team_member_id
 			from eligible
 			join public.team_members availability_member
