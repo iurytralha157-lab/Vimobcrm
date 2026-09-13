@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -633,6 +634,10 @@ func nativeEvolutionProviderMessage(message nativeEvolutionMessage) (map[string]
 		if !ok {
 			return nil, fmt.Errorf("%w: Evolution Go media message is invalid", ErrProviderFailed)
 		}
+		block, ok = nativeNormalizeProviderMediaNumbers(block)
+		if !ok {
+			return nil, fmt.Errorf("%w: Evolution Go media message has invalid numeric metadata", ErrProviderFailed)
+		}
 		providerMessage[canonical] = block
 		break
 	}
@@ -644,6 +649,29 @@ func nativeEvolutionProviderMessage(message nativeEvolutionMessage) (map[string]
 		return nil, fmt.Errorf("%w: Evolution Go media message exceeds the recovery limit", ErrProviderFailed)
 	}
 	return providerMessage, nil
+}
+
+func nativeNormalizeProviderMediaNumbers(value any) (any, bool) {
+	block, ok := value.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	for _, key := range []string{"fileLength", "mediaKeyTimestamp"} {
+		raw, exists := block[key]
+		if !exists {
+			continue
+		}
+		text, isText := raw.(string)
+		if !isText {
+			continue
+		}
+		parsed, err := strconv.ParseUint(strings.TrimSpace(text), 10, 64)
+		if err != nil {
+			return nil, false
+		}
+		block[key] = parsed
+	}
+	return block, true
 }
 
 func nativeSanitizeProviderValue(value any, depth int) (any, bool) {

@@ -538,6 +538,23 @@ func TestWhatsAppMediaQueueMessageKeyRetainsOnlyRecoveryCoordinates(t *testing.T
 	if _, exists := key["media_url"]; exists {
 		t.Fatal("plaintext fallback was retained alongside the stronger provider message")
 	}
+	providerMessage, err := nativeEvolutionProviderMessage(nativeEvolutionMessage{
+		MessageType: "audio",
+		Raw:         key,
+	})
+	if err != nil {
+		t.Fatalf("queued provider message cannot be reconstructed: %v", err)
+	}
+	providerBlock, ok := providerMessage["audioMessage"].(map[string]any)
+	if !ok {
+		t.Fatalf("reconstructed provider block = %#v", providerMessage)
+	}
+	if _, ok := providerBlock["fileLength"].(uint64); !ok {
+		t.Fatalf("fileLength was not normalized to a JSON number: %#v", providerBlock["fileLength"])
+	}
+	if _, ok := providerBlock["mediaKeyTimestamp"].(uint64); !ok {
+		t.Fatalf("mediaKeyTimestamp was not normalized to a JSON number: %#v", providerBlock["mediaKeyTimestamp"])
+	}
 }
 
 func TestWhatsAppMediaQueueMessageKeyUsesOnlyValidatedHTTPFallback(t *testing.T) {
