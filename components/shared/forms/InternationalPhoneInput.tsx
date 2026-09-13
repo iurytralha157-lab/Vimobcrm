@@ -8,7 +8,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   countries,
   formatPhoneFromParts,
@@ -33,6 +32,37 @@ type PhoneView = {
   country: Country | null;
   text: string;
 };
+
+/**
+ * Placeholder format hints per country code.
+ * These are display-only suggestions, not enforced masks.
+ */
+const COUNTRY_PLACEHOLDERS: Record<string, string> = {
+  '55': '(00) 00000-0000',   // Brasil
+  '1': '(000) 000-0000',     // EUA / Canadá
+  '351': '000 000 000',      // Portugal
+  '54': '(000) 0000-0000',   // Argentina
+  '52': '000 0000 0000',     // México
+  '34': '000 000 000',       // Espanha
+  '57': '000 0000000',       // Colômbia
+  '56': '0 0000 0000',       // Chile
+  '51': '000 000 000',       // Peru
+  '598': '0000 0000',        // Uruguai
+  '595': '0000 0000',        // Paraguai
+  '591': '0000 0000',        // Bolívia
+  '593': '00 000 0000',      // Equador
+  '58': '0000 000 0000',     // Venezuela
+  '44': '0000 000000',       // Reino Unido
+  '33': '00 00 00 00 00',    // França
+  '49': '000 00000000',      // Alemanha
+  '39': '000 0000000',       // Itália
+  '81': '00 0000 0000',      // Japão
+};
+
+function getCountryPlaceholder(countryCode: string | undefined): string {
+  if (!countryCode) return '000 000 000 0000';
+  return COUNTRY_PLACEHOLDERS[countryCode] ?? '000 000 000 0000';
+}
 
 function formatBrazilianLocalPhone(digits: string) {
   const clean = digits.replace(/\D/g, '').slice(0, 11);
@@ -82,7 +112,7 @@ export function InternationalPhoneInput({
   value,
   onChange,
   id,
-  placeholder = '(00) 00000-0000',
+  placeholder,
   disabled = false,
   className,
   'aria-invalid': ariaInvalid,
@@ -156,6 +186,8 @@ export function InternationalPhoneInput({
     onChange(nextValue);
   };
 
+  const resolvedPlaceholder = placeholder ?? getCountryPlaceholder(selectedCountry?.code);
+
   return (
     <div className={cn('flex items-center gap-1', className)}>
       <Popover open={countryPopoverOpen} onOpenChange={setCountryPopoverOpen}>
@@ -183,15 +215,16 @@ export function InternationalPhoneInput({
             <div className="relative">
               <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                aria-label="Buscar pais ou DDI"
-                placeholder="Buscar pais..."
+                aria-label="Buscar país ou DDI"
+                placeholder="Buscar país..."
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 className="h-8 pl-8"
               />
             </div>
           </div>
-          <ScrollArea className="h-[200px]">
+          {/* Native scroll div — Radix ScrollArea blocks mouse-wheel on Windows */}
+          <div className="max-h-[200px] overflow-y-auto overscroll-contain">
             <div className="p-1">
               {filteredCountries.map((country) => (
                 <button
@@ -209,7 +242,7 @@ export function InternationalPhoneInput({
                 </button>
               ))}
             </div>
-          </ScrollArea>
+          </div>
         </PopoverContent>
       </Popover>
 
@@ -217,7 +250,7 @@ export function InternationalPhoneInput({
         id={id}
         value={phoneText}
         onChange={(event) => handlePhoneChange(event.target.value)}
-        placeholder={selectedCountry ? placeholder : '+DDI e numero'}
+        placeholder={selectedCountry ? resolvedPlaceholder : '+DDI e número'}
         disabled={disabled}
         inputMode="tel"
         autoComplete="tel"

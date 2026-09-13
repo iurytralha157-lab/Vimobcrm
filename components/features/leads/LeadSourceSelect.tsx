@@ -72,7 +72,7 @@ export function LeadSourceSelect({
         <SelectTrigger aria-label="Origem do lead">
           <SelectValue placeholder="Como conheceu?" />
         </SelectTrigger>
-        <SelectContent>
+        <SelectContent className="max-h-[220px]">
           <SelectItem value={LEAD_SOURCE_NONE_VALUE}>Não informado</SelectItem>
           {options.map((option) => (
             <SelectItem key={option.value} value={option.value}>

@@ -1059,4 +1059,16 @@ test("tela Meta preserva autoria compacta e concentra a rolagem na lista", () =>
     /format\(new Date\(config\.created_at\), "dd\/MM\/yyyy"/,
   );
   assert.match(source, /format\(new Date\(config\.created_at\), "HH:mm"/);
+  assert.match(source, /adAccountId: selectedAccount\.adAccountId/);
+  assert.match(
+    source,
+    /if \(selectedAccount\?\.isNew\) \{\s*setSelectedIntegration\(null\);\s*setPendingPage\(page\);\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /setNewOAuth\(null\);\s*setSelectedAccountKey\(getIntegrationAccountKey\(integration\)\);/,
+  );
+  assert.match(source, /getAccountPageSummary\(account\)/);
+  assert.doesNotMatch(source, />Nova conexão</);
+  assert.match(source, /Atualizar conexão da página/);
 });

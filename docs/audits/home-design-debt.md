@@ -8,11 +8,11 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 
 - Arquivos analisados: 535
 - Arquivos com achados: 41
-- Achados: 103
+- Achados: 102
 - Arquivos protegidos/mistos com achados: 40
-- Achados alcançáveis pelo CRM protegido: 102
-- Distribuição por superfície: protected-only 93, protected-and-public 9, public-only 1, infraestrutura 0
-- P1: 49
+- Achados alcançáveis pelo CRM protegido: 101
+- Distribuição por superfície: protected-only 92, protected-and-public 9, public-only 1, infraestrutura 0
+- P1: 48
 - P2: 12
 - P3: 42
 
@@ -23,7 +23,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | P1 | Sombra forte | 16 | Usar shadow-none ou a sombra sutil dos pop-ups globais. |
 | P2 | Sombra fora do padrão | 6 | Blocos Home não usam sombra; validar se a elevação é realmente necessária. |
 | P1 | Raio acima de 8px | 5 | Blocos usam 8px; controles 6px; microelementos 4px. |
-| P1 | Tipografia pesada | 3 | Texto normal usa 300; títulos usam 400. |
+| P1 | Tipografia pesada | 2 | Texto normal usa 300; títulos usam 400. |
 | P1 | Cor hardcoded | 25 | Usar tokens --app-* ou cores semânticas do domínio. |
 | P2 | Superfície branca/preta fixa | 3 | Usar --app-surface-solid, --app-surface-soft ou --app-surface-hover. |
 | P2 | Movimento agressivo | 3 | Remover scale/translate decorativo de cards e ações operacionais. |
@@ -46,7 +46,6 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/chat/FloatingChatButton.tsx` | 8 | 2 | heavy-shadow: 2 |
 | `components/features/properties/PropertyWorkspaceScreen.tsx` | 6 | 5 | uppercase-tracking: 4, aggressive-motion: 1 |
 | `components/features/round-robin/distribution-queue-editor/DistributionQueueAutoTagsSection.tsx` | 6 | 2 | hardcoded-color: 1, hardcoded-surface: 1 |
-| `components/features/settings/IntegrationsTab.tsx` | 6 | 2 | heavy-font: 2 |
 | `components/features/contacts/ImportContactsDialog.tsx` | 4 | 4 | uppercase-tracking: 4 |
 | `components/features/integrations/MetaIntegrationSettings.tsx` | 4 | 4 | uppercase-tracking: 4 |
 | `components/features/properties/detail/PropertyWorkspaceOverview.tsx` | 4 | 4 | uppercase-tracking: 4 |
@@ -66,6 +65,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/schedule/dashboard/AgendaUpcomingEventsPanel.tsx` | 3 | 2 | uppercase-tracking: 1, aggressive-motion: 1 |
 | `components/features/marketing/MarketingTabViews.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/presence/OnlineUsersPanel.tsx` | 3 | 1 | heavy-font: 1 |
+| `components/features/settings/IntegrationsTab.tsx` | 3 | 1 | heavy-font: 1 |
 | `components/features/schedule/dashboard/AgendaDashboardFilters.tsx` | 2 | 2 | uppercase-tracking: 2 |
 | `components/features/whatsapp/conversations/ConversationListItem.tsx` | 2 | 2 | uppercase-tracking: 2 |
 | `components/features/contacts/contacts-screen/ContactsOverlays.tsx` | 2 | 1 | medium-shadow: 1 |
@@ -91,7 +91,6 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/chat/FloatingChatButton.tsx` | 8 | 2 | heavy-shadow: 2 |
 | `components/features/properties/PropertyWorkspaceScreen.tsx` | 6 | 5 | uppercase-tracking: 4, aggressive-motion: 1 |
 | `components/features/round-robin/distribution-queue-editor/DistributionQueueAutoTagsSection.tsx` | 6 | 2 | hardcoded-color: 1, hardcoded-surface: 1 |
-| `components/features/settings/IntegrationsTab.tsx` | 6 | 2 | heavy-font: 2 |
 | `components/features/contacts/ImportContactsDialog.tsx` | 4 | 4 | uppercase-tracking: 4 |
 | `components/features/integrations/MetaIntegrationSettings.tsx` | 4 | 4 | uppercase-tracking: 4 |
 | `components/features/properties/detail/PropertyWorkspaceOverview.tsx` | 4 | 4 | uppercase-tracking: 4 |
@@ -112,6 +111,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/auth/AuthSplitLayout.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/marketing/MarketingTabViews.tsx` | 3 | 1 | oversized-radius: 1 |
 | `components/features/presence/OnlineUsersPanel.tsx` | 3 | 1 | heavy-font: 1 |
+| `components/features/settings/IntegrationsTab.tsx` | 3 | 1 | heavy-font: 1 |
 | `components/features/schedule/dashboard/AgendaDashboardFilters.tsx` | 2 | 2 | uppercase-tracking: 2 |
 | `components/features/whatsapp/conversations/ConversationListItem.tsx` | 2 | 2 | uppercase-tracking: 2 |
 | `components/features/contacts/contacts-screen/ContactsOverlays.tsx` | 2 | 1 | medium-shadow: 1 |

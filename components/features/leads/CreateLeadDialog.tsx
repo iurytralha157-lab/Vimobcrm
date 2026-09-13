@@ -172,7 +172,6 @@ export function CreateLeadDialog({
     return ({
     name: editableLead?.name || '',
     phone: editableLead?.phone || '',
-    phone2: '',
     email: editableLead?.email || '',
     message: editableLead?.message || '',
     feedback: editableLead?.feedback || '',
@@ -202,7 +201,6 @@ export function CreateLeadDialog({
     empresa: editableLead?.empresa || '',
     profissao: editableLead?.profissao || '',
     renda_familiar: editableLead?.renda_familiar || '',
-    faixa_valor_imovel: editableLead?.faixa_valor_imovel || '',
     valor_interesse: editableLead?.valor_interesse == null ? '' : formatCurrencyInput(editableLead.valor_interesse),
     assigned_user_id: editableLead?.assigned_user_id || profile?.id || '',
     team_id: editableLead?.team_id || '',
@@ -245,7 +243,6 @@ export function CreateLeadDialog({
   const isFormEmpty = useCallback((data: typeof formData) => {
     return !data.name.trim()
       && !data.phone
-      && !data.phone2
       && !data.email.trim()
       && !data.message.trim()
       && !data.feedback.trim()
@@ -274,7 +271,6 @@ export function CreateLeadDialog({
       && !data.empresa
       && !data.profissao
       && !data.renda_familiar
-      && !data.faixa_valor_imovel
       && !data.valor_interesse
       && !data.lost_reason
       && !data.property_id
@@ -537,7 +533,6 @@ export function CreateLeadDialog({
           empresa: formData.empresa || null,
           profissao: formData.profissao || null,
           renda_familiar: formData.renda_familiar || null,
-          faixa_valor_imovel: formData.faixa_valor_imovel || null,
           valor_interesse: parseCurrencyInput(formData.valor_interesse) ?? null,
           property_id: primaryPropertyId,
           interest_property_id: primaryPropertyId,
@@ -561,7 +556,6 @@ export function CreateLeadDialog({
           empresa: formData.empresa || undefined,
           profissao: formData.profissao || undefined,
           renda_familiar: formData.renda_familiar || undefined,
-          faixa_valor_imovel: formData.faixa_valor_imovel || undefined,
           valor_interesse: parseCurrencyInput(formData.valor_interesse),
           property_id: primaryPropertyId || undefined,
           interest_property_ids: formData.interest_property_ids.length > 0 ? formData.interest_property_ids : undefined,
@@ -702,11 +696,11 @@ export function CreateLeadDialog({
     }
 
     if (formData.phone && !hasValidPhone) {
-      nextErrors.phone = 'Telefone invalido. Informe DDI + numero (ex.: +55 11 99999-9999).';
+      nextErrors.phone = 'Telefone inválido. Informe DDI + DDD + número (ex.: +55 11 99999-9999).';
     }
 
     if (formData.email.trim() && !hasValidEmail) {
-      nextErrors.email = 'Email invalido. Use o formato nome@dominio.com';
+      nextErrors.email = 'E-mail inválido. Use o formato nome@dominio.com';
     }
 
     const firstError = nextErrors.name || nextErrors.contact || nextErrors.phone || nextErrors.email;
@@ -871,11 +865,11 @@ export function CreateLeadDialog({
           <div className="flex-1 min-h-0 overflow-y-auto">
             <div className="px-6 pb-4 pt-3">
               <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                <TabsList data-tour="lead-form-tabs" className={cn('mb-5 grid h-10 w-full rounded-[8px] bg-[var(--app-surface-soft)] p-1', isEditMode ? 'grid-cols-3' : 'grid-cols-4')}>
-                  <TabsTrigger data-tour="lead-form-tab-basic" value="basic" className="rounded-[6px] text-[12px] font-light text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Contato</TabsTrigger>
-                  <TabsTrigger data-tour="lead-form-tab-profile" value="profile" className="rounded-[6px] text-[12px] font-light text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Pessoa</TabsTrigger>
-                  <TabsTrigger data-tour="lead-form-tab-interest" value="interest" className="rounded-[6px] text-[12px] font-light text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Interesse</TabsTrigger>
-                  {!isEditMode && <TabsTrigger data-tour="lead-form-tab-management" value="management" className="rounded-[6px] text-[12px] font-light text-[var(--app-text-tertiary)] data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Gestão</TabsTrigger>}
+                <TabsList data-tour="lead-form-tabs" className={cn('mb-5 grid h-8 w-full rounded-[8px] bg-[var(--app-surface-soft)] p-1', isEditMode ? 'grid-cols-3' : 'grid-cols-4')}>
+                  <TabsTrigger data-tour="lead-form-tab-basic" value="basic" className="h-6 rounded-[6px] px-2.5 text-[12px] font-light text-[var(--app-text-secondary)] shadow-none data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-[var(--app-text-primary)] data-[state=active]:shadow-none">Contato</TabsTrigger>
+                  <TabsTrigger data-tour="lead-form-tab-profile" value="profile" className="h-6 rounded-[6px] px-2.5 text-[12px] font-light text-[var(--app-text-secondary)] shadow-none data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-[var(--app-text-primary)] data-[state=active]:shadow-none">Pessoa</TabsTrigger>
+                  <TabsTrigger data-tour="lead-form-tab-interest" value="interest" className="h-6 rounded-[6px] px-2.5 text-[12px] font-light text-[var(--app-text-secondary)] shadow-none data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-[var(--app-text-primary)] data-[state=active]:shadow-none">Interesse</TabsTrigger>
+                  {!isEditMode && <TabsTrigger data-tour="lead-form-tab-management" value="management" className="h-6 rounded-[6px] px-2.5 text-[12px] font-light text-[var(--app-text-secondary)] shadow-none data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-[var(--app-text-primary)] data-[state=active]:shadow-none">Gestão</TabsTrigger>}
                 </TabsList>
 
                 {/* Basic Info Tab */}
@@ -1354,7 +1348,7 @@ export function CreateLeadDialog({
               <Button
                 key="btn-avancar"
                 type="button"
-                className="h-10 w-[60%] rounded-[6px] bg-primary/50 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
+                className="h-10 w-[60%] rounded-[6px] bg-primary text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary/90"
                 onClick={() => {
                   if (activeTab === 'basic') {
                     if (!validateBasicStep()) return;
@@ -1374,7 +1368,7 @@ export function CreateLeadDialog({
                 data-tour="lead-form-submit"
                 key="btn-submit"
                 type="submit"
-                className="h-10 w-[60%] rounded-[6px] bg-primary/50 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
+                className="h-10 w-[60%] rounded-[6px] bg-primary text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary/90 disabled:opacity-40"
                 disabled={isSubmitting || isLoadingEditLead || sensitiveProfileError || !hasRequiredLeadIdentity || (!isEditMode && !hasRequiredManagement)}
               >
                 {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}

@@ -172,6 +172,49 @@ func TestPaidMediaOmitsVideoMetricWhenInsightFallbackLostTheGroup(t *testing.T) 
 	}
 }
 
+func TestPaidMediaResolvesNestedCreativeAssets(t *testing.T) {
+	creative := map[string]any{
+		"id": "creative-1",
+		"object_story_spec": map[string]any{
+			"link_data": map[string]any{
+				"picture": "https://cdn.example.com/creative.jpg",
+			},
+		},
+		"asset_feed_spec": map[string]any{
+			"videos": []any{map[string]any{"video_id": "video-1"}},
+		},
+		"video_source": "https://cdn.example.com/creative.mp4",
+	}
+	catalog := marketingSyncEntityCatalog{
+		Campaigns: map[string]map[string]any{"campaign-1": {"id": "campaign-1", "name": "Campaign"}},
+		Adsets:    map[string]map[string]any{"adset-1": {"id": "adset-1", "name": "Ad set"}},
+		Ads: map[string]map[string]any{
+			"ad-1": {
+				"id": "ad-1", "name": "Ad", "campaign_id": "campaign-1", "adset_id": "adset-1",
+				"creative": map[string]any{"id": "creative-1"},
+			},
+		},
+		Creatives: map[string]map[string]any{"creative-1": creative},
+	}
+
+	rows := buildMarketingSyncPaidMedia(
+		marketingSyncTarget{OrganizationID: "11111111-1111-4111-8111-111111111111", IntegrationID: "22222222-2222-4222-8222-222222222222"},
+		"act_123",
+		catalog,
+		nil,
+		time.Now(),
+	)
+	if len(rows) != 1 {
+		t.Fatalf("media rows=%#v", rows)
+	}
+	if rows[0].MediaURL != "https://cdn.example.com/creative.jpg" || rows[0].ThumbnailURL != "https://cdn.example.com/creative.jpg" {
+		t.Fatalf("creative image was not resolved: %#v", rows[0])
+	}
+	if rows[0].MediaType != "video" || rows[0].VideoURL != "https://cdn.example.com/creative.mp4" || rows[0].RawMetadata["video_id"] != "video-1" {
+		t.Fatalf("creative video was not resolved: %#v", rows[0])
+	}
+}
+
 func TestCollectMarketingSyncProfileMetricsIgnoresLifetimeTotals(t *testing.T) {
 	dateRange := marketingSyncDateRange{From: mustMarketingSyncDate(t, "2026-07-01"), To: mustMarketingSyncDate(t, "2026-07-31")}
 	metrics := collectMarketingSyncProfileMetrics([]map[string]any{{

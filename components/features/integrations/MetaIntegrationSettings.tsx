@@ -127,6 +127,27 @@ interface AccountGroup {
 
 const getPagePicture = (page?: MetaPage | null) => page?.picture?.data?.url || "";
 const searchableText = (value: unknown) => normalizeSearchText(String(value ?? ""));
+const getIntegrationAccountKey = (integration: MetaIntegration) =>
+  integration.facebook_user_id ||
+  integration.facebook_user_name ||
+  integration.page_id ||
+  integration.id;
+
+function getAccountPageSummary(account: AccountGroup) {
+  const names = Array.from(
+    new Set(
+      (account.isNew
+        ? account.pages.map((page) => page.name)
+        : account.integrations.map((integration) => integration.page_name))
+        .map((name) => name?.trim())
+        .filter((name): name is string => Boolean(name)),
+    ),
+  );
+
+  if (names.length === 0) return "";
+  if (names.length === 1) return names[0];
+  return `${names[0]} +${names.length - 1}`;
+}
 
 function getNameInitials(value?: string | null) {
   const parts = String(value ?? "")
@@ -189,6 +210,16 @@ const normalizeOAuthPayload = (payload?: OAuthPayload | null): OAuthPayload | nu
   if (!payload) return null;
   const flowId = payload.flow_id?.trim();
   if (!flowId) return null;
+  const adAccounts = (payload.ad_accounts || [])
+    .filter((account) => Boolean(account.id?.trim()))
+    .map((account) => ({
+      id: account.id.trim(),
+      account_id: account.account_id,
+      name: account.name,
+      account_status: account.account_status,
+      currency: account.currency,
+      timezone_name: account.timezone_name,
+    }));
 
   return {
     flow_id: flowId,
@@ -200,17 +231,8 @@ const normalizeOAuthPayload = (payload?: OAuthPayload | null): OAuthPayload | nu
       facebook_user_id: page.facebook_user_id,
       facebook_user_name: page.facebook_user_name,
     })),
-    ad_accounts: (payload.ad_accounts || [])
-      .filter((account) => Boolean(account.id?.trim()))
-      .map((account) => ({
-        id: account.id.trim(),
-        account_id: account.account_id,
-        name: account.name,
-        account_status: account.account_status,
-        currency: account.currency,
-        timezone_name: account.timezone_name,
-      })),
-    adAccountId: payload.adAccountId || payload.ad_account_id,
+    ad_accounts: adAccounts,
+    adAccountId: payload.adAccountId || payload.ad_account_id || adAccounts[0]?.id,
     facebook_user_id: payload.facebook_user_id,
     facebook_user_name: payload.facebook_user_name,
   };
@@ -275,7 +297,7 @@ export function MetaIntegrationSettings({
   const handledOAuthMessageRef = useRef<string | number | null>(null);
   const formsRequestSequenceRef = useRef(0);
 
-  const { activeOrganization, profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
   const {
     data: integrations = [],
@@ -401,7 +423,7 @@ export function MetaIntegrationSettings({
   useEffect(() => {
     if (!oauthPayload) return;
     queueMicrotask(() => {
-      openOAuthWizard(oauthPayload, "Conta do Facebook conectada. Escolha a página para continuar.");
+      openOAuthWizard(oauthPayload, "Conta do Facebook autorizada. Escolha a página para concluir.");
     });
   }, [oauthPayload, openOAuthWizard]);
 
@@ -442,7 +464,7 @@ export function MetaIntegrationSettings({
       }
 
       if (!event.data || event.data.type !== "META_OAUTH_SUCCESS") return;
-      if (openOAuthWizard(event.data.data || null, "Conta do Facebook conectada. Escolha a página para continuar.")) return;
+      if (openOAuthWizard(event.data.data || null, "Conta do Facebook autorizada. Escolha a página para concluir.")) return;
       toast.error("O retorno da Meta não possui um fluxo seguro válido. Inicie a conexão novamente.");
     };
 
@@ -484,7 +506,7 @@ export function MetaIntegrationSettings({
     const grouped = new Map<string, AccountGroup>();
 
     for (const integration of integrations) {
-      const key = integration.facebook_user_id || integration.facebook_user_name || integration.page_id || integration.id;
+      const key = getIntegrationAccountKey(integration);
       const current = grouped.get(key) || {
         key,
         name: integration.facebook_user_name || integration.page_name || "Conta Facebook",
@@ -516,6 +538,9 @@ export function MetaIntegrationSettings({
   }, [integrations, newOAuth]);
 
   const selectedAccount = accounts.find((account) => account.key === selectedAccountKey) || accounts[0];
+  const pendingPageIntegration = pendingPage
+    ? integrations.find((integration) => integration.page_id === pendingPage.id) ?? null
+    : null;
   const configuredByFormId = useMemo(() => new Map(configs.map((config) => [config.form_id, config])), [configs]);
   const integrationById = useMemo(() => new Map(integrations.map((integration) => [integration.id, integration])), [integrations]);
 
@@ -659,14 +684,19 @@ export function MetaIntegrationSettings({
     const result = await connectPage.mutateAsync({
       pageId: page.id,
       flowId: selectedAccount.flowId,
+      adAccountId: selectedAccount.adAccountId,
     });
 
     const refreshed = await refetchIntegrations();
     const integration = (refreshed.data || []).find((item) => item.page_id === page.id);
     if (integration) {
+      setNewOAuth(null);
+      setSelectedAccountKey(getIntegrationAccountKey(integration));
       setPendingPage(null);
       await loadFormsForIntegration(integration);
     } else if (result?.success) {
+      setNewOAuth(null);
+      setSelectedAccountKey("");
       setPendingPage(null);
       toast.success("Página conectada. Reabra o wizard se os formulários não aparecerem agora.");
     }
@@ -682,6 +712,12 @@ export function MetaIntegrationSettings({
 
     if ("page_id" in page) {
       await loadFormsForIntegration(page);
+      return;
+    }
+
+    if (selectedAccount?.isNew) {
+      setSelectedIntegration(null);
+      setPendingPage(page);
       return;
     }
 
@@ -1254,36 +1290,47 @@ export function MetaIntegrationSettings({
               </Button>
               <div className="space-y-2">
                 <p className="text-[10px] font-light uppercase tracking-wide text-muted-foreground">Contas Facebook</p>
-                {accounts.map((account) => (
-                  <button
-                    key={account.key}
-                    type="button"
-                    aria-pressed={selectedAccount?.key === account.key}
-                    className={cn(
-                      "flex w-full min-w-0 items-center justify-between rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 py-2 text-left transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/30",
-                      selectedAccount?.key === account.key && "bg-primary/10 text-[var(--app-text-primary)] ring-1 ring-inset ring-primary/30",
-                    )}
-                    onClick={() => {
-                      setSelectedAccountKey(account.key);
-                      formsRequestSequenceRef.current += 1;
-                      setSelectedIntegration(null);
-                      setPendingPage(null);
-                      setForms([]);
-                      setFormsLoading(false);
-                      setFormsLoadError(null);
-                      setWizardPageSearch("");
-                      setWizardFormSearch("");
-                    }}
-                  >
-                    <div className="min-w-0">
-                      <p className="break-words text-[12px] font-normal leading-4">
-                        {account.name}
-                      </p>
-                      <p className="text-xs text-muted-foreground">{account.isNew ? "Nova conexão" : "Conta conectada"}</p>
-                    </div>
-                    {selectedAccount?.key === account.key && <Check className="h-4 w-4 shrink-0 text-primary" />}
-                  </button>
-                ))}
+                {accounts.map((account) => {
+                  const pageSummary = getAccountPageSummary(account);
+                  const connectionLabel = account.isNew ? "autorização pronta" : "conectada";
+                  return (
+                    <button
+                      key={account.key}
+                      type="button"
+                      aria-pressed={selectedAccount?.key === account.key}
+                      className={cn(
+                        "flex w-full min-w-0 items-center justify-between rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 py-2 text-left transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/30",
+                        selectedAccount?.key === account.key && "bg-primary/10 text-[var(--app-text-primary)] ring-1 ring-inset ring-primary/30",
+                      )}
+                      onClick={() => {
+                        setSelectedAccountKey(account.key);
+                        formsRequestSequenceRef.current += 1;
+                        setSelectedIntegration(null);
+                        setPendingPage(null);
+                        setForms([]);
+                        setFormsLoading(false);
+                        setFormsLoadError(null);
+                        setWizardPageSearch("");
+                        setWizardFormSearch("");
+                      }}
+                    >
+                      <div className="min-w-0">
+                        <p className="break-words text-[12px] font-normal leading-4">
+                          {account.name}
+                        </p>
+                        <p
+                          className="truncate text-xs text-muted-foreground"
+                          title={pageSummary || undefined}
+                        >
+                          {pageSummary
+                            ? `${pageSummary} · ${connectionLabel}`
+                            : connectionLabel}
+                        </p>
+                      </div>
+                      {selectedAccount?.key === account.key && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                    </button>
+                  );
+                })}
               </div>
             </aside>
 
@@ -1414,10 +1461,14 @@ export function MetaIntegrationSettings({
                               disabled={connectPage.isPending}
                             >
                               {connectPage.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                              Confirmar e conectar página
+                              {pendingPageIntegration
+                                ? "Atualizar conexão da página"
+                                : "Confirmar e conectar página"}
                             </Button>
                             <p className="mt-2 text-center text-[11px] text-[var(--app-text-tertiary)]">
-                              Nada é conectado apenas ao selecionar a página na lista.
+                              {pendingPageIntegration
+                                ? "A nova autorização substituirá as credenciais desta página sem alterar seus formulários."
+                                : "Nada é conectado apenas ao selecionar a página na lista."}
                             </p>
                           </div>
                         </div>

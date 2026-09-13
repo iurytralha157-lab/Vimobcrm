@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "1dea8d2cf7e4e286adca3fc7c942d477c8e910d960c80ccb761018f61c7b0bcd",
-  "surfaceInventoryDigestSha256": "25365175a2d77a8b2fb14fda8056d2dba43c24de36cd83b4cc685915caceb562",
+  "sourceDigestSha256": "1820dfcef15d1f70fe4119acafae0e3a96ca1cc832349b6863db0150f3a7ef0d",
+  "surfaceInventoryDigestSha256": "069e2c7c5ff613af672ea002986bd750999d28fba7d3e7d00ca1e87a4c08560e",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
     "filesScanned": 535,
@@ -9,17 +9,17 @@
   },
   "counts": {
     "filesWithFindings": 41,
-    "findings": 103,
+    "findings": 102,
     "protectedReachableFilesWithFindings": 40,
-    "protectedReachableFindings": 102,
+    "protectedReachableFindings": 101,
     "bySurfaceScope": {
-      "protected-only": 93,
+      "protected-only": 92,
       "protected-and-public": 9,
       "public-only": 1,
       "infrastructure": 0
     },
     "byPriority": {
-      "P1": 49,
+      "P1": 48,
       "P2": 12,
       "P3": 42
     },
@@ -43,7 +43,7 @@
         "priority": "P1"
       },
       "heavy-font": {
-        "count": 3,
+        "count": 2,
         "guidance": "Texto normal usa 300; títulos usam 400.",
         "label": "Tipografia pesada",
         "priority": "P1"
@@ -165,14 +165,6 @@
       "rules": {
         "hardcoded-color": 1,
         "hardcoded-surface": 1
-      }
-    },
-    {
-      "file": "components/features/settings/IntegrationsTab.tsx",
-      "count": 2,
-      "score": 6,
-      "rules": {
-        "heavy-font": 2
       }
     },
     {
@@ -331,6 +323,14 @@
     },
     {
       "file": "components/features/presence/OnlineUsersPanel.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "heavy-font": 1
+      }
+    },
+    {
+      "file": "components/features/settings/IntegrationsTab.tsx",
       "count": 1,
       "score": 3,
       "rules": {
@@ -506,14 +506,6 @@
       }
     },
     {
-      "file": "components/features/settings/IntegrationsTab.tsx",
-      "count": 2,
-      "score": 6,
-      "rules": {
-        "heavy-font": 2
-      }
-    },
-    {
       "file": "components/features/contacts/ImportContactsDialog.tsx",
       "count": 4,
       "score": 4,
@@ -661,6 +653,14 @@
     },
     {
       "file": "components/features/presence/OnlineUsersPanel.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "heavy-font": 1
+      }
+    },
+    {
+      "file": "components/features/settings/IntegrationsTab.tsx",
       "count": 1,
       "score": 3,
       "rules": {
@@ -868,7 +868,7 @@
     },
     {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-      "line": 1256,
+      "line": 1292,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -877,7 +877,7 @@
     },
     {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-      "line": 1256,
+      "line": 1292,
       "match": "tracking-wide",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -886,7 +886,7 @@
     },
     {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-      "line": 1297,
+      "line": 1344,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -895,7 +895,7 @@
     },
     {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-      "line": 1297,
+      "line": 1344,
       "match": "tracking-wide",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1561,16 +1561,7 @@
     },
     {
       "file": "components/features/settings/IntegrationsTab.tsx",
-      "line": 1344,
-      "match": "font-semibold",
-      "priority": "P1",
-      "rule": "heavy-font",
-      "surfaceScope": "protected-only",
-      "weight": 3
-    },
-    {
-      "file": "components/features/settings/IntegrationsTab.tsx",
-      "line": 1426,
+      "line": 1319,
       "match": "font-semibold",
       "priority": "P1",
       "rule": "heavy-font",

@@ -2,15 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Building2,
-  CheckCircle2,
-  Clock3,
   Key,
   Lock,
   RefreshCw,
   Settings2,
   Sparkles,
   Webhook,
-  type LucideIcon,
 } from "lucide-react";
 import NextImage from "next/image";
 import { useRouter } from "next/navigation";
@@ -858,17 +855,6 @@ export function IntegrationsTab({
     items: filteredIntegrations.filter((item) => item.category === categoryId),
   })).filter((group) => group.items.length > 0);
 
-  const statusSummary = integrations.reduce(
-    (summary, item) => {
-      if (item.status === "connected") summary.connected += 1;
-      else if (item.status === "reconnect-required" || item.status === "error") {
-        summary.attention += 1;
-      } else if (item.status === "unavailable") summary.unavailable += 1;
-      else summary.pending += 1;
-      return summary;
-    },
-    { connected: 0, pending: 0, attention: 0, unavailable: 0 },
-  );
 
   const openIntegration = useCallback(
     (item: IntegrationItem) => {
@@ -901,55 +887,12 @@ export function IntegrationsTab({
 
   return (
     <div className="space-y-5">
-      <div className="app-card flex flex-col gap-4 rounded-[8px] p-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h2 className="text-sm font-medium text-[var(--app-text-primary)]">
-            Estado das integrações
-          </h2>
-          <p className="mt-1 text-xs font-light text-muted-foreground">
-            Os estados abaixo vêm da configuração real da organização. Um card
-            pendente ainda precisa ser configurado antes de operar.
-          </p>
-        </div>
-        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-          <SummaryPill
-            icon={CheckCircle2}
-            label="Conectadas"
-            value={statusSummary.connected}
-            tone="connected"
-          />
-          <SummaryPill
-            icon={Clock3}
-            label="Pendentes"
-            value={statusSummary.pending}
-            tone="pending"
-          />
-          <SummaryPill
-            icon={AlertCircle}
-            label="Revisar"
-            value={statusSummary.attention}
-            tone="attention"
-          />
-          <SummaryPill
-            icon={Lock}
-            label="Indisponíveis"
-            value={statusSummary.unavailable}
-            tone="unavailable"
-          />
-        </div>
-      </div>
-
       {groupedIntegrations.map((group) => (
         <section key={group.categoryId} className="space-y-3">
           <div className="flex items-end justify-between gap-3 px-0.5">
-            <div>
-              <h2 className="text-[13px] font-medium text-[var(--app-text-primary)]">
-                {group.definition.title}
-              </h2>
-              <p className="mt-0.5 text-[11px] font-light text-muted-foreground">
-                {group.definition.description}
-              </p>
-            </div>
+            <h2 className="text-[13px] font-medium text-[var(--app-text-primary)]">
+              {group.definition.title}
+            </h2>
             <span className="shrink-0 text-[11px] font-light text-muted-foreground">
               {group.items.length} {group.items.length === 1 ? "integração" : "integrações"}
             </span>
@@ -1104,26 +1047,6 @@ function IntegrationCard({
       </CardHeader>
 
       <CardContent className="flex flex-1 flex-col gap-3 p-4 pt-2">
-        <p className="min-h-[36px] text-[12px] font-light leading-[18px] text-muted-foreground">
-          {item.description}
-        </p>
-
-        <div className="flex min-h-6 flex-wrap gap-1.5" aria-label="Capacidades">
-          {item.capabilities.slice(0, 2).map((capability) => (
-            <span
-              key={capability}
-              className="rounded-[5px] bg-[var(--app-surface-soft)] px-2 py-1 text-[9px] font-light text-[var(--app-text-secondary)]"
-            >
-              {INTEGRATION_CAPABILITY_LABELS[capability]}
-            </span>
-          ))}
-          {item.capabilities.length > 2 && (
-            <span className="rounded-[5px] bg-[var(--app-surface-soft)] px-2 py-1 text-[9px] font-light text-[var(--app-text-secondary)]">
-              +{item.capabilities.length - 2}
-            </span>
-          )}
-        </div>
-
         <IntegrationCardNotice
           item={item}
           isAccessLocked={isAccessLocked}
@@ -1314,36 +1237,6 @@ function getIntegrationActionLabel(
   if (item.status === "connected") return "Gerenciar";
   if (item.status === "reconnect-required") return "Corrigir configuração";
   return "Configurar";
-}
-
-function SummaryPill({
-  icon: Icon,
-  label,
-  value,
-  tone,
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: number;
-  tone: "connected" | "pending" | "attention" | "unavailable";
-}) {
-  const toneClassName = {
-    connected: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-    pending: "bg-blue-500/10 text-blue-700 dark:text-blue-300",
-    attention: "bg-amber-500/10 text-amber-800 dark:text-amber-200",
-    unavailable:
-      "bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]",
-  }[tone];
-
-  return (
-    <div
-      className={`flex min-w-[118px] items-center gap-2 rounded-[7px] px-3 py-2 ${toneClassName}`}
-    >
-      <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-      <span className="text-[11px] font-light">{label}</span>
-      <strong className="ml-auto text-xs font-semibold">{value}</strong>
-    </div>
-  );
 }
 
 function isIntegrationKey(value?: string): value is IntegrationKey {

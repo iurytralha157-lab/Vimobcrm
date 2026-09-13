@@ -717,6 +717,7 @@ func normalizeMetaCreative(adObject map[string]any, creative map[string]any) map
 	)
 
 	imageURL := firstURL(
+		creative["effective_image_url"],
 		creative["image_url"],
 		creative["thumbnail_url"],
 		creative["object_url"],

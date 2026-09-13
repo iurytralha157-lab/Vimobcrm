@@ -12,9 +12,9 @@ import (
 
 const marketingSyncCampaignFields = "id,name,status,effective_status,objective,buying_type,daily_budget,lifetime_budget,budget_remaining,updated_time"
 const marketingSyncAdsetFields = "id,name,campaign_id,status,effective_status,optimization_goal,billing_event,daily_budget,lifetime_budget,bid_amount,updated_time"
-const marketingSyncAdFields = "id,name,campaign_id,adset_id,status,effective_status,preview_shareable_link,updated_time,creative{id,name,title,body,image_url,thumbnail_url,video_id,effective_object_story_id,object_url}"
+const marketingSyncAdFields = "id,name,campaign_id,adset_id,status,effective_status,preview_shareable_link,updated_time,creative{id,name,title,body,effective_image_url,image_url,thumbnail_url,video_id,effective_object_story_id,object_url}"
 const marketingSyncAdFallbackFields = "id,name,campaign_id,adset_id,status,effective_status,creative"
-const marketingSyncCreativeFields = "id,name,title,body,image_url,thumbnail_url,video_id,effective_object_story_id,object_url,object_story_spec,asset_feed_spec"
+const marketingSyncCreativeFields = "id,name,title,body,effective_image_url,image_url,thumbnail_url,video_id,effective_object_story_id,object_url,object_story_spec,asset_feed_spec"
 const marketingSyncCreativeFallbackFields = "id,name,title,body,image_url,thumbnail_url,video_id"
 
 var (
@@ -114,6 +114,7 @@ func fetchMarketingSyncEntityCatalog(ctx context.Context, graph *marketingSyncGr
 	}
 	creativeIDs := make([]string, 0)
 	seenCreatives := make(map[string]struct{})
+	creativeAds := make(map[string]map[string]any)
 	for _, ad := range catalog.Ads {
 		nested := marketingSyncRecord(ad["creative"])
 		creativeID := marketingSyncText(ad["creative"])
@@ -125,6 +126,9 @@ func fetchMarketingSyncEntityCatalog(ctx context.Context, graph *marketingSyncGr
 		}
 		if nested != nil {
 			catalog.Creatives[creativeID] = nested
+		}
+		if creativeAds[creativeID] == nil {
+			creativeAds[creativeID] = ad
 		}
 		if _, ok := seenCreatives[creativeID]; !ok {
 			seenCreatives[creativeID] = struct{}{}
@@ -157,7 +161,7 @@ func fetchMarketingSyncEntityCatalog(ctx context.Context, graph *marketingSyncGr
 	}
 	videoRequests := make([]videoRequest, 0)
 	for creativeID, creative := range catalog.Creatives {
-		if videoID := marketingSyncText(creative["video_id"]); videoID != "" {
+		if videoID := resolveMarketingSyncCreativeAssets(creativeAds[creativeID], creative).VideoID; videoID != "" {
 			videoRequests = append(videoRequests, videoRequest{CreativeID: creativeID, VideoID: videoID})
 		}
 	}
@@ -526,6 +530,7 @@ func marketingSyncPerformanceRowFromInsight(insight map[string]any, level string
 		metrics.RawActions["vimob_page_id"] = strings.TrimSpace(target.PageID)
 		metrics.RawActions["vimob_instagram_account_id"] = strings.TrimSpace(target.InstagramBusinessAccountID)
 	}
+	creativeAssets := resolveMarketingSyncCreativeAssets(ad, creative)
 	return marketingSyncPerformanceRow{
 		OrganizationID: target.OrganizationID, IntegrationID: target.IntegrationID,
 		ExternalAccountID: accountID, Level: level, EntityID: entityID, MetricDate: metricDate,
@@ -541,10 +546,10 @@ func marketingSyncPerformanceRowFromInsight(insight map[string]any, level string
 		VideoThreeSecondViews: metrics.VideoThreeSecondViews, VideoThruplays: metrics.VideoThruplays,
 		CTR: metrics.CTR, CPC: metrics.CPC, CPM: metrics.CPM, CPL: metrics.CPL,
 		Frequency: metrics.Frequency, HookRate: metrics.HookRate, CreativeID: creativeID,
-		CreativeURL:          marketingSyncSafeHTTPSURL(creative["image_url"]),
-		CreativeVideoURL:     marketingSyncSafeHTTPSURL(creative["video_source"]),
-		CreativePermalinkURL: marketingSyncSafeHTTPSURL(marketingSyncFirstValue(creative["video_permalink_url"], creative["object_url"], ad["preview_shareable_link"])),
-		ThumbnailURL:         marketingSyncSafeHTTPSURL(marketingSyncFirstValue(creative["thumbnail_url"], creative["video_picture"])),
+		CreativeURL:          marketingSyncSafeHTTPSURL(creativeAssets.ImageURL),
+		CreativeVideoURL:     marketingSyncSafeHTTPSURL(creativeAssets.VideoURL),
+		CreativePermalinkURL: marketingSyncSafeHTTPSURL(creativeAssets.PermalinkURL),
+		ThumbnailURL:         marketingSyncSafeHTTPSURL(creativeAssets.ThumbnailURL),
 		RawActions:           metrics.RawActions, VideoMetricsAvailable: videoMetricsAvailable, FetchedAt: fetchedAt,
 	}, true
 }
@@ -640,13 +645,14 @@ func buildMarketingSyncPaidMedia(target marketingSyncTarget, accountID string, c
 	rows := make([]marketingSyncMediaRow, 0, len(catalog.Ads))
 	for adID, ad := range catalog.Ads {
 		creative := marketingSyncCreativeForAd(ad, catalog)
+		creativeAssets := resolveMarketingSyncCreativeAssets(ad, creative)
 		campaignID := marketingSyncText(ad["campaign_id"])
 		adsetID := marketingSyncText(ad["adset_id"])
 		campaign := catalog.Campaigns[campaignID]
 		adset := catalog.Adsets[adsetID]
 		value := metrics[adID]
 		mediaType := "image"
-		if marketingSyncText(creative["video_id"]) != "" {
+		if creativeAssets.VideoID != "" || creativeAssets.VideoURL != "" {
 			mediaType = "video"
 		}
 		mediaMetrics := map[string]any{
@@ -665,15 +671,15 @@ func buildMarketingSyncPaidMedia(target marketingSyncTarget, accountID string, c
 			Title: marketingSyncFirstText(creative["name"], creative["title"], ad["name"]), Caption: marketingSyncText(creative["body"]),
 			CampaignID: campaignID, CampaignName: marketingSyncText(campaign["name"]),
 			AdsetID: adsetID, AdsetName: marketingSyncText(adset["name"]), AdID: adID, AdName: marketingSyncText(ad["name"]),
-			CreativeID: marketingSyncText(creative["id"]), ThumbnailURL: marketingSyncSafeHTTPSURL(marketingSyncFirstValue(creative["thumbnail_url"], creative["video_picture"])),
-			MediaURL: marketingSyncSafeHTTPSURL(creative["image_url"]), VideoURL: marketingSyncSafeHTTPSURL(creative["video_source"]),
-			PermalinkURL: marketingSyncSafeHTTPSURL(marketingSyncFirstValue(creative["video_permalink_url"], creative["object_url"], ad["preview_shareable_link"])),
+			CreativeID: marketingSyncText(creative["id"]), ThumbnailURL: marketingSyncSafeHTTPSURL(creativeAssets.ThumbnailURL),
+			MediaURL: marketingSyncSafeHTTPSURL(creativeAssets.ImageURL), VideoURL: marketingSyncSafeHTTPSURL(creativeAssets.VideoURL),
+			PermalinkURL: marketingSyncSafeHTTPSURL(creativeAssets.PermalinkURL),
 			Metrics:      mediaMetrics,
 			RawMetadata: map[string]any{
 				"ad_status":                 nullableMarketingSyncText(marketingSyncText(ad["status"])),
 				"ad_effective_status":       nullableMarketingSyncText(marketingSyncText(ad["effective_status"])),
 				"objective":                 nullableMarketingSyncText(marketingSyncText(campaign["objective"])),
-				"video_id":                  nullableMarketingSyncText(marketingSyncText(creative["video_id"])),
+				"video_id":                  nullableMarketingSyncText(creativeAssets.VideoID),
 				"effective_object_story_id": nullableMarketingSyncText(marketingSyncText(creative["effective_object_story_id"])),
 				"object_story_spec":         marketingSyncMapOrEmpty(creative["object_story_spec"]),
 				"asset_feed_spec":           marketingSyncMapOrEmpty(creative["asset_feed_spec"]),
@@ -697,6 +703,46 @@ func marketingSyncCreativeForAd(ad map[string]any, catalog marketingSyncEntityCa
 		return creative
 	}
 	return nested
+}
+
+type marketingSyncCreativeAssets struct {
+	ImageURL     string
+	ThumbnailURL string
+	VideoID      string
+	VideoURL     string
+	PermalinkURL string
+}
+
+func resolveMarketingSyncCreativeAssets(ad map[string]any, creative map[string]any) marketingSyncCreativeAssets {
+	normalized := normalizeMetaCreative(ad, creative)
+	imageURL := firstURL(
+		creative["effective_image_url"],
+		creative["image_url"],
+		normalized["creative_url"],
+	)
+	return marketingSyncCreativeAssets{
+		ImageURL: imageURL,
+		ThumbnailURL: firstURL(
+			creative["thumbnail_url"],
+			creative["video_picture"],
+			normalized["creative_thumbnail_url"],
+			imageURL,
+		),
+		VideoID: firstNonEmpty(
+			marketingSyncText(creative["video_id"]),
+			textFromAny(normalized["creative_video_id"]),
+		),
+		VideoURL: firstURL(
+			creative["video_source"],
+			normalized["creative_video_url"],
+		),
+		PermalinkURL: firstURL(
+			creative["video_permalink_url"],
+			creative["object_url"],
+			normalized["creative_permalink_url"],
+			ad["preview_shareable_link"],
+		),
+	}
 }
 
 func marketingSyncEntityBudget(entity map[string]any, currency string) (*float64, string) {
