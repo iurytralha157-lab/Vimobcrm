@@ -3,8 +3,11 @@ package schedule
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"reflect"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -171,17 +174,17 @@ func TestScheduleDashboardQueryUsesSafeScopedAggregates(t *testing.T) {
 		"and member.user_id = users.id",
 		"and coalesce(member.is_active, false) = true",
 		"and coalesce(leader.is_leader, false) = true",
-		"selected_team_member.team_id = $14::uuid",
+		"selected_team_member.team_id = $10::uuid",
 		"event_responsibilities as materialized (",
 		"select filtered_events.id as event_id, filtered_events.user_id",
 		"join public.schedule_event_assignees assignee",
 		"se.team_id",
 		"join filtered_events responsibility_event",
-		"responsibility_event.team_id = $14::uuid",
+		"responsibility_event.team_id = $10::uuid",
 		"responsibility_event.team_id is null",
 		"scoped_responsibilities as materialized (",
-		"where ($13::uuid is null or event_responsibilities.user_id = $13::uuid)",
-		"responsibility_team_member.team_id = $14::uuid",
+		"where ($9::uuid is null or event_responsibilities.user_id = $9::uuid)",
+		"responsibility_team_member.team_id = $10::uuid",
 		"select user_id from scoped_responsibilities",
 		"join filtered_events on filtered_events.id = scoped_responsibilities.event_id",
 		"group by scoped_responsibilities.user_id",
@@ -237,14 +240,15 @@ func TestScheduleDashboardQueryUsesSafeScopedAggregates(t *testing.T) {
 	if count := strings.Count(query, "filtered_events.event_type in ('visit', 'meeting')"); count < 2 {
 		t.Fatalf("daily/weekly no-show series must exclude invalid legacy activity types, found %d guarded aggregates", count)
 	}
-	if len(args) != 19 || args[17] != filter.EventType || args[18] != filter.Status {
+	if len(args) != 13 || args[11] != filter.EventType || args[12] != filter.Status {
 		t.Fatalf("unexpected query args: %#v", args)
 	}
-	if args[16] != filter.Source {
-		t.Fatalf("source argument = %#v", args[16])
+	assertEveryPositionalArgumentIsUsed(t, query, args)
+	if args[10] != filter.Source {
+		t.Fatalf("source argument = %#v", args[10])
 	}
-	if args[12] != filter.UserID || args[13] != filter.TeamID {
-		t.Fatalf("roster scope arguments = %#v, %#v", args[12], args[13])
+	if args[8] != filter.UserID || args[9] != filter.TeamID {
+		t.Fatalf("roster scope arguments = %#v, %#v", args[8], args[9])
 	}
 }
 
@@ -317,7 +321,7 @@ func TestScheduleDashboardEventsQueryReusesDashboardScopeAndListsEntirePeriod(t 
 	if err != nil {
 		t.Fatalf("build dashboard events query: %v", err)
 	}
-	if len(eventsArgs) != len(dashboardArgs)+2 {
+	if len(eventsArgs) != len(dashboardArgs)+6 {
 		t.Fatalf("events args = %d, dashboard args = %d", len(eventsArgs), len(dashboardArgs))
 	}
 	if !reflect.DeepEqual(eventsArgs[:len(dashboardArgs)], dashboardArgs) {
@@ -326,6 +330,8 @@ func TestScheduleDashboardEventsQueryReusesDashboardScopeAndListsEntirePeriod(t 
 	if got := eventsArgs[len(eventsArgs)-2:]; !reflect.DeepEqual(got, []any{35, 70}) {
 		t.Fatalf("pagination args = %#v", got)
 	}
+	assertEveryPositionalArgumentIsUsed(t, dashboardQuery, dashboardArgs)
+	assertEveryPositionalArgumentIsUsed(t, eventsQuery, eventsArgs)
 
 	for _, fragment := range []string{
 		"filtered_events as materialized (",
@@ -395,8 +401,8 @@ func TestScheduleDashboardResponsibleMetricsUseUniqueScopedParticipants(t *testi
 		"select filtered_events.id as event_id, assignee.user_id",
 		"assignee.organization_id = filtered_events.organization_id",
 		"assignee.event_id = filtered_events.id",
-		"$13::uuid is null or event_responsibilities.user_id = $13::uuid",
-		"responsibility_team_member.team_id = $14::uuid",
+		"$9::uuid is null or event_responsibilities.user_id = $9::uuid",
+		"responsibility_team_member.team_id = $10::uuid",
 		"responsibility_team_member.user_id = event_responsibilities.user_id",
 		"coalesce(responsibility_team_member.is_active, false) = true",
 	} {
@@ -643,5 +649,22 @@ func TestScheduleDashboardNormalizesEmptyCollections(t *testing.T) {
 	page.normalizeCollections()
 	if page.Items == nil {
 		t.Fatal("dashboard events items must normalize to an empty array")
+	}
+}
+
+func assertEveryPositionalArgumentIsUsed(t *testing.T, query string, args []any) {
+	t.Helper()
+	used := make(map[int]bool, len(args))
+	for _, match := range regexp.MustCompile(`\$(\d+)`).FindAllStringSubmatch(query, -1) {
+		index, err := strconv.Atoi(match[1])
+		if err != nil {
+			t.Fatalf("parse query placeholder %q: %v", match[0], err)
+		}
+		used[index] = true
+	}
+	for index := 1; index <= len(args); index++ {
+		if !used[index] {
+			t.Fatalf("query does not use positional argument %s", fmt.Sprintf("$%d", index))
+		}
 	}
 }

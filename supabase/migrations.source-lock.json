@@ -538,6 +538,10 @@
     {
       "file": "20260912193000_repair_legacy_google_all_day_ranges.sql",
       "sha256": "3cbb4cb0de110943c06c0bbe2df2a8e0c19ea47ba931f8bf4619ce4bb1a7f7a7"
+    },
+    {
+      "file": "20260913104722_repair_cadence_operational_schema.sql",
+      "sha256": "dfcb06ad45af050cebb089a7ebd19410051c347ce41fe748889ffc98bc188c16"
     }
   ]
 }

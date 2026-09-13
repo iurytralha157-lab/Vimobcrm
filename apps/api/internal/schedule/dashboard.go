@@ -87,6 +87,16 @@ func buildScheduleDashboardEventsQuery(tenantContext tenant.Context, filter Dash
 	}
 
 	args := append([]any(nil), scope.args...)
+	args = append(args,
+		propertyscope.CanRead(tenantContext),
+		propertyscope.CanViewAll(tenantContext),
+		tenantContext.UserID,
+		propertyscope.CanViewTeam(tenantContext),
+	)
+	propertyReadPlaceholder := fmt.Sprintf("$%d", len(args)-3)
+	propertyViewAllPlaceholder := fmt.Sprintf("$%d", len(args)-2)
+	propertyUserIDPlaceholder := fmt.Sprintf("$%d", len(args)-1)
+	propertyViewTeamPlaceholder := fmt.Sprintf("$%d", len(args))
 	args = append(args, filter.Limit)
 	limitPlaceholder := fmt.Sprintf("$%d", len(args))
 	args = append(args, filter.Offset)
@@ -118,7 +128,14 @@ func buildScheduleDashboardEventsQuery(tenantContext tenant.Context, filter Dash
 			left join public.leads lead
 			  on lead.organization_id = filtered_events.organization_id
 			 and lead.id = filtered_events.lead_id
-			` + schedulePropertyJoinSQL("filtered_events", "property", "$9", "$10", "$11", "$12") + `
+			` + schedulePropertyJoinSQL(
+		"filtered_events",
+		"property",
+		propertyReadPlaceholder,
+		propertyViewAllPlaceholder,
+		propertyUserIDPlaceholder,
+		propertyViewTeamPlaceholder,
+	) + `
 			order by filtered_events.start_time asc, filtered_events.id asc
 			limit ` + limitPlaceholder + `::integer
 			offset ` + offsetPlaceholder + `::bigint
@@ -254,14 +271,14 @@ func buildScheduleDashboardQuery(tenantContext tenant.Context, filter DashboardF
 					  and coalesce(leader.is_leader, false) = true
 				)
 			  )
-			  and ($13::uuid is null or users.id = $13::uuid)
+			  and ($9::uuid is null or users.id = $9::uuid)
 			  and (
-				$14::uuid is null
+				$10::uuid is null
 				or exists (
 					select 1
 					from public.team_members selected_team_member
 					where selected_team_member.organization_id = $1::uuid
-					  and selected_team_member.team_id = $14::uuid
+					  and selected_team_member.team_id = $10::uuid
 					  and selected_team_member.user_id = users.id
 					  and coalesce(selected_team_member.is_active, false) = true
 				)
@@ -283,17 +300,17 @@ func buildScheduleDashboardQuery(tenantContext tenant.Context, filter DashboardF
 			from event_responsibilities
 			join filtered_events responsibility_event
 			  on responsibility_event.id = event_responsibilities.event_id
-			where ($13::uuid is null or event_responsibilities.user_id = $13::uuid)
+			where ($9::uuid is null or event_responsibilities.user_id = $9::uuid)
 			  and (
-				$14::uuid is null
-				or responsibility_event.team_id = $14::uuid
+				$10::uuid is null
+				or responsibility_event.team_id = $10::uuid
 				or (
 					responsibility_event.team_id is null
 					and exists (
 						select 1
 						from public.team_members responsibility_team_member
 						where responsibility_team_member.organization_id = $1::uuid
-						  and responsibility_team_member.team_id = $14::uuid
+						  and responsibility_team_member.team_id = $10::uuid
 						  and responsibility_team_member.user_id = event_responsibilities.user_id
 						  and coalesce(responsibility_team_member.is_active, false) = true
 					)
@@ -467,10 +484,6 @@ func buildScheduleDashboardQueryScope(tenantContext tenant.Context, filter Dashb
 		tenantContext.HasPermission(permissions.LeadViewTeam),
 		filter.DateFrom.Format(dashboardDateLayout),
 		filter.DateTo.Format(dashboardDateLayout),
-		propertyscope.CanRead(tenantContext),
-		propertyscope.CanViewAll(tenantContext),
-		tenantContext.UserID,
-		propertyscope.CanViewTeam(tenantContext),
 		selectedUserID,
 		selectedTeamID,
 	}
@@ -496,8 +509,7 @@ func buildScheduleDashboardQueryScope(tenantContext tenant.Context, filter Dashb
 	}
 
 	if filter.UserID != "" {
-		args = append(args, filter.UserID)
-		index := len(args)
+		const index = 9
 		where = append(where, fmt.Sprintf(`(
 			se.user_id = $%d::uuid
 			or exists (
@@ -510,8 +522,7 @@ func buildScheduleDashboardQueryScope(tenantContext tenant.Context, filter Dashb
 		)`, index, index))
 	}
 	if filter.TeamID != "" {
-		args = append(args, filter.TeamID)
-		index := len(args)
+		const index = 10
 		where = append(where, fmt.Sprintf(`(
 			se.team_id = $%d::uuid
 			or (
@@ -582,8 +593,8 @@ func scheduleDashboardFilteredEventsCTEs(scope scheduleDashboardQueryScope) stri
 				timezone_config.report_timezone,
 				$7::date as date_from,
 				$8::date as date_to,
-				$13::uuid as selected_user_id,
-				$14::uuid as selected_team_id,
+				$9::uuid as selected_user_id,
+				$10::uuid as selected_team_id,
 				(($7::date)::timestamp without time zone at time zone timezone_config.report_timezone) as from_at,
 				((($8::date + 1)::timestamp without time zone) at time zone timezone_config.report_timezone) as to_at,
 				statement_timestamp() as as_of
