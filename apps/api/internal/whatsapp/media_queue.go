@@ -33,6 +33,7 @@ const (
 	whatsappMediaUploadSizeKey     = "upload_intent_size"
 	whatsappMediaUploadFailuresKey = "upload_intent_failures"
 	whatsappMediaCompletionMaxJobs = 100
+	whatsappMediaRealtimePriority  = 100
 
 	mediaErrorManualOnly     = "media_policy_manual_only_type"
 	mediaErrorTooLarge       = "media_policy_too_large"
@@ -2132,12 +2133,7 @@ func (repo Repository) enqueueManualWhatsAppMediaJob(ctx context.Context, messag
 	}
 	dedupeKey, assetKey, fileSHA256, fileEncSHA256 := whatsappMediaQueueKeys(message.OrganizationID, message.SessionID, nativeMessage)
 	repairStoragePath := strings.TrimSpace(message.MediaStoragePath)
-	messageKeyPayload := map[string]any{
-		"provider_message_id": message.MessageID,
-		"media_url":           message.MediaURL,
-		"media_base64":        nativeMessage.MediaBase64,
-		"raw":                 raw,
-	}
+	messageKeyPayload := whatsappMediaQueueMessageKey(nativeMessage)
 	if repairStoragePath != "" {
 		messageKeyPayload[whatsappMediaRepairPathKey] = repairStoragePath
 	}
@@ -2192,7 +2188,18 @@ func (repo Repository) enqueueManualWhatsAppMediaJob(ctx context.Context, messag
 			        or nullif(btrim(coalesce(message_key->>'upload_intent_path', '')), '') is not null
 			        or nullif(btrim(coalesce(message_key->>'repair_storage_path', '')), '') is not null
 			      then message_key
-			      else coalesce(message_key, '{}'::jsonb) || $4::jsonb
+			      else (
+			        case
+			          when $4::jsonb ? 'message' then jsonb_build_object('message', $4::jsonb->'message')
+			          when coalesce(message_key, '{}'::jsonb) ? 'message' then jsonb_build_object('message', message_key->'message')
+			          when $4::jsonb ? 'media_url' then jsonb_build_object('media_url', $4::jsonb->'media_url')
+			          when coalesce(message_key, '{}'::jsonb) ? 'media_url' then jsonb_build_object('media_url', message_key->'media_url')
+			          else '{}'::jsonb
+			        end
+			        || jsonb_strip_nulls(jsonb_build_object(
+			          'repair_storage_path', $4::jsonb->'repair_storage_path'
+			        ))
+			      )
 			    end,
 			    provider_message_id = case
 			      when status = 'processing'
@@ -2386,18 +2393,7 @@ func enqueueNativeEvolutionMediaJob(ctx context.Context, tx pgx.Tx, session nati
 		jobStatus = "failed"
 	}
 	dedupeKey, assetKey, fileSHA256, fileEncSHA256 := whatsappMediaQueueKeys(session.OrganizationID, session.ID, message)
-	messageKeyPayload := map[string]any{
-		"provider_message_id": message.ProviderMessageID,
-	}
-	if strings.TrimSpace(message.MediaURL) != "" {
-		messageKeyPayload["media_url"] = message.MediaURL
-	}
-	if strings.TrimSpace(message.MediaBase64) != "" {
-		messageKeyPayload["media_base64"] = message.MediaBase64
-	}
-	if len(message.Raw) > 0 {
-		messageKeyPayload["raw"] = message.Raw
-	}
+	messageKeyPayload := whatsappMediaQueueMessageKey(message)
 	messageKey := jsonb(messageKeyPayload)
 
 	var persistedStatus, persistedError, persistedStoragePath, persistedMimeType string
@@ -2408,13 +2404,13 @@ func enqueueNativeEvolutionMediaJob(ctx context.Context, tx pgx.Tx, session nati
 			provider_message_id, message_key, media_type, media_mime_type,
 			status, attempts, max_attempts, next_retry_at,
 			dedupe_key, asset_key, declared_size, file_sha256, file_enc_sha256,
-			error_code, error_message, failed_at, manual_requested
+			error_code, error_message, failed_at, manual_requested, priority
 		) values (
 			$1::uuid, $2::uuid, $3::uuid, $4::uuid,
 			$5, $6::jsonb, $7, nullif($8, ''),
 			$9, 0, $10, now(),
 			$11, $12, nullif($13, 0), nullif($14, ''), nullif($15, ''),
-			nullif($16, ''), nullif($16, ''), case when $9 = 'failed' then now() end, false
+			nullif($16, ''), nullif($16, ''), case when $9 = 'failed' then now() end, false, $22
 		)
 		on conflict (organization_id, dedupe_key) do update
 		set message_key = case
@@ -2422,30 +2418,25 @@ func enqueueNativeEvolutionMediaJob(ctx context.Context, tx pgx.Tx, session nati
 		        or nullif(btrim(coalesce(media_jobs.message_key->>$17::text, '')), '') is not null
 		        or nullif(btrim(coalesce(media_jobs.message_key->>$21::text, '')), '') is not null
 		      then media_jobs.message_key
-		      else (
-		        coalesce(media_jobs.message_key, '{}'::jsonb)
-		        || (excluded.message_key - 'raw' - $17::text - $18::text - $19::text - $20::text - $21::text)
-		      ) || jsonb_strip_nulls(jsonb_build_object(
-		        'raw', case
-		          -- Preserve the strongest immutable provider snapshot. A sparse
-		          -- redelivery must never remove mediaKey/directPath after a rich
-		          -- event supplied a cryptographic fingerprint.
-		          when media_jobs.file_sha256 is not null then media_jobs.message_key->'raw'
-		          when excluded.file_sha256 is not null then excluded.message_key->'raw'
-		          when media_jobs.file_enc_sha256 is not null then media_jobs.message_key->'raw'
-		          when excluded.file_enc_sha256 is not null then excluded.message_key->'raw'
-		          when octet_length(coalesce(excluded.message_key->'raw', 'null'::jsonb)::text)
-		             > octet_length(coalesce(media_jobs.message_key->'raw', 'null'::jsonb)::text)
-		          then excluded.message_key->'raw'
-		          else media_jobs.message_key->'raw'
-		        end,
-		        $17::text, media_jobs.message_key->$17::text,
+			      else (
+			        -- Keep one bounded recovery source. Prefer a provider message
+			        -- block over a plaintext URL and never retain the webhook envelope.
+			        case
+			          when excluded.message_key ? 'message' then jsonb_build_object('message', excluded.message_key->'message')
+			          when media_jobs.message_key ? 'message' then jsonb_build_object('message', media_jobs.message_key->'message')
+			          when excluded.message_key ? 'media_url' then jsonb_build_object('media_url', excluded.message_key->'media_url')
+			          when media_jobs.message_key ? 'media_url' then jsonb_build_object('media_url', media_jobs.message_key->'media_url')
+			          else '{}'::jsonb
+			        end
+			      ) || jsonb_strip_nulls(jsonb_build_object(
+			        $17::text, media_jobs.message_key->$17::text,
 		        $18::text, media_jobs.message_key->$18::text,
 		        $19::text, media_jobs.message_key->$19::text,
 		        $20::text, media_jobs.message_key->$20::text,
 		        $21::text, media_jobs.message_key->$21::text
 		      ))
-		    end,
+			    end,
+			    priority = greatest(media_jobs.priority, excluded.priority),
 		    provider_message_id = case
 		      when media_jobs.status in ('processing', 'completed')
 		        or nullif(btrim(coalesce(media_jobs.message_key->>$17::text, '')), '') is not null
@@ -2545,7 +2536,7 @@ func enqueueNativeEvolutionMediaJob(ctx context.Context, tx pgx.Tx, session nati
 		jobStatus, whatsappMediaJobMaxAttempts, dedupeKey, assetKey, message.MediaSize,
 		fileSHA256, fileEncSHA256, policy.errorCode,
 		whatsappMediaUploadPathKey, whatsappMediaUploadMIMEKey, whatsappMediaUploadSizeKey,
-		whatsappMediaUploadFailuresKey, whatsappMediaRepairPathKey).Scan(
+		whatsappMediaUploadFailuresKey, whatsappMediaRepairPathKey, whatsappMediaRealtimePriority).Scan(
 		&persistedStatus,
 		&persistedError,
 		&persistedStoragePath,
@@ -2586,6 +2577,55 @@ func enqueueNativeEvolutionMediaJob(ctx context.Context, tx pgx.Tx, session nati
 		}
 	}
 	return persistedStatus == "pending", nil
+}
+
+func whatsappMediaQueueMessageKey(message nativeEvolutionMessage) map[string]any {
+	messageNode := nativeFirstMap(message.Raw, "message", "Message")
+	if len(messageNode) == 0 {
+		messageNode = message.Raw
+	}
+	kind, block := nativeMediaBlock(messageNode, message.Raw, nativeFirstMap(message.Raw, "Info", "info"))
+	blockNames := map[string]string{
+		"image": "imageMessage", "video": "videoMessage", "audio": "audioMessage",
+		"document": "documentMessage", "sticker": "stickerMessage",
+	}
+	cleaned := map[string]any{}
+	copyString := func(key string, maxBytes int, aliases ...string) {
+		value := strings.TrimSpace(stripNullBytes(firstString(block, aliases...)))
+		if value != "" && len(value) <= maxBytes {
+			cleaned[key] = value
+		}
+	}
+	copyString("mediaKey", 4096, "mediaKey", "MediaKey", "media_key")
+	copyString("fileSha256", 4096, "fileSha256", "fileSHA256", "FileSHA256", "FileSha256")
+	copyString("fileEncSha256", 4096, "fileEncSha256", "fileEncSHA256", "FileEncSHA256", "FileEncSha256")
+	copyString("fileLength", 64, "fileLength", "FileLength", "file_length")
+	copyString("mediaKeyTimestamp", 64, "mediaKeyTimestamp", "MediaKeyTimestamp", "media_key_timestamp")
+	copyString("mimetype", 512, "mimetype", "mimeType", "MimeType")
+
+	if value := strings.TrimSpace(stripNullBytes(firstString(block, "url", "URL"))); whatsappMediaQueueHTTPURL(value) {
+		cleaned["url"] = value
+	}
+	if value := strings.TrimSpace(stripNullBytes(firstString(block, "directPath", "DirectPath", "direct_path"))); len(value) <= 8192 && strings.HasPrefix(value, "/") {
+		cleaned["directPath"] = value
+	}
+	if blockName := blockNames[kind]; blockName != "" && (cleaned["url"] != nil || cleaned["directPath"] != nil) {
+		return map[string]any{"message": map[string]any{blockName: cleaned}}
+	}
+
+	mediaURL := strings.TrimSpace(stripNullBytes(message.MediaURL))
+	if whatsappMediaQueueHTTPURL(mediaURL) {
+		return map[string]any{"media_url": mediaURL}
+	}
+	return map[string]any{}
+}
+
+func whatsappMediaQueueHTTPURL(value string) bool {
+	if value == "" || len(value) > 8192 {
+		return false
+	}
+	parsed, err := url.Parse(value)
+	return err == nil && parsed.Host != "" && (strings.EqualFold(parsed.Scheme, "http") || strings.EqualFold(parsed.Scheme, "https"))
 }
 
 func whatsappMediaQueueKeys(organizationID string, sessionID string, message nativeEvolutionMessage) (string, string, string, string) {

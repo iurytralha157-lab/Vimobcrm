@@ -494,6 +494,64 @@ func TestNativeMediaThumbnailIsNeverTreatedAsFullFile(t *testing.T) {
 	}
 }
 
+func TestWhatsAppMediaQueueMessageKeyRetainsOnlyRecoveryCoordinates(t *testing.T) {
+	key := whatsappMediaQueueMessageKey(nativeEvolutionMessage{
+		MessageType: "audio",
+		MediaURL:    "https://cdn.example.invalid/fallback.enc",
+		MediaBase64: "must-not-enter-postgres",
+		Raw: map[string]any{
+			"Info": map[string]any{"ID": "provider-message-id", "Sender": "5511999999999@s.whatsapp.net"},
+			"Message": map[string]any{
+				"audioMessage": map[string]any{
+					"directPath":        "/v/t62.7117-24/recovery.enc",
+					"mediaKey":          "encrypted-media-key",
+					"fileSha256":        "plaintext-sha",
+					"fileEncSha256":     "encrypted-sha",
+					"fileLength":        float64(4096),
+					"mediaKeyTimestamp": float64(123456),
+					"mimetype":          "audio/ogg; codecs=opus",
+					"caption":           "private caption",
+					"jpegThumbnail":     "private thumbnail",
+				},
+			},
+		},
+	})
+	if _, exists := key["raw"]; exists {
+		t.Fatal("raw webhook envelope escaped into the durable media queue")
+	}
+	if _, exists := key["media_base64"]; exists {
+		t.Fatal("inline media bytes escaped into the durable media queue")
+	}
+	messageNode, ok := key["message"].(map[string]any)
+	if !ok || len(messageNode) != 1 {
+		t.Fatalf("sanitized provider message = %#v", key)
+	}
+	block, ok := messageNode["audioMessage"].(map[string]any)
+	if !ok || block["directPath"] != "/v/t62.7117-24/recovery.enc" || block["mediaKey"] != "encrypted-media-key" {
+		t.Fatalf("sanitized audio recovery block = %#v", block)
+	}
+	for _, forbidden := range []string{"caption", "jpegThumbnail", "contextInfo"} {
+		if _, exists := block[forbidden]; exists {
+			t.Fatalf("provider display field %q escaped into the durable queue", forbidden)
+		}
+	}
+	if _, exists := key["media_url"]; exists {
+		t.Fatal("plaintext fallback was retained alongside the stronger provider message")
+	}
+}
+
+func TestWhatsAppMediaQueueMessageKeyUsesOnlyValidatedHTTPFallback(t *testing.T) {
+	valid := whatsappMediaQueueMessageKey(nativeEvolutionMessage{MediaURL: "https://cdn.example.invalid/media.jpg"})
+	if valid["media_url"] != "https://cdn.example.invalid/media.jpg" || len(valid) != 1 {
+		t.Fatalf("validated media fallback = %#v", valid)
+	}
+	for _, candidate := range []string{"javascript:alert(1)", "https:///missing-host", "data:image/png;base64,AAAA"} {
+		if got := whatsappMediaQueueMessageKey(nativeEvolutionMessage{MediaURL: candidate}); len(got) != 0 {
+			t.Fatalf("unsafe media URL %q entered the queue as %#v", candidate, got)
+		}
+	}
+}
+
 func TestWhatsAppMediaAmbiguousOutcomeWinsOverDisconnectedText(t *testing.T) {
 	err := normalizeWhatsAppMediaProviderRecoveryError(fmt.Errorf(
 		"%w: upstream 504: client disconnected",
@@ -1084,6 +1142,15 @@ func TestWhatsAppMediaQueueSourceContracts(t *testing.T) {
 	}
 	queue := mustReadWhatsAppMediaContractFile(t, filepath.Join(whatsappDir, "media_queue.go"))
 	for _, required := range []string{
+		"messageKeyPayload := whatsappMediaQueueMessageKey(message)",
+		"priority = greatest(media_jobs.priority, excluded.priority)",
+		"whatsappMediaRealtimePriority",
+	} {
+		if !strings.Contains(queue, required) {
+			t.Fatalf("native media queue compatibility contract is missing %q", required)
+		}
+	}
+	for _, required := range []string{
 		"whatsappMediaSessionCanDownload(ctx, job)",
 		"markWhatsAppMediaProviderStarted(ctx, job)",
 		"deferWhatsAppMediaJobDisconnected(ctx, job, providerStarted)",
@@ -1130,6 +1197,38 @@ func TestWhatsAppMediaQueueSourceContracts(t *testing.T) {
 	} {
 		if strings.Contains(strings.ToLower(migration), forbidden) {
 			t.Fatalf("legacy Edge worker privilege was restored by %q", forbidden)
+		}
+	}
+}
+
+func TestWhatsAppMediaMessageKeyMigrationKeepsPayloadBounded(t *testing.T) {
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime caller unavailable")
+	}
+	migration := strings.ToLower(mustReadWhatsAppMediaContractFile(t, filepath.Join(
+		filepath.Dir(sourceFile), "..", "..", "..", "..", "supabase", "migrations", "20260913162739_align_whatsapp_media_queue_message_key_contract.sql",
+	)))
+	for _, required := range []string{
+		"media_jobs_message_key_runtime_check",
+		"upload_intent_path",
+		"upload_intent_content_type",
+		"upload_intent_size",
+		"upload_intent_failures",
+		"repair_storage_path",
+		"octet_length(message_key::text) <= 65536",
+		"like 'orgs/' || organization_id::text || '/assets/v2/%'",
+		"not valid",
+		"validate constraint media_jobs_message_key_runtime_check",
+		"rename constraint media_jobs_message_key_runtime_check to media_jobs_message_key_minimal_check",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Fatalf("media message_key migration is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"'raw'", "'media_base64'", "'base64'"} {
+		if strings.Contains(migration, forbidden) {
+			t.Fatalf("media message_key migration reintroduced forbidden payload key %s", forbidden)
 		}
 	}
 }
