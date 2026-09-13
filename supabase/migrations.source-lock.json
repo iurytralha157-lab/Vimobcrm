@@ -546,6 +546,10 @@
     {
       "file": "20260913162739_align_whatsapp_media_queue_message_key_contract.sql",
       "sha256": "ea8c82c33d011b6badcc6359501895b9dad3571d1de63855949532e364dae9ad"
+    },
+    {
+      "file": "20260913174500_restore_whatsapp_private_realtime_policy.sql",
+      "sha256": "19158cbb67a6669878c527c1ba8853ba5569164ddab82904b59f1cce0195a3c4"
     }
   ]
 }
