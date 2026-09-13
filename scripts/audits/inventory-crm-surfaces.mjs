@@ -73,6 +73,10 @@ function relative(file) {
   return toPosix(path.relative(ROOT, file));
 }
 
+function normalizeSourceText(value) {
+  return value.replace(/\r\n?/g, "\n");
+}
+
 const STABLE_ID_NAMESPACE = "vimob-crm-surface/v1";
 const STABLE_ID_HEX_LENGTH = 20;
 
@@ -101,7 +105,9 @@ const sourceFiles = SOURCE_ROOTS.flatMap((directory) => walk(path.join(ROOT, dir
   .map((file) => path.normalize(file))
   .sort((left, right) => relative(left).localeCompare(relative(right)));
 const sourceFileSet = new Set(sourceFiles);
-const sourceTextByFile = new Map(sourceFiles.map((file) => [file, fs.readFileSync(file, "utf8")]));
+const sourceTextByFile = new Map(
+  sourceFiles.map((file) => [file, normalizeSourceText(fs.readFileSync(file, "utf8"))]),
+);
 const astByFile = new Map(
   sourceFiles.map((file) => [
     file,
@@ -1012,7 +1018,7 @@ function assertFresh(file, expected) {
     process.exitCode = 1;
     return;
   }
-  if (fs.readFileSync(file, "utf8") !== expected) {
+  if (normalizeSourceText(fs.readFileSync(file, "utf8")) !== normalizeSourceText(expected)) {
     console.error(`Relatorio desatualizado: ${relative(file)}`);
     process.exitCode = 1;
   }

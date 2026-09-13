@@ -94,6 +94,10 @@ function toPosix(value) {
   return value.split(path.sep).join("/");
 }
 
+function normalizeSourceText(value) {
+  return value.replace(/\r\n?/g, "\n");
+}
+
 function relative(file) {
   return toPosix(path.relative(ROOT, file));
 }
@@ -163,7 +167,7 @@ const findings = [];
 const digester = crypto.createHash("sha256");
 
 for (const file of sourceFiles) {
-  const source = fs.readFileSync(file, "utf8");
+  const source = normalizeSourceText(fs.readFileSync(file, "utf8"));
   const sourcePath = relative(file);
   digester.update(sourcePath);
   digester.update("\0");
@@ -313,7 +317,10 @@ const jsonContent = `${JSON.stringify(report, null, 2)}\n`;
 const markdownContent = markdownFor(report);
 
 function assertFresh(file, expected) {
-  if (!fs.existsSync(file) || fs.readFileSync(file, "utf8") !== expected) {
+  if (
+    !fs.existsSync(file)
+    || normalizeSourceText(fs.readFileSync(file, "utf8")) !== normalizeSourceText(expected)
+  ) {
     console.error(`Relatório desatualizado: ${relative(file)}`);
     process.exitCode = 1;
   }
