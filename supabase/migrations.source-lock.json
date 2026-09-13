@@ -542,6 +542,10 @@
     {
       "file": "20260913104722_repair_cadence_operational_schema.sql",
       "sha256": "dfcb06ad45af050cebb089a7ebd19410051c347ce41fe748889ffc98bc188c16"
+    },
+    {
+      "file": "20260913162739_align_whatsapp_media_queue_message_key_contract.sql",
+      "sha256": "ea8c82c33d011b6badcc6359501895b9dad3571d1de63855949532e364dae9ad"
     }
   ]
 }
