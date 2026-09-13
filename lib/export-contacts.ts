@@ -2,9 +2,12 @@ import ExcelJS from 'exceljs';
 import { format as formatDate } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { contactsAPI } from '@/lib/api/contacts';
+import { buildContactExportCSV } from '@/lib/export-contacts-csv';
 import type { Contact, ContactListFilters } from '@/hooks/use-contacts-list';
 
-interface ExportFilters {
+export { buildContactExportCSV, escapeContactExportCSVCell } from '@/lib/export-contacts-csv';
+
+export interface ContactExportFilters {
   search?: string;
   teamId?: string;
   pipelineId?: string;
@@ -21,20 +24,32 @@ interface ExportFilters {
   createdTo?: string;
 }
 
+export type ContactExportFormat = 'xlsx' | 'csv';
+
+export type ContactExportProgress = {
+  phase: 'fetching' | 'generating' | 'downloading';
+  processed: number;
+  total: number | null;
+};
+
 interface ExportOptions {
-  filters?: ExportFilters;
+  filters?: ContactExportFilters;
   filename?: string;
-  exportFormat?: 'xlsx' | 'csv';
+  exportFormat?: ContactExportFormat;
   organizationId?: string | null;
+  columnKeys?: readonly ContactExportColumnKey[];
+  includeDynamicFields?: boolean;
+  signal?: AbortSignal;
+  onProgress?: (progress: ContactExportProgress) => void;
 }
 
 type ContactExportRow = Record<string, string | number | boolean | null | undefined>;
 
 type ExportColumn = {
-  header: string;
-  key: string;
-  width: number;
-  value?: (contact: Contact) => string | number | boolean | null | undefined;
+  readonly header: string;
+  readonly key: string;
+  readonly width: number;
+  readonly value?: (contact: Contact) => string | number | boolean | null | undefined;
 };
 
 type JsonScalar = string | number | boolean | null;
@@ -64,7 +79,7 @@ const sourceLabels: Record<string, string> = {
   website: 'Website',
   whatsapp: 'WhatsApp',
   instagram: 'Instagram',
-  indicacao: 'Indicacao',
+  indicacao: 'Indicação',
   outro: 'Outro',
 };
 
@@ -106,7 +121,7 @@ function dealStatusLabel(status?: string | null) {
 
 function boolLabel(value?: boolean | null) {
   if (value === true) return 'Sim';
-  if (value === false) return 'Nao';
+  if (value === false) return 'Não';
   return '';
 }
 
@@ -301,11 +316,39 @@ function buildDynamicExportColumns(contacts: Contact[], extrasByContactId: Map<s
   return Array.from(columns.values()).sort((a, b) => a.header.localeCompare(b.header, 'pt-BR'));
 }
 
-function buildExportColumns(contacts: Contact[], extrasByContactId: Map<string, ContactExportExtras>) {
-  return [...contactExportColumns, ...buildDynamicExportColumns(contacts, extrasByContactId)];
+function resolveStaticExportColumns(
+  columnKeys?: readonly ContactExportColumnKey[],
+): ExportColumn[] {
+  if (columnKeys === undefined) return [...contactExportColumns];
+
+  const availableKeys = new Set<ContactExportColumnKey>(
+    contactExportColumns.map((column) => column.key),
+  );
+  const invalidKey = columnKeys.find((key) => !availableKeys.has(key));
+  if (invalidKey) {
+    throw new Error(`Coluna de exportação inválida: ${invalidKey}`);
+  }
+
+  const selectedKeys = new Set(columnKeys);
+  return contactExportColumns.filter((column) => selectedKeys.has(column.key));
 }
 
-const contactExportColumns: ExportColumn[] = [
+function buildExportColumns(
+  contacts: Contact[],
+  extrasByContactId: Map<string, ContactExportExtras>,
+  columnKeys?: readonly ContactExportColumnKey[],
+  includeDynamicFields = true,
+) {
+  const staticColumns = resolveStaticExportColumns(columnKeys);
+  if (!includeDynamicFields) return staticColumns;
+
+  return [
+    ...staticColumns,
+    ...buildDynamicExportColumns(contacts, extrasByContactId),
+  ];
+}
+
+const contactExportColumns = [
   { header: 'ID do lead', key: 'id', width: 36 },
   { header: 'Nome', key: 'nome', width: 25 },
   { header: 'Telefone', key: 'telefone', width: 18 },
@@ -315,18 +358,18 @@ const contactExportColumns: ExportColumn[] = [
   { header: 'Status interno', key: 'status_interno', width: 18 },
   { header: 'Pipeline', key: 'pipeline', width: 20 },
   { header: 'ID da pipeline', key: 'pipeline_id', width: 36 },
-  { header: 'Atendimento/Estagio', key: 'estagio', width: 24 },
-  { header: 'ID do estagio', key: 'estagio_id', width: 36 },
-  { header: 'Responsavel', key: 'responsavel', width: 24 },
-  { header: 'ID do responsavel', key: 'responsavel_id', width: 36 },
+  { header: 'Atendimento/Estágio', key: 'estagio', width: 24 },
+  { header: 'ID do estágio', key: 'estagio_id', width: 36 },
+  { header: 'Responsável', key: 'responsavel', width: 24 },
+  { header: 'ID do responsável', key: 'responsavel_id', width: 36 },
   { header: 'Origem', key: 'origem', width: 18 },
   { header: 'Detalhe da origem', key: 'origem_detalhe', width: 28 },
   { header: 'Prioridade', key: 'prioridade', width: 14 },
   { header: 'Tags', key: 'tags', width: 30 },
   { header: 'Criado em', key: 'criado_em', width: 18 },
   { header: 'Atualizado em', key: 'atualizado_em', width: 18 },
-  { header: 'Entrada no estagio', key: 'entrada_estagio', width: 18 },
-  { header: 'Ultima entrada', key: 'ultima_entrada', width: 18 },
+  { header: 'Entrada no estágio', key: 'entrada_estagio', width: 18 },
+  { header: 'Última entrada', key: 'ultima_entrada', width: 18 },
   { header: 'Último contato', key: 'ultimo_contato', width: 18 },
   { header: 'Próximo follow-up', key: 'proximo_follow_up', width: 18 },
   { header: 'Data de ganho', key: 'data_ganho', width: 18 },
@@ -335,7 +378,7 @@ const contactExportColumns: ExportColumn[] = [
   { header: 'Motivo/feedback de ganho', key: 'motivo_ganho', width: 34 },
   { header: 'Feedback', key: 'feedback', width: 42 },
   { header: 'Valor de interesse', key: 'valor_interesse', width: 18 },
-  { header: 'Comissao %', key: 'comissao_percentual', width: 14 },
+  { header: 'Comissão %', key: 'comissao_percentual', width: 14 },
   { header: 'Faixa de valor do imóvel', key: 'faixa_valor_imovel', width: 24 },
   { header: 'Renda familiar', key: 'renda_familiar', width: 20 },
   { header: 'Finalidade da compra', key: 'finalidade_compra', width: 24 },
@@ -343,7 +386,7 @@ const contactExportColumns: ExportColumn[] = [
   { header: 'Trabalha', key: 'trabalha', width: 12 },
   { header: 'Cargo', key: 'cargo', width: 20 },
   { header: 'Empresa', key: 'empresa', width: 24 },
-  { header: 'Profissao', key: 'profissao', width: 20 },
+  { header: 'Profissão', key: 'profissao', width: 20 },
   { header: 'CEP', key: 'cep', width: 12 },
   { header: 'Endereço', key: 'endereco', width: 34 },
   { header: 'Número', key: 'numero', width: 12 },
@@ -387,10 +430,10 @@ const contactExportColumns: ExportColumn[] = [
   { header: 'Primeira resposta em', key: 'primeira_resposta_em', width: 18 },
   { header: 'Primeira resposta segundos', key: 'primeira_resposta_segundos', width: 20 },
   { header: 'Canal primeira resposta', key: 'primeira_resposta_canal', width: 22 },
-  { header: 'Primeira resposta automatica', key: 'primeira_resposta_automatica', width: 22 },
+  { header: 'Primeira resposta automática', key: 'primeira_resposta_automatica', width: 22 },
   { header: 'Usuário primeira resposta', key: 'primeira_resposta_usuario_id', width: 36 },
   { header: 'Reentradas', key: 'reentradas', width: 12 },
-  { header: 'Redistribuicoes', key: 'redistribuicoes', width: 16 },
+  { header: 'Redistribuições', key: 'redistribuicoes', width: 16 },
   { header: 'Source Session ID', key: 'source_session_id', width: 28 },
   { header: 'Source Webhook ID', key: 'source_webhook_id', width: 36 },
   { header: 'Visitor Session ID', key: 'visitor_session_id', width: 28 },
@@ -398,9 +441,257 @@ const contactExportColumns: ExportColumn[] = [
   { header: 'Metadados JSON', key: 'metadata_json', width: 42 },
   { header: 'Meta Payload JSON', key: 'meta_payload_json', width: 42 },
   { header: 'Meta Raw Payload JSON', key: 'meta_raw_payload_json', width: 42 },
+] as const satisfies readonly ExportColumn[];
+
+export type ContactExportColumnKey = (typeof contactExportColumns)[number]['key'];
+
+export type ContactExportColumnGroupKey =
+  | 'essential'
+  | 'service'
+  | 'profile'
+  | 'marketing'
+  | 'technical';
+
+export type ContactExportColumnOption = {
+  key: ContactExportColumnKey;
+  label: string;
+  group: ContactExportColumnGroupKey;
+};
+
+export const CONTACT_EXPORT_COLUMN_GROUPS: ReadonlyArray<{
+  key: ContactExportColumnGroupKey;
+  label: string;
+  description: string;
+}> = [
+  {
+    key: 'essential',
+    label: 'Dados essenciais',
+    description: 'Identificação e canais de contato.',
+  },
+  {
+    key: 'service',
+    label: 'Atendimento',
+    description: 'Status, responsável, pipeline, tags e datas.',
+  },
+  {
+    key: 'profile',
+    label: 'Perfil e imóvel',
+    description: 'Qualificação, endereço e interesse imobiliário.',
+  },
+  {
+    key: 'marketing',
+    label: 'Origem e marketing',
+    description: 'Campanhas, anúncios, formulários e UTMs.',
+  },
+  {
+    key: 'technical',
+    label: 'Dados técnicos',
+    description: 'Métricas, identificadores internos e JSON bruto.',
+  },
 ];
 
-function buildContactExportRow(contact: Contact, columns: ExportColumn[] = contactExportColumns): ContactExportRow {
+const essentialColumnKeys = new Set<ContactExportColumnKey>([
+  'id',
+  'nome',
+  'telefone',
+  'whatsapp',
+  'email',
+]);
+
+const serviceColumnKeys = new Set<ContactExportColumnKey>([
+  'status',
+  'status_interno',
+  'pipeline',
+  'pipeline_id',
+  'estagio',
+  'estagio_id',
+  'responsavel',
+  'responsavel_id',
+  'prioridade',
+  'tags',
+  'criado_em',
+  'atualizado_em',
+  'entrada_estagio',
+  'ultima_entrada',
+  'ultimo_contato',
+  'proximo_follow_up',
+  'data_ganho',
+  'data_perda',
+  'motivo_perda',
+  'motivo_ganho',
+  'feedback',
+]);
+
+const profileColumnKeys = new Set<ContactExportColumnKey>([
+  'valor_interesse',
+  'comissao_percentual',
+  'faixa_valor_imovel',
+  'renda_familiar',
+  'finalidade_compra',
+  'procura_financiamento',
+  'trabalha',
+  'cargo',
+  'empresa',
+  'profissao',
+  'cep',
+  'endereco',
+  'numero',
+  'complemento',
+  'bairro',
+  'cidade',
+  'uf',
+  'codigo_imovel',
+  'imovel_id',
+  'imovel_interesse_id',
+  'plano_interesse_id',
+]);
+
+const marketingColumnKeys = new Set<ContactExportColumnKey>([
+  'origem',
+  'origem_detalhe',
+  'mensagem',
+  'mensagem_inicial',
+  'campanha',
+  'campanha_id',
+  'conjunto',
+  'conjunto_id',
+  'formulario',
+  'formulario_id',
+  'criativo',
+  'criativo_id',
+  'criativo_url',
+  'video_url',
+  'instagram_url',
+  'plataforma',
+  'meta_lead_id',
+  'meta_form_id',
+  'meta_campaign_id',
+  'meta_adset_id',
+  'meta_ad_id',
+  'meta_click_id',
+  'utm_source',
+  'utm_medium',
+  'utm_campaign',
+  'utm_content',
+  'utm_term',
+]);
+
+function contactExportColumnGroup(key: ContactExportColumnKey): ContactExportColumnGroupKey {
+  if (essentialColumnKeys.has(key)) return 'essential';
+  if (serviceColumnKeys.has(key)) return 'service';
+  if (profileColumnKeys.has(key)) return 'profile';
+  if (marketingColumnKeys.has(key)) return 'marketing';
+  return 'technical';
+}
+
+export const CONTACT_EXPORT_COLUMN_OPTIONS: readonly ContactExportColumnOption[] =
+  contactExportColumns.map((column) => ({
+    key: column.key,
+    label: column.header,
+    group: contactExportColumnGroup(column.key),
+  }));
+
+export const DEFAULT_CONTACT_EXPORT_COLUMN_KEYS = [
+  'nome',
+  'telefone',
+  'email',
+] as const satisfies readonly ContactExportColumnKey[];
+
+export type ContactExportPresetKey =
+  | 'essential'
+  | 'operational'
+  | 'marketing'
+  | 'complete';
+
+export const CONTACT_EXPORT_PRESETS: ReadonlyArray<{
+  key: ContactExportPresetKey;
+  label: string;
+  columnKeys: readonly ContactExportColumnKey[];
+  includeDynamicFields: boolean;
+}> = [
+  {
+    key: 'essential',
+    label: 'Essencial',
+    columnKeys: DEFAULT_CONTACT_EXPORT_COLUMN_KEYS,
+    includeDynamicFields: false,
+  },
+  {
+    key: 'operational',
+    label: 'Operacional',
+    columnKeys: [
+      'id',
+      'nome',
+      'telefone',
+      'whatsapp',
+      'email',
+      'status',
+      'pipeline',
+      'estagio',
+      'responsavel',
+      'origem',
+      'prioridade',
+      'tags',
+      'criado_em',
+      'ultimo_contato',
+      'proximo_follow_up',
+    ],
+    includeDynamicFields: false,
+  },
+  {
+    key: 'marketing',
+    label: 'Marketing',
+    columnKeys: CONTACT_EXPORT_COLUMN_OPTIONS.filter(
+      (column) => column.group === 'essential' || column.group === 'marketing',
+    ).map((column) => column.key),
+    includeDynamicFields: false,
+  },
+  {
+    key: 'complete',
+    label: 'Completo',
+    columnKeys: contactExportColumns.map((column) => column.key),
+    includeDynamicFields: true,
+  },
+];
+
+const spreadsheetTextColumnKeys = new Set<string>([
+  'id',
+  'telefone',
+  'whatsapp',
+  'pipeline_id',
+  'estagio_id',
+  'responsavel_id',
+  'cep',
+  'numero',
+  'codigo_imovel',
+  'imovel_id',
+  'imovel_interesse_id',
+  'plano_interesse_id',
+  'campanha_id',
+  'conjunto_id',
+  'formulario_id',
+  'criativo_id',
+  'meta_lead_id',
+  'meta_form_id',
+  'meta_campaign_id',
+  'meta_adset_id',
+  'meta_ad_id',
+  'meta_click_id',
+  'primeiro_toque_usuario_id',
+  'primeira_resposta_usuario_id',
+  'source_session_id',
+  'source_webhook_id',
+  'visitor_session_id',
+  'criado_por',
+]);
+
+function isSpreadsheetTextColumn(column: ExportColumn) {
+  return Boolean(column.value) || spreadsheetTextColumnKeys.has(column.key);
+}
+
+function buildContactExportRow(
+  contact: Contact,
+  columns: readonly ExportColumn[] = contactExportColumns,
+): ContactExportRow {
   const row: ContactExportRow = {
     id: contact.id,
     nome: contact.name,
@@ -503,28 +794,72 @@ function buildContactExportRow(contact: Contact, columns: ExportColumn[] = conta
   return row;
 }
 
-function addContactWorksheetRows(worksheet: ExcelJS.Worksheet, contacts: Contact[], columns: ExportColumn[]) {
+function addContactWorksheetRows(
+  worksheet: ExcelJS.Worksheet,
+  contacts: Contact[],
+  columns: readonly ExportColumn[],
+) {
   contacts.forEach((contact) => {
-    worksheet.addRow(buildContactExportRow(contact, columns));
+    const worksheetRow = worksheet.addRow(buildContactExportRow(contact, columns));
+    columns.forEach((column, index) => {
+      if (isSpreadsheetTextColumn(column)) {
+        worksheetRow.getCell(index + 1).numFmt = '@';
+      }
+    });
   });
 }
 
 export async function exportContactsFiltered({
   filters = {},
   filename = 'contatos',
-  exportFormat = 'csv',
+  exportFormat = 'xlsx',
   organizationId,
+  columnKeys,
+  includeDynamicFields = columnKeys === undefined,
+  signal,
+  onProgress,
 }: ExportOptions) {
-  const contacts = await fetchAllFilteredContacts(filters, organizationId);
+  signal?.throwIfAborted();
+  const contacts = await fetchAllFilteredContacts(
+    filters,
+    organizationId,
+    signal,
+    onProgress,
+  );
 
   if (contacts.length === 0) {
     throw new Error('Nenhum contato encontrado para exportar');
   }
 
-  const extrasByContactId = buildExportExtras(contacts);
-  const columns = buildExportColumns(contacts, extrasByContactId);
+  signal?.throwIfAborted();
+  onProgress?.({
+    phase: 'generating',
+    processed: contacts.length,
+    total: contacts.length,
+  });
+  await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
+
+  const extrasByContactId = includeDynamicFields
+    ? buildExportExtras(contacts)
+    : new Map<string, ContactExportExtras>();
+  const columns = buildExportColumns(
+    contacts,
+    extrasByContactId,
+    columnKeys,
+    includeDynamicFields,
+  );
+
+  if (columns.length === 0) {
+    throw new Error('Selecione ao menos uma coluna para exportar');
+  }
 
   if (exportFormat === 'csv') {
+    signal?.throwIfAborted();
+    onProgress?.({
+      phase: 'downloading',
+      processed: contacts.length,
+      total: contacts.length,
+    });
     downloadCSV(contacts, filename, columns);
     return contacts.length;
   }
@@ -532,22 +867,41 @@ export async function exportContactsFiltered({
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet('Contatos');
 
-  worksheet.columns = columns;
+  worksheet.columns = columns.map(({ header, key, width }) => ({
+    header,
+    key,
+    width,
+  }));
 
   addContactWorksheetRows(worksheet, contacts, columns);
   styleHeader(worksheet);
 
+  signal?.throwIfAborted();
+  onProgress?.({
+    phase: 'downloading',
+    processed: contacts.length,
+    total: contacts.length,
+  });
   await downloadWorkbook(workbook, filename, exportFormat);
   return contacts.length;
 }
 
-async function fetchAllFilteredContacts(filters: ExportFilters, organizationId?: string | null) {
+async function fetchAllFilteredContacts(
+  filters: ContactExportFilters,
+  organizationId?: string | null,
+  signal?: AbortSignal,
+  onProgress?: (progress: ContactExportProgress) => void,
+) {
   const pageSize = 500;
   const contacts: Contact[] = [];
+  const contactIds = new Set<string>();
   let page = 1;
   let totalCount: number | null = null;
 
+  onProgress?.({ phase: 'fetching', processed: 0, total: null });
+
   while (page <= 10000) {
+    signal?.throwIfAborted();
     const pageContacts = await contactsAPI.list({
       ...(filters as ContactListFilters),
       sortBy: 'created_at',
@@ -555,12 +909,21 @@ async function fetchAllFilteredContacts(filters: ExportFilters, organizationId?:
       page,
       limit: pageSize,
       mode: 'export',
-    }, organizationId);
+    }, organizationId, { signal });
 
     if (pageContacts.length === 0) break;
 
-    contacts.push(...pageContacts);
+    pageContacts.forEach((contact) => {
+      if (contactIds.has(contact.id)) return;
+      contactIds.add(contact.id);
+      contacts.push(contact);
+    });
     totalCount = pageContacts[0]?.total_count ?? totalCount;
+    onProgress?.({
+      phase: 'fetching',
+      processed: contacts.length,
+      total: totalCount,
+    });
 
     if (pageContacts.length < pageSize) break;
     if (totalCount !== null && contacts.length >= totalCount) break;
@@ -568,29 +931,36 @@ async function fetchAllFilteredContacts(filters: ExportFilters, organizationId?:
     page += 1;
   }
 
+  if (totalCount !== null && contacts.length < totalCount) {
+    throw new Error(
+      'A lista de contatos mudou durante a exportação. Tente novamente para gerar um arquivo completo.',
+    );
+  }
+
   return contacts;
 }
 
-function downloadCSV(contacts: Contact[], filename: string, columns: ExportColumn[]) {
+function downloadCSV(
+  contacts: Contact[],
+  filename: string,
+  columns: readonly ExportColumn[],
+) {
   const headers = columns.map((column) => column.header);
   const rows = contacts.map((contact) => {
     const row = buildContactExportRow(contact, columns);
     return columns.map((column) => row[column.key]);
   });
-  const csv = [headers, ...rows]
-    .map((row) => row.map(escapeCSVCell).join(';'))
-    .join('\r\n');
+  const csv = buildContactExportCSV(
+    headers,
+    rows,
+    columns.map(isSpreadsheetTextColumn),
+  );
 
-  downloadFile(['\uFEFF', csv], `${filename}.csv`, 'text/csv;charset=utf-8;');
-}
-
-function escapeCSVCell(value: string | number | boolean | null | undefined) {
-  const text = value == null ? '' : String(value);
-  const safeText =
-    typeof value === 'string' && /^\s*[=+\-@]/.test(text)
-      ? `'${text}`
-      : text;
-  return `"${safeText.replace(/"/g, '""')}"`;
+  downloadFile(
+    csv,
+    `${filename}.csv`,
+    'text/csv;charset=utf-8;',
+  );
 }
 
 function styleHeader(worksheet: ExcelJS.Worksheet) {
@@ -600,9 +970,20 @@ function styleHeader(worksheet: ExcelJS.Worksheet) {
     pattern: 'solid',
     fgColor: { argb: 'FFE2E8F0' },
   };
+  worksheet.views = [{ state: 'frozen', ySplit: 1 }];
+  if (worksheet.columnCount > 0) {
+    worksheet.autoFilter = {
+      from: { row: 1, column: 1 },
+      to: { row: 1, column: worksheet.columnCount },
+    };
+  }
 }
 
-async function downloadWorkbook(workbook: ExcelJS.Workbook, filename: string, exportFormat: 'xlsx' | 'csv') {
+async function downloadWorkbook(
+  workbook: ExcelJS.Workbook,
+  filename: string,
+  exportFormat: ContactExportFormat,
+) {
   if (exportFormat === 'csv') {
     const buffer = await workbook.csv.writeBuffer();
     downloadFile(['\uFEFF', buffer], `${filename}.csv`, 'text/csv;charset=utf-8;');

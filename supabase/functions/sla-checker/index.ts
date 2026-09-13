@@ -3,7 +3,8 @@ import { authorizePrivateWorkerRequest } from "../_shared/private-worker-auth.ts
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
 };
 
 interface PendingLead {
@@ -22,25 +23,69 @@ interface PendingLead {
   sla_notified_overdue_at: string | null;
 }
 
+async function enqueueNotification(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  payload: Record<string, unknown>,
+) {
+  const response = await fetch(
+    `${supabaseUrl}/functions/v1/notification-dispatcher`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": serviceRoleKey,
+        "Authorization": `Bearer ${serviceRoleKey}`,
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+  const result = await response.json().catch(() => null) as {
+    success?: boolean;
+    queued?: boolean;
+    notification_id?: string;
+    error?: string;
+  } | null;
+  if (
+    !response.ok || result?.success !== true || result.queued !== true ||
+    typeof result.notification_id !== "string"
+  ) {
+    throw new Error(
+      `notification_enqueue_failed:${response.status}:${
+        result?.error || "invalid_ack"
+      }`,
+    );
+  }
+  return result.notification_id;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   if (req.method !== "POST") {
-    return new Response("Method not allowed", { status: 405, headers: corsHeaders });
+    return new Response("Method not allowed", {
+      status: 405,
+      headers: corsHeaders,
+    });
   }
 
   if (!authorizePrivateWorkerRequest(req)) {
     return new Response(
       JSON.stringify({ error: "Unauthorized" }),
-      { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
     );
   }
 
   try {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get(
+      "SUPABASE_SERVICE_ROLE_KEY",
+    )!;
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -54,15 +99,22 @@ Deno.serve(async (req) => {
       console.error("Error fetching pending leads:", rpcError);
       return new Response(
         JSON.stringify({ success: false, error: rpcError.message }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
 
     if (!pendingLeads || pendingLeads.length === 0) {
       console.log("No pending leads to check");
       return new Response(
-        JSON.stringify({ success: true, message: "No pending leads", processed: 0 }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({
+          success: true,
+          message: "No pending leads",
+          processed: 0,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
@@ -74,7 +126,9 @@ Deno.serve(async (req) => {
 
     for (const lead of pendingLeads as PendingLead[]) {
       const startAt = new Date(lead.sla_start_at);
-      const elapsedSeconds = Math.floor((now.getTime() - startAt.getTime()) / 1000);
+      const elapsedSeconds = Math.floor(
+        (now.getTime() - startAt.getTime()) / 1000,
+      );
 
       // Determine new status
       let newStatus = "ok";
@@ -84,7 +138,9 @@ Deno.serve(async (req) => {
         newStatus = "warning";
       }
 
-      console.log(`Lead ${lead.lead_id}: elapsed=${elapsedSeconds}s, status=${lead.current_sla_status} -> ${newStatus}`);
+      console.log(
+        `Lead ${lead.lead_id}: elapsed=${elapsedSeconds}s, status=${lead.current_sla_status} -> ${newStatus}`,
+      );
 
       // Update lead with SLA info
       const updateData: Record<string, unknown> = {
@@ -94,7 +150,10 @@ Deno.serve(async (req) => {
       };
 
       // Check if status changed to WARNING (and not already notified)
-      if (newStatus === "warning" && lead.current_sla_status !== "warning" && !lead.sla_notified_warning_at) {
+      if (
+        newStatus === "warning" && lead.current_sla_status !== "warning" &&
+        !lead.sla_notified_warning_at
+      ) {
         updateData.sla_notified_warning_at = now.toISOString();
         warningsCreated++;
 
@@ -102,7 +161,9 @@ Deno.serve(async (req) => {
         await supabase.from("activities").insert({
           lead_id: lead.lead_id,
           type: "sla_warning",
-          content: `SLA em alerta: ${Math.floor(elapsedSeconds / 60)} minutos sem resposta`,
+          content: `SLA em alerta: ${
+            Math.floor(elapsedSeconds / 60)
+          } minutos sem resposta`,
           metadata: {
             elapsed_seconds: elapsedSeconds,
             warn_threshold: lead.warn_after_seconds,
@@ -125,29 +186,27 @@ Deno.serve(async (req) => {
 
         // Create notification for assigned user
         if (lead.notify_assignee && lead.assigned_user_id) {
-          await fetch(`${SUPABASE_URL}/functions/v1/notification-dispatcher`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          await enqueueNotification(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+            event_key: "sla_warning",
+            organization_id: lead.organization_id,
+            user_id: lead.assigned_user_id,
+            variables: {
+              lead_name: lead.lead_name,
+              minutes: Math.floor(elapsedSeconds / 60),
             },
-            body: JSON.stringify({
-              event_key: "sla_warning",
-              organization_id: lead.organization_id,
-              user_id: lead.assigned_user_id,
-              variables: { lead_name: lead.lead_name, minutes: Math.floor(elapsedSeconds / 60) },
-              lead_id: lead.lead_id,
-              dedupe_key: `sla_warning:${lead.lead_id}:${now.getHours()}` // dedupe por hora
-            }),
+            lead_id: lead.lead_id,
+            dedupe_key: `sla_warning:${lead.lead_id}:${lead.sla_start_at}`,
           });
         }
-
 
         console.log(`Created WARNING notification for lead ${lead.lead_id}`);
       }
 
       // Check if status changed to OVERDUE (and not already notified)
-      if (newStatus === "overdue" && lead.current_sla_status !== "overdue" && !lead.sla_notified_overdue_at) {
+      if (
+        newStatus === "overdue" && lead.current_sla_status !== "overdue" &&
+        !lead.sla_notified_overdue_at
+      ) {
         updateData.sla_notified_overdue_at = now.toISOString();
         overduesCreated++;
 
@@ -155,7 +214,9 @@ Deno.serve(async (req) => {
         await supabase.from("activities").insert({
           lead_id: lead.lead_id,
           type: "sla_overdue",
-          content: `SLA estourado: ${Math.floor(elapsedSeconds / 60)} minutos sem resposta`,
+          content: `SLA estourado: ${
+            Math.floor(elapsedSeconds / 60)
+          } minutos sem resposta`,
           metadata: {
             elapsed_seconds: elapsedSeconds,
             warn_threshold: lead.warn_after_seconds,
@@ -178,50 +239,50 @@ Deno.serve(async (req) => {
 
         // Create notification for assigned user
         if (lead.notify_assignee && lead.assigned_user_id) {
-          await fetch(`${SUPABASE_URL}/functions/v1/notification-dispatcher`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          await enqueueNotification(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+            event_key: "sla_overdue",
+            organization_id: lead.organization_id,
+            user_id: lead.assigned_user_id,
+            variables: {
+              lead_name: lead.lead_name,
+              minutes: Math.floor(elapsedSeconds / 60),
             },
-            body: JSON.stringify({
-              event_key: "sla_overdue",
-              organization_id: lead.organization_id,
-              user_id: lead.assigned_user_id,
-              variables: { lead_name: lead.lead_name, minutes: Math.floor(elapsedSeconds / 60) },
-              lead_id: lead.lead_id,
-              dedupe_key: `sla_overdue:${lead.lead_id}:${now.getHours()}`
-            }),
+            lead_id: lead.lead_id,
+            dedupe_key: `sla_overdue:${lead.lead_id}:${lead.sla_start_at}`,
           });
         }
 
-
         // Notify managers if configured
         if (lead.notify_manager) {
-          const { data: managers } = await supabase
+          const { data: managers, error: managersError } = await supabase
             .from("users")
             .select("id")
             .eq("organization_id", lead.organization_id)
             .in("role", ["admin", "manager"]);
 
+          if (managersError) {
+            throw new Error(`sla_manager_lookup_failed:${managersError.code}`);
+          }
+
           if (managers) {
             for (const manager of managers) {
               if (manager.id !== lead.assigned_user_id) {
-                await fetch(`${SUPABASE_URL}/functions/v1/notification-dispatcher`, {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-                  },
-                  body: JSON.stringify({
+                await enqueueNotification(
+                  SUPABASE_URL,
+                  SUPABASE_SERVICE_ROLE_KEY,
+                  {
                     event_key: "sla_overdue_manager",
                     organization_id: lead.organization_id,
                     user_id: manager.id,
-                    variables: { lead_name: lead.lead_name, minutes: Math.floor(elapsedSeconds / 60) },
+                    variables: {
+                      lead_name: lead.lead_name,
+                      minutes: Math.floor(elapsedSeconds / 60),
+                    },
                     lead_id: lead.lead_id,
-                    dedupe_key: `sla_overdue_manager:${lead.lead_id}:${manager.id}:${now.getHours()}`
-                  }),
-                });
+                    dedupe_key:
+                      `sla_overdue_manager:${lead.lead_id}:${manager.id}:${lead.sla_start_at}`,
+                  },
+                );
               }
             }
           }
@@ -231,7 +292,13 @@ Deno.serve(async (req) => {
       }
 
       // Update lead
-      await supabase.from("leads").update(updateData).eq("id", lead.lead_id);
+      const { error: updateError } = await supabase
+        .from("leads")
+        .update(updateData)
+        .eq("id", lead.lead_id);
+      if (updateError) {
+        throw new Error(`sla_state_update_failed:${updateError.code}`);
+      }
     }
 
     const result = {
@@ -246,15 +313,19 @@ Deno.serve(async (req) => {
 
     return new Response(
       JSON.stringify(result),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
-
   } catch (error: unknown) {
     console.error("SLA Checker error:", error);
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const errorMessage = error instanceof Error
+      ? error.message
+      : "Unknown error";
     return new Response(
       JSON.stringify({ success: false, error: errorMessage }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
     );
   }
 });

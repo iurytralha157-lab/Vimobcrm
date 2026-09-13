@@ -76,6 +76,9 @@ func TestEnrichTrackingLocationFromInfrastructureHeaders(t *testing.T) {
 	if request.Metadata["lat"] != -23.5505 || request.Metadata["lng"] != -46.6333 {
 		t.Fatalf("unexpected coordinates: %#v", request.Metadata)
 	}
+	if !request.LocationEnriched {
+		t.Fatal("infrastructure location must be marked as server-enriched")
+	}
 }
 
 func TestEnrichTrackingLocationRejectsInvalidCoordinates(t *testing.T) {
@@ -118,6 +121,19 @@ func TestEnrichTrackingLocationInfersCountryFromBrowserMetadata(t *testing.T) {
 	}
 }
 
+func TestPublicTrackingCannotForgeAuthoritativeFormConversion(t *testing.T) {
+	t.Parallel()
+
+	if isAllowedPublicTrackingEvent("form_submit") {
+		t.Fatal("public tracking must not accept form_submit; CreatePublicContact records the authoritative conversion")
+	}
+	for _, eventType := range []string{"pageview", "session_start", "property_search", "whatsapp_click", "cta_click"} {
+		if !isAllowedPublicTrackingEvent(eventType) {
+			t.Fatalf("expected public tracking event %q to remain allowed", eventType)
+		}
+	}
+}
+
 func TestPublicPropertyJSONGatesExactLocationByVisibility(t *testing.T) {
 	query := publicPropertyJSONSQL()
 
@@ -126,6 +142,8 @@ func TestPublicPropertyJSONGatesExactLocationByVisibility(t *testing.T) {
 		"'lote'",
 		"'condominio_nome'",
 		"'metadata'",
+		"'valor_venda_avaliado'",
+		"'valor_locacao_avaliado'",
 	} {
 		if strings.Contains(query, field) {
 			t.Fatalf("public property payload exposes exact location field %s", field)
@@ -149,6 +167,61 @@ func TestPublicPropertyJSONGatesExactLocationByVisibility(t *testing.T) {
 	}
 }
 
+func TestPublicPropertyOutputRedactsLegacySnapshotAppraisals(t *testing.T) {
+	legacySnapshot := map[string]any{
+		"titulo":                    "Imovel publico",
+		"public_address_visibility": "parcial",
+		"condominio_nome":           "Residencial Privado",
+		"valor_venda_avaliado":      780000,
+		"valor_locacao_avaliado":    4200,
+	}
+	redactPublicPropertyInternalValues(legacySnapshot)
+
+	for _, field := range []string{"valor_venda_avaliado", "valor_locacao_avaliado", "condominio_nome"} {
+		if _, exists := legacySnapshot[field]; exists {
+			t.Fatalf("legacy public snapshot retained internal appraisal field %q: %#v", field, legacySnapshot)
+		}
+		if field != "condominio_nome" && !strings.Contains(publicPropertyOutputSQL(), "- '"+field+"'") {
+			t.Fatalf("public snapshot SQL does not redact historical field %q: %s", field, publicPropertyOutputSQL())
+		}
+	}
+	if !strings.Contains(publicPropertyOutputSQL(), "else publication_snapshot.payload") ||
+		!strings.Contains(publicPropertyOutputSQL(), "- 'condominio_nome'") {
+		t.Fatalf("public snapshot SQL does not fail closed for condominium privacy: %s", publicPropertyOutputSQL())
+	}
+	if legacySnapshot["titulo"] != "Imovel publico" {
+		t.Fatalf("public redaction changed a safe field: %#v", legacySnapshot)
+	}
+}
+
+func TestPublicSnapshotCondominiumRequiresCanonicalCompleteVisibility(t *testing.T) {
+	for _, visibility := range []any{nil, "", "parcial", "minimo", "full", "COMPLETE"} {
+		property := map[string]any{
+			"public_address_visibility": visibility,
+			"condominio_nome":           "Residencial Privado",
+		}
+		redactPublicPropertyInternalValues(property)
+		if _, exists := property["condominio_nome"]; exists {
+			t.Fatalf("visibility %#v retained condominium name", visibility)
+		}
+	}
+
+	property := map[string]any{
+		"public_address_visibility": " Completo ",
+		"condominio_nome":           "Residencial Público",
+	}
+	redactPublicPropertyInternalValues(property)
+	if property["condominio_nome"] != "Residencial Público" {
+		t.Fatalf("canonical complete visibility lost condominium name: %#v", property)
+	}
+
+	condominiumSQL := publicPropertyTextSQL("condominio_nome", "p.condominio_nome")
+	if !strings.Contains(condominiumSQL, publicSnapshotHasCompleteAddressSQL()) ||
+		strings.Contains(condominiumSQL, "p.condominio_nome") {
+		t.Fatalf("condominium projection is not frozen and fail-closed: %s", condominiumSQL)
+	}
+}
+
 func TestPublicPropertySearchCannotProbeExactLocation(t *testing.T) {
 	args := []any{"organization-id"}
 	clauses := strings.Join(publicPropertyWhereClauses(url.Values{
@@ -161,10 +234,52 @@ func TestPublicPropertySearchCannotProbeExactLocation(t *testing.T) {
 			t.Fatalf("public property search can probe exact location through %s", fragment)
 		}
 	}
+	if !strings.Contains(clauses, "publication_snapshot.payload->>'condominio_nome'") || !strings.Contains(clauses, "else null::text") {
+		t.Fatalf("condominium filter must use only the frozen publication value: %s", clauses)
+	}
+	if args[len(args)-1] != "condominio secreto" {
+		t.Fatalf("condominium filter argument = %#v", args[len(args)-1])
+	}
+}
+
+func TestPublicCondominiumOptionsNeverJoinTheLiveCatalog(t *testing.T) {
+	raw, err := os.ReadFile("repository_public_properties.go")
+	if err != nil {
+		t.Fatalf("read repository: %v", err)
+	}
+	repository := string(raw)
+	start := strings.Index(repository, "func (repo Repository) listPublicCondominiums(")
+	if start < 0 {
+		t.Fatal("could not find listPublicCondominiums")
+	}
+	end := strings.Index(repository[start:], "func (repo Repository) listPublicPropertyPurposes(")
+	if end < 0 {
+		t.Fatal("could not isolate listPublicCondominiums")
+	}
+	listCondominiums := repository[start : start+end]
+	if strings.Contains(listCondominiums, "property_condominiums") || strings.Contains(listCondominiums, "p.condominium_id") {
+		t.Fatal("public condominium options must not derive from the live property catalog")
+	}
+	if !strings.Contains(listCondominiums, `publicPropertyTextSQL("condominio_nome", "null::text")`) {
+		t.Fatal("public condominium options must derive from the frozen publication snapshot")
+	}
+
+	filterOptionsStart := strings.Index(repository, "func (repo Repository) listPublicPropertyFilterOptions(")
+	if filterOptionsStart < 0 {
+		t.Fatal("could not find listPublicPropertyFilterOptions")
+	}
+	filterOptions := repository[filterOptionsStart:]
+	if strings.Contains(filterOptions, "property_condominiums") || strings.Contains(filterOptions, "p.condominium_id") {
+		t.Fatal("combined public filter options must not derive from the live property catalog")
+	}
+	if !strings.Contains(filterOptions, `publicPropertyTextSQL("condominio_nome", "null::text")`) ||
+		!strings.Contains(filterOptions, "p.public_condominio") {
+		t.Fatal("combined public filter options must derive from the frozen publication snapshot")
+	}
 }
 
 func TestPublicContactReentryKeepsTheLeadLockAtTheTransactionTail(t *testing.T) {
-	raw, err := os.ReadFile("repository.go")
+	raw, err := os.ReadFile("repository_public_contact.go")
 	if err != nil {
 		t.Fatalf("read repository: %v", err)
 	}
@@ -234,13 +349,15 @@ func TestPublicPropertyEligibilityMakesCanonicalStateAuthoritative(t *testing.T)
 	if !strings.Contains(publicPropertySnapshotJoinSQL(), "version.payload->'property'") {
 		t.Fatal("public property projection does not read the immutable version payload")
 	}
-	if output := publicPropertyOutputSQL(); !strings.HasPrefix(output, "coalesce(publication_snapshot.payload") {
-		t.Fatalf("public output does not prefer the central snapshot: %s", output)
+	if output := publicPropertyOutputSQL(); !strings.Contains(output, "when publication_snapshot.payload is not null then") ||
+		!strings.Contains(output, "publication_snapshot.payload - 'valor_venda_avaliado' - 'valor_locacao_avaliado'") ||
+		!strings.Contains(output, "else "+publicPropertyJSONSQL()) {
+		t.Fatalf("public output does not prefer and sanitize the central snapshot: %s", output)
 	}
 }
 
 func TestPublicPropertyCodeLookupUsesVersionedSnapshot(t *testing.T) {
-	raw, err := os.ReadFile("repository.go")
+	raw, err := os.ReadFile("repository_public_properties.go")
 	if err != nil {
 		t.Fatalf("read repository: %v", err)
 	}

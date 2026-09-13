@@ -6,6 +6,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { GripVertical, Trash2, Loader2, Pencil, Check, X, Plus } from 'lucide-react';
 import { toast } from 'sonner';
+import { stringifyErrorMessage as getErrorMessage } from '@/lib/api/vimob-error';
 import { cn } from '@/lib/utils';
 import { createClientId } from '@/lib/client-id';
 import { useDeleteStage, useReorderStages } from '@/hooks/use-stages';
@@ -42,7 +43,6 @@ interface StagesEditorDialogProps {
   pipelineId: string;
   pipelineName: string;
   stages: Stage[];
-  onStagesUpdated: () => void;
 }
 
 export function StagesEditorDialog({
@@ -51,7 +51,6 @@ export function StagesEditorDialog({
   pipelineId,
   pipelineName,
   stages: initialStages,
-  onStagesUpdated,
 }: StagesEditorDialogProps) {
   const sortedInitialStages = [...initialStages].sort((a, b) => a.position - b.position);
   const initialStagesKey = open
@@ -154,11 +153,6 @@ export function StagesEditorDialog({
   const hasPendingNewStage = pendingNewStageName.length > 0;
   const canSave = hasChanges || hasPendingNewStage;
 
-  const getErrorMessage = (error: unknown) => {
-    if (error instanceof Error) return error.message;
-    return String(error);
-  };
-
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen && isMutating) return;
     onOpenChange(nextOpen);
@@ -232,7 +226,6 @@ export function StagesEditorDialog({
       setDraftStages(stagesForSave, false);
       setIsAdding(false);
       setNewName('');
-      onStagesUpdated();
       onOpenChange(false);
     } catch (error: unknown) {
       toast.error('Erro ao salvar: ' + getErrorMessage(error));
@@ -287,7 +280,6 @@ export function StagesEditorDialog({
 
       setDraftStages(stages.filter(s => s.id !== target.id), false);
       toast.success('Coluna excluída!');
-      onStagesUpdated();
       setDeleteStage(null);
     } catch (error: unknown) {
       toast.error('Erro ao excluir: ' + getErrorMessage(error));

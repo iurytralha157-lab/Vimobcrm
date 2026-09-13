@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 const domainVerificationPath = "/.well-known/vimob-domain-verification"
@@ -26,7 +27,7 @@ type DomainVerificationResult struct {
 }
 
 func (handler Handler) VerifyDomain(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}

@@ -1,6 +1,9 @@
 package teams
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 var (
 	ErrInvalidInput         = errors.New("invalid team input")
@@ -41,6 +44,19 @@ type TeamUser struct {
 	Name      *string `json:"name"`
 	Email     *string `json:"email"`
 	AvatarURL *string `json:"avatar_url"`
+}
+
+type TeamHistoryEvent struct {
+	ID          string         `json:"id"`
+	Action      string         `json:"action"`
+	EntityType  string         `json:"entity_type"`
+	EntityID    string         `json:"entity_id"`
+	OldData     map[string]any `json:"old_data"`
+	NewData     map[string]any `json:"new_data"`
+	Diff        map[string]any `json:"diff"`
+	CreatedAt   time.Time      `json:"created_at"`
+	User        *TeamUser      `json:"user"`
+	SubjectUser *TeamUser      `json:"subject_user"`
 }
 
 type EntityRef struct {
@@ -117,7 +133,7 @@ type UpdateTeamRequest struct {
 }
 
 type UpdateTeamStatusRequest struct {
-	IsActive bool `json:"is_active"`
+	IsActive *bool `json:"is_active"`
 }
 
 type AssetUpload struct {

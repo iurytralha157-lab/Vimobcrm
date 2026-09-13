@@ -113,6 +113,7 @@ func TestMembershipDeletionLifecycleContract(t *testing.T) {
 	}
 
 	migration := read(filepath.Join("supabase", "migrations", "20260827000000_distinguish_disabled_and_deleted_organization_members.sql"))
+	assignmentSerializationMigration := read(filepath.Join("supabase", "migrations", "20260905154916_serialize_user_assignment_with_membership_lifecycle.sql"))
 	repository := read(filepath.Join("apps", "api", "internal", "users", "repository.go"))
 	invitation := read(filepath.Join("apps", "api", "internal", "admin", "invitation_accept.go"))
 
@@ -131,6 +132,10 @@ func TestMembershipDeletionLifecycleContract(t *testing.T) {
 	if !strings.Contains(repository, "responsible_user_id is null and created_by = $2::uuid") {
 		t.Fatal("DELETE must transfer legacy properties whose responsibility falls back to the creator")
 	}
+	if !strings.Contains(repository, "or corretor_id = $2::uuid") ||
+		!strings.Contains(repository, "nullif(btrim(cadastrado_por), '') = $2") {
+		t.Fatal("DELETE must transfer mutable canonical and legacy property responsibility fields")
+	}
 	if !strings.Contains(invitation, "deleted_at = null") {
 		t.Fatal("accepting a new invitation must restore a tombstoned membership")
 	}
@@ -138,7 +143,14 @@ func TestMembershipDeletionLifecycleContract(t *testing.T) {
 		!strings.Contains(repository, "is_active = selected_state.organization_id is not null") {
 		t.Fatal("membership changes must synchronize the legacy canonical user access fields")
 	}
+	if strings.Contains(repository, "public.users current_user") {
+		t.Fatal("canonical access synchronization must not use the reserved current_user keyword as a SQL alias")
+	}
 	if !strings.Contains(repository, "func lockCanonicalUserAccess") || !strings.Contains(repository, "for update") {
 		t.Fatal("membership lifecycle writes must serialize the canonical user access state")
+	}
+	if strings.Count(assignmentSerializationMigration, "for key share") < 3 ||
+		!strings.Contains(assignmentSerializationMigration, "membership.deleted_at is null") {
+		t.Fatal("assignment guards must wait for user lifecycle writes and reject tombstoned memberships")
 	}
 }

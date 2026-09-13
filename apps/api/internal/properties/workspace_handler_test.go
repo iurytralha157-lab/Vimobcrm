@@ -2,13 +2,16 @@ package properties
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 )
 
-func TestDecodePropertyWorkspaceJSONRejectsUnknownAndConcatenatedValues(t *testing.T) {
+func TestPropertyWorkspaceJSONRejectsUnknownAndConcatenatedValues(t *testing.T) {
 	tests := []struct {
 		name string
 		body string
@@ -22,7 +25,7 @@ func TestDecodePropertyWorkspaceJSONRejectsUnknownAndConcatenatedValues(t *testi
 			request := httptest.NewRequest("POST", "/v1/properties/example/keys", strings.NewReader(test.body))
 			response := httptest.NewRecorder()
 			var input CreatePropertyKeyInput
-			if err := decodePropertyWorkspaceJSON(response, request, &input); err == nil {
+			if err := httpserver.DecodeJSON(response, request, &input, propertyWorkspaceBodyLimit); err == nil {
 				t.Fatal("expected invalid JSON contract to be rejected")
 			}
 		})
@@ -47,6 +50,7 @@ func TestPropertyWorkspaceHandlersDisableSharedCachingAndVaryByIdentity(t *testi
 		{name: "ownership-end", method: http.MethodPost, path: "/v1/properties/example/ownerships/link/end", handle: handler.EndOwnership},
 		{name: "asset-create", method: http.MethodPost, path: "/v1/properties/example/assets", handle: handler.CreateAsset},
 		{name: "asset-upload-intent", method: http.MethodPost, path: "/v1/properties/example/assets/upload-intents", handle: handler.CreateAssetUploadIntent},
+		{name: "asset-upload-discard", method: http.MethodDelete, path: "/v1/properties/example/assets/upload-intents", handle: handler.DiscardAssetUpload},
 		{name: "asset-update", method: http.MethodPatch, path: "/v1/properties/example/assets/asset", handle: handler.UpdateAsset},
 		{name: "asset-delete", method: http.MethodDelete, path: "/v1/properties/example/assets/asset", handle: handler.DeleteAsset},
 		{name: "asset-order", method: http.MethodPut, path: "/v1/properties/example/assets/order", handle: handler.ReorderAssets},
@@ -74,7 +78,7 @@ func TestPropertyWorkspaceHandlersDisableSharedCachingAndVaryByIdentity(t *testi
 	}
 }
 
-func TestDecodePropertyWorkspaceJSONRejectsUnknownNestedOwnerField(t *testing.T) {
+func TestPropertyWorkspaceJSONRejectsUnknownNestedOwnerField(t *testing.T) {
 	request := httptest.NewRequest("PATCH", "/v1/properties/example/ownerships/link", strings.NewReader(`{
 		"ownership_percentage":100,
 		"is_primary":true,
@@ -89,16 +93,16 @@ func TestDecodePropertyWorkspaceJSONRejectsUnknownNestedOwnerField(t *testing.T)
 	}`))
 	response := httptest.NewRecorder()
 	var input UpdatePropertyOwnershipInput
-	if err := decodePropertyWorkspaceJSON(response, request, &input); err == nil {
+	if err := httpserver.DecodeJSON(response, request, &input, propertyWorkspaceBodyLimit); err == nil {
 		t.Fatal("expected an unknown nested owner field to be rejected")
 	}
 }
 
-func TestDecodePropertyWorkspaceJSONAcceptsSingleStrictValue(t *testing.T) {
+func TestPropertyWorkspaceJSONAcceptsSingleStrictValue(t *testing.T) {
 	request := httptest.NewRequest("POST", "/v1/properties/example/keys", strings.NewReader(`{"label":"Chave principal"}`))
 	response := httptest.NewRecorder()
 	var input CreatePropertyKeyInput
-	if err := decodePropertyWorkspaceJSON(response, request, &input); err != nil {
+	if err := httpserver.DecodeJSON(response, request, &input, propertyWorkspaceBodyLimit); err != nil {
 		t.Fatalf("expected valid body, got %v", err)
 	}
 	if input.Label != "Chave principal" {
@@ -128,5 +132,16 @@ func TestWorkspaceResourceNotFoundErrorsMapTo404(t *testing.T) {
 	}
 	if !errors.Is(ErrPropertyAssetNotFound, ErrPropertyAssetNotFound) {
 		t.Fatal("sentinel error identity changed")
+	}
+}
+
+func TestPropertyStorageOperationErrorsMapToBadGateway(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/v1/properties/example/assets", nil)
+	response := httptest.NewRecorder()
+
+	writePropertyError(response, request, fmt.Errorf("%w: upstream timeout", ErrStorageOperation))
+
+	if response.Code != http.StatusBadGateway || !strings.Contains(response.Body.String(), "storage_operation_failed") {
+		t.Fatalf("response = %d %s, want 502 storage_operation_failed", response.Code, response.Body.String())
 	}
 }

@@ -80,6 +80,7 @@ export function MobileSidebar({
   );
   const previousLocationKeyRef = useRef(locationKey);
   const {
+    activeOrganization,
     profile,
     isSuperAdmin,
     organization,
@@ -89,7 +90,7 @@ export function MobileSidebar({
   const { t } = useLanguage();
   const { hasModule } = useOrganizationModules();
   const { hasPermission } = useUserPermissions();
-  const activeOrganizationId = organization?.id || profile?.organization_id;
+  const activeOrganizationId = activeOrganization.organizationId;
   const activeOrganizationMembership = userOrganizations.find(
     (org) => org.organization_id === activeOrganizationId,
   );

@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.108.1";
+import { loadCanonicalPropertyLocationResolver } from "../_shared/property-import-location.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -10,11 +11,16 @@ const requestTimeoutMs = 20_000;
 const detailTimeoutMs = 8_000;
 const maxRuntimeMs = 140_000;
 const detailConcurrency = 6;
+const propertyPhotoLimit = 20;
+const syncLeaseMs = 5 * 60 * 1_000;
+const propertyMediaCapacityError = "property_media_capacity_exhausted_append_only";
 
 type JsonRecord = Record<string, unknown>;
 type IntegrationRecord = {
   api_key?: unknown;
-  import_inactive?: unknown;
+  is_active?: unknown;
+  status?: unknown;
+  updated_at?: unknown;
 };
 
 function jsonResponse(body: JsonRecord, status: number) {
@@ -135,6 +141,45 @@ function asText(value: unknown): string {
   return value === undefined || value === null ? "" : String(value).trim();
 }
 
+function normalizeStatusToken(value: unknown): string {
+  return asText(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function normalizeImportedPropertyStatus(value: unknown, availableByEndpoint: boolean): string {
+  const status = normalizeStatusToken(value);
+  if (!status) return availableByEndpoint ? "ativo" : "inativo";
+  if (status.includes("vendid") || status === "sold") return "vendido";
+  if (
+    status.includes("locad") ||
+    status.includes("alugad") ||
+    status === "rented" ||
+    status === "leased"
+  ) return "alugado";
+  if (status.includes("reserv") || status === "reserved") return "reservado";
+  if (status.includes("arquiv") || status === "archived") return "arquivado";
+  if (status.includes("rascunh") || status === "draft") return "rascunho";
+  if (
+    status.includes("inativ") ||
+    status.includes("suspend") ||
+    status.includes("indispon") ||
+    status.includes("bloque") ||
+    status.includes("desativ") ||
+    status.includes("nao ativo")
+  ) return "inativo";
+  if (
+    status === "ativo" ||
+    status === "active" ||
+    status === "available" ||
+    status === "disponivel" ||
+    status === "vago" ||
+    status === "true"
+  ) return "ativo";
+  return "inativo";
+}
+
 function parseNumber(value: unknown): number | null {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   const raw = asText(value).replace(/[^\d,.-]/g, "");
@@ -156,9 +201,45 @@ function parseInteger(value: unknown): number | null {
 function addPhoto(value: unknown, photos: string[], seen: Set<string>) {
   if (typeof value !== "string") return;
   const trimmed = value.trim();
-  if (!/^https:\/\//i.test(trimmed) || seen.has(trimmed)) return;
+  if (
+    photos.length >= propertyPhotoLimit ||
+    !/^https:\/\//i.test(trimmed) ||
+    seen.has(trimmed)
+  ) return;
   seen.add(trimmed);
   photos.push(trimmed);
+}
+
+function normalizeImportedPhotos(mainImage: unknown, candidates: unknown[]) {
+  const photos: string[] = [];
+  const seen = new Set<string>();
+  addPhoto(mainImage, photos, seen);
+  for (const candidate of candidates) addPhoto(candidate, photos, seen);
+  return photos;
+}
+
+async function reconcileCanonicalPropertyPhotos(
+  supabase: SupabaseClient,
+  organizationId: string,
+  propertyId: string,
+  photos: string[],
+  galleryComplete: boolean,
+): Promise<string | null> {
+  const { error } = await supabase.rpc("reconcile_imported_property_photos", {
+    p_organization_id: organizationId,
+    p_property_id: propertyId,
+    p_provider: "imoview",
+    p_photo_urls: photos,
+    p_primary_url: photos[0] ?? null,
+    p_gallery_complete: galleryComplete,
+  });
+  if (error) {
+    console.error("Imoview canonical photo reconciliation failed:", error.code ?? "rpc_failed");
+    return error.code === "23514" && error.message.includes(propertyMediaCapacityError)
+      ? propertyMediaCapacityError
+      : "property_media_reconciliation_failed";
+  }
+  return null;
 }
 
 function extractPhotos(value: unknown): string[] {
@@ -186,6 +267,49 @@ function extractPhotos(value: unknown): string[] {
   };
   visit(value, 0, false);
   return photos;
+}
+
+function extractExplicitPhotoGallery(record: JsonRecord): {
+  photos: string[];
+  galleryComplete: boolean;
+} {
+  const collectionKeys = [
+    "fotos", "Fotos", "galeria", "Galeria", "fotosImovel", "FotosImovel",
+    "imagens", "Imagens",
+  ];
+  const collectionKey = collectionKeys.find((key) =>
+    Object.prototype.hasOwnProperty.call(record, key)
+  );
+  if (!collectionKey) {
+    return { photos: extractPhotos(record), galleryComplete: false };
+  }
+
+  const collection = record[collectionKey];
+  if (!Array.isArray(collection) || collection.length > propertyPhotoLimit) {
+    return { photos: extractPhotos(record), galleryComplete: false };
+  }
+
+  const photos: string[] = [];
+  const seen = new Set<string>();
+  let validEntries = 0;
+  for (const entry of collection) {
+    const entryRecord = asRecord(entry);
+    const candidate = typeof entry === "string"
+      ? entry
+      : entryRecord
+        ? firstValue(entryRecord, [
+          "url", "Url", "URL", "urlFoto", "UrlFoto", "foto", "Foto",
+          "original", "Original", "grande", "Grande", "src", "Src",
+        ])
+        : null;
+    const before = photos.length;
+    addPhoto(candidate, photos, seen);
+    if (photos.length === before + 1) validEntries += 1;
+  }
+  return {
+    photos,
+    galleryComplete: validEntries === collection.length && photos.length === collection.length,
+  };
 }
 
 function extractMainImage(record: JsonRecord): string {
@@ -226,7 +350,10 @@ async function parallelMap<T, R>(items: T[], fn: (item: T) => Promise<R>, concur
   return results;
 }
 
-async function fetchDetails(apiKey: string, code: string): Promise<JsonRecord | null> {
+async function fetchDetails(
+  apiKey: string,
+  code: string,
+): Promise<{ record: JsonRecord | null; photos: string[]; galleryComplete: boolean }> {
   try {
     const endpoint = `${imoviewBaseUrl}/Imovel/RetornarDetalhesImovelDisponivel?codigoImovel=${encodeURIComponent(code)}`;
     const response = await fetchWithTimeout(endpoint, {
@@ -235,11 +362,24 @@ async function fetchDetails(apiKey: string, code: string): Promise<JsonRecord | 
     }, detailTimeoutMs);
     if (!response.ok) {
       await response.text();
-      return null;
+      return { record: null, photos: [], galleryComplete: false };
     }
-    return asRecord(await response.json());
+    const record = asRecord(await response.json());
+    const returnedCode = record
+      ? asText(firstValue(record, ["codigo", "codigoImovel", "Codigo", "CodigoImovel", "referencia"]))
+      : "";
+    if (!record || !returnedCode || returnedCode !== code) {
+      return { record: null, photos: [], galleryComplete: false };
+    }
+    const gallery = extractExplicitPhotoGallery(record);
+    const mainImage = extractMainImage(record);
+    return {
+      record,
+      photos: gallery.photos,
+      galleryComplete: gallery.galleryComplete && (!mainImage || gallery.photos.includes(mainImage)),
+    };
   } catch {
-    return null;
+    return { record: null, photos: [], galleryComplete: false };
   }
 }
 
@@ -254,7 +394,7 @@ async function testConnection(apiKey: string) {
     return { success: false, error: `API returned ${response.status}` };
   }
   await response.text();
-  return { success: true, message: "ConexÃ£o vÃ¡lida" };
+  return { success: true, message: "Conexão válida" };
 }
 
 async function loadIntegration(
@@ -280,36 +420,135 @@ async function loadIntegration(
   };
 }
 
+async function claimSyncLease(
+  supabase: SupabaseClient,
+  organizationId: string,
+  integration: IntegrationRecord,
+): Promise<{ token: string | null; error: string | null }> {
+  const currentStatus = asText(integration.status) || "connected";
+  const currentUpdatedAt = asText(integration.updated_at);
+  if (currentStatus === "syncing") {
+    const updatedAtMs = Date.parse(currentUpdatedAt);
+    if (!Number.isFinite(updatedAtMs) || Date.now() - updatedAtMs < syncLeaseMs) {
+      return { token: null, error: "sync_already_running" };
+    }
+  }
+
+  let claim = supabase
+    .from("imoview_integrations")
+    .update({
+      status: "syncing",
+      last_error: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("organization_id", organizationId)
+    .eq("status", currentStatus);
+  claim = currentUpdatedAt
+    ? claim.eq("updated_at", currentUpdatedAt)
+    : claim.is("updated_at", null);
+  const { data, error } = await claim.select("updated_at").maybeSingle();
+  if (error) return { token: null, error: "sync_lease_claim_failed" };
+  const token = asText(data?.updated_at);
+  return token
+    ? { token, error: null }
+    : { token: null, error: "sync_lease_changed" };
+}
+
 async function recordSyncResult(
   supabase: SupabaseClient,
   organizationId: string,
   synced: number,
   skipped: number,
+  deactivated: number,
   errors: string[],
+  runToken: string,
 ): Promise<boolean> {
   const completedAt = new Date().toISOString();
   const common = {
     last_sync_at: completedAt,
     total_synced: synced,
-    sync_log: { last_run: completedAt, synced, skipped, errors: errors.slice(0, 20) },
+    sync_log: { last_run: completedAt, synced, skipped, deactivated, errors: errors.slice(0, 20) },
     updated_at: completedAt,
   };
-  const extended = await supabase
+  const { data: extendedRows, error: extendedError } = await supabase
     .from("imoview_integrations")
     .update({
       ...common,
       status: errors.length === 0 ? "connected" : "error",
       last_error: errors.length === 0 ? null : errors[0].slice(0, 2_000),
     })
-    .eq("organization_id", organizationId);
-  if (!extended.error) return true;
+    .eq("organization_id", organizationId)
+    .eq("status", "syncing")
+    .eq("updated_at", runToken)
+    .select("id");
+  if (!extendedError) return extendedRows?.length === 1;
 
-  const fallback = await supabase
+  const { data: fallbackRows, error: fallbackError } = await supabase
     .from("imoview_integrations")
-    .update(common)
-    .eq("organization_id", organizationId);
-  if (fallback.error) console.error("Imoview sync status update failed:", fallback.error);
-  return !fallback.error;
+    .update({
+      ...common,
+      status: errors.length === 0 ? "connected" : "error",
+    })
+    .eq("organization_id", organizationId)
+    .eq("status", "syncing")
+    .eq("updated_at", runToken)
+    .select("id");
+  if (fallbackError) console.error("Imoview sync status update failed:", fallbackError);
+  return !fallbackError && fallbackRows?.length === 1;
+}
+
+async function persistImoviewProperty(
+  supabase: SupabaseClient,
+  organizationId: string,
+  sourceCode: string,
+  propertyData: Record<string, unknown>,
+): Promise<{ id: string | null; error: string | null }> {
+  const loadExisting = () => supabase
+    .from("properties")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("imoview_codigo", sourceCode)
+    .maybeSingle();
+
+  const updateExisting = async (propertyId: string) => {
+    const { data, error } = await supabase
+      .from("properties")
+      .update(propertyData)
+      .eq("organization_id", organizationId)
+      .eq("id", propertyId)
+      .eq("imoview_codigo", sourceCode)
+      .select("id")
+      .maybeSingle();
+    return error || !data?.id
+      ? { id: null, error: "property_update_failed" }
+      : { id: data.id as string, error: null };
+  };
+
+  const { data: existing, error: lookupError } = await loadExisting();
+  if (lookupError) return { id: null, error: "property_lookup_failed" };
+  if (typeof existing?.id === "string") return updateExisting(existing.id);
+
+  const { data: inserted, error: insertError } = await supabase
+    .from("properties")
+    .insert([propertyData])
+    .select("id")
+    .maybeSingle();
+  if (!insertError && typeof inserted?.id === "string") {
+    return { id: inserted.id, error: null };
+  }
+  if (insertError?.code !== "23505") {
+    return { id: null, error: "property_insert_failed" };
+  }
+
+  // The provider key is protected by a partial unique index rather than a
+  // named constraint, so PostgREST upsert conflict inference is not reliable.
+  // A concurrent insert is resolved by re-reading the tenant/provider key and
+  // applying the same scoped update deterministically.
+  const { data: raced, error: rereadError } = await loadExisting();
+  if (rereadError || typeof raced?.id !== "string") {
+    return { id: null, error: "property_insert_conflict_unresolved" };
+  }
+  return updateExisting(raced.id);
 }
 
 async function syncProperties(
@@ -321,8 +560,12 @@ async function syncProperties(
   const perPage = 50;
   let totalSynced = 0;
   let totalSkipped = 0;
+  // RetornarImoveisDisponiveis does not provide a locally verified total or
+  // continuation cursor. Missing rows are therefore never deactivated.
+  const totalDeactivated = 0;
   const errors: string[] = [];
   const startedAt = Date.now();
+  let locationResolver: Awaited<ReturnType<typeof loadCanonicalPropertyLocationResolver>> | null = null;
 
   while (Date.now() - startedAt < maxRuntimeMs) {
     let response: Response;
@@ -349,48 +592,93 @@ async function syncProperties(
       errors.push(`Invalid JSON on page ${page}`);
       break;
     }
-    if (items.length === 0) break;
+    if (items.length === 0) {
+      break;
+    }
 
     const details = await parallelMap(items, async (item) => {
       const code = asText(firstValue(item, ["codigo", "codigoImovel", "Codigo", "CodigoImovel", "referencia"]));
-      return code ? await fetchDetails(apiKey, code) : null;
+      return code
+        ? await fetchDetails(apiKey, code)
+        : { record: null, photos: [], galleryComplete: false };
     }, detailConcurrency);
 
+    if (!locationResolver) {
+      try {
+        locationResolver = await loadCanonicalPropertyLocationResolver(
+          supabase,
+          organizationId,
+        );
+      } catch {
+        errors.push(`Location catalog load failed on page ${page}`);
+        break;
+      }
+    }
+
     for (let index = 0; index < items.length; index += 1) {
-      if (Date.now() - startedAt >= maxRuntimeMs) break;
+      if (Date.now() - startedAt >= maxRuntimeMs) {
+        break;
+      }
       const item = items[index];
-      const detail = details[index];
+      const detailResult = details[index];
+      const detail = detailResult.record;
       const code = asText(firstValue(item, ["codigo", "codigoImovel", "Codigo", "CodigoImovel", "referencia"]));
       if (!code) {
         totalSkipped += 1;
         continue;
       }
       try {
-        const detailPhotos = extractPhotos(detail);
         const listingPhotos = extractPhotos(item);
-        const photos = detailPhotos.length >= listingPhotos.length ? detailPhotos : listingPhotos;
-        const mainImage = (detail && extractMainImage(detail)) || extractMainImage(item) || photos[0] || "";
+        let photoCandidates = detailResult.photos;
+        if (!detailResult.galleryComplete && listingPhotos.length > photoCandidates.length) {
+          photoCandidates = listingPhotos;
+        }
+        const photos = normalizeImportedPhotos(
+          (detail && extractMainImage(detail)) || extractMainImage(item),
+          photoCandidates,
+        );
         const finalidade = asText(firstValue(item, ["finalidade", "destinacao"])).toLowerCase();
         const hasSale = finalidade.includes("venda");
         const hasRent = finalidade.includes("locac") || finalidade.includes("alugu");
-        const businessType = hasSale && hasRent ? "Venda e Aluguel" : hasRent ? "Aluguel" : "Venda";
+        const businessType = hasSale && hasRent ? "venda_locacao" : hasRent ? "locacao" : "venda";
         const salePrice = parseNumber(firstValue(item, ["valorVenda", "valor_venda", "valor"]));
         const rentPrice = parseNumber(firstValue(item, ["valorAluguel", "valor_aluguel"]));
-        const price = businessType === "Aluguel" ? rentPrice ?? salePrice : salePrice ?? rentPrice;
+        const price = businessType === "locacao" ? rentPrice ?? salePrice : salePrice ?? rentPrice;
+        const propertyType = asText(firstValue(item, ["tipoImovel", "tipo"])) || "Outro";
+        const publicDescription = firstValue(item, ["descricao", "observacao"]);
+        const sourceStatus = firstValue(detail ?? {}, [
+          "status", "Status", "situacao", "Situacao", "statusImovel", "situacaoImovel", "disponivel",
+        ]) ?? firstValue(item, [
+          "status", "Status", "situacao", "Situacao", "statusImovel", "situacaoImovel", "disponivel",
+        ]);
+        const sourceCity = item.cidade ?? null;
+        const sourceState = firstValue(item, ["uf", "estado"]);
+        const sourceNeighborhood = item.bairro ?? null;
+        const canonicalLocation = locationResolver.resolve({
+          city: sourceCity,
+          state: sourceState,
+          neighborhood: sourceNeighborhood,
+        });
 
         const propertyData = {
           organization_id: organizationId,
           imoview_codigo: code,
-          title: asText(firstValue(item, ["titulo", "tituloSite", "tipoImovel"])) || `ImÃ³vel ${code}`,
-          tipo_de_imovel: asText(firstValue(item, ["tipoImovel", "tipo"])) || "Outro",
+          title: asText(firstValue(item, ["titulo", "tituloSite", "tipoImovel"])) || `Imóvel ${code}`,
+          tipo: propertyType,
+          tipo_de_imovel: propertyType,
+          finalidade: businessType,
           tipo_de_negocio: businessType,
-          status: "ativo",
+          // RetornarImoveisDisponiveis is an availability endpoint, so a
+          // missing status is active. An explicit unknown/terminal status is
+          // never promoted to active.
+          status: normalizeImportedPropertyStatus(sourceStatus, true),
           endereco: firstValue(item, ["endereco", "logradouro"]),
           numero: asText(item.numero) || null,
           complemento: item.complemento ?? null,
-          bairro: item.bairro ?? null,
-          cidade: item.cidade ?? null,
-          uf: firstValue(item, ["uf", "estado"]),
+          bairro: sourceNeighborhood,
+          cidade: sourceCity,
+          uf: sourceState,
+          ...canonicalLocation,
           cep: item.cep ?? null,
           quartos: parseInteger(firstValue(item, ["quartos", "dormitorios"])),
           suites: parseInteger(item.suites),
@@ -402,33 +690,53 @@ async function syncProperties(
           valor_locacao: rentPrice,
           condominio: parseNumber(item.condominio),
           iptu: parseNumber(item.iptu),
-          descricao: firstValue(item, ["descricao", "observacao"]),
-          imagem_principal: mainImage || null,
-          fotos: photos,
+          descricao: publicDescription,
+          descricao_site: publicDescription,
           latitude: parseNumber(item.latitude),
           longitude: parseNumber(item.longitude),
           exclusividade: asText(firstValue(item, ["exclusividade", "exclusivo"])).toLowerCase() === "sim",
         };
 
-        const { error } = await supabase.from("properties").upsert(propertyData, {
-          onConflict: "organization_id,imoview_codigo",
-          ignoreDuplicates: false,
-        });
-        if (error) errors.push(`Upsert error for ${code}: ${error.message}`);
-        else totalSynced += 1;
+        // Media is deliberately excluded from the property write. The RPC
+        // below reconciles canonical assets and compatibility columns under a
+        // single property lock, so a failure preserves the previous gallery.
+        const persistedProperty = await persistImoviewProperty(
+          supabase,
+          organizationId,
+          code,
+          propertyData,
+        );
+        if (!persistedProperty.id) {
+          errors.push(`Property write error for ${code}: ${persistedProperty.error ?? "unknown"}`);
+        } else {
+          const mediaError = await reconcileCanonicalPropertyPhotos(
+            supabase,
+            organizationId,
+            persistedProperty.id,
+            photos,
+            detailResult.galleryComplete,
+          );
+          if (mediaError) {
+            errors.push(`Media reconciliation error for ${code}: ${mediaError}`);
+          } else {
+            totalSynced += 1;
+          }
+        }
       } catch (error) {
         errors.push(`Process error ${code}: ${(error as Error).message}`);
       }
     }
 
-    if (items.length < perPage) break;
+    if (items.length < perPage) {
+      break;
+    }
     page += 1;
   }
 
   if (Date.now() - startedAt >= maxRuntimeMs) {
     errors.push(`Runtime limit reached after page ${page}`);
   }
-  return { totalSynced, totalSkipped, errors };
+  return { totalSynced, totalSkipped, totalDeactivated, errors };
 }
 
 Deno.serve(async (req) => {
@@ -456,6 +764,9 @@ Deno.serve(async (req) => {
     if (error || !integration) return jsonResponse({ error: "integration_not_configured" }, 404);
     const apiKey = typeof integration.api_key === "string" ? integration.api_key.trim() : "";
     if (!apiKey) return jsonResponse({ error: "invalid_imoview_api_key" }, 422);
+    if (integration.is_active === false || integration.status === "disabled") {
+      return jsonResponse({ error: "integration_disabled" }, 409);
+    }
 
     if (action === "test") {
       try {
@@ -465,14 +776,35 @@ Deno.serve(async (req) => {
       }
     }
 
-    const { totalSynced, totalSkipped, errors } = await syncProperties(supabase, apiKey, organizationId);
-    if (!(await recordSyncResult(supabase, organizationId, totalSynced, totalSkipped, errors))) {
+    const lease = await claimSyncLease(supabase, organizationId, integration);
+    if (!lease.token) {
+      return jsonResponse(
+        { error: lease.error ?? "sync_lease_claim_failed" },
+        lease.error === "sync_lease_claim_failed" ? 500 : 409,
+      );
+    }
+
+    const { totalSynced, totalSkipped, totalDeactivated, errors } = await syncProperties(
+      supabase,
+      apiKey,
+      organizationId,
+    );
+    if (!(await recordSyncResult(
+      supabase,
+      organizationId,
+      totalSynced,
+      totalSkipped,
+      totalDeactivated,
+      errors,
+      lease.token,
+    ))) {
       return jsonResponse({ error: "sync_status_update_failed" }, 500);
     }
     return jsonResponse({
       success: errors.length === 0,
       synced: totalSynced,
       skipped: totalSkipped,
+      deactivated: totalDeactivated,
       errors: errors.slice(0, 10),
     }, 200);
   } catch (error) {

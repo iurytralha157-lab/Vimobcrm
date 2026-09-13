@@ -238,9 +238,26 @@ func (service *oauthService) connectPage(ctx context.Context, auth oauthAuthCont
 	if err != nil {
 		return nil, newOAuthFailure("meta_module_lookup_failed", http.StatusServiceUnavailable, err)
 	}
-	messengerActive, err := service.graph.subscribePageWebhook(ctx, page, marketingEnabled && conversationsEnabled)
+	releasePageSubscription, err := acquireMetaPageSubscriptionLock(ctx, service.store.db, page.ID)
 	if err != nil {
-		return nil, err
+		return nil, newOAuthFailure("meta_page_subscription_busy", http.StatusServiceUnavailable, err)
+	}
+	defer releasePageSubscription()
+	requestedMessaging := marketingEnabled && conversationsEnabled
+	providerState, err := service.store.pageSubscriptionState(ctx, page.ID)
+	if err != nil {
+		return nil, newOAuthFailure("meta_page_subscription_state_failed", http.StatusServiceUnavailable, err)
+	}
+	providerMessagingSubscribed := providerState.MessagingSubscribed
+	// A Page subscription belongs to the Meta app, not to one CRM tenant. If
+	// another tenant already keeps the Page subscribed, a new leadgen-only
+	// connection must not overwrite its messaging fields. We only contact Meta
+	// for the first Page connection or for a monotonic messaging upgrade.
+	if providerState.ConnectedCount == 0 || (requestedMessaging && !providerMessagingSubscribed) {
+		providerMessagingSubscribed, err = service.graph.subscribePageWebhook(ctx, page, requestedMessaging)
+		if err != nil {
+			return nil, err
+		}
 	}
 	integration, err := service.store.persistConnectedIntegration(
 		ctx,
@@ -251,7 +268,7 @@ func (service *oauthService) connectPage(ctx context.Context, auth oauthAuthCont
 		userToken,
 		selected,
 		options,
-		messengerActive,
+		providerMessagingSubscribed,
 	)
 	if err != nil {
 		// Never unsubscribe a page that already has a connected row. A failed
@@ -259,7 +276,7 @@ func (service *oauthService) connectPage(ctx context.Context, auth oauthAuthCont
 		// healthy integration; only compensate a genuinely new subscription.
 		cleanupContext, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cleanupCancel()
-		if connected, stateErr := service.store.integrationConnected(cleanupContext, auth.OrganizationID, page.ID); stateErr == nil && !connected {
+		if connectedCount, stateErr := service.store.connectedPageIntegrationCount(cleanupContext, page.ID); stateErr == nil && connectedCount == 0 {
 			_ = service.graph.unsubscribePageWebhook(cleanupContext, page.ID, page.AccessToken)
 		}
 		return nil, err
@@ -271,7 +288,7 @@ func (service *oauthService) connectPage(ctx context.Context, auth oauthAuthCont
 	return map[string]any{
 		"success":             true,
 		"marketing_active":    marketingEnabled,
-		"messenger_active":    messengerActive,
+		"messenger_active":    requestedMessaging && providerMessagingSubscribed,
 		"integration":         integration,
 		"missing_permissions": oauthMissingScopes(debug.Scopes, service.graph.loginScopes()),
 	}, nil
@@ -328,6 +345,11 @@ func (service *oauthService) disconnectPage(ctx context.Context, auth oauthAuthC
 	if err != nil {
 		return nil, err
 	}
+	releasePageSubscription, err := acquireMetaPageSubscriptionLock(ctx, service.store.db, pageID)
+	if err != nil {
+		return nil, newOAuthFailure("meta_page_subscription_busy", http.StatusServiceUnavailable, err)
+	}
+	defer releasePageSubscription()
 	integration, err := service.store.getIntegration(ctx, auth.OrganizationID, pageID)
 	if err != nil {
 		return nil, err
@@ -338,22 +360,35 @@ func (service *oauthService) disconnectPage(ctx context.Context, auth oauthAuthC
 	}); err != nil {
 		return nil, err
 	}
-	page, err := service.resolveIntegrationPage(ctx, integration)
-	if err != nil {
+	connectedCount, countErr := service.store.connectedPageIntegrationCount(ctx, pageID)
+	if countErr != nil {
 		_ = service.store.setIntegrationState(ctx, auth.OrganizationID, pageID, map[string]any{
 			"is_connected":  false,
 			"health_status": "disconnect_pending",
-			"last_error":    "meta_webhook_unsubscribe_failed",
+			"last_error":    "meta_page_subscription_state_failed",
 		})
-		return nil, newOAuthFailure("meta_webhook_unsubscribe_failed", http.StatusBadGateway)
+		return nil, newOAuthFailure("meta_page_subscription_state_failed", http.StatusServiceUnavailable, countErr)
 	}
-	if !service.graph.unsubscribePageWebhook(ctx, pageID, page.AccessToken) {
-		_ = service.store.setIntegrationState(ctx, auth.OrganizationID, pageID, map[string]any{
-			"is_connected":  false,
-			"health_status": "disconnect_pending",
-			"last_error":    "meta_webhook_unsubscribe_failed",
-		})
-		return nil, newOAuthFailure("meta_webhook_unsubscribe_failed", http.StatusBadGateway)
+	webhookUnsubscribed := false
+	if connectedCount == 0 {
+		page, pageErr := service.resolveIntegrationPage(ctx, integration)
+		if pageErr != nil {
+			_ = service.store.setIntegrationState(ctx, auth.OrganizationID, pageID, map[string]any{
+				"is_connected":  false,
+				"health_status": "disconnect_pending",
+				"last_error":    "meta_webhook_unsubscribe_failed",
+			})
+			return nil, newOAuthFailure("meta_webhook_unsubscribe_failed", http.StatusBadGateway, pageErr)
+		}
+		if !service.graph.unsubscribePageWebhook(ctx, pageID, page.AccessToken) {
+			_ = service.store.setIntegrationState(ctx, auth.OrganizationID, pageID, map[string]any{
+				"is_connected":  false,
+				"health_status": "disconnect_pending",
+				"last_error":    "meta_webhook_unsubscribe_failed",
+			})
+			return nil, newOAuthFailure("meta_webhook_unsubscribe_failed", http.StatusBadGateway)
+		}
+		webhookUnsubscribed = true
 	}
 	if err := service.store.deleteIntegration(ctx, auth.OrganizationID, pageID); err != nil {
 		cleanupContext, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -365,7 +400,11 @@ func (service *oauthService) disconnectPage(ctx context.Context, auth oauthAuthC
 		})
 		return nil, err
 	}
-	return map[string]any{"success": true, "webhook_unsubscribed": true}, nil
+	return map[string]any{
+		"success":                           true,
+		"webhook_unsubscribed":              webhookUnsubscribed,
+		"webhook_preserved_for_shared_page": connectedCount > 0,
+	}, nil
 }
 
 func (service *oauthService) togglePage(ctx context.Context, auth oauthAuthContext, body map[string]any) (map[string]any, error) {
@@ -377,6 +416,11 @@ func (service *oauthService) togglePage(ctx context.Context, auth oauthAuthConte
 	if !ok {
 		return nil, newOAuthFailure("invalid_toggle_state", http.StatusBadRequest)
 	}
+	releasePageSubscription, err := acquireMetaPageSubscriptionLock(ctx, service.store.db, pageID)
+	if err != nil {
+		return nil, newOAuthFailure("meta_page_subscription_busy", http.StatusServiceUnavailable, err)
+	}
+	defer releasePageSubscription()
 	integration, err := service.store.getIntegration(ctx, auth.OrganizationID, pageID)
 	if err != nil {
 		return nil, err
@@ -391,14 +435,21 @@ func (service *oauthService) togglePage(ctx context.Context, auth oauthAuthConte
 		}); err != nil {
 			return nil, err
 		}
+		connectedCount, countErr := service.store.connectedPageIntegrationCount(ctx, pageID)
+		if countErr != nil {
+			return nil, newOAuthFailure("meta_page_subscription_state_failed", http.StatusServiceUnavailable, countErr)
+		}
 		unsubscribed := false
-		if page, pageErr := service.resolveIntegrationPage(ctx, integration); pageErr == nil {
-			unsubscribed = service.graph.unsubscribePageWebhook(ctx, pageID, page.AccessToken)
+		if connectedCount == 0 {
+			if page, pageErr := service.resolveIntegrationPage(ctx, integration); pageErr == nil {
+				unsubscribed = service.graph.unsubscribePageWebhook(ctx, pageID, page.AccessToken)
+			}
 		}
 		return map[string]any{
-			"success":              true,
-			"is_active":            false,
-			"webhook_unsubscribed": unsubscribed,
+			"success":                           true,
+			"is_active":                         false,
+			"webhook_unsubscribed":              unsubscribed,
+			"webhook_preserved_for_shared_page": connectedCount > 0,
 		}, nil
 	}
 
@@ -427,16 +478,25 @@ func (service *oauthService) togglePage(ctx context.Context, auth oauthAuthConte
 		_ = service.markIntegrationError(auth, pageID, err)
 		return nil, newOAuthFailure("meta_module_lookup_failed", http.StatusServiceUnavailable, err)
 	}
-	messengerActive, err := service.graph.subscribePageWebhook(ctx, page, marketingEnabled && conversationsEnabled)
+	requestedMessaging := marketingEnabled && conversationsEnabled
+	providerState, err := service.store.pageSubscriptionState(ctx, pageID)
 	if err != nil {
 		_ = service.markIntegrationError(auth, pageID, err)
-		return nil, err
+		return nil, newOAuthFailure("meta_page_subscription_state_failed", http.StatusServiceUnavailable, err)
 	}
-	if err := service.store.refreshIntegrationMetadata(ctx, auth.OrganizationID, page, messengerActive); err != nil {
+	providerMessagingSubscribed := providerState.MessagingSubscribed
+	if providerState.ConnectedCount == 0 || (requestedMessaging && !providerMessagingSubscribed) {
+		providerMessagingSubscribed, err = service.graph.subscribePageWebhook(ctx, page, requestedMessaging)
+		if err != nil {
+			_ = service.markIntegrationError(auth, pageID, err)
+			return nil, err
+		}
+	}
+	if err := service.store.refreshIntegrationMetadata(ctx, auth.OrganizationID, page, providerMessagingSubscribed); err != nil {
 		_ = service.markIntegrationError(auth, pageID, err)
 		cleanupContext, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cleanupCancel()
-		if connected, stateErr := service.store.integrationConnected(cleanupContext, auth.OrganizationID, pageID); stateErr == nil && !connected {
+		if connectedCount, stateErr := service.store.connectedPageIntegrationCount(cleanupContext, pageID); stateErr == nil && connectedCount == 0 {
 			_ = service.graph.unsubscribePageWebhook(cleanupContext, page.ID, page.AccessToken)
 		}
 		return nil, err
@@ -444,7 +504,7 @@ func (service *oauthService) togglePage(ctx context.Context, auth oauthAuthConte
 	return map[string]any{
 		"success":          true,
 		"is_active":        true,
-		"messenger_active": messengerActive,
+		"messenger_active": requestedMessaging && providerMessagingSubscribed,
 	}, nil
 }
 

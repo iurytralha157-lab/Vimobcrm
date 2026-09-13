@@ -1,11 +1,17 @@
-import { useState } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
+import { useState } from "react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -14,27 +20,27 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+} from "@/components/ui/alert-dialog";
 import {
   Sheet,
   SheetContent,
   SheetHeader,
   SheetTitle,
   SheetDescription,
-} from '@/components/ui/sheet';
+} from "@/components/ui/sheet";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from "@/components/ui/select";
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
-} from '@/components/ui/accordion';
+} from "@/components/ui/accordion";
 import {
   Webhook,
   Plus,
@@ -46,48 +52,79 @@ import {
   ArrowDownToLine,
   ArrowUpFromLine,
   Building2,
-} from 'lucide-react';
-import { useWebhooks, useCreateWebhook, useUpdateWebhook, useDeleteWebhook, useToggleWebhook, useRegenerateToken } from '@/hooks/use-webhooks';
-import type { WebhookIntegration } from '@/hooks/use-webhooks';
-import { useProperties } from '@/hooks/use-properties';
-import { InlineTagSelector } from '@/components/ui/tag-selector';
-import { formatDistanceToNow } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
-import { toast } from 'sonner';
+  AlertTriangle,
+} from "lucide-react";
+import {
+  useWebhooks,
+  useCreateWebhook,
+  useUpdateWebhook,
+  useDeleteWebhook,
+  useToggleWebhook,
+  useRegenerateToken,
+} from "@/hooks/use-webhooks";
+import type { WebhookIntegration } from "@/hooks/use-webhooks";
+import { useProperties } from "@/hooks/use-properties";
+import { InlineTagSelector } from "@/components/ui/tag-selector";
+import { formatDistanceToNow } from "date-fns";
+import { ptBR } from "date-fns/locale";
+import { toast } from "sonner";
+import { formatUnspacedBRLCurrency } from "@/lib/utils/formatting";
+import { getIntegrationQueryErrorMessage } from "@/lib/api/integration-query";
 
-type WebhookInterestType = '' | 'property';
+type WebhookInterestType = "" | "property";
+type OutgoingWebhookEvent = "lead.created" | "lead.reentered";
 type WebhookFormData = {
   name: string;
-  type: 'incoming' | 'outgoing';
+  type: "incoming" | "outgoing";
   target_tag_ids: string[];
   interest_type: WebhookInterestType;
   interest_property_id: string;
+  webhook_url: string;
+  trigger_events: OutgoingWebhookEvent[];
 };
 
 type WebhookCreatePayload = {
   name: string;
-  type: 'incoming' | 'outgoing';
+  type: "incoming" | "outgoing";
   target_tag_ids?: string[];
   field_mapping?: Record<string, string>;
+  webhook_url?: string;
+  trigger_events?: OutgoingWebhookEvent[];
 };
 
 type WebhookUpdatePayload = {
   id: string;
   name: string;
-  target_tag_ids: string[];
-  field_mapping: Record<string, string>;
+  target_tag_ids?: string[];
+  field_mapping?: Record<string, string>;
+  webhook_url?: string;
+  trigger_events?: OutgoingWebhookEvent[];
 };
 
 type WebhookConfirmation = {
-  action: 'delete' | 'regenerate';
+  action: "delete" | "regenerate";
   id: string;
   name: string;
 };
 
-const DEFAULT_WEBHOOK_API_URL = 'http://localhost:8081';
+const DEFAULT_WEBHOOK_API_URL = "http://localhost:8081";
+const OUTGOING_WEBHOOK_EVENTS: Array<{
+  value: OutgoingWebhookEvent;
+  label: string;
+}> = [
+  { value: "lead.created", label: "Lead criado" },
+  { value: "lead.reentered", label: "Lead em reentrada" },
+];
 
 export function WebhooksTab() {
-  const { data: webhooks = [], isLoading } = useWebhooks();
+  const {
+    data: webhooks = [],
+    error: webhooksError,
+    isError: isWebhooksError,
+    isFetching: isFetchingWebhooks,
+    isLoading,
+    refetch: refetchWebhooks,
+  } = useWebhooks();
   const { data: properties = [] } = useProperties();
   const createWebhook = useCreateWebhook();
   const updateWebhook = useUpdateWebhook();
@@ -96,33 +133,62 @@ export function WebhooksTab() {
   const regenerateToken = useRegenerateToken();
 
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [selectedWebhook, setSelectedWebhook] = useState<WebhookIntegration | null>(null);
-  const [confirmation, setConfirmation] = useState<WebhookConfirmation | null>(null);
+  const [selectedWebhook, setSelectedWebhook] =
+    useState<WebhookIntegration | null>(null);
+  const [confirmation, setConfirmation] = useState<WebhookConfirmation | null>(
+    null,
+  );
   const [formData, setFormData] = useState<WebhookFormData>({
-    name: '',
-    type: 'incoming',
+    name: "",
+    type: "incoming",
     target_tag_ids: [],
-    interest_type: '',
-    interest_property_id: '',
+    interest_type: "",
+    interest_property_id: "",
+    webhook_url: "",
+    trigger_events: ["lead.created", "lead.reentered"],
   });
 
   const webhookUrl = `${getWebhookAPIBaseURL()}/v1/public/webhooks/generic`;
 
   const handleCreate = async () => {
     if (!formData.name.trim()) {
-      toast.error('Informe o nome do webhook');
+      toast.error("Informe o nome do webhook");
       return;
+    }
+
+    if (formData.type === "outgoing") {
+      if (!formData.webhook_url.trim().startsWith("https://")) {
+        toast.error("Informe uma URL HTTPS para o webhook de saída");
+        return;
+      }
+      if (formData.trigger_events.length === 0) {
+        toast.error("Selecione ao menos um evento");
+        return;
+      }
     }
 
     const webhookData: WebhookCreatePayload = {
       name: formData.name.trim(),
       type: formData.type,
-      target_tag_ids: formData.target_tag_ids.length > 0 ? formData.target_tag_ids : undefined,
     };
 
-    // Store interest in field_mapping so the public webhook endpoint can apply it
-    if (formData.interest_type === 'property' && formData.interest_property_id) {
-      webhookData.field_mapping = { interest_property_id: formData.interest_property_id };
+    if (formData.type === "outgoing") {
+      webhookData.webhook_url = formData.webhook_url.trim();
+      webhookData.trigger_events = formData.trigger_events;
+    } else {
+      webhookData.target_tag_ids =
+        formData.target_tag_ids.length > 0
+          ? formData.target_tag_ids
+          : undefined;
+      // Store interest in field_mapping so the public webhook endpoint can apply it.
+      if (
+        formData.interest_type === "property" &&
+        formData.interest_property_id
+      ) {
+        webhookData.field_mapping = {
+          interest_property_id: formData.interest_property_id,
+        };
+      }
     }
 
     await createWebhook.mutateAsync(webhookData);
@@ -137,15 +203,24 @@ export function WebhooksTab() {
     const updates: WebhookUpdatePayload = {
       id: selectedWebhook.id,
       name: formData.name.trim(),
-      target_tag_ids: formData.target_tag_ids,
-      field_mapping: {},
     };
 
-    // Update interest in field_mapping
-    if (formData.interest_type === 'property' && formData.interest_property_id) {
-      updates.field_mapping = { interest_property_id: formData.interest_property_id };
+    if (selectedWebhook.type === "outgoing") {
+      if (
+        !formData.webhook_url.trim().startsWith("https://") ||
+        formData.trigger_events.length === 0
+      ) {
+        toast.error("Informe uma URL HTTPS e selecione ao menos um evento");
+        return;
+      }
+      updates.webhook_url = formData.webhook_url.trim();
+      updates.trigger_events = formData.trigger_events;
     } else {
-      updates.field_mapping = {};
+      updates.target_tag_ids = formData.target_tag_ids;
+      updates.field_mapping =
+        formData.interest_type === "property" && formData.interest_property_id
+          ? { interest_property_id: formData.interest_property_id }
+          : {};
     }
 
     await updateWebhook.mutateAsync(updates);
@@ -157,11 +232,13 @@ export function WebhooksTab() {
 
   const resetForm = () => {
     setFormData({
-      name: '',
-      type: 'incoming',
+      name: "",
+      type: "incoming",
       target_tag_ids: [],
-      interest_type: '',
-      interest_property_id: '',
+      interest_type: "",
+      interest_property_id: "",
+      webhook_url: "",
+      trigger_events: ["lead.created", "lead.reentered"],
     });
   };
 
@@ -170,11 +247,11 @@ export function WebhooksTab() {
 
     // Parse interest from field_mapping
     const fieldMapping = webhook.field_mapping || {};
-    let interestType: '' | 'property' = '';
-    let interestPropertyId = '';
+    let interestType: "" | "property" = "";
+    let interestPropertyId = "";
 
     if (fieldMapping.interest_property_id) {
-      interestType = 'property';
+      interestType = "property";
       interestPropertyId = fieldMapping.interest_property_id;
     }
 
@@ -184,6 +261,11 @@ export function WebhooksTab() {
       target_tag_ids: webhook.target_tag_ids || [],
       interest_type: interestType,
       interest_property_id: interestPropertyId,
+      webhook_url: webhook.webhook_url || "",
+      trigger_events: (webhook.trigger_events || []).filter(
+        (event): event is OutgoingWebhookEvent =>
+          event === "lead.created" || event === "lead.reentered",
+      ),
     });
     setDialogOpen(true);
   };
@@ -197,7 +279,7 @@ export function WebhooksTab() {
     if (!confirmation) return;
 
     try {
-      if (confirmation.action === 'delete') {
+      if (confirmation.action === "delete") {
         await deleteWebhook.mutateAsync(confirmation.id);
       } else {
         await regenerateToken.mutateAsync(confirmation.id);
@@ -209,9 +291,9 @@ export function WebhooksTab() {
   };
 
   const confirmationPending =
-    confirmation?.action === 'delete'
+    confirmation?.action === "delete"
       ? deleteWebhook.isPending
-      : confirmation?.action === 'regenerate'
+      : confirmation?.action === "regenerate"
         ? regenerateToken.isPending
         : false;
 
@@ -220,6 +302,42 @@ export function WebhooksTab() {
       <div className="flex items-center justify-center py-12">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
+    );
+  }
+
+  if (isWebhooksError) {
+    return (
+      <Card role="alert" className="app-card border-amber-500/20">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <AlertTriangle className="h-5 w-5 text-amber-500" />
+            Webhooks indisponíveis
+          </CardTitle>
+          <CardDescription>
+            {getIntegrationQueryErrorMessage(webhooksError, {
+              moduleUnavailable:
+                "O módulo de Webhooks ainda não está habilitado para esta organização.",
+              permissionDenied:
+                "Sua função não permite visualizar nem gerenciar webhooks.",
+              loadFailed:
+                "Não foi possível carregar os webhooks. Verifique a conexão e tente novamente.",
+            })}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void refetchWebhooks()}
+            disabled={isFetchingWebhooks}
+          >
+            <RefreshCw
+              className={`h-4 w-4 mr-2 ${isFetchingWebhooks ? "animate-spin" : ""}`}
+            />
+            Tentar novamente
+          </Button>
+        </CardContent>
+      </Card>
     );
   }
 
@@ -233,10 +351,16 @@ export function WebhooksTab() {
               Webhooks
             </CardTitle>
             <CardDescription>
-              Receba leads de sistemas externos através de webhooks
+              Receba leads e envie eventos assinados para sistemas externos
             </CardDescription>
           </div>
-          <Button onClick={() => { resetForm(); setSelectedWebhook(null); setDialogOpen(true); }}>
+          <Button
+            onClick={() => {
+              resetForm();
+              setSelectedWebhook(null);
+              setDialogOpen(true);
+            }}
+          >
             <Plus className="h-4 w-4 mr-2" />
             Novo Webhook
           </Button>
@@ -245,8 +369,14 @@ export function WebhooksTab() {
           {webhooks.length === 0 ? (
             <div className="app-card-soft text-center py-12">
               <Webhook className="h-12 w-12 text-muted-foreground/30 mx-auto mb-4" />
-              <p className="text-muted-foreground">Nenhum webhook configurado</p>
-              <Button variant="outline" className="mt-4" onClick={() => setDialogOpen(true)}>
+              <p className="text-muted-foreground">
+                Nenhum webhook configurado
+              </p>
+              <Button
+                variant="outline"
+                className="mt-4"
+                onClick={() => setDialogOpen(true)}
+              >
                 <Plus className="h-4 w-4 mr-2" />
                 Criar primeiro webhook
               </Button>
@@ -261,8 +391,10 @@ export function WebhooksTab() {
                   <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                     {/* Info */}
                     <div className="flex items-start gap-3">
-                      <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${webhook.type === 'incoming' ? 'bg-primary/10' : 'bg-warning/10'}`}>
-                        {webhook.type === 'incoming' ? (
+                      <div
+                        className={`h-10 w-10 rounded-lg flex items-center justify-center ${webhook.type === "incoming" ? "bg-primary/10" : "bg-warning/10"}`}
+                      >
+                        {webhook.type === "incoming" ? (
                           <ArrowDownToLine className="h-5 w-5 text-primary" />
                         ) : (
                           <ArrowUpFromLine className="h-5 w-5 text-warning" />
@@ -271,25 +403,51 @@ export function WebhooksTab() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <h4 className="font-medium">{webhook.name}</h4>
-                          <Badge variant={webhook.is_active ? 'default' : 'secondary'}>
-                            {webhook.is_active ? 'Ativo' : 'Inativo'}
+                          <Badge
+                            variant={
+                              webhook.is_active ? "default" : "secondary"
+                            }
+                          >
+                            {webhook.is_active ? "Ativo" : "Inativo"}
                           </Badge>
                           <Badge variant="outline">
-                            {webhook.type === 'incoming' ? 'Entrada' : 'Saída'}
+                            {webhook.type === "incoming" ? "Entrada" : "Saída"}
                           </Badge>
                         </div>
                         <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground flex-wrap">
-                          <span>{webhook.leads_received || 0} leads recebidos</span>
-                          {webhook.last_lead_at && (
-                            <span>
-                              Último: {formatDistanceToNow(new Date(webhook.last_lead_at), { addSuffix: true, locale: ptBR })}
-                            </span>
-                          )}
+                          <span>
+                            {webhook.type === "incoming"
+                              ? `${webhook.leads_received || 0} leads recebidos`
+                              : `${webhook.trigger_events.length} eventos configurados`}
+                          </span>
+                          {webhook.type === "incoming" &&
+                            webhook.last_lead_at && (
+                              <span>
+                                Último:{" "}
+                                {formatDistanceToNow(
+                                  new Date(webhook.last_lead_at),
+                                  { addSuffix: true, locale: ptBR },
+                                )}
+                              </span>
+                            )}
+                          {webhook.type === "outgoing" &&
+                            webhook.last_triggered_at && (
+                              <span>
+                                Último envio:{" "}
+                                {formatDistanceToNow(
+                                  new Date(webhook.last_triggered_at),
+                                  { addSuffix: true, locale: ptBR },
+                                )}
+                              </span>
+                            )}
                         </div>
                         {/* Show interest info */}
                         {webhook.field_mapping?.interest_property_id && (
                           <div className="flex items-center gap-2 mt-2 flex-wrap">
-                            <Badge variant="outline" className="text-xs text-emerald-600 border-emerald-300">
+                            <Badge
+                              variant="outline"
+                              className="text-xs text-emerald-600 border-emerald-300"
+                            >
                               <Building2 className="h-3 w-3 mr-1" />
                               Imóvel configurado
                             </Badge>
@@ -302,9 +460,18 @@ export function WebhooksTab() {
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <Switch
                         checked={webhook.is_active}
-                        onCheckedChange={(checked) => toggleWebhook.mutate({ id: webhook.id, is_active: checked })}
+                        onCheckedChange={(checked) =>
+                          toggleWebhook.mutate({
+                            id: webhook.id,
+                            is_active: checked,
+                          })
+                        }
                       />
-                      <Button variant="ghost" size="icon" onClick={() => openEditDialog(webhook)}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => openEditDialog(webhook)}
+                      >
                         <Code className="h-4 w-4" />
                       </Button>
                       <Button
@@ -312,7 +479,11 @@ export function WebhooksTab() {
                         size="icon"
                         aria-label={`Excluir webhook ${webhook.name}`}
                         onClick={() =>
-                          setConfirmation({ action: 'delete', id: webhook.id, name: webhook.name })
+                          setConfirmation({
+                            action: "delete",
+                            id: webhook.id,
+                            name: webhook.name,
+                          })
                         }
                       >
                         <Trash2 className="h-4 w-4 text-destructive" />
@@ -321,60 +492,86 @@ export function WebhooksTab() {
                   </div>
 
                   {/* Expandable details */}
-                  {webhook.type === 'incoming' && (
+                  {
                     <Accordion type="single" collapsible className="mt-4">
                       <AccordionItem value="details" className="border-none">
                         <AccordionTrigger className="py-2 text-sm">
                           Ver configuração
                         </AccordionTrigger>
                         <AccordionContent>
-                          <div className="space-y-4 pt-2">
-                            {/* URL */}
-                            <div className="space-y-2">
-                              <Label className="text-xs text-muted-foreground">URL do Webhook</Label>
-                              <div className="flex gap-2">
-                                <Input value={webhookUrl} readOnly className="font-mono text-xs" />
-                                <Button variant="outline" size="icon" onClick={() => copyToClipboard(webhookUrl, 'URL')}>
-                                  <Copy className="h-4 w-4" />
-                                </Button>
+                          {webhook.type === "incoming" ? (
+                            <div className="space-y-4 pt-2">
+                              {/* URL */}
+                              <div className="space-y-2">
+                                <Label className="text-xs text-muted-foreground">
+                                  URL do Webhook
+                                </Label>
+                                <div className="flex gap-2">
+                                  <Input
+                                    value={webhookUrl}
+                                    readOnly
+                                    className="font-mono text-xs"
+                                  />
+                                  <Button
+                                    variant="outline"
+                                    size="icon"
+                                    onClick={() =>
+                                      copyToClipboard(webhookUrl, "URL")
+                                    }
+                                  >
+                                    <Copy className="h-4 w-4" />
+                                  </Button>
+                                </div>
                               </div>
-                            </div>
 
-                            {/* Token */}
-                            <div className="space-y-2">
-                              <Label className="text-xs text-muted-foreground">Token de autenticação</Label>
-                              <div className="flex gap-2">
-                                <Input
-                                  value={webhook.api_token}
-                                  readOnly
-                                  type="password"
-                                  className="font-mono text-xs"
-                                />
-                                <Button variant="outline" size="icon" onClick={() => copyToClipboard(webhook.api_token, 'Token')}>
-                                  <Copy className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="icon"
-                                  aria-label={`Regenerar token do webhook ${webhook.name}`}
-                                  onClick={() =>
-                                    setConfirmation({
-                                      action: 'regenerate',
-                                      id: webhook.id,
-                                      name: webhook.name,
-                                    })
-                                  }
-                                >
-                                  <RefreshCw className="h-4 w-4" />
-                                </Button>
+                              {/* Token */}
+                              <div className="space-y-2">
+                                <Label className="text-xs text-muted-foreground">
+                                  Token de autenticação
+                                </Label>
+                                <div className="flex gap-2">
+                                  <Input
+                                    value={webhook.api_token}
+                                    readOnly
+                                    type="password"
+                                    className="font-mono text-xs"
+                                  />
+                                  <Button
+                                    variant="outline"
+                                    size="icon"
+                                    onClick={() =>
+                                      copyToClipboard(
+                                        webhook.api_token,
+                                        "Token",
+                                      )
+                                    }
+                                  >
+                                    <Copy className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="icon"
+                                    aria-label={`Regenerar token do webhook ${webhook.name}`}
+                                    onClick={() =>
+                                      setConfirmation({
+                                        action: "regenerate",
+                                        id: webhook.id,
+                                        name: webhook.name,
+                                      })
+                                    }
+                                  >
+                                    <RefreshCw className="h-4 w-4" />
+                                  </Button>
+                                </div>
                               </div>
-                            </div>
 
-                            {/* Example */}
-                            <div className="space-y-2">
-                              <Label className="text-xs text-muted-foreground">Exemplo de requisição</Label>
-                            <div className="app-card-soft p-3 font-mono text-xs overflow-x-auto">
-                                <pre>{`curl -X POST "${webhookUrl}" \\
+                              {/* Example */}
+                              <div className="space-y-2">
+                                <Label className="text-xs text-muted-foreground">
+                                  Exemplo de requisição
+                                </Label>
+                                <div className="app-card-soft p-3 font-mono text-xs overflow-x-auto">
+                                  <pre>{`curl -X POST "${webhookUrl}" \\
   -H "Authorization: Bearer ${webhook.api_token}" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -400,27 +597,128 @@ export function WebhooksTab() {
 
     "contact_notes": "Lead interessado em financiamento"
   }'`}</pre>
+                                </div>
                               </div>
-                            </div>
 
-                            {/* Field mapping */}
-                            <div className="space-y-2">
-                              <Label className="text-xs text-muted-foreground">Mapeamento de Campos</Label>
-                              <div className="grid grid-cols-2 gap-2 text-xs">
-                                {Object.entries(webhook.field_mapping || {}).map(([target, source]) => (
-                                  <div key={target} className="flex items-center gap-2 rounded bg-[var(--app-surface-soft)] px-2 py-1">
-                                    <span className="text-muted-foreground">{String(source)}</span>
-                                    <span>→</span>
-                                    <span className="font-medium">{target}</span>
-                                  </div>
-                                ))}
+                              {/* Field mapping */}
+                              <div className="space-y-2">
+                                <Label className="text-xs text-muted-foreground">
+                                  Mapeamento de Campos
+                                </Label>
+                                <div className="grid grid-cols-2 gap-2 text-xs">
+                                  {Object.entries(
+                                    webhook.field_mapping || {},
+                                  ).map(([target, source]) => (
+                                    <div
+                                      key={target}
+                                      className="flex items-center gap-2 rounded bg-[var(--app-surface-soft)] px-2 py-1"
+                                    >
+                                      <span className="text-muted-foreground">
+                                        {String(source)}
+                                      </span>
+                                      <span>→</span>
+                                      <span className="font-medium">
+                                        {target}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
                             </div>
-                          </div>
+                          ) : (
+                            <div className="space-y-4 pt-2">
+                              <div className="space-y-2">
+                                <Label className="text-xs text-muted-foreground">
+                                  Destino HTTPS
+                                </Label>
+                                <div className="flex gap-2">
+                                  <Input
+                                    value={webhook.webhook_url || ""}
+                                    readOnly
+                                    className="font-mono text-xs"
+                                  />
+                                  <Button
+                                    variant="outline"
+                                    size="icon"
+                                    onClick={() =>
+                                      copyToClipboard(
+                                        webhook.webhook_url || "",
+                                        "URL",
+                                      )
+                                    }
+                                  >
+                                    <Copy className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                <Label className="text-xs text-muted-foreground">
+                                  Eventos
+                                </Label>
+                                <div className="flex flex-wrap gap-2">
+                                  {webhook.trigger_events.map((event) => (
+                                    <Badge
+                                      key={event}
+                                      variant="outline"
+                                      className="font-mono text-xs"
+                                    >
+                                      {event}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                <Label className="text-xs text-muted-foreground">
+                                  Segredo de assinatura
+                                </Label>
+                                <div className="flex gap-2">
+                                  <Input
+                                    value={webhook.api_token}
+                                    readOnly
+                                    type="password"
+                                    className="font-mono text-xs"
+                                  />
+                                  <Button
+                                    variant="outline"
+                                    size="icon"
+                                    onClick={() =>
+                                      copyToClipboard(
+                                        webhook.api_token,
+                                        "Segredo",
+                                      )
+                                    }
+                                  >
+                                    <Copy className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="icon"
+                                    aria-label={`Regenerar segredo do webhook ${webhook.name}`}
+                                    onClick={() =>
+                                      setConfirmation({
+                                        action: "regenerate",
+                                        id: webhook.id,
+                                        name: webhook.name,
+                                      })
+                                    }
+                                  >
+                                    <RefreshCw className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                  Valide <code>X-Vimob-Signature</code> com
+                                  HMAC-SHA256 sobre
+                                  <code> X-Vimob-Timestamp.corpo_bruto</code> e
+                                  deduplique por
+                                  <code> X-Vimob-Delivery</code>.
+                                </p>
+                              </div>
+                            </div>
+                          )}
                         </AccordionContent>
                       </AccordionItem>
                     </Accordion>
-                  )}
+                  }
                 </div>
               ))}
             </div>
@@ -440,57 +738,74 @@ export function WebhooksTab() {
           <div className="space-y-2">
             <h4 className="font-medium">Como usar webhooks</h4>
             <p className="text-sm text-muted-foreground">
-              Webhooks permitem que sistemas externos enviem leads automaticamente para o CRM.
-              Configure um webhook de entrada, copie a URL e o token, e configure seu sistema para enviar requisições POST.
+              Webhooks de entrada criam ou registram a reentrada de leads pela
+              distribuição canônica. Webhooks de saída entregam eventos
+              assinados com repetição automática.
             </p>
           </div>
           <Separator />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="space-y-2">
               <h4 className="font-medium">Campos aceitos</h4>
-              <p className="text-xs text-muted-foreground mb-3">Campos básicos do lead</p>
+              <p className="text-xs text-muted-foreground mb-3">
+                Campos básicos do lead
+              </p>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { field: 'name', required: true },
-                  { field: 'phone', required: false },
-                  { field: 'email', required: false },
-                  { field: 'message', required: false },
-                  { field: 'property_id', required: false },
+                  { field: "name", required: true },
+                  { field: "phone", required: false },
+                  { field: "email", required: false },
+                  { field: "message", required: false },
+                  { field: "property_id", required: false },
                 ].map(({ field, required }) => (
-                  <div key={field} className="app-card-soft px-3 py-2 text-sm font-mono">
-                    {field}{required && <span className="text-destructive">*</span>}
+                  <div
+                    key={field}
+                    className="app-card-soft px-3 py-2 text-sm font-mono"
+                  >
+                    {field}
+                    {required && <span className="text-destructive">*</span>}
                   </div>
                 ))}
               </div>
-              <p className="text-xs text-muted-foreground">* Campo obrigatório</p>
+              <p className="text-xs text-muted-foreground">
+                * Campo obrigatório
+              </p>
             </div>
 
             <div className="space-y-2">
-              <h4 className="font-medium">Campos de rastreamento (opcionais)</h4>
-              <p className="text-xs text-muted-foreground mb-3">Dados de campanha, anúncio e UTM</p>
+              <h4 className="font-medium">
+                Campos de rastreamento (opcionais)
+              </h4>
+              <p className="text-xs text-muted-foreground mb-3">
+                Dados de campanha, anúncio e UTM
+              </p>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  'campaign_id',
-                  'campaign_name',
-                  'adset_id',
-                  'adset_name',
-                  'ad_id',
-                  'ad_name',
-                  'form_name',
-                  'utm_source',
-                  'utm_medium',
-                  'utm_campaign',
-                  'utm_content',
-                  'utm_term',
-                  'contact_notes',
+                  "campaign_id",
+                  "campaign_name",
+                  "adset_id",
+                  "adset_name",
+                  "ad_id",
+                  "ad_name",
+                  "form_name",
+                  "utm_source",
+                  "utm_medium",
+                  "utm_campaign",
+                  "utm_content",
+                  "utm_term",
+                  "contact_notes",
                 ].map((field) => (
-                  <div key={field} className="app-card-soft border-primary/10 bg-primary/5 px-3 py-2 text-sm font-mono text-primary">
+                  <div
+                    key={field}
+                    className="app-card-soft border-primary/10 bg-primary/5 px-3 py-2 text-sm font-mono text-primary"
+                  >
                     {field}
                   </div>
                 ))}
               </div>
               <p className="text-xs text-muted-foreground mt-2">
-                Esses campos são salvos automaticamente e exibidos na aba &quot;Contato&quot; do lead.
+                Esses campos são salvos automaticamente e exibidos na aba
+                &quot;Contato&quot; do lead.
               </p>
             </div>
           </div>
@@ -499,16 +814,28 @@ export function WebhooksTab() {
             <h4 className="font-medium">Respostas da API</h4>
             <div className="space-y-1 text-sm">
               <div className="flex items-center gap-2">
-                <Badge variant="default" className="bg-success">200</Badge>
-                <span className="text-muted-foreground">Lead criado com sucesso</span>
+                <Badge variant="default" className="bg-success">
+                  200
+                </Badge>
+                <span className="text-muted-foreground">
+                  Lead criado com sucesso
+                </span>
               </div>
               <div className="flex items-center gap-2">
-                <Badge variant="default" className="bg-warning">400</Badge>
-                <span className="text-muted-foreground">Campo obrigatório faltando</span>
+                <Badge variant="default" className="bg-warning">
+                  400
+                </Badge>
+                <span className="text-muted-foreground">
+                  Campo obrigatório faltando
+                </span>
               </div>
               <div className="flex items-center gap-2">
-                <Badge variant="default" className="bg-destructive">401</Badge>
-                <span className="text-muted-foreground">Token inválido ou inativo</span>
+                <Badge variant="default" className="bg-destructive">
+                  401
+                </Badge>
+                <span className="text-muted-foreground">
+                  Token inválido ou inativo
+                </span>
               </div>
             </div>
           </div>
@@ -516,12 +843,28 @@ export function WebhooksTab() {
       </Card>
 
       {/* Create/Edit Dialog */}
-      <Sheet open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) { setSelectedWebhook(null); resetForm(); } }}>
-        <SheetContent side="right" className="app-card w-[90%] sm:w-[650px] sm:max-w-[650px] p-6 flex flex-col overflow-y-auto">
+      <Sheet
+        open={dialogOpen}
+        onOpenChange={(open) => {
+          setDialogOpen(open);
+          if (!open) {
+            setSelectedWebhook(null);
+            resetForm();
+          }
+        }}
+      >
+        <SheetContent
+          side="right"
+          className="app-card w-[90%] sm:w-[650px] sm:max-w-[650px] p-6 flex flex-col overflow-y-auto"
+        >
           <SheetHeader>
-            <SheetTitle>{selectedWebhook ? 'Editar Webhook' : 'Novo Webhook'}</SheetTitle>
+            <SheetTitle>
+              {selectedWebhook ? "Editar Webhook" : "Novo Webhook"}
+            </SheetTitle>
             <SheetDescription>
-              {selectedWebhook ? 'Altere as configurações do webhook' : 'Configure um novo webhook para receber leads'}
+              {selectedWebhook
+                ? "Altere as configurações do webhook"
+                : "Configure um novo webhook para receber leads"}
             </SheetDescription>
           </SheetHeader>
           <div className="space-y-4 pt-4">
@@ -530,7 +873,9 @@ export function WebhooksTab() {
               <Input
                 placeholder="Ex: Leads do Site"
                 value={formData.name}
-                onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, name: e.target.value }))
+                }
               />
             </div>
 
@@ -539,97 +884,168 @@ export function WebhooksTab() {
                 <Label>Tipo</Label>
                 <Select
                   value={formData.type}
-                  onValueChange={(v) => setFormData(prev => ({ ...prev, type: v as 'incoming' | 'outgoing' }))}
+                  onValueChange={(v) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      type: v as "incoming" | "outgoing",
+                    }))
+                  }
                 >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="incoming">Entrada (receber leads)</SelectItem>
-                    <SelectItem value="outgoing" disabled>Saída (em breve)</SelectItem>
+                    <SelectItem value="incoming">
+                      Entrada (receber leads)
+                    </SelectItem>
+                    <SelectItem value="outgoing">
+                      Saída (enviar eventos)
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             )}
 
-            <Separator />
+            {formData.type === "outgoing" ? (
+              <>
+                <Separator />
+                <div className="space-y-2">
+                  <Label htmlFor="outgoing-webhook-url">
+                    URL HTTPS de destino
+                  </Label>
+                  <Input
+                    id="outgoing-webhook-url"
+                    type="url"
+                    placeholder="https://seu-sistema.com/webhooks/vimob"
+                    value={formData.webhook_url}
+                    onChange={(event) =>
+                      setFormData((previous) => ({
+                        ...previous,
+                        webhook_url: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-3">
+                  <Label>Eventos enviados</Label>
+                  {OUTGOING_WEBHOOK_EVENTS.map((event) => (
+                    <div
+                      key={event.value}
+                      className="app-card-soft flex items-center justify-between p-3"
+                    >
+                      <div>
+                        <p className="text-sm font-medium">{event.label}</p>
+                        <code className="text-xs text-muted-foreground">
+                          {event.value}
+                        </code>
+                      </div>
+                      <Switch
+                        checked={formData.trigger_events.includes(event.value)}
+                        onCheckedChange={(checked) =>
+                          setFormData((previous) => ({
+                            ...previous,
+                            trigger_events: checked
+                              ? [...previous.trigger_events, event.value]
+                              : previous.trigger_events.filter(
+                                  (value) => value !== event.value,
+                                ),
+                          }))
+                        }
+                      />
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <>
+                <Separator />
 
-            {/* Tags */}
-            <div className="space-y-2">
-              <Label>Tags automáticas</Label>
-              <InlineTagSelector
-                selectedTagIds={formData.target_tag_ids}
-                onToggleTag={(tagId) => {
-                  setFormData(prev => ({
-                    ...prev,
-                    target_tag_ids: prev.target_tag_ids.includes(tagId)
-                      ? prev.target_tag_ids.filter(id => id !== tagId)
-                      : [...prev.target_tag_ids, tagId]
-                  }));
-                }}
-              />
-              <p className="text-xs text-muted-foreground">
-                Clique nas tags para selecioná-las. Serão aplicadas automaticamente aos leads recebidos.
-              </p>
-            </div>
+                {/* Tags */}
+                <div className="space-y-2">
+                  <Label>Tags automáticas</Label>
+                  <InlineTagSelector
+                    selectedTagIds={formData.target_tag_ids}
+                    onToggleTag={(tagId) => {
+                      setFormData((prev) => ({
+                        ...prev,
+                        target_tag_ids: prev.target_tag_ids.includes(tagId)
+                          ? prev.target_tag_ids.filter((id) => id !== tagId)
+                          : [...prev.target_tag_ids, tagId],
+                      }));
+                    }}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Clique nas tags para selecioná-las. Serão aplicadas
+                    automaticamente aos leads recebidos.
+                  </p>
+                </div>
 
-            <Separator />
+                <Separator />
 
-            {/* Interest Selection */}
-            <div className="space-y-3">
-              <Label>Interesse do Lead</Label>
-              <p className="text-xs text-muted-foreground">
-                Defina o interesse padrão para leads recebidos por este webhook.
-                A distribuição (pipeline, estágio) é configurada nas filas de distribuição.
-              </p>
+                {/* Interest Selection */}
+                <div className="space-y-3">
+                  <Label>Interesse do Lead</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Defina o interesse padrão para leads recebidos por este
+                    webhook. A distribuição (pipeline, estágio) é configurada
+                    nas filas de distribuição.
+                  </p>
 
-              <Select
-                value={formData.interest_type || "__none__"}
-                onValueChange={(v) => setFormData(prev => ({
-                  ...prev,
-                  interest_type: v === "__none__" ? '' : v as '' | 'property',
-                  interest_property_id: '',
-                }))}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Sem interesse definido" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Sem interesse definido</SelectItem>
-                  <SelectItem value="property">Imóvel</SelectItem>
-                </SelectContent>
-              </Select>
-
-              {formData.interest_type === 'property' && (
-                <Select
-                  value={formData.interest_property_id || "__none__"}
-                  onValueChange={(v) => setFormData(prev => ({
-                    ...prev,
-                    interest_property_id: v === "__none__" ? '' : v
-                  }))}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecione o imóvel" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">Nenhum imóvel</SelectItem>
-                    {properties.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        <span>
-                          {p.code}
-                          {p.preco && (
-                            <span className="ml-2 text-emerald-600">
-                              R${p.preco.toLocaleString('pt-BR')}
-                            </span>
-                          )}
-                        </span>
+                  <Select
+                    value={formData.interest_type || "__none__"}
+                    onValueChange={(v) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        interest_type:
+                          v === "__none__" ? "" : (v as "" | "property"),
+                        interest_property_id: "",
+                      }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Sem interesse definido" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">
+                        Sem interesse definido
                       </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
+                      <SelectItem value="property">Imóvel</SelectItem>
+                    </SelectContent>
+                  </Select>
 
-            </div>
+                  {formData.interest_type === "property" && (
+                    <Select
+                      value={formData.interest_property_id || "__none__"}
+                      onValueChange={(v) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          interest_property_id: v === "__none__" ? "" : v,
+                        }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Selecione o imóvel" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">Nenhum imóvel</SelectItem>
+                        {properties.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            <span>
+                              {p.code}
+                              {p.preco && (
+                                <span className="ml-2 text-emerald-600">
+                                  {formatUnspacedBRLCurrency(p.preco)}
+                                </span>
+                              )}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+              </>
+            )}
 
             <div className="flex justify-end gap-2 pt-4">
               <Button variant="outline" onClick={() => setDialogOpen(false)}>
@@ -642,7 +1058,7 @@ export function WebhooksTab() {
                 {(createWebhook.isPending || updateWebhook.isPending) && (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 )}
-                {selectedWebhook ? 'Salvar' : 'Criar Webhook'}
+                {selectedWebhook ? "Salvar" : "Criar Webhook"}
               </Button>
             </div>
           </div>
@@ -658,12 +1074,14 @@ export function WebhooksTab() {
         <AlertDialogContent className="w-[calc(100vw-24px)] max-w-[440px] gap-3 rounded-[8px] p-4 sm:p-5">
           <AlertDialogHeader className="space-y-1.5 text-left">
             <AlertDialogTitle className="text-[14px] font-normal">
-              {confirmation?.action === 'delete' ? 'Excluir webhook' : 'Regenerar token'}
+              {confirmation?.action === "delete"
+                ? "Excluir webhook"
+                : "Regenerar token"}
             </AlertDialogTitle>
             <AlertDialogDescription className="text-[12px] font-light leading-[18px]">
-              {confirmation?.action === 'delete'
+              {confirmation?.action === "delete"
                 ? `O webhook “${confirmation.name}” será excluído e deixará de receber leads. Esta ação não pode ser desfeita.`
-                : `O token atual de “${confirmation?.name ?? ''}” será invalidado imediatamente. Sistemas que ainda usam esse token deixarão de enviar leads.`}
+                : `O token atual de “${confirmation?.name ?? ""}” será invalidado imediatamente. Sistemas que ainda usam esse token deixarão de enviar leads.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="gap-2 sm:space-x-0">
@@ -678,13 +1096,17 @@ export function WebhooksTab() {
               disabled={confirmationPending}
               onClick={() => void handleConfirmedAction()}
               className={
-                confirmation?.action === 'delete'
-                  ? 'h-9 rounded-[6px] bg-destructive px-3 text-[12px] font-light text-destructive-foreground shadow-none hover:bg-destructive/90'
-                  : 'h-9 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary'
+                confirmation?.action === "delete"
+                  ? "h-9 rounded-[6px] bg-destructive px-3 text-[12px] font-light text-destructive-foreground shadow-none hover:bg-destructive/90"
+                  : "h-9 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
               }
             >
-              {confirmationPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-              {confirmation?.action === 'delete' ? 'Excluir webhook' : 'Regenerar token'}
+              {confirmationPending && (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              )}
+              {confirmation?.action === "delete"
+                ? "Excluir webhook"
+                : "Regenerar token"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -694,5 +1116,7 @@ export function WebhooksTab() {
 }
 
 function getWebhookAPIBaseURL() {
-  return (process.env.NEXT_PUBLIC_VIMOB_API_URL || DEFAULT_WEBHOOK_API_URL).replace(/\/+$/, '');
+  return (
+    process.env.NEXT_PUBLIC_VIMOB_API_URL || DEFAULT_WEBHOOK_API_URL
+  ).replace(/\/+$/, "");
 }

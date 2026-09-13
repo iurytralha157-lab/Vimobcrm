@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { useAuth } from '@/contexts/AuthContext'
+import { useOptionalActiveOrganizationId as useOrganizationId } from '@/hooks/use-active-organization'
 import { propertyCatalogAPI } from '@/lib/api/property-catalog'
 
 export interface PropertyType {
@@ -25,11 +26,6 @@ const defaultTypes = [
   'Ch\u00e1cara',
   'Galp\u00e3o',
 ]
-
-function useOrganizationId() {
-  const { profile, organization } = useAuth()
-  return organization?.id || profile?.organization_id || undefined
-}
 
 export function usePropertyTypes() {
   const organizationId = useOrganizationId()

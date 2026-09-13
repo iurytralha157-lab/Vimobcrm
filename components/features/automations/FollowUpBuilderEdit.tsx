@@ -65,7 +65,7 @@ import { useProperties } from '@/hooks/use-properties';
 import { toast } from 'sonner';
 import DeletableEdge from './edges/DeletableEdge';
 import { FlowSimulator } from './FlowSimulator';
-import type { Json } from '@/integrations/supabase/types';
+import type { Json } from '@/lib/supabase/types';
 import { saveAutomationFlowInputSchema } from '@/lib/validation';
 import { createAutomationMediaPreviewIndex, withAutomationMediaPreview } from './media-preview';
 import { resolveReplyKeywordConfig } from '@/lib/automations';

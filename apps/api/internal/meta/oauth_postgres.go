@@ -623,21 +623,32 @@ func (store oauthPostgresStore) getIntegration(ctx context.Context, organization
 	return integration, nil
 }
 
-func (store oauthPostgresStore) integrationConnected(ctx context.Context, organizationID string, pageID string) (bool, error) {
-	var connected bool
+type oauthPageSubscriptionState struct {
+	ConnectedCount      int64
+	MessagingSubscribed bool
+}
+
+func (store oauthPostgresStore) pageSubscriptionState(ctx context.Context, pageID string) (oauthPageSubscriptionState, error) {
+	var state oauthPageSubscriptionState
 	err := store.db.Pool().QueryRow(ctx, `
-		select coalesce(is_connected, false)
+		select
+		  count(*)::bigint,
+		  coalesce(
+		    bool_or(
+		      coalesce(subscribed_fields, '[]'::jsonb) @> '["messages"]'::jsonb
+		    ),
+		    false
+		  )
 		from public.meta_integrations
-		where organization_id = $1::uuid and page_id = $2
-		limit 1
-	`, organizationID, pageID).Scan(&connected)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return connected, nil
+		where btrim(page_id) = btrim($1)
+		  and coalesce(is_connected, false) = true
+	`, pageID).Scan(&state.ConnectedCount, &state.MessagingSubscribed)
+	return state, err
+}
+
+func (store oauthPostgresStore) connectedPageIntegrationCount(ctx context.Context, pageID string) (int64, error) {
+	state, err := store.pageSubscriptionState(ctx, pageID)
+	return state.ConnectedCount, err
 }
 
 func (store oauthPostgresStore) persistConnectedIntegration(

@@ -1,80 +1,53 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
-import { integrationsAPI } from "@/lib/api";
+import { invalidateScheduleDashboardCaches } from "@/hooks/schedule/invalidate-schedule-dashboard";
+import { getErrorObjectMessage as getErrorMessage } from "@/lib/api/vimob-error";
 import { FEATURES } from "@/config/constants";
+import {
+  buildGoogleCalendarReturnUrl,
+  googleCalendarAPI,
+  type GoogleCalendarConnectionStatus,
+} from "@/lib/api/google-calendar";
 import { toast } from "sonner";
 
-export interface GoogleCalendarConnectionStatus {
-  id: string;
-  organization_id: string;
-  user_id: string;
-  account_email: string | null;
-  account_picture_url: string | null;
-  calendar_id: string;
-  calendar_summary: string | null;
-  sync_enabled: boolean;
-  sync_status: "idle" | "syncing" | "connected" | "error" | "disconnected";
-  connected_at: string;
-  disconnected_at: string | null;
-  last_synced_at: string | null;
-  watch_expires_at: string | null;
-  last_error: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-type GoogleCalendarFunctionResponse<T = unknown> = {
-  success: boolean;
-  error?: string;
-} & T;
-
-const GOOGLE_CALENDAR_DISABLED_MESSAGE = "Integração com Google Agenda desativada temporariamente.";
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "object" && error && "message" in error) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === "string") return message;
-  }
-  return "Erro desconhecido";
-}
-
-async function invokeGoogleCalendar<T>(body: Record<string, unknown>) {
-  if (!FEATURES.ENABLE_GOOGLE_CALENDAR_INTEGRATION) {
-    throw new Error(GOOGLE_CALENDAR_DISABLED_MESSAGE);
-  }
-
-  const data = await integrationsAPI.invokeFunction<GoogleCalendarFunctionResponse<T>>("google-calendar-oauth", body);
-  if (!data?.success) throw new Error(data?.error || "Falha na integracao Google Agenda");
-  return data;
-}
+export type { GoogleCalendarConnectionStatus };
 
 export function useGoogleCalendarStatus(options: { enabled?: boolean } = {}) {
-  const { profile } = useAuth();
+  const { activeOrganization, profile } = useAuth();
 
   return useQuery({
-    queryKey: ["google-calendar-status", profile?.organization_id, profile?.id],
+    queryKey: [
+      "google-calendar-status",
+      activeOrganization.organizationId,
+      profile?.id,
+    ],
     queryFn: async () => {
-      if (!profile?.id) return null;
+      if (!profile?.id || !activeOrganization.organizationId) return null;
       if (!FEATURES.ENABLE_GOOGLE_CALENDAR_INTEGRATION) return null;
-      const data = await invokeGoogleCalendar<{ connection: GoogleCalendarConnectionStatus | null }>({ action: "status" });
-      return data.connection;
+      return googleCalendarAPI.getStatus(activeOrganization.organizationId);
     },
-    enabled: options.enabled !== false && !!profile?.id && FEATURES.ENABLE_GOOGLE_CALENDAR_INTEGRATION,
+    enabled:
+      options.enabled !== false &&
+      !!profile?.id &&
+      !!activeOrganization.organizationId &&
+      FEATURES.ENABLE_GOOGLE_CALENDAR_INTEGRATION,
     staleTime: 1000 * 60,
   });
 }
 
 export function useConnectGoogleCalendar() {
   const queryClient = useQueryClient();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: async () => {
-      const returnUrl = window.location.href;
-      return invokeGoogleCalendar<{ auth_url: string }>({
-        action: "get_auth_url",
-        return_url: returnUrl,
-      });
+      if (!activeOrganization.organizationId) {
+        throw new Error("Organização ativa não encontrada.");
+      }
+      return googleCalendarAPI.getAuthUrl(
+        activeOrganization.organizationId,
+        buildGoogleCalendarReturnUrl(window.location.href),
+      );
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["google-calendar-status"] });
@@ -89,13 +62,17 @@ export function useConnectGoogleCalendar() {
 
 export function useDisconnectGoogleCalendar() {
   const queryClient = useQueryClient();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: async (connectionId?: string) => {
-      await invokeGoogleCalendar({
-        action: "disconnect",
-        connection_id: connectionId,
-      });
+      if (!activeOrganization.organizationId) {
+        throw new Error("Organização ativa não encontrada.");
+      }
+      await googleCalendarAPI.disconnect(
+        activeOrganization.organizationId,
+        connectionId,
+      );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["google-calendar-status"] });
@@ -110,13 +87,17 @@ export function useDisconnectGoogleCalendar() {
 
 export function useToggleGoogleCalendarSync() {
   const queryClient = useQueryClient();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: async (syncEnabled: boolean) => {
-      await invokeGoogleCalendar({
-        action: "set_sync_enabled",
-        sync_enabled: syncEnabled,
-      });
+      if (!activeOrganization.organizationId) {
+        throw new Error("Organização ativa não encontrada.");
+      }
+      await googleCalendarAPI.setSyncEnabled(
+        activeOrganization.organizationId,
+        syncEnabled,
+      );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["google-calendar-status"] });
@@ -131,16 +112,19 @@ export function useToggleGoogleCalendarSync() {
 
 export function useSyncGoogleCalendarNow() {
   const queryClient = useQueryClient();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: async () => {
-      return invokeGoogleCalendar({
-        action: "sync_now",
-      });
+      if (!activeOrganization.organizationId) {
+        throw new Error("Organização ativa não encontrada.");
+      }
+      return googleCalendarAPI.syncNow(activeOrganization.organizationId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["google-calendar-status"] });
       queryClient.invalidateQueries({ queryKey: ["schedule-events"] });
+      invalidateScheduleDashboardCaches(queryClient);
       toast.success("Google Agenda sincronizada");
     },
     onError: (error) => {

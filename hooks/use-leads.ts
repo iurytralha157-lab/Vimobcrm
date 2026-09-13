@@ -1,12 +1,21 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { leadsAPI, type LeadSensitiveProfile, type LeadUpdateInput } from '@/lib/api/leads';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import type { Tables } from '@/integrations/supabase/types';
+import type { Tables } from '@/lib/supabase/types';
 import { enforceClientActionRateLimit, getClientRateLimitMessage } from '@/lib/client-action-rate-limit';
 import { VimobAPIError } from '@/lib/api/vimob-client';
+import { stringifyErrorMessage as getErrorMessage } from '@/lib/api/vimob-error';
 import { invalidateLeadHistorySoon } from '@/hooks/use-optimistic-lead-history';
-import { runLeadImportBatch } from '@/lib/lead-import-batch';
+import { runLeadImportBatch, type ImportBatchProgress } from '@/lib/lead-import-batch';
+import { notifyLeadRealtimeChange } from '@/contexts/LeadRealtimeBus';
+import {
+  countImportDistributionOutcome,
+  createEmptyImportDistributionSummary,
+  resolveImportDistributionOutcome,
+  type ImportDistributionSummary,
+  type LeadDistributionOutcome,
+} from '@/lib/lead-distribution-outcome';
 type LeadTag = Pick<Tables<'tags'>, 'id' | 'name' | 'color'>;
 export type CreateLeadInput = {
   name: string;
@@ -40,6 +49,10 @@ export type CreateLeadInput = {
   lost_reason?: string;
   is_own_resource?: boolean;
   import_mode?: boolean;
+  auto_distribute?: boolean;
+  round_robin_id?: string;
+  import_row_number?: number;
+  import_validation_error?: string;
   profile?: {
     personType?: 'individual' | 'company';
     gender?: 'male' | 'female' | 'other';
@@ -53,12 +66,40 @@ export type CreateLeadInput = {
     stateRegistration?: string;
   };
 };
-type CreateLeadResult = Lead & { reentry?: boolean; assignedUserName?: string };
+type CreateLeadResult = Lead & {
+  reentry?: boolean;
+  assignedUserName?: string;
+  distributionOutcome?: LeadDistributionOutcome;
+};
 
 export type ImportLeadsResult = {
+  total: number;
+  processed: number;
+  remaining: number;
+  created: number;
+  reentered: number;
   success: number;
   failed: number;
-  failures: Array<{ index: number; name: string; message: string }>;
+  failures: Array<{
+    index: number;
+    rowNumber: number;
+    name: string;
+    code: string;
+    message: string;
+  }>;
+  reasons: Array<{ code: string; message: string; count: number }>;
+  distribution: ImportDistributionSummary;
+};
+
+export type ImportLeadsProgress = ImportBatchProgress & {
+  created: number;
+  reentered: number;
+  distribution: ImportDistributionSummary;
+};
+
+export type ImportLeadsMutationInput = {
+  rows: CreateLeadInput[];
+  onProgress?: (progress: ImportLeadsProgress) => void;
 };
 
 export type BulkDeleteLeadsResult = {
@@ -66,10 +107,10 @@ export type BulkDeleteLeadsResult = {
   failures: Array<{ id: string; message: string }>;
 };
 
-const getErrorMessage = (error: unknown) => {
-  if (error instanceof Error) return error.message;
-  return String(error);
-};
+function invalidateLeadSourceOptions(queryClient: QueryClient) {
+  queryClient.invalidateQueries({ queryKey: ['shared-filter-lead-meta-filters'] });
+  queryClient.invalidateQueries({ queryKey: ['lead-meta-filters'] });
+}
 
 const getErrorCode = (error: unknown) => {
   if (typeof error === 'object' && error !== null && 'code' in error) {
@@ -104,8 +145,8 @@ export function useLeads(filters?: {
   search?: string;
   limit?: number;
 }, options: { enabled?: boolean } = {}) {
-  const { user, profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || undefined;
+  const { activeOrganization, user } = useAuth();
+  const organizationId = activeOrganization.organizationId || undefined;
   const limit = filters?.limit || 200;
 
   return useQuery({
@@ -129,8 +170,8 @@ export function useLeads(filters?: {
 }
 
 export function useLead(id: string | null) {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || undefined;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId || undefined;
 
   return useQuery({
     queryKey: ['lead', organizationId, id],
@@ -147,8 +188,8 @@ export function useLead(id: string | null) {
 }
 
 export function useLeadSensitiveProfile(id: string | null, options: { enabled?: boolean } = {}) {
-	const { profile, organization } = useAuth();
-	const organizationId = organization?.id || profile?.organization_id || undefined;
+	const { activeOrganization } = useAuth();
+	const organizationId = activeOrganization.organizationId || undefined;
 
 	return useQuery<LeadSensitiveProfile>({
 		queryKey: ['lead-sensitive-profile', organizationId, id],
@@ -164,8 +205,8 @@ export function useLeadSensitiveProfile(id: string | null, options: { enabled?: 
 
 export function useCreateLead() {
   const queryClient = useQueryClient();
-  const { user, profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || undefined;
+  const { activeOrganization, user } = useAuth();
+  const organizationId = activeOrganization.organizationId || undefined;
 
   return useMutation<CreateLeadResult, Error, CreateLeadInput>({
     mutationFn: async (lead) => {
@@ -177,7 +218,7 @@ export function useCreateLead() {
         { limit: 10, windowMs: 60_000 },
       ]);
 
-      const { data, error, reentry, assignedUserName } = await leadsAPI.createLead(organizationId, {
+      const { data, error, reentry, assignedUserName, distributionOutcome } = await leadsAPI.createLead(organizationId, {
         ...lead,
         source: lead.source || 'manual',
       });
@@ -187,18 +228,26 @@ export function useCreateLead() {
         throw new Error('Não foi possível concluir a criação do lead. Tente novamente.');
       }
 
-      return { ...data, reentry, assignedUserName };
+      return { ...data, reentry, assignedUserName, distributionOutcome };
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       queryClient.invalidateQueries({ queryKey: ['stages'] });
-      queryClient.invalidateQueries({ queryKey: ['stages-with-leads'] });
+      invalidateLeadSourceOptions(queryClient);
+      if (organizationId) {
+        notifyLeadRealtimeChange({
+          organizationId,
+          leadId: data.id,
+          reason: data.reentry ? 'lead.reentered' : 'lead.created',
+        });
+      }
       queryClient.invalidateQueries({ queryKey: ['activities'] });
       if (data?.id) {
         queryClient.invalidateQueries({ queryKey: ['lead', data.id] });
         invalidateLeadHistorySoon(queryClient, data.id);
       }
       queryClient.invalidateQueries({ queryKey: ['whatsapp-conversations'] });
+      queryClient.invalidateQueries({ queryKey: ['whatsapp-conversation'] });
       if (data?.reentry) {
         toast.success(`Lead ja existia e foi atualizado. Responsavel atual: ${data.assignedUserName || 'sem responsavel'}`);
       } else {
@@ -222,54 +271,110 @@ export function useCreateLead() {
 
 export function useImportLeads() {
   const queryClient = useQueryClient();
-  const { user, profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || undefined;
+  const { activeOrganization, user } = useAuth();
+  const organizationId = activeOrganization.organizationId || undefined;
 
-  return useMutation<ImportLeadsResult, Error, CreateLeadInput[]>({
-    mutationFn: async (rows) => {
+  return useMutation<ImportLeadsResult, Error, CreateLeadInput[] | ImportLeadsMutationInput>({
+    mutationFn: async (input) => {
+      const rows = Array.isArray(input) ? input : input.rows;
+      const onProgress = Array.isArray(input) ? undefined : input.onProgress;
       if (!user?.id) throw new Error('Usuário não autenticado');
       if (!organizationId) throw new Error('Usuário não possui organização');
       if (rows.length === 0) throw new Error('Nenhum contato válido para importar');
-      if (rows.length > 2_000) throw new Error('A importação aceita até 2.000 contatos por arquivo');
+
+      let created = 0;
+      let reentered = 0;
+      const distribution = createEmptyImportDistributionSummary();
 
       const batch = await runLeadImportBatch(
         rows,
         async (row) => {
-          await leadsAPI.createLead(organizationId, {
-            ...row,
+          if (row.import_validation_error) {
+            throw Object.assign(new Error(row.import_validation_error), {
+              code: 'invalid_import_row',
+            });
+          }
+
+          const lead = { ...row };
+          delete lead.import_row_number;
+          delete lead.import_validation_error;
+          const result = await leadsAPI.createLead(organizationId, {
+            ...lead,
             import_mode: true,
           });
+          if (result.reentry) reentered += 1;
+          else created += 1;
+          countImportDistributionOutcome(distribution, resolveImportDistributionOutcome({
+            serverOutcome: result.distributionOutcome,
+            reentry: result.reentry,
+            autoDistribute: row.auto_distribute,
+          }));
         },
-        3,
+        {
+          concurrency: 4,
+          onProgress: progress => onProgress?.({
+            ...progress,
+            created,
+            reentered,
+            distribution: { ...distribution },
+          }),
+        },
       );
       const failures: ImportLeadsResult['failures'] = batch.failures.map(
         ({ index, error }) => ({
           index,
+          rowNumber: rows[index].import_row_number ?? index + 2,
           name: rows[index].name,
-          message: getErrorMessage(error),
+          code: getErrorCode(error) || 'import_row_failed',
+          message: getErrorMessage(error) || 'Não foi possível importar esta linha',
         }),
       );
+      const reasonMap = new Map<string, ImportLeadsResult['reasons'][number]>();
+      failures.forEach((failure) => {
+        const key = `${failure.code}\u0000${failure.message}`;
+        const existing = reasonMap.get(key);
+        if (existing) existing.count += 1;
+        else reasonMap.set(key, {
+          code: failure.code,
+          message: failure.message,
+          count: 1,
+        });
+      });
+
+      const success = batch.successIndexes.length;
 
       return {
-        success: batch.successIndexes.length,
+        total: rows.length,
+        processed: rows.length,
+        remaining: 0,
+        created,
+        reentered,
+        success,
         failed: failures.length,
         failures,
+        reasons: Array.from(reasonMap.values()).sort((left, right) =>
+          right.count - left.count || left.message.localeCompare(right.message),
+        ),
+        distribution,
       };
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       queryClient.invalidateQueries({ queryKey: ['contacts-list'] });
       queryClient.invalidateQueries({ queryKey: ['shared-filter-contacts'] });
       queryClient.invalidateQueries({ queryKey: ['stages'] });
-      queryClient.invalidateQueries({ queryKey: ['stages-with-leads'] });
+      if (result.success > 0) invalidateLeadSourceOptions(queryClient);
+      if (organizationId && result.success > 0) {
+        notifyLeadRealtimeChange({ organizationId, reason: 'lead.created' });
+      }
     },
   });
 }
 
 export function useUpdateLead() {
   const queryClient = useQueryClient();
-  const { user, profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || undefined;
+  const { activeOrganization, user } = useAuth();
+  const organizationId = activeOrganization.organizationId || undefined;
 
   return useMutation({
     mutationFn: async ({ id, ...updates }: UpdateLeadInput) => {
@@ -291,7 +396,7 @@ export function useUpdateLead() {
 
       return data;
     },
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       if (data?.id) {
         queryClient.setQueryData(['lead', organizationId, data.id], data);
         queryClient.setQueriesData<Lead[]>({ queryKey: ['leads'] }, (current) => {
@@ -322,7 +427,14 @@ export function useUpdateLead() {
 
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       queryClient.invalidateQueries({ queryKey: ['contacts-list'], refetchType: 'active' });
-      queryClient.invalidateQueries({ queryKey: ['stages-with-leads'] });
+      if (variables.source !== undefined) invalidateLeadSourceOptions(queryClient);
+      if (organizationId && data?.id) {
+        notifyLeadRealtimeChange({
+          organizationId,
+          leadId: data.id,
+          reason: 'lead.updated',
+        });
+      }
       queryClient.invalidateQueries({ queryKey: ['activities'], refetchType: 'none' });
     },
     onError: (error) => {
@@ -338,8 +450,8 @@ export function useUpdateLead() {
 
 export function useDeleteLead() {
   const queryClient = useQueryClient();
-  const { user, profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || undefined;
+  const { activeOrganization, user } = useAuth();
+  const organizationId = activeOrganization.organizationId || undefined;
 
   return useMutation({
     mutationFn: async (id: string) => {
@@ -354,11 +466,13 @@ export function useDeleteLead() {
       const { error } = await leadsAPI.deleteLead(id, organizationId);
       if (error) throw error;
     },
-    onSuccess: () => {
+    onSuccess: (_, leadId) => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       queryClient.invalidateQueries({ queryKey: ['contacts-list'] });
       queryClient.invalidateQueries({ queryKey: ['stages'] });
-      queryClient.invalidateQueries({ queryKey: ['stages-with-leads'] });
+      if (organizationId) {
+        notifyLeadRealtimeChange({ organizationId, leadId, reason: 'lead.deleted' });
+      }
       toast.success('Contato excluído!');
     },
     onError: (error) => {
@@ -374,8 +488,8 @@ export function useDeleteLead() {
 
 export function useBulkDeleteLeads() {
   const queryClient = useQueryClient();
-  const { user, profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || undefined;
+  const { activeOrganization, user } = useAuth();
+  const organizationId = activeOrganization.organizationId || undefined;
 
   return useMutation<BulkDeleteLeadsResult, Error, string[]>({
     mutationFn: async (inputIds) => {
@@ -416,15 +530,17 @@ export function useBulkDeleteLeads() {
       queryClient.invalidateQueries({ queryKey: ['contacts-list'] });
       queryClient.invalidateQueries({ queryKey: ['shared-filter-contacts'] });
       queryClient.invalidateQueries({ queryKey: ['stages'] });
-      queryClient.invalidateQueries({ queryKey: ['stages-with-leads'] });
+      if (organizationId) {
+        notifyLeadRealtimeChange({ organizationId, reason: 'lead.deleted' });
+      }
     },
   });
 }
 
 export function useAddLeadTag() {
   const queryClient = useQueryClient();
-  const { user, profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || undefined;
+  const { activeOrganization, user } = useAuth();
+  const organizationId = activeOrganization.organizationId || undefined;
 
   return useMutation({
     mutationFn: async ({ leadId, tagId }: { leadId: string; tagId: string }) => {
@@ -445,9 +561,17 @@ export function useAddLeadTag() {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       queryClient.invalidateQueries({ queryKey: ['lead'] });
       queryClient.invalidateQueries({ queryKey: ['stages'] });
-      queryClient.invalidateQueries({ queryKey: ['stages-with-leads'] });
+      if (organizationId) {
+        notifyLeadRealtimeChange({
+          organizationId,
+          leadId: variables.leadId,
+          reason: 'lead.tagged',
+        });
+      }
       queryClient.invalidateQueries({ queryKey: ['activities'] });
       queryClient.invalidateQueries({ queryKey: ['conversation-lead-detail'] });
+      queryClient.invalidateQueries({ queryKey: ['whatsapp-conversations'] });
+      queryClient.invalidateQueries({ queryKey: ['whatsapp-conversation'] });
       invalidateLeadHistorySoon(queryClient, variables.leadId);
       toast.success('Tag adicionada!');
     },
@@ -469,8 +593,8 @@ export function useAddLeadTag() {
 
 export function useRemoveLeadTag() {
   const queryClient = useQueryClient();
-  const { user, profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || undefined;
+  const { activeOrganization, user } = useAuth();
+  const organizationId = activeOrganization.organizationId || undefined;
 
   return useMutation({
     mutationFn: async ({ leadId, tagId }: { leadId: string; tagId: string }) => {
@@ -490,9 +614,17 @@ export function useRemoveLeadTag() {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       queryClient.invalidateQueries({ queryKey: ['lead'] });
       queryClient.invalidateQueries({ queryKey: ['stages'] });
-      queryClient.invalidateQueries({ queryKey: ['stages-with-leads'] });
+      if (organizationId) {
+        notifyLeadRealtimeChange({
+          organizationId,
+          leadId: variables.leadId,
+          reason: 'lead.untagged',
+        });
+      }
       queryClient.invalidateQueries({ queryKey: ['activities'] });
       queryClient.invalidateQueries({ queryKey: ['conversation-lead-detail'] });
+      queryClient.invalidateQueries({ queryKey: ['whatsapp-conversations'] });
+      queryClient.invalidateQueries({ queryKey: ['whatsapp-conversation'] });
       invalidateLeadHistorySoon(queryClient, variables.leadId);
       toast.success('Tag removida!');
     },

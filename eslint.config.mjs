@@ -15,6 +15,7 @@ const eslintConfig = defineConfig([
     ".codex-logs/**",
     ".codex-tmp/**",
     ".codex-worktrees/**",
+    ".property-*-tests/**",
     ".tmp/**",
     ".validation-tests/**",
     "node_modules/**",

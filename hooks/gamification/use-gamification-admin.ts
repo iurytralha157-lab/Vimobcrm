@@ -8,17 +8,13 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getFriendlyErrorMessage } from '@/lib/error-handler';
 import { gamificationAPI, type GamificationActionType, type GamificationMissionInput } from '@/lib/api/gamification';
 
-function getErrorMessage(error: unknown) {
-  return getFriendlyErrorMessage(error);
-}
-
 function showMutationError(action: string, error: unknown) {
-  toast.error(action, { description: getErrorMessage(error) });
+  toast.error(action, { description: getFriendlyErrorMessage(error) });
 }
 
 export function useGamificationAdmin(enabled = true) {
-  const { organization } = useAuth();
-  const organizationId = organization?.id;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
   const queryClient = useQueryClient();
 
   const query = useQuery({

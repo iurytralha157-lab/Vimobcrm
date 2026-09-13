@@ -258,7 +258,7 @@ func TestPublicOnboardingPrevalidationRemainsReadOnlyAndRouted(t *testing.T) {
 	if resolveIP < 0 || repositoryCall < 0 || resolveIP >= repositoryCall {
 		t.Fatal("prevalidation handler must replace client-supplied network identity before repository access")
 	}
-	appRaw, err := os.ReadFile("../app/app.go")
+	appRaw, err := os.ReadFile("../app/routes.go")
 	if err != nil {
 		t.Fatal(err)
 	}

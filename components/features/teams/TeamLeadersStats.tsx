@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Crown, Users, TrendingUp, Loader2 } from 'lucide-react';
 import { useLeaderStats } from '@/hooks/use-leader-stats';
+import { getInitials } from '@/lib/user-display';
 
 export function TeamLeadersStats() {
   const { data: stats = [], isLoading } = useLeaderStats();
@@ -31,10 +32,6 @@ export function TeamLeadersStats() {
       </Card>
     );
   }
-
-  const getInitials = (name: string) => {
-    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
-  };
 
   return (
     <div className="space-y-4">

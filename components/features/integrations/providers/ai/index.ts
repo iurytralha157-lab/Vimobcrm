@@ -1,0 +1,1 @@
+export { aiIntegrationProviderManifest } from "./manifest";

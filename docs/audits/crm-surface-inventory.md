@@ -1,39 +1,39 @@
 # Inventario canonico de superficies do CRM
 
 Gerado por `node scripts/audits/inventory-crm-surfaces.mjs --write`.
-O conteudo e deterministico para o digest `1953a1cc8f0496d73067993af1b8461ef9493ec804442eb5656c7f41372267ca`.
+O conteudo e deterministico para o digest `eac29f6e6ec5e26ce3edf8b50beefd08d079f55e24cec06c9dae2b4037c43bd4`.
 
 ## Denominadores
 
 | Superficie | Total |
 | --- | ---: |
-| Rotas de arquivo | 84 |
-| Telas renderizaveis (sem redirects) | 78 |
-| Aliases/redirects | 6 |
-| Rotas protegidas | 63 |
+| Rotas de arquivo | 89 |
+| Telas renderizaveis (sem redirects) | 82 |
+| Aliases/redirects | 7 |
+| Rotas protegidas | 68 |
 | Rotas protegidas admin | 19 |
 | Rotas nao protegidas (publicas, site e auth) | 21 |
-| Rotas dinamicas | 16 |
-| Overlays unicos | 221 |
+| Rotas dinamicas | 17 |
+| Overlays unicos | 213 |
 | Formularios HTML unicos | 49 |
-| CTAs internos unicos | 1284 |
-| Controles complementares de overlay/tab | 293 |
+| CTAs internos unicos | 1306 |
+| Controles complementares de overlay/tab | 279 |
 
-Overlays: `alertDialog` 58, `dialog` 86, `dropdownMenu` 34, `popover` 26, `sheet` 17.
+Overlays: `alertDialog` 60, `dialog` 79, `dropdownMenu` 30, `popover` 31, `sheet` 13.
 
-CTAs declarados, inclusive externos/desconhecidos: `actionButton` 1183, `external` 8, `internal` 30, `internalDynamic` 71, `unknownDynamic` 38.
+CTAs declarados, inclusive externos/desconhecidos: `actionButton` 1199, `external` 6, `internal` 32, `internalDynamic` 75, `unknownDynamic` 44.
 
 ## Identificadores estaveis
 
-O indice JSON usa IDs no formato `tipo:00000000000000000000`, derivados por SHA-256 de tipo + caminho relativo + localizacao/assinatura estrutural. Nenhum caminho absoluto entra na chave. O digest do indice e `ffaed169fc1dd7dcf91760eea8140cc1f47ca518fd0d68aa3ae377eeb65151a5`.
+O indice JSON usa IDs no formato `tipo:00000000000000000000`, derivados por SHA-256 de tipo + caminho relativo + localizacao/assinatura estrutural. Nenhum caminho absoluto entra na chave. O digest do indice e `98f58c4bed3e2692d72b5340af129db2f46aeb0d44737efc4c79b1a9ebe67d0d`.
 
 | Categoria enderecavel | IDs |
 | --- | ---: |
-| Rotas renderizaveis e aliases | 84 |
-| Overlays alcancaveis | 193 |
-| Formularios alcancaveis | 46 |
-| CTAs internos alcancaveis | 1175 |
-| Controles complementares alcancaveis | 260 |
+| Rotas renderizaveis e aliases | 89 |
+| Overlays alcancaveis | 206 |
+| Formularios alcancaveis | 49 |
+| CTAs internos alcancaveis | 1270 |
+| Controles complementares alcancaveis | 272 |
 
 Cada entrada de superficie preserva arquivo, linha, coluna, dono e rotas associadas, permitindo que um caso E2E declare exatamente o ID coberto sem criar uma segunda contagem.
 
@@ -41,12 +41,12 @@ Cada entrada de superficie preserva arquivo, linha, coluna, dono e rotas associa
 
 | Verificacao | Denominador |
 | --- | ---: |
-| Acesso das rotas protegidas x ADM/Lider/Usuario | 189 |
-| Tela renderizavel x desktop/mobile | 156 |
-| Contrato dos aliases | 6 |
-| Overlays alcancaveis por implementacao | 193 |
-| Formularios alcancaveis por implementacao | 46 |
-| CTAs internos alcancaveis por implementacao | 1175 |
+| Acesso das rotas protegidas x ADM/Lider/Usuario | 204 |
+| Tela renderizavel x desktop/mobile | 164 |
+| Contrato dos aliases | 7 |
+| Overlays alcancaveis por implementacao | 206 |
+| Formularios alcancaveis por implementacao | 49 |
+| CTAs internos alcancaveis por implementacao | 1270 |
 | CTAs das telas de erro/infraestrutura | 2 |
 
 Nao se somam esses denominadores como se fossem equivalentes. A cobertura deve ser informada por categoria e, para o corte de 90%, tambem como `aprovados / planejados` com todo P0/P1 obrigatoriamente aprovado.
@@ -62,14 +62,14 @@ Nao se somam esses denominadores como se fossem equivalentes. A cobertura deve s
 
 ## Lacunas do inventario estatico
 
-- 35 arquivo(s) com superficie declarada nao aparecem no grafo conservador iniciado nas rotas.
-- 16 rota(s) dinamica(s) exigem fixture valida e caso invalido; o inventario nao cria dados.
+- 10 arquivo(s) com superficie declarada nao aparecem no grafo conservador iniciado nas rotas.
+- 17 rota(s) dinamica(s) exigem fixture valida e caso invalido; o inventario nao cria dados.
 - As 19 rotas /admin sao de superadministracao: ADM/Lider/Usuario da organizacao devem ter negacao esperada, e uma persona superadmin separada e necessaria para validar a tela.
 - Imports por barrel sao seguidos em nivel de arquivo e podem superestimar associacoes rota-componente; os denominadores unicos nao duplicam a implementacao.
 - Elementos gerados por map/lista contam uma implementacao de codigo, nao a quantidade dependente dos dados em runtime.
 - Handlers, feature flags, permissoes e destinos dinamicos precisam de verificacao em runtime; este auditor e deliberadamente estatico.
 
-Arquivos com superficie fora do grafo conservador: `components/features/announcements/AnnouncementBanner.tsx`, `components/features/crm-management/CadencesTab.tsx`, `components/features/crm-management/DistributionQueueTab.tsx`, `components/features/crm-management/OperationalTab.tsx`, `components/features/crm-management/TabIntroCard.tsx`, `components/features/dashboard/CampaignPerformanceWidget.tsx`, `components/features/dashboard/DashboardAlertBar.tsx`, `components/features/dashboard/RecentActivities.tsx`, `components/features/dashboard/UpcomingTasksWidget.tsx`, `components/features/financial/SmartEntryForm.tsx`, `components/features/help/FeatureRequestDialog.tsx`, `components/features/help/QuickActions.tsx`, `components/features/integrations/MetaFormManager.tsx`, `components/features/leads/LeadHistory.tsx`, `components/features/leads/LeadMessagesTab.tsx`, `components/features/leads/LeadTrackingSection.tsx`, `components/features/leads/SdrDistributionButton.tsx`, `components/features/pipelines/PipelineSlaSettings.tsx`, `components/features/properties/ImoviewImportDialog.tsx`, `components/features/properties/PropertyFormDialog.tsx`, `components/features/properties/VistaImportDialog.tsx`, `components/features/properties/detail/PropertyAssetDeleteDialog.tsx`, `components/features/properties/detail/PropertyAssetDialog.tsx`, `components/features/round-robin/EditQueueDialog.tsx`, `components/features/round-robin/RuleEditor.tsx`, `components/features/round-robin/RulesManager.tsx`, `components/features/schedule/EventForm.tsx`, `components/features/settings/RolesTab.tsx`, `components/features/teams/TeamCard.tsx`, `components/features/whatsapp/GroupsManagerSheet.tsx`, `components/features/whatsapp/LabelsManagerSheet.tsx`, `components/features/whatsapp/LabelsPopover.tsx`, `components/features/whatsapp/LeadSidePanel.tsx`, `components/features/whatsapp/QuickActions.tsx`, `components/features/whatsapp/QuickMessageTemplates.tsx`.
+Arquivos com superficie fora do grafo conservador: `components/features/crm-management/DistributionQueueTab.tsx`, `components/features/dashboard/CampaignPerformanceWidget.tsx`, `components/features/dashboard/DashboardAlertBar.tsx`, `components/features/dashboard/RecentActivities.tsx`, `components/features/dashboard/UpcomingTasksWidget.tsx`, `components/features/integrations/MetaConversionFeedbackPanel.tsx`, `components/features/integrations/MetaFormManager.tsx`, `components/features/leads/SdrDistributionButton.tsx`, `components/features/round-robin/RulesManager.tsx`, `components/features/settings/RolesTab.tsx`.
 
 Superficies de erro/infraestrutura verificadas separadamente: `app/(protected)/error.tsx`, `app/error.tsx`.
 
@@ -112,6 +112,8 @@ Delegacoes `Button asChild` a revisar: nenhuma.
 | `route:9ad85d302163f62dd2a6` | `/crm/contacts` | protected | estatica | `-` |
 | `route:0fd7fbfe398bb0ac358c` | `/crm/conversas` | protected | estatica | `-` |
 | `route:dc86e96838c7ef79928e` | `/crm/management` | protected | estatica | `-` |
+| `route:b49dc798158ca2e3c78a` | `/crm/management/distribution/[id]/edit` | protected | dinamica | `-` |
+| `route:8be9c5f3465f01ec0cce` | `/crm/management/distribution/new` | protected | estatica | `-` |
 | `route:15818b6ea1843d71467a` | `/crm/management/teams/[id]/edit` | protected | dinamica | `-` |
 | `route:38eebfc719842d04c399` | `/crm/management/teams/new` | protected | estatica | `-` |
 | `route:7891c3d6187bc64bec1b` | `/crm/pipelines` | protected | estatica | `-` |
@@ -144,18 +146,21 @@ Delegacoes `Button asChild` a revisar: nenhuma.
 | `route:35522dc528c9d332e37e` | `/properties/[id]` | protected | dinamica | `-` |
 | `route:91094461966c868a9eb2` | `/properties/[id]/edit` | protected | dinamica | `-` |
 | `route:45dda8f8a9e3d63b9136` | `/properties/condominiums` | protected | estatica | `-` |
-| `route:79391f2b4051eb9a4d83` | `/properties/developments` | protected | estatica | `-` |
+| `route:a99c5b8fb3821775c216` | `/properties/developments` | protected | alias | ``/properties/launches${nextSearch ? `?${nextSearch}` : ""}`` |
 | `route:4f43a8077b166d28f2aa` | `/properties/developments/[id]` | protected | dinamica | `-` |
+| `route:7c4b25c2f40b50272de0` | `/properties/launches` | protected | estatica | `-` |
 | `route:995ec62d517d53288b07` | `/properties/locations` | protected | estatica | `-` |
 | `route:7abdaa26c0e2e8963d47` | `/properties/new` | protected | estatica | `-` |
 | `route:928bd2664ebdaac64f9b` | `/properties/owners` | protected | estatica | `-` |
 | `route:fe24531c9731f083e908` | `/properties/rentals` | protected | estatica | `-` |
+| `route:2628df75032b23c75700` | `/properties/settings` | protected | estatica | `-` |
 | `route:6bcb6e971c4cdde6ebf4` | `/reset-password` | auth | estatica | `-` |
 | `route:001a7b3436b762432045` | `/select-organization` | protected | estatica | `-` |
-| `route:478db995ffa698fda68a` | `/settings` | protected | estatica | ``/settings/integrations/meta${nextSearch ? `?${nextSearch}` : ""}`` |
+| `route:478db995ffa698fda68a` | `/settings` | protected | estatica | ``/properties/settings${nextSearch ? `?${nextSearch}` : ""}`; `/settings/integrations/meta${nextSearch ? `?${nextSearch}` : ""}`; `/settings/integrations/whatsapp${nextSearch ? `?${nextSearch}` : ""}`` |
 | `route:5311f43f9580e51f6201` | `/settings/ai` | protected | alias | `/settings?tab=ai` |
 | `route:80723a77ceb91316f5c3` | `/settings/integrations/grupo-olx` | protected | alias | `/settings?tab=grupo-olx` |
 | `route:4d668f443cdf67316f08` | `/settings/integrations/meta` | protected | estatica | `-` |
+| `route:03df4e2d62dfc23b8a5e` | `/settings/integrations/whatsapp` | protected | estatica | `-` |
 | `route:ee3e2704620b2afdbc3a` | `/settings/site` | protected | estatica | `-` |
 | `route:64006dd15b8f9e96ad29` | `/settings/users/[id]` | protected | dinamica | `-` |
 | `route:336c91c8701a2a4f939f` | `/sites/[slug]/[[...path]]` | public | dinamica | `-` |

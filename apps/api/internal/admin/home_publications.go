@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/supabasehttp"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -213,7 +214,7 @@ func (handler Handler) AnswerHomeAssistant(w http.ResponseWriter, r *http.Reques
 
 	defer r.Body.Close()
 	var request homeAssistantRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 
@@ -253,7 +254,7 @@ func (handler Handler) CreateHomePublicationAdmin(w http.ResponseWriter, r *http
 
 	defer r.Body.Close()
 	var request homePublicationCreateRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 
@@ -283,7 +284,7 @@ func (handler Handler) UpdateHomePublicationAdmin(w http.ResponseWriter, r *http
 	}
 	defer r.Body.Close()
 	var request homePublicationUpdateRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 
@@ -341,7 +342,7 @@ func (handler Handler) ReorderHomePublicationsAdmin(w http.ResponseWriter, r *ht
 
 	defer r.Body.Close()
 	var request homePublicationOrderRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	items, err := handler.repo.ReorderHomePublications(r.Context(), tenantContext, request.Items)
@@ -1247,13 +1248,13 @@ func (repo Repository) uploadHomePublicationObject(ctx context.Context, objectPa
 		"%s/storage/v1/object/%s/%s",
 		repo.projectURL,
 		url.PathEscape(homePublicationImageBucket),
-		escapeHomePublicationObjectPath(objectPath),
+		supabasehttp.EscapeObjectPath(objectPath),
 	)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
 	if err != nil {
 		return err
 	}
-	setHomePublicationStorageAuth(request, repo.apiKey)
+	supabasehttp.SetServiceAuth(request, repo.apiKey)
 	request.Header.Set("Content-Type", contentType)
 	request.Header.Set("Cache-Control", "31536000, immutable")
 	request.Header.Set("x-upsert", "false")
@@ -1288,13 +1289,13 @@ func (repo Repository) deleteHomePublicationObject(ctx context.Context, objectPa
 		"%s/storage/v1/object/%s/%s",
 		repo.projectURL,
 		url.PathEscape(homePublicationImageBucket),
-		escapeHomePublicationObjectPath(objectPath),
+		supabasehttp.EscapeObjectPath(objectPath),
 	)
 	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
 	if err != nil {
 		return err
 	}
-	setHomePublicationStorageAuth(request, repo.apiKey)
+	supabasehttp.SetServiceAuth(request, repo.apiKey)
 
 	response, err := repo.httpClient.Do(request)
 	if err != nil {
@@ -1312,29 +1313,7 @@ func (repo Repository) deleteHomePublicationObject(ctx context.Context, objectPa
 }
 
 func (repo Repository) homePublicationPublicURL(objectPath string) string {
-	return fmt.Sprintf(
-		"%s/storage/v1/object/public/%s/%s",
-		repo.projectURL,
-		url.PathEscape(homePublicationImageBucket),
-		escapeHomePublicationObjectPath(objectPath),
-	)
-}
-
-func setHomePublicationStorageAuth(request *http.Request, apiKey string) {
-	request.Header.Set("apikey", apiKey)
-	request.Header.Del("Authorization")
-	segments := strings.Split(apiKey, ".")
-	if len(segments) == 3 && segments[0] != "" && segments[1] != "" && segments[2] != "" {
-		request.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-}
-
-func escapeHomePublicationObjectPath(value string) string {
-	parts := strings.Split(strings.Trim(value, "/"), "/")
-	for index, part := range parts {
-		parts[index] = url.PathEscape(part)
-	}
-	return strings.Join(parts, "/")
+	return supabasehttp.PublicObjectURL(repo.projectURL, homePublicationImageBucket, objectPath)
 }
 
 func sanitizeHomeAssistantText(value string, maxRunes int) string {

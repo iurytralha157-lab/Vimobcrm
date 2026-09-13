@@ -1,36 +1,14 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { useAuth } from '@/contexts/AuthContext'
-import { propertyOwnersAPI, type PropertyOwner, type PropertyOwnerInput, type PropertyOwnerPage } from '@/lib/api/property-owners'
+import { useOptionalActiveOrganizationId as useOrganizationId } from '@/hooks/use-active-organization'
+import { propertyOwnersAPI, type PropertyOwner, type PropertyOwnerInput, type PropertyOwnerPage, type PropertyOwnerUpdateInput } from '@/lib/api/property-owners'
+import { stringifyErrorMessage as getErrorMessage } from '@/lib/api/vimob-error'
+import { isPropertyWorkspaceConflict } from '@/lib/property-concurrency'
 
 export type { PropertyOwner }
 
 export const PROPERTY_OWNER_PAGE_SIZE = 50
-
-function useOrganizationId() {
-  const { profile, organization } = useAuth()
-  return organization?.id || profile?.organization_id || undefined
-}
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message
-  return String(error)
-}
-
-export function usePropertyOwners() {
-  const organizationId = useOrganizationId()
-
-  return useQuery({
-    queryKey: ['property-owners', organizationId],
-    queryFn: async () => {
-      if (!organizationId) return [] as PropertyOwner[]
-
-      const { data } = await propertyOwnersAPI.getOwners(organizationId)
-      return data
-    },
-    enabled: !!organizationId,
-  })
-}
 
 export function usePropertyOwnersPage(
   search = '',
@@ -95,7 +73,7 @@ export function useUpdatePropertyOwner() {
   const organizationId = useOrganizationId()
 
   return useMutation({
-    mutationFn: async ({ id, ...owner }: PropertyOwnerInput & { id: string }) => {
+    mutationFn: async ({ id, ...owner }: PropertyOwnerUpdateInput & { id: string }) => {
       if (!user?.id) throw new Error('Usuário não autenticado')
       if (!organizationId) throw new Error('Usuário não possui organização')
 
@@ -108,8 +86,44 @@ export function useUpdatePropertyOwner() {
       queryClient.invalidateQueries({ queryKey: ['properties-infinite'] })
       toast.success('Proprietario atualizado!')
     },
-    onError: (error) => {
+    onError: async (error) => {
+      if (isPropertyWorkspaceConflict(error)) {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['property-owners'] }),
+          queryClient.invalidateQueries({ queryKey: ['properties'] }),
+          queryClient.invalidateQueries({ queryKey: ['properties-infinite'] }),
+        ])
+        toast.error('Este proprietário foi alterado por outra pessoa. Feche e reabra a edição para revisar a versão mais recente.')
+        return
+      }
       toast.error('Erro ao atualizar proprietario: ' + getErrorMessage(error))
+    },
+  })
+}
+
+export function useDeactivatePropertyOwner() {
+  const queryClient = useQueryClient()
+  const { user } = useAuth()
+  const organizationId = useOrganizationId()
+
+  return useMutation({
+    mutationFn: async ({ id, expected_updated_at }: { id: string; expected_updated_at: string }) => {
+      if (!user?.id) throw new Error('Usuário não autenticado')
+      if (!organizationId) throw new Error('Usuário não possui organização')
+
+      await propertyOwnersAPI.deactivateOwner(organizationId, id, expected_updated_at)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['property-owners'] })
+      toast.success('Proprietario desativado!')
+    },
+    onError: async (error) => {
+      await queryClient.invalidateQueries({ queryKey: ['property-owners'] })
+      if (isPropertyWorkspaceConflict(error)) {
+        toast.error('Este proprietário foi alterado por outra pessoa. Atualize a lista antes de tentar novamente.')
+        return
+      }
+      toast.error('Erro ao desativar proprietario: ' + getErrorMessage(error))
     },
   })
 }

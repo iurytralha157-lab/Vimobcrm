@@ -143,10 +143,10 @@ export function useHomeOverview(
   scope: HomeFocusScope = 'mine',
   enabled = true,
 ) {
-  const { organization, profile, user, isSuperAdmin } = useAuth()
+  const { activeOrganization, organization, profile, user, isSuperAdmin } = useAuth()
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions()
   const { hasModule, isLoading: modulesLoading } = useOrganizationModules()
-  const organizationId = organization?.id ?? profile?.organization_id
+  const organizationId = activeOrganization.organizationId
   const today = useTodayRange()
   const billingBlocked = !isSuperAdmin && isBillingAccessBlocked(organization)
 

@@ -247,9 +247,9 @@ type SaveSubscriptionOptions = {
 };
 
 export function useWebPush() {
-  const { user, profile, organization } = useAuth();
+  const { activeOrganization, user, profile, organization } = useAuth();
   const queryClient = useQueryClient();
-  const organizationId = organization?.id || profile?.organization_id;
+  const organizationId = activeOrganization.organizationId;
   const [state, setState] = useState<WebPushState>({
     isSupported: false,
     isSubscribed: false,

@@ -1,0 +1,1 @@
+export { GoogleTagManagerIntegrationSettings } from './GoogleTagManagerIntegrationSettings'

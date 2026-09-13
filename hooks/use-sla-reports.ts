@@ -22,19 +22,19 @@ export interface SlaFilters {
 }
 
 export function useSlaPerformanceByUser(filters?: SlaFilters) {
-  const { profile } = useAuth();
+  const { activeOrganization, profile } = useAuth();
 
   return useQuery({
     queryKey: ["sla-performance-by-user", filters],
     queryFn: async () => {
-      if (!profile?.organization_id) return [];
+      if (!activeOrganization.organizationId) return [];
       return analyticsAPI.slaPerformanceByUser<SlaPerformanceByUser>({
         startDate: filters?.startDate?.toISOString(),
         endDate: filters?.endDate?.toISOString(),
         pipelineId: filters?.pipelineId,
       });
     },
-    enabled: !!profile?.organization_id,
+    enabled: !!activeOrganization.organizationId,
   });
 }
 
@@ -47,12 +47,12 @@ export interface SlaSummary {
 }
 
 export function useSlaSummary(pipelineId?: string | null) {
-  const { profile } = useAuth();
+  const { activeOrganization, profile } = useAuth();
 
   return useQuery({
     queryKey: ["sla-summary", pipelineId],
     queryFn: async (): Promise<SlaSummary> => {
-      if (!profile?.organization_id) {
+      if (!activeOrganization.organizationId) {
         return {
           totalPending: 0,
           totalWarning: 0,
@@ -64,7 +64,7 @@ export function useSlaSummary(pipelineId?: string | null) {
 
       return analyticsAPI.slaSummary<SlaSummary>({ pipelineId });
     },
-    enabled: !!profile?.organization_id,
+    enabled: !!activeOrganization.organizationId,
   });
 }
 

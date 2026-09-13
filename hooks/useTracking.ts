@@ -1,29 +1,40 @@
-import { useCallback } from 'react';
-import { publicSiteAPI } from '@/lib/api/public-site';
-import { getPublicSiteAttribution } from '@/lib/public-site-attribution';
+import { useCallback } from "react";
+import { publicSiteAPI } from "@/lib/api/public-site";
+import {
+  getPublicSiteAttribution,
+  hasPublicSiteSessionStarted,
+  markPublicSiteSessionStarted,
+  sanitizePublicReferrer,
+} from "@/lib/public-site-attribution";
+import { createPublicSiteSessionStartCoordinator } from "@/lib/site/public-session";
+import type { PublicTrackingEventType } from "@/lib/site/public-tracking";
+import type { PublicTrackingInput } from "@/lib/validation";
 
 function getOS(): string {
   const ua = navigator.userAgent;
-  if (/iPhone|iPad|iPod/.test(ua)) return 'iOS';
-  if (/Android/.test(ua)) return 'Android';
-  if (/Windows/.test(ua)) return 'Windows';
-  if (/Mac OS X/.test(ua)) return 'macOS';
-  if (/Linux/.test(ua)) return 'Linux';
-  return 'other';
+  if (/iPhone|iPad|iPod/.test(ua)) return "iOS";
+  if (/Android/.test(ua)) return "Android";
+  if (/Windows/.test(ua)) return "Windows";
+  if (/Mac OS X/.test(ua)) return "macOS";
+  if (/Linux/.test(ua)) return "Linux";
+  return "other";
 }
 
-function getDeviceInfo() {
+function getDeviceInfo(): Pick<
+  PublicTrackingInput,
+  "device_type" | "browser" | "screen_width" | "screen_height"
+> {
   const width = window.innerWidth;
-  let deviceType = 'desktop';
-  if (width <= 768) deviceType = 'mobile';
-  else if (width <= 1024) deviceType = 'tablet';
+  let deviceType: "desktop" | "mobile" | "tablet" = "desktop";
+  if (width <= 768) deviceType = "mobile";
+  else if (width <= 1024) deviceType = "tablet";
 
   const ua = navigator.userAgent;
-  let browser = 'other';
-  if (ua.includes('Chrome') && !ua.includes('Edg')) browser = 'chrome';
-  else if (ua.includes('Firefox')) browser = 'firefox';
-  else if (ua.includes('Safari') && !ua.includes('Chrome')) browser = 'safari';
-  else if (ua.includes('Edg')) browser = 'edge';
+  let browser: "chrome" | "firefox" | "safari" | "edge" | "other" = "other";
+  if (ua.includes("Chrome") && !ua.includes("Edg")) browser = "chrome";
+  else if (ua.includes("Firefox")) browser = "firefox";
+  else if (ua.includes("Safari") && !ua.includes("Chrome")) browser = "safari";
+  else if (ua.includes("Edg")) browser = "edge";
 
   return {
     device_type: deviceType,
@@ -35,41 +46,74 @@ function getDeviceInfo() {
 
 export interface TrackEventParams {
   organizationId: string;
-  eventType: string;
+  eventType: PublicTrackingEventType;
   pagePath?: string;
   pageTitle?: string;
   propertyId?: string;
-  leadId?: string;
   metadata?: Record<string, unknown>;
 }
 
+const coordinateSessionStart = createPublicSiteSessionStartCoordinator();
+
 export async function trackEvent(params: TrackEventParams) {
-  const attribution = getPublicSiteAttribution();
+  const attribution = getPublicSiteAttribution(params.organizationId, {
+    recordActivity:
+      params.eventType !== "page_duration" &&
+      params.eventType !== "session_start",
+  });
   const sessionId = attribution.session_id;
   const os = getOS();
+  const sessionMetadata = {
+    os,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
 
   const enrichedMetadata = {
     ...(params.metadata || {}),
-    os,
-	locale: navigator.language,
-	timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    ...sessionMetadata,
   };
+  const clickAttribution =
+    params.eventType === "page_duration"
+      ? {}
+      : {
+          gclid: attribution.gclid,
+          fbclid: attribution.fbclid,
+        };
 
-  const payload = {
+  const payload: PublicTrackingInput = {
     session_id: sessionId,
     event_type: params.eventType,
     page_path: params.pagePath || window.location.pathname,
     page_title: params.pageTitle || document.title,
-    referrer: document.referrer || null,
+    referrer: sanitizePublicReferrer(document.referrer),
     organization_id: params.organizationId,
     property_id: params.propertyId || null,
-    lead_id: params.leadId || null,
     metadata: enrichedMetadata,
     utm_source: attribution.utm_source,
     utm_medium: attribution.utm_medium,
     utm_campaign: attribution.utm_campaign,
+    ...clickAttribution,
     ...getDeviceInfo(),
   };
+
+  const sessionStarted = await coordinateSessionStart(
+    JSON.stringify([params.organizationId, sessionId]),
+    {
+      hasStarted: () =>
+        hasPublicSiteSessionStarted(params.organizationId, sessionId),
+      start: () =>
+        publicSiteAPI.track({
+          ...payload,
+          event_type: "session_start",
+          metadata: sessionMetadata,
+          gclid: attribution.gclid,
+          fbclid: attribution.fbclid,
+        }),
+      markStarted: () =>
+        markPublicSiteSessionStarted(params.organizationId, sessionId),
+    },
+  );
+  if (params.eventType === "session_start") return sessionStarted;
 
   try {
     await publicSiteAPI.track(payload);
@@ -93,40 +137,42 @@ export async function trackPageView(params: {
 }) {
   await trackEvent({
     organizationId: params.organizationId,
-    eventType: 'pageview',
+    eventType: "pageview",
     pagePath: params.pagePath,
     pageTitle: params.pageTitle,
     propertyId: params.propertyId,
   });
 }
 
-export async function trackFavorite(organizationId: string, propertyId: string) {
+export async function trackFavorite(
+  organizationId: string,
+  propertyId: string,
+) {
   await trackEvent({
     organizationId,
-    eventType: 'favorite',
+    eventType: "favorite",
     propertyId,
   });
 }
 
-export async function trackConversion(organizationId: string) {
+export async function trackWhatsAppClick(
+  organizationId: string,
+  metadata?: Record<string, unknown>,
+) {
   await trackEvent({
     organizationId,
-    eventType: 'form_submit',
-  });
-}
-
-export async function trackWhatsAppClick(organizationId: string, metadata?: Record<string, unknown>) {
-  await trackEvent({
-    organizationId,
-    eventType: 'whatsapp_click',
+    eventType: "whatsapp_click",
     metadata,
   });
 }
 
-export async function trackCtaClick(organizationId: string, metadata?: Record<string, unknown>) {
+export async function trackCtaClick(
+  organizationId: string,
+  metadata?: Record<string, unknown>,
+) {
   await trackEvent({
     organizationId,
-    eventType: 'cta_click',
+    eventType: "cta_click",
     metadata,
   });
 }
@@ -134,7 +180,11 @@ export async function trackCtaClick(organizationId: string, metadata?: Record<st
 // Hook for use in components
 export function useTracking(organizationId?: string) {
   const track = useCallback(
-    async (eventType: string, metadata?: Record<string, unknown>, propertyId?: string) => {
+    async (
+      eventType: PublicTrackingEventType,
+      metadata?: Record<string, unknown>,
+      propertyId?: string,
+    ) => {
       if (!organizationId) return;
       await trackEvent({
         organizationId,
@@ -143,7 +193,7 @@ export function useTracking(organizationId?: string) {
         metadata,
       });
     },
-    [organizationId]
+    [organizationId],
   );
 
   return { track };

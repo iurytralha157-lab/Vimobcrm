@@ -11,8 +11,8 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $runtimeRoot = Join-Path $env:TEMP 'vimob-api-local-runtime'
-$expectedSupabaseUrl = 'http://127.0.0.1:55321'
-$expectedDatabasePort = 55322
+$expectedSupabaseUrl = 'http://127.0.0.1:56321'
+$expectedDatabasePort = 56322
 
 function Test-PrivateIPv4 {
   param(
@@ -61,13 +61,13 @@ $publicHost = if ($ExposeLan) { Resolve-LanAddress } else { '127.0.0.1' }
 $listenHost = if ($ExposeLan) { '0.0.0.0' } else { '127.0.0.1' }
 $frontendOrigin = "http://${publicHost}:$FrontendPort"
 $apiPublicUrl = "http://${publicHost}:$ApiPort"
-$supabasePublicUrl = "http://${publicHost}:55321"
+$supabasePublicUrl = "http://${publicHost}:56321"
 
 function Get-LocalSupabaseStatus {
   $previousErrorActionPreference = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   try {
-    $statusJson = & npx.cmd --yes supabase@2.110.0 status -o json 2>$null
+    $statusJson = & npx.cmd --yes supabase@2.110.0 status --log-level error -o json 2>$null
     $statusExitCode = $LASTEXITCODE
   } finally {
     $ErrorActionPreference = $previousErrorActionPreference
@@ -77,7 +77,7 @@ function Get-LocalSupabaseStatus {
     Write-Host 'Supabase local não está ativo. Iniciando containers locais...'
     $ErrorActionPreference = 'Continue'
     try {
-      & npx.cmd --yes supabase@2.110.0 start
+      & npx.cmd --yes supabase@2.110.0 start --ignore-health-check
       $startExitCode = $LASTEXITCODE
     } finally {
       $ErrorActionPreference = $previousErrorActionPreference
@@ -87,13 +87,22 @@ function Get-LocalSupabaseStatus {
       throw 'Não foi possível iniciar o Supabase local.'
     }
 
-    $ErrorActionPreference = 'Continue'
-    try {
-      $statusJson = & npx.cmd --yes supabase@2.110.0 status -o json 2>$null
-      $statusExitCode = $LASTEXITCODE
-    } finally {
-      $ErrorActionPreference = $previousErrorActionPreference
-    }
+    $statusDeadline = [DateTime]::UtcNow.AddSeconds(180)
+    do {
+      $ErrorActionPreference = 'Continue'
+      try {
+        $statusJson = & npx.cmd --yes supabase@2.110.0 status --log-level error -o json 2>$null
+        $statusExitCode = $LASTEXITCODE
+      } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+      }
+
+      if ($statusExitCode -eq 0) {
+        break
+      }
+
+      Start-Sleep -Seconds 1
+    } while ([DateTime]::UtcNow -lt $statusDeadline)
   }
 
   if ($statusExitCode -ne 0) {
@@ -214,6 +223,18 @@ function Wait-LocalHttp {
 }
 
 $supabaseStatus = Get-LocalSupabaseStatus
+Wait-LocalHttp `
+  -Url "$expectedSupabaseUrl/auth/v1/health" `
+  -ServiceName 'Supabase Auth local' `
+  -TimeoutSeconds 180
+Wait-LocalHttp `
+  -Url "$expectedSupabaseUrl/storage/v1/status" `
+  -ServiceName 'Supabase Storage local' `
+  -TimeoutSeconds 180
+Wait-LocalHttp `
+  -Url "$expectedSupabaseUrl/functions/v1/_internal/health" `
+  -ServiceName 'Supabase Edge Functions local' `
+  -TimeoutSeconds 180
 Stop-LocalWorkspaceListener -Port $ApiPort
 Stop-LocalWorkspaceListener -Port $FrontendPort
 
@@ -238,12 +259,14 @@ Set-CommonLocalEnvironment -SupabaseStatus $supabaseStatus
 $env:API_ENV = 'development'
 $env:API_HOST = $listenHost
 $env:API_PORT = [string]$ApiPort
+$env:DATABASE_FORCE_READ_ONLY = 'false'
 $apiCorsOrigins = @(
   "http://localhost:$FrontendPort",
   "http://127.0.0.1:$FrontendPort",
   $frontendOrigin
 ) | Select-Object -Unique
 $env:API_CORS_ALLOWED_ORIGINS = $apiCorsOrigins -join ','
+$env:API_BACKGROUND_WORKERS_ENABLED = 'false'
 $env:AUTOMATION_RUNTIME_WORKER_ENABLED = 'false'
 $env:WHATSAPP_AI_WORKER_ENABLED = 'false'
 $env:WHATSAPP_AI_FOLLOW_UP_WORKER_ENABLED = 'false'
@@ -264,7 +287,11 @@ foreach ($externalKey in @(
   'EVOLUTION_GO_BACKEND_WEBHOOK_URL',
   'WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS',
   'ASAAS_API_KEY',
+  'META_APP_ID',
   'META_APP_SECRET',
+  'META_LOGIN_CONFIG_ID',
+  'META_OAUTH_CALLBACK_URL',
+  'META_OAUTH_ALLOWED_ORIGINS',
   'META_WEBHOOK_VERIFY_TOKEN',
   'WEB_PUSH_VAPID_PUBLIC_KEY',
   'WEB_PUSH_VAPID_PRIVATE_KEY',
@@ -298,6 +325,7 @@ $env:NEXT_PUBLIC_SUPABASE_ANON_KEY = [string]$supabaseStatus.ANON_KEY
 $env:NEXT_PUBLIC_VIMOB_API_URL = $apiPublicUrl
 $env:VIMOB_API_URL = "http://127.0.0.1:$ApiPort"
 $env:NEXT_PUBLIC_BILLING_ACCESS_BYPASS = 'true'
+$env:NEXT_PUBLIC_LOCAL_READ_ONLY = 'false'
 
 foreach ($nextExternalKey in @(
   'RESEND_API_KEY',
@@ -334,7 +362,7 @@ $frontendProcess = Start-Process `
 Wait-LocalHttp `
   -Url "http://127.0.0.1:$FrontendPort/login" `
   -ServiceName 'Frontend local' `
-  -TimeoutSeconds 90
+  -TimeoutSeconds 300
 
 Write-Host ''
 Write-Host 'Vimob local iniciado com sucesso.'

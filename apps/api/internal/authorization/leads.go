@@ -1,6 +1,7 @@
 package authorization
 
 import (
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/leadscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
@@ -11,13 +12,13 @@ type LeadResource struct {
 }
 
 func CanViewLead(context tenant.Context, lead LeadResource) bool {
-	if context.IsSuperAdmin || context.HasRole("owner", "admin") || context.HasPermission(permissions.LeadViewAll) {
+	if leadscope.CanViewAll(context) {
 		return true
 	}
-	if lead.AssignedUserID != "" && lead.AssignedUserID == context.UserID && context.HasPermission(permissions.LeadViewOwn) {
+	if lead.AssignedUserID != "" && lead.AssignedUserID == context.UserID && leadscope.CanViewOwn(context) {
 		return true
 	}
-	if !context.HasPermission(permissions.LeadViewTeam) {
+	if !leadscope.CanViewTeam(context) {
 		return false
 	}
 	if lead.TeamID != "" {

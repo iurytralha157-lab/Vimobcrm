@@ -1,52 +1,18 @@
 "use client";
 
 import {
-  type ReactNode,
   useCallback,
   useEffect,
   useRef,
   useState,
 } from "react";
-import NextImage from "next/image";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  ArrowRight,
-  Check,
-  CheckCircle2,
-  Copy,
-  CreditCard,
-  ExternalLink,
-  LockKeyhole,
-  Pencil,
-  QrCode,
-  ReceiptText,
-  RefreshCw,
-  ShieldCheck,
-} from "lucide-react";
-import { AuthLogo } from "@/components/features/auth/auth-logo";
-import { CardPaymentFields } from "@/components/features/auth/CardPaymentFields";
 import { SignupCheckoutRecoveryBanner } from "@/components/features/onboarding/SignupCheckoutRecoveryBanner";
-import { VimobLoader } from "@/components/shared/loading";
 import { toast } from "sonner";
 import { paymentsAPI } from "@/lib/api/payments";
 import { settingsAPI } from "@/lib/api/settings";
 import { createUUID } from "@/lib/client-id";
-import {
-  BRAND_HEADER_LAYOUT,
-  DEFAULT_AUTHENTICATED_ROUTE,
-} from "@/config/constants";
+import { stringifyErrorMessage as getErrorMessage } from "@/lib/api/vimob-error";
+import { DEFAULT_AUTHENTICATED_ROUTE } from "@/config/constants";
 import {
   clearCheckoutBillingDraftSession,
   consumeCheckoutBillingProfileSession,
@@ -64,804 +30,54 @@ import {
   resolveCardRecurrenceState,
 } from "@/lib/billing/checkout-ui-state";
 import { checkoutBillingDetailsSchema } from "@/lib/validation";
-
-interface CheckoutInfo {
-  organization: {
-    id: string;
-    name: string;
-    logo_url: string | null;
-    primary_color: string | null;
-    subscription_status: string | null;
-    plan_id: string | null;
-    pending_plan_id: string | null;
-  };
-  plan: {
-    id: string;
-    name: string;
-    price: number;
-    billing_cycle: string | null;
-    description: string | null;
-    billing_periods: number[];
-    display_features: string[];
-    max_users: number | null;
-    max_whatsapp_sessions: number | null;
-  } | null;
-  billing_profile?: {
-    name: string;
-    email: string;
-    cpf_cnpj: string;
-    phone: string;
-    country: "BR";
-    postal_code: string;
-    address: string;
-    address_number: string;
-    address_complement: string;
-    neighborhood: string;
-    city: string;
-    state: string;
-  };
-  billing_profile_summary?: {
-    complete: boolean;
-    name: string;
-    email: string;
-    cpf_cnpj: string;
-    phone: string;
-    country: "BR";
-    postal_code: string;
-    address: string;
-    address_number: string;
-    address_complement: string;
-    neighborhood: string;
-    city: string;
-    state: string;
-  } | null;
-  checkout_access?: {
-    scope: "organization" | "payment";
-    can_change_plan: boolean;
-    can_manage_payment_method?: boolean;
-    use_stored_billing_profile: boolean;
-    payment_status: string | null;
-    payment_settled: boolean;
-    recurrence_saved?: boolean;
-    recurrence_processing?: boolean;
-    recurrence_save_failed?: boolean;
-    requires_payment_method_update?: boolean;
-    bank_slip_registration_cancelled?: boolean;
-  };
-  active_checkout?: ActiveCheckout | null;
-}
-
-type ActiveCheckout = {
-  intent_id: string;
-  plan_id: string;
-  billing_method: PaymentMethod;
-  status: string;
-  billing_period_months: number;
-  amount: number;
-  payment_id: string | null;
-  subscription_id: string | null;
-  checkout_id: string | null;
-  provider_status: string | null;
-  card_last4: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type PublicCheckoutPlan = {
-  id?: string;
-  slug?: string;
-  name?: string;
-  price?: number;
-  billing_cycle?: string | null;
-  billing_periods?: number[] | null;
-  description?: string | null;
-  display_features?: string[] | null;
-  display_order?: number | null;
-  max_users?: number | null;
-  max_whatsapp_sessions?: number | null;
-};
-
-type PublicCheckoutPlansResponse = {
-  data?: PublicCheckoutPlan[];
-  error?: string;
-};
-
-type CheckoutPlanChangeResponse = {
-  ok?: boolean;
-  message?: string;
-  requiresPayment?: boolean;
-  plan?: PublicCheckoutPlan;
-};
-
-interface PixResult {
-  type: "PIX";
-  payment_id: string;
-  invoice_url?: string;
-  qr_code?: string;
-  qr_payload?: string;
-  value: number;
-}
-
-type CardResult =
-  | {
-    type: "CREDIT_CARD";
-    hosted: true;
-    checkout_id: string;
-    checkout_url: string;
-    status: string;
-    message?: string;
-  }
-  | {
-    type: "CREDIT_CARD";
-    hosted: false;
-    subscription_id?: string | null;
-    payment_id?: string;
-    settled?: boolean;
-    saved_only?: boolean;
-    recurrence_saved?: boolean;
-    recurrence_processing?: boolean;
-    recurrence_save_failed?: boolean;
-    requires_payment_method_update?: boolean;
-    processing?: boolean;
-    code?: string;
-    card_update_job_id?: string;
-    status: string;
-    card_last4?: string;
-    message?: string;
-  };
-
-interface BoletoResult {
-  type: "BOLETO";
-  payment_id: string;
-  invoice_url?: string;
-  bank_slip_url?: string;
-  identification_field?: string;
-  bar_code?: string;
-  due_date: string | null;
-  value: number;
-}
-
-type CancelPaymentResult = {
-  success?: boolean;
-  error?: string;
-};
-
-type PaymentMethod = "PIX" | "BOLETO" | "CREDIT_CARD";
-
-async function checkoutCardRequestFingerprint(parts: string[]) {
-  const payload = new TextEncoder().encode(parts.join("\u001f"));
-  const digest = new Uint8Array(
-    await globalThis.crypto.subtle.digest("SHA-256", payload),
-  );
-  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-const cardUpdateSessionTtlMs = 24 * 60 * 60 * 1_000;
-
-type PersistedCardUpdateJob = {
-  version: 1;
-  jobId: string;
-  mode: "settled_payment" | "saved_only";
-  paymentId: string | null;
-  subscriptionId: string | null;
-  createdAt: number;
-};
-
-async function cardUpdateSessionStorageKey(identity: string) {
-  const digest = await checkoutCardRequestFingerprint([
-    "vimob:billing-card-update",
-    identity,
-  ]);
-  return `vimob:billing-card-update:${digest}`;
-}
-
-function parsePersistedCardUpdateJob(value: string | null) {
-  if (!value) return null;
-  try {
-    const parsed = JSON.parse(value) as Partial<PersistedCardUpdateJob>;
-    if (
-      parsed.version !== 1 ||
-      typeof parsed.jobId !== "string" ||
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-        .test(parsed.jobId) ||
-      (parsed.mode !== "settled_payment" && parsed.mode !== "saved_only") ||
-      typeof parsed.createdAt !== "number" ||
-      !Number.isSafeInteger(parsed.createdAt) ||
-      Date.now() - parsed.createdAt > cardUpdateSessionTtlMs ||
-      parsed.createdAt > Date.now() + 60_000 ||
-      (parsed.paymentId !== null && typeof parsed.paymentId !== "string") ||
-      (parsed.subscriptionId !== null &&
-        typeof parsed.subscriptionId !== "string")
-    ) {
-      return null;
-    }
-    if (
-      parsed.mode === "settled_payment" &&
-      (!parsed.paymentId || parsed.paymentId.length > 255)
-    ) return null;
-    if (
-      parsed.subscriptionId && parsed.subscriptionId.length > 255
-    ) return null;
-    return parsed as PersistedCardUpdateJob;
-  } catch {
-    return null;
-  }
-}
-
-type PaymentRecoveryState =
-  | "creating"
-  | "pending"
-  | "processing"
-  | "settled"
-  | "retry"
-  | "assisted"
-  | "cancelled";
-
-type PaymentStatusResponse = {
-  checkout: ActiveCheckout | null;
-  state: PaymentRecoveryState;
-  code?: string;
-  message?: string;
-  payment?: {
-    id: string;
-    status: string;
-    billing_type: string;
-    value: number;
-    due_date: string | null;
-    payment_date: string | null;
-    invoice_url: string | null;
-  };
-  pix?: {
-    qr_code?: string | null;
-    qr_payload?: string | null;
-  };
-  boleto?: {
-    bank_slip_url?: string | null;
-    identification_field?: string | null;
-    bar_code?: string | null;
-  };
-  receipt?: unknown;
-  recurrence_saved?: boolean;
-  recurrence_processing?: boolean;
-  recurrence_save_failed?: boolean;
-  requires_payment_method_update?: boolean;
-  bank_slip_registration_cancelled?: boolean;
-  card_update?: {
-    job_id: string;
-    mode?: "settled_payment" | "saved_only";
-    state: "queued" | "succeeded" | "cancelled" | "failed" | "manual_review";
-    status?: string;
-    card_last4?: string;
-    last_error_code?: string;
-    next_attempt_at?: string;
-    updated_at?: string;
-    completed_at?: string;
-  };
-};
-
-type ChargeRequest = {
-  idempotency_key?: string;
-  billing_type: PaymentMethod;
-  billing_profile_mode?: "manual" | "stored";
-  holder_email?: string;
-  holder_cpf_cnpj?: string;
-  holder_phone?: string;
-  billing_period_months: number;
-  expected_plan_id: string;
-  expected_monthly_price: number;
-  checkout_token?: string;
-  organization_id?: string | null;
-  holder_name?: string;
-  holder_postal_code?: string;
-  holder_address?: string;
-  holder_address_number?: string;
-  holder_address_complement?: string;
-  holder_neighborhood?: string;
-  holder_city?: string;
-  holder_state?: string;
-  holder_country?: "BR";
-  card?: {
-    holder_name: string;
-    holder_cpf_cnpj: string;
-    number: string;
-    expiry_month: string;
-    expiry_year: string;
-    ccv: string;
-  };
-};
-
-type ChargeResult =
-  | ({ success: true } & PixResult)
-  | ({ success: true } & BoletoResult)
-  | ({ success: true } & CardResult)
-  | {
-    success: true;
-    type: PaymentMethod;
-    processing: true;
-    status: "CREATING" | "RECOVERING";
-    intent_id?: string;
-    payment_id?: string;
-    subscription_id?: string;
-    settled?: boolean;
-    recurrence_saved?: boolean;
-    recurrence_processing?: boolean;
-    recurrence_save_failed?: boolean;
-    requires_payment_method_update?: boolean;
-    saved_only?: boolean;
-    code?: string;
-    card_update_job_id?: string;
-    message?: string;
-  }
-  | { success?: false; error?: string };
-
-const getErrorMessage = (error: unknown) => {
-  if (error instanceof Error) return error.message;
-  return String(error);
-};
-
-const currencyFormatter = new Intl.NumberFormat("pt-BR", {
-  style: "currency",
-  currency: "BRL",
-  minimumFractionDigits: 2,
-});
-const supportedBillingPeriods = new Set([1, 6, 12]);
-
-function formatCurrency(value: number) {
-  return currencyFormatter.format(Number.isFinite(value) ? value : 0);
-}
-
-function normalizeBillingPeriods(periods?: number[] | null) {
-  if (!Array.isArray(periods)) return [];
-
-  return Array.from(
-    new Set(
-      periods.filter(
-        (period): period is number =>
-          typeof period === "number" &&
-          Number.isInteger(period) &&
-          supportedBillingPeriods.has(period),
-      ),
-    ),
-  ).sort((first, second) => first - second);
-}
-
-function normalizePublicCheckoutPlans(plans?: PublicCheckoutPlan[] | null) {
-  if (!Array.isArray(plans)) return [];
-
-  return plans
-    .filter(
-      (item) => item.id && item.slug && item.name && Number(item.price) > 0,
-    )
-    .sort(
-      (first, second) =>
-        Number(first.display_order ?? 0) - Number(second.display_order ?? 0),
-    );
-}
-
-async function fetchPublicCheckoutPlans(signal?: AbortSignal) {
-  const response = await fetch("/api/onboarding/plans", {
-    headers: { Accept: "application/json" },
-    signal,
-  });
-  const payload = (await response
-    .json()
-    .catch(() => null)) as PublicCheckoutPlansResponse | null;
-  if (!response.ok || !Array.isArray(payload?.data)) {
-    throw new Error(payload?.error || "Não foi possível carregar os planos.");
-  }
-
-  return normalizePublicCheckoutPlans(payload.data);
-}
-
-function formatPeriod(period: number) {
-  return `${period} ${period === 1 ? "mês" : "meses"}`;
-}
-
-function formatPeriodLabel(period: number) {
-  if (period === 1) return "Mensal";
-  if (period === 6) return "Semestral";
-  return "Anual";
-}
-
-function formatBoletoDueDate(value: string | null) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || "");
-  if (!match) return null;
-  return `${match[3]}/${match[2]}/${match[1]}`;
-}
-
-async function copyPaymentCode(value: string, successMessage: string) {
-  try {
-    await navigator.clipboard.writeText(value);
-    toast.success(successMessage);
-  } catch {
-    toast.error(
-      "Não foi possível copiar automaticamente. Selecione o código e copie manualmente.",
-    );
-  }
-}
-
-function isCheckoutActivated(checkout: CheckoutInfo) {
-  if (checkout.checkout_access?.can_manage_payment_method) return false;
-  if (checkout.checkout_access?.scope === "payment") {
-    return checkout.checkout_access.payment_settled;
-  }
-  return Boolean(
-    checkout.plan &&
-      checkout.organization.subscription_status === "active" &&
-      checkout.organization.plan_id === checkout.plan.id &&
-      !checkout.organization.pending_plan_id,
-  );
-}
-
-function isProcessingResult(
-  result: ChargeResult,
-): result is Extract<ChargeResult, { processing: true }> {
-  return "processing" in result && result.processing === true;
-}
-
-function getHTTPStatus(error: unknown) {
-  if (!error || typeof error !== "object" || !("status" in error)) return null;
-  const status = Number((error as { status?: unknown }).status);
-  return Number.isInteger(status) ? status : null;
-}
+import {
+  CardConfirmationView,
+  CheckoutBillingSection,
+  CheckoutLoadErrorView,
+  CheckoutLoadingView,
+  CheckoutOrderSummary,
+  CheckoutPageShell,
+  CheckoutPaymentSection,
+  PaidCheckoutView,
+  PaymentCheckoutUnavailableView,
+  PlanUnavailableView,
+} from "@/components/features/auth/checkout";
+import {
+  cardUpdateSessionStorageKey,
+  checkoutCardRequestFingerprint,
+  fetchPublicCheckoutPlans,
+  formatPeriodLabel,
+  getHTTPStatus,
+  isCardFailureStatus,
+  isCheckoutActivated,
+  isProcessingResult,
+  isSupportedBillingPeriod,
+  normalizeBillingPeriods,
+  parsePersistedCardUpdateJob,
+  validateCardInput,
+} from "@/lib/billing/checkout-domain";
+import type {
+  ActiveCheckout,
+  BoletoResult,
+  CancelPaymentResult,
+  ChargeRequest,
+  ChargeResult,
+  CheckoutInfo,
+  CheckoutPlanChangeResponse,
+  CheckoutScreenProps,
+  PaymentMethod,
+  PaymentRecoveryState,
+  PaymentStatusResponse,
+  PersistedCardUpdateJob,
+  PixResult,
+  PublicCheckoutPlan,
+} from "@/lib/billing/checkout-types";
 
 function waitFor(milliseconds: number) {
   return new Promise<void>((resolve) =>
     window.setTimeout(resolve, milliseconds)
   );
 }
-
-function isCardFailureStatus(value?: string | null) {
-  const normalized = value?.trim().toUpperCase() || "";
-  return [
-    "CREDIT_CARD_CAPTURE_REFUSED",
-    "REFUSED",
-    "DECLINED",
-    "OVERDUE",
-  ].includes(normalized);
-}
-
-function validateCardInput(input: {
-  holderName: string;
-  holderDocument: string;
-  number: string;
-  expiryMonth: string;
-  expiryYear: string;
-  ccv: string;
-}) {
-  if (input.holderName.trim().length < 2) {
-    return "Informe o nome impresso no cartão.";
-  }
-  if (![11, 14].includes(input.holderDocument.replace(/\D/g, "").length)) {
-    return "Informe o CPF ou CNPJ do titular do cartão.";
-  }
-
-  const number = input.number.replace(/\D/g, "");
-  if (number.length < 13 || number.length > 19) {
-    return "Informe um número de cartão válido.";
-  }
-
-  let sum = 0;
-  let shouldDouble = false;
-  for (let index = number.length - 1; index >= 0; index -= 1) {
-    let digit = Number(number[index]);
-    if (shouldDouble) {
-      digit *= 2;
-      if (digit > 9) digit -= 9;
-    }
-    sum += digit;
-    shouldDouble = !shouldDouble;
-  }
-  if (sum % 10 !== 0) return "Informe um número de cartão válido.";
-
-  const month = Number(input.expiryMonth);
-  const year = Number(input.expiryYear);
-  if (
-    !Number.isInteger(month) ||
-    month < 1 ||
-    month > 12 ||
-    !/^\d{4}$/.test(input.expiryYear)
-  ) {
-    return "Confira a validade do cartão.";
-  }
-  const now = new Date();
-  if (
-    year < now.getFullYear() ||
-    (year === now.getFullYear() && month < now.getMonth() + 1)
-  ) {
-    return "O cartão informado está vencido.";
-  }
-  if (!/^\d{3,4}$/.test(input.ccv)) {
-    return "Informe um código de segurança válido.";
-  }
-  return null;
-}
-
-function CheckoutPageShell({ children }: Readonly<{ children: ReactNode }>) {
-  return (
-    <div className="app-shell min-h-screen bg-[var(--app-background)] text-[var(--app-text-primary)]">
-      <header className="sticky top-0 z-30 bg-[var(--app-background)]">
-        <div
-          className="mx-auto flex h-[72px] w-full items-center justify-between px-4 sm:px-6 lg:px-8"
-          style={{ maxWidth: BRAND_HEADER_LAYOUT.maxWidth }}
-        >
-          <div className="inline-flex min-h-11 w-fit items-center">
-            <AuthLogo theme="adaptive" width={BRAND_HEADER_LAYOUT.logoWidth} />
-          </div>
-          <div className="flex h-10 items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-4 text-xs font-light text-[var(--app-text-secondary)]">
-            <ShieldCheck
-              className="h-4 w-4 text-primary/70"
-              strokeWidth={1.6}
-              aria-hidden="true"
-            />
-            Checkout seguro
-          </div>
-        </div>
-      </header>
-      <main
-        className="mx-auto w-full px-4 pb-8 pt-5 sm:px-6 sm:pb-10 sm:pt-7 lg:px-8"
-        style={{ maxWidth: BRAND_HEADER_LAYOUT.maxWidth }}
-      >
-        {children}
-      </main>
-    </div>
-  );
-}
-
-type BillingDetailsFieldsProps = {
-  name: string;
-  email: string;
-  document: string;
-  phone: string;
-  postalCode: string;
-  address: string;
-  addressNumber: string;
-  addressComplement: string;
-  neighborhood: string;
-  city: string;
-  state: string;
-  disabled: boolean;
-  onNameChange: (value: string) => void;
-  onEmailChange: (value: string) => void;
-  onDocumentChange: (value: string) => void;
-  onPhoneChange: (value: string) => void;
-  onPostalCodeChange: (value: string) => void;
-  onAddressChange: (value: string) => void;
-  onAddressNumberChange: (value: string) => void;
-  onAddressComplementChange: (value: string) => void;
-  onNeighborhoodChange: (value: string) => void;
-  onCityChange: (value: string) => void;
-  onStateChange: (value: string) => void;
-};
-
-function BillingDetailsFields({
-  name,
-  email,
-  document,
-  phone,
-  postalCode,
-  address,
-  addressNumber,
-  addressComplement,
-  neighborhood,
-  city,
-  state,
-  disabled,
-  onNameChange,
-  onEmailChange,
-  onDocumentChange,
-  onPhoneChange,
-  onPostalCodeChange,
-  onAddressChange,
-  onAddressNumberChange,
-  onAddressComplementChange,
-  onNeighborhoodChange,
-  onCityChange,
-  onStateChange,
-}: BillingDetailsFieldsProps) {
-  const inputClassName =
-    "h-10 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 py-0 !text-[12px] font-light text-[var(--app-text-secondary)] shadow-none placeholder:text-[var(--app-text-secondary)] placeholder:opacity-100 focus-visible:ring-1 focus-visible:ring-primary/40 focus-visible:ring-offset-0";
-  const labelClassName = "sr-only";
-
-  return (
-    <div className="mt-5 grid gap-4 sm:grid-cols-6">
-      <div className="sm:col-span-3">
-        <Label htmlFor="billing-holder-name" className={labelClassName}>
-          Nome ou razão social
-        </Label>
-        <Input
-          id="billing-holder-name"
-          autoComplete="name"
-          required
-          minLength={2}
-          placeholder="Nome ou razão social"
-          value={name}
-          disabled={disabled}
-          onChange={(event) => onNameChange(event.target.value)}
-          className={inputClassName}
-        />
-      </div>
-      <div className="sm:col-span-3">
-        <Label htmlFor="billing-email" className={labelClassName}>
-          E-mail
-        </Label>
-        <Input
-          id="billing-email"
-          type="email"
-          autoComplete="email"
-          required
-          placeholder="E-mail"
-          value={email}
-          disabled={disabled}
-          onChange={(event) => onEmailChange(event.target.value)}
-          className={inputClassName}
-        />
-      </div>
-      <div className="sm:col-span-3">
-        <Label htmlFor="billing-document" className={labelClassName}>
-          CPF/CNPJ
-        </Label>
-        <Input
-          id="billing-document"
-          inputMode="numeric"
-          required
-          pattern="[0-9.\/-]{11,18}"
-          title="Informe um CPF ou CNPJ com 11 ou 14 números."
-          placeholder="CPF/CNPJ"
-          value={document}
-          disabled={disabled}
-          onChange={(event) => onDocumentChange(event.target.value)}
-          className={inputClassName}
-        />
-      </div>
-      <div className="sm:col-span-3">
-        <Label htmlFor="billing-phone" className={labelClassName}>
-          Celular
-        </Label>
-        <Input
-          id="billing-phone"
-          type="tel"
-          autoComplete="tel"
-          required
-          placeholder="Celular"
-          value={phone}
-          disabled={disabled}
-          onChange={(event) => onPhoneChange(event.target.value)}
-          className={inputClassName}
-        />
-      </div>
-      <div className="sm:col-span-3">
-        <Label htmlFor="billing-country" className={labelClassName}>
-          País de residência
-        </Label>
-        <Input
-          id="billing-country"
-          placeholder="País de residência"
-          value="Brasil"
-          readOnly
-          disabled={disabled}
-          className={inputClassName}
-        />
-      </div>
-      <div className="sm:col-span-3">
-        <Label htmlFor="billing-postal-code" className={labelClassName}>
-          CEP
-        </Label>
-        <Input
-          id="billing-postal-code"
-          inputMode="numeric"
-          autoComplete="postal-code"
-          required
-          pattern="[0-9-]{8,9}"
-          title="Informe um CEP com 8 números."
-          placeholder="CEP"
-          value={postalCode}
-          disabled={disabled}
-          onChange={(event) => onPostalCodeChange(event.target.value)}
-          className={inputClassName}
-        />
-      </div>
-      <div className="sm:col-span-4">
-        <Label htmlFor="billing-address" className={labelClassName}>
-          Endereço
-        </Label>
-        <Input
-          id="billing-address"
-          autoComplete="street-address"
-          required
-          minLength={3}
-          placeholder="Endereço"
-          value={address}
-          disabled={disabled}
-          onChange={(event) => onAddressChange(event.target.value)}
-          className={inputClassName}
-        />
-      </div>
-      <div className="sm:col-span-2">
-        <Label htmlFor="billing-address-number" className={labelClassName}>
-          Número
-        </Label>
-        <Input
-          id="billing-address-number"
-          autoComplete="address-line2"
-          required
-          placeholder="Número"
-          value={addressNumber}
-          disabled={disabled}
-          onChange={(event) => onAddressNumberChange(event.target.value)}
-          className={inputClassName}
-        />
-      </div>
-      <div className="sm:col-span-3">
-        <Label htmlFor="billing-address-complement" className={labelClassName}>
-          Complemento{" "}
-          <span className="text-[var(--app-text-tertiary)]">(opcional)</span>
-        </Label>
-        <Input
-          id="billing-address-complement"
-          placeholder="Complemento (opcional)"
-          value={addressComplement}
-          disabled={disabled}
-          onChange={(event) => onAddressComplementChange(event.target.value)}
-          className={inputClassName}
-        />
-      </div>
-      <div className="sm:col-span-3">
-        <Label htmlFor="billing-neighborhood" className={labelClassName}>
-          Bairro
-        </Label>
-        <Input
-          id="billing-neighborhood"
-          required
-          placeholder="Bairro"
-          value={neighborhood}
-          disabled={disabled}
-          onChange={(event) => onNeighborhoodChange(event.target.value)}
-          className={inputClassName}
-        />
-      </div>
-      <div className="sm:col-span-4">
-        <Label htmlFor="billing-city" className={labelClassName}>
-          Cidade
-        </Label>
-        <Input
-          id="billing-city"
-          autoComplete="address-level2"
-          required
-          placeholder="Cidade"
-          value={city}
-          disabled={disabled}
-          onChange={(event) => onCityChange(event.target.value)}
-          className={inputClassName}
-        />
-      </div>
-      <div className="sm:col-span-2">
-        <Label htmlFor="billing-state" className={labelClassName}>
-          UF
-        </Label>
-        <Input
-          id="billing-state"
-          autoComplete="address-level1"
-          required
-          minLength={2}
-          maxLength={2}
-          placeholder="UF"
-          value={state}
-          disabled={disabled}
-          onChange={(event) => onStateChange(event.target.value.toUpperCase())}
-          className={inputClassName}
-        />
-      </div>
-    </div>
-  );
-}
-
-type CheckoutScreenProps = {
-  organizationId?: string | null;
-  checkoutToken?: string | null;
-};
-
 export default function Checkout(props: CheckoutScreenProps = {}) {
   const organizationId = props.organizationId?.trim() || null;
   const checkoutToken = organizationId
@@ -879,7 +95,6 @@ export default function Checkout(props: CheckoutScreenProps = {}) {
     />
   );
 }
-
 function CheckoutContent({
   organizationId: organizationIdProp,
   checkoutToken: checkoutTokenProp,
@@ -1158,7 +373,7 @@ function CheckoutContent({
 
       setActiveCheckout(checkout);
       setBillingDetailsConfirmed(true);
-      if (supportedBillingPeriods.has(checkout.billing_period_months)) {
+      if (isSupportedBillingPeriod(checkout.billing_period_months)) {
         setSelectedPeriodMonths(checkout.billing_period_months);
       }
       setTab(checkout.billing_method);
@@ -1284,7 +499,7 @@ function CheckoutContent({
           }
           if (
             data.active_checkout &&
-            supportedBillingPeriods.has(
+            isSupportedBillingPeriod(
               data.active_checkout.billing_period_months,
             )
           ) {
@@ -1719,7 +934,7 @@ function CheckoutContent({
         if (checkout) {
           setActiveCheckout(checkout);
           setTab(checkout.billing_method);
-          if (supportedBillingPeriods.has(checkout.billing_period_months)) {
+          if (isSupportedBillingPeriod(checkout.billing_period_months)) {
             setSelectedPeriodMonths(checkout.billing_period_months);
           }
           if (checkout.subscription_id) {
@@ -1815,7 +1030,7 @@ function CheckoutContent({
         ) {
           setActiveCheckout(canonicalInfo.active_checkout);
           if (
-            supportedBillingPeriods.has(
+            isSupportedBillingPeriod(
               canonicalInfo.active_checkout.billing_period_months,
             )
           ) {
@@ -1849,7 +1064,7 @@ function CheckoutContent({
             setActiveCheckout(canonicalInfo.active_checkout);
             setBillingDetailsConfirmed(true);
             if (
-              supportedBillingPeriods.has(
+              isSupportedBillingPeriod(
                 canonicalInfo.active_checkout.billing_period_months,
               )
             ) {
@@ -1938,7 +1153,7 @@ function CheckoutContent({
         if (!mounted) return;
         const update = status.card_update;
         if (!update || update.job_id !== directCardUpdateJobId) {
-          throw new Error("A atualizaÃ§Ã£o do cartÃ£o nÃ£o foi localizada.");
+          throw new Error("A atualização do cartão não foi localizada.");
         }
 
         setRecoveryMessage(status.message || null);
@@ -1962,7 +1177,7 @@ function CheckoutContent({
           setRecoveryState("settled");
           toast.success(
             status.message ||
-              "CartÃ£o atualizado para as prÃ³ximas cobranÃ§as.",
+              "Cartão atualizado para as próximas cobranças.",
           );
           if (directCardUpdateMode === "saved_only") {
             window.location.assign(
@@ -1978,8 +1193,8 @@ function CheckoutContent({
         setRecurrenceWarning(
           status.message ||
             (requiresAssistance
-              ? "A atualizaÃ§Ã£o do cartÃ£o precisa de verificaÃ§Ã£o do suporte."
-              : "O cartÃ£o nÃ£o foi atualizado. Confira os dados e tente novamente."),
+              ? "A atualização do cartão precisa de verificação do suporte."
+              : "O cartão não foi atualizado. Confira os dados e tente novamente."),
         );
         setCardFailureMessage(status.message || null);
         setAwaitingCardConfirmation(false);
@@ -1995,7 +1210,7 @@ function CheckoutContent({
         if (mounted && attempts >= 3) {
           setRecoveryMessage(
             getErrorMessage(error) ||
-              "Ainda nÃ£o foi possÃ­vel confirmar a atualizaÃ§Ã£o do cartÃ£o.",
+              "Ainda não foi possível confirmar a atualização do cartão.",
           );
         }
       } finally {
@@ -2004,7 +1219,7 @@ function CheckoutContent({
           window.clearInterval(interval);
           setDirectPollingExpired(true);
           setRecoveryMessage(
-            "A atualizaÃ§Ã£o continua em conciliaÃ§Ã£o. Tente consultar novamente em instantes.",
+            "A atualização continua em conciliação. Tente consultar novamente em instantes.",
           );
         }
       }
@@ -2462,11 +1677,11 @@ function CheckoutContent({
             setRecoveryState("processing");
             setRecoveryMessage(
               result.message ||
-                "O cartÃ£o foi recebido e estÃ¡ sendo atualizado com seguranÃ§a.",
+                "O cartão foi recebido e está sendo atualizado com segurança.",
             );
             toast.info(
               result.message ||
-                "A atualizaÃ§Ã£o do cartÃ£o estÃ¡ em processamento.",
+                "A atualização do cartão está em processamento.",
             );
             return;
           }
@@ -2653,52 +1868,14 @@ function CheckoutContent({
     await handleCancelDirectPayment();
   };
 
-  if (loading) {
-    return (
-      <CheckoutPageShell>
-        <div className="flex min-h-[55vh] items-center justify-center">
-          <VimobLoader size="lg" label="Carregando checkout..." />
-        </div>
-      </CheckoutPageShell>
-    );
-  }
+  if (loading) return <CheckoutLoadingView />;
 
   if (!info) {
-    const notFound = checkoutLoadError?.notFound ?? true;
     return (
-      <CheckoutPageShell>
-        <div className="flex min-h-[55vh] items-center justify-center">
-          <Card className="w-full max-w-md rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
-            <CardContent className="space-y-4 p-6 text-center sm:p-8">
-              <div>
-                <h2 className="text-[18px] font-normal text-[var(--app-text-primary)]">
-                  {notFound
-                    ? "Checkout não encontrado"
-                    : "Não foi possível carregar o checkout"}
-                </h2>
-                <p className="mt-2 text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
-                  {notFound
-                    ? "Confira se o link está completo ou solicite um novo checkout."
-                    : checkoutLoadError?.message ||
-                      "A conexão falhou temporariamente. Tente novamente."}
-                </p>
-              </div>
-              {!notFound
-                ? (
-                  <Button
-                    type="button"
-                    onClick={() => setLoadAttempt((value) => value + 1)}
-                    className="h-10 w-full rounded-[6px] bg-primary/50 text-[12px] font-light hover:bg-primary"
-                  >
-                    <RefreshCw className="mr-2 h-4 w-4" />
-                    Tentar novamente
-                  </Button>
-                )
-                : null}
-            </CardContent>
-          </Card>
-        </div>
-      </CheckoutPageShell>
+      <CheckoutLoadErrorView
+        error={checkoutLoadError}
+        onRetry={() => setLoadAttempt((value) => value + 1)}
+      />
     );
   }
 
@@ -2708,290 +1885,47 @@ function CheckoutContent({
       (recoveryState === "assisted" && directPollingExpired));
 
   if (paymentCheckoutUnavailable) {
-    const cancelled = recoveryState === "cancelled";
     return (
-      <CheckoutPageShell>
-        <div className="flex min-h-[55vh] items-center justify-center">
-          <Card className="w-full max-w-md rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
-            <CardContent className="space-y-4 p-6 text-center sm:p-8">
-              <span className="mx-auto flex h-10 w-10 items-center justify-center rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]">
-                {cancelled
-                  ? <ReceiptText className="h-5 w-5" aria-hidden="true" />
-                  : <RefreshCw className="h-5 w-5" aria-hidden="true" />}
-              </span>
-              <h2 className="text-[18px] font-normal">
-                {cancelled ? "Cobrança cancelada" : "Pagamento em verificação"}
-              </h2>
-              <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
-                {cancelled
-                  ? "Esta cobrança não aceita mais pagamentos. Solicite um novo link à sua organização."
-                  : recoveryMessage ||
-                    "Não liberamos uma nova tentativa enquanto o estado real da cobrança não puder ser confirmado."}
-              </p>
-              {!cancelled
-                ? (
-                  <Button
-                    type="button"
-                    onClick={() => setLoadAttempt((value) => value + 1)}
-                    className="h-10 w-full rounded-[6px] bg-primary/50 text-[12px] font-light hover:bg-primary"
-                  >
-                    <RefreshCw className="mr-2 h-4 w-4" />
-                    Consultar novamente
-                  </Button>
-                )
-                : null}
-            </CardContent>
-          </Card>
-        </div>
-      </CheckoutPageShell>
+      <PaymentCheckoutUnavailableView
+        cancelled={recoveryState === "cancelled"}
+        message={recoveryMessage}
+        onRetry={() => setLoadAttempt((value) => value + 1)}
+      />
     );
   }
 
   if (paid) {
     return (
-      <CheckoutPageShell>
-        <div className="flex min-h-[55vh] items-center justify-center">
-          <Card className="w-full max-w-md rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
-            <CardContent className="space-y-4 p-6 text-center sm:p-8">
-              <span className="mx-auto flex h-10 w-10 items-center justify-center rounded-[6px] bg-emerald-500/10 text-emerald-600">
-                <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
-              </span>
-              <h2 className="text-[18px] font-normal">Pagamento confirmado!</h2>
-              <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
-                Sua assinatura do {info.plan?.name}{" "}
-                está ativa. Você já pode usar o Vimob normalmente.
-              </p>
-              {recurrenceWarning
-                ? (
-                  <div className="rounded-[6px] bg-amber-500/10 p-3 text-left text-[11px] font-light leading-[17px] text-amber-800 dark:text-amber-300">
-                    <div className="flex items-start gap-2">
-                      {recurrenceState === "processing" &&
-                          !directPollingExpired
-                        ? (
-                          <VimobLoader
-                            size="xs"
-                            className="mt-0.5"
-                            label="Conciliando cartão recorrente..."
-                          />
-                        )
-                        : (
-                          <CreditCard
-                            className="mt-0.5 h-4 w-4 shrink-0"
-                            aria-hidden="true"
-                          />
-                        )}
-                      <span>{recurrenceWarning}</span>
-                    </div>
-                  </div>
-                )
-                : null}
-              {recurrenceState === "saved"
-                ? (
-                  <div className="flex items-center gap-2 rounded-[6px] bg-emerald-500/10 p-3 text-left text-[11px] font-light text-emerald-700 dark:text-emerald-300">
-                    <Check className="h-4 w-4 shrink-0" aria-hidden="true" />
-                    Cartão recorrente confirmado para as próximas cobranças.
-                  </div>
-                )
-                : null}
-              <div className="rounded-[6px] bg-[var(--app-surface-soft)] p-4 text-left">
-                <div className="flex items-start gap-3">
-                  <ReceiptText
-                    className="mt-0.5 h-4 w-4 shrink-0 text-primary"
-                    strokeWidth={1.7}
-                    aria-hidden="true"
-                  />
-                  <div className="min-w-0">
-                    <p className="text-[12px] font-normal text-[var(--app-text-primary)]">
-                      {paymentReceipt
-                        ? `Comprovante ${paymentReceipt.number}`
-                        : "Comprovante Vimob"}
-                    </p>
-                    <p className="mt-1 text-[11px] font-light leading-[17px] text-[var(--app-text-tertiary)]">
-                      O envio para o e-mail e o WhatsApp cadastrados foi
-                      enfileirado. Você também pode abrir o registro por aqui;
-                      ele confirma o pagamento, mas não é documento fiscal.
-                    </p>
-                  </div>
-                </div>
-              </div>
-              {paymentReceipt
-                ? (
-                  <Button
-                    asChild
-                    variant="outline"
-                    className="h-10 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none hover:bg-primary hover:text-primary-foreground"
-                  >
-                    <a
-                      href={paymentReceipt.verification_path}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      Ver comprovante
-                      <ExternalLink
-                        className="ml-2 h-4 w-4"
-                        aria-hidden="true"
-                      />
-                    </a>
-                  </Button>
-                )
-                : (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={paymentReceiptLoading}
-                    onClick={() => void refreshPaymentReceipt()}
-                    className="h-10 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none hover:bg-primary hover:text-primary-foreground"
-                  >
-                    {paymentReceiptLoading
-                      ? (
-                        <VimobLoader
-                          size="xs"
-                          className="mr-2"
-                          label="Preparando comprovante..."
-                        />
-                      )
-                      : (
-                        <RefreshCw
-                          className="mr-2 h-4 w-4"
-                          aria-hidden="true"
-                        />
-                      )}
-                    {paymentReceiptLoading
-                      ? "Preparando comprovante"
-                      : "Consultar comprovante"}
-                  </Button>
-                )}
-              <Button
-                asChild
-                className="h-10 w-full rounded-[6px] bg-primary/50 text-[12px] font-light hover:bg-primary"
-              >
-                <a href={DEFAULT_AUTHENTICATED_ROUTE}>Acessar plataforma</a>
-              </Button>
-              {recurrenceState === "failed"
-                ? (
-                  <Button
-                    asChild
-                    variant="outline"
-                    className="h-10 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none hover:bg-primary hover:text-primary-foreground"
-                  >
-                    <a href="/settings?tab=subscription&billing=methods">
-                      Atualizar cartão para renovação
-                    </a>
-                  </Button>
-                )
-                : null}
-              {recurrenceState === "processing" && directPollingExpired
-                ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={handleRetryDirectStatus}
-                    className="h-10 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none hover:bg-primary hover:text-primary-foreground"
-                  >
-                    <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" />
-                    Consultar recorrência novamente
-                  </Button>
-                )
-                : null}
-            </CardContent>
-          </Card>
-        </div>
-      </CheckoutPageShell>
+      <PaidCheckoutView
+        planName={info.plan?.name}
+        recurrenceWarning={recurrenceWarning}
+        recurrenceState={recurrenceState}
+        pollingExpired={directPollingExpired}
+        receipt={paymentReceipt}
+        receiptLoading={paymentReceiptLoading}
+        onRefreshReceipt={() => void refreshPaymentReceipt()}
+        onRetryStatus={handleRetryDirectStatus}
+      />
     );
   }
 
   if (awaitingCardConfirmation) {
-    const cardNeedsAction = Boolean(
-      cardFailureMessage ||
-        directPollingExpired ||
-        recoveryState === "assisted",
-    );
-    const cardCanBeCancelled = Boolean(
-      recoveryState === "retry" ||
-        (cardFailureMessage && recoveryState !== "assisted") ||
-        (directPollingExpired && !recoveryPaymentId && !recoverySubscriptionId),
-    );
     return (
-      <CheckoutPageShell>
-        <div className="flex min-h-[55vh] items-center justify-center">
-          <Card className="w-full max-w-md rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
-            <CardContent className="space-y-4 p-6 text-center sm:p-8">
-              {!cardNeedsAction
-                ? <VimobLoader size="lg" label="Confirmando pagamento..." />
-                : (
-                  <span className="mx-auto flex h-10 w-10 items-center justify-center rounded-[6px] bg-amber-500/10 text-amber-700 dark:text-amber-300">
-                    <CreditCard className="h-5 w-5" aria-hidden="true" />
-                  </span>
-                )}
-              <h2 className="text-[18px] font-normal">
-                {cardFailureMessage
-                  ? "Cartão não autorizado"
-                  : cardNeedsAction
-                  ? "Confirmação pendente"
-                  : recoveryState === "settled"
-                  ? "Ativando sua assinatura"
-                  : "Confirmando pagamento"}
-              </h2>
-              <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
-                {cardFailureMessage ||
-                  recoveryMessage ||
-                  "Seu cartão foi cadastrado com segurança e ficou vinculado à assinatura. Estamos aguardando a confirmação da primeira cobrança."}
-              </p>
-              <Button
-                variant="outline"
-                onClick={handleRetryDirectStatus}
-                className="h-10 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none hover:bg-primary hover:text-primary-foreground"
-              >
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Consultar novamente
-              </Button>
-              {cardCanBeCancelled
-                ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    disabled={cancellingDirectPayment}
-                    onClick={() => void handleUseAnotherPaymentMethod()}
-                    className="h-10 w-full rounded-[6px] text-[12px] font-light"
-                  >
-                    {cancellingDirectPayment
-                      ? (
-                        <VimobLoader
-                          size="xs"
-                          className="mr-2"
-                          label="Cancelando tentativa..."
-                        />
-                      )
-                      : null}
-                    Cancelar e tentar outro cartão
-                  </Button>
-                )
-                : null}
-            </CardContent>
-          </Card>
-        </div>
-      </CheckoutPageShell>
+      <CardConfirmationView
+        failureMessage={cardFailureMessage}
+        recoveryMessage={recoveryMessage}
+        recoveryState={recoveryState}
+        pollingExpired={directPollingExpired}
+        recoveryPaymentId={recoveryPaymentId}
+        recoverySubscriptionId={recoverySubscriptionId}
+        cancelling={cancellingDirectPayment}
+        onRetryStatus={handleRetryDirectStatus}
+        onUseAnotherPaymentMethod={() => void handleUseAnotherPaymentMethod()}
+      />
     );
   }
 
-  if (!info.plan) {
-    return (
-      <CheckoutPageShell>
-        <div className="flex min-h-[55vh] items-center justify-center">
-          <Card className="w-full max-w-md rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
-            <CardContent className="space-y-2 p-6 text-center sm:p-8">
-              <h2 className="text-[18px] font-normal">Plano indisponível</h2>
-              <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
-                Este checkout não possui um plano válido. Solicite um novo link
-                para continuar.
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-      </CheckoutPageShell>
-    );
-  }
-
+  if (!info.plan) return <PlanUnavailableView />;
   const plan = info.plan;
   const billingPeriods = normalizeBillingPeriods(plan.billing_periods);
   const scopedQuote = info.checkout_access?.scope === "payment"
@@ -3025,20 +1959,6 @@ function CheckoutContent({
     ? formatPeriodLabel(selectedPeriodMonths)
     : "Não selecionado";
   const checkoutMethod = processingMethod || tab;
-  const boletoDueDate = boletoResult
-    ? formatBoletoDueDate(boletoResult.due_date)
-    : null;
-  const boletoPaymentCode = boletoResult?.identification_field ||
-    boletoResult?.bar_code || "";
-  const boletoPaymentCodeLabel = boletoResult?.identification_field
-    ? "Linha digitável"
-    : "Código de barras";
-  const boletoPaymentCodeCopiedMessage = boletoResult?.identification_field
-    ? "Linha digitável copiada!"
-    : "Código de barras copiado!";
-  const boletoDocumentUrl = boletoResult?.bank_slip_url ||
-    boletoResult?.invoice_url || "";
-  const boletoArtifactsReady = Boolean(boletoDocumentUrl || boletoPaymentCode);
   const usesStoredBillingProfile = Boolean(
     info?.checkout_access?.scope === "payment" &&
       info.checkout_access.use_stored_billing_profile &&
@@ -3111,912 +2031,116 @@ function CheckoutContent({
       </div>
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:gap-5">
-        <div className="min-w-0 space-y-4">
-          <form
-            id="checkout-billing-form"
-            className="min-w-0 rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4 shadow-none sm:p-5"
-            onSubmit={(event) => {
-              event.preventDefault();
-              handleBillingDetailsContinue();
-            }}
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-[12px] font-light text-primary-foreground">
-                  1
-                </span>
-                <div>
-                  <h2 className="app-section-title">Dados de faturamento</h2>
-                </div>
-              </div>
-              {billingDetailsConfirmed &&
-                  !usesStoredBillingProfile &&
-                  !pixResult &&
-                  !boletoResult &&
-                  !processingMethod
-                ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => setBillingDetailsConfirmed(false)}
-                    className="h-8 shrink-0 rounded-[6px] px-2.5 text-[11px] font-light text-[var(--app-text-tertiary)] hover:bg-[var(--app-surface-soft)] hover:text-primary"
-                  >
-                    <Pencil className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                    Editar
-                  </Button>
-                )
-                : null}
-            </div>
-
-            <BillingDetailsFields
-              name={holderName}
-              email={holderEmail}
-              document={holderCpf}
-              phone={holderPhone}
-              postalCode={holderPostalCode}
-              address={holderAddress}
-              addressNumber={holderAddressNumber}
-              addressComplement={holderAddressComplement}
-              neighborhood={holderNeighborhood}
-              city={holderCity}
-              state={holderState}
-              disabled={usesStoredBillingProfile ||
-                billingDetailsConfirmed ||
-                submitting ||
-                Boolean(processingMethod) ||
-                Boolean(pixResult || boletoResult)}
-              onNameChange={setHolderName}
-              onEmailChange={setHolderEmail}
-              onDocumentChange={setHolderCpf}
-              onPhoneChange={setHolderPhone}
-              onPostalCodeChange={setHolderPostalCode}
-              onAddressChange={setHolderAddress}
-              onAddressNumberChange={setHolderAddressNumber}
-              onAddressComplementChange={setHolderAddressComplement}
-              onNeighborhoodChange={setHolderNeighborhood}
-              onCityChange={setHolderCity}
-              onStateChange={setHolderState}
-            />
-
-            {billingDetailsConfirmed
-              ? (
-                <div className="mt-4 flex items-center gap-2 rounded-[6px] bg-emerald-500/10 px-3 py-2.5 text-[11px] font-light text-emerald-700 dark:text-emerald-300">
-                  <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                  {usesStoredBillingProfile
-                    ? "Dados protegidos e conferidos. As informações sensíveis permanecem mascaradas."
-                    : "Dados conferidos. Escolha o período para continuar."}
-                </div>
-              )
-              : (
-                <Button
-                  type="submit"
-                  className="mt-5 h-10 rounded-[6px] bg-primary/50 px-5 text-[12px] font-light hover:bg-primary focus-visible:bg-primary"
-                >
-                  Continuar para o período
-                  <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
-                </Button>
-              )}
-          </form>
-
-          {!managingPaymentMethod
-            ? (
-              <section
-                ref={periodSectionRef}
-                className="min-w-0 rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4 shadow-none sm:p-5"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-[12px] font-light text-primary-foreground">
-                    2
-                  </span>
-                  <div>
-                    <h2 className="app-section-title">Escolha o período</h2>
-                  </div>
-                </div>
-
-                {billingPeriods.length > 0
-                  ? (
-                    <div className="mt-4 grid gap-2 sm:grid-cols-3">
-                      {billingPeriods.map((period) => {
-                        const selected = selectedPeriodMonths === period;
-
-                        return (
-                          <button
-                            key={period}
-                            type="button"
-                            aria-pressed={selected}
-                            disabled={!canEditCheckoutSelection}
-                            onClick={() => setSelectedPeriodMonths(period)}
-                            className={`group rounded-[6px] border-0 p-3 text-left outline-none transition-colors focus-visible:ring-1 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-60 ${
-                              selected
-                                ? "bg-primary text-primary-foreground"
-                                : "bg-[var(--app-surface-soft)] hover:bg-primary hover:text-primary-foreground"
-                            }`}
-                          >
-                            <span className="flex items-center justify-between gap-2">
-                              <span className="text-[12px] font-light">
-                                {formatPeriodLabel(period)}
-                              </span>
-                              <span
-                                className={`flex h-4 w-4 items-center justify-center rounded-[4px] ${
-                                  selected
-                                    ? "bg-primary-foreground/20 text-primary-foreground"
-                                    : "bg-[var(--app-surface-solid)] text-transparent group-hover:bg-primary-foreground/20"
-                                }`}
-                              >
-                                {selected
-                                  ? (
-                                    <Check
-                                      className="h-3 w-3"
-                                      aria-hidden="true"
-                                    />
-                                  )
-                                  : null}
-                              </span>
-                            </span>
-                            <span
-                              className={`mt-1.5 block text-[11px] font-light ${
-                                selected
-                                  ? "text-primary-foreground/80"
-                                  : "text-[var(--app-text-tertiary)] group-hover:text-primary-foreground/75"
-                              }`}
-                            >
-                              {formatCurrency(monthlyPrice * period)} no período
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )
-                  : (
-                    <div className="mt-4 rounded-[6px] bg-amber-500/10 p-3 text-[12px] font-light leading-[18px] text-amber-700 dark:text-amber-300">
-                      Os períodos deste plano ainda não foram configurados.
-                      Atualize o catálogo antes de cobrar.
-                    </div>
-                  )}
-              </section>
-            )
-            : null}
-        </div>
+        <CheckoutBillingSection
+          periodSectionRef={periodSectionRef}
+          details={{
+            name: holderName,
+            email: holderEmail,
+            document: holderCpf,
+            phone: holderPhone,
+            postalCode: holderPostalCode,
+            address: holderAddress,
+            addressNumber: holderAddressNumber,
+            addressComplement: holderAddressComplement,
+            neighborhood: holderNeighborhood,
+            city: holderCity,
+            state: holderState,
+            onNameChange: setHolderName,
+            onEmailChange: setHolderEmail,
+            onDocumentChange: setHolderCpf,
+            onPhoneChange: setHolderPhone,
+            onPostalCodeChange: setHolderPostalCode,
+            onAddressChange: setHolderAddress,
+            onAddressNumberChange: setHolderAddressNumber,
+            onAddressComplementChange: setHolderAddressComplement,
+            onNeighborhoodChange: setHolderNeighborhood,
+            onCityChange: setHolderCity,
+            onStateChange: setHolderState,
+          }}
+          state={{
+            confirmed: billingDetailsConfirmed,
+            usesStoredProfile: usesStoredBillingProfile,
+            submitting,
+            processingMethod,
+            hasDirectPaymentResult: Boolean(pixResult || boletoResult),
+          }}
+          period={{
+            managingPaymentMethod,
+            periods: billingPeriods,
+            selectedMonths: selectedPeriodMonths,
+            canEdit: canEditCheckoutSelection,
+            monthlyPrice,
+          }}
+          actions={{
+            onContinue: handleBillingDetailsContinue,
+            onEdit: () => setBillingDetailsConfirmed(false),
+            onSelectPeriod: setSelectedPeriodMonths,
+          }}
+        />
 
         <div className="min-w-0 space-y-4">
-          <aside className="min-w-0">
-            <section className="rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4 shadow-none sm:p-5">
-              <h2 className="app-section-title">
-                {managingPaymentMethod
-                  ? "Assinatura atual"
-                  : "Resumo do pedido"}
-              </h2>
-
-              <div className="mt-4 divide-y divide-[var(--app-border)] text-[12px] font-light">
-                <DropdownMenu
-                  open={planSelectorOpen}
-                  onOpenChange={(open) =>
-                    setPlanSelectorOpen(canChangePlan ? open : false)}
-                >
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      type="button"
-                      disabled={!canChangePlan}
-                      aria-label={"Editar plano. Atual: " + plan.name}
-                      className="group flex w-full items-center justify-between gap-4 px-2 py-3 text-left outline-none transition-colors hover:bg-[var(--app-surface-soft)] focus-visible:ring-1 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      <span className="text-[var(--app-text-tertiary)]">
-                        Plano
-                      </span>
-                      <span className="flex min-w-0 items-center justify-end gap-2 text-right text-[var(--app-text-secondary)] transition-colors group-hover:text-primary">
-                        <span className="truncate">{plan.name}</span>
-                        {changingPlanId
-                          ? (
-                            <RefreshCw
-                              className="h-3 w-3 shrink-0 animate-spin"
-                              aria-hidden="true"
-                            />
-                          )
-                          : (
-                            <Pencil
-                              className="h-3 w-3 shrink-0"
-                              aria-hidden="true"
-                            />
-                          )}
-                      </span>
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="end"
-                    sideOffset={6}
-                    className="w-[min(300px,calc(100vw-32px))] rounded-[8px] p-2"
-                  >
-                    <DropdownMenuLabel className="px-2 pb-2 pt-1 text-[11px] font-light text-[var(--app-text-tertiary)]">
-                      Escolha o plano
-                    </DropdownMenuLabel>
-                    {plansLoading
-                      ? (
-                        <div className="flex items-center px-2 py-3 text-[11px] font-light text-[var(--app-text-tertiary)]">
-                          <RefreshCw
-                            className="mr-2 h-3.5 w-3.5 animate-spin"
-                            aria-hidden="true"
-                          />
-                          Carregando planos...
-                        </div>
-                      )
-                      : availablePlans.length > 0
-                      ? (
-                        <DropdownMenuRadioGroup
-                          value={plan.id}
-                          className="space-y-1"
-                          onValueChange={(value) => {
-                            const nextPlan = availablePlans.find(
-                              (availablePlan) => availablePlan.id === value,
-                            );
-                            if (!nextPlan || nextPlan.id === plan.id) return;
-                            setPlanSelectorOpen(false);
-                            void handlePlanChange(nextPlan);
-                          }}
-                        >
-                          {availablePlans.map((availablePlan) => (
-                            <DropdownMenuRadioItem
-                              key={availablePlan.id ||
-                                availablePlan.slug ||
-                                availablePlan.name}
-                              value={availablePlan.id || ""}
-                              disabled={Boolean(changingPlanId)}
-                              className="rounded-[6px] py-2 pl-7 pr-2 text-[12px] font-light"
-                            >
-                              <span className="min-w-0 flex-1 truncate">
-                                {availablePlan.name}
-                              </span>
-                              <span className="ml-3 shrink-0 text-[11px] text-[var(--app-text-tertiary)]">
-                                {formatCurrency(
-                                  Number(availablePlan.price),
-                                )}/mês
-                              </span>
-                            </DropdownMenuRadioItem>
-                          ))}
-                        </DropdownMenuRadioGroup>
-                      )
-                      : (
-                        <p className="px-2 py-3 text-[11px] font-light leading-[16px] text-[var(--app-text-tertiary)]">
-                          Não foi possível listar os planos agora.
-                        </p>
-                      )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-
-                {!managingPaymentMethod
-                  ? (
-                    <div className="flex w-full items-center justify-between gap-4 px-2 py-3">
-                      <span className="text-[var(--app-text-tertiary)]">
-                        Período
-                      </span>
-                      <span className="text-right text-[var(--app-text-secondary)]">
-                        {selectedPeriodLabel}
-                      </span>
-                    </div>
-                  )
-                  : null}
-
-                <div className="flex w-full items-center justify-between gap-4 px-2 py-3">
-                  <span className="text-[var(--app-text-tertiary)]">
-                    Pagamento
-                  </span>
-                  <span className="text-right text-[var(--app-text-secondary)]">
-                    {managingPaymentMethod
-                      ? "Cartão recorrente"
-                      : activePaymentMethodLabel}
-                  </span>
-                </div>
-              </div>
-
-              {!managingPaymentMethod
-                ? (
-                  <div className="mt-2 border-t border-[var(--app-border)] pt-4">
-                    <div className="flex items-end justify-between gap-4">
-                      <div>
-                        <p className="text-[12px] font-light text-[var(--app-text-secondary)]">
-                          Total
-                        </p>
-                        {selectedPeriodMonths
-                          ? (
-                            <p className="mt-0.5 text-[11px] font-light text-[var(--app-text-tertiary)]">
-                              Referente a {formatPeriod(selectedPeriodMonths)}
-                            </p>
-                          )
-                          : null}
-                      </div>
-                      <p className="text-[20px] font-normal tracking-tight text-primary/70">
-                        {formatCurrency(total)}
-                      </p>
-                    </div>
-                    <p className="mt-2 text-right text-[11px] font-light text-[var(--app-text-tertiary)]">
-                      {formatCurrency(monthlyPrice)}/mês
-                    </p>
-                  </div>
-                )
-                : (
-                  <p className="mt-3 border-t border-[var(--app-border)] px-2 pt-4 text-[11px] font-light leading-[17px] text-[var(--app-text-tertiary)]">
-                    O novo cartão será usado nas próximas cobranças automáticas.
-                  </p>
-                )}
-            </section>
-          </aside>
-          <form
-            ref={paymentFormRef}
-            id="checkout-payment-form"
-            className="min-w-0 rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4 shadow-none sm:p-5"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (isPaymentFormReady) void handleSubmit(checkoutMethod);
+          <CheckoutOrderSummary
+            plan={plan}
+            managingPaymentMethod={managingPaymentMethod}
+            planSelectorOpen={planSelectorOpen}
+            canChangePlan={canChangePlan}
+            changingPlanId={changingPlanId}
+            plansLoading={plansLoading}
+            availablePlans={availablePlans}
+            selectedPeriodLabel={selectedPeriodLabel}
+            activePaymentMethodLabel={activePaymentMethodLabel}
+            selectedPeriodMonths={selectedPeriodMonths}
+            total={total}
+            monthlyPrice={monthlyPrice}
+            onPlanSelectorOpenChange={setPlanSelectorOpen}
+            onPlanChange={handlePlanChange}
+          />
+          <CheckoutPaymentSection
+            formRef={paymentFormRef}
+            billing={{
+              confirmed: billingDetailsConfirmed,
+              managingPaymentMethod,
+              periods: billingPeriods,
             }}
-          >
-            <div className="flex items-center gap-3">
-              <span
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] text-[12px] font-light ${
-                  billingDetailsConfirmed
-                    ? "bg-primary/50 text-primary-foreground"
-                    : "bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)]"
-                }`}
-              >
-                {managingPaymentMethod ? 2 : 3}
-              </span>
-              <h2 className="app-section-title">
-                {managingPaymentMethod
-                  ? "Cartão recorrente"
-                  : "Informação de pagamento"}
-              </h2>
-            </div>
-
-            {!billingDetailsConfirmed
-              ? (
-                <div className="mt-5 flex items-center gap-3 rounded-[6px] bg-[var(--app-surface-soft)] p-4 text-[12px] font-light text-[var(--app-text-tertiary)]">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-[var(--app-surface-solid)]">
-                    <LockKeyhole
-                      className="h-3.5 w-3.5"
-                      strokeWidth={1.6}
-                      aria-hidden="true"
-                    />
-                  </span>
-                  Confira os dados de faturamento para liberar as formas de
-                  pagamento.
-                </div>
-              )
-              : paymentProviderProcessing
-              ? (
-                <div className="mt-5 flex items-start gap-3 rounded-[6px] bg-[var(--app-surface-soft)] p-4 text-[12px] font-light text-[var(--app-text-tertiary)]">
-                  <VimobLoader size="xs" label="Processando pagamento..." />
-                  <span>
-                    O pagamento já foi enviado e está em análise. As formas de
-                    pagamento ficam bloqueadas até a confirmação.
-                  </span>
-                </div>
-              )
-              : pixResult
-              ? (
-                <div className="mt-5 space-y-4 text-center" aria-live="polite">
-                  <div>
-                    <h3 className="text-[14px] font-light">
-                      {pixResult.qr_code || pixResult.qr_payload
-                        ? "Pague com Pix"
-                        : "Preparando seu Pix"}
-                    </h3>
-                    <p className="mt-1 text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
-                      {pixResult.qr_code || pixResult.qr_payload
-                        ? "Escaneie o QR Code ou use o código copia e cola. A confirmação é automática."
-                        : recoveryMessage ||
-                          "A cobrança já foi criada e o código está sendo recuperado."}
-                    </p>
-                  </div>
-                  {pixResult.qr_code
-                    ? (
-                      <NextImage
-                        src={`data:image/png;base64,${pixResult.qr_code}`}
-                        alt="QR Code Pix"
-                        width={256}
-                        height={256}
-                        className="mx-auto aspect-square h-auto w-full max-w-56 rounded-[8px] bg-[var(--app-surface-solid)] p-2"
-                        unoptimized
-                      />
-                    )
-                    : !pixResult.qr_payload
-                    ? (
-                      <div className="mx-auto flex h-48 w-full max-w-56 items-center justify-center rounded-[8px] bg-[var(--app-surface-soft)]">
-                        {!directPollingExpired
-                          ? (
-                            <VimobLoader
-                              size="sm"
-                              label="Preparando código Pix..."
-                            />
-                          )
-                          : (
-                            <QrCode
-                              className="h-6 w-6 text-[var(--app-text-tertiary)]"
-                              aria-hidden="true"
-                            />
-                          )}
-                      </div>
-                    )
-                    : null}
-                  {pixResult.qr_payload
-                    ? (
-                      <div className="mx-auto flex max-w-xl items-center gap-2">
-                        <Input
-                          value={pixResult.qr_payload}
-                          readOnly
-                          aria-label="Código Pix copia e cola"
-                          className="h-10 min-w-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[11px] font-light shadow-none"
-                        />
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="outline"
-                          className="h-10 w-10 shrink-0 rounded-[6px] border-0 bg-primary/50 text-primary-foreground shadow-none hover:bg-primary"
-                          aria-label="Copiar código Pix"
-                          onClick={() => {
-                            void copyPaymentCode(
-                              pixResult.qr_payload || "",
-                              "Código Pix copiado!",
-                            );
-                          }}
-                        >
-                          <Copy className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    )
-                    : null}
-                  <div className="flex items-center justify-center gap-2 text-[11px] font-light text-[var(--app-text-tertiary)]">
-                    {!directPollingExpired
-                      ? (
-                        <VimobLoader
-                          size="xs"
-                          label="Aguardando pagamento..."
-                        />
-                      )
-                      : null}
-                    {directPollingExpired
-                      ? recoveryMessage || "A confirmação ainda está pendente."
-                      : recoveryState === "settled"
-                      ? "Pagamento recebido. Ativando assinatura..."
-                      : pixResult.qr_code || pixResult.qr_payload
-                      ? "Aguardando pagamento..."
-                      : "Recuperando código Pix..."}
-                  </div>
-                  <div className="flex flex-col items-center justify-center gap-2 sm:flex-row">
-                    {directPollingExpired
-                      ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={handleRetryDirectStatus}
-                          className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[11px] font-light shadow-none hover:bg-primary hover:text-primary-foreground"
-                        >
-                          <RefreshCw className="mr-2 h-4 w-4" />
-                          Atualizar status
-                        </Button>
-                      )
-                      : null}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="h-9 rounded-[6px] text-[11px] font-light"
-                      disabled={cancellingDirectPayment}
-                      onClick={() => void handleUseAnotherPaymentMethod()}
-                    >
-                      {cancellingDirectPayment
-                        ? (
-                          <VimobLoader
-                            size="xs"
-                            className="mr-2"
-                            label="Cancelando cobrança..."
-                          />
-                        )
-                        : null}
-                      Usar outra forma
-                    </Button>
-                  </div>
-                </div>
-              )
-              : boletoResult
-              ? (
-                <div className="mt-5 space-y-4" aria-live="polite">
-                  <div className="flex items-start gap-3 rounded-[6px] bg-[var(--app-surface-soft)] p-3">
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
-                      <ReceiptText className="h-4 w-4" aria-hidden="true" />
-                    </span>
-                    <div>
-                      <h3 className="text-[14px] font-light">
-                        {boletoArtifactsReady
-                          ? "Boleto gerado"
-                          : "Preparando seu boleto"}
-                      </h3>
-                      <p className="mt-1 text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
-                        {boletoArtifactsReady
-                          ? (
-                            <>
-                              {boletoDueDate
-                                ? `Vencimento em ${boletoDueDate}. `
-                                : "Consulte o vencimento na fatura. "}
-                              O plano será ativado automaticamente após a
-                              compensação.
-                            </>
-                          )
-                          : (
-                            recoveryMessage ||
-                            "A cobrança já foi criada e os dados bancários estão sendo recuperados."
-                          )}
-                      </p>
-                    </div>
-                  </div>
-
-                  {boletoPaymentCode
-                    ? (
-                      <div>
-                        <Label
-                          htmlFor="boleto-identification-field"
-                          className="text-[12px] font-light text-[var(--app-text-secondary)]"
-                        >
-                          {boletoPaymentCodeLabel}
-                        </Label>
-                        <div className="mt-2 flex items-center gap-2">
-                          <Input
-                            id="boleto-identification-field"
-                            value={boletoPaymentCode}
-                            readOnly
-                            className="h-10 min-w-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[11px] font-light shadow-none"
-                          />
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="outline"
-                            className="h-10 w-10 shrink-0 rounded-[6px] border-0 bg-primary/50 text-primary-foreground shadow-none hover:bg-primary"
-                            aria-label={`Copiar ${boletoPaymentCodeLabel.toLowerCase()}`}
-                            onClick={() => {
-                              void copyPaymentCode(
-                                boletoPaymentCode,
-                                boletoPaymentCodeCopiedMessage,
-                              );
-                            }}
-                          >
-                            <Copy className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    )
-                    : null}
-
-                  <div className="flex items-center gap-2 text-[11px] font-light text-[var(--app-text-tertiary)]">
-                    {!directPollingExpired
-                      ? (
-                        <VimobLoader
-                          size="xs"
-                          label={boletoArtifactsReady
-                            ? "Aguardando compensação do boleto..."
-                            : "Preparando boleto..."}
-                        />
-                      )
-                      : null}
-                    {directPollingExpired
-                      ? recoveryMessage || "A confirmação ainda está pendente."
-                      : recoveryState === "settled"
-                      ? "Pagamento recebido. Ativando assinatura..."
-                      : boletoArtifactsReady
-                      ? "Aguardando compensação bancária"
-                      : "Recuperando dados do boleto..."}
-                  </div>
-                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-                    {boletoDocumentUrl
-                      ? (
-                        <Button
-                          variant="outline"
-                          asChild
-                          className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[11px] font-light shadow-none hover:bg-primary hover:text-primary-foreground"
-                        >
-                          <a
-                            href={boletoDocumentUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            Abrir boleto
-                            <ExternalLink className="ml-2 h-4 w-4" />
-                          </a>
-                        </Button>
-                      )
-                      : null}
-                    {directPollingExpired
-                      ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={handleRetryDirectStatus}
-                          className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[11px] font-light shadow-none hover:bg-primary hover:text-primary-foreground"
-                        >
-                          <RefreshCw className="mr-2 h-4 w-4" />
-                          Atualizar status
-                        </Button>
-                      )
-                      : null}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="h-9 rounded-[6px] text-[11px] font-light"
-                      disabled={cancellingDirectPayment}
-                      onClick={() => void handleUseAnotherPaymentMethod()}
-                    >
-                      {cancellingDirectPayment
-                        ? (
-                          <VimobLoader
-                            size="xs"
-                            className="mr-2"
-                            label="Cancelando cobrança..."
-                          />
-                        )
-                        : null}
-                      Usar outra forma
-                    </Button>
-                  </div>
-                </div>
-              )
-              : (
-                <Tabs
-                  value={tab}
-                  onValueChange={(value) => setTab(value as PaymentMethod)}
-                  className="mt-5"
-                >
-                  {bankSlipRegistrationCancelled
-                    ? (
-                      <div
-                        className="mb-4 flex items-start gap-2 rounded-[6px] bg-amber-500/10 p-3 text-[12px] font-light leading-[18px] text-amber-700 dark:text-amber-300"
-                        role="status"
-                      >
-                        <ReceiptText
-                          className="mt-0.5 h-4 w-4 shrink-0"
-                          aria-hidden="true"
-                        />
-                        <span>
-                          O boleto anterior expirou ou teve o registro bancário
-                          cancelado. Gere um novo boleto ou escolha Pix ou
-                          cartão; o documento antigo não está mais disponível.
-                        </span>
-                      </div>
-                    )
-                    : null}
-                  {directCardUpdateJobId &&
-                      directCardUpdateMode === "saved_only"
-                    ? (
-                      <div
-                        className="mb-4 space-y-3 rounded-[6px] bg-amber-500/10 p-3 text-[12px] font-light leading-[18px] text-amber-700 dark:text-amber-300"
-                        role="status"
-                        aria-live="polite"
-                      >
-                        <div className="flex items-start gap-2">
-                          {!directPollingExpired
-                            ? (
-                              <VimobLoader
-                                size="xs"
-                                label="Confirmando atualização do cartão..."
-                              />
-                            )
-                            : (
-                              <RefreshCw
-                                className="mt-0.5 h-4 w-4 shrink-0"
-                                aria-hidden="true"
-                              />
-                            )}
-                          <span>
-                            {recoveryMessage ||
-                              (directPollingExpired
-                                ? "A atualização continua em conciliação. Consulte novamente em instantes."
-                                : "A atualização do cartão está sendo confirmada com segurança.")}
-                          </span>
-                        </div>
-                        {directPollingExpired && recoveryState !== "assisted"
-                          ? (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              onClick={handleRetryDirectStatus}
-                              className="h-8 px-2.5 text-[11px] font-light text-current hover:bg-amber-500/10"
-                            >
-                              <RefreshCw
-                                className="mr-2 h-3.5 w-3.5"
-                                aria-hidden="true"
-                              />
-                              Consultar novamente
-                            </Button>
-                          )
-                          : null}
-                      </div>
-                    )
-                    : processingMethod
-                    ? (
-                      <div className="mb-4 space-y-3 rounded-[6px] bg-amber-500/10 p-3 text-[12px] font-light leading-[18px] text-amber-700 dark:text-amber-300">
-                        <div className="flex items-start gap-2">
-                          {!directPollingExpired
-                            ? (
-                              <VimobLoader
-                                size="xs"
-                                label="Localizando cobrança..."
-                              />
-                            )
-                            : (
-                              <RefreshCw
-                                className="mt-0.5 h-4 w-4 shrink-0"
-                                aria-hidden="true"
-                              />
-                            )}
-                          <span>
-                            {recoveryMessage ||
-                              (directPollingExpired
-                                ? "A cobrança ainda não pôde ser localizada. Consulte novamente ou cancele a tentativa."
-                                : "A cobrança está sendo localizada automaticamente sem gerar duplicidade.")}
-                          </span>
-                        </div>
-                        {directPollingExpired
-                          ? (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              disabled={cancellingDirectPayment}
-                              onClick={() =>
-                                void handleUseAnotherPaymentMethod()}
-                              className="h-8 px-2.5 text-[11px] font-light text-current hover:bg-amber-500/10"
-                            >
-                              {cancellingDirectPayment
-                                ? (
-                                  <VimobLoader
-                                    size="xs"
-                                    className="mr-2"
-                                    label="Cancelando tentativa..."
-                                  />
-                                )
-                                : null}
-                              Cancelar tentativa
-                            </Button>
-                          )
-                          : null}
-                      </div>
-                    )
-                    : null}
-                  <TabsList
-                    className={`grid h-10 w-full ${
-                      managingPaymentMethod ? "grid-cols-1" : "grid-cols-3"
-                    } rounded-[8px] bg-[var(--app-surface-soft)] p-1 text-[var(--app-text-tertiary)]`}
-                  >
-                    {!managingPaymentMethod
-                      ? (
-                        <>
-                          <TabsTrigger
-                            value="PIX"
-                            disabled={submitting || Boolean(processingMethod) ||
-                              Boolean(directCardUpdateJobId)}
-                            className="mx-0 min-w-0 rounded-[6px] px-2 text-[11px] font-light shadow-none data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-primary/70 data-[state=active]:shadow-none sm:text-[12px]"
-                          >
-                            <QrCode className="mr-1 h-3.5 w-3.5 sm:mr-1.5" />
-                            Pix
-                          </TabsTrigger>
-                          <TabsTrigger
-                            value="BOLETO"
-                            disabled={submitting || Boolean(processingMethod) ||
-                              Boolean(directCardUpdateJobId)}
-                            className="mx-0 min-w-0 rounded-[6px] px-2 text-[11px] font-light shadow-none data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-primary/70 data-[state=active]:shadow-none sm:text-[12px]"
-                          >
-                            <ReceiptText className="mr-1 h-3.5 w-3.5 sm:mr-1.5" />
-                            Boleto
-                          </TabsTrigger>
-                        </>
-                      )
-                      : null}
-                    <TabsTrigger
-                      value="CREDIT_CARD"
-                      disabled={submitting || Boolean(processingMethod) ||
-                        Boolean(directCardUpdateJobId)}
-                      className="mx-0 min-w-0 rounded-[6px] px-2 text-[11px] font-light shadow-none data-[state=active]:bg-[var(--app-surface-solid)] data-[state=active]:text-primary/70 data-[state=active]:shadow-none sm:text-[12px]"
-                    >
-                      <CreditCard className="mr-1 h-3.5 w-3.5 sm:mr-1.5" />
-                      Cartão
-                    </TabsTrigger>
-                  </TabsList>
-
-                  {tab === "CREDIT_CARD"
-                    ? (
-                      <CardPaymentFields
-                        holderName={cardHolderName}
-                        holderDocument={cardHolderDocument}
-                        number={cardNumber}
-                        expiryMonth={cardExpiryMonth}
-                        expiryYear={cardExpiryYear}
-                        ccv={cardCcv}
-                        disabled={submitting || Boolean(processingMethod) ||
-                          Boolean(directCardUpdateJobId)}
-                        onHolderNameChange={setCardHolderName}
-                        onHolderDocumentChange={setCardHolderDocument}
-                        onNumberChange={setCardNumber}
-                        onExpiryMonthChange={setCardExpiryMonth}
-                        onExpiryYearChange={setCardExpiryYear}
-                        onCcvChange={setCardCcv}
-                      />
-                    )
-                    : null}
-                </Tabs>
-              )}
-            <div className="mt-5 flex items-start gap-2 border-t border-[var(--app-border)] pt-4 text-[11px] font-light leading-[17px] text-[var(--app-text-tertiary)]">
-              <ShieldCheck
-                className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600"
-                aria-hidden="true"
-              />
-              Seus dados são protegidos e processados em ambiente seguro.
-            </div>
-
-            {pixResult || boletoResult
-              ? (
-                <div className="mt-5 flex items-center gap-2 rounded-[6px] bg-amber-500/10 p-3 text-[11px] font-light text-amber-800 dark:text-amber-300">
-                  {!directPollingExpired
-                    ? (
-                      <VimobLoader
-                        size="xs"
-                        label={pixResult
-                          ? "Aguardando pagamento Pix..."
-                          : "Aguardando compensação do boleto..."}
-                      />
-                    )
-                    : (
-                      <ReceiptText
-                        className="h-4 w-4 shrink-0"
-                        aria-hidden="true"
-                      />
-                    )}
-                  {directPollingExpired
-                    ? "Confirmação ainda pendente"
-                    : pixResult
-                    ? "Aguardando pagamento Pix"
-                    : "Aguardando compensação do boleto"}
-                </div>
-              )
-              : (
-                <Button
-                  type="submit"
-                  className="mt-5 h-10 w-full rounded-[6px] bg-primary/50 text-[12px] font-light hover:bg-primary focus-visible:bg-primary"
-                  disabled={submitting ||
-                    Boolean(directCardUpdateJobId) ||
-                    !isPaymentFormReady ||
-                    (!managingPaymentMethod &&
-                      billingPeriods.length === 0 &&
-                      !paymentRecoveryInProgress)}
-                >
-                  {submitting
-                    ? (
-                      <VimobLoader
-                        size="sm"
-                        className="mr-2"
-                        label={checkoutMethod === "PIX"
-                          ? "Gerando QR Code Pix..."
-                          : checkoutMethod === "BOLETO"
-                          ? "Gerando boleto..."
-                          : managingPaymentMethod
-                          ? "Salvando cartão..."
-                          : "Cadastrando cartão..."}
-                      />
-                    )
-                    : processingMethod
-                    ? <RefreshCw className="mr-2 h-4 w-4" />
-                    : checkoutMethod === "PIX"
-                    ? <QrCode className="mr-2 h-4 w-4" />
-                    : checkoutMethod === "BOLETO"
-                    ? <ReceiptText className="mr-2 h-4 w-4" />
-                    : <CreditCard className="mr-2 h-4 w-4" />}
-                  {processingMethod
-                    ? "Localizar cobrança"
-                    : checkoutMethod === "PIX"
-                    ? "Gerar QR Code Pix"
-                    : checkoutMethod === "BOLETO"
-                    ? "Gerar boleto"
-                    : managingPaymentMethod
-                    ? "Salvar cartão recorrente"
-                    : "Cadastrar cartão"}
-                  {!submitting && !processingMethod
-                    ? <ArrowRight className="ml-2 h-4 w-4" />
-                    : null}
-                </Button>
-              )}
-          </form>
+            payment={{
+              isFormReady: isPaymentFormReady,
+              providerProcessing: paymentProviderProcessing,
+              checkoutMethod,
+              processingMethod,
+              submitting,
+              recoveryMessage,
+              recoveryState,
+              pollingExpired: directPollingExpired,
+              cancelling: cancellingDirectPayment,
+              recoveryInProgress: paymentRecoveryInProgress,
+              bankSlipRegistrationCancelled,
+              cardUpdateJobId: directCardUpdateJobId,
+              cardUpdateMode: directCardUpdateMode,
+              tab,
+            }}
+            pixResult={pixResult}
+            boletoResult={boletoResult}
+            card={{
+              holderName: cardHolderName,
+              holderDocument: cardHolderDocument,
+              number: cardNumber,
+              expiryMonth: cardExpiryMonth,
+              expiryYear: cardExpiryYear,
+              ccv: cardCcv,
+              onHolderNameChange: setCardHolderName,
+              onHolderDocumentChange: setCardHolderDocument,
+              onNumberChange: setCardNumber,
+              onExpiryMonthChange: setCardExpiryMonth,
+              onExpiryYearChange: setCardExpiryYear,
+              onCcvChange: setCardCcv,
+            }}
+            actions={{
+              onSubmit: handleSubmit,
+              onRetryStatus: handleRetryDirectStatus,
+              onUseAnotherPaymentMethod: handleUseAnotherPaymentMethod,
+              onTabChange: setTab,
+            }}
+          />
         </div>
       </div>
     </CheckoutPageShell>

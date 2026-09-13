@@ -28,6 +28,75 @@ function getString(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
 }
 
+/**
+ * Preserves the legacy UI policy used when every thrown value must be rendered.
+ * Unlike getTechnicalErrorMessage, this intentionally stringifies non-Error values
+ * and does not trim the result.
+ */
+export function stringifyErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/** Preserves the legacy UI policy that only trusts native Error instances. */
+export function getErrorMessageOrFallback(error: unknown, fallback = 'Erro desconhecido') {
+  return error instanceof Error ? error.message : fallback
+}
+
+export function getNonEmptyErrorMessageOrFallback(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback
+}
+
+/** Preserves the legacy policy that rejects whitespace-only Error messages. */
+export function getNonBlankErrorMessageOrFallback(error: unknown, fallback: string) {
+  return error instanceof Error && error.message.trim() ? error.message : fallback
+}
+
+/**
+ * Preserves the legacy UI policy that trusts Error and string-valued `message`
+ * fields, without treating a raw string as an error message.
+ */
+export function getErrorObjectMessage(error: unknown, fallback = 'Erro desconhecido') {
+  if (error instanceof Error) return error.message
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = (error as { message?: unknown }).message
+    if (typeof message === 'string') return message
+  }
+  return fallback
+}
+
+export function getOptionalErrorObjectMessage(error: unknown) {
+  return getErrorObjectMessage(error, '')
+}
+
+type StructuredErrorMessageOptions = {
+  fields?: readonly string[]
+  includeArrays?: boolean
+}
+
+/**
+ * Preserves the detailed Supabase-style error policy used by operational forms.
+ * Callers opt into extra fields (for example `code`) and array handling explicitly.
+ */
+export function getStructuredErrorMessage(
+  error: unknown,
+  options: StructuredErrorMessageOptions = {},
+) {
+  if (error instanceof Error) return error.message
+
+  const isObject = typeof error === 'object' && error !== null
+  if (isObject && (options.includeArrays || !Array.isArray(error))) {
+    const payload = error as Record<string, unknown>
+    const fields = options.fields ?? ['message', 'details', 'hint']
+    const details = fields
+      .map((field) => payload[field])
+      .filter((value): value is string => typeof value === 'string' && value.length > 0)
+
+    return details.join(' ') || JSON.stringify(error)
+  }
+
+  return String(error)
+}
+
 function normalizeForComparison(value: string) {
   return value
     .normalize('NFD')

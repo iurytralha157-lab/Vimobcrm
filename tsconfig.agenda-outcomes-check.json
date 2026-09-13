@@ -1,0 +1,37 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false,
+    "noEmit": true
+  },
+  "include": [
+    "next-env.d.ts",
+    "components/features/schedule/ScheduleOutcomeDialog.tsx",
+    "components/features/schedule/AgendaScreen.tsx",
+    "components/features/schedule/EventSheet.tsx",
+    "components/features/schedule/EventsList.tsx",
+    "components/features/schedule/CalendarView.tsx",
+    "components/features/schedule/CompactScheduleEventsList.tsx",
+    "components/features/schedule/event-sheet/**/*.tsx",
+    "components/features/schedule/event-sheet/**/*.ts",
+    "components/features/leads/LeadDetailDialog.tsx",
+    "components/features/leads/lead-detail/CompactScheduleEventsList.tsx",
+    "components/features/whatsapp/ConversationLeadPanel.tsx",
+    "hooks/use-schedule-events.ts",
+    "hooks/use-schedule-event-assignees.ts",
+    "hooks/use-google-calendar.ts",
+    "hooks/schedule/invalidate-schedule-dashboard.ts",
+    "lib/api/schedule.ts",
+    "lib/schedule-outcome.ts",
+    "lib/validation/schedule.ts",
+    "lib/validation/schedule.test.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    ".next*/**/*",
+    ".validation-tests/**/*",
+    "supabase/functions",
+    "deploy/edge-retirement",
+    "deploy/supabase-self-hosted/functions-main"
+  ]
+}

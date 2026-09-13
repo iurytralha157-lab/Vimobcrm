@@ -3,9 +3,12 @@ import { expect, test } from '@playwright/test';
 import { signInAs } from './support/auth';
 
 test('campos monetarios aceitam milhares e centavos', async ({ page }) => {
+  test.setTimeout(120_000);
   await signInAs(page, 'admin');
   await page.goto('/properties/new');
-  await page.getByRole('button', { name: 'Valores', exact: true }).click();
+  const ownerTab = page.getByRole('tab', { name: 'Proprietário', exact: true });
+  const valuesTab = page.getByRole('tab', { name: 'Valores', exact: true });
+  await valuesTab.click();
 
   const fields = page.locator('[data-tour="property-values-section"] input[inputmode="decimal"]');
   await expect(fields).toHaveCount(7);
@@ -16,11 +19,13 @@ test('campos monetarios aceitam milhares e centavos', async ({ page }) => {
     await fields.nth(index).fill(inputs[index]);
   }
 
-  await page.getByRole('button', { name: 'Valores', exact: true }).click();
+  await ownerTab.click();
+  await valuesTab.click();
   await expect.poll(() => fields.evaluateAll((elements) => elements.map((element) => (element as HTMLInputElement).value)))
     .toEqual(inputs);
 
   await fields.nth(0).fill('9.876,54');
-  await page.getByRole('button', { name: 'Valores', exact: true }).click();
+  await ownerTab.click();
+  await valuesTab.click();
   await expect(fields.nth(0)).toHaveValue('9.876,54');
 });

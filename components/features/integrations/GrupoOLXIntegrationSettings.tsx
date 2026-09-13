@@ -52,6 +52,8 @@ import { useProperties, type Property } from "@/hooks/use-properties";
 import { usePipelines, useStages } from "@/hooks/use-stages";
 import { useUsers } from "@/hooks/use-users";
 import { useRoundRobins } from "@/hooks/use-round-robins";
+import { formatWholePtBRCurrency } from "@/lib/utils/formatting";
+import { CanalProSetupGuide } from "@/components/features/integrations/grupo-olx/CanalProSetupGuide";
 import {
   getGrupoOLXPublicURLs,
   useActivateGrupoOLXIntegration,
@@ -137,11 +139,7 @@ function getPropertyPrice(property: Property) {
   const rentPrice = Number(property.valor_locacao || 0);
   const value = salePrice > 0 ? salePrice : rentPrice;
   if (!Number.isFinite(value) || value <= 0) return "-";
-  return value.toLocaleString("pt-BR", {
-    currency: "BRL",
-    maximumFractionDigits: 0,
-    style: "currency",
-  });
+  return formatWholePtBRCurrency(value);
 }
 
 function getPublicationDraft(publication: GrupoOLXPublication): PublicationDraft {
@@ -658,6 +656,8 @@ export function GrupoOLXIntegrationSettings() {
           </div>
         </section>
       </div>
+
+      <CanalProSetupGuide endpointsReady={Boolean(urls)} />
 
       <section className="space-y-4 rounded-[8px] border border-white/[0.055] p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

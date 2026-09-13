@@ -16,7 +16,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/authorization"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/leadscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/propertyscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
@@ -33,6 +36,7 @@ type Repository struct {
 	evolutionGoAPIKey    string
 	notificationEmail    notificationEmailClient
 	notificationPush     *notificationPushClient
+	notificationStats    *notificationDispatchCounters
 	gamificationRecorder GamificationRecorder
 }
 
@@ -44,16 +48,32 @@ type leadTeamQueryer interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
+type notificationQueryer interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+type notificationRowsQueryer interface {
+	notificationQueryer
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
 type destination struct {
 	PipelineID *string
 	StageID    *string
 	StageName  *string
 }
 
+type moveStageDestination struct {
+	destination
+	IsWon  bool
+	IsLost bool
+}
+
 type CreateResult struct {
-	Lead             Lead
-	Reentry          bool
-	AssignedUserName string
+	Lead                Lead
+	Reentry             bool
+	AssignedUserName    string
+	DistributionOutcome CreateDistributionOutcome
 }
 
 type roundRobinSelection struct {
@@ -89,7 +109,11 @@ type leadSnapshot struct {
 }
 
 func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder, storageConfigs ...StorageConfig) Repository {
-	repository := Repository{db: db, gamificationRecorder: gamificationRecorder}
+	repository := Repository{
+		db:                   db,
+		gamificationRecorder: gamificationRecorder,
+		notificationStats:    &notificationDispatchCounters{},
+	}
 	if len(storageConfigs) > 0 {
 		repository.storage = newStorageClient(storageConfigs[0])
 		repository.evolutionGoAPIURL = strings.TrimRight(strings.TrimSpace(storageConfigs[0].EvolutionGo.APIURL), "/")
@@ -265,24 +289,27 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	if !canCreateLeadInput(tenantContext, input) {
 		return CreateResult{}, tenant.ErrOrganizationAccessDenied
 	}
-	if !canAssignLeads(tenantContext) {
-		if input.AssignedUserID == nil || strings.TrimSpace(*input.AssignedUserID) == "" {
-			assignedUserID := tenantContext.UserID
-			input.AssignedUserID = &assignedUserID
-		} else if strings.TrimSpace(*input.AssignedUserID) != tenantContext.UserID {
-			return CreateResult{}, tenant.ErrOrganizationAccessDenied
-		}
+	if !canUseRequestedRoundRobin(tenantContext, input) {
+		return CreateResult{}, tenant.ErrOrganizationAccessDenied
 	}
-
-	resolvedDestination, err := repo.resolveDestination(ctx, tenantContext.OrganizationID, input.PipelineID, input.StageID)
+	var err error
+	input, err = applyCreateAssignmentPolicy(tenantContext, input)
 	if err != nil {
 		return CreateResult{}, err
 	}
 
-	if err := repo.validateAssignedUser(ctx, tenantContext.OrganizationID, input.AssignedUserID); err != nil {
+	resolvedDestination, err := repo.resolveDestination(ctx, repo.db.Pool(), tenantContext.OrganizationID, input.PipelineID, input.StageID)
+	if err != nil {
 		return CreateResult{}, err
 	}
-	if err := repo.validateLeadTeam(ctx, tenantContext, input.TeamID); err != nil {
+
+	if err := repo.validateAssignedUser(ctx, repo.db.Pool(), tenantContext.OrganizationID, input.AssignedUserID); err != nil {
+		return CreateResult{}, err
+	}
+	if err := repo.validateLeadTeam(ctx, repo.db.Pool(), tenantContext, input.TeamID); err != nil {
+		return CreateResult{}, err
+	}
+	if err := repo.validateRequestedRoundRobin(ctx, repo.db.Pool(), tenantContext.OrganizationID, input.RoundRobinID); err != nil {
 		return CreateResult{}, err
 	}
 
@@ -378,10 +405,16 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		return Lead{}, tenant.ErrOrganizationAccessDenied
 	}
 
+	if err := repo.applyDestinationDealStatus(ctx, tx, tenantContext.OrganizationID, current, &input); err != nil {
+		return Lead{}, err
+	}
 	if err := validateLostReasonContract(current, input); err != nil {
 		return Lead{}, err
 	}
-	if err := repo.applySelectedPropertyCommercialValues(ctx, tx, tenantContext.OrganizationID, current, &input); err != nil {
+	if err := repo.validateUpdatePropertyReferences(ctx, tx, tenantContext, input); err != nil {
+		return Lead{}, err
+	}
+	if err := repo.applySelectedPropertyCommercialValues(ctx, tx, tenantContext, current, &input); err != nil {
 		return Lead{}, err
 	}
 
@@ -423,7 +456,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 			return Lead{}, tenant.ErrOrganizationAccessDenied
 		}
 		if input.AssignedUserID.Value != nil {
-			if err := repo.validateAssignedUser(ctx, tenantContext.OrganizationID, input.AssignedUserID.Value); err != nil {
+			if err := repo.validateAssignedUser(ctx, tx, tenantContext.OrganizationID, input.AssignedUserID.Value); err != nil {
 				return Lead{}, err
 			}
 			addUUIDAssignment("assigned_user_id", input.AssignedUserID)
@@ -439,7 +472,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		if !canAssignLeads(tenantContext) {
 			return Lead{}, tenant.ErrOrganizationAccessDenied
 		}
-		if err := repo.validateLeadTeam(ctx, tenantContext, input.TeamID.Value); err != nil {
+		if err := repo.validateLeadTeam(ctx, tx, tenantContext, input.TeamID.Value); err != nil {
 			return Lead{}, err
 		}
 		addUUIDAssignment("team_id", input.TeamID)
@@ -465,28 +498,15 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		}
 	}
 
-	if err := repo.applyDestinationAssignments(ctx, tenantContext.OrganizationID, current, input, addUUIDAssignment, addRawAssignment); err != nil {
+	if err := repo.applyDestinationAssignments(ctx, tx, tenantContext.OrganizationID, current, input, addUUIDAssignment, addRawAssignment); err != nil {
 		return Lead{}, err
 	}
 
 	if input.PropertyID.Set {
-		if err := repo.validateProperty(ctx, tx, tenantContext.OrganizationID, input.PropertyID.Value); err != nil {
-			return Lead{}, err
-		}
 		addUUIDAssignment("property_id", input.PropertyID)
 	}
 	if input.InterestPropertyID.Set {
-		if err := repo.validateProperty(ctx, tx, tenantContext.OrganizationID, input.InterestPropertyID.Value); err != nil {
-			return Lead{}, err
-		}
 		addUUIDAssignment("interest_property_id", input.InterestPropertyID)
-	}
-	if input.InterestPropertyIDs.Set {
-		for _, propertyID := range input.InterestPropertyIDs.Value {
-			if err := repo.validateProperty(ctx, tx, tenantContext.OrganizationID, &propertyID); err != nil {
-				return Lead{}, err
-			}
-		}
 	}
 
 	addTextAssignment("name", input.Name)
@@ -540,11 +560,17 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if len(assignments) == 0 {
 		return Lead{}, ErrNoLeadChanges
 	}
+	if !hasLeadColumnAssignment(assignments, "board_order_at") {
+		// board_order_at is the index-backed operational clock for the Kanban.
+		// Advancing it on a real lead patch keeps recently worked leads at the
+		// top without sorting the all-time board by an unindexed expression.
+		addRawAssignment("board_order_at = now()")
+	}
 
 	wonPropertyReservation, err := repo.lockWonLeadPropertyForUpdate(
 		ctx,
 		tx,
-		tenantContext.OrganizationID,
+		tenantContext,
 		current,
 		input,
 	)
@@ -625,6 +651,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if err := repo.insertLeadUpdateActivities(ctx, tx, tenantContext, current, input); err != nil {
 		return Lead{}, err
 	}
+	if err := repo.enqueueDealWonNotifications(ctx, tx, tenantContext, current, input); err != nil {
+		return Lead{}, err
+	}
 	sideEffectsDuration = time.Since(sideEffectsStartedAt)
 
 	finalReadStartedAt := time.Now()
@@ -646,12 +675,21 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	return updatedLead, nil
 }
 
+func hasLeadColumnAssignment(assignments []string, column string) bool {
+	prefix := column + " ="
+	for _, assignment := range assignments {
+		if strings.HasPrefix(strings.TrimSpace(assignment), prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func (repo Repository) dispatchDealStatusSideEffects(tenantContext tenant.Context, current leadSnapshot, input updateInput) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		repo.dispatchDealWonNotification(ctx, tenantContext, current, input)
 		repo.recordDealStatusGamification(ctx, tenantContext, current, input)
 	}()
 }
@@ -677,7 +715,7 @@ func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Conte
 		return moveStageResult{}, tenant.ErrOrganizationAccessDenied
 	}
 
-	resolvedDestination, err := repo.resolveDestination(ctx, tenantContext.OrganizationID, nil, &input.StageID)
+	resolvedDestination, err := repo.resolveMoveStageDestination(ctx, tx, tenantContext.OrganizationID, input.StageID)
 	if err != nil {
 		return moveStageResult{}, err
 	}
@@ -686,6 +724,23 @@ func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Conte
 	}
 
 	stageChanged := current.StageID != *resolvedDestination.StageID
+	effectiveStatus := ""
+	if stageChanged {
+		effectiveStatus, err = repo.resolveMoveStageDealStatus(ctx, tx, tenantContext.OrganizationID, *resolvedDestination.StageID, resolvedDestination.IsWon, resolvedDestination.IsLost)
+		if err != nil {
+			return moveStageResult{}, err
+		}
+		effectiveStatus = effectiveMoveStageDealStatus(current.DealStatus, effectiveStatus)
+	}
+	predictedStatusInput := moveStagePredictedStatusInput(effectiveStatus, input.LostReason)
+	if err := validateLostReasonContract(current, predictedStatusInput); err != nil {
+		return moveStageResult{}, err
+	}
+	wonPropertyReservation, err := repo.lockWonLeadPropertyForUpdate(ctx, tx, tenantContext, current, predictedStatusInput)
+	if err != nil {
+		return moveStageResult{}, err
+	}
+
 	boardOrderAt := input.BoardOrderAt
 	if boardOrderAt == nil {
 		// Compatibility with clients deployed before boardOrderAt existed: their
@@ -705,11 +760,27 @@ func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Conte
 			    stage_entered_at = now(),
 			    board_order_at = coalesce($5::timestamptz, now()),
 			    is_own_resource = coalesce($6::boolean, is_own_resource),
+			    deal_status = coalesce($7::text, deal_status),
+			    lost_reason = case
+			      when $7::text = 'lost' then coalesce($8::text, lost_reason)
+			      when $7::text in ('open', 'won') then null
+			      else lost_reason
+			    end,
+			    won_at = case
+			      when $7::text = 'won' then coalesce(won_at, now())
+			      when $7::text in ('open', 'lost') then null
+			      else won_at
+			    end,
+			    lost_at = case
+			      when $7::text = 'lost' then coalesce(lost_at, now())
+			      when $7::text in ('open', 'won') then null
+			      else lost_at
+			    end,
 			    updated_at = now()
 			where organization_id = $1::uuid
 			  and id = $2::uuid
 			returning id::text, stage_entered_at, board_order_at
-		`, tenantContext.OrganizationID, leadID, *resolvedDestination.StageID, *resolvedDestination.PipelineID, nullableTime(boardOrderAt), nullableBool(input.IsOwnResource)).Scan(&updatedID, &stageEnteredAt, &persistedBoardOrderAt)
+		`, tenantContext.OrganizationID, leadID, *resolvedDestination.StageID, *resolvedDestination.PipelineID, nullableTime(boardOrderAt), nullableBool(input.IsOwnResource), nullableString(effectiveStatus), nullable(input.LostReason)).Scan(&updatedID, &stageEnteredAt, &persistedBoardOrderAt)
 		persistedStageEnteredAt = &stageEnteredAt
 	} else {
 		err = tx.QueryRow(ctx, `
@@ -727,6 +798,28 @@ func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Conte
 		return moveStageResult{}, err
 	}
 
+	updatedLead, err := repo.getLeadForMutation(ctx, tx, tenantContext.OrganizationID, updatedID)
+	if err != nil {
+		return moveStageResult{}, err
+	}
+	statusInput := moveStageActualStatusInput(current, updatedLead)
+	if err := validateLostReasonContract(current, statusInput); err != nil {
+		return moveStageResult{}, err
+	}
+
+	if _, err := repo.reserveWonLeadProperty(ctx, tx, tenantContext, current, statusInput, wonPropertyReservation); err != nil {
+		return moveStageResult{}, err
+	}
+	if err := repo.releaseReopenedLeadProperty(ctx, tx, tenantContext, current, statusInput); err != nil {
+		return moveStageResult{}, err
+	}
+	if err := repo.insertDealStatusActivities(ctx, tx, tenantContext, current, statusInput); err != nil {
+		return moveStageResult{}, err
+	}
+	if err := repo.enqueueDealWonNotifications(ctx, tx, tenantContext, current, statusInput); err != nil {
+		return moveStageResult{}, err
+	}
+
 	auditAction := "reorder_lead"
 	newData := map[string]any{
 		"stage_id":       *resolvedDestination.StageID,
@@ -738,6 +831,12 @@ func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Conte
 		newData["pipeline_id"] = *resolvedDestination.PipelineID
 		newData["is_own_resource"] = nullableBool(input.IsOwnResource)
 		newData["stage_entered_at"] = persistedStageEnteredAt
+	}
+	if statusInput.DealStatus.Set && statusInput.DealStatus.Value != nil {
+		newData["deal_status"] = *statusInput.DealStatus.Value
+	}
+	if statusInput.LostReason.Set {
+		newData["lost_reason"] = nullablePatchString(statusInput.LostReason)
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -762,6 +861,8 @@ func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Conte
 	`, tenantContext.OrganizationID, tenantContext.UserID, auditAction, updatedID, jsonb(map[string]any{
 		"pipeline_id": nullableString(current.PipelineID),
 		"stage_id":    nullableString(current.StageID),
+		"deal_status": current.DealStatus,
+		"lost_reason": nullableString(current.LostReason),
 	}), jsonb(newData)); err != nil {
 		return moveStageResult{}, err
 	}
@@ -779,14 +880,10 @@ func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Conte
 		}
 	}
 
-	updatedLead, err := repo.getLeadForMutation(ctx, tx, tenantContext.OrganizationID, updatedID)
-	if err != nil {
-		return moveStageResult{}, err
-	}
-
 	if err := tx.Commit(ctx); err != nil {
 		return moveStageResult{}, err
 	}
+	repo.dispatchDealStatusSideEffects(tenantContext, current, statusInput)
 
 	return moveStageResult{Lead: updatedLead, StageChanged: stageChanged}, nil
 }
@@ -813,7 +910,7 @@ func (repo Repository) Assign(ctx context.Context, tenantContext tenant.Context,
 	}
 
 	if input.AssignedUserID != nil {
-		if err := repo.validateAssignedUser(ctx, tenantContext.OrganizationID, input.AssignedUserID); err != nil {
+		if err := repo.validateAssignedUser(ctx, tx, tenantContext.OrganizationID, input.AssignedUserID); err != nil {
 			return Lead{}, err
 		}
 	}
@@ -1074,6 +1171,15 @@ func (repo Repository) AddTag(ctx context.Context, tenantContext tenant.Context,
 	`, tenantContext.OrganizationID, leadID, input.TagID); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(ctx, `
+		update public.leads
+		set board_order_at = now(),
+		    updated_at = now()
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+	`, tenantContext.OrganizationID, leadID); err != nil {
+		return err
+	}
 
 	if err := repo.insertActivity(ctx, tx, tenantContext.OrganizationID, leadID, tenantContext.UserID, "tag_added", fmt.Sprintf(`Tag "%s" adicionada`, tagName), map[string]any{
 		"tag_id":   input.TagID,
@@ -1126,6 +1232,15 @@ func (repo Repository) RemoveTag(ctx context.Context, tenantContext tenant.Conte
 	}
 
 	if tag.RowsAffected() > 0 {
+		if _, err := tx.Exec(ctx, `
+			update public.leads
+			set board_order_at = now(),
+			    updated_at = now()
+			where organization_id = $1::uuid
+			  and id = $2::uuid
+		`, tenantContext.OrganizationID, leadID); err != nil {
+			return err
+		}
 		if err := repo.insertActivity(ctx, tx, tenantContext.OrganizationID, leadID, tenantContext.UserID, "tag_removed", fmt.Sprintf(`Tag "%s" removida`, tagName), map[string]any{
 			"tag_id":   input.TagID,
 			"tag_name": tagName,
@@ -1144,14 +1259,8 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 	}
 	defer tx.Rollback(ctx)
 
-	if err := repo.validateProperty(ctx, tx, tenantContext.OrganizationID, input.PropertyID); err != nil {
+	if err := repo.validateCreatePropertyReferences(ctx, tx, tenantContext, input); err != nil {
 		return CreateResult{}, err
-	}
-	for _, propertyID := range input.InterestPropertyIDs {
-		propertyID := propertyID
-		if err := repo.validateProperty(ctx, tx, tenantContext.OrganizationID, &propertyID); err != nil {
-			return CreateResult{}, err
-		}
 	}
 
 	leadMetadata := make(LeadMetadata, len(input.Metadata)+1)
@@ -1323,15 +1432,20 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 		return CreateResult{}, err
 	}
 
-	distributionSource := input.Source
-	if _, err := distribution.Distribute(ctx, tx, distribution.Request{
-		OrganizationID:   tenantContext.OrganizationID,
-		LeadID:           leadID,
-		IdempotencyKey:   "manual:" + leadID,
-		PreserveAssignee: true,
-		Source:           &distributionSource,
-		OccurredAt:       time.Now().UTC(),
-	}); err != nil {
+	distributionOutcome := CreateDistributionOutcomeSkipped
+	if shouldAutoDistribute(input) {
+		distributionResult, err := distribution.Distribute(ctx, tx, newLeadDistributionRequest(tenantContext, input, leadID))
+		if err != nil {
+			return CreateResult{}, err
+		}
+		distributionOutcome = CreateDistributionOutcome(distributionResult.Reason)
+	} else if _, err := tx.Exec(ctx, `
+		update public.leads
+		set metadata = coalesce(metadata, '{}'::jsonb) - 'distribution_deferred'
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		  and metadata ? 'distribution_deferred'
+	`, tenantContext.OrganizationID, leadID); err != nil {
 		return CreateResult{}, err
 	}
 
@@ -1354,7 +1468,7 @@ func (repo Repository) createNewLead(ctx context.Context, tenantContext tenant.C
 		return CreateResult{}, err
 	}
 
-	return CreateResult{Lead: lead}, nil
+	return CreateResult{Lead: lead, DistributionOutcome: distributionOutcome}, nil
 }
 
 func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant.Context, input createInput, resolvedDestination destination, existingLead existingLeadMatch) (CreateResult, error) {
@@ -1372,7 +1486,7 @@ func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant
 	}
 	defer tx.Rollback(ctx)
 
-	if err := repo.validateProperty(ctx, tx, tenantContext.OrganizationID, input.PropertyID); err != nil {
+	if err := repo.validateCreatePropertyReferences(ctx, tx, tenantContext, input); err != nil {
 		return CreateResult{}, err
 	}
 
@@ -1393,10 +1507,7 @@ func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant
 		      when $9::uuid is null or stage_id is not distinct from $9::uuid then stage_entered_at
 		      else now()
 		    end,
-		    board_order_at = case
-		      when $9::uuid is null or stage_id is not distinct from $9::uuid then coalesce(board_order_at, stage_entered_at, created_at)
-		      else now()
-		    end,
+		    board_order_at = now(),
 		    stage_id = coalesce($9::uuid, stage_id),
 		    property_id = coalesce($10::uuid, property_id),
 		    interest_property_id = coalesce($10::uuid, interest_property_id),
@@ -1517,16 +1628,21 @@ func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant
 		return CreateResult{}, err
 	}
 
-	return CreateResult{Lead: lead, Reentry: true, AssignedUserName: assignedUserName}, nil
+	return CreateResult{
+		Lead:                lead,
+		Reentry:             true,
+		AssignedUserName:    assignedUserName,
+		DistributionOutcome: CreateDistributionOutcomeReentryPreserved,
+	}, nil
 }
 
-func (repo Repository) resolveDestination(ctx context.Context, organizationID string, pipelineID *string, stageID *string) (destination, error) {
+func (repo Repository) resolveDestination(ctx context.Context, queryer leadTeamQueryer, organizationID string, pipelineID *string, stageID *string) (destination, error) {
 	if stageID != nil {
 		var resolvedStageID string
 		var resolvedPipelineID string
 		var resolvedStageName string
 
-		err := repo.db.Pool().QueryRow(ctx, `
+		err := queryer.QueryRow(ctx, `
 			select s.id::text, s.pipeline_id::text, s.name
 			from public.stages s
 			join public.pipelines p on p.id = s.pipeline_id
@@ -1536,6 +1652,7 @@ func (repo Repository) resolveDestination(ctx context.Context, organizationID st
 			  and s.is_active = true
 			  and p.is_active = true
 			limit 1
+			for share of s, p
 		`, *stageID, organizationID).Scan(&resolvedStageID, &resolvedPipelineID, &resolvedStageName)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return destination{}, ErrInvalidReference
@@ -1556,7 +1673,7 @@ func (repo Repository) resolveDestination(ctx context.Context, organizationID st
 		var resolvedStageID pgtype.Text
 		var resolvedStageName pgtype.Text
 
-		err := repo.db.Pool().QueryRow(ctx, `
+		err := queryer.QueryRow(ctx, `
 			select p.id::text, (
 				select s.id::text
 				from public.stages s
@@ -1579,6 +1696,7 @@ func (repo Repository) resolveDestination(ctx context.Context, organizationID st
 			  and p.organization_id = $2::uuid
 			  and p.is_active = true
 			limit 1
+			for share of p
 		`, *pipelineID, organizationID).Scan(&resolvedPipelineID, &resolvedStageID, &resolvedStageName)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return destination{}, ErrInvalidReference
@@ -1598,7 +1716,7 @@ func (repo Repository) resolveDestination(ctx context.Context, organizationID st
 	var resolvedStageID pgtype.Text
 	var resolvedStageName pgtype.Text
 
-	err := repo.db.Pool().QueryRow(ctx, `
+	err := queryer.QueryRow(ctx, `
 		select p.id::text, (
 			select s.id::text
 			from public.stages s
@@ -1621,6 +1739,7 @@ func (repo Repository) resolveDestination(ctx context.Context, organizationID st
 		  and p.is_active = true
 		order by p.is_default desc, p.position asc, p.created_at asc
 		limit 1
+		for share of p
 	`, organizationID).Scan(&resolvedPipelineID, &resolvedStageID, &resolvedStageName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return destination{}, nil
@@ -1643,13 +1762,155 @@ func (repo Repository) resolveDestination(ctx context.Context, organizationID st
 	return out, nil
 }
 
-func (repo Repository) validateAssignedUser(ctx context.Context, organizationID string, assignedUserID *string) error {
+func (repo Repository) resolveMoveStageDestination(ctx context.Context, tx pgx.Tx, organizationID string, stageID string) (moveStageDestination, error) {
+	var resolved moveStageDestination
+	var resolvedStageID, resolvedPipelineID, resolvedStageName string
+	err := tx.QueryRow(ctx, `
+		select
+			s.id::text,
+			s.pipeline_id::text,
+			s.name,
+			coalesce(s.is_won, false),
+			coalesce(s.is_lost, false)
+		from public.stages s
+		join public.pipelines p
+		  on p.id = s.pipeline_id
+		 and p.organization_id = s.organization_id
+		where s.id = $1::uuid
+		  and s.organization_id = $2::uuid
+		  and s.is_active = true
+		  and p.is_active = true
+		limit 1
+		for share of s, p
+	`, stageID, organizationID).Scan(
+		&resolvedStageID,
+		&resolvedPipelineID,
+		&resolvedStageName,
+		&resolved.IsWon,
+		&resolved.IsLost,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return moveStageDestination{}, ErrInvalidReference
+	}
+	if err != nil {
+		return moveStageDestination{}, err
+	}
+	resolved.PipelineID = &resolvedPipelineID
+	resolved.StageID = &resolvedStageID
+	resolved.StageName = &resolvedStageName
+	return resolved, nil
+}
+
+func (repo Repository) resolveMoveStageDealStatus(ctx context.Context, tx pgx.Tx, organizationID string, stageID string, isWon bool, isLost bool) (string, error) {
+	stageStatus, err := terminalStageDealStatus(isWon, isLost)
+	if err != nil {
+		return "", err
+	}
+
+	rows, err := tx.Query(ctx, `
+		select lower(btrim(automation.action_config->>'deal_status'))
+		from public.stage_automations automation
+		where automation.organization_id = $1::uuid
+		  and automation.stage_id = $2::uuid
+		  and automation.is_active = true
+		  and automation.trigger_type = 'on_enter'
+		  and automation.automation_type = 'change_deal_status_on_enter'
+		  and lower(btrim(automation.action_config->>'deal_status')) in ('open', 'won', 'lost')
+		for share of automation
+	`, organizationID, stageID)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	automationStatus := ""
+	for rows.Next() {
+		var status string
+		if err := rows.Scan(&status); err != nil {
+			return "", err
+		}
+		if automationStatus != "" && automationStatus != status {
+			return "", fmt.Errorf("%w: destination stage has conflicting deal status automations", ErrInvalidReference)
+		}
+		automationStatus = status
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+
+	if stageStatus != "" && automationStatus != "" && stageStatus != automationStatus {
+		return "", fmt.Errorf("%w: destination stage terminal status conflicts with its automation", ErrInvalidReference)
+	}
+	if automationStatus != "" {
+		return automationStatus, nil
+	}
+	return stageStatus, nil
+}
+
+func terminalStageDealStatus(isWon bool, isLost bool) (string, error) {
+	if isWon && isLost {
+		return "", fmt.Errorf("%w: destination stage cannot be both won and lost", ErrInvalidReference)
+	}
+	if isWon {
+		return "won", nil
+	}
+	if isLost {
+		return "lost", nil
+	}
+	return "", nil
+}
+
+func effectiveMoveStageDealStatus(currentStatus string, destinationStatus string) string {
+	if destinationStatus == "" && (currentStatus == "won" || currentStatus == "lost") {
+		return "open"
+	}
+	return destinationStatus
+}
+
+func moveStagePredictedStatusInput(status string, lostReason *string) updateInput {
+	input := updateInput{}
+	if status == "" {
+		return input
+	}
+	statusCopy := status
+	input.DealStatus = patchString{Set: true, Value: &statusCopy}
+	if status == "lost" && lostReason != nil {
+		reasonCopy := *lostReason
+		input.LostReason = patchString{Set: true, Value: &reasonCopy}
+	}
+	return input
+}
+
+func moveStageActualStatusInput(current leadSnapshot, updated Lead) updateInput {
+	input := updateInput{}
+	if updated.DealStatus != current.DealStatus {
+		status := updated.DealStatus
+		input.DealStatus = patchString{Set: true, Value: &status}
+	}
+	if updated.LostReason != current.LostReason {
+		input.LostReason.Set = true
+		if strings.TrimSpace(updated.LostReason) != "" {
+			reason := updated.LostReason
+			input.LostReason.Value = &reason
+		}
+	}
+	if updated.AssignedUserID != current.AssignedUserID {
+		input.AssignedUserID.Set = true
+		if updated.AssignedUserID != "" {
+			assignedUserID := updated.AssignedUserID
+			input.AssignedUserID.Value = &assignedUserID
+		}
+	}
+	return input
+}
+
+func (repo Repository) validateAssignedUser(ctx context.Context, queryer leadTeamQueryer, organizationID string, assignedUserID *string) error {
 	if assignedUserID == nil {
 		return nil
 	}
 
 	var exists bool
-	err := repo.db.Pool().QueryRow(ctx, `
+	err := queryer.QueryRow(ctx, `
 		select exists (
 			select 1
 			from public.organization_members om
@@ -1670,7 +1931,7 @@ func (repo Repository) validateAssignedUser(ctx context.Context, organizationID 
 	return nil
 }
 
-func (repo Repository) validateLeadTeam(ctx context.Context, tenantContext tenant.Context, teamID *string) error {
+func (repo Repository) validateLeadTeam(ctx context.Context, queryer leadTeamQueryer, tenantContext tenant.Context, teamID *string) error {
 	if teamID == nil {
 		return nil
 	}
@@ -1679,7 +1940,7 @@ func (repo Repository) validateLeadTeam(ctx context.Context, tenantContext tenan
 	}
 
 	var teamExists bool
-	err := repo.db.Pool().QueryRow(ctx, `
+	err := queryer.QueryRow(ctx, `
 		select exists (
 			select 1
 			from public.teams t
@@ -1694,6 +1955,31 @@ func (repo Repository) validateLeadTeam(ctx context.Context, tenantContext tenan
 	if !teamExists {
 		return ErrInvalidReference
 	}
+	return nil
+}
+
+func (repo Repository) validateRequestedRoundRobin(ctx context.Context, queryer leadTeamQueryer, organizationID string, roundRobinID *string) error {
+	if roundRobinID == nil {
+		return nil
+	}
+
+	var exists bool
+	err := queryer.QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.round_robins rr
+			where rr.organization_id = $1::uuid
+			  and rr.id = $2::uuid
+			  and coalesce(rr.is_active, true) = true
+		)
+	`, organizationID, *roundRobinID).Scan(&exists)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return ErrInvalidReference
+	}
+
 	return nil
 }
 
@@ -1844,6 +2130,7 @@ func (repo Repository) transferLeadAssignee(ctx context.Context, tx pgx.Tx, tena
 		update public.leads
 		set assigned_user_id = $3::uuid,
 		    assigned_at = case when $3::uuid is null then null else now() end,
+		    board_order_at = now(),
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and id = $2::uuid
@@ -1999,20 +2286,30 @@ func (repo Repository) assignmentLogUsesCanonicalSchema(ctx context.Context, tx 
 	return hasOldUser && hasNewUser && hasCreatedBy, nil
 }
 
-func (repo Repository) validateProperty(ctx context.Context, tx pgx.Tx, organizationID string, propertyID *string) error {
+func (repo Repository) validateProperty(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, propertyID *string) error {
 	if propertyID == nil {
 		return nil
+	}
+	if !propertyscope.CanRead(tenantContext) {
+		return ErrInvalidReference
 	}
 
 	var exists bool
 	err := tx.QueryRow(ctx, `
 		select exists (
 			select 1
-			from public.properties
-			where organization_id = $1::uuid
-			  and id = $2::uuid
+			from public.properties property
+			where property.organization_id = $1::uuid
+			  and property.id = $2::uuid
+			  and `+propertyscope.VisibilitySQL("property", "$3", "$4", "$5")+`
 		)
-	`, organizationID, *propertyID).Scan(&exists)
+	`,
+		tenantContext.OrganizationID,
+		*propertyID,
+		propertyscope.CanViewAll(tenantContext),
+		nullableString(tenantContext.UserID),
+		propertyscope.CanViewTeam(tenantContext),
+	).Scan(&exists)
 	if err != nil {
 		return err
 	}
@@ -2020,6 +2317,41 @@ func (repo Repository) validateProperty(ctx context.Context, tx pgx.Tx, organiza
 		return ErrInvalidReference
 	}
 
+	return nil
+}
+
+func (repo Repository) validateCreatePropertyReferences(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, input createInput) error {
+	if err := repo.validateProperty(ctx, tx, tenantContext, input.PropertyID); err != nil {
+		return err
+	}
+	for _, value := range input.InterestPropertyIDs {
+		propertyID := value
+		if err := repo.validateProperty(ctx, tx, tenantContext, &propertyID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (repo Repository) validateUpdatePropertyReferences(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, input updateInput) error {
+	if input.PropertyID.Set {
+		if err := repo.validateProperty(ctx, tx, tenantContext, input.PropertyID.Value); err != nil {
+			return err
+		}
+	}
+	if input.InterestPropertyID.Set {
+		if err := repo.validateProperty(ctx, tx, tenantContext, input.InterestPropertyID.Value); err != nil {
+			return err
+		}
+	}
+	if input.InterestPropertyIDs.Set {
+		for _, value := range input.InterestPropertyIDs.Value {
+			propertyID := value
+			if err := repo.validateProperty(ctx, tx, tenantContext, &propertyID); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -2184,7 +2516,7 @@ func (repo Repository) canEditLead(ctx context.Context, tx pgx.Tx, tenantContext
 	return authorization.CanOperateLead(tenantContext, authorization.LeadResource{AssignedUserID: assignedUserID, TeamID: teamID}), nil
 }
 
-func (repo Repository) applyDestinationAssignments(ctx context.Context, organizationID string, current leadSnapshot, input updateInput, addUUIDAssignment func(string, patchString), addRawAssignment func(string)) error {
+func (repo Repository) applyDestinationAssignments(ctx context.Context, tx pgx.Tx, organizationID string, current leadSnapshot, input updateInput, addUUIDAssignment func(string, patchString), addRawAssignment func(string)) error {
 	if !input.PipelineID.Set && !input.StageID.Set {
 		return nil
 	}
@@ -2207,7 +2539,7 @@ func (repo Repository) applyDestinationAssignments(ctx context.Context, organiza
 			pipelineID = input.PipelineID.Value
 		}
 
-		resolvedDestination, err := repo.resolveDestination(ctx, organizationID, pipelineID, input.StageID.Value)
+		resolvedDestination, err := repo.resolveDestination(ctx, tx, organizationID, pipelineID, input.StageID.Value)
 		if err != nil {
 			return err
 		}
@@ -2231,7 +2563,7 @@ func (repo Repository) applyDestinationAssignments(ctx context.Context, organiza
 		return nil
 	}
 
-	resolvedDestination, err := repo.resolveDestination(ctx, organizationID, input.PipelineID.Value, nil)
+	resolvedDestination, err := repo.resolveDestination(ctx, tx, organizationID, input.PipelineID.Value, nil)
 	if err != nil {
 		return err
 	}
@@ -2243,6 +2575,62 @@ func (repo Repository) applyDestinationAssignments(ctx context.Context, organiza
 		addRawAssignment("board_order_at = now()")
 	}
 
+	return nil
+}
+
+func (repo Repository) applyDestinationDealStatus(ctx context.Context, tx pgx.Tx, organizationID string, current leadSnapshot, input *updateInput) error {
+	if input == nil || (!input.PipelineID.Set && !input.StageID.Set) {
+		return nil
+	}
+
+	var destinationStageID string
+	if input.StageID.Set {
+		if input.StageID.Value != nil {
+			destinationStageID = *input.StageID.Value
+		}
+	} else if input.PipelineID.Value != nil {
+		resolved, err := repo.resolveDestination(ctx, tx, organizationID, input.PipelineID.Value, nil)
+		if err != nil {
+			return err
+		}
+		if resolved.StageID != nil {
+			destinationStageID = *resolved.StageID
+		}
+	}
+
+	destinationStatus := ""
+	if destinationStageID != "" && destinationStageID != current.StageID {
+		resolved, err := repo.resolveMoveStageDestination(ctx, tx, organizationID, destinationStageID)
+		if err != nil {
+			return err
+		}
+		if input.PipelineID.Set && input.PipelineID.Value != nil && (resolved.PipelineID == nil || *resolved.PipelineID != *input.PipelineID.Value) {
+			return ErrInvalidReference
+		}
+		destinationStatus, err = repo.resolveMoveStageDealStatus(ctx, tx, organizationID, destinationStageID, resolved.IsWon, resolved.IsLost)
+		if err != nil {
+			return err
+		}
+		destinationStatus = effectiveMoveStageDealStatus(current.DealStatus, destinationStatus)
+	} else if destinationStageID == "" && current.StageID != "" {
+		destinationStatus = effectiveMoveStageDealStatus(current.DealStatus, "")
+	}
+
+	return mergeStageDrivenDealStatus(input, destinationStatus)
+}
+
+func mergeStageDrivenDealStatus(input *updateInput, destinationStatus string) error {
+	if input == nil || destinationStatus == "" {
+		return nil
+	}
+	if input.DealStatus.Set {
+		if input.DealStatus.Value == nil || *input.DealStatus.Value != destinationStatus {
+			return fmt.Errorf("%w: dealStatus conflicts with the destination stage", ErrInvalidInput)
+		}
+		return nil
+	}
+	status := destinationStatus
+	input.DealStatus = patchString{Set: true, Value: &status}
 	return nil
 }
 
@@ -2332,29 +2720,13 @@ func (repo Repository) getTagName(ctx context.Context, tx pgx.Tx, organizationID
 	return name, nil
 }
 
-func (repo Repository) applySelectedPropertyCommercialValues(ctx context.Context, tx pgx.Tx, organizationID string, current leadSnapshot, input *updateInput) error {
+func (repo Repository) applySelectedPropertyCommercialValues(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, current leadSnapshot, input *updateInput) error {
 	if input == nil || (!input.PropertyID.Set && !input.InterestPropertyID.Set) {
 		return nil
 	}
 
-	currentPropertyID := current.InterestPropertyID
-	if currentPropertyID == "" {
-		currentPropertyID = current.PropertyID
-	}
-
-	propertyID := currentPropertyID
-	if input.PropertyID.Set {
-		propertyID = ""
-		if input.PropertyID.Value != nil {
-			propertyID = *input.PropertyID.Value
-		}
-	}
-	if input.InterestPropertyID.Set {
-		propertyID = ""
-		if input.InterestPropertyID.Value != nil {
-			propertyID = *input.InterestPropertyID.Value
-		}
-	}
+	currentPropertyID := selectedLeadPropertyID(current, updateInput{})
+	propertyID := selectedLeadPropertyID(current, *input)
 	if propertyID == currentPropertyID {
 		return nil
 	}
@@ -2365,15 +2737,27 @@ func (repo Repository) applySelectedPropertyCommercialValues(ctx context.Context
 		return nil
 	}
 
+	canReadManagedCommercialValues := propertyscope.CanViewAll(tenantContext)
+	commercialProjection := `nullif(property.preco, 0)::text, null::text`
+	if canReadManagedCommercialValues {
+		commercialProjection = `coalesce(nullif(property.preco, 0), nullif(property.valor_venda_avaliado, 0))::text,
+		       property.commission_percentage::text`
+	}
 	var price, commission pgtype.Text
 	if err := tx.QueryRow(ctx, `
-		select coalesce(nullif(preco, 0), nullif(valor_venda_avaliado, 0))::text,
-		       commission_percentage::text
-		from public.properties
-		where organization_id = $1::uuid
-		  and id = $2::uuid
+		select `+commercialProjection+`
+		from public.properties property
+		where property.organization_id = $1::uuid
+		  and property.id = $2::uuid
+		  and `+propertyscope.VisibilitySQL("property", "$3", "$4", "$5")+`
 		limit 1
-	`, organizationID, propertyID).Scan(&price, &commission); err != nil {
+	`,
+		tenantContext.OrganizationID,
+		propertyID,
+		propertyscope.CanViewAll(tenantContext),
+		nullableString(tenantContext.UserID),
+		propertyscope.CanViewTeam(tenantContext),
+	).Scan(&price, &commission); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrInvalidReference
 		}
@@ -2385,10 +2769,12 @@ func (repo Repository) applySelectedPropertyCommercialValues(ctx context.Context
 		value := price.String
 		input.InterestValue.Value = &value
 	}
-	input.CommissionPercentage = patchString{Set: true}
-	if commission.Valid {
-		value := commission.String
-		input.CommissionPercentage.Value = &value
+	if canReadManagedCommercialValues {
+		input.CommissionPercentage = patchString{Set: true}
+		if commission.Valid {
+			value := commission.String
+			input.CommissionPercentage.Value = &value
+		}
 	}
 
 	return nil
@@ -2481,39 +2867,32 @@ func (repo Repository) insertLeadUpdateActivities(ctx context.Context, tx pgx.Tx
 		}
 	}
 
-	propertyID := current.InterestPropertyID
-	if propertyID == "" {
-		propertyID = current.PropertyID
-	}
-	if input.PropertyID.Set {
-		propertyID = ""
-		if input.PropertyID.Value != nil {
-			propertyID = *input.PropertyID.Value
-		}
-	}
-	if input.InterestPropertyID.Set {
-		propertyID = ""
-		if input.InterestPropertyID.Value != nil {
-			propertyID = *input.InterestPropertyID.Value
-		}
-	}
-
-	currentPropertyID := current.InterestPropertyID
-	if currentPropertyID == "" {
-		currentPropertyID = current.PropertyID
-	}
+	propertyID := selectedLeadPropertyID(current, input)
+	currentPropertyID := selectedLeadPropertyID(current, updateInput{})
 	if propertyID == "" || propertyID == currentPropertyID {
 		return nil
 	}
 
+	commercialProjection := "null::text"
+	includeManagedCommission := propertyscope.CanViewAll(tenantContext)
+	if includeManagedCommission {
+		commercialProjection = "property.commission_percentage::text"
+	}
 	var title, code, price, commission pgtype.Text
 	if err := tx.QueryRow(ctx, `
-		select title, code, preco::text, commission_percentage::text
-		from public.properties
-		where organization_id = $1::uuid
-		  and id = $2::uuid
+		select property.title, property.code, property.preco::text, `+commercialProjection+`
+		from public.properties property
+		where property.organization_id = $1::uuid
+		  and property.id = $2::uuid
+		  and `+propertyscope.VisibilitySQL("property", "$3", "$4", "$5")+`
 		limit 1
-	`, tenantContext.OrganizationID, propertyID).Scan(&title, &code, &price, &commission); err != nil {
+	`,
+		tenantContext.OrganizationID,
+		propertyID,
+		propertyscope.CanViewAll(tenantContext),
+		nullableString(tenantContext.UserID),
+		propertyscope.CanViewTeam(tenantContext),
+	).Scan(&title, &code, &price, &commission); err != nil {
 		return err
 	}
 
@@ -2525,14 +2904,17 @@ func (repo Repository) insertLeadUpdateActivities(ctx context.Context, tx pgx.Tx
 		content = "Imovel selecionado"
 	}
 
-	return repo.insertActivity(ctx, tx, tenantContext.OrganizationID, current.ID, tenantContext.UserID, "property_selected", content, map[string]any{
-		"property_id":           propertyID,
-		"property_title":        nullableString(propertyTitle),
-		"property_code":         nullableString(propertyCode),
-		"property_price":        nullableString(textValue(price)),
-		"commission_percentage": nullableString(textValue(commission)),
-		"origin":                "lead_update",
-	})
+	metadata := map[string]any{
+		"property_id":    propertyID,
+		"property_title": nullableString(propertyTitle),
+		"property_code":  nullableString(propertyCode),
+		"property_price": nullableString(textValue(price)),
+		"origin":         "lead_update",
+	}
+	if includeManagedCommission {
+		metadata["commission_percentage"] = nullableString(textValue(commission))
+	}
+	return repo.insertActivity(ctx, tx, tenantContext.OrganizationID, current.ID, tenantContext.UserID, "property_selected", content, metadata)
 }
 
 type propertyReservationSnapshot struct {
@@ -2605,28 +2987,39 @@ func (repo Repository) latestPropertyReservation(ctx context.Context, tx pgx.Tx,
 	return snapshot, true, nil
 }
 
+func selectedLeadPropertyID(current leadSnapshot, input updateInput) string {
+	propertyID := current.PropertyID
+	if input.PropertyID.Set {
+		propertyID = ""
+		if input.PropertyID.Value != nil {
+			propertyID = *input.PropertyID.Value
+		}
+	}
+
+	interestPropertyID := current.InterestPropertyID
+	if input.InterestPropertyID.Set {
+		interestPropertyID = ""
+		if input.InterestPropertyID.Value != nil {
+			interestPropertyID = *input.InterestPropertyID.Value
+		}
+	}
+	if interestPropertyID != "" {
+		return interestPropertyID
+	}
+	return propertyID
+}
+
 func wonLeadReservationPropertyID(current leadSnapshot, input updateInput) (string, bool) {
 	if !input.DealStatus.Set || input.DealStatus.Value == nil || *input.DealStatus.Value != "won" || current.DealStatus == "won" {
 		return "", false
 	}
-
-	propertyID := current.InterestPropertyID
-	if propertyID == "" {
-		propertyID = current.PropertyID
-	}
-	if input.PropertyID.Set && input.PropertyID.Value != nil {
-		propertyID = *input.PropertyID.Value
-	}
-	if input.InterestPropertyID.Set && input.InterestPropertyID.Value != nil {
-		propertyID = *input.InterestPropertyID.Value
-	}
-	return propertyID, true
+	return selectedLeadPropertyID(current, input), true
 }
 
 func (repo Repository) lockWonLeadPropertyForUpdate(
 	ctx context.Context,
 	tx pgx.Tx,
-	organizationID string,
+	tenantContext tenant.Context,
 	current leadSnapshot,
 	input updateInput,
 ) (*wonLeadPropertyReservation, error) {
@@ -2634,8 +3027,23 @@ func (repo Repository) lockWonLeadPropertyForUpdate(
 	if !movingToWon || propertyID == "" {
 		return nil, nil
 	}
+	if err := repo.validateProperty(ctx, tx, tenantContext, &propertyID); err != nil {
+		return nil, err
+	}
+	return repo.lockWonLeadPropertyForTrustedSystem(ctx, tx, tenantContext.OrganizationID, current.ID, propertyID)
+}
 
-	retryDelay := propertyReservationRetryDelay(current.ID)
+// lockWonLeadPropertyForTrustedSystem is the explicit organization-only bypass
+// for server-side ingestion and workers. Human request paths must call
+// lockWonLeadPropertyForUpdate so the canonical property scope is enforced.
+func (repo Repository) lockWonLeadPropertyForTrustedSystem(
+	ctx context.Context,
+	tx pgx.Tx,
+	organizationID string,
+	leadID string,
+	propertyID string,
+) (*wonLeadPropertyReservation, error) {
+	retryDelay := propertyReservationRetryDelay(leadID)
 	for {
 		reservation := wonLeadPropertyReservation{PropertyID: propertyID}
 		err := tx.QueryRow(ctx, `
@@ -2698,6 +3106,12 @@ func (repo Repository) lockWonLeadPropertyForUpdate(
 			return &reservation, nil
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
+			if isLinkedDevelopmentPropertyConsistencyViolation(err) {
+				return nil, fmt.Errorf(
+					"%w: Este im\u00f3vel pertence ao espelho de um empreendimento. Fa\u00e7a a reserva pela unidade vinculada.",
+					ErrLeadPropertyUnavailable,
+				)
+			}
 			return nil, err
 		}
 
@@ -2719,7 +3133,7 @@ func (repo Repository) lockWonLeadPropertyForUpdate(
 			if reservationErr != nil {
 				return nil, reservationErr
 			}
-			if found && latest.LeadID == current.ID {
+			if found && latest.LeadID == leadID {
 				return &wonLeadPropertyReservation{
 					PropertyID:      propertyID,
 					AlreadyReserved: true,
@@ -2788,7 +3202,7 @@ func (repo Repository) reserveWonLeadProperty(
 		reservation, err = repo.lockWonLeadPropertyForUpdate(
 			ctx,
 			tx,
-			tenantContext.OrganizationID,
+			tenantContext,
 			current,
 			input,
 		)
@@ -2850,18 +3264,12 @@ func (repo Repository) releaseReopenedLeadProperty(ctx context.Context, tx pgx.T
 		return nil
 	}
 
-	propertyID := current.InterestPropertyID
-	if propertyID == "" {
-		propertyID = current.PropertyID
-	}
-	if input.PropertyID.Set && input.PropertyID.Value != nil {
-		propertyID = *input.PropertyID.Value
-	}
-	if input.InterestPropertyID.Set && input.InterestPropertyID.Value != nil {
-		propertyID = *input.InterestPropertyID.Value
-	}
+	propertyID := selectedLeadPropertyID(current, input)
 	if propertyID == "" {
 		return nil
+	}
+	if err := repo.validateProperty(ctx, tx, tenantContext, &propertyID); err != nil {
+		return err
 	}
 
 	var title, code, currentStatus string
@@ -2917,6 +3325,12 @@ func (repo Repository) releaseReopenedLeadProperty(ctx context.Context, tx pgx.T
 		where organization_id = $1::uuid
 		  and id = $2::uuid
 	`, tenantContext.OrganizationID, propertyID, restoreStatus, restorePublishedOnSite, restoreAnnounce); err != nil {
+		if isLinkedDevelopmentPropertyConsistencyViolation(err) {
+			return fmt.Errorf(
+				"%w: Este im\u00f3vel pertence ao espelho de um empreendimento. Reabra a disponibilidade pela unidade vinculada.",
+				ErrLeadPropertyUnavailable,
+			)
+		}
 		return err
 	}
 
@@ -3178,9 +3592,9 @@ func (repo Repository) notifyInterestedLeadsForReservedProperty(
 	return tag.RowsAffected(), nil
 }
 
-func (repo Repository) dispatchDealWonNotification(ctx context.Context, tenantContext tenant.Context, current leadSnapshot, input updateInput) {
+func (repo Repository) enqueueDealWonNotifications(ctx context.Context, queryer notificationRowsQueryer, tenantContext tenant.Context, current leadSnapshot, input updateInput) error {
 	if !input.DealStatus.Set || input.DealStatus.Value == nil || *input.DealStatus.Value != "won" || current.DealStatus == "won" {
-		return
+		return nil
 	}
 
 	assignedUserID := current.AssignedUserID
@@ -3199,42 +3613,64 @@ func (repo Repository) dispatchDealWonNotification(ctx context.Context, tenantCo
 		}
 	}
 
-	recipients, err := repo.listDealWonNotificationRecipients(ctx, tenantContext.OrganizationID, assignedUserID)
-	if err != nil || len(recipients) == 0 {
+	recipients, err := repo.listDealWonNotificationRecipientsWithQueryer(ctx, queryer, tenantContext.OrganizationID, assignedUserID)
+	if err != nil {
+		return err
+	}
+	if len(recipients) == 0 {
 		if assignedUserID != "" {
 			recipients = []string{assignedUserID}
 		}
 	}
 	actorName := "Equipe Vimob"
-	if name, err := repo.getNotificationUserName(ctx, tenantContext.OrganizationID, tenantContext.UserID); err == nil && name != "" {
+	if name, err := repo.getNotificationUserNameWithQueryer(ctx, queryer, tenantContext.OrganizationID, tenantContext.UserID); err != nil {
+		return err
+	} else if name != "" {
 		actorName = name
 	}
 	organizationName := ""
-	_ = repo.db.Pool().QueryRow(ctx, `
+	if err := queryer.QueryRow(ctx, `
 		select coalesce(name, '')
 		from public.organizations
 		where id = $1::uuid
 		limit 1
-	`, tenantContext.OrganizationID).Scan(&organizationName)
+	`, tenantContext.OrganizationID).Scan(&organizationName); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
 
 	for _, recipientID := range recipients {
-		_, _ = repo.enqueueDispatchNotification(ctx, tenantContext.OrganizationID, recipientID, DispatchNotificationRequest{
+		if _, err := repo.enqueueDispatchNotificationWithQueryer(ctx, queryer, tenantContext.OrganizationID, recipientID, DispatchNotificationRequest{
 			EventKey:  "deal_won",
 			UserID:    recipientID,
 			LeadID:    &current.ID,
-			DedupeKey: "deal_won:" + current.ID + ":" + recipientID,
+			DedupeKey: dealWonNotificationDedupeKey(current, recipientID),
 			Variables: map[string]any{
 				"lead_name":         current.Name,
 				"valor_interesse":   nullableString(interestValue),
 				"actor_name":        actorName,
 				"organization_name": organizationName,
 			},
-		})
+		}); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+func dealWonNotificationDedupeKey(current leadSnapshot, recipientID string) string {
+	// The pre-update timestamp identifies the open/lost -> won transition. It is
+	// stable across a transaction retry, while a later reopen creates a new
+	// episode that is allowed to notify the same recipient again.
+	episode := firstNotificationText(stringFromMap(current.Data, "updated_at"), "initial")
+	return notificationDedupeKey("deal_won", current.ID, recipientID, episode)
 }
 
 func (repo Repository) listDealWonNotificationRecipients(ctx context.Context, organizationID string, assignedUserID string) ([]string, error) {
-	rows, err := repo.db.Pool().Query(ctx, `
+	return repo.listDealWonNotificationRecipientsWithQueryer(ctx, repo.db.Pool(), organizationID, assignedUserID)
+}
+
+func (repo Repository) listDealWonNotificationRecipientsWithQueryer(ctx context.Context, queryer notificationRowsQueryer, organizationID string, assignedUserID string) ([]string, error) {
+	rows, err := queryer.Query(ctx, `
 		with base as (
 			select nullif($2, '')::uuid as assigned_user_id
 		),
@@ -3294,8 +3730,12 @@ func (repo Repository) listDealWonNotificationRecipients(ctx context.Context, or
 }
 
 func (repo Repository) getNotificationUserName(ctx context.Context, organizationID string, userID string) (string, error) {
+	return repo.getNotificationUserNameWithQueryer(ctx, repo.db.Pool(), organizationID, userID)
+}
+
+func (repo Repository) getNotificationUserNameWithQueryer(ctx context.Context, queryer notificationQueryer, organizationID string, userID string) (string, error) {
 	var name pgtype.Text
-	err := repo.db.Pool().QueryRow(ctx, `
+	err := queryer.QueryRow(ctx, `
 		select u.name
 		from public.users u
 		join public.organization_members om
@@ -3402,6 +3842,22 @@ func isLeadPhoneUniqueViolation(err error) bool {
 	}
 
 	return pgErr.Code == "23505" && pgErr.ConstraintName == "leads_org_phone_unique"
+}
+
+func isLinkedDevelopmentPropertyConsistencyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		return false
+	}
+
+	switch pgErr.ConstraintName {
+	case "property_development_unit_status_sync",
+		"property_development_unit_price_sync",
+		"property_development_unit_publication_sync":
+		return true
+	default:
+		return false
+	}
 }
 
 func (repo Repository) insertActivity(ctx context.Context, tx pgx.Tx, organizationID string, leadID string, userID string, activityType string, content string, metadata map[string]any) error {
@@ -3593,47 +4049,7 @@ func leadSelectFields() string {
 }
 
 func leadVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder string, canViewTeamPlaceholder string, canViewOwn bool) string {
-	canViewOwnSQL := "false"
-	if canViewOwn {
-		canViewOwnSQL = "true"
-	}
-	return `(
-		` + canViewAllPlaceholder + `::boolean
-		or (` + canViewOwnSQL + ` and l.assigned_user_id = ` + userIDPlaceholder + `::uuid)
-		or (
-			` + canViewTeamPlaceholder + `::boolean
-			and (
-				(
-					nullif(to_jsonb(l)->>'team_id', '') is not null
-					and exists (
-						select 1 from public.team_members leader
-						where leader.organization_id = l.organization_id
-						  and leader.user_id = ` + userIDPlaceholder + `::uuid
-						  and leader.team_id::text = to_jsonb(l)->>'team_id'
-						  and leader.is_active = true
-						  and leader.is_leader = true
-					)
-				)
-				or (
-					nullif(to_jsonb(l)->>'team_id', '') is null
-					and l.assigned_user_id is not null
-					and exists (
-						select 1
-						from public.team_members leader
-						join public.team_members member
-						  on member.organization_id = leader.organization_id
-						 and member.team_id = leader.team_id
-						 and member.is_active = true
-						where leader.organization_id = l.organization_id
-						  and leader.user_id = ` + userIDPlaceholder + `::uuid
-						  and leader.is_active = true
-						  and leader.is_leader = true
-						  and member.user_id = l.assigned_user_id
-					)
-				)
-			)
-		)
-	)`
+	return leadscope.VisibilitySQL("l", canViewAllPlaceholder, userIDPlaceholder, canViewTeamPlaceholder, canViewOwn)
 }
 
 func scanLeadWithTotal(row scanner) (Lead, int64, error) {
@@ -3649,7 +4065,7 @@ func scanLead(row scanner) (Lead, error) {
 
 func scanLeadFields(row scanner, total *int64) (Lead, error) {
 	var lead Lead
-	var email, phone, priority, message, propertyCode, propertyID, interestPropertyID pgtype.Text
+	var email, phone, source, status, dealStatus, priority, message, propertyCode, propertyID, interestPropertyID pgtype.Text
 	var pipelineID, stageID, assignedUserID, teamID, interestValue, commissionPercentage pgtype.Text
 	var lostReason, feedback, finalidadeCompra pgtype.Text
 	var isOwnResource pgtype.Bool
@@ -3666,9 +4082,9 @@ func scanLeadFields(row scanner, total *int64) (Lead, error) {
 		&lead.Name,
 		&email,
 		&phone,
-		&lead.Source,
-		&lead.Status,
-		&lead.DealStatus,
+		&source,
+		&status,
+		&dealStatus,
 		&priority,
 		&message,
 		&propertyCode,
@@ -3724,6 +4140,9 @@ func scanLeadFields(row scanner, total *int64) (Lead, error) {
 
 	lead.Email = textValue(email)
 	lead.Phone = textValue(phone)
+	lead.Source = textValueWithDefault(source, "manual")
+	lead.Status = textValueWithDefault(status, "new")
+	lead.DealStatus = textValueWithDefault(dealStatus, "open")
 	lead.Priority = textValueWithDefault(priority, "normal")
 	lead.Message = textValue(message)
 	lead.PropertyCode = textValue(propertyCode)
@@ -3816,15 +4235,11 @@ func textValue(value pgtype.Text) string {
 }
 
 func textPointer(value pgtype.Text) *string {
-	if !value.Valid || strings.TrimSpace(value.String) == "" {
-		return nil
-	}
-
-	return &value.String
+	return pgvalue.TextPointerNonBlank(value)
 }
 
 func textValueWithDefault(value pgtype.Text, fallback string) string {
-	if !value.Valid || value.String == "" {
+	if !value.Valid || strings.TrimSpace(value.String) == "" {
 		return fallback
 	}
 
@@ -3872,11 +4287,7 @@ func nullableTime(value *time.Time) any {
 }
 
 func nullableString(value string) any {
-	if strings.TrimSpace(value) == "" {
-		return nil
-	}
-
-	return value
+	return pgvalue.NullableString(value)
 }
 
 func nullablePatchString(value patchString) any {
@@ -3921,11 +4332,19 @@ func validateLostReasonContract(current leadSnapshot, input updateInput) error {
 		}
 	}
 
-	lostReasonIsBlank := strings.TrimSpace(nextLostReason) == ""
 	isMovingToLost := nextStatus == "lost" && current.DealStatus != "lost"
+	requestedLostReason := ""
+	if input.LostReason.Set && input.LostReason.Value != nil {
+		requestedLostReason = strings.TrimSpace(*input.LostReason.Value)
+	}
+	if isMovingToLost && requestedLostReason == "" {
+		return fmt.Errorf("%w: lostReason is required when dealStatus is lost", ErrLostReasonRequired)
+	}
+
+	lostReasonIsBlank := strings.TrimSpace(nextLostReason) == ""
 	isClearingLostReason := nextStatus == "lost" && strings.TrimSpace(current.LostReason) != "" && input.LostReason.Set && lostReasonIsBlank
-	if (isMovingToLost || isClearingLostReason) && lostReasonIsBlank {
-		return fmt.Errorf("%w: lostReason is required when dealStatus is lost", ErrInvalidInput)
+	if isClearingLostReason && lostReasonIsBlank {
+		return fmt.Errorf("%w: lostReason is required when dealStatus is lost", ErrLostReasonRequired)
 	}
 
 	return nil
@@ -3966,6 +4385,48 @@ func canCreateLeadInput(tenantContext tenant.Context, input createInput) bool {
 		return tenantContext.IsOrganizationMember() && tenantContext.HasPermission(permissions.LeadImport)
 	}
 	return canCreateLeads(tenantContext)
+}
+
+func canUseRequestedRoundRobin(tenantContext tenant.Context, input createInput) bool {
+	return input.RoundRobinID == nil || tenantContext.HasPermission(permissions.DistributionManage)
+}
+
+func applyCreateAssignmentPolicy(tenantContext tenant.Context, input createInput) (createInput, error) {
+	if canAssignLeads(tenantContext) {
+		return input, nil
+	}
+	if input.AssignedUserID == nil || strings.TrimSpace(*input.AssignedUserID) == "" {
+		if !keepsImportUnassignedForDistribution(input) {
+			assignedUserID := tenantContext.UserID
+			input.AssignedUserID = &assignedUserID
+		}
+		return input, nil
+	}
+	if strings.TrimSpace(*input.AssignedUserID) != tenantContext.UserID {
+		return createInput{}, tenant.ErrOrganizationAccessDenied
+	}
+	return input, nil
+}
+
+func keepsImportUnassignedForDistribution(input createInput) bool {
+	return input.ImportMode && input.AutoDistribute != nil && *input.AutoDistribute
+}
+
+func shouldAutoDistribute(input createInput) bool {
+	return input.AutoDistribute == nil || *input.AutoDistribute
+}
+
+func newLeadDistributionRequest(tenantContext tenant.Context, input createInput, leadID string) distribution.Request {
+	distributionSource := input.Source
+	return distribution.Request{
+		OrganizationID:   tenantContext.OrganizationID,
+		LeadID:           leadID,
+		IdempotencyKey:   "manual:" + leadID,
+		RoundRobinID:     input.RoundRobinID,
+		PreserveAssignee: true,
+		Source:           &distributionSource,
+		OccurredAt:       time.Now().UTC(),
+	}
 }
 
 func canEditAllLeads(tenantContext tenant.Context) bool {

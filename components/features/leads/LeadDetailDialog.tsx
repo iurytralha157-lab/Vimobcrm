@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type CSSProperties, type ReactNode } from 'react';
+import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { PropertyPickerDialog } from '@/components/features/properties/PropertyPickerDialog';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -11,25 +11,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Drawer, DrawerContent, DrawerTitle } from '@/components/ui/drawer';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { useIsMobile } from '@/hooks/use-mobile';
 import {
   Phone, Mail, MessageCircle, Loader2, X, Plus, Save, User,
-  MapPin, Calendar, Lightbulb, FileEdit, Check, Activity, ListTodo, Contact,
-  ChevronDown, FileText, Paperclip, Info, Eye, EyeOff, ExternalLink
+  Calendar, FileEdit, Activity, Contact,
+  ChevronDown, FileText, Paperclip
 } from 'lucide-react';
 import {
   Command,
@@ -40,32 +29,28 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { cn } from '@/lib/utils';
+import { getTagColorStyleWithWhiteText } from '@/lib/tag-color';
 import { commandSearchFilter } from '@/lib/search-text';
-import { format, type Locale } from 'date-fns';
+import { format } from 'date-fns';
 import { ptBR, enUS } from 'date-fns/locale';
 import { useCompleteCadenceTask } from '@/hooks/use-lead-tasks';
 import { useLeadCadenceState } from '@/hooks/leads/use-lead-cadence-state';
 import { useCreateActivity } from '@/hooks/use-activities';
-import { useLead, useUpdateLead, useAddLeadTag, useLeadSensitiveProfile, useRemoveLeadTag } from '@/hooks/use-leads';
+import { useLead, useUpdateLead, useAddLeadTag, useRemoveLeadTag } from '@/hooks/use-leads';
 import type { Lead } from '@/hooks/use-leads';
-import type { Tag } from '@/hooks/use-tags';
-import type { User as AppUser } from '@/hooks/use-users';
-import type { PipelineLead } from '@/hooks/use-stages';
 import { useProperties } from '@/hooks/use-properties';
 import { useScheduleEvents, ScheduleEvent, EventType } from '@/hooks/use-schedule-events';
-import { useLeadMeta, type LeadMeta } from '@/hooks/use-lead-meta';
+import { useLeadMeta } from '@/hooks/use-lead-meta';
 import { useLeadAttachments, useUploadLeadAttachment, type LeadAttachment } from '@/hooks/use-lead-attachments';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { useFloatingChat } from '@/contexts/FloatingChatContext';
 import { LeadUnifiedThread } from '@/components/features/leads/LeadUnifiedThread';
 import { ReentryBadge } from '@/components/features/leads/ReentryBadge';
-import { LostReasonDialog } from '@/components/features/leads/LostReasonDialog';
-import { LeadAttachmentViewer } from '@/components/features/leads/LeadAttachmentViewer';
 import { CopyLeadPhoneButton } from '@/components/features/leads/CopyLeadPhoneButton';
 import { LeadCadencePanel } from '@/components/features/leads/LeadCadencePanel';
 
-import { TaskOutcomeDialog, TaskOutcome } from '@/components/features/leads/TaskOutcomeDialog';
-import { EventSheet } from '@/components/features/schedule/EventSheet';
+import type { TaskOutcome } from '@/components/features/leads/TaskOutcomeDialog';
 import { toast } from 'sonner';
 import { formatPhoneForDisplay, normalizePhoneToE164 } from '@/lib/phone-utils';
 import { TagSelectorPopoverContent } from '@/components/ui/tag-selector';
@@ -79,769 +64,39 @@ import { useTeams } from '@/hooks/use-teams';
 import type { UnifiedHistoryEvent } from '@/hooks/use-lead-history';
 import { appendOptimisticHistoryEvent } from '@/hooks/use-optimistic-lead-history';
 import { leadsAPI } from '@/lib/api/leads';
+import { mergePreservingDefinedFields } from '@/lib/merge-preserving-defined';
+import { VimobAPIError } from '@/lib/api/vimob-client';
+import { getPipelineStageOutcome } from '@/lib/pipeline-stage-outcome';
+import { isAttendanceScheduleType, isFinalScheduleStatus } from '@/lib/schedule-outcome';
+import { useStageAutomations } from '@/hooks/use-stage-automations';
 import { teamsAPI } from '@/lib/api/teams';
-import { maskCPF, maskRG } from '@/lib/masks';
 import type { LeadCadenceTaskState } from '@/lib/validation';
-import { getSafeAbsoluteHttpUrl } from '@/lib/safe-http-url';
-const sourceLabels: Record<string, string> = {
-  meta: 'Meta Ads',
-  meta_ads: 'Meta Ads',
-  site: 'Site',
-  website: 'Site',
-  manual: 'Manual',
-  facebook: 'Facebook',
-  instagram: 'Instagram',
-  import: 'Importação',
-  google: 'Google Ads',
-  google_ads: 'Google Ads',
-  indicacao: 'Indicação',
-  whatsapp: 'WhatsApp',
-  webhook: 'Webhook',
-  outros: 'Outros'
-};
-const scheduleEventTypeLabels: Record<EventType, string> = {
-  call: 'Ligação',
-  email: 'E-mail',
-  meeting: 'Reunião',
-  task: 'Tarefa',
-  message: 'Mensagem',
-  visit: 'Visita'
-};
-const scheduleEventTypeIcons: Record<EventType, typeof Phone> = {
-  call: Phone,
-  email: Mail,
-  meeting: Calendar,
-  task: ListTodo,
-  message: MessageCircle,
-  visit: MapPin
-};
-type LeadDetailStage = {
-  id: string;
-  name: string;
-  color?: string | null;
-  stage_key?: string | null;
-  pipeline_id?: string | null;
-  position?: number | null;
-};
-
-type CadenceTaskType = 'call' | 'message' | 'email' | 'note';
-
-const OUTCOME_CADENCE_TASK_TYPES: CadenceTaskType[] = ['call', 'message', 'email'];
-
-type LeadDetailTag = {
-  id?: string;
-  name?: string | null;
-  color?: string | null;
-};
-
-type RenderableLeadTag = LeadDetailTag & { id: string };
-
-type LeadDetailAssignee = {
-  id: string;
-  name?: string | null;
-  email?: string | null;
-  avatar_url?: string | null;
-};
-
-export type LeadDetailLead = Omit<PipelineLead, 'stage' | 'assignee' | 'tags'> & Omit<Partial<Lead>, 'stage' | 'assignee' | 'tags'> & {
-  whatsapp_picture?: string | null;
-  whatsapp_avatar_url?: string | null;
-  contact_picture?: string | null;
-  assignee?: LeadDetailAssignee | null;
-  property?: { id?: string; code?: string | null; title?: string | null; preco?: number | null } | null;
-  interest_property?: { id?: string; code?: string | null; title?: string | null; preco?: number | null } | null;
-  stage?: LeadDetailStage | null;
-  tags?: LeadDetailTag[];
-};
-
-type CampaignTrackingDetails = Omit<Partial<LeadMeta>, 'lead_id' | 'created_at'> & {
-  lead_id?: string | null;
-  created_at?: string | null;
-  page_name?: string | null;
-  leadgen_id?: string | null;
-  creative_link_url?: string | null;
-};
-
-type SelectableLeadProperty = {
-  id: string;
-  title?: string | null;
-  code?: string | null;
-  codigo?: string | null;
-  reference?: string | null;
-  preco?: number | null;
-  commission_percentage?: number | null;
-};
-
-function getLeadPropertyFallback(lead: LeadDetailLead | null): SelectableLeadProperty | null {
-  const property = lead?.interest_property || lead?.property || null;
-  const propertyId = lead?.interest_property_id || lead?.property_id || property?.id || null;
-
-  if (!propertyId) return null;
-
-  return {
-    id: propertyId,
-    title: property?.title || null,
-    code: property?.code || null,
-    preco: typeof property?.preco === 'number' ? property.preco : null,
-    commission_percentage: typeof lead?.commission_percentage === 'number' ? lead.commission_percentage : null,
-  };
-}
-
-function mergePropertyFallback(
-  properties: SelectableLeadProperty[],
-  fallback: SelectableLeadProperty | null,
-) {
-  if (!fallback || properties.some((property) => property.id === fallback.id)) return properties;
-  return [fallback, ...properties];
-}
-
-type PipelineCacheStage = LeadDetailStage & {
-  leads?: LeadDetailLead[];
-  total_lead_count?: number | null;
-};
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (typeof error === 'object' && error && 'message' in error) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === 'string') return message;
-  }
-  return 'Erro desconhecido';
-}
-
-function getCadenceTaskType(type?: string | null): CadenceTaskType {
-  return type === 'message' || type === 'email' || type === 'note' ? type : 'call';
-}
-
-function hasTagId(tag: LeadDetailTag | null | undefined): tag is RenderableLeadTag {
-  return typeof tag?.id === 'string' && tag.id.length > 0;
-}
-
-function getTagForegroundClass(backgroundColor: string) {
-  const match = backgroundColor.trim().match(/^#([\da-f]{3}|[\da-f]{6}|[\da-f]{8})$/i);
-  if (!match) return 'text-primary-foreground';
-
-  const value = match[1].length === 3
-    ? match[1].split('').map((character) => character + character).join('')
-    : match[1].slice(0, 6);
-  const channels = [0, 2, 4].map((offset) => Number.parseInt(value.slice(offset, offset + 2), 16) / 255);
-  const [red, green, blue] = channels.map((channel) =>
-    channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
-  );
-  const luminance = (0.2126 * red) + (0.7152 * green) + (0.0722 * blue);
-
-  return luminance > 0.179 ? 'text-slate-950' : 'text-white';
-}
-
-interface LeadDetailDialogProps {
-  lead: LeadDetailLead | null;
-  stages: LeadDetailStage[];
-  onClose: () => void;
-  onEdit?: (lead: LeadDetailLead) => void;
-  allTags: Tag[];
-  allUsers: AppUser[];
-  refetchStages: () => void;
-}
-
-function InfoLine({ label, value, icon }: { label: string; value: ReactNode; icon?: ReactNode }) {
-  return (
-    <div className="flex min-w-0 items-center justify-between gap-3 text-xs">
-      <span className="flex min-w-0 items-center gap-1.5 text-[var(--app-text-tertiary)]">
-        {icon}
-        {label}
-      </span>
-      <span className="max-w-[60%] truncate text-right font-normal text-[var(--app-text-primary)]">
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function metaText(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed || null;
-}
-
-function safeExternalUrl(value: unknown): string | null {
-  const candidate = metaText(value);
-  if (!candidate) return null;
-  if (candidate.startsWith('/') && !candidate.startsWith('//')) return candidate;
-
-  try {
-    const url = new URL(candidate);
-    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : null;
-  } catch {
-    return null;
-  }
-}
-
-function formatDateSafely(
-  value: string | Date,
-  pattern: string,
-  locale: Locale,
-  fallback: string,
-) {
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? fallback : format(date, pattern, { locale });
-}
-
-function firstTrackingText(...values: unknown[]) {
-  for (const value of values) {
-    const text = metaText(value);
-    if (text) return text;
-  }
-
-  return null;
-}
-
-function trackingRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function normalizeTrackingKey(value: unknown) {
-  return metaText(value)?.toLowerCase().replace(/[\s-]+/g, '_') || '';
-}
-
-function isTrackedLeadSource(value: unknown) {
-  return ['meta', 'meta_ads', 'facebook', 'instagram', 'google', 'google_ads'].includes(
-    normalizeTrackingKey(value),
-  );
-}
-
-function trackingSourceLabel(value: unknown) {
-  const key = normalizeTrackingKey(value);
-  return sourceLabels[key] || metaText(value);
-}
-
-function buildCampaignTrackingDetails(
-  leadMeta: LeadMeta | null | undefined,
-  lead: LeadDetailLead | null | undefined,
-): CampaignTrackingDetails | null {
-  if (!lead && !leadMeta) return null;
-
-  const boardMeta = Array.isArray(lead?.lead_meta)
-    ? lead.lead_meta.find((meta) => (
-      metaText(meta?.campaign_name) ||
-      metaText(meta?.campaign_id) ||
-      metaText(meta?.adset_name) ||
-      metaText(meta?.adset_id) ||
-      metaText(meta?.ad_name) ||
-      metaText(meta?.ad_id) ||
-      metaText(meta?.platform)
-    ))
-    : null;
-
-  const source = metaText(lead?.source);
-  const inferredPlatform = isTrackedLeadSource(source) ? normalizeTrackingKey(source) : null;
-  const leadRecord = trackingRecord(lead);
-  const boardMetaRecord = trackingRecord(boardMeta);
-  const rawPayload = trackingRecord(leadMeta?.raw_payload);
-  const rawDetails = trackingRecord(rawPayload?.lead_details);
-  const rawSourceReferral = trackingRecord(rawPayload?.source_referral);
-  const rawReferral = trackingRecord(rawPayload?.referral);
-
-  const details: CampaignTrackingDetails = {
-    lead_id: firstTrackingText(leadMeta?.lead_id, lead?.id),
-    campaign_name: firstTrackingText(leadMeta?.campaign_name, boardMeta?.campaign_name, rawDetails?.campaign_name, rawPayload?.campaign_name),
-    campaign_id: firstTrackingText(leadMeta?.campaign_id, boardMeta?.campaign_id, lead?.meta_campaign_id),
-    adset_name: firstTrackingText(leadMeta?.adset_name, boardMeta?.adset_name, rawDetails?.adset_name, rawPayload?.adset_name),
-    adset_id: firstTrackingText(leadMeta?.adset_id, boardMeta?.adset_id, lead?.meta_adset_id),
-    ad_name: firstTrackingText(leadMeta?.ad_name, boardMeta?.ad_name, rawDetails?.ad_name, rawPayload?.ad_name),
-    ad_id: firstTrackingText(leadMeta?.ad_id, boardMeta?.ad_id, lead?.meta_ad_id),
-    form_name: firstTrackingText(leadMeta?.form_name, boardMetaRecord?.form_name, rawDetails?.form_name, rawPayload?.form_name, leadRecord?.utm_term),
-    form_id: firstTrackingText(leadMeta?.form_id, rawDetails?.form_id, rawPayload?.form_id, lead?.meta_form_id),
-    page_id: firstTrackingText(leadMeta?.page_id, rawDetails?.page_id, rawPayload?.page_id),
-    page_name: firstTrackingText(rawDetails?.page_name, rawPayload?.page_name),
-    leadgen_id: firstTrackingText(rawDetails?.leadgen_id, rawPayload?.leadgen_id),
-    platform: firstTrackingText(leadMeta?.platform, boardMeta?.platform, rawDetails?.platform, rawPayload?.platform, inferredPlatform),
-    source_type: firstTrackingText(leadMeta?.source_type, source),
-    created_at: firstTrackingText(leadMeta?.created_at, lead?.created_at),
-    utm_source: firstTrackingText(leadMeta?.utm_source, lead?.utm_source),
-    utm_medium: firstTrackingText(leadMeta?.utm_medium, lead?.utm_medium),
-    utm_campaign: firstTrackingText(leadMeta?.utm_campaign, lead?.utm_campaign),
-    utm_content: firstTrackingText(leadMeta?.utm_content, lead?.utm_content),
-    utm_term: firstTrackingText(leadMeta?.utm_term, lead?.utm_term),
-    contact_notes: firstTrackingText(leadMeta?.contact_notes),
-    creative_url: firstTrackingText(leadMeta?.creative_url),
-    creative_video_url: firstTrackingText(leadMeta?.creative_video_url),
-    creative_instagram_url: firstTrackingText(leadMeta?.creative_instagram_url),
-    creative_link_url: firstTrackingText(
-      rawPayload?.source_url,
-      rawPayload?.creative_link_url,
-      rawPayload?.creative_destination_url,
-      rawSourceReferral?.source_url,
-      rawReferral?.source_url,
-      rawDetails?.source_url,
-      leadMeta?.creative_instagram_url,
-    ),
-  };
-
-  return hasLeadTrackingData(details) ? details : null;
-}
-
-function hasLeadTrackingData(leadMeta: CampaignTrackingDetails | null | undefined) {
-  if (!leadMeta) return false;
-
-  return [
-    leadMeta.campaign_name,
-    leadMeta.campaign_id,
-    leadMeta.adset_name,
-    leadMeta.adset_id,
-    leadMeta.ad_name,
-    leadMeta.ad_id,
-    leadMeta.form_name,
-    leadMeta.form_id,
-    leadMeta.page_id,
-    leadMeta.page_name,
-    leadMeta.leadgen_id,
-    leadMeta.utm_source,
-    leadMeta.utm_medium,
-    leadMeta.utm_campaign,
-    leadMeta.utm_content,
-    leadMeta.utm_term,
-    leadMeta.creative_url,
-    leadMeta.creative_video_url,
-    leadMeta.creative_instagram_url,
-    leadMeta.creative_link_url,
-    leadMeta.contact_notes,
-  ].some((value) => Boolean(metaText(value))) || isTrackedLeadSource(leadMeta.platform) || isTrackedLeadSource(leadMeta.source_type);
-}
-
-function CampaignTrackingHover({ leadMeta }: { leadMeta: CampaignTrackingDetails | null | undefined }) {
-  const [open, setOpen] = useState(false);
-  if (!hasLeadTrackingData(leadMeta)) return null;
-
-  const sourceLabel = trackingSourceLabel(leadMeta?.platform) || trackingSourceLabel(leadMeta?.source_type);
-  const displayName =
-    metaText(leadMeta?.campaign_name) ||
-    metaText(leadMeta?.utm_campaign) ||
-    metaText(leadMeta?.ad_name) ||
-    metaText(leadMeta?.form_name) ||
-    sourceLabel ||
-    'Campanha registrada';
-
-  const mainRows = [
-    ['Campanha', metaText(leadMeta?.campaign_name) || metaText(leadMeta?.utm_campaign)],
-    ['Conjunto', leadMeta?.adset_name],
-    ['Anuncio', leadMeta?.ad_name],
-    ['Formulario', leadMeta?.form_name],
-    ['ID do formulário', leadMeta?.form_id],
-    ['Página', leadMeta?.page_name || leadMeta?.page_id],
-    ['Leadgen', leadMeta?.leadgen_id],
-    ['Plataforma', trackingSourceLabel(leadMeta?.platform) || leadMeta?.platform],
-    ['Origem', trackingSourceLabel(leadMeta?.source_type) || leadMeta?.utm_source],
-    ['Capturado em', leadMeta?.created_at
-      ? formatDateSafely(leadMeta.created_at, "dd/MM/yyyy 'às' HH:mm", ptBR, leadMeta.created_at)
-      : null],
-  ] as const;
-
-  const utmRows = [
-    ['utm_source', leadMeta?.utm_source],
-    ['utm_medium', leadMeta?.utm_medium],
-    ['utm_campaign', leadMeta?.utm_campaign],
-    ['utm_content', leadMeta?.utm_content],
-    ['utm_term', leadMeta?.utm_term],
-  ] as const;
-
-  const safeCreativeLink = getSafeAbsoluteHttpUrl(leadMeta?.creative_link_url)
-    || getSafeAbsoluteHttpUrl(leadMeta?.creative_instagram_url);
-  const seenLinks = new Set<string>();
-  const links = ([
-    ['Link do criativo', safeCreativeLink],
-    ['Imagem', getSafeAbsoluteHttpUrl(leadMeta?.creative_url)],
-    ['Video', getSafeAbsoluteHttpUrl(leadMeta?.creative_video_url)],
-  ] as const).flatMap(([label, value]) => {
-    const href = metaText(value);
-    if (!href || seenLinks.has(href)) return [];
-    seenLinks.add(href);
-    return [[label, href] as const];
-  });
-
-  const DetailRow = ({ label, value }: { label: string; value: unknown }) => {
-    const text = metaText(value);
-    if (!text) return null;
-
-    return (
-      <div className="grid grid-cols-[100px_minmax(0,1fr)] gap-2 text-[11px] leading-snug text-left">
-        <span className="text-[var(--app-text-tertiary)]">{label}</span>
-        <span className="break-words text-left font-normal text-[var(--app-text-primary)]">{text}</span>
-      </div>
-    );
-  };
-
-  const hasUtms = utmRows.some(([, value]) => Boolean(metaText(value)));
-  const hasLinks = links.length > 0;
-
-  return (
-    <HoverCard open={open} onOpenChange={setOpen} openDelay={100} closeDelay={420}>
-      <HoverCardTrigger asChild>
-        <button
-          type="button"
-          aria-expanded={open}
-          onClick={() => setOpen((current) => !current)}
-          className="group inline-flex min-w-0 max-w-full items-center justify-end gap-1 text-right font-normal text-[var(--app-text-primary)] outline-none transition-colors hover:text-primary focus-visible:text-primary"
-        >
-          <span className="truncate underline decoration-dotted decoration-[var(--app-text-tertiary)] underline-offset-4 group-hover:decoration-primary group-focus-visible:decoration-primary">
-            {displayName}
-          </span>
-          <Info className="h-3 w-3 shrink-0 text-[var(--app-text-tertiary)] transition-colors group-hover:text-primary group-focus-visible:text-primary" />
-        </button>
-      </HoverCardTrigger>
-      <HoverCardContent
-        side="right"
-        align="center"
-        sideOffset={4}
-        collisionPadding={12}
-        className="vimob-popover-content z-[100] w-[min(420px,calc(100vw-2rem))] rounded-[8px] border-0 p-0 text-left text-[var(--app-text-primary)] shadow-none"
-      >
-        <div className="border-b border-[var(--app-border)] px-3 py-2 text-left">
-          <p className="text-[11px] font-normal text-primary">Rastreamento de campanha</p>
-        </div>
-
-        <div className="max-h-[420px] space-y-3 overflow-y-auto p-3 text-left">
-          <div className="space-y-1.5">
-            {mainRows.map(([label, value]) => (
-              <DetailRow key={label} label={label} value={value} />
-            ))}
-          </div>
-
-          {hasUtms && (
-            <div className="space-y-1.5 border-t border-[var(--app-border)] pt-3 text-left">
-              <p className="text-[11px] font-normal text-[var(--app-text-tertiary)]">UTMs</p>
-              {utmRows.map(([label, value]) => (
-                <DetailRow key={label} label={label} value={value} />
-              ))}
-            </div>
-          )}
-
-          {leadMeta?.contact_notes && (
-            <div className="border-t border-[var(--app-border)] pt-3 text-left">
-              <p className="text-[11px] font-normal text-[var(--app-text-tertiary)]">Observações</p>
-              <p className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-snug text-[var(--app-text-secondary)]">
-                {leadMeta.contact_notes}
-              </p>
-            </div>
-          )}
-
-          {hasLinks && (
-            <div className="flex flex-wrap gap-2 border-t border-[var(--app-border)] pt-3 text-left">
-              {links.map(([label, value]) => {
-                const href = safeExternalUrl(value);
-                if (!href) return null;
-                return (
-                  <a
-                    key={label}
-                    href={href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-1 text-[11px] font-light text-[var(--app-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)] hover:text-primary"
-                  >
-                    <span>{label}</span>
-                    <ExternalLink className="h-3 w-3" />
-                  </a>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </HoverCardContent>
-    </HoverCard>
-  );
-}
-
-function LeadProfileHover({
-  lead,
-  canRevealSensitive,
-}: {
-  lead: LeadDetailLead;
-  canRevealSensitive: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [revealSensitive, setRevealSensitive] = useState(false);
-  const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || undefined;
-  const sensitiveProfile = useLeadSensitiveProfile(lead.id, {
-    enabled: canRevealSensitive && revealSensitive,
-  });
-  const metadata = trackingRecord(lead.metadata) || {};
-  const nestedProfile = trackingRecord(metadata.profile);
-  const profileData = nestedProfile && Object.keys(nestedProfile).length > 0 ? nestedProfile : metadata;
-  const text = (key: string) => metaText(profileData[key]);
-  const personType = text('personType');
-  const gender = text('gender');
-  const hasCPF = metadata.hasCPF === true || profileData.hasCPF === true;
-  const hasRG = metadata.hasRG === true || profileData.hasRG === true;
-  const birthDate = text('birthDate');
-  const birthDateLabel = birthDate
-    ? formatDateSafely(`${birthDate}T00:00:00`, 'dd/MM/yyyy', ptBR, birthDate)
-    : null;
-  const interestValue = typeof lead.valor_interesse === 'number'
-    ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(lead.valor_interesse)
-    : null;
-  const interestProperty = lead.interest_property || lead.property;
-  const propertyLabel = [interestProperty?.code, interestProperty?.title].filter(Boolean).join(' - ') || null;
-  const rows = [
-    ['Nome', lead.name],
-    ['Nome social', text('socialName')],
-    ['Telefone', formatPhoneForDisplay(lead.phone || '')],
-    ['E-mail', lead.email],
-    ['Tipo', personType === 'company' ? 'Pessoa jurídica' : personType === 'individual' ? 'Pessoa física' : null],
-    ['Gênero', gender === 'male' ? 'Masculino' : gender === 'female' ? 'Feminino' : gender === 'other' ? 'Outro' : null],
-    ['Nascimento', birthDateLabel],
-    ['Profissão', lead.profissao],
-    ['Cargo', lead.cargo],
-    ['Empresa', lead.empresa],
-    ['Renda', lead.renda_familiar],
-    ['Razão social', text('corporateName')],
-    ['Nome fantasia', text('tradeName')],
-    ['CNPJ', text('cnpj')],
-    ['Inscrição estadual', text('stateRegistration')],
-    ['Valor de interesse', interestValue],
-    ['Imóvel de interesse', propertyLabel],
-  ].filter((row): row is [string, string] => Boolean(row[1]));
-
-  const clearSensitiveData = () => {
-    setRevealSensitive(false);
-    if (organizationId) {
-      queryClient.removeQueries({
-        queryKey: ['lead-sensitive-profile', organizationId, lead.id],
-        exact: true,
-      });
-    }
-  };
-
-  const handleOpenChange = (nextOpen: boolean) => {
-    setOpen(nextOpen);
-    if (!nextOpen) clearSensitiveData();
-  };
-
-  const sensitiveValue = (kind: 'cpf' | 'rg') => {
-    if (!revealSensitive) return '••••••••••••';
-    if (sensitiveProfile.isLoading || sensitiveProfile.isFetching) return 'Carregando...';
-    const value = sensitiveProfile.data?.[kind];
-    if (!value) return 'Não informado';
-    return kind === 'cpf' ? maskCPF(value) : maskRG(value);
-  };
-
-  return (
-    <HoverCard open={open} onOpenChange={handleOpenChange} openDelay={100} closeDelay={420}>
-      <HoverCardTrigger asChild>
-        <button
-          type="button"
-          aria-expanded={open}
-          onClick={() => setOpen((current) => !current)}
-          className="group inline-flex min-w-0 max-w-full items-center justify-end gap-1 text-right font-normal text-[var(--app-text-primary)] outline-none transition-colors hover:text-primary focus-visible:text-primary"
-        >
-          <span className="truncate underline decoration-dotted decoration-[var(--app-text-tertiary)] underline-offset-4 group-hover:decoration-primary">
-            {lead.name || 'Lead'}
-          </span>
-          <Info className="h-3 w-3 shrink-0 text-[var(--app-text-tertiary)] group-hover:text-primary" />
-        </button>
-      </HoverCardTrigger>
-      <HoverCardContent
-        side="right"
-        align="start"
-        sideOffset={4}
-        collisionPadding={12}
-        className="vimob-popover-content z-[110] w-[min(420px,calc(100vw-2rem))] rounded-[8px] border-0 p-0 text-left text-[var(--app-text-primary)] shadow-none"
-      >
-        <div className="border-b border-[var(--app-border)] px-3 py-2">
-          <p className="text-[11px] font-normal text-primary">Ficha do lead</p>
-        </div>
-        <div className="max-h-[430px] space-y-3 overflow-y-auto p-3">
-          <div className="space-y-1.5">
-            {rows.map(([label, value]) => (
-              <div key={label} className="grid grid-cols-[118px_minmax(0,1fr)] gap-2 text-[11px] leading-snug">
-                <span className="text-[var(--app-text-tertiary)]">{label}</span>
-                <span className="break-words font-normal text-[var(--app-text-primary)]">{value}</span>
-              </div>
-            ))}
-          </div>
-
-          {(hasCPF || hasRG) && (
-            <div className="space-y-1.5 border-t border-[var(--app-border)] pt-3">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[11px] font-normal text-[var(--app-text-tertiary)]">Documentos protegidos</p>
-                {canRevealSensitive && (
-                  <button
-                    type="button"
-                    onClick={() => revealSensitive ? clearSensitiveData() : setRevealSensitive(true)}
-                    className="inline-flex items-center gap-1 rounded-[5px] bg-[var(--app-surface-soft)] px-2 py-1 text-[10px] font-light text-primary transition-colors hover:bg-[var(--app-surface-hover)]"
-                  >
-                    {revealSensitive ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                    {revealSensitive ? 'Ocultar' : 'Revelar'}
-                  </button>
-                )}
-              </div>
-              {hasCPF && <InfoLine label="CPF" value={sensitiveValue('cpf')} />}
-              {hasRG && <InfoLine label="RG" value={sensitiveValue('rg')} />}
-              {sensitiveProfile.isError && (
-                <p className="text-[10px] text-destructive">Não foi possível liberar os documentos.</p>
-              )}
-            </div>
-          )}
-        </div>
-      </HoverCardContent>
-    </HoverCard>
-  );
-}
-
-function getDealStatusTriggerClass(status?: string | null) {
-  if (status === 'won') {
-    return '!border-0 !bg-emerald-600 !text-white !shadow-none !ring-0 !ring-offset-0 transition-colors hover:!bg-emerald-700 data-[state=open]:!bg-emerald-700 focus:!ring-0 focus-visible:!ring-1 focus-visible:!ring-emerald-500/40 focus-visible:!ring-offset-0';
-  }
-
-  if (status === 'lost') {
-    return '!border-0 !bg-red-600 !text-white !shadow-none !ring-0 !ring-offset-0 transition-colors hover:!bg-red-700 data-[state=open]:!bg-red-700 focus:!ring-0 focus-visible:!ring-1 focus-visible:!ring-red-500/40 focus-visible:!ring-offset-0';
-  }
-
-  return '!border-0 !bg-[var(--app-surface-soft)] !text-[var(--app-text-primary)] !shadow-none !ring-0 !ring-offset-0 transition-colors hover:!bg-[var(--app-surface-hover)] data-[state=open]:!bg-[var(--app-surface-hover)] focus:!ring-0 focus-visible:!ring-1 focus-visible:!ring-[var(--app-border-strong)] focus-visible:!ring-offset-0';
-}
-
-function getScheduleEventType(value?: string | null): EventType {
-  return value === 'email' ||
-    value === 'meeting' ||
-    value === 'task' ||
-    value === 'message' ||
-    value === 'visit'
-    ? value
-    : 'call';
-}
-
-function getScheduleStatusLabel(status?: string | null, isLate = false) {
-  if (status === 'completed') return 'Concluído';
-  if (status === 'cancelled' || status === 'canceled') return 'Cancelado';
-  if (status === 'no_show') return 'Não compareceu';
-  if (isLate) return 'Atrasado';
-  return 'Em aberto';
-}
-
-function getScheduleStatusClass(status?: string | null, isLate = false) {
-  if (status === 'completed') return 'bg-emerald-500/12 text-emerald-500';
-  if (status === 'cancelled' || status === 'canceled') return 'bg-red-500/12 text-red-500';
-  if (status === 'no_show') return 'bg-amber-500/12 text-amber-500';
-  if (isLate) return 'bg-red-500/12 text-red-500';
-  return 'bg-primary/12 text-primary';
-}
-
-function getScheduleDateLabel(event: ScheduleEvent, locale: Locale) {
-  const startDate = new Date(event.start_time);
-  const endDate = new Date(event.end_time);
-  if (Number.isNaN(startDate.getTime())) return 'Data inválida';
-
-  const dateLabel = formatDateSafely(startDate, 'dd/MM', locale, 'Data inválida');
-  const startTime = formatDateSafely(startDate, 'HH:mm', locale, '--:--');
-  const endTime = formatDateSafely(endDate, 'HH:mm', locale, startTime);
-
-  if (event.is_all_day) return `${dateLabel} - dia todo`;
-  if (event.end_time && startTime !== endTime) return `${dateLabel} ${startTime}-${endTime}`;
-  return `${dateLabel} ${startTime}`;
-}
-
-function CompactScheduleEventsList({
-  events,
-  locale,
-  onEditEvent,
-}: {
-  events: ScheduleEvent[];
-  locale: Locale;
-  onEditEvent?: (event: ScheduleEvent) => void;
-}) {
-  const [currentTime] = useState(() => Date.now());
-  const sortedEvents = [...events].sort((left, right) => {
-    const leftCompleted = left.status === 'completed';
-    const rightCompleted = right.status === 'completed';
-    if (leftCompleted !== rightCompleted) return leftCompleted ? 1 : -1;
-    return new Date(left.start_time).getTime() - new Date(right.start_time).getTime();
-  });
-
-  if (sortedEvents.length === 0) {
-    return null;
-  }
-
-  return (
-    <div
-      className={cn(
-        'mt-3 space-y-1.5 overflow-y-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
-        sortedEvents.length > 2 ? 'h-[148px]' : 'max-h-[148px]',
-      )}
-    >
-      {sortedEvents.map((event) => {
-        const eventType = getScheduleEventType(event.event_type);
-        const EventIcon = scheduleEventTypeIcons[eventType] || Calendar;
-        const isCompleted = event.status === 'completed';
-        const isLate = !isCompleted && new Date(event.start_time).getTime() < currentTime;
-
-        return (
-          <button
-            key={event.id}
-            type="button"
-            disabled={!onEditEvent}
-            onClick={() => onEditEvent?.(event)}
-            className={cn(
-              'flex w-full items-center gap-2 rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 py-1.5 text-left transition-colors hover:bg-primary/10 disabled:cursor-default disabled:hover:bg-[var(--app-surface-solid)]',
-              isCompleted && 'opacity-65',
-            )}
-          >
-            <span
-              className={cn(
-                'flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px]',
-                isCompleted ? 'bg-emerald-500/18 text-emerald-500' : 'bg-primary/12 text-primary',
-              )}
-            >
-              {isCompleted ? <Check className="h-3 w-3" /> : <EventIcon className="h-3 w-3" />}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className={cn('block truncate text-[11px] font-normal leading-tight', isCompleted && 'line-through')}>
-                {event.title || scheduleEventTypeLabels[eventType]}
-              </span>
-              <span className="mt-px flex min-w-0 flex-wrap items-center gap-1 text-[10.5px] font-light leading-tight text-[var(--app-text-secondary)]">
-                <span className="font-normal text-[var(--app-text-primary)]">{scheduleEventTypeLabels[eventType]}</span>
-                <span>-</span>
-                <span>{getScheduleDateLabel(event, locale)}</span>
-                {!isCompleted && (
-                  <span className={cn('rounded-[4px] px-1.5 py-0.5 font-light', getScheduleStatusClass(event.status, isLate))}>
-                    {getScheduleStatusLabel(event.status, isLate)}
-                  </span>
-                )}
-              </span>
-            </span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function getStageStepperStyle(stageCount: number): CSSProperties {
-  if (stageCount > 32) {
-    return {
-      '--lead-stage-step-size': '1.35rem',
-      '--lead-stage-step-font-size': '0.625rem',
-      '--lead-stage-step-gap': '0.25rem',
-    } as CSSProperties;
-  }
-
-  if (stageCount > 20) {
-    return {
-      '--lead-stage-step-size': '1.55rem',
-      '--lead-stage-step-font-size': '0.6875rem',
-      '--lead-stage-step-gap': '0.25rem',
-    } as CSSProperties;
-  }
-
-  return {
-    '--lead-stage-step-size': '2rem',
-    '--lead-stage-step-font-size': '0.75rem',
-    '--lead-stage-step-gap': '0.375rem',
-  } as CSSProperties;
-}
-
-const stageTooltipClassName = 'max-w-[18rem] text-[11px] font-normal leading-snug tracking-normal';
+import {
+  buildCampaignTrackingDetails,
+  CampaignTrackingHover,
+  CompactScheduleEventsList,
+  getCadenceTaskType,
+  getDealStatusTriggerClass,
+  getErrorMessage,
+  getLeadPropertyFallback,
+  getLeadSourceLabel,
+  getStageStepperStyle,
+  hasTagId,
+  InfoLine,
+  LeadDetailOverlays,
+  LeadProfileHover,
+  mergePropertyFallback,
+  OUTCOME_CADENCE_TASK_TYPES,
+  stageTooltipClassName,
+  useLeadDetailPipelineCache,
+  type LeadDetailDialogProps,
+  type LeadDetailLead,
+  type ReopenStatusConfirmation,
+  type AssigneeScheduleConfirmation,
+  type SelectableLeadProperty,
+} from './lead-detail';
+
+export type { LeadDetailLead } from './lead-detail';
 
 export function LeadDetailDialog({
   lead: leadProp,
@@ -850,7 +105,6 @@ export function LeadDetailDialog({
   onEdit,
   allTags,
   allUsers,
-  refetchStages
 }: LeadDetailDialogProps) {
   const lead = leadProp ?? ({} as LeadDetailLead);
   const { language } = useLanguage();
@@ -865,7 +119,6 @@ export function LeadDetailDialog({
   const [editingScheduleEvent, setEditingScheduleEvent] = useState<ScheduleEvent | null>(null);
   const [scheduleDefaultType, setScheduleDefaultType] = useState<EventType>('call');
   const [activeTab, setActiveTab] = useState('activities');
-  const [composerRequest, setComposerRequest] = useState<{ id: number; text?: string } | null>(null);
   const [selectedTask, setSelectedTask] = useState<LeadCadenceTaskState | null>(null);
   const [roteiroDialogOpen, setRoteiroDialogOpen] = useState(false);
   const [outcomeDialogOpen, setOutcomeDialogOpen] = useState(false);
@@ -876,17 +129,10 @@ export function LeadDetailDialog({
   const [isUploading, setIsUploading] = useState(false);
   const [shouldLoadLeadProperties, setShouldLoadLeadProperties] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [reopenStatusConfirmation, setReopenStatusConfirmation] = useState<{
-    leadId: string;
-    leadName: string;
-    fromStatus: 'won' | 'lost' | string;
-  } | null>(null);
-  const [assigneeScheduleConfirmation, setAssigneeScheduleConfirmation] = useState<{
-    leadId: string;
-    userId: string;
-    userName: string;
-    description: string;
-  } | null>(null);
+  const [reopenStatusConfirmation, setReopenStatusConfirmation] =
+    useState<ReopenStatusConfirmation | null>(null);
+  const [assigneeScheduleConfirmation, setAssigneeScheduleConfirmation] =
+    useState<AssigneeScheduleConfirmation | null>(null);
   const handleCloseLeadDetail = () => {
     setAssigneeScheduleConfirmation(null);
     onClose();
@@ -894,11 +140,20 @@ export function LeadDetailDialog({
   const v2LeadInfoScrollRef = useRef<HTMLDivElement>(null);
   const v2LeadWorkScrollRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
+  const { openNewChat, openNewChatWithMessage } = useFloatingChat();
+  const {
+    refreshPipelineInBackground,
+    restorePipelineCache,
+    updatePipelineAssigneeCache,
+    updatePipelineLeadCache,
+  } = useLeadDetailPipelineCache();
 
   const leadId = leadProp?.id ?? null;
   const fullLeadQuery = useLead(leadId);
   const [lostReasonLocal, setLostReasonLocal] = useState(lead?.lost_reason || '');
   const [lostReasonDialogOpen, setLostReasonDialogOpen] = useState(false);
+  const [pendingLostStageId, setPendingLostStageId] = useState<string | null>(null);
+  const [stageMovePending, setStageMovePending] = useState(false);
   const [feedback, setFeedback] = useState('');
 
   const handleSaveFeedback = async () => {
@@ -949,8 +204,13 @@ export function LeadDetailDialog({
     const fullLead = fullLeadQuery.data as LeadDetailLead | null | undefined;
     const hydratedLead: LeadDetailLead = fullLead
       ? {
-          ...leadProp,
-          ...fullLead,
+          ...mergePreservingDefinedFields(leadProp, fullLead, [
+            'initial_message',
+            'last_contact_at',
+            'next_follow_up_at',
+            'priority',
+            'status',
+          ]),
           assignee: fullLead.assignee ?? (
             fullLead.assigned_user_id === leadProp.assigned_user_id
               ? leadProp.assignee
@@ -1031,9 +291,9 @@ export function LeadDetailDialog({
       isActive = false;
     };
   }, [leadProp?.lost_reason, lostReasonLocal]);
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile, organization } = useAuth();
   const cadenceOrganizationId =
-    leadProp?.organization_id || profile?.organization_id || organization?.id || null;
+    leadProp?.organization_id || activeOrganization.organizationId || null;
   const {
     data: leadCadenceState,
     isLoading: leadCadenceLoading,
@@ -1050,8 +310,39 @@ export function LeadDetailDialog({
   };
   const hasPropertiesModule = hasModule('properties');
   const hasAgendaModule = hasModule('agenda');
-  const canUseLeadWhatsApp =
-    canOperateLead && hasModule('whatsapp') && hasPermission('whatsapp_operate');
+  const hasLeadWhatsAppModule = hasModule('whatsapp');
+  const canViewLeadWhatsApp =
+    hasLeadWhatsAppModule &&
+    (hasPermission('whatsapp_view') || hasPermission('whatsapp_operate'));
+  const canOperateLeadWhatsApp =
+    hasLeadWhatsAppModule && hasPermission('whatsapp_operate');
+  const openLeadWhatsApp = (message?: string) => {
+    const currentLead = localLead || lead;
+    const preparedMessage = message?.trim() || '';
+    const canOpenLeadWhatsApp = preparedMessage
+      ? canOperateLeadWhatsApp
+      : canViewLeadWhatsApp;
+
+    if (!canOpenLeadWhatsApp) {
+      toast.error('WhatsApp indisponível para este usuário.');
+      return;
+    }
+    if (!currentLead.phone) {
+      toast.error('Cadastre um telefone antes de iniciar a conversa.');
+      return;
+    }
+
+    const phone = currentLead.phone;
+    const leadName = currentLead.name || 'Lead';
+    handleCloseLeadDetail();
+    queueMicrotask(() => {
+      if (preparedMessage) {
+        openNewChatWithMessage(phone, preparedMessage, currentLead.id, leadName);
+        return;
+      }
+      openNewChat(phone, leadName, currentLead.id);
+    });
+  };
   const canViewProperties =
     hasPropertiesModule &&
     (hasPermission('property_view') || hasPermission('property_manage'));
@@ -1073,6 +364,32 @@ export function LeadDetailDialog({
     leadId: leadId || undefined,
     enabled: canViewLeadSchedule,
   });
+  const scheduleSummaryLabel = useMemo(() => {
+    if (scheduleEvents.length === 0) return 'Nenhum compromisso';
+    const appointments = scheduleEvents.filter((event) =>
+      isAttendanceScheduleType(event.event_type),
+    );
+    const simpleCommitmentsCount = scheduleEvents.length - appointments.length;
+    const openCount = appointments.filter((event) => !isFinalScheduleStatus(event.status)).length;
+    const completedCount = appointments.filter((event) => event.status === 'completed').length;
+    const noShowCount = appointments.filter((event) => event.status === 'no_show').length;
+    const rescheduledCount = appointments.filter((event) => event.outcome === 'rescheduled').length;
+    const appointmentTotalLabel = appointments.length === 1
+      ? appointments[0]?.event_type === 'visit' ? '1 visita' : '1 reunião'
+      : `${appointments.length} visitas/reuniões`;
+    return [
+      appointments.length > 0
+        ? appointmentTotalLabel
+        : 'Nenhuma visita/reunião',
+      openCount > 0 ? `${openCount} em aberto` : null,
+      completedCount > 0 ? `${completedCount} realizada${completedCount === 1 ? '' : 's'}` : null,
+      noShowCount > 0 ? `${noShowCount} no-show` : null,
+      rescheduledCount > 0 ? `${rescheduledCount} remarcada${rescheduledCount === 1 ? '' : 's'}` : null,
+      simpleCommitmentsCount > 0
+        ? `+ ${simpleCommitmentsCount} compromisso${simpleCommitmentsCount === 1 ? '' : 's'} simples`
+        : null,
+    ].filter(Boolean).join(' · ');
+  }, [scheduleEvents]);
   const { data: leadMeta } = useLeadMeta(leadId);
   const completeCadenceTask = useCompleteCadenceTask();
   const updateLead = useUpdateLead();
@@ -1080,6 +397,7 @@ export function LeadDetailDialog({
   const removeTag = useRemoveLeadTag();
   const updateCommission = useUpdateLeadCommission();
   const dealStatusChange = useDealStatusChange();
+  const { data: stageAutomations = [] } = useStageAutomations();
   const { recordFirstResponse } = useRecordFirstResponseOnAction();
   const { data: teams = [] } = useTeams({
     includeInactive: true,
@@ -1198,7 +516,6 @@ export function LeadDetailDialog({
 
     try {
       await updateLead.mutateAsync(updateData);
-      refreshPipelineInBackground();
     } catch {
       setLocalLead(previousLead);
       setEditForm(previousEditForm);
@@ -1209,16 +526,17 @@ export function LeadDetailDialog({
 
   // Quick action handlers for phone/email with outcome dialog
   const handleQuickPhone = () => {
-    if (!canOperateLead || !lead.phone) return;
-    const phoneHref = normalizePhoneToE164(lead.phone);
+    const currentLead = localLead || lead;
+    if (!canOperateLead || !currentLead.phone) return;
+    const phoneHref = normalizePhoneToE164(currentLead.phone);
     if (!phoneHref) return;
 
     // 1. Log initiation immediately in history
     createActivityMutation.mutate({
-      lead_id: lead.id,
+      lead_id: currentLead.id,
       type: 'call_initiated',
       content: 'Ligação iniciada',
-      metadata: { phone: lead.phone, channel: 'phone' },
+      metadata: { phone: currentLead.phone, channel: 'phone' },
     });
 
     window.open(`tel:${phoneHref}`, '_blank', 'noopener,noreferrer');
@@ -1227,14 +545,13 @@ export function LeadDetailDialog({
   };
 
   const handleQuickWhatsApp = () => {
-    if (!canUseLeadWhatsApp) return;
-    setActiveTab(isMobile ? 'history' : 'activities');
-    setComposerRequest((current) => ({ id: (current?.id || 0) + 1 }));
+    openLeadWhatsApp();
   };
 
   const handleQuickEmail = () => {
-    if (!canOperateLead || !lead.email) return;
-    const gmailUrl = `https://mail.google.com/mail/view=cm&fs=1&tf=1&to=${encodeURIComponent(lead.email)}`;
+    const currentLead = localLead || lead;
+    if (!canOperateLead || !currentLead.email) return;
+    const gmailUrl = `https://mail.google.com/mail/view=cm&fs=1&tf=1&to=${encodeURIComponent(currentLead.email)}`;
     window.open(gmailUrl, '_blank', 'noopener,noreferrer');
     setQuickActionOutcomeType('email');
     setQuickActionOutcomeOpen(true);
@@ -1242,35 +559,41 @@ export function LeadDetailDialog({
 
   const handleQuickActionOutcomeConfirm = async (outcome: TaskOutcome, notes: string) => {
     if (!canOperateLead) return;
-    // 1. Log in the 'activities' table for visual history
-    await createActivityMutation.mutateAsync({
-      lead_id: lead.id,
-      type: quickActionOutcomeType === 'call' ? 'call' : 'email',
-      content: quickActionOutcomeType === 'call' ? 'Tentativa de ligação' : 'Email enviado',
-      metadata: { outcome, notes, channel: quickActionOutcomeType },
-    });
+    const currentLead = localLead || lead;
+    try {
+      // 1. Log in the 'activities' table for visual history
+      await createActivityMutation.mutateAsync({
+        lead_id: currentLead.id,
+        type: quickActionOutcomeType === 'call' ? 'call' : 'email',
+        content: quickActionOutcomeType === 'call' ? 'Tentativa de ligação' : 'Email enviado',
+        metadata: { outcome, notes, channel: quickActionOutcomeType },
+      });
 
     // 2. If it's a call, also register it in 'telephony_calls' for gamification & metrics
     if (quickActionOutcomeType === 'call') {
       // Use fire-and-forget logic or separate mutation to not block UI/history
       createCallMutation.mutate({
-        lead_id: lead.id,
-        phone_to: lead.phone || '',
+        lead_id: currentLead.id,
+        phone_to: currentLead.phone || '',
         direction: 'outbound',
         notes: notes,
-        organization_id: lead.organization_id || profile?.organization_id || organization?.id || ''
+        organization_id: currentLead.organization_id || activeOrganization.organizationId || ''
       });
     }
 
     await recordFirstResponse({
-      leadId: lead.id,
-      organizationId: lead.organization_id || profile?.organization_id || organization?.id || '',
+      leadId: currentLead.id,
+      organizationId: currentLead.organization_id || activeOrganization.organizationId || '',
       channel: quickActionOutcomeType === 'call' ? 'phone' : 'email',
       actorUserId: profile?.id || null,
-      firstResponseAt: lead.first_response_at,
+      firstResponseAt: currentLead.first_response_at,
     });
 
-    setQuickActionOutcomeOpen(false);
+      setQuickActionOutcomeOpen(false);
+    } catch (error) {
+      toast.error(`Não foi possível registrar a atividade: ${getErrorMessage(error)}`);
+      throw error;
+    }
   };
   const handleEditScheduleEvent = (event: ScheduleEvent) => {
     if (!canManageLeadSchedule) return;
@@ -1294,112 +617,10 @@ export function LeadDetailDialog({
   const assignableUsers = canTransferLead ? safeAllUsers : [];
   const leadTagIds = leadTags.map((tag) => tag.id);
   const availableTags = safeAllTags.filter(t => !leadTagIds.includes(t.id));
-
-  const updatePipelineAssigneeCache = (nextLead: LeadDetailLead) => {
-    const snapshots = queryClient.getQueriesData<PipelineCacheStage[]>({ queryKey: ['stages-with-leads'] });
-    const nextUpdatedAt = new Date().toISOString();
-
-    snapshots.forEach(([queryKey, cachedData]) => {
-      if (!Array.isArray(cachedData)) return;
-
-      const keyParts = Array.isArray(queryKey) ? queryKey : [];
-      const filterUserId = keyParts[3] as string | null | undefined;
-      const shouldKeepInFilteredView =
-        !filterUserId || filterUserId === 'all' || filterUserId === nextLead.assigned_user_id;
-
-      let changed = false;
-      const nextStages = cachedData.map((stage) => {
-        if (!Array.isArray(stage?.leads)) return stage;
-
-        let stageChanged = false;
-        const nextLeads = stage.leads.reduce<LeadDetailLead[]>((acc, stageLead) => {
-          if (stageLead?.id !== nextLead.id) {
-            acc.push(stageLead);
-            return acc;
-          }
-
-          changed = true;
-          stageChanged = true;
-
-          if (!shouldKeepInFilteredView) return acc;
-
-          acc.push({
-            ...stageLead,
-            assigned_user_id: nextLead.assigned_user_id,
-            assignee: nextLead.assignee || undefined,
-            updated_at: nextUpdatedAt
-          });
-          return acc;
-        }, []);
-
-        if (!stageChanged) return stage;
-
-        const totalLeadCount = Number(stage.total_lead_count ?? stage.leads.length);
-        return {
-          ...stage,
-          leads: nextLeads,
-          total_lead_count: shouldKeepInFilteredView
-            ? totalLeadCount
-            : Math.max(totalLeadCount - 1, 0)
-        };
-      });
-
-      if (changed) {
-        queryClient.setQueryData(queryKey, nextStages);
-      }
-    });
-
-    return snapshots;
-  };
-
-  const updatePipelineLeadCache = (leadIdToUpdate: string, patch: Partial<LeadDetailLead>) => {
-    const snapshots = queryClient.getQueriesData<PipelineCacheStage[]>({ queryKey: ['stages-with-leads'] });
-    const nextUpdatedAt = new Date().toISOString();
-
-    snapshots.forEach(([queryKey, cachedData]) => {
-      if (!Array.isArray(cachedData)) return;
-
-      let changed = false;
-      const nextStages = cachedData.map((stage) => {
-        if (!Array.isArray(stage?.leads)) return stage;
-
-        let stageChanged = false;
-        const nextLeads = stage.leads.map((stageLead) => {
-          if (stageLead?.id !== leadIdToUpdate) return stageLead;
-
-          changed = true;
-          stageChanged = true;
-          return {
-            ...stageLead,
-            ...patch,
-            updated_at: nextUpdatedAt,
-          };
-        });
-
-        return stageChanged ? { ...stage, leads: nextLeads } : stage;
-      });
-
-      if (changed) {
-        queryClient.setQueryData(queryKey, nextStages);
-      }
-    });
-
-    return snapshots;
-  };
-
-  const restorePipelineCache = (snapshots: Array<[QueryKey, unknown]>) => {
-    snapshots.forEach(([queryKey, data]) => {
-      queryClient.setQueryData(queryKey, data);
-    });
-  };
-
-  const refreshPipelineInBackground = () => {
-    queryClient.invalidateQueries({ queryKey: ['stages-with-leads'], refetchType: 'inactive' });
-    refetchStages();
-  };
+  const isTagMutationPending = addTag.isPending || removeTag.isPending;
 
   const handleAddTag = async (tagId: string) => {
-    if (!canOperateLead) return;
+    if (!canOperateLead || isTagMutationPending) return;
     const tagToAdd = safeAllTags.find(t => t.id === tagId);
     if (!tagToAdd || !localLead) return;
 
@@ -1423,7 +644,6 @@ export function LeadDetailDialog({
         leadId: lead.id,
         tagId
       });
-      refreshPipelineInBackground();
     } catch {
       setLocalLead(previousLead);
       restorePipelineCache(pipelineSnapshots);
@@ -1431,7 +651,7 @@ export function LeadDetailDialog({
   };
 
   const handleRemoveTag = async (tagId: string) => {
-    if (!canOperateLead || !localLead) return;
+    if (!canOperateLead || !localLead || isTagMutationPending) return;
 
     const nextTags = leadTags.filter((tag) => tag.id !== tagId);
     const previousLead: LeadDetailLead = { ...localLead, tags: localLead.tags ? [...localLead.tags] : [] };
@@ -1445,7 +665,6 @@ export function LeadDetailDialog({
         leadId: lead.id,
         tagId
       });
-      refreshPipelineInBackground();
     } catch {
       setLocalLead(previousLead);
       restorePipelineCache(pipelineSnapshots);
@@ -1458,7 +677,7 @@ export function LeadDetailDialog({
       .map((member) => member.id)
       .filter(Boolean)
       .sort();
-    const organizationId = lead.organization_id || profile?.organization_id || organization?.id;
+    const organizationId = lead.organization_id || activeOrganization.organizationId;
 
     if (teamMemberIds.length === 0) return Promise.resolve([]);
 
@@ -1562,7 +781,7 @@ export function LeadDetailDialog({
       setLocalLead(optimisticLead);
       pipelineSnapshots = updatePipelineAssigneeCache(optimisticLead);
 
-      const organizationId = lead.organization_id || profile?.organization_id || organization?.id;
+      const organizationId = lead.organization_id || activeOrganization.organizationId || undefined;
       const { data, error } = await leadsAPI.assignLead(lead.id, userId, organizationId);
       if (error) throw error;
 
@@ -1583,7 +802,7 @@ export function LeadDetailDialog({
       }
       updatePipelineLeadCache(lead.id, persistedLead);
       void queryClient.invalidateQueries({ queryKey: ['lead-history-v2', lead.id] });
-      refreshPipelineInBackground();
+      refreshPipelineInBackground(organizationId, lead.id, 'lead.assigned');
 
       toast.success(userId
         ? `Lead transferido para ${selectedUser?.name || selectedUser?.email || 'o novo responsável'}`
@@ -1620,7 +839,7 @@ export function LeadDetailDialog({
     if (firstContactChannel) {
       await recordFirstResponse({
         leadId: lead.id,
-        organizationId: lead.organization_id || profile?.organization_id || organization?.id || '',
+        organizationId: lead.organization_id || activeOrganization.organizationId || '',
         channel: firstContactChannel,
         actorUserId: profile?.id || null,
         firstResponseAt: lead.first_response_at,
@@ -1673,8 +892,8 @@ export function LeadDetailDialog({
     if (taskType === 'message' && task.recommended_message) {
       // Substituir variáveis na mensagem
       const message = task.recommended_message.replace(/{nome}/gi, lead.name || '').replace(/{empresa}/gi, lead.empresa || '').replace(/{email}/gi, lead.email || '');
-      setActiveTab(isMobile ? 'history' : 'activities');
-      setComposerRequest((current) => ({ id: (current?.id || 0) + 1, text: message }));
+      openLeadWhatsApp(message);
+      return;
     }
 
     // O gestor escolhe quais tarefas realmente exigem um resultado operacional.
@@ -1691,8 +910,10 @@ export function LeadDetailDialog({
     if (!selectedTask) return;
     if (action === 'message' && selectedTask.recommended_message) {
       const message = selectedTask.recommended_message.replace(/{nome}/gi, lead.name || '').replace(/{empresa}/gi, lead.empresa || '').replace(/{email}/gi, lead.email || '');
-      setActiveTab(isMobile ? 'history' : 'activities');
-      setComposerRequest((current) => ({ id: (current?.id || 0) + 1, text: message }));
+      setRoteiroDialogOpen(false);
+      setSelectedTask(null);
+      openLeadWhatsApp(message);
+      return;
     }
 
     // Após o roteiro, respeitar a regra configurada pelo gestor.
@@ -1761,17 +982,17 @@ export function LeadDetailDialog({
       }
 
       setIsEditingContact(false);
-      refetchStages();
       toast.success('Dados salvos com sucesso!');
     } catch (error) {
       console.error('Erro ao salvar dados do lead:', error);
     }
   };
-  const handleMoveToStage = async (stageId: string) => {
-    if (!canOperateLead || stageId === localLead.stage_id) return;
+  const persistMoveToStage = async (stageId: string, lostReason?: string) => {
+    if (!canOperateLead || stageId === localLead.stage_id || stageMovePending) return false;
 
     const previousLead = { ...localLead };
     const stage = stages.find(s => s.id === stageId);
+    setStageMovePending(true);
     setLocalLead({
       ...localLead,
       stage_id: stageId,
@@ -1781,9 +1002,10 @@ export function LeadDetailDialog({
     try {
       const isProposal = stage?.name?.toLowerCase().includes('proposta');
 
-      const organizationId = lead.organization_id || profile?.organization_id || organization?.id;
+      const organizationId = lead.organization_id || activeOrganization.organizationId || undefined;
       const { data: updatedLead, error } = await leadsAPI.moveLeadStage(lead.id, {
         stageId,
+        lostReason,
       }, organizationId);
       if (error) throw error;
 
@@ -1791,7 +1013,7 @@ export function LeadDetailDialog({
       updatePipelineLeadCache(lead.id, updatedLead);
       void queryClient.invalidateQueries({ queryKey: ['lead-history-v2', lead.id] });
       void queryClient.invalidateQueries({ queryKey: ['lead-cadence-state'] });
-      refreshPipelineInBackground();
+      refreshPipelineInBackground(organizationId, lead.id, 'lead.stage_moved');
 
       // Se moveu para estágio de Proposta, registrar atividade de gamificação
       if (isProposal) {
@@ -1803,15 +1025,35 @@ export function LeadDetailDialog({
       }
 
       toast.success('Lead movido!');
-
-      // Se a automação da coluna mudou para perdido, abrir diálogo para salvar o motivo
-      if (updatedLead && updatedLead.deal_status === 'lost') {
-        setLostReasonDialogOpen(true);
-      }
+      return true;
     } catch (error: unknown) {
       setLocalLead(previousLead);
-      toast.error(`Não foi possível mover o lead: ${getErrorMessage(error)}`);
+      if (
+        !lostReason &&
+        error instanceof VimobAPIError &&
+        error.code === 'lead_lost_reason_required'
+      ) {
+        setPendingLostStageId(stageId);
+        setLostReasonDialogOpen(true);
+      } else {
+        toast.error(`Não foi possível mover o lead: ${getErrorMessage(error)}`);
+      }
+      return false;
+    } finally {
+      setStageMovePending(false);
     }
+  };
+
+  const handleMoveToStage = async (stageId: string) => {
+    if (!canOperateLead || stageId === localLead.stage_id) return;
+    const stage = stages.find((item) => item.id === stageId);
+    if (getPipelineStageOutcome(stage, stageAutomations) === 'lost') {
+      setPendingLostStageId(stageId);
+      setLostReasonDialogOpen(true);
+      return;
+    }
+
+    await persistMoveToStage(stageId);
   };
 
   // Centralized handler for deal status changes
@@ -1867,7 +1109,7 @@ export function LeadDetailDialog({
       const result = await dealStatusChange.mutateAsync({
         leadId: lead.id,
         newStatus: newStatus as 'open' | 'won' | 'lost',
-        organizationId: profile?.organization_id || organization?.id || '',
+        organizationId: activeOrganization.organizationId || '',
         organizationName: organization?.name || null,
         userId: currentLead?.assigned_user_id ?? null,
         propertyId: currentInterestPropertyId,
@@ -1891,6 +1133,16 @@ export function LeadDetailDialog({
 
   // Confirm lost with reason from dialog
   const handleConfirmLostReason = async (reason: string) => {
+    if (pendingLostStageId) {
+      const moved = await persistMoveToStage(pendingLostStageId, reason);
+      if (moved) {
+        setLostReasonLocal(reason);
+        setPendingLostStageId(null);
+        setLostReasonDialogOpen(false);
+      }
+      return;
+    }
+
     const previousStatus = localLead?.deal_status || 'open';
     const currentLead = localLead || lead;
     const previousLead = localLead ? { ...localLead } : null;
@@ -1908,7 +1160,7 @@ export function LeadDetailDialog({
       const result = await dealStatusChange.mutateAsync({
         leadId: lead.id,
         newStatus: 'lost',
-        organizationId: profile?.organization_id || organization?.id || '',
+        organizationId: activeOrganization.organizationId || '',
         organizationName: organization?.name || null,
         userId: currentLead?.assigned_user_id ?? null,
         propertyId: currentLead?.interest_property_id || currentLead?.property_id || null,
@@ -1936,6 +1188,7 @@ export function LeadDetailDialog({
 
   const leadSource = localLead?.source ?? lead.source ?? 'outros';
   const leadName = localLead?.name || lead.name || 'Lead';
+  const canOpenLeadWhatsApp = canViewLeadWhatsApp;
   const campaignTrackingDetails = buildCampaignTrackingDetails(leadMeta ?? null, localLead || lead);
 
   const MobileContentV2 = () => {
@@ -1945,7 +1198,7 @@ export function LeadDetailDialog({
     const contactRows: Array<{ label: string; value: ReactNode }> = [
       { label: 'Nome', value: <LeadProfileHover lead={localLead} canRevealSensitive={canOperateLead} /> },
       { label: 'Telefone', value: formatPhoneForDisplay(localLead.phone || '') },
-      { label: 'Origem', value: sourceLabels[leadSource] || leadSource },
+      { label: 'Origem', value: getLeadSourceLabel(leadSource) },
       {
         label: 'Campanha',
         value: campaignTrackingDetails ? <CampaignTrackingHover leadMeta={campaignTrackingDetails} /> : null
@@ -2013,10 +1266,10 @@ export function LeadDetailDialog({
                 <h2 className="truncate text-[14px] font-normal leading-tight">{leadName}</h2>
                 <ReentryBadge count={lead.reentry_count} lastEntryAt={lead.last_entry_at} />
               </div>
-              {lead.phone && (
+              {localLead.phone && (
                 <div className="mt-1 flex min-w-0 items-center gap-1.5">
-                  <p className="truncate text-xs text-[var(--app-text-tertiary)]">{formatPhoneForDisplay(lead.phone)}</p>
-                  <CopyLeadPhoneButton phone={lead.phone} className="h-6 w-6 bg-transparent hover:bg-[var(--app-surface-soft)]" />
+                  <p className="truncate text-xs text-[var(--app-text-tertiary)]">{formatPhoneForDisplay(localLead.phone)}</p>
+                  <CopyLeadPhoneButton phone={localLead.phone} className="h-6 w-6 bg-transparent hover:bg-[var(--app-surface-soft)]" />
                 </div>
               )}
 
@@ -2028,14 +1281,12 @@ export function LeadDetailDialog({
                       key={tag.id}
                       className={cn(
                         'flex h-5 items-center gap-1 rounded-[4px] border-0 px-1.5 text-[10px] font-light',
-                        tagColor
-                          ? getTagForegroundClass(tagColor)
-                          : 'bg-[var(--app-surface-hover)] text-[var(--app-text-primary)]',
+                        'text-white',
                       )}
-                      style={tagColor ? { backgroundColor: tagColor } : undefined}
+                      style={getTagColorStyleWithWhiteText(tagColor)}
                     >
                       <span className="max-w-[82px] truncate">{tag.name || 'Tag'}</span>
-                      <button disabled={!canOperateLead} type="button" aria-label={`Remover tag ${tag.name || 'Tag'}`} title="Remover tag" className="rounded-[3px] p-0.5 hover:bg-primary-foreground/15 disabled:hidden" onClick={() => handleRemoveTag(tag.id)}>
+                      <button disabled={!canOperateLead || isTagMutationPending} type="button" aria-label={`Remover tag ${tag.name || 'Tag'}`} title="Remover tag" className="rounded-[3px] p-0.5 hover:bg-primary-foreground/15 disabled:hidden" onClick={() => handleRemoveTag(tag.id)}>
                         <X className="h-2.5 w-2.5" />
                       </button>
                     </Badge>
@@ -2046,9 +1297,9 @@ export function LeadDetailDialog({
                     +{leadTags.length - 4}
                   </Badge>
                 )}
-                <Popover open={tagPopoverOpen} onOpenChange={(open) => canOperateLead && setTagPopoverOpen(open)}>
+                <Popover open={tagPopoverOpen} onOpenChange={(open) => canOperateLead && !isTagMutationPending && setTagPopoverOpen(open)}>
                   <PopoverTrigger asChild>
-                    <Button disabled={!canOperateLead} variant="ghost" size="sm" className="h-5 rounded-[5px] border-0 bg-[var(--app-surface-soft)] px-1.5 text-[10px] disabled:hidden">
+                    <Button disabled={!canOperateLead || isTagMutationPending} variant="ghost" size="sm" className="h-5 rounded-[5px] border-0 bg-[var(--app-surface-soft)] px-1.5 text-[10px] disabled:hidden">
                       <Plus className="mr-1 h-3 w-3" />
                       Tag
                     </Button>
@@ -2125,16 +1376,16 @@ export function LeadDetailDialog({
           </div>
 
           <div className="mt-2 grid grid-flow-col auto-cols-fr gap-2">
-            {lead.phone && (
+            {localLead.phone && (
               <Button disabled={!canOperateLead} variant="outline" size="sm" aria-label={`Ligar para ${leadName}`} title="Ligar" onClick={handleQuickPhone} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
                 <Phone className="h-3.5 w-3.5" />
               </Button>
             )}
-            <Button disabled={!canUseLeadWhatsApp} size="sm" onClick={handleQuickWhatsApp} className="h-8 rounded-[6px] px-2 text-xs">
+            <Button disabled={!canOpenLeadWhatsApp || !localLead.phone} size="sm" onClick={handleQuickWhatsApp} className="h-8 rounded-[6px] px-2 text-xs">
               <MessageCircle className="mr-1 h-3.5 w-3.5" />
               Chat
             </Button>
-            {lead.email && (
+              {localLead.email && (
               <Button disabled={!canOperateLead} variant="outline" size="sm" aria-label={`Enviar e-mail para ${leadName}`} title="Enviar e-mail" onClick={handleQuickEmail} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
                 <Mail className="h-3.5 w-3.5" />
               </Button>
@@ -2254,11 +1505,11 @@ export function LeadDetailDialog({
               <div className="space-y-3 pb-4">
 
 
-                {hasAgendaModule && <section className="lead-agenda-card rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+                {canViewLeadSchedule && <section className="lead-agenda-card rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="flex items-center justify-between">
                     <div className="lead-agenda-summary min-w-0">
                       <h3 className="text-[12px] font-normal">Agenda</h3>
-                      <p className="text-[10px] text-[var(--app-text-tertiary)]">{scheduleEvents.length} compromisso(s)</p>
+                      <p className="text-[10px] text-[var(--app-text-tertiary)]">{scheduleSummaryLabel}</p>
                     </div>
                     <Button
                       size="sm"
@@ -2316,10 +1567,10 @@ export function LeadDetailDialog({
                 leadId={lead.id}
                 leadName={leadName}
                 leadAvatarUrl={leadAvatarUrl}
-                leadPhone={lead.phone || null}
-                whatsappVerified={lead.whatsapp_verified ?? null}
+                leadPhone={localLead.phone || null}
+                whatsappVerified={localLead.whatsapp_verified ?? null}
                 leadCreatedAt={lead.created_at || null}
-                composerRequest={composerRequest}
+                readOnly
               />
             </div>
           )}
@@ -2334,7 +1585,7 @@ export function LeadDetailDialog({
     const contactRows: Array<{ label: string; value: ReactNode; icon?: ReactNode }> = [
       { label: 'Nome', value: <LeadProfileHover lead={localLead} canRevealSensitive={canOperateLead} /> },
       { label: 'Telefone', value: formatPhoneForDisplay(localLead.phone || '') },
-      { label: 'Origem', value: sourceLabels[leadSource] || leadSource },
+      { label: 'Origem', value: getLeadSourceLabel(leadSource) },
       {
         label: 'Campanha',
         value: campaignTrackingDetails ? <CampaignTrackingHover leadMeta={campaignTrackingDetails} /> : null
@@ -2419,22 +1670,20 @@ export function LeadDetailDialog({
                             key={tag.id}
                             className={cn(
                               'flex h-6 items-center gap-1 rounded-[5px] border-0 px-2 text-[10px] font-light',
-                              tagColor
-                                ? getTagForegroundClass(tagColor)
-                                : 'bg-[var(--app-surface-hover)] text-[var(--app-text-primary)]',
+                              'text-white',
                             )}
-                            style={tagColor ? { backgroundColor: tagColor } : undefined}
+                            style={getTagColorStyleWithWhiteText(tagColor)}
                           >
                             {tag.name || 'Tag'}
-                            <button disabled={!canOperateLead} type="button" aria-label={`Remover tag ${tag.name || 'Tag'}`} title="Remover tag" className="rounded-[3px] p-0.5 hover:bg-primary-foreground/15 disabled:hidden" onClick={() => handleRemoveTag(tag.id)}>
+                            <button disabled={!canOperateLead || isTagMutationPending} type="button" aria-label={`Remover tag ${tag.name || 'Tag'}`} title="Remover tag" className="rounded-[3px] p-0.5 hover:bg-primary-foreground/15 disabled:hidden" onClick={() => handleRemoveTag(tag.id)}>
                               <X className="h-2.5 w-2.5" />
                             </button>
                           </Badge>
                         );
                       })}
-                      <Popover open={tagPopoverOpen} onOpenChange={(open) => canOperateLead && setTagPopoverOpen(open)}>
+                      <Popover open={tagPopoverOpen} onOpenChange={(open) => canOperateLead && !isTagMutationPending && setTagPopoverOpen(open)}>
                         <PopoverTrigger asChild>
-                          <Button disabled={!canOperateLead} variant="ghost" size="sm" className="h-6 rounded-[5px] border-0 bg-[var(--app-surface-soft)] px-2 text-[10px] disabled:hidden">
+                          <Button disabled={!canOperateLead || isTagMutationPending} variant="ghost" size="sm" className="h-6 rounded-[5px] border-0 bg-[var(--app-surface-soft)] px-2 text-[10px] disabled:hidden">
                             <Plus className="mr-1 h-3 w-3" />
                             Tag
                           </Button>
@@ -2518,16 +1767,16 @@ export function LeadDetailDialog({
                 </div>
 
                 <div className="grid grid-flow-col auto-cols-fr gap-2">
-                  {lead.phone && (
+                  {localLead.phone && (
                     <Button disabled={!canOperateLead} variant="outline" size="sm" aria-label={`Ligar para ${leadName}`} title="Ligar" onClick={handleQuickPhone} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
                       <Phone className="h-3.5 w-3.5" />
                     </Button>
                   )}
-                  <Button disabled={!canUseLeadWhatsApp} size="sm" onClick={handleQuickWhatsApp} className="h-8 rounded-[6px] px-2 text-xs">
+                  <Button disabled={!canOpenLeadWhatsApp || !localLead.phone} size="sm" onClick={handleQuickWhatsApp} className="h-8 rounded-[6px] px-2 text-xs">
                     <MessageCircle className="mr-1 h-3.5 w-3.5" />
                     Chat
                   </Button>
-                  {lead.email && (
+                  {localLead.email && (
                     <Button disabled={!canOperateLead} variant="outline" size="sm" aria-label={`Enviar e-mail para ${leadName}`} title="Enviar e-mail" onClick={handleQuickEmail} className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)]">
                       <Mail className="h-3.5 w-3.5" />
                     </Button>
@@ -2614,11 +1863,11 @@ export function LeadDetailDialog({
               <div className="space-y-4">
 
 
-                {hasAgendaModule && <section data-tour="lead-detail-agenda" className="lead-agenda-card rounded-[8px] bg-[var(--app-surface-soft)] p-3">
+                {canViewLeadSchedule && <section data-tour="lead-detail-agenda" className="lead-agenda-card rounded-[8px] bg-[var(--app-surface-soft)] p-3">
                   <div className="flex items-center justify-between">
                     <div className="lead-agenda-summary min-w-0">
                       <h3 className="text-[12px] font-normal">Agenda</h3>
-                      <p className="text-[10px] text-[var(--app-text-tertiary)]">{scheduleEvents.length} compromisso(s)</p>
+                      <p className="text-[10px] text-[var(--app-text-tertiary)]">{scheduleSummaryLabel}</p>
                     </div>
                     <Button
                       size="sm"
@@ -2679,10 +1928,10 @@ export function LeadDetailDialog({
               leadId={lead.id}
               leadName={leadName}
               leadAvatarUrl={leadAvatarUrl}
-              leadPhone={lead.phone || null}
-              whatsappVerified={lead.whatsapp_verified ?? null}
+              leadPhone={localLead.phone || null}
+              whatsappVerified={localLead.whatsapp_verified ?? null}
               leadCreatedAt={lead.created_at || null}
-              composerRequest={composerRequest}
+              readOnly
             />
           </aside>
         </div>
@@ -2690,180 +1939,54 @@ export function LeadDetailDialog({
     );
   };
 
-  // Desktop content - defined as JSX variable (NOT a component function) to prevent re-mounting
-
-  // Roteiro Dialog
-  const RoteiroDialog = () => {
-    if (!selectedTask) return null;
-
-    return <Dialog open={roteiroDialogOpen} onOpenChange={setRoteiroDialogOpen}>
-      <DialogContent className="w-[calc(100vw-2rem)] rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4 text-[var(--app-text-primary)] shadow-none sm:w-full sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 font-normal">
-            <div className="flex h-8 w-8 items-center justify-center rounded-[6px] bg-amber-500/12">
-              <Lightbulb className="h-4 w-4 text-amber-600" />
-            </div>
-            {selectedTask.title || 'Roteiro'}
-          </DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div className="rounded-[8px] border-0 bg-amber-500/10 p-3">
-            <div className="flex items-start gap-3">
-              <Lightbulb className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
-              <p className="text-sm text-amber-800 dark:text-amber-200 whitespace-pre-wrap leading-relaxed">
-                {selectedTask.observation}
-              </p>
-            </div>
-          </div>
-
-          {selectedTask.recommended_message && <div className="rounded-[8px] border-0 bg-primary/5 p-3">
-              <div className="flex items-start gap-3">
-                <MessageCircle className="h-5 w-5 text-primary mt-0.5 shrink-0" />
-                <div>
-                  <p className="mb-1 text-xs font-normal text-primary">Mensagem sugerida:</p>
-                  <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-                    {selectedTask.recommended_message.replace(/{nome}/gi, lead.name || '').replace(/{empresa}/gi, lead.empresa || '').replace(/{email}/gi, lead.email || '')}
-                  </p>
-                </div>
-              </div>
-            </div>}
-
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Button className="h-8 flex-1 rounded-[6px] text-[11px] font-light" disabled={completeCadenceTask.isPending} onClick={() => void handleRoteiroAction('complete')}>
-              <Check className="h-4 w-4 mr-2" />
-              Marcar como feito
-            </Button>
-            {selectedTask.recommended_message && lead.phone && <Button variant="outline" className="h-8 flex-1 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[11px] font-light shadow-none" disabled={completeCadenceTask.isPending} onClick={() => void handleRoteiroAction('message')}>
-                <MessageCircle className="h-4 w-4 mr-2" />
-                Enviar mensagem
-              </Button>}
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>;
-  };
-
-  // Outcome Dialog component (for cadence tasks)
-  const OutcomeDialogComponent = () => (
-    <>
-      {taskForOutcome && (
-        <TaskOutcomeDialog
-          open={outcomeDialogOpen}
-          onOpenChange={setOutcomeDialogOpen}
-          taskType={getCadenceTaskType(taskForOutcome.type)}
-          taskTitle={taskForOutcome.title || ''}
-          onConfirm={handleOutcomeConfirm}
-          isLoading={completeCadenceTask.isPending}
-        />
-      )}
-      {/* Quick Action Outcome Dialog (for phone/email buttons) */}
-      <TaskOutcomeDialog
-        open={quickActionOutcomeOpen}
-        onOpenChange={setQuickActionOutcomeOpen}
-        taskType={quickActionOutcomeType}
-        taskTitle={quickActionOutcomeType === 'call' ? 'Tentativa de ligação' : 'Email enviado'}
-        onConfirm={handleQuickActionOutcomeConfirm}
-        isLoading={createActivityMutation.isPending}
-      />
-    </>
+  const overlays = (
+    <LeadDetailOverlays
+      lead={lead}
+      leadName={leadName}
+      selectedTask={selectedTask}
+      roteiroDialogOpen={roteiroDialogOpen}
+      onRoteiroDialogOpenChange={setRoteiroDialogOpen}
+      onRoteiroAction={handleRoteiroAction}
+      taskForOutcome={taskForOutcome}
+      outcomeDialogOpen={outcomeDialogOpen}
+      onOutcomeDialogOpenChange={setOutcomeDialogOpen}
+      onOutcomeConfirm={handleOutcomeConfirm}
+      quickActionOutcomeOpen={quickActionOutcomeOpen}
+      quickActionOutcomeType={quickActionOutcomeType}
+      onQuickActionOutcomeOpenChange={setQuickActionOutcomeOpen}
+      onQuickActionOutcomeConfirm={handleQuickActionOutcomeConfirm}
+      cadenceTaskPending={completeCadenceTask.isPending}
+      quickActionPending={createActivityMutation.isPending}
+      reopenStatusConfirmation={reopenStatusConfirmation}
+      onReopenStatusConfirmationChange={setReopenStatusConfirmation}
+      onConfirmReopen={(confirmation) => {
+        void handleDealStatusChange('open', {
+          skipReopenConfirmation: true,
+          previousStatusOverride: confirmation.fromStatus,
+        });
+      }}
+      assigneeScheduleConfirmation={assigneeScheduleConfirmation}
+      onAssigneeScheduleConfirmationChange={setAssigneeScheduleConfirmation}
+      onConfirmAssignee={(confirmation) => {
+        setAssigneeScheduleConfirmation(null);
+        void handleAssignUser(confirmation.userId, { skipScheduleConfirmation: true });
+      }}
+      dealStatusPending={dealStatusChange.isPending || stageMovePending}
+      lostReasonDialogOpen={lostReasonDialogOpen}
+      onLostReasonDialogOpenChange={(open) => {
+        if (!open && !stageMovePending) setPendingLostStageId(null);
+        setLostReasonDialogOpen(open);
+      }}
+      onConfirmLostReason={handleConfirmLostReason}
+      selectedAttachment={selectedAttachment}
+      onSelectedAttachmentChange={setSelectedAttachment}
+      hasAgendaModule={hasAgendaModule}
+      scheduleFormOpen={scheduleFormOpen}
+      onCloseScheduleForm={handleCloseScheduleForm}
+      editingScheduleEvent={editingScheduleEvent}
+      scheduleDefaultType={scheduleDefaultType}
+    />
   );
-
-  const ReopenLeadDialog = () => {
-    const fromStatusLabel = reopenStatusConfirmation?.fromStatus === 'won'
-      ? 'ganho'
-      : reopenStatusConfirmation?.fromStatus === 'lost'
-        ? 'perdido'
-        : 'finalizado';
-
-    return (
-      <AlertDialog
-        open={Boolean(reopenStatusConfirmation)}
-        onOpenChange={(open) => {
-          if (!open) setReopenStatusConfirmation(null);
-        }}
-      >
-        <AlertDialogContent className="w-[calc(100vw-2rem)] max-w-md rounded-[8px] border-0 bg-[var(--app-surface-solid)] text-[var(--app-text-primary)] shadow-none">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="font-normal">Confirmar reabertura do lead?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {reopenStatusConfirmation?.leadName || 'Este lead'} está marcado como {fromStatusLabel}. Ao confirmar, ele volta para Aberto e pode entrar novamente no fluxo comercial.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel
-              className="rounded-[6px] border-0 bg-[var(--app-surface-soft)] font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
-              disabled={dealStatusChange.isPending}
-            >
-              Não reabrir
-            </AlertDialogCancel>
-            <AlertDialogAction
-              className="rounded-[6px] bg-primary font-normal tracking-normal text-primary-foreground antialiased hover:bg-primary/90"
-              disabled={dealStatusChange.isPending || !reopenStatusConfirmation}
-              onClick={() => {
-                const confirmation = reopenStatusConfirmation;
-                if (!confirmation) return;
-
-                void handleDealStatusChange('open', {
-                  skipReopenConfirmation: true,
-                  previousStatusOverride: confirmation.fromStatus,
-                });
-              }}
-            >
-              {dealStatusChange.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Reabrindo...
-                </>
-              ) : (
-                'Sim, reabrir lead'
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    );
-  };
-
-  const AssigneeScheduleDialog = () => {
-    const confirmation = assigneeScheduleConfirmation?.leadId === lead.id
-      ? assigneeScheduleConfirmation
-      : null;
-
-    return (
-      <AlertDialog
-        open={Boolean(confirmation)}
-        onOpenChange={(open) => {
-          if (!open) setAssigneeScheduleConfirmation(null);
-        }}
-      >
-        <AlertDialogContent className="w-[calc(100vw-2rem)] max-w-md rounded-[8px] border-0 bg-[var(--app-surface-solid)] text-[var(--app-text-primary)] shadow-none">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="font-normal">Responsável fora da escala</AlertDialogTitle>
-            <AlertDialogDescription>
-              {confirmation?.userName || 'Este usuário'} está fora da disponibilidade configurada.{' '}
-              {confirmation?.description} Deseja atribuir o lead mesmo assim?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="rounded-[6px] border-0 bg-[var(--app-surface-soft)] font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]">
-              Cancelar
-            </AlertDialogCancel>
-            <AlertDialogAction
-              className="rounded-[6px] bg-primary font-normal tracking-normal text-primary-foreground antialiased hover:bg-primary/90"
-              disabled={!confirmation}
-              onClick={() => {
-                if (!confirmation) return;
-                setAssigneeScheduleConfirmation(null);
-                void handleAssignUser(confirmation.userId, { skipScheduleConfirmation: true });
-              }}
-            >
-              Atribuir mesmo assim
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    );
-  };
 
   // Render mobile or desktop version - use JSX directly instead of component functions
   if (isMobile) {
@@ -2890,34 +2013,7 @@ export function LeadDetailDialog({
             {MobileContentV2()}
           </DrawerContent>
         </Drawer>
-        {RoteiroDialog()}
-        {OutcomeDialogComponent()}
-        {ReopenLeadDialog()}
-        {AssigneeScheduleDialog()}
-        <LostReasonDialog
-          open={lostReasonDialogOpen}
-          onOpenChange={setLostReasonDialogOpen}
-          onConfirm={handleConfirmLostReason}
-          leadName={leadName}
-          loading={dealStatusChange.isPending}
-        />
-        <LeadAttachmentViewer
-          key={selectedAttachment ? `${selectedAttachment.id}:${selectedAttachment.file_url}` : 'no-attachment'}
-          attachment={selectedAttachment}
-          open={Boolean(selectedAttachment)}
-          onOpenChange={(open) => {
-            if (!open) setSelectedAttachment(null);
-          }}
-        />
-        {hasAgendaModule && <EventSheet
-          open={scheduleFormOpen}
-          onOpenChange={(open) => !open && handleCloseScheduleForm()}
-          leadId={lead.id}
-          leadName={leadName}
-          event={editingScheduleEvent}
-          defaultUserId={lead.assigned_user_id ?? undefined}
-          defaultType={scheduleDefaultType}
-        />}
+        {overlays}
       </>
     );
   }
@@ -2949,35 +2045,7 @@ export function LeadDetailDialog({
           {DesktopContentV2()}
         </DialogContent>
       </Dialog>
-      {RoteiroDialog()}
-      {OutcomeDialogComponent()}
-      {ReopenLeadDialog()}
-      {AssigneeScheduleDialog()}
-      <LostReasonDialog
-        open={lostReasonDialogOpen}
-        onOpenChange={setLostReasonDialogOpen}
-        onConfirm={handleConfirmLostReason}
-        leadName={leadName}
-        loading={dealStatusChange.isPending}
-      />
-      <LeadAttachmentViewer
-        key={selectedAttachment ? `${selectedAttachment.id}:${selectedAttachment.file_url}` : 'no-attachment'}
-        attachment={selectedAttachment}
-        open={Boolean(selectedAttachment)}
-        onOpenChange={(open) => {
-          if (!open) setSelectedAttachment(null);
-        }}
-      />
-      {/* Formulário de agendamento (global para o card) */}
-      {hasAgendaModule && <EventSheet
-        open={scheduleFormOpen}
-        onOpenChange={open => !open && handleCloseScheduleForm()}
-        leadId={lead.id}
-        leadName={leadName}
-        event={editingScheduleEvent}
-        defaultUserId={lead.assigned_user_id ?? undefined}
-        defaultType={scheduleDefaultType}
-      />}
+      {overlays}
     </>
   );
 }

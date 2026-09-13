@@ -141,10 +141,20 @@ func (service *MarketingSyncService) loadMarketingSyncTargets(ctx context.Contex
 		  coalesce(integration.instagram_username, ''),
 		  coalesce(integration.ad_account_id, ''),
 		  coalesce(integration.selected_ad_accounts, '[]'::jsonb)::text,
+		  coalesce(form_routes.form_ids, '[]'::jsonb)::text,
 		  secret.decrypted_secret
 		from public.meta_integrations as integration
 		join vault.decrypted_secrets as secret
 		  on secret.id = integration.user_access_token_secret_ref
+		left join lateral (
+		  select jsonb_agg(distinct btrim(form_config.form_id)) filter (
+		    where nullif(btrim(form_config.form_id), '') is not null
+		  ) as form_ids
+		  from public.meta_form_configs as form_config
+		  where form_config.organization_id = integration.organization_id
+		    and form_config.integration_id = integration.id
+		    and coalesce(form_config.is_active, true) = true
+		) as form_routes on true
 		join public.organization_modules as module_access
 		  on module_access.organization_id = integration.organization_id
 		 and lower(btrim(module_access.module_name)) = 'campaigns'
@@ -152,6 +162,12 @@ func (service *MarketingSyncService) loadMarketingSyncTargets(ctx context.Contex
 		where integration.organization_id = $1::uuid
 		  and coalesce(integration.is_connected, false) = true
 		  and coalesce(integration.token_status, 'active') = 'active'
+		  and (
+		    integration.token_expires_at is null
+		    or integration.token_expires_at > now() + interval '5 minutes'
+		  )
+		  and coalesce(integration.granted_scopes, array[]::text[])
+		    @> array['ads_read']::text[]
 		  and nullif(secret.decrypted_secret, '') is not null
 		order by integration.updated_at desc, integration.created_at desc
 	`, organizationID)
@@ -163,7 +179,7 @@ func (service *MarketingSyncService) loadMarketingSyncTargets(ctx context.Contex
 	targets := make([]marketingSyncTarget, 0)
 	for rows.Next() {
 		var target marketingSyncTarget
-		var selected string
+		var selected, activeForms string
 		if err := rows.Scan(
 			&target.IntegrationID,
 			&target.OrganizationID,
@@ -173,6 +189,7 @@ func (service *MarketingSyncService) loadMarketingSyncTargets(ctx context.Contex
 			&target.InstagramUsername,
 			&target.AdAccountID,
 			&selected,
+			&activeForms,
 			&target.AccessToken,
 		); err != nil {
 			return nil, newMarketingSyncFailure("sync_target_lookup_failed", 503, err)
@@ -183,12 +200,123 @@ func (service *MarketingSyncService) loadMarketingSyncTargets(ctx context.Contex
 		if err := json.Unmarshal([]byte(selected), &target.SelectedAdAccounts); err != nil {
 			target.SelectedAdAccounts = nil
 		}
+		if err := json.Unmarshal([]byte(activeForms), &target.ActiveLeadFormIDs); err != nil {
+			target.ActiveLeadFormIDs = nil
+		}
 		targets = append(targets, target)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, newMarketingSyncFailure("sync_target_lookup_failed", 503, err)
 	}
 	return targets, nil
+}
+
+const marketingSyncAdAccountBindingCountQuery = `
+	with connected_integrations as (
+		select
+		  integration.id as integration_id,
+		  integration.organization_id,
+		  coalesce(integration.page_id, '') as page_id,
+		  coalesce(integration.instagram_business_account_id, '') as instagram_business_account_id,
+		  integration.ad_account_id,
+		  case
+		    when jsonb_typeof(integration.selected_ad_accounts) = 'array'
+		      then integration.selected_ad_accounts
+		    else '[]'::jsonb
+		  end as selected_ad_accounts
+		from public.meta_integrations as integration
+		where coalesce(integration.is_connected, false) = true
+		  and coalesce(integration.token_status, 'active') = 'active'
+		  and (
+		    integration.token_expires_at is null
+		    or integration.token_expires_at > now() + interval '5 minutes'
+		  )
+	), account_bindings as (
+		select
+		  integration.integration_id,
+		  integration.organization_id,
+		  integration.page_id,
+		  integration.instagram_business_account_id,
+		  nullif(
+		    lower(regexp_replace(btrim(integration.ad_account_id), '^act_', '', 'i')),
+		    ''
+		  ) as account_id
+		from connected_integrations as integration
+		where nullif(btrim(integration.ad_account_id), '') is not null
+
+		union
+
+		select
+		  integration.integration_id,
+		  integration.organization_id,
+		  integration.page_id,
+		  integration.instagram_business_account_id,
+		  nullif(
+		    lower(regexp_replace(btrim(
+		      case jsonb_typeof(selected.value)
+		        when 'string' then selected.value #>> '{}'
+		        when 'number' then selected.value #>> '{}'
+		        when 'object' then coalesce(
+		          selected.value->>'id',
+		          selected.value->>'account_id',
+		          selected.value->>'accountId'
+		        )
+		        else null
+		      end
+		    ), '^act_', '', 'i')),
+		    ''
+		  ) as account_id
+		from connected_integrations as integration
+		cross join lateral jsonb_array_elements(integration.selected_ad_accounts)
+		  as selected(value)
+	)
+	select
+	  count(distinct binding.integration_id)::bigint,
+	  count(distinct binding.integration_id) filter (
+	    where (
+	      nullif(btrim($2), '') is not null
+	      and btrim(binding.page_id) = btrim($2)
+	    ) or (
+	      nullif(btrim($3), '') is not null
+	      and btrim(binding.instagram_business_account_id) = btrim($3)
+	    )
+	  )::bigint
+	from account_bindings as binding
+	where binding.account_id = lower(
+	  regexp_replace(btrim($1), '^act_', '', 'i')
+	)
+`
+
+type marketingSyncAccountScope struct {
+	Page bool
+	Form bool
+}
+
+// marketingSyncAdAccountScope protects agency accounts at two independent
+// levels: multiple integrations on an account require Page/Instagram scope;
+// multiple integrations on the same account + asset additionally require Form.
+func (service *MarketingSyncService) marketingSyncAdAccountScope(ctx context.Context, target marketingSyncTarget, accountID string) (marketingSyncAccountScope, error) {
+	if service == nil || service.db == nil {
+		return marketingSyncAccountScope{}, newMarketingSyncFailure("marketing_database_unavailable", 503, nil)
+	}
+	dbCtx, cancel := service.marketingSyncDatabaseContext(ctx)
+	defer cancel()
+	var accountBindings, assetBindings int64
+	if err := service.db.QueryRow(
+		dbCtx,
+		marketingSyncAdAccountBindingCountQuery,
+		accountID,
+		target.PageID,
+		target.InstagramBusinessAccountID,
+	).Scan(&accountBindings, &assetBindings); err != nil {
+		return marketingSyncAccountScope{}, newMarketingSyncFailure("marketing_account_ownership_lookup_failed", 503, err)
+	}
+	return marketingSyncAccountScopeFromBindingCounts(accountBindings, assetBindings), nil
+}
+
+func marketingSyncAccountScopeFromBindingCounts(accountBindings, assetBindings int64) marketingSyncAccountScope {
+	formScoped := assetBindings > 1
+	return marketingSyncAccountScope{Page: accountBindings > 1 || formScoped, Form: formScoped}
 }
 
 func (service *MarketingSyncService) upsertMarketingSyncAccount(ctx context.Context, row marketingSyncAccountRow) error {
@@ -400,6 +528,27 @@ func (service *MarketingSyncService) reconcileMarketingSyncPerformance(
 		dateRange.From, dateRange.To, marketingSyncJSONString(keys))
 	if err != nil {
 		return 0, newMarketingSyncFailure("marketing_performance_daily_reconcile_failed", 500, err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+func (service *MarketingSyncService) deleteMarketingSyncUnscopedAggregateLevels(
+	ctx context.Context,
+	target marketingSyncTarget,
+	accountID string,
+) (int64, error) {
+	dbCtx, cancel := service.marketingSyncDatabaseContext(ctx)
+	defer cancel()
+	tag, err := service.db.Exec(dbCtx, `
+		delete from public.marketing_performance_daily as snapshot
+		where snapshot.organization_id = $1::uuid
+		  and snapshot.integration_id = $2::uuid
+		  and snapshot.provider = 'meta'
+		  and snapshot.external_account_id = $3
+		  and snapshot.level in ('account', 'campaign', 'adset')
+	`, target.OrganizationID, target.IntegrationID, accountID)
+	if err != nil {
+		return 0, newMarketingSyncFailure("marketing_unscoped_aggregate_cleanup_failed", 500, err)
 	}
 	return tag.RowsAffected(), nil
 }

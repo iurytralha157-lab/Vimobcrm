@@ -8,6 +8,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/propertyscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -86,7 +88,7 @@ func (repo Repository) listVisibleLeadEnrichmentSeeds(ctx context.Context, tenan
 		select
 			l.id::text,
 			l.assigned_user_id::text,
-			l.interest_property_id::text
+			coalesce(l.interest_property_id, l.property_id)::text
 		from public.leads l
 		where l.organization_id = $1::uuid
 		  and `+leadVisibilitySQL("$2", "$3", "$4", tenantContext.HasPermission(permissions.LeadViewOwn))+`
@@ -272,21 +274,23 @@ func (repo Repository) attachLeadEnrichmentsBatch(
 	}
 
 	propertyIDs = uniqueStrings(propertyIDs)
-	if len(propertyIDs) > 0 {
+	if len(propertyIDs) > 0 && propertyscope.CanRead(tenantContext) {
 		propertyArgs := []any{tenantContext.OrganizationID}
+		propertyArgs, propertyVisibility := appendCanonicalPropertyVisibility(propertyArgs, tenantContext, "property")
 		for _, id := range propertyIDs {
 			propertyArgs = append(propertyArgs, id)
 		}
 
 		batch.Queue(`
 			select
-				id::text,
-				code,
-				title,
-				preco::double precision
-			from public.properties
-			where organization_id = $1::uuid
-			  and id in (`+uuidPlaceholders(2, propertyIDs)+`)
+				property.id::text,
+				property.code,
+				property.title,
+				property.preco::double precision
+			from public.properties property
+			where property.organization_id = $1::uuid
+			  and `+propertyVisibility+`
+			  and property.id in (`+uuidPlaceholders(5, propertyIDs)+`)
 		`, propertyArgs...).Query(func(rows pgx.Rows) error {
 			propertiesByID := map[string]*LeadEnrichmentProperty{}
 			for rows.Next() {
@@ -371,9 +375,5 @@ func uniqueStrings(values []string) []string {
 }
 
 func textPtr(value pgtype.Text) *string {
-	if !value.Valid {
-		return nil
-	}
-
-	return &value.String
+	return pgvalue.TextPointer(value)
 }

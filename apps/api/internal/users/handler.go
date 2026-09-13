@@ -11,15 +11,21 @@ import (
 	"strings"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 type Handler struct {
-	repo Repository
+	repo      Repository
+	publisher realtime.Publisher
 }
 
-func NewHandler(repo Repository) Handler {
-	return Handler{repo: repo}
+func NewHandler(repo Repository, publishers ...realtime.Publisher) Handler {
+	publisher := realtime.Publisher(realtime.NoopPublisher{})
+	if len(publishers) > 0 && publishers[0] != nil {
+		publisher = publishers[0]
+	}
+	return Handler{repo: repo, publisher: publisher}
 }
 
 func (handler Handler) ListUserOrganizations(w http.ResponseWriter, r *http.Request) {
@@ -39,7 +45,7 @@ func (handler Handler) ListUserOrganizations(w http.ResponseWriter, r *http.Requ
 }
 
 func (handler Handler) ListOrganizationUsers(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -70,14 +76,14 @@ func (handler Handler) ListOrganizationUsers(w http.ResponseWriter, r *http.Requ
 }
 
 func (handler Handler) CreateOrganizationUser(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 
 	defer r.Body.Close()
 	var request CreateUserRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 
@@ -97,14 +103,14 @@ func (handler Handler) CreateOrganizationUser(w http.ResponseWriter, r *http.Req
 }
 
 func (handler Handler) UpdateOrganizationUser(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 
 	defer r.Body.Close()
 	var request UpdateUserRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 
@@ -119,12 +125,21 @@ func (handler Handler) UpdateOrganizationUser(w http.ResponseWriter, r *http.Req
 		writeUserError(w, r, err)
 		return
 	}
+	if input.Role != nil || input.IsActive != nil {
+		handler.publishOrganizationMembershipChanged(
+			tenantContext,
+			user.ID,
+			user.Role,
+			user.IsActive,
+			false,
+		)
+	}
 
 	httpserver.WriteJSON(w, http.StatusOK, MutateUserResult{Success: true, User: user})
 }
 
 func (handler Handler) GetDeleteUserImpact(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -139,7 +154,7 @@ func (handler Handler) GetDeleteUserImpact(w http.ResponseWriter, r *http.Reques
 }
 
 func (handler Handler) DeleteOrganizationUser(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -161,8 +176,62 @@ func (handler Handler) DeleteOrganizationUser(w http.ResponseWriter, r *http.Req
 		writeUserError(w, r, err)
 		return
 	}
+	targetUserID, _ := normalizeUUID(r.PathValue("id"))
+	handler.publishOrganizationMembershipChanged(
+		tenantContext,
+		targetUserID,
+		"",
+		false,
+		true,
+	)
 
 	httpserver.WriteJSON(w, http.StatusOK, result)
+}
+
+func (handler Handler) publishOrganizationMembershipChanged(
+	tenantContext tenant.Context,
+	targetUserID string,
+	memberRole string,
+	isActive bool,
+	deleted bool,
+) {
+	if handler.publisher == nil {
+		return
+	}
+
+	data := map[string]any{
+		"targetUserId":    targetUserID,
+		"changedByUserId": tenantContext.UserID,
+		"isActive":        isActive,
+		"deleted":         deleted,
+		"revoked":         deleted || !isActive,
+	}
+	if normalizedRole := strings.TrimSpace(memberRole); normalizedRole != "" {
+		data["memberRole"] = normalizedRole
+	}
+
+	handler.publisher.Publish(realtime.NewTargetedEvent(
+		realtime.EventAccessMembershipChanged,
+		tenantContext.OrganizationID,
+		targetUserID,
+		data,
+	))
+
+	changeKind := "membership_updated"
+	if deleted {
+		changeKind = "deleted"
+	} else if !isActive {
+		changeKind = "deactivated"
+	}
+	handler.publisher.Publish(realtime.NewEvent(
+		realtime.EventOrganizationUsersChanged,
+		tenantContext.OrganizationID,
+		tenantContext.UserID,
+		map[string]any{
+			"targetUserId": targetUserID,
+			"changeKind":   changeKind,
+		},
+	))
 }
 
 func (handler Handler) ListSummaries(w http.ResponseWriter, r *http.Request) {
@@ -185,27 +254,6 @@ func (handler Handler) ListSummaries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpserver.WriteJSON(w, http.StatusOK, map[string][]Summary{"data": summaries})
-}
-
-func organizationContext(w http.ResponseWriter, r *http.Request) (tenant.Context, bool) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.OrganizationID == "" {
-		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
-		return tenant.Context{}, false
-	}
-
-	return tenantContext, true
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
-		return err
-	}
-
-	return nil
 }
 
 func decodeOptionalJSON(w http.ResponseWriter, r *http.Request, target any) error {

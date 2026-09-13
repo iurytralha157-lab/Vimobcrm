@@ -77,6 +77,7 @@ function normalizeProgress(value: unknown): Record<string, boolean> {
 
 export function useSetupGuide() {
   const {
+    activeOrganization,
     user,
     profile,
     isSuperAdmin,
@@ -95,7 +96,7 @@ export function useSetupGuide() {
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [open, setOpen] = useState(false);
   const userId = user?.id;
-  const organizationId = organization?.id || profile?.organization_id;
+  const organizationId = activeOrganization.organizationId;
   const loginSessionId = user?.last_sign_in_at || user?.created_at || 'current';
   const sessionShownKey = userId && organizationId
     ? `${SESSION_SHOWN_KEY}:${userId}:${organizationId}:${loginSessionId}`
@@ -370,8 +371,8 @@ export function useSetupGuide() {
       {
         id: 'team',
         title: 'Usuários e acessos',
-        subtitle: 'Convites, perfis, funções e status',
-        description: 'Convide pessoas e controle o papel, a função e o status de cada acesso da organização.',
+        subtitle: 'Convites, perfis, permissões e status',
+        description: 'Convide pessoas e controle o perfil, as permissões e o status de cada acesso da organização.',
         route: '/settings?tab=team',
         ctaLabel: 'Gerenciar equipe',
         section: 'Gestão',
@@ -379,12 +380,13 @@ export function useSetupGuide() {
         audience: 'Administradores',
         details: [
           'Novos usuários entram por convite e concluem o próprio acesso com segurança.',
-          'Administradores podem alterar o perfil entre usuário e administrador, aplicar funções personalizadas e desativar acessos.',
+          'O perfil Usuário atua no próprio escopo; o Gestor acompanha todos os leads e consulta as equipes; o Administrador controla toda a organização.',
+          'Líder não é outro perfil: é uma responsabilidade de equipe que pode ser acumulada por um Usuário ou Gestor.',
           'Permissões corretas evitam que alguém veja conversas, leads ou integrações fora do próprio acesso.',
         ],
         checklist: [
           'Enviar um convite com nome, e-mail, telefone e perfil inicial.',
-          'Definir administrador, usuário ou função personalizada conforme a responsabilidade.',
+          'Definir Usuário, Gestor ou Administrador conforme a responsabilidade na organização.',
           'Desativar ou excluir acessos somente depois de revisar leads e imóveis vinculados.',
         ],
         tourTarget: 'team-add-user',
@@ -399,9 +401,9 @@ export function useSetupGuide() {
         ctaLabel: 'Abrir equipes',
         section: 'Gestão',
         badge: 'Equipe',
-        audience: isAdmin ? 'Administradores' : 'Líderes de equipe',
+        audience: isAdmin ? 'Administradores' : 'Gestores e líderes de equipe',
         details: [
-          'Administradores enxergam todas as equipes; líderes enxergam somente as equipes que lideram.',
+          'Administradores gerenciam todas as equipes; Gestores consultam todas; Líderes comuns atuam somente nas equipes que lideram.',
           'Cada equipe possui membros, líderes e disponibilidade própria por usuário.',
           'A disponibilidade é consultada por equipe e pode mudar entre equipes para a mesma pessoa.',
         ],

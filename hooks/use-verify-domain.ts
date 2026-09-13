@@ -12,13 +12,13 @@ interface VerifyDomainResult {
 
 export function useVerifyDomain() {
   const queryClient = useQueryClient();
-  const { organization } = useAuth();
+  const { activeOrganization, organization } = useAuth();
 
   return useMutation({
     mutationFn: async (domain: string): Promise<VerifyDomainResult> => {
-      if (!organization?.id) throw new Error('Organização não encontrada.');
+      if (!activeOrganization.organizationId) throw new Error('Organização não encontrada.');
       if (!domain.trim()) throw new Error('Domínio não informado.');
-      return siteAPI.verifyDomain(organization?.id);
+      return siteAPI.verifyDomain(activeOrganization.organizationId);
     },
     onSuccess: (data) => {
       if (data.verified) {

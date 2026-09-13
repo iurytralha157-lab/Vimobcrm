@@ -48,7 +48,8 @@ func TestCreatePublicSignupAuthUserRequiresSignupProofAndBindsAttempt(t *testing
 				data["name"] != "Andre Silva" ||
 				data["signup_attempt_id"] != attemptID ||
 				data["provisioning_source"] != "public_onboarding" ||
-				strings.TrimSpace(stringValue(data["signup_attempt_binding"])) == "" {
+				strings.TrimSpace(stringValue(data["signup_attempt_binding"])) == "" ||
+				strings.TrimSpace(stringValue(data["signup_password_binding"])) == "" {
 				t.Fatalf("signup request is missing its signed provisional binding: %#v", payload["data"])
 			}
 			actionLink := server.URL + "/auth/v1/verify?" + url.Values{
@@ -76,7 +77,8 @@ func TestCreatePublicSignupAuthUserRequiresSignupProofAndBindsAttempt(t *testing
 			appMetadata, ok := payload["app_metadata"].(map[string]any)
 			if !ok ||
 				appMetadata["signup_attempt_id"] != attemptID ||
-				appMetadata["provisioning_source"] != "public_onboarding" {
+				appMetadata["provisioning_source"] != "public_onboarding" ||
+				strings.TrimSpace(stringValue(appMetadata["signup_password_binding"])) == "" {
 				t.Fatalf("Auth app_metadata is not attempt-exact: %#v", payload["app_metadata"])
 			}
 			_ = json.NewEncoder(writer).Encode(map[string]any{
@@ -255,8 +257,12 @@ func TestPublicSignupAuthReconciliationIsAttemptExactAndOrphanOnly(t *testing.T)
 		"raw_app_meta_data ->> 'signup_attempt_id' = $2",
 		"raw_app_meta_data ->> 'provisioning_source' = 'public_onboarding'",
 		"publicSignupAuthProvisionalBinding(attemptID, email)",
+		"publicSignupAuthPasswordBinding(attemptID, email, password)",
 		"raw_user_meta_data ->> 'signup_attempt_id' = $2",
 		"raw_user_meta_data ->> 'signup_attempt_binding' = $3",
+		"raw_app_meta_data ->> 'signup_password_binding' = $4",
+		"raw_user_meta_data ->> 'signup_password_binding' = $4",
+		"auth_user.encrypted_password = extensions.crypt($5, auth_user.encrypted_password)",
 		"coalesce(auth_user.raw_app_meta_data ->> 'signup_attempt_id', '') in ('', $2)",
 		"auth_user.deleted_at is null",
 		"auth_user.email_confirmed_at is null",
@@ -278,6 +284,35 @@ func TestPublicSignupAuthReconciliationIsAttemptExactAndOrphanOnly(t *testing.T)
 	}
 	if !strings.Contains(source, "context.WithoutCancel(ctx)") {
 		t.Fatal("ambiguous Auth responses must be reconciled after request cancellation")
+	}
+}
+
+func TestPublicSignupPasswordBindingIsAttemptAndCredentialExact(t *testing.T) {
+	t.Parallel()
+
+	repo := Repository{
+		environment: "test",
+		projectURL:  "https://project.supabase.co",
+		apiKey:      "sb_secret_signup_test",
+	}
+	const attemptID = "0f5ecbd9-c8c9-490c-b70a-3beb8ef44d6f"
+	const email = "andre@example.com"
+
+	binding, err := repo.publicSignupAuthPasswordBinding(attemptID, email, "StrongPassword!1")
+	if err != nil {
+		t.Fatalf("bind password: %v", err)
+	}
+	same, err := repo.publicSignupAuthPasswordBinding(attemptID, " ANDRE@EXAMPLE.COM ", "StrongPassword!1")
+	if err != nil {
+		t.Fatalf("bind normalized password: %v", err)
+	}
+	different, err := repo.publicSignupAuthPasswordBinding(attemptID, email, "OtherPassword!2")
+	if err != nil {
+		t.Fatalf("bind different password: %v", err)
+	}
+
+	if binding == "" || same != binding || different == binding {
+		t.Fatalf("password binding is not credential exact: binding=%q same=%q different=%q", binding, same, different)
 	}
 }
 

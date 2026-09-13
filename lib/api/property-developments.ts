@@ -10,7 +10,8 @@ import {
 	apiPropertyDevelopmentReservationListResponseSchema,
 	apiPropertyDevelopmentReservationResponseSchema,
 	apiPropertyDevelopmentUnitListResponseSchema,
-	apiPropertyDevelopmentUnitPriceResponseSchema,
+  apiPropertyDevelopmentUnitPriceResponseSchema,
+  apiPropertyDevelopmentUnitPropertyLinkResponseSchema,
   apiPropertyDevelopmentUnitResponseSchema,
   apiPropertyDevelopmentWorkspaceResponseSchema,
   organizationIdSchema,
@@ -29,6 +30,9 @@ import {
 	propertyDevelopmentReservationListFiltersSchema,
 	propertyDevelopmentUnitListFiltersSchema,
   propertyDevelopmentUnitPatchInputSchema,
+	propertyDevelopmentUnitLinkInputSchema,
+	propertyDevelopmentUnitPromoteInputSchema,
+	propertyDevelopmentUnitUnlinkInputSchema,
 	propertyDevelopmentUnitPriceInputSchema,
   uuidSchema,
   validateDomainResponse,
@@ -56,6 +60,10 @@ import {
 	type PropertyDevelopmentUnitListFilters,
 	type PropertyDevelopmentUnitListMeta,
   type PropertyDevelopmentUnitPatchInput,
+	type PropertyDevelopmentUnitLinkInput,
+	type PropertyDevelopmentUnitPromoteInput,
+	type PropertyDevelopmentUnitUnlinkInput,
+	type PropertyDevelopmentUnitPropertyLinkResult,
 	type PropertyDevelopmentUnitPriceInput,
   type PropertyDevelopmentWorkspace,
   type PropertyDevelopmentWorkspaceMeta,
@@ -87,6 +95,8 @@ export type PropertyDevelopmentUnitPriceResult = {
 	unit: PropertyDevelopmentUnit
 	price_table: PropertyDevelopmentPriceTable
 }
+
+export type PropertyDevelopmentPropertyLinkResult = PropertyDevelopmentUnitPropertyLinkResult
 
 export type PropertyDevelopmentBulkUnitsResult = {
   units: PropertyDevelopmentUnit[]
@@ -366,6 +376,60 @@ export const propertyDevelopmentsAPI = {
     return response.data
   },
 
+	async linkUnitProperty(
+		organizationId: string,
+		developmentId: string,
+		unitId: string,
+		input: PropertyDevelopmentUnitLinkInput,
+		idempotencyKey: string,
+	) {
+		return mutateUnitPropertyLink(
+			organizationId,
+			developmentId,
+			unitId,
+			'link-property',
+			propertyDevelopmentUnitLinkInputSchema,
+			input,
+			idempotencyKey,
+		)
+	},
+
+	async promoteUnitProperty(
+		organizationId: string,
+		developmentId: string,
+		unitId: string,
+		input: PropertyDevelopmentUnitPromoteInput,
+		idempotencyKey: string,
+	) {
+		return mutateUnitPropertyLink(
+			organizationId,
+			developmentId,
+			unitId,
+			'promote-property',
+			propertyDevelopmentUnitPromoteInputSchema,
+			input,
+			idempotencyKey,
+		)
+	},
+
+	async unlinkUnitProperty(
+		organizationId: string,
+		developmentId: string,
+		unitId: string,
+		input: PropertyDevelopmentUnitUnlinkInput,
+		idempotencyKey: string,
+	) {
+		return mutateUnitPropertyLink(
+			organizationId,
+			developmentId,
+			unitId,
+			'unlink-property',
+			propertyDevelopmentUnitUnlinkInputSchema,
+			input,
+			idempotencyKey,
+		)
+	},
+
   async activatePriceTable(
     organizationId: string,
     developmentId: string,
@@ -501,6 +565,38 @@ export const propertyDevelopmentsAPI = {
 		)
 		return response.data
 	},
+}
+
+async function mutateUnitPropertyLink<TInput>(
+	organizationId: string,
+	developmentId: string,
+	unitId: string,
+	action: 'link-property' | 'promote-property' | 'unlink-property',
+	schema: z.ZodType<TInput>,
+	input: TInput,
+	idempotencyKey: string,
+) {
+	const context = `property-developments.unit.${action}`
+	const orgId = parseOrganizationId(organizationId, context)
+	const id = parseEntityId(developmentId, `${context}.development`)
+	const targetUnitId = parseEntityId(unitId, `${context}.unit`)
+	const key = parseEntityId(idempotencyKey, `${context}.idempotency`)
+	const body = parseDomainInput(schema, input, context)
+	const response = await vimobAPIRequest<unknown>(
+		`/v1/property-developments/${id}/units/${targetUnitId}/${action}`,
+		{
+			method: 'POST',
+			organizationId: orgId,
+			body,
+			headers: { 'Idempotency-Key': key },
+		},
+	)
+	const validated = validateDomainResponse(
+		apiPropertyDevelopmentUnitPropertyLinkResponseSchema,
+		response,
+		context,
+	)
+	return validated.data
 }
 
 async function transitionReservation<TInput>(

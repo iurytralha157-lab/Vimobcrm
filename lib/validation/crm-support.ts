@@ -233,6 +233,25 @@ export const apiTeamSchema = z.object({
     user: apiTeamUserSchema.nullable().optional(),
   }).passthrough()).optional(),
 }).passthrough()
+export const apiTeamHistoryEventSchema = z.object({
+  id: uuidSchema,
+  action: z.string().min(1),
+  entity_type: z.string().min(1),
+  entity_id: uuidSchema,
+  old_data: z.record(z.unknown()).nullable().optional(),
+  new_data: z.record(z.unknown()).nullable().optional(),
+  diff: z.record(z.unknown()).nullable().optional(),
+  created_at: timestampSchema,
+  user: apiTeamUserSchema.nullable().optional(),
+  subject_user: apiTeamUserSchema.nullable().optional(),
+}).passthrough()
+export const apiTeamDistributionStatsSchema = z.object({
+  totalEvents: nonNegativeIntegerSchema,
+  uniqueLeads: nonNegativeIntegerSchema,
+  redistributionEvents: nonNegativeIntegerSchema,
+  coverage: z.enum(['complete', 'partial']),
+  completeSince: timestampSchema,
+}).passthrough()
 export const apiTeamPipelineSchema = z.object({
   id: uuidSchema,
   team_id: uuidSchema,
@@ -253,6 +272,8 @@ export const apiAvailabilitySchema = z.object({
 }).passthrough()
 export const apiTeamListResponseSchema = apiEnvelopeSchema(z.array(apiTeamSchema))
 export const apiTeamResponseSchema = apiEnvelopeSchema(apiTeamSchema)
+export const apiTeamHistoryListResponseSchema = apiEnvelopeSchema(z.array(apiTeamHistoryEventSchema))
+export const apiTeamDistributionStatsResponseSchema = apiEnvelopeSchema(apiTeamDistributionStatsSchema)
 export const apiTeamPipelineListResponseSchema = apiEnvelopeSchema(z.array(apiTeamPipelineSchema))
 export const apiTeamPipelineResponseSchema = apiEnvelopeSchema(apiTeamPipelineSchema)
 export const apiAvailabilityListResponseSchema = apiEnvelopeSchema(z.array(apiAvailabilitySchema))
@@ -363,6 +384,22 @@ export const apiRoundRobinSchema = z.object({
   createdAt: timestampSchema,
   updatedAt: timestampSchema,
 }).passthrough()
+export const apiRoundRobinHistoryEventSchema = z.object({
+  id: uuidSchema,
+  action: z.string().min(1),
+  entity_type: z.enum([
+    'distribution_queue',
+    'distribution_queue_rule',
+    'distribution_queue_member',
+  ]),
+  entity_id: uuidSchema,
+  old_data: z.record(z.unknown()).nullable().optional(),
+  new_data: z.record(z.unknown()).nullable().optional(),
+  diff: z.record(z.unknown()).nullable().optional(),
+  created_at: timestampSchema,
+  user: apiTeamUserSchema.nullable().optional(),
+  subject_user: apiTeamUserSchema.nullable().optional(),
+}).passthrough()
 export const apiRoundRobinWhatsAppSessionOptionSchema = z.object({
   id: uuidSchema,
   instanceName: z.string(),
@@ -384,6 +421,9 @@ export const apiRoundRobinMetaFormOptionSchema = z.object({
 }).strict()
 export const apiRoundRobinListResponseSchema = apiEnvelopeSchema(z.array(apiRoundRobinSchema))
 export const apiRoundRobinResponseSchema = apiEnvelopeSchema(apiRoundRobinSchema)
+export const apiRoundRobinHistoryListResponseSchema = apiEnvelopeSchema(
+  z.array(apiRoundRobinHistoryEventSchema),
+)
 export const apiRoundRobinWhatsAppSessionOptionListResponseSchema = apiEnvelopeSchema(
   z.array(apiRoundRobinWhatsAppSessionOptionSchema),
 )
@@ -438,6 +478,7 @@ export const apiNotificationResponseSchema = apiEnvelopeSchema(apiNotificationSc
 export const apiUnreadCountResponseSchema = z.object({ count: nonNegativeIntegerSchema }).passthrough()
 export const apiDispatchNotificationResponseSchema = z.object({
   success: z.boolean(),
+  queued: z.boolean(),
   notification: apiNotificationSchema.nullable().optional(),
   error: z.string().optional(),
 }).passthrough()

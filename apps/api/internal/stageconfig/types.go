@@ -97,6 +97,13 @@ func (request StageAutomationRequest) Validate(requireStage bool) (stageAutomati
 	if requireStage && input.StageID == "" {
 		return stageAutomationInput{}, fmt.Errorf("%w: stage_id is required", ErrInvalidInput)
 	}
+	if input.StageID != "" {
+		stageID, ok := normalizeUUID(input.StageID)
+		if !ok {
+			return stageAutomationInput{}, fmt.Errorf("%w: stage_id is invalid", ErrInvalidInput)
+		}
+		input.StageID = stageID
+	}
 	if request.IsActive != nil {
 		input.IsActive = *request.IsActive
 	}
@@ -113,15 +120,56 @@ func (request StageAutomationRequest) Validate(requireStage bool) (stageAutomati
 
 	actionConfig := map[string]any{}
 	for key, value := range request.ActionConfig {
-		if value != nil && value != "" {
-			actionConfig[key] = value
+		if value == nil {
+			continue
+		}
+		if text, ok := value.(string); ok {
+			text = strings.TrimSpace(text)
+			if text == "" {
+				continue
+			}
+			actionConfig[key] = text
+			continue
+		}
+		actionConfig[key] = value
+	}
+
+	if request.TargetStageID != nil {
+		targetStageID := cleanString(request.TargetStageID)
+		if targetStageID != nil {
+			normalized, ok := normalizeUUID(*targetStageID)
+			if !ok {
+				return stageAutomationInput{}, fmt.Errorf("%w: target_stage_id is invalid", ErrInvalidInput)
+			}
+			request.TargetStageID = &normalized
 		}
 	}
-	if automationType == "change_assignee_on_enter" && len(actionConfig) == 0 && cleanString(request.TargetUserID) != nil {
-		actionConfig["target_user_id"] = *cleanString(request.TargetUserID)
-	}
-	if automationType == "change_deal_status_on_enter" && len(actionConfig) == 0 && cleanString(request.DealStatus) != nil {
-		actionConfig["deal_status"] = *cleanString(request.DealStatus)
+
+	switch automationType {
+	case "change_assignee_on_enter":
+		targetUserID, err := requiredAutomationConfigString(actionConfig, "target_user_id", request.TargetUserID)
+		if err != nil {
+			return stageAutomationInput{}, err
+		}
+		normalized, ok := normalizeUUID(targetUserID)
+		if !ok {
+			return stageAutomationInput{}, fmt.Errorf("%w: target_user_id is invalid", ErrInvalidInput)
+		}
+		actionConfig["target_user_id"] = normalized
+	case "change_deal_status_on_enter":
+		dealStatus, err := requiredAutomationConfigString(actionConfig, "deal_status", request.DealStatus)
+		if err != nil {
+			return stageAutomationInput{}, err
+		}
+		dealStatus = strings.ToLower(dealStatus)
+		if dealStatus != "open" && dealStatus != "won" && dealStatus != "lost" {
+			return stageAutomationInput{}, fmt.Errorf("%w: deal_status is invalid", ErrInvalidInput)
+		}
+		actionConfig["deal_status"] = dealStatus
+	case "alert_on_inactivity":
+		if request.TriggerDays != nil && (*request.TriggerDays < 1 || *request.TriggerDays > 3650) {
+			return stageAutomationInput{}, fmt.Errorf("%w: trigger_days must be between 1 and 3650", ErrInvalidInput)
+		}
 	}
 
 	var actionConfigValue any
@@ -140,6 +188,28 @@ func (request StageAutomationRequest) Validate(requireStage bool) (stageAutomati
 	}
 
 	return input, nil
+}
+
+func requiredAutomationConfigString(actionConfig map[string]any, key string, fallback *string) (string, error) {
+	configured := ""
+	if value, exists := actionConfig[key]; exists {
+		text, ok := value.(string)
+		if !ok {
+			return "", fmt.Errorf("%w: %s must be a string", ErrInvalidInput, key)
+		}
+		configured = strings.TrimSpace(text)
+	}
+	fallbackValue := cleanString(fallback)
+	if configured != "" && fallbackValue != nil && configured != *fallbackValue {
+		return "", fmt.Errorf("%w: conflicting %s values", ErrInvalidInput, key)
+	}
+	if configured == "" && fallbackValue != nil {
+		configured = *fallbackValue
+	}
+	if configured == "" {
+		return "", fmt.Errorf("%w: %s is required", ErrInvalidInput, key)
+	}
+	return configured, nil
 }
 
 func (request StageOperationalConfigRequest) Validate() (StageOperationalConfigRequest, error) {

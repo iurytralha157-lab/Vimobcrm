@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/supabasehttp"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -466,7 +467,7 @@ func (repo Repository) callOrganizationAsaasCleanupRPC(
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Content-Type", "application/json")
-	setSupabaseServiceAPIAuth(request, repo.apiKey)
+	supabasehttp.SetServiceAuth(request, repo.apiKey)
 
 	response, err := repo.httpClient.Do(request)
 	if err != nil {
@@ -489,15 +490,6 @@ func (repo Repository) callOrganizationAsaasCleanupRPC(
 		return fmt.Errorf("decode Supabase cleanup RPC response: %w", err)
 	}
 	return nil
-}
-
-func setSupabaseServiceAPIAuth(request *http.Request, apiKey string) {
-	request.Header.Set("apikey", apiKey)
-	request.Header.Del("Authorization")
-	segments := strings.Split(apiKey, ".")
-	if len(segments) == 3 && segments[0] != "" && segments[1] != "" && segments[2] != "" {
-		request.Header.Set("Authorization", "Bearer "+apiKey)
-	}
 }
 
 func normalizeAsaasCleanupResourceID(value string) (string, error) {
@@ -974,7 +966,7 @@ func (repo Repository) deleteStorageObjectBatch(ctx context.Context, bucket stri
 	if err != nil {
 		return err
 	}
-	setSupabaseServiceAPIAuth(request, repo.apiKey)
+	supabasehttp.SetServiceAuth(request, repo.apiKey)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := repo.httpClient.Do(request)
 	if err != nil {

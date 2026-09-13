@@ -48,6 +48,32 @@ func TestSiteSnapshotKeepsPrivateAssetOriginOutOfPayload(t *testing.T) {
 	}
 }
 
+func TestNewPropertyWithOnlyCanonicalAssetsPublishesItsPhoto(t *testing.T) {
+	source := readyPublicationSource()
+	source.Property["imagem_principal"] = ""
+	source.Property["fotos"] = []string{}
+	source.Assets = []sourceAsset{{
+		ID:          testAssetID,
+		AssetType:   "photo",
+		Visibility:  "public",
+		StoragePath: "orgs/tenant/properties/property/asset/fachada.jpg",
+		MIMEType:    "image/jpeg",
+		IsPrimary:   true,
+	}}
+
+	snapshot := buildSiteSnapshot(source, "https://api.example.com", testPublicationID, 1)
+	photos := stringSlice(snapshot.Property["fotos"])
+	if len(photos) != 1 || photos[0] == "" {
+		t.Fatalf("canonical-only property photos = %#v", photos)
+	}
+	if snapshot.Property["imagem_principal"] != photos[0] {
+		t.Fatalf("canonical-only primary = %#v, photos = %#v", snapshot.Property["imagem_principal"], photos)
+	}
+	if strings.Contains(photos[0], source.Assets[0].StoragePath) {
+		t.Fatalf("private Storage path leaked through public snapshot: %q", photos[0])
+	}
+}
+
 func TestSnapshotHashChangesWhenAssetContentChangesAtSamePath(t *testing.T) {
 	source := readyPublicationSource()
 	source.Assets = []sourceAsset{{
@@ -88,6 +114,23 @@ func TestNonPublicPropertyAssetPreventsLegacyPhotoFallbackLeak(t *testing.T) {
 	checks, _, state := evaluateGrupoOLXReadiness(source)
 	if state != ReadinessBlocked || findCheck(checks, "grupo_olx_photo").Resolved {
 		t.Fatalf("non-public-only media must block readiness: %q %#v", state, checks)
+	}
+}
+
+func TestRetiredCanonicalPhotoFencePreventsLegacyFallbackResurrection(t *testing.T) {
+	source := readyPublicationSource()
+	source.Assets = nil
+	source.HasAssetPhotos = true
+	source.Property["imagem_principal"] = "https://legacy.example/retired-photo.jpg"
+	source.Property["fotos"] = []string{"https://legacy.example/retired-photo.jpg"}
+
+	snapshot := buildSiteSnapshot(source, "https://api.example.com", testPublicationID, 1)
+	if len(snapshot.Media) != 0 || len(stringSlice(snapshot.Property["fotos"])) != 0 {
+		t.Fatalf("retired canonical photo was resurrected through legacy fallback: %#v", snapshot)
+	}
+	checks, _, state := evaluateSiteReadiness(source)
+	if state != ReadinessBlocked || findCheck(checks, "photo").Resolved {
+		t.Fatalf("retired-only media must block new publication readiness: %q %#v", state, checks)
 	}
 }
 
@@ -178,6 +221,7 @@ func TestSiteSnapshotAppliesAllAddressPrivacyModes(t *testing.T) {
 	for key, value := range map[string]any{
 		"pais": "Brasil", "endereco": "Rua Privada", "numero": "123", "complemento": "Apto 45",
 		"cep": "01001-000", "latitude": -23.5505, "longitude": -46.6333,
+		"condominio_nome": "Residencial Privado",
 	} {
 		source.Property[key] = value
 	}
@@ -187,9 +231,9 @@ func TestSiteSnapshotAppliesAllAddressPrivacyModes(t *testing.T) {
 		present []string
 		absent  []string
 	}{
-		{mode: "minimo", present: []string{"cidade", "estado"}, absent: []string{"bairro", "endereco", "numero", "complemento", "cep", "latitude", "longitude"}},
-		{mode: "parcial", present: []string{"bairro", "cidade", "estado"}, absent: []string{"endereco", "numero", "complemento", "cep", "latitude", "longitude"}},
-		{mode: "completo", present: []string{"bairro", "cidade", "estado", "pais", "endereco", "numero", "complemento", "cep", "latitude", "longitude"}},
+		{mode: "minimo", present: []string{"cidade", "estado"}, absent: []string{"bairro", "endereco", "numero", "complemento", "cep", "latitude", "longitude", "condominio_nome"}},
+		{mode: "parcial", present: []string{"bairro", "cidade", "estado"}, absent: []string{"endereco", "numero", "complemento", "cep", "latitude", "longitude", "condominio_nome"}},
+		{mode: "completo", present: []string{"bairro", "cidade", "estado", "pais", "endereco", "numero", "complemento", "cep", "latitude", "longitude", "condominio_nome"}},
 	}
 	for _, test := range tests {
 		t.Run(test.mode, func(t *testing.T) {
@@ -214,6 +258,20 @@ func TestSiteSnapshotAppliesAllAddressPrivacyModes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSitePublicationSourceCapturesTenantScopedCondominiumName(t *testing.T) {
+	query := sitePublicPropertySQL("p")
+	for _, required := range []string{
+		"'condominio_nome'",
+		"from public.property_condominiums as condominium",
+		"condominium.organization_id = p.organization_id",
+		"condominium.id = p.condominium_id",
+	} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("site publication source is missing %q", required)
+		}
 	}
 }
 
@@ -274,6 +332,24 @@ func TestCanonicalSnapshotKeepsOnlySafeIPTUPeriodScalar(t *testing.T) {
 	}
 	if _, exists := snapshot.Property["metadata"]; exists {
 		t.Fatal("property metadata must not be copied into a public snapshot")
+	}
+}
+
+func TestPublicSnapshotsExcludeInternalAppraisalValues(t *testing.T) {
+	source := readyGrupoOLXPublicationSource()
+	source.Property["valor_venda_avaliado"] = 780000
+	source.Property["valor_locacao_avaliado"] = 4200
+
+	properties := map[string]map[string]any{
+		"site":      buildSiteSnapshot(source, "https://api.example.com", testPublicationID, 1).Property,
+		"grupo_olx": buildGrupoOLXSnapshot(source, "https://api.example.com", testPublicationID, 1).Property,
+	}
+	for channel, property := range properties {
+		for _, field := range []string{"valor_venda_avaliado", "valor_locacao_avaliado"} {
+			if _, exists := property[field]; exists {
+				t.Fatalf("%s snapshot leaked internal appraisal field %q: %#v", channel, field, property)
+			}
+		}
 	}
 }
 

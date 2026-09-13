@@ -1,18 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useAuth } from '@/contexts/AuthContext'
+import { useOptionalActiveOrganizationId as useOrganizationId } from '@/hooks/use-active-organization'
 import { siteAPI, type SiteMenuItem } from '@/lib/api/site'
+import { getErrorMessageOrFallback as getErrorMessage } from '@/lib/api/vimob-error'
 import { toast } from 'sonner'
 
 export type { SiteMenuItem }
-
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : 'Erro desconhecido'
-}
-
-function useOrganizationId() {
-  const { profile, organization } = useAuth()
-  return organization?.id || profile?.organization_id || undefined
-}
 
 export function useSiteMenuItems() {
   const organizationId = useOrganizationId()

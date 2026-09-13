@@ -1,10 +1,16 @@
-import { useState } from 'react';
-import Link from 'next/link';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { useState } from "react";
+import Link from "next/link";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -13,48 +19,82 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { useAuth } from '@/contexts/AuthContext';
-import { toast } from 'sonner';
-import { AlertTriangle, Copy, ExternalLink, Key, RefreshCw, ShieldCheck } from 'lucide-react';
-import { settingsAPI, type OrganizationApiKey } from '@/lib/api/settings';
+} from "@/components/ui/alert-dialog";
+import { useAuth } from "@/contexts/AuthContext";
+import { toast } from "sonner";
+import {
+  AlertTriangle,
+  Copy,
+  ExternalLink,
+  Key,
+  RefreshCw,
+  ShieldCheck,
+} from "lucide-react";
+import { settingsAPI, type OrganizationApiKey } from "@/lib/api/settings";
+import {
+  getIntegrationQueryErrorMessage,
+  shouldRetryIntegrationQuery,
+} from "@/lib/api/integration-query";
 
 const formatApiKeyDate = (value: string | null) =>
-  value ? new Date(value).toLocaleDateString('pt-BR') : 'sem data';
+  value ? new Date(value).toLocaleDateString("pt-BR") : "sem data";
+const DEFAULT_PUBLIC_API_URL = "http://localhost:8081";
 
 export function APITab() {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
+  const leadEndpoint = `${getPublicAPIBaseURL()}/v1/public/api/leads`;
   const queryClient = useQueryClient();
   const [newKey, setNewKey] = useState<string | null>(null);
-  const [keyName, setKeyName] = useState('');
-  const [keyToDelete, setKeyToDelete] = useState<OrganizationApiKey | null>(null);
+  const [keyName, setKeyName] = useState("");
+  const [keyToDelete, setKeyToDelete] = useState<OrganizationApiKey | null>(
+    null,
+  );
 
-  const { data: apiKeys, isLoading } = useQuery<OrganizationApiKey[]>({
-    queryKey: ['api-keys', organizationId],
+  const {
+    data: apiKeys = [],
+    error: apiKeysError,
+    isError: isApiKeysError,
+    isFetching: isFetchingApiKeys,
+    isLoading,
+    refetch: refetchApiKeys,
+  } = useQuery<OrganizationApiKey[]>({
+    queryKey: ["api-keys", organizationId],
     queryFn: () => settingsAPI.listApiKeys(organizationId),
     enabled: !!organizationId,
+    refetchOnMount: "always",
+    retry: shouldRetryIntegrationQuery,
+  });
+
+  const apiKeysErrorMessage = getIntegrationQueryErrorMessage(apiKeysError, {
+    moduleUnavailable:
+      "A API ainda não está habilitada para esta organização. Ative o módulo antes de gerar credenciais.",
+    permissionDenied:
+      "Sua função não permite visualizar nem gerenciar as chaves de API.",
+    loadFailed:
+      "Não foi possível carregar as chaves de API. Verifique a conexão e tente novamente.",
   });
 
   const generateKeyMutation = useMutation<string, Error>({
     mutationFn: async () => {
-      if (!organizationId) throw new Error('Organização não encontrada');
+      if (!organizationId) throw new Error("Organização não encontrada");
       const result = await settingsAPI.createApiKey(
-        { name: keyName || 'Chave Padrao' },
+        { name: keyName || "Chave padrão" },
         organizationId,
       );
-      if (!result.apiKey) throw new Error('Resposta invalida da geracao de chave');
+      if (!result.apiKey)
+        throw new Error("Resposta inválida da geração de chave");
       return result.apiKey;
     },
     onSuccess: (apiKey) => {
       setNewKey(apiKey);
-      setKeyName('');
-      queryClient.invalidateQueries({ queryKey: ['api-keys', organizationId] });
-      toast.success('Chave de API gerada com sucesso!');
+      setKeyName("");
+      queryClient.invalidateQueries({ queryKey: ["api-keys", organizationId] });
+      toast.success("Chave de API gerada com sucesso!");
     },
     onError: (error) => {
-      console.error('Error generating API key:', error);
-      toast.error(error.message || 'Erro ao gerar chave de API');
+      console.error("Error generating API key:", error);
+      toast.error(error.message || "Erro ao gerar chave de API");
     },
   });
 
@@ -63,11 +103,11 @@ export function APITab() {
       await settingsAPI.deleteApiKey(id, organizationId);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['api-keys', organizationId] });
-      toast.success('Chave de API removida');
+      queryClient.invalidateQueries({ queryKey: ["api-keys", organizationId] });
+      toast.success("Chave de API removida");
     },
     onError: (error: Error) => {
-      toast.error(error.message || 'Não foi possível remover a chave de API');
+      toast.error(error.message || "Não foi possível remover a chave de API");
     },
   });
 
@@ -84,7 +124,7 @@ export function APITab() {
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
-    toast.success('Copiado para a area de transferencia!');
+    toast.success("Copiado para a área de transferência!");
   };
 
   return (
@@ -95,11 +135,61 @@ export function APITab() {
           <div className="space-y-1 text-sm">
             <p className="font-medium">Mantenha sua chave em segredo</p>
             <p className="text-muted-foreground">
-              Estas credenciais são reservadas às integrações liberadas pela Vimob. Elas não
-              substituem o login nem tornam públicos os endpoints internos do CRM. Nunca
-              coloque uma chave no frontend ou em um repositório público.
+              Estas credenciais são reservadas às integrações liberadas pela
+              Vimob. Elas não substituem o login nem tornam públicos os
+              endpoints internos do CRM. Nunca coloque uma chave no frontend ou
+              em um repositório público.
             </p>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="app-card">
+        <CardHeader>
+          <CardTitle className="text-lg">Criar lead pela API v1</CardTitle>
+          <CardDescription>
+            O lead entra no mesmo fluxo transacional de reentrada e distribuição
+            usado pelos webhooks.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label>Endpoint</Label>
+            <div className="flex gap-2">
+              <Input
+                value={leadEndpoint}
+                readOnly
+                className="font-mono text-xs"
+              />
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => copyToClipboard(leadEndpoint)}
+              >
+                <Copy className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+          <div className="app-card-soft overflow-x-auto p-3">
+            <pre className="text-xs">
+              <code>{`curl -X POST "${leadEndpoint}" \\
+  -H "Authorization: Bearer <SUA_CHAVE>" \\
+  -H "Idempotency-Key: lead-seu-sistema-123" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "name": "João Silva",
+    "phone": "+55 11 99999-9999",
+    "email": "joao@email.com",
+    "message": "Interesse no imóvel"
+  }'`}</code>
+            </pre>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            <code>name</code> e <code>phone</code> são obrigatórios. Use uma
+            chave de idempotência exclusiva por evento: uma repetição idêntica
+            retorna o mesmo lead; conteúdo diferente com a mesma chave retorna{" "}
+            <code>409</code>. Limites excedidos retornam <code>429</code>.
+          </p>
         </CardContent>
       </Card>
 
@@ -112,8 +202,9 @@ export function APITab() {
                 Chaves de API
               </CardTitle>
               <CardDescription>
-                Gerencie credenciais emitidas para integrações habilitadas na sua organização.
-                Consulte o guia antes de iniciar qualquer desenvolvimento.
+                Gerencie credenciais emitidas para integrações habilitadas na
+                sua organização. Consulte o guia antes de iniciar qualquer
+                desenvolvimento.
               </CardDescription>
             </div>
           </div>
@@ -128,11 +219,12 @@ export function APITab() {
                 value={keyName}
                 onChange={(event) => setKeyName(event.target.value)}
                 maxLength={80}
+                disabled={isApiKeysError}
               />
             </div>
             <Button
               onClick={() => generateKeyMutation.mutate()}
-              disabled={generateKeyMutation.isPending}
+              disabled={generateKeyMutation.isPending || isApiKeysError}
             >
               {generateKeyMutation.isPending ? (
                 <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
@@ -150,17 +242,22 @@ export function APITab() {
                 Sua nova chave de API
               </div>
               <p className="text-sm text-muted-foreground">
-                Esta é a <strong>única vez</strong> que você verá a chave completa. Copie e
-                guarde em local seguro agora; depois so restara o prefixo identificador.
+                Esta é a <strong>única vez</strong> que você verá a chave
+                completa. Copie e guarde em local seguro agora; depois
+                restará apenas o prefixo identificador.
               </p>
               <div className="flex gap-2">
                 <Input value={newKey} readOnly className="font-mono text-xs" />
-                <Button variant="outline" size="icon" onClick={() => copyToClipboard(newKey)}>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => copyToClipboard(newKey)}
+                >
                   <Copy className="h-4 w-4" />
                 </Button>
               </div>
               <Button variant="ghost" size="sm" onClick={() => setNewKey(null)}>
-                Ja salvei, ocultar
+                Já salvei, ocultar
               </Button>
             </div>
           )}
@@ -171,12 +268,39 @@ export function APITab() {
                 <RefreshCw className="h-6 w-6 animate-spin mr-2" />
                 Carregando chaves...
               </div>
-            ) : apiKeys?.length === 0 ? (
+            ) : isApiKeysError ? (
+              <div
+                role="alert"
+                className="app-card-soft border-amber-500/20 p-4 space-y-3"
+              >
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="h-5 w-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-medium">Recurso indisponível</p>
+                    <p className="text-sm text-muted-foreground">
+                      {apiKeysErrorMessage}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void refetchApiKeys()}
+                  disabled={isFetchingApiKeys}
+                >
+                  <RefreshCw
+                    className={`h-4 w-4 mr-2 ${isFetchingApiKeys ? "animate-spin" : ""}`}
+                  />
+                  Tentar novamente
+                </Button>
+              </div>
+            ) : apiKeys.length === 0 ? (
               <div className="app-card-soft text-center py-8 text-muted-foreground border-dashed">
                 Nenhuma chave de API gerada.
               </div>
             ) : (
-              apiKeys?.map((key) => (
+              apiKeys.map((key) => (
                 <div
                   key={key.id}
                   className="app-card-soft flex items-center justify-between p-4 transition-colors hover:bg-[var(--app-surface-hover)]"
@@ -214,7 +338,9 @@ export function APITab() {
 
       <Card className="app-card">
         <CardHeader>
-          <CardTitle className="text-lg">Guia de integracoes e webhooks</CardTitle>
+          <CardTitle className="text-lg">
+            Guia de integrações e webhooks
+          </CardTitle>
           <CardDescription>
             Entenda o escopo atual antes de conectar sistemas externos.
           </CardDescription>
@@ -224,13 +350,14 @@ export function APITab() {
             <div className="space-y-1">
               <p className="font-medium">Credenciais e webhooks</p>
               <p className="text-sm text-muted-foreground">
-                Boas práticas, limites atuais e o caminho correto para configurar a integração.
+                Boas práticas, limites atuais e o caminho correto para
+                configurar a integração.
               </p>
             </div>
             <Button variant="outline" asChild>
               <Link href="/suporte/como-criar-chave-de-api-e-configurar-webhooks">
                 <ExternalLink className="h-4 w-4 mr-2" />
-                Ver guia de integracao
+                Ver guia de integração
               </Link>
             </Button>
           </div>
@@ -249,8 +376,8 @@ export function APITab() {
               Remover chave de API
             </AlertDialogTitle>
             <AlertDialogDescription className="text-[12px] font-light leading-[18px]">
-              A chave “{keyToDelete?.name ?? ''}” será invalidada imediatamente. Integrações que
-              ainda a utilizam deixarão de funcionar.
+              A chave “{keyToDelete?.name ?? ""}” será invalidada imediatamente.
+              Integrações que ainda a utilizam deixarão de funcionar.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="gap-2 sm:space-x-0">
@@ -276,4 +403,10 @@ export function APITab() {
       </AlertDialog>
     </div>
   );
+}
+
+function getPublicAPIBaseURL() {
+  return (
+    process.env.NEXT_PUBLIC_VIMOB_API_URL || DEFAULT_PUBLIC_API_URL
+  ).replace(/\/+$/, "");
 }

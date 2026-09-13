@@ -99,6 +99,7 @@ select results_eq(
         'property_condominiums',
         'property_types'
       )
+      and policyname <> 'vimob_active_membership_guard'
   $$,
   array[24::bigint],
   'each protected property table has one canonical policy per operation'
@@ -322,11 +323,19 @@ values
   ('a9000000-0000-4000-8000-000000000003', 'a1000000-0000-4000-8000-000000000001', 'SEC-A-3', 'Property Manager A', 'a8000000-0000-4000-8000-000000000003', 'a7000000-0000-4000-8000-000000000001', 'a7100000-0000-4000-8000-000000000001', 'a7200000-0000-4000-8000-000000000001', 'a7300000-0000-4000-8000-000000000001', 'a2000000-0000-4000-8000-000000000003', 'a2000000-0000-4000-8000-000000000003'),
   ('a9000000-0000-4000-8000-000000000004', 'a1000000-0000-4000-8000-000000000002', 'SEC-B-1', 'Property Manager B', 'a8000000-0000-4000-8000-000000000004', 'a7000000-0000-4000-8000-000000000002', 'a7100000-0000-4000-8000-000000000002', 'a7200000-0000-4000-8000-000000000002', 'a7300000-0000-4000-8000-000000000002', 'a2000000-0000-4000-8000-000000000006', 'a2000000-0000-4000-8000-000000000006');
 
+update public.property_ownerships
+set ownership_percentage = 60
+where organization_id = 'a1000000-0000-4000-8000-000000000001'
+  and property_id = 'a9000000-0000-4000-8000-000000000001'
+  and owner_id = 'a8000000-0000-4000-8000-000000000001'
+  and valid_to is null;
+
 insert into public.property_ownerships (
   organization_id,
   property_id,
   owner_id,
   ownership_percentage,
+  is_primary,
   valid_from
 )
 values (
@@ -334,6 +343,7 @@ values (
   'a9000000-0000-4000-8000-000000000001',
   'a8000000-0000-4000-8000-000000000003',
   40,
+  false,
   current_date
 );
 
@@ -347,6 +357,14 @@ values
 -- migration accidentally exposes the tables again.
 grant select, insert, update, delete
   on public.properties, public.property_owners
+  to authenticated;
+-- The legacy-property compatibility trigger is intentionally invoker-rights
+-- and touches the normalized asset catalog even when no image is supplied.
+-- Grant its read/insert dependency inside this rolled-back RLS exercise so
+-- the assertions below continue testing tenant policies rather than stopping
+-- at the backend-only production grant boundary.
+grant select, insert, update
+  on public.property_assets
   to authenticated;
 grant insert, update, delete
   on public.property_cities, public.property_neighborhoods, public.property_condominiums, public.property_types
@@ -602,7 +620,12 @@ select results_eq(
 );
 
 select results_eq(
-  $$select count(*)::bigint from storage.objects where bucket_id = 'property-private'$$,
+  $$
+    select count(*)::bigint
+    from storage.objects
+    where bucket_id = 'property-private'
+      and name like 'orgs/a1000000-0000-4000-8000-00000000000%/properties/a9000000-0000-4000-8000-00000000000%/document.pdf'
+  $$,
   array[2::bigint],
   'service role still reads private media across tenants'
 );

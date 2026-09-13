@@ -101,6 +101,7 @@ export const APP_NAVIGATION_ITEMS: readonly AppNavigationItem[] = [
     path: "/crm/management",
     module: "crm",
     anyPermissions: [
+      "team_view",
       "team_manage",
       "distribution_manage",
       "pipeline_manage",
@@ -111,7 +112,7 @@ export const APP_NAVIGATION_ITEMS: readonly AppNavigationItem[] = [
         icon: "users",
         labelKey: "managementTeams",
         path: "/crm/management?tab=teams",
-        anyPermissions: ["team_manage"],
+        anyPermissions: ["team_view", "team_manage"],
       },
       {
         icon: "shuffle",
@@ -138,7 +139,11 @@ export const APP_NAVIGATION_ITEMS: readonly AppNavigationItem[] = [
     labelKey: "properties",
     path: "/properties",
     module: "properties",
-    anyPermissions: ["property_view", "property_manage"],
+    anyPermissions: [
+      "property_view",
+      "property_manage",
+      "settings_organization",
+    ],
     children: [
       {
         icon: "building",
@@ -149,7 +154,7 @@ export const APP_NAVIGATION_ITEMS: readonly AppNavigationItem[] = [
       {
         icon: "building",
         labelKey: "propertiesDevelopments",
-        path: "/properties/developments",
+        path: "/properties/launches",
         anyPermissions: ["property_view", "property_manage"],
       },
       {
@@ -176,6 +181,12 @@ export const APP_NAVIGATION_ITEMS: readonly AppNavigationItem[] = [
         path: "/properties/owners",
         permission: "property_manage",
       },
+      {
+        icon: "settings",
+        labelKey: "propertiesSettings",
+        path: "/properties/settings",
+        permission: "settings_organization",
+      },
     ],
   },
   {
@@ -184,6 +195,20 @@ export const APP_NAVIGATION_ITEMS: readonly AppNavigationItem[] = [
     path: "/agenda",
     module: "agenda",
     permission: "schedule_view",
+    children: [
+      {
+        icon: "calendar",
+        labelKey: "scheduleCalendar",
+        path: "/agenda",
+        permission: "schedule_view",
+      },
+      {
+        icon: "barChart",
+        labelKey: "scheduleDashboard",
+        path: "/agenda?tab=dashboard",
+        permission: "schedule_view",
+      },
+    ],
   },
   {
     icon: "zap",
@@ -303,13 +328,6 @@ export const APP_BOTTOM_NAVIGATION_ITEMS: readonly AppNavigationItem[] = [
         path: "/settings?tab=ai",
         module: "ai_agent",
         permission: "settings_ai",
-      },
-      {
-        icon: "building",
-        labelKey: "settingsProperties",
-        path: "/settings?tab=properties",
-        module: "properties",
-        permission: "property_manage",
       },
       {
         icon: "globe",

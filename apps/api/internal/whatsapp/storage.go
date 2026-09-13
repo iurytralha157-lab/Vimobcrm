@@ -26,6 +26,7 @@ type StorageConfig struct {
 type EvolutionGoConfig struct {
 	APIURL                   string
 	APIKey                   string
+	ImageDigest              string
 	WebhookURL               string
 	BackendWebhookURL        string
 	WebhookProcessorMode     string
@@ -56,7 +57,7 @@ func (client storageClient) signedURL(ctx context.Context, bucket string, object
 		"%s/storage/v1/object/sign/%s/%s",
 		client.projectURL,
 		url.PathEscape(bucket),
-		escapeStorageObjectPath(objectPath),
+		supabasehttp.EscapeObjectPath(objectPath),
 	)
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
@@ -104,7 +105,7 @@ func (client storageClient) upload(ctx context.Context, bucket string, objectPat
 		"%s/storage/v1/object/%s/%s",
 		client.projectURL,
 		url.PathEscape(bucket),
-		escapeStorageObjectPath(objectPath),
+		supabasehttp.EscapeObjectPath(objectPath),
 	)
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
@@ -141,26 +142,80 @@ func (client storageClient) upload(ctx context.Context, bucket string, objectPat
 	return nil
 }
 
+func (client storageClient) objectExists(ctx context.Context, bucket string, objectPath string) (bool, error) {
+	if client.projectURL == "" || client.apiKey == "" {
+		return false, ErrStorageNotConfigured
+	}
+	if strings.TrimSpace(objectPath) == "" {
+		return false, fmt.Errorf("storage object path is required")
+	}
+
+	endpoint := fmt.Sprintf(
+		"%s/storage/v1/object/%s/%s",
+		client.projectURL,
+		url.PathEscape(bucket),
+		supabasehttp.EscapeObjectPath(objectPath),
+	)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return false, err
+	}
+	supabasehttp.SetServiceAuth(request, client.apiKey)
+	// Reconciliation only needs object existence. Bound the response even if a
+	// Storage deployment ignores Range so media bytes are never downloaded into
+	// the worker merely to recover a database marker.
+	request.Header.Set("Range", "bytes=0-0")
+
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		return false, err
+	}
+	defer response.Body.Close()
+
+	switch response.StatusCode {
+	case http.StatusOK, http.StatusPartialContent:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		payload, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		if response.StatusCode == http.StatusBadRequest && storageObjectMissingResponse(payload) {
+			// Older self-hosted Storage releases used 400 for a missing object.
+			// Accept only the narrow provider error markers; every other 400 is a
+			// configuration/path/auth failure and must remain visible.
+			return false, nil
+		}
+		message := strings.TrimSpace(string(payload))
+		if message == "" {
+			message = response.Status
+		}
+		return false, fmt.Errorf("supabase storage object reconciliation failed: %s", message)
+	}
+}
+
+func storageObjectMissingResponse(payload []byte) bool {
+	message := strings.ToLower(strings.TrimSpace(string(payload)))
+	for _, marker := range []string{`object not found`, `no such key`, `nosuchkey`, `not_found`} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func (client storageClient) publicURL(bucket string, objectPath string) string {
 	if client.projectURL == "" {
 		return ""
 	}
 
+	// whatsapp-media is private. Persist this stable object reference; delivery
+	// and read paths exchange it for a short-lived signed URL.
 	return fmt.Sprintf(
 		"%s/storage/v1/object/public/%s/%s",
 		client.projectURL,
 		url.PathEscape(bucket),
-		escapeStorageObjectPath(objectPath),
+		supabasehttp.EscapeObjectPath(objectPath),
 	)
-}
-
-func escapeStorageObjectPath(value string) string {
-	parts := strings.Split(strings.Trim(value, "/"), "/")
-	for index, part := range parts {
-		parts[index] = url.PathEscape(part)
-	}
-
-	return strings.Join(parts, "/")
 }
 
 func (client storageClient) resolveSignedURL(value string) string {

@@ -62,11 +62,15 @@ SITE_URL=https://app.vimobcrm.com.br
 3. Subir a pilha oficial vazia com PostgreSQL 17.
 4. Gerar chaves novas e configurar SMTP, URLs e os secrets de
    `edge-functions.env.example` fora do Git.
-5. Copiar `supabase/functions/_shared` e somente as funções listadas em
-   `supabase/functions/production-manifest.json` para `volumes/functions`.
-6. Instalar o roteador em `functions-main/index.ts` e o override
+5. Executar `node scripts/supabase/verify-edge-functions.mjs`. O corte deve ser
+   interrompido se inventário, lifecycle, JWT ou hashes da fonte divergirem.
+6. Copiar `supabase/functions/_shared` e somente as funções com status `ACTIVE`
+   em `supabase/functions/production-manifest.json` para `volumes/functions`.
+   Entradas `RETIRED` permanecem apenas como inventário e o roteador responde
+   `404` para elas.
+7. Instalar o roteador em `functions-main/index.ts` e o override
    `docker-compose.vimob-functions.yml`. Ele preserva `verify_jwt` por função.
-7. Habilitar o endpoint S3 no self-hosted, gerar credenciais e iniciar a
+8. Habilitar o endpoint S3 no self-hosted, gerar credenciais e iniciar a
    primeira cópia com `copy-storage.sh`.
 
 O comando `supabase secrets list` devolve nomes e hashes, não os valores. Os
@@ -84,7 +88,10 @@ provedores antes do corte.
 5. Executar `post-restore-rewrite.sql` para trocar as referências ao projeto
    antigo em seis Cron jobs e na função `private.invoke_google_calendar_worker`.
 6. Executar novamente `copy-storage.sh` para trazer o delta dos objetos.
-7. Reiniciar os serviços e executar `verify.sql`.
+7. Executar `rewrite-public-storage-urls-v1.sql` primeiro com `apply=0`; para
+   aplicar, repetir com `apply=1` e as cinco contagens exibidas pela auditoria.
+   O script recusa buckets privados, URLs assinadas e objetos ausentes.
+8. Reiniciar os serviços e executar `verify.sql`.
 
 O banco recebe escrita durante o dump lógico. Por isso, depois do início do
 dump final, a origem deve permanecer em manutenção até o cutover. Não faça

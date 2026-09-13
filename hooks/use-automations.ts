@@ -12,17 +12,13 @@ import {
   type TriggerType,
   type UpdateAutomationInput,
 } from "@/lib/api/automations";
+import { getNonEmptyErrorMessageOrFallback } from "@/lib/api/vimob-error";
+import { requireActiveOrganizationId as requireOrganizationId } from "@/lib/auth/active-organization";
 import { saveAutomationFlowInputSchema } from "@/lib/validation";
 import { toast } from "sonner";
 
-function getErrorMessage(error: unknown) {
-  return error instanceof Error && error.message ? error.message : "Tente novamente em alguns instantes.";
-}
-
-function requireOrganizationId(organizationId?: string | null) {
-  if (!organizationId) throw new Error("Organização não selecionada.");
-  return organizationId;
-}
+const getErrorMessage = (error: unknown) =>
+  getNonEmptyErrorMessageOrFallback(error, "Tente novamente em alguns instantes.");
 
 export type {
   ActionType,
@@ -62,8 +58,8 @@ export const TRIGGER_TYPE_DESCRIPTIONS: Record<TriggerType, string> = {
 };
 
 export function useAutomations(enabled = true) {
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ["automations", organizationId],
@@ -73,18 +69,18 @@ export function useAutomations(enabled = true) {
 }
 
 export function useAutomation(automationId: string) {
-  const { profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useQuery({
-    queryKey: ["automation", automationId, profile?.organization_id],
-    queryFn: () => automationsAPI.getAutomation(automationId, profile?.organization_id),
-    enabled: !!automationId && !!profile?.organization_id,
+    queryKey: ["automation", automationId, activeOrganization.organizationId],
+    queryFn: () => automationsAPI.getAutomation(automationId, activeOrganization.organizationId),
+    enabled: !!automationId && !!activeOrganization.organizationId,
   });
 }
 
 export function useAutomationMedia(mediaType: AutomationMediaType) {
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   const query = useInfiniteQuery({
     queryKey: ["automation-media", organizationId, mediaType],
@@ -110,11 +106,11 @@ export function useAutomationMedia(mediaType: AutomationMediaType) {
 
 export function useCreateAutomation() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: async (data: CreateAutomationInput) => {
-      return automationsAPI.createAutomation(data, requireOrganizationId(profile?.organization_id));
+      return automationsAPI.createAutomation(data, requireOrganizationId(activeOrganization.organizationId));
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["automations"] });
@@ -127,11 +123,11 @@ export function useCreateAutomation() {
 
 export function useUpdateAutomation() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: async (data: UpdateAutomationInput) => {
-      return automationsAPI.updateAutomation(data, requireOrganizationId(profile?.organization_id));
+      return automationsAPI.updateAutomation(data, requireOrganizationId(activeOrganization.organizationId));
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["automations"] });
@@ -145,10 +141,10 @@ export function useUpdateAutomation() {
 
 export function useDeleteAutomation() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
-    mutationFn: async (id: string) => automationsAPI.deleteAutomation(id, requireOrganizationId(profile?.organization_id)),
+    mutationFn: async (id: string) => automationsAPI.deleteAutomation(id, requireOrganizationId(activeOrganization.organizationId)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["automations"] });
       toast.success("Automação excluída!");
@@ -161,10 +157,10 @@ export function useDeleteAutomation() {
 
 export function useDuplicateAutomation() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
-    mutationFn: async (id: string) => automationsAPI.duplicateAutomation(id, requireOrganizationId(profile?.organization_id)),
+    mutationFn: async (id: string) => automationsAPI.duplicateAutomation(id, requireOrganizationId(activeOrganization.organizationId)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["automations"] });
       toast.success("Automação duplicada com sucesso!");
@@ -177,11 +173,11 @@ export function useDuplicateAutomation() {
 
 export function useToggleAutomation() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: async ({ id, is_active }: { id: string; is_active: boolean }) => {
-      const organizationId = requireOrganizationId(profile?.organization_id);
+      const organizationId = requireOrganizationId(activeOrganization.organizationId);
 
       if (is_active) {
         const automation = await automationsAPI.getAutomation(id, organizationId);
@@ -224,7 +220,7 @@ export function useToggleAutomation() {
 
 export function useSaveAutomationFlowJSON() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: async ({ automationId, flowDefinition, ...metadata }: {
@@ -236,7 +232,7 @@ export function useSaveAutomationFlowJSON() {
     }) => automationsAPI.saveAutomationFlow(
       automationId,
       { flowDefinition, ...metadata },
-      requireOrganizationId(profile?.organization_id),
+      requireOrganizationId(activeOrganization.organizationId),
     ),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["automation", variables.automationId] });
@@ -250,7 +246,7 @@ export function useSaveAutomationFlowJSON() {
 
 export function useSaveAutomationFlow() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: async ({
@@ -288,7 +284,7 @@ export function useSaveAutomationFlow() {
       return automationsAPI.saveAutomationFlow(
         automationId,
         { flowDefinition, name, description, isActive },
-        requireOrganizationId(profile?.organization_id),
+        requireOrganizationId(activeOrganization.organizationId),
       );
     },
     onSuccess: (_, variables) => {
@@ -302,22 +298,22 @@ export function useSaveAutomationFlow() {
 }
 
 export function useAutomationTemplates() {
-  const { profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useQuery({
-    queryKey: ["automation-templates", profile?.organization_id],
-    queryFn: () => automationsAPI.listTemplates(profile?.organization_id),
-    enabled: !!profile?.organization_id,
+    queryKey: ["automation-templates", activeOrganization.organizationId],
+    queryFn: () => automationsAPI.listTemplates(activeOrganization.organizationId),
+    enabled: !!activeOrganization.organizationId,
   });
 }
 
 export function useCreateTemplate() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: async (data: { name: string; content: string; media_url?: string; media_type?: string }) => {
-      return automationsAPI.createTemplate(data, requireOrganizationId(profile?.organization_id));
+      return automationsAPI.createTemplate(data, requireOrganizationId(activeOrganization.organizationId));
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["automation-templates"] });
@@ -331,10 +327,10 @@ export function useCreateTemplate() {
 
 export function useDeleteTemplate() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
-    mutationFn: async (id: string) => automationsAPI.deleteTemplate(id, requireOrganizationId(profile?.organization_id)),
+    mutationFn: async (id: string) => automationsAPI.deleteTemplate(id, requireOrganizationId(activeOrganization.organizationId)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["automation-templates"] });
       toast.success("Template excluido!");
@@ -347,10 +343,10 @@ export function useDeleteTemplate() {
 
 export function useCancelExecution() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
-    mutationFn: async (executionId: string) => automationsAPI.cancelExecution(executionId, requireOrganizationId(profile?.organization_id)),
+    mutationFn: async (executionId: string) => automationsAPI.cancelExecution(executionId, requireOrganizationId(activeOrganization.organizationId)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["automation-executions"] });
       toast.success("Automação interrompida!");
@@ -363,11 +359,11 @@ export function useCancelExecution() {
 
 export function useCancelAutomationExecutions() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: (automationId: string) =>
-      automationsAPI.cancelAutomationExecutions(automationId, requireOrganizationId(profile?.organization_id)),
+      automationsAPI.cancelAutomationExecutions(automationId, requireOrganizationId(activeOrganization.organizationId)),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["automation-executions"] });
       queryClient.invalidateQueries({ queryKey: ["automation-execution-summaries"] });
@@ -381,8 +377,8 @@ export function useCancelAutomationExecutions() {
 
 export function useCancelLeadExecutions() {
   const queryClient = useQueryClient();
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useMutation({
     mutationFn: (leadId: string) =>
@@ -391,20 +387,57 @@ export function useCancelLeadExecutions() {
       queryClient.invalidateQueries({ queryKey: ["automation-executions"] });
       queryClient.invalidateQueries({ queryKey: ["automation-execution-summaries"] });
       if (result.cancelled === 0) {
-        toast.info("Nenhuma automaÃ§Ã£o ativa para este lead.");
+        toast.info("Nenhuma automação ativa para este lead.");
         return;
       }
-      toast.success(result.cancelled === 1 ? "AutomaÃ§Ã£o interrompida." : `${result.cancelled} automaÃ§Ãµes interrompidas.`);
+      toast.success(result.cancelled === 1 ? "Automação interrompida." : `${result.cancelled} automações interrompidas.`);
     },
     onError: (error: unknown) => {
-      toast.error("NÃ£o foi possÃ­vel interromper a automaÃ§Ã£o do lead.", { description: getErrorMessage(error) });
+      toast.error("Não foi possível interromper a automação do lead.", { description: getErrorMessage(error) });
     },
   });
 }
 
+const ACTIVE_AUTOMATION_EXECUTION_STATUSES = new Set(["queued", "running", "waiting"]);
+
+export function useLeadActiveAutomationExecutions(
+  leadId: string | null,
+  options: { enabled?: boolean } = {},
+) {
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
+
+  return useQuery({
+    queryKey: ["automation-executions", "lead-active", organizationId, leadId],
+    queryFn: async () => {
+      if (!leadId) return [] as AutomationExecution[];
+
+      const executions = await automationsAPI.listExecutions({
+        leadId,
+        activeOnly: true,
+        limit: 10,
+        organizationId,
+      });
+
+      // Keep the UI fail-closed if an older API returns an unexpected status.
+      return executions.filter((execution) =>
+        ACTIVE_AUTOMATION_EXECUTION_STATUSES.has(execution.status),
+      );
+    },
+    enabled: (options.enabled ?? true) && !!organizationId && !!leadId,
+    staleTime: 5_000,
+    refetchInterval: (query) => {
+      const executions = query.state.data as AutomationExecution[] | undefined;
+      return executions?.length ? 15_000 : 30_000;
+    },
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+  });
+}
+
 export function useAutomationExecutions(automationId?: string, limit = 50) {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ["automation-executions", automationId, organizationId, limit],
@@ -429,8 +462,8 @@ export function useAutomationExecutions(automationId?: string, limit = 50) {
 }
 
 export function useAutomationExecutionSummaries() {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ["automation-execution-summaries", organizationId],
@@ -447,8 +480,8 @@ export function useAutomationExecutionSteps(
   executionId: string,
   options: { enabled?: boolean; limit?: number; offset?: number; isExecutionActive?: boolean } = {},
 ) {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
   const limit = options.limit ?? 50;
   const offset = options.offset ?? 0;
 
@@ -467,8 +500,8 @@ export function useAutomationExecutionSteps(
 }
 
 export function useAutomationRuntimeIssues(offset = 0, limit = 50) {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ["automation-runtime-issues", organizationId, limit, offset],
@@ -485,8 +518,8 @@ export function useAutomationRuntimeIssues(offset = 0, limit = 50) {
 
 export function useRetryAutomationRuntimeIssue() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useMutation({
     mutationFn: ({ kind, id }: { kind: AutomationRuntimeIssueKind; id: string }) =>

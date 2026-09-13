@@ -1,6 +1,7 @@
 package properties
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -39,6 +40,9 @@ func TestProjectWorkspacePropertyUsesRoleAwareAllowlist(t *testing.T) {
 		"commission_percentage": 6.0,
 		"comentarios_internos":  "nao expor",
 		"aprovacao_ambiental":   "aprovada",
+		"faixa_valor_imovel":    "R$ 500 mil a R$ 700 mil",
+		"renda_familiar":        15000.0,
+		"is_demo":               true,
 		"metadata":              map[string]any{"internal": true},
 		"future_secret_column":  "must never leak",
 	}
@@ -55,7 +59,8 @@ func TestProjectWorkspacePropertyUsesRoleAwareAllowlist(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		"owner_cellphone", "commission_percentage", "comentarios_internos",
-		"aprovacao_ambiental", "metadata", "future_secret_column",
+		"aprovacao_ambiental", "faixa_valor_imovel", "renda_familiar", "is_demo",
+		"metadata", "future_secret_column",
 	} {
 		if _, exists := viewer[forbidden]; exists {
 			t.Fatalf("viewer projection leaked %s: %#v", forbidden, viewer)
@@ -71,11 +76,161 @@ func TestProjectWorkspacePropertyUsesRoleAwareAllowlist(t *testing.T) {
 	}
 
 	manager := projectWorkspaceProperty(source, true, true)
-	if manager["commission_percentage"] != 6.0 || manager["comentarios_internos"] != "nao expor" || manager["aprovacao_ambiental"] != "aprovada" {
+	if manager["commission_percentage"] != 6.0 || manager["comentarios_internos"] != "nao expor" ||
+		manager["aprovacao_ambiental"] != "aprovada" || manager["faixa_valor_imovel"] == nil ||
+		manager["renda_familiar"] != 15000.0 || manager["is_demo"] != true {
 		t.Fatalf("manager projection omitted intentional internal fields: %#v", manager)
 	}
 	if _, exists := manager["future_secret_column"]; exists {
 		t.Fatalf("future database columns must require an explicit contract change: %#v", manager)
+	}
+}
+
+func TestEveryWritablePropertyFieldHasAnExplicitResponsePrivacyClass(t *testing.T) {
+	t.Parallel()
+
+	classified := make(map[string]struct{}, len(workspacePropertyBaseFields)+len(workspacePropertyInternalFields)+len(propertyOwnerContactFields))
+	for _, fields := range [][]string{
+		workspacePropertyBaseFields,
+		workspacePropertyInternalFields,
+		propertyOwnerContactFields,
+	} {
+		for _, field := range fields {
+			classified[field] = struct{}{}
+		}
+	}
+	for field := range writableFields {
+		if _, ok := classified[field]; !ok {
+			t.Errorf("writable property field %q has no explicit base, internal, or owner-contact response class", field)
+		}
+	}
+}
+
+func TestPropertyListIncludesRevisionAndAppliesRoleAwareProjection(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	start := strings.Index(source, "func (repo Repository) List(")
+	end := strings.Index(source, "func (repo Repository) Stats(")
+	if start < 0 || end <= start {
+		t.Fatal("property List method was not found")
+	}
+	method := source[start:end]
+	for _, required := range []string{
+		"'created_at', p.created_at",
+		"'updated_at', p.updated_at",
+		"from public.property_assets as any_photo",
+		"activePropertyAssetSQL(\"asset\")",
+		"'image_urls', case",
+		"'fotos', case",
+		"repo.attachSignedPropertyCoverURLs(ctx, properties)",
+		"properties[index] = projectWorkspaceProperty(",
+		"canManageProperties(tenantContext)",
+	} {
+		if !strings.Contains(method, required) {
+			t.Fatalf("property List contract is missing %q", required)
+		}
+	}
+	if count := strings.Count(method, "activePropertyAssetSQL(\"asset\")"); count != 1 {
+		t.Fatalf("property List must filter retirement only from the cover lookup, got %d filters", count)
+	}
+	if strings.Index(method, "repo.attachSignedPropertyCoverURLs(ctx, properties)") >
+		strings.Index(method, "properties[index] = projectWorkspaceProperty(") {
+		t.Fatal("list projection must run after cover signing so it can remove the private storage-path helper")
+	}
+
+	const creatorID = "00000000-0000-4000-8000-000000000003"
+	property := normalizePropertyOutput(Property{
+		"id":                    "00000000-0000-4000-8000-000000000001",
+		"organization_id":       "00000000-0000-4000-8000-000000000002",
+		"created_by":            creatorID,
+		"created_at":            "2026-09-08T12:00:00Z",
+		"updated_at":            "2026-09-08T12:30:00Z",
+		"finalidade_uso":        "residencial",
+		"commission_percentage": 6.0,
+	})
+	viewer := projectWorkspaceProperty(property, false, false)
+	if viewer["created_at"] == nil || viewer["updated_at"] == nil {
+		t.Fatalf("list projection removed optimistic-lock timestamps: %#v", viewer)
+	}
+	if viewer["finalidade_uso"] != "residencial" {
+		t.Fatalf("list projection removed safe purpose data: %#v", viewer)
+	}
+	if viewer["cadastrado_por"] != creatorID {
+		t.Fatalf("list projection lost the normalized responsible id used by edit policy: %#v", viewer)
+	}
+	for _, forbidden := range []string{"created_by", "commission_percentage", "_asset_cover_storage_path"} {
+		if _, exists := viewer[forbidden]; exists {
+			t.Fatalf("viewer list projection leaked %s: %#v", forbidden, viewer)
+		}
+	}
+
+	legacyCreatorOnly := Property{
+		"created_by":          creatorID,
+		"responsible_user_id": "00000000-0000-4000-8000-000000000004",
+		"cadastrado_por":      "00000000-0000-4000-8000-000000000004",
+	}
+	creator := tenant.Context{
+		UserID:         creatorID,
+		OrganizationID: "00000000-0000-4000-8000-000000000002",
+		MemberRole:     "user",
+		Permissions:    []string{"property_view"},
+	}
+	authorization := propertyUpdateAuthorizationFromProperty(
+		creator,
+		legacyCreatorOnly,
+		propertyEditPolicyResponsibleOrAdmin,
+		"hidden",
+	)
+	legacyCreatorOnly["can_edit"] = authorization.CanEdit
+	creatorProjection := projectWorkspaceProperty(legacyCreatorOnly, false, false)
+	if creatorProjection["can_edit"] != true {
+		t.Fatalf("creator-only legacy property lost its server-derived edit capability: %#v", creatorProjection)
+	}
+	if _, exists := creatorProjection["created_by"]; exists {
+		t.Fatalf("server-derived capability re-exposed the internal creator UUID: %#v", creatorProjection)
+	}
+}
+
+func TestPropertyWorkspaceInjectsServerEditCapabilityBeforeProjection(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile("workspace_repository.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	start := strings.Index(source, "func (repo Repository) GetWorkspace(")
+	end := strings.Index(source, "var normalizedWorkspaceResourcesByTable")
+	if start < 0 || end <= start {
+		t.Fatal("property workspace read method was not found")
+	}
+	method := source[start:end]
+	authorizationIndex := strings.Index(method, "propertyUpdateAuthorizationFromProperty(")
+	capabilityIndex := strings.Index(method, "property[\"can_edit\"] = authorization.CanEdit")
+	projectionIndex := strings.Index(method, "projectWorkspaceProperty(property, canManage, canViewContacts)")
+	if authorizationIndex < 0 || capabilityIndex < authorizationIndex || projectionIndex < capabilityIndex {
+		t.Fatal("normalized workspace must derive can_edit from raw creator/responsible ids before privacy projection")
+	}
+
+	legacyStart := strings.Index(source, "func (repo Repository) getLegacyWorkspace(")
+	legacyEnd := strings.Index(source, "func workspaceReadVisibility(")
+	if legacyStart < 0 || legacyEnd <= legacyStart {
+		t.Fatal("legacy property workspace fallback was not found")
+	}
+	legacyMethod := source[legacyStart:legacyEnd]
+	for _, required := range []string{
+		"propertyUpdateAuthorizationFromProperty(",
+		"authorization.CanEdit",
+		"property[\"can_edit\"] = canEdit",
+	} {
+		if !strings.Contains(legacyMethod, required) {
+			t.Fatalf("legacy workspace capability contract is missing %q", required)
+		}
 	}
 }
 

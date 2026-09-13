@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { mergePreservingDefinedFields } from '../merge-preserving-defined'
 import {
   apiLeadListResponseSchema,
   apiLeadSensitiveProfileResponseSchema,
   leadCreateInputSchema,
+  leadCustomSourceNameSchema,
+  leadDistributionOutcomeSchema,
   leadMoveStageInputSchema,
   leadUpdateInputSchema,
 } from './leads'
@@ -18,6 +21,30 @@ import {
 
 const ID = '11111111-1111-4111-8111-111111111111'
 const ORG_ID = '22222222-2222-4222-8222-222222222222'
+
+test('normaliza e limita o nome de uma origem criada pelo usuario', () => {
+  assert.equal(
+    leadCustomSourceNameSchema.parse('  Plantão   Zona Sul  '),
+    'Plantão Zona Sul',
+  )
+  assert.equal(leadCustomSourceNameSchema.safeParse('').success, false)
+  assert.equal(leadCustomSourceNameSchema.safeParse('x'.repeat(81)).success, false)
+  assert.equal(leadCustomSourceNameSchema.safeParse('Origem\nquebrada').success, false)
+})
+
+test('aceita apenas resultados conhecidos da distribuicao de criacao', () => {
+  for (const outcome of [
+    'assigned',
+    'already_assigned',
+    'no_matching_queue',
+    'no_available_members',
+    'skipped',
+    'reentry_preserved',
+  ]) {
+    assert.equal(leadDistributionOutcomeSchema.safeParse(outcome).success, true)
+  }
+  assert.equal(leadDistributionOutcomeSchema.safeParse('silently_failed').success, false)
+})
 
 test('normaliza telefone brasileiro local e legado para E.164', () => {
   assert.equal(normalizePhoneToE164('(11) 99999-8888'), '+5511999998888')
@@ -76,6 +103,37 @@ test('aceita uma entrada valida de lead', () => {
   })
 
   assert.equal(result.success, true)
+})
+
+test('valida o controle de distribuicao da importacao', () => {
+  const automatic = leadCreateInputSchema.safeParse({
+    name: 'Contato distribuido',
+    importMode: true,
+    autoDistribute: true,
+    roundRobinId: ID,
+  })
+  const manual = leadCreateInputSchema.safeParse({
+    name: 'Contato sem distribuicao',
+    importMode: true,
+    autoDistribute: false,
+  })
+
+  assert.equal(automatic.success, true)
+  assert.equal(manual.success, true)
+  assert.equal(leadCreateInputSchema.safeParse({
+    name: 'Fila invalida',
+    autoDistribute: true,
+    roundRobinId: 'fila-invalida',
+  }).success, false)
+  assert.equal(leadCreateInputSchema.safeParse({
+    name: 'Opcoes conflitantes',
+    autoDistribute: false,
+    roundRobinId: ID,
+  }).success, false)
+  assert.equal(leadCreateInputSchema.safeParse({
+    name: 'Fila sem acionamento explicito',
+    roundRobinId: ID,
+  }).success, false)
 })
 
 test('trata email vazio de importacao como ausente', () => {
@@ -215,6 +273,38 @@ test('valida a ordem visual separada do relogio da etapa', () => {
     stageId: ID,
     stageEnteredAt: '2026-07-12T15:30:00Z',
   }).success, false)
+})
+
+test('aceita e normaliza motivo de perda no contrato transacional de movimento', () => {
+  const result = leadMoveStageInputSchema.safeParse({
+    stageId: ID,
+    lostReason: '  Sem interesse  ',
+  })
+
+  assert.equal(result.success, true)
+  if (result.success) assert.equal(result.data.lostReason, 'Sem interesse')
+  assert.equal(leadMoveStageInputSchema.safeParse({
+    stageId: ID,
+    lostReason: 'x'.repeat(301),
+  }).success, false)
+})
+
+test('nao apaga campos enriquecidos quando o DTO hidratado usa null sintetico', () => {
+  const snapshot = {
+    id: 'lead-1',
+    initial_message: 'Quero visitar' as string | null,
+    last_contact_at: '2026-09-01T10:00:00Z' as string | null | undefined,
+    name: 'Original',
+  }
+  const merged = mergePreservingDefinedFields(snapshot, {
+    initial_message: null,
+    last_contact_at: undefined,
+    name: 'Atualizado',
+  }, ['initial_message', 'last_contact_at'])
+
+  assert.equal(merged.initial_message, 'Quero visitar')
+  assert.equal(merged.last_contact_at, '2026-09-01T10:00:00Z')
+  assert.equal(merged.name, 'Atualizado')
 })
 
 test('valida o contrato da lista de leads', () => {

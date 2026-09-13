@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/leadscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -39,6 +40,9 @@ func (service Service) Run(ctx context.Context, tenantContext tenant.Context, re
 	request, err := request.Validate()
 	if err != nil {
 		return RunResponse{}, err
+	}
+	if request.LeadID != "" && !leadscope.CanRead(tenantContext) {
+		return RunResponse{}, ErrPermission
 	}
 	agents, err := service.repo.ListRunnableAgents(ctx, tenantContext.OrganizationID)
 	if err != nil {

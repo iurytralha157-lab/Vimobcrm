@@ -110,6 +110,17 @@ func (resolver ClientIPResolver) Resolve(request *http.Request) string {
 	return peer.String()
 }
 
+// TrustsForwardedHeaders reports whether infrastructure-provided request
+// metadata can be accepted for this connection. A public client can forge
+// forwarding and geo headers unless the immediate peer is explicitly trusted.
+func (resolver ClientIPResolver) TrustsForwardedHeaders(request *http.Request) bool {
+	if request == nil {
+		return false
+	}
+	peer, ok := parseRemoteAddress(request.RemoteAddr)
+	return ok && resolver.isTrusted(peer)
+}
+
 func (resolver ClientIPResolver) isTrusted(address netip.Addr) bool {
 	for _, prefix := range resolver.trustedProxies {
 		if prefix.Contains(address) {

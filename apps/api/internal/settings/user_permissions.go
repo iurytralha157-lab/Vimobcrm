@@ -13,6 +13,10 @@ import (
 type permissionTarget struct {
 	role         string
 	isTeamLeader bool
+	name         string
+	email        string
+	avatarURL    *string
+	isActive     bool
 }
 
 func (repo Repository) GetUserPermissions(ctx context.Context, tenantContext tenant.Context, userID string) (UserPermissionProfile, error) {
@@ -44,9 +48,13 @@ func (repo Repository) GetUserPermissions(ctx context.Context, tenantContext ten
 		profile = "leader"
 	}
 	result := UserPermissionProfile{
-		UserID:  userID,
-		Profile: profile,
-		Locked:  target.role == "owner" || target.role == "admin",
+		UserID:    userID,
+		Name:      target.name,
+		Email:     target.email,
+		AvatarURL: target.avatarURL,
+		IsActive:  target.isActive,
+		Profile:   profile,
+		Locked:    target.role == "owner" || target.role == "admin",
 	}
 	for _, definition := range permissions.Catalog() {
 		var override *bool
@@ -82,20 +90,39 @@ func (repo Repository) ReplaceUserPermissions(ctx context.Context, tenantContext
 	if target.role == "owner" || target.role == "admin" {
 		return UserPermissionProfile{}, tenant.ErrOrganizationAccessDenied
 	}
+	if !canMutatePermissionTarget(tenantContext, userID) {
+		return UserPermissionProfile{}, tenant.ErrOrganizationAccessDenied
+	}
 	roleGrants, err := repo.getUserRoleGrants(ctx, tenantContext.OrganizationID, userID)
 	if err != nil {
 		return UserPermissionProfile{}, err
 	}
+	currentOverrides, err := repo.getUserPermissionOverrides(ctx, tenantContext.OrganizationID, userID)
+	if err != nil {
+		return UserPermissionProfile{}, err
+	}
 	inherited := permissions.InheritedSet(target.role, target.isTeamLeader, roleGrants)
-	overrides := make(map[string]bool)
+	normalizedDesired := make(map[string]bool, len(desired))
 	for key, allowed := range desired {
 		canonical := permissions.CanonicalKey(key)
 		if !permissions.IsKnown(canonical) {
 			return UserPermissionProfile{}, ErrInvalidInput
 		}
+		if previous, exists := normalizedDesired[canonical]; exists && previous != allowed {
+			return UserPermissionProfile{}, ErrInvalidInput
+		}
+		normalizedDesired[canonical] = allowed
+	}
+	overrides := make(map[string]bool)
+	for canonical, allowed := range normalizedDesired {
 		if allowed != (inherited["*"] || inherited[canonical]) {
 			overrides[canonical] = allowed
 		}
+	}
+	currentEffective := permissions.Resolve(target.role, target.isTeamLeader, roleGrants, currentOverrides)
+	desiredEffective := permissions.Resolve(target.role, target.isTeamLeader, roleGrants, overrides)
+	if !canApplyPermissionTransition(tenantContext, currentEffective, desiredEffective) {
+		return UserPermissionProfile{}, tenant.ErrOrganizationAccessDenied
 	}
 
 	if err := repo.replaceUserPermissionOverrides(ctx, tenantContext, userID, overrides); err != nil {
@@ -119,6 +146,22 @@ func (repo Repository) ResetUserPermissions(ctx context.Context, tenantContext t
 	if target.role == "owner" || target.role == "admin" {
 		return UserPermissionProfile{}, tenant.ErrOrganizationAccessDenied
 	}
+	if !canMutatePermissionTarget(tenantContext, userID) {
+		return UserPermissionProfile{}, tenant.ErrOrganizationAccessDenied
+	}
+	roleGrants, err := repo.getUserRoleGrants(ctx, tenantContext.OrganizationID, userID)
+	if err != nil {
+		return UserPermissionProfile{}, err
+	}
+	currentOverrides, err := repo.getUserPermissionOverrides(ctx, tenantContext.OrganizationID, userID)
+	if err != nil {
+		return UserPermissionProfile{}, err
+	}
+	currentEffective := permissions.Resolve(target.role, target.isTeamLeader, roleGrants, currentOverrides)
+	defaultEffective := permissions.Resolve(target.role, target.isTeamLeader, roleGrants, map[string]bool{})
+	if !canApplyPermissionTransition(tenantContext, currentEffective, defaultEffective) {
+		return UserPermissionProfile{}, tenant.ErrOrganizationAccessDenied
+	}
 	if err := repo.replaceUserPermissionOverrides(ctx, tenantContext, userID, map[string]bool{}); err != nil {
 		return UserPermissionProfile{}, err
 	}
@@ -135,12 +178,24 @@ func (repo Repository) getPermissionTarget(ctx context.Context, organizationID s
 		           and tm.user_id = om.user_id
 		           and tm.is_active = true
 		           and tm.is_leader = true
-		       )
+		       ),
+		       u.name,
+		       u.email,
+		       u.avatar_url,
+		       (coalesce(u.is_active, false) and coalesce(om.is_active, false))
 		from public.organization_members om
+		join public.users u on u.id = om.user_id
 		where om.organization_id = $1::uuid
 		  and om.user_id = $2::uuid
-		  and om.is_active = true
-	`, organizationID, userID).Scan(&target.role, &target.isTeamLeader)
+		  and om.deleted_at is null
+	`, organizationID, userID).Scan(
+		&target.role,
+		&target.isTeamLeader,
+		&target.name,
+		&target.email,
+		&target.avatarURL,
+		&target.isActive,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return permissionTarget{}, ErrInvalidInput
 	}
@@ -237,7 +292,40 @@ func (repo Repository) replaceUserPermissionOverrides(ctx context.Context, tenan
 }
 
 func canManageUserPermissions(tenantContext tenant.Context) bool {
-	return tenantContext.IsSuperAdmin ||
-		tenantContext.HasRole("owner", "admin") ||
+	return isPrivilegedPermissionManager(tenantContext) ||
 		tenantContext.HasPermission(permissions.PermissionsManage)
+}
+
+func isPrivilegedPermissionManager(tenantContext tenant.Context) bool {
+	return tenantContext.IsSuperAdmin || tenantContext.HasRole("owner", "admin")
+}
+
+func canMutatePermissionTarget(tenantContext tenant.Context, targetUserID string) bool {
+	return targetUserID != tenantContext.UserID || isPrivilegedPermissionManager(tenantContext)
+}
+
+func canDelegatePermissionKeys(tenantContext tenant.Context, permissionKeys []string) bool {
+	if isPrivilegedPermissionManager(tenantContext) {
+		return true
+	}
+	for _, permissionKey := range permissionKeys {
+		if !tenantContext.HasPermission(permissionKey) {
+			return false
+		}
+	}
+	return true
+}
+
+func canApplyPermissionTransition(tenantContext tenant.Context, current []string, desired []string) bool {
+	if isPrivilegedPermissionManager(tenantContext) {
+		return true
+	}
+	for _, definition := range permissions.Catalog() {
+		if permissions.Has(desired, definition.Key) &&
+			!permissions.Has(current, definition.Key) &&
+			!tenantContext.HasPermission(definition.Key) {
+			return false
+		}
+	}
+	return true
 }

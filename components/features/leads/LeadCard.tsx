@@ -14,7 +14,13 @@ import { TaskOutcomeDialog, TaskOutcome } from '@/components/features/leads/Task
 import { useAuth } from '@/contexts/AuthContext';
 import { ReentryBadge } from '@/components/features/leads/ReentryBadge';
 import { BRAND_COLORS } from '@/config/brand-colors';
-import { getTagColorStyle } from '@/lib/tag-color';
+import { getTagColorStyleWithWhiteText } from '@/lib/tag-color';
+import {
+  formatCompactBRLCurrency as formatCurrency,
+  formatUnspacedBRLCurrency,
+} from '@/lib/utils/formatting';
+import { getErrorObjectMessage } from '@/lib/api/vimob-error';
+import { toast } from 'sonner';
 
 // Deal status labels and colors
 const dealStatusConfig = {
@@ -73,8 +79,6 @@ type LeadCardLead = {
     campaign_name?: string | null;
   }> | null;
   tags?: LeadTag[] | null;
-  unread_count?: number | null;
-  has_whatsapp_messages?: boolean | null;
   reentry_count?: number | null;
   last_entry_at?: string | null;
   deal_status?: string | null;
@@ -90,13 +94,16 @@ interface LeadCardProps {
   index: number;
   onAssignNow: (leadId: string) => void;
   isDragDisabled: boolean;
+  hasWhatsAppModule: boolean;
+  canViewWhatsApp: boolean;
+  canOperateWhatsApp: boolean;
   tourTarget?: string;
+  nowMs?: number;
 }
 
 // Formata tempo sempre em horas (ex: "30min", "2h", "72h")
-const formatShortTime = (date: Date): string => {
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
+const formatShortTime = (date: Date, nowMs = Date.now()): string => {
+  const diffMs = nowMs - date.getTime();
   const diffHrs = Math.floor(diffMs / 3600000);
   if (diffHrs === 0) {
     const diffMins = Math.floor(diffMs / 60000);
@@ -110,19 +117,34 @@ export const LeadCard = memo(function LeadCard({
   index,
   onAssignNow,
   isDragDisabled = false,
+  hasWhatsAppModule,
+  canViewWhatsApp,
+  canOperateWhatsApp,
   tourTarget,
+  nowMs = Date.now(),
 }: LeadCardProps) {
   const { openNewChat } = useFloatingChat();
-  const { profile } = useAuth();
+  const { activeOrganization, profile } = useAuth();
   const { recordFirstResponse } = useRecordFirstResponseOnAction();
   const createActivity = useCreateActivity();
   const [outcomeDialogOpen, setOutcomeDialogOpen] = useState(false);
   const [outcomeType, setOutcomeType] = useState<'call' | 'email'>('call');
   const leadName = lead.name || 'Lead';
-  const unreadCount = lead.unread_count ?? 0;
-  const stageTime = lead.stage_entered_at ? formatShortTime(new Date(lead.stage_entered_at)) : '-';
+  const stageTime = lead.stage_entered_at
+    ? formatShortTime(new Date(lead.stage_entered_at), nowMs)
+    : '-';
   const hasPhone = !!lead.phone;
   const hasEmail = !!lead.email;
+  const canUseWhatsApp = hasPhone && hasWhatsAppModule && canViewWhatsApp;
+  const whatsappActionLabel = !hasPhone
+    ? 'Sem telefone'
+    : !hasWhatsAppModule
+      ? 'Módulo de WhatsApp indisponível'
+      : !canViewWhatsApp
+        ? 'Sem permissão para ver o WhatsApp'
+        : canOperateWhatsApp
+          ? 'Abrir WhatsApp'
+          : 'Ver mensagens';
   const leadAvatarUrl = lead.whatsapp_avatar_url || lead.whatsapp_picture || lead.contact_picture || null;
 
   // Get interest value from: interest property, legacy valor_interesse, or property
@@ -147,18 +169,6 @@ export const LeadCard = memo(function LeadCard({
     whatsapp: "bg-[var(--lead-action-whatsapp-bg)] text-[var(--lead-action-whatsapp-fg)] hover:bg-[var(--lead-action-whatsapp-hover)]",
     email: "bg-[var(--lead-action-email-bg)] text-[var(--lead-action-email-fg)] hover:bg-[var(--lead-action-email-hover)]"
   };
-  const formatCurrency = (value: number) => {
-    if (value >= 1_000_000) {
-      const v = value / 1_000_000;
-      const formatted = v.toLocaleString('pt-BR', { maximumFractionDigits: 1, minimumFractionDigits: v % 1 === 0 ? 0 : 1 });
-      return `R$${formatted}M`;
-    } else if (value >= 1_000) {
-      const v = value / 1_000;
-      const formatted = v.toLocaleString('pt-BR', { maximumFractionDigits: 1, minimumFractionDigits: 0 });
-      return `R$${formatted}K`;
-    }
-    return `R$${value.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`;
-  };
   const handlePhoneClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (lead.phone) {
@@ -171,7 +181,7 @@ export const LeadCard = memo(function LeadCard({
   };
   const handleWhatsAppClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (lead.phone) {
+    if (lead.phone && canUseWhatsApp) {
       openNewChat(lead.phone, leadName, lead.id);
     }
   };
@@ -186,20 +196,25 @@ export const LeadCard = memo(function LeadCard({
   };
 
   const handleOutcomeConfirm = async (outcome: TaskOutcome, notes: string) => {
-    await createActivity.mutateAsync({
-      lead_id: lead.id,
-      type: outcomeType === 'call' ? 'call' : 'email',
-      content: outcomeType === 'call' ? 'Tentativa de ligação' : 'Email enviado',
-      metadata: { outcome, notes, channel: outcomeType },
-    });
-    await recordFirstResponse({
-      leadId: lead.id,
-      organizationId: lead.organization_id || profile?.organization_id || '',
-      channel: outcomeType === 'call' ? 'phone' : 'email',
-      actorUserId: profile?.id || null,
-      firstResponseAt: lead.first_response_at,
-    });
-    setOutcomeDialogOpen(false);
+    try {
+      await createActivity.mutateAsync({
+        lead_id: lead.id,
+        type: outcomeType === 'call' ? 'call' : 'email',
+        content: outcomeType === 'call' ? 'Tentativa de ligação' : 'Email enviado',
+        metadata: { outcome, notes, channel: outcomeType },
+      });
+      await recordFirstResponse({
+        leadId: lead.id,
+        organizationId: lead.organization_id || activeOrganization.organizationId || '',
+        channel: outcomeType === 'call' ? 'phone' : 'email',
+        actorUserId: profile?.id || null,
+        firstResponseAt: lead.first_response_at,
+      });
+      setOutcomeDialogOpen(false);
+    } catch (error) {
+      toast.error(`Não foi possível registrar a atividade: ${getErrorObjectMessage(error)}`);
+      throw error;
+    }
   };
   const isLost = lead.deal_status === 'lost';
   const isWon = lead.deal_status === 'won';
@@ -222,7 +237,7 @@ export const LeadCard = memo(function LeadCard({
 
   const isRecentlyCreated = lead.created_at &&
     !lead.assigned_user_id &&
-    (Date.now() - new Date(lead.created_at).getTime()) < 10000;
+    (nowMs - new Date(lead.created_at).getTime()) < 10000;
   const isAssigneeHydrating = Boolean(lead.assigned_user_id && !lead.assignee);
 
   return <>
@@ -288,11 +303,40 @@ export const LeadCard = memo(function LeadCard({
                   <>
                     <span
                       className="inline-flex h-[18px] items-center justify-center rounded-[4px] border-0 px-1.5 text-[9px] font-normal leading-none"
-                      style={getTagColorStyle(lead.tags[0].color)}
+                      style={getTagColorStyleWithWhiteText(lead.tags[0].color)}
                     >
                       {lead.tags[0].name}
                     </span>
-                    {lead.tags.length > 1 && <span className="inline-flex h-[18px] items-center text-[10px] leading-none text-muted-foreground">+{lead.tags.length - 1}</span>}
+                    {lead.tags.length > 1 && (
+                      <TooltipProvider delayDuration={100}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span
+                              className="pointer-events-auto relative z-30 inline-flex h-[18px] cursor-help items-center text-[10px] leading-none text-muted-foreground"
+                              aria-label={`Ver mais ${lead.tags.length - 1} tags`}
+                              tabIndex={0}
+                              onPointerDown={(event) => event.stopPropagation()}
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              +{lead.tags.length - 1}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom" className="max-w-[220px] border-0 p-2">
+                            <div className="flex flex-wrap gap-1">
+                              {lead.tags.slice(1).map((tag, hiddenTagIndex) => (
+                                <span
+                                  key={`${tag.name || 'tag'}-${hiddenTagIndex}`}
+                                  className="inline-flex h-[18px] items-center rounded-[4px] px-1.5 text-[9px] font-normal leading-none"
+                                  style={getTagColorStyleWithWhiteText(tag.color)}
+                                >
+                                  {tag.name || 'Sem nome'}
+                                </span>
+                              ))}
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
                   </>
                 ) : null}
             </div>
@@ -309,10 +353,6 @@ export const LeadCard = memo(function LeadCard({
                     {leadName[0]?.toUpperCase() || <User className="h-4 w-4" />}
                   </AvatarFallback>
                 </Avatar>
-                {/* Indicador de mensagens não lidas */}
-                {unreadCount > 0 && <span className="absolute -top-1 -right-1 h-4 min-w-4 flex items-center justify-center px-1 text-[9px] font-normal bg-primary text-primary-foreground rounded-full">
-                    {unreadCount > 9 ? '9+' : unreadCount}
-                  </span>}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5 min-w-0">
@@ -498,12 +538,12 @@ export const LeadCard = memo(function LeadCard({
 
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button type="button" aria-label={hasPhone ? `${lead.has_whatsapp_messages ? 'Ver mensagens de' : 'Enviar WhatsApp para'} ${leadName}` : `${leadName} está sem telefone`} onMouseDown={e => e.stopPropagation()} onClick={handleWhatsAppClick} disabled={!hasPhone} className={cn("pointer-events-auto flex h-6 w-6 items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-1 focus-visible:ring-primary/50", hasPhone ? iconColors.whatsapp : "cursor-not-allowed bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] opacity-60")}>
+                  <button type="button" aria-label={`${whatsappActionLabel}: ${leadName}`} onMouseDown={e => e.stopPropagation()} onClick={handleWhatsAppClick} disabled={!canUseWhatsApp} className={cn("pointer-events-auto flex h-6 w-6 items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-1 focus-visible:ring-primary/50", canUseWhatsApp ? iconColors.whatsapp : "cursor-not-allowed bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)] opacity-60")}>
                     <MessageCircle aria-hidden="true" className="h-3 w-3" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" className="text-xs">
-                  {hasPhone ? (lead.has_whatsapp_messages ? 'Ver Mensagens' : 'Enviar WhatsApp') : 'Sem telefone'}
+                  {whatsappActionLabel}
                 </TooltipContent>
               </Tooltip>
 
@@ -532,10 +572,10 @@ export const LeadCard = memo(function LeadCard({
                     {interestLabel ? (
                       <div className="space-y-0.5">
                         <div className="font-medium">{interestLabel}</div>
-                        <div>R${valorInteresse.toLocaleString('pt-BR')}</div>
+                        <div>{formatUnspacedBRLCurrency(valorInteresse)}</div>
                       </div>
                     ) : (
-                      <>Valor: R${valorInteresse.toLocaleString('pt-BR')}</>
+                      <>Valor: {formatUnspacedBRLCurrency(valorInteresse)}</>
                     )}
                   </TooltipContent>
                 </Tooltip>}
@@ -566,13 +606,15 @@ export const LeadCard = memo(function LeadCard({
     </Draggable>
 
     {/* Outcome Dialog for Phone/Email */}
-    <TaskOutcomeDialog
-      open={outcomeDialogOpen}
-      onOpenChange={setOutcomeDialogOpen}
-      taskType={outcomeType}
-      taskTitle={outcomeType === 'call' ? 'Tentativa de ligação' : 'Email enviado'}
-      onConfirm={handleOutcomeConfirm}
-      isLoading={createActivity.isPending}
-    />
+    {outcomeDialogOpen && (
+      <TaskOutcomeDialog
+        open={outcomeDialogOpen}
+        onOpenChange={setOutcomeDialogOpen}
+        taskType={outcomeType}
+        taskTitle={outcomeType === 'call' ? 'Tentativa de ligação' : 'Email enviado'}
+        onConfirm={handleOutcomeConfirm}
+        isLoading={createActivity.isPending}
+      />
+    )}
   </>;
 });

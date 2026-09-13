@@ -46,11 +46,24 @@ function getConnectedSessions(sessions?: MessageInputSession[] | null) {
   );
 }
 
+function getConfiguredSessions(sessions?: MessageInputSession[] | null) {
+  return (sessions || []).filter((session) =>
+    session.status !== "deleted" && session.provider !== "evolution"
+  );
+}
+
 function getConversationSession(
   conversation?: MessageInputConversation | null,
   sessions?: MessageInputSession[] | null,
 ): MessageInputSession | null {
   if (!conversation?.session_id) return null;
+
+  // The session list is the shared, actively refreshed source used by the
+  // Integrations screen and every WhatsApp launcher. Conversation payloads can
+  // carry an older nested status and must not override the current session.
+  const currentSession = findSessionById(sessions, conversation.session_id);
+  if (currentSession) return currentSession;
+
   if (conversation.session?.id === conversation.session_id) {
     return {
       id: conversation.session_id,
@@ -59,7 +72,7 @@ function getConversationSession(
     };
   }
 
-  return findSessionById(sessions, conversation.session_id) || {
+  return {
     id: conversation.session_id,
     status: null,
   };
@@ -89,9 +102,27 @@ export function getWhatsAppSendSessionId(
   if (connectedSessions.length === 1) {
     return connectedSessions[0].id;
   }
+  if (connectedSessions.length > 1) {
+    return undefined;
+  }
 
+  // A configured session can have a stale offline status while Integrations
+  // is reconciling it. Let the backend perform the definitive validation when
+  // there is no ambiguity about which account should send.
+  if (conversationSession?.id && findSessionById(sessions, conversationSession.id)) {
+    return conversationSession.id;
+  }
+
+  // Preserve a persisted conversation's trusted account when that account is
+  // absent from the refreshed list. The backend will validate authorization;
+  // the client must not silently redirect history through another account.
   if (conversationSession?.id && conversationSession.status == null) {
     return conversationSession.id;
+  }
+
+  const configuredSessions = getConfiguredSessions(sessions);
+  if (configuredSessions.length === 1) {
+    return configuredSessions[0].id;
   }
 
   return undefined;
@@ -124,22 +155,6 @@ export function getWhatsAppMessageInputState(
       placeholder: connectedSessions.length > 1
         ? "Selecione qual WhatsApp deseja usar para enviar"
         : "Conecte um WhatsApp para enviar",
-    };
-  }
-
-  const selectedSession = selectedSessionId && selectedSessionId !== "all"
-    ? findSessionById(sessions, selectedSessionId)
-    : null;
-  const linkedSession = selectedSession || findSessionById(sessions, sendSessionId) || (
-    conversation.session?.id === sendSessionId ? conversation.session : null
-  );
-  if (linkedSession?.status && !isUsableWhatsAppSessionStatus(linkedSession.status)) {
-    return {
-      disabled: true,
-      placeholder: selectedSession
-        ? "A conexão selecionada está desconectada"
-        : "A conexão deste WhatsApp está desconectada",
-      sendSessionId,
     };
   }
 

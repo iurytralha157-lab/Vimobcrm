@@ -3,9 +3,11 @@ package webhooks
 import "errors"
 
 var (
-	ErrInvalidInput    = errors.New("invalid webhook input")
-	ErrInvalidToken    = errors.New("invalid webhook token")
-	ErrWebhookNotFound = errors.New("webhook not found")
+	ErrInvalidInput        = errors.New("invalid webhook input")
+	ErrInvalidToken        = errors.New("invalid webhook token")
+	ErrWebhookNotFound     = errors.New("webhook not found")
+	ErrRateLimited         = errors.New("webhook rate limit exceeded")
+	ErrIdempotencyConflict = errors.New("webhook idempotency key was reused with different payload")
 )
 
 type Envelope[T any] struct {
@@ -28,7 +30,7 @@ type WebhookRequest struct {
 
 type IncomingLeadResult struct {
 	OK             bool   `json:"ok"`
-	OrganizationID string `json:"organizationId,omitempty"`
+	OrganizationID string `json:"-"`
 	LeadID         string `json:"leadId"`
 	Reentry        bool   `json:"reentry"`
 	Idempotent     bool   `json:"idempotent,omitempty"`
@@ -45,4 +47,13 @@ type incomingWebhook struct {
 	TargetTagIDs     []string          `json:"target_tag_ids"`
 	TargetPropertyID *string           `json:"target_property_id"`
 	FieldMapping     map[string]string `json:"field_mapping"`
+}
+
+type leadIngressOptions struct {
+	Source                string
+	Provider              string
+	ProviderEventID       *string
+	SourceWebhookID       *string
+	IncrementWebhookStats bool
+	RequirePhone          bool
 }

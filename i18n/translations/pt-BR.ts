@@ -39,6 +39,8 @@ export const ptBR = {
     attentionCenter: "Prioridades e atenção",
     contacts: "Contatos",
     schedule: "Agenda",
+    scheduleCalendar: "Agenda",
+    scheduleDashboard: "Dashboard da agenda",
     conversations: "Conversas",
     properties: "Imóveis",
     propertiesAll: "Todos os Imóveis",
@@ -47,6 +49,7 @@ export const ptBR = {
     propertiesCondos: "Condomínios",
     propertiesLocations: "Localidades",
     propertiesOwners: "Proprietários",
+    propertiesSettings: "Configurações",
     contracts: "Contratos",
     financial: "Financeiro",
     financialDashboard: "Dashboard",
@@ -154,7 +157,7 @@ export const ptBR = {
     // Users tab
     users: {
       manager: "Gestor",
-      title: "Gestão de Usuários",
+      title: "Gestão de usuário",
       description: "Gerencie os membros da sua equipe",
       newUser: "Novo Corretor",
       createUser: "Criar Usuário",

@@ -44,6 +44,27 @@ func TestParseMessageFilterRejectsInvalidCompositeCursor(t *testing.T) {
 	}
 }
 
+func TestParseMessageFilterAllowsLazyMediaURLsWithoutChangingDefault(t *testing.T) {
+	defaultFilter, err := ParseMessageFilter(url.Values{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !defaultFilter.IncludeMediaURLs {
+		t.Fatal("legacy clients must keep eager media URL compatibility")
+	}
+
+	lazyFilter, err := ParseMessageFilter(url.Values{"includeMediaUrls": {"false"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lazyFilter.IncludeMediaURLs {
+		t.Fatal("includeMediaUrls=false must keep Storage signing out of the message-list request")
+	}
+	if _, err := ParseMessageFilter(url.Values{"includeMediaUrls": {"sometimes"}}); err == nil {
+		t.Fatal("invalid includeMediaUrls value was accepted")
+	}
+}
+
 func TestParseHistoryAccessFilterReusesBoundedMessageCursor(t *testing.T) {
 	const leadID = "22222222-2222-4222-8222-222222222222"
 	const cursorID = "11111111-1111-4111-8111-111111111111"

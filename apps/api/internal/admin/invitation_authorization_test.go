@@ -62,3 +62,20 @@ func TestCreateInvitationEnforcesAdminGrantAuthority(t *testing.T) {
 		t.Fatal("admin invitation authority must be enforced before persistence")
 	}
 }
+
+func TestDeleteInvitationOnlyCancelsPendingRecords(t *testing.T) {
+	source, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatalf("read admin repository source: %v", err)
+	}
+	text := string(source)
+	start := strings.Index(text, "func (repo Repository) DeleteInvitation(")
+	end := strings.Index(text[start+1:], "\nfunc (")
+	if start < 0 || end < 0 {
+		t.Fatal("could not isolate DeleteInvitation")
+	}
+	function := text[start : start+1+end]
+	if count := strings.Count(function, "and used_at is null"); count != 2 {
+		t.Fatalf("both superadmin and organization deletes must preserve accepted invitations; found %d pending guards", count)
+	}
+}

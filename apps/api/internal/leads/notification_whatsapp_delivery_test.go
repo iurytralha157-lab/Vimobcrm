@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -161,6 +163,9 @@ func TestOperationalNotificationRecipientSnapshotStillRequiresMembership(t *test
 	}
 	if _, bypassesMembership := immutableNotificationRecipientSnapshot(notification, "schedule_reminder", "whatsapp"); bypassesMembership {
 		t.Fatal("operational schedule reminder must keep the active-membership lookup")
+	}
+	if _, bypassesMembership := immutableNotificationRecipientSnapshot(notification, "appointment_reminder", "whatsapp"); bypassesMembership {
+		t.Fatal("canonical appointment reminder must keep the active-membership lookup")
 	}
 	if _, bypassesMembership := immutableNotificationRecipientSnapshot(notification, "billing_due_today", "email"); bypassesMembership {
 		t.Fatal("non-receipt billing email must re-resolve the currently authorized account contact")
@@ -334,6 +339,114 @@ func TestTransactionalWhatsAppPreWriteFailureRemainsRetryable(t *testing.T) {
 	}
 }
 
+func TestTransactionalWhatsAppAmbiguousHTTPFailureIsAcceptedWithoutRetry(t *testing.T) {
+	tests := []struct {
+		name        string
+		status      int
+		wantUnknown bool
+	}{
+		{name: "request timeout", status: http.StatusRequestTimeout, wantUnknown: true},
+		{name: "too early", status: http.StatusTooEarly, wantUnknown: true},
+		{name: "internal error", status: http.StatusInternalServerError, wantUnknown: true},
+		{name: "service unavailable", status: http.StatusServiceUnavailable, wantUnknown: true},
+		{name: "rate limited", status: http.StatusTooManyRequests, wantUnknown: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			provider := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				response.Header().Set("Content-Type", "application/json")
+				response.Header().Set("Retry-After", "1")
+				response.WriteHeader(test.status)
+				_, _ = response.Write([]byte(`{"error":"simulated provider response"}`))
+			}))
+			defer provider.Close()
+
+			idempotencyKey := notificationWhatsAppIdempotencyKey(
+				"11111111-1111-4111-8111-111111111111",
+				"billing_due_today",
+				"billing:due-today:22222222-2222-4222-8222-222222222222",
+			)
+			repo := Repository{evolutionGoAPIURL: provider.URL, evolutionGoAPIKey: "provider-token"}
+			result, err := repo.dispatchWhatsAppViaEvolutionGoWithClient(
+				context.Background(),
+				notificationWhatsAppSession{InstanceKey: "platform-sender"},
+				"5511999991111",
+				"Sua assinatura vence hoje",
+				"evolution_go_global_instance",
+				idempotencyKey,
+				provider.Client(),
+			)
+			if result.OutcomeUnknown != test.wantUnknown {
+				t.Fatalf("result = %#v, want outcomeUnknown=%v", result, test.wantUnknown)
+			}
+			if test.wantUnknown {
+				if err == nil {
+					t.Fatal("ambiguous mutation response must return an error")
+				}
+				metadata := setNotificationChannelDispatch(map[string]any{}, "whatsapp", result)
+				dispatch := mapFromAny(mapFromAny(metadata["dispatch"])["whatsapp"])
+				if dispatch["status"] != "accepted" || shouldAttemptNotificationChannel(metadata, "whatsapp", nil) {
+					t.Fatalf("ambiguous HTTP result must await webhook reconciliation: %#v", dispatch)
+				}
+			} else if err != nil {
+				t.Fatalf("definitive HTTP rejection returned error: %v", err)
+			}
+		})
+	}
+}
+
+func TestOrganizationWhatsAppAttemptNeverSwitchesToGlobalSender(t *testing.T) {
+	t.Parallel()
+
+	if shouldFallbackToGlobalNotificationWhatsAppSender(DispatchWhatsAppResult{
+		Attempted:      true,
+		OutcomeUnknown: true,
+		Error:          "evolution_go_delivery_outcome_unknown",
+	}) {
+		t.Fatal("ambiguous organization-sender outcome must not call the global sender")
+	}
+	if shouldFallbackToGlobalNotificationWhatsAppSender(DispatchWhatsAppResult{
+		Attempted: true,
+		Permanent: true,
+		Error:     "recipient_invalid",
+	}) {
+		t.Fatal("permanent organization-sender failure must not call the global sender")
+	}
+	if shouldFallbackToGlobalNotificationWhatsAppSender(DispatchWhatsAppResult{
+		Attempted: true,
+		Error:     "dial tcp: connection refused",
+	}) {
+		t.Fatal("an organization attempt must remain bound to its selected sender")
+	}
+	if !shouldFallbackToGlobalNotificationWhatsAppSender(DispatchWhatsAppResult{
+		Attempted: false,
+		Error:     "dial tcp: connection refused",
+	}) {
+		t.Fatal("a proven pre-write failure remains safe for a future preflight selection")
+	}
+
+	raw, err := os.ReadFile("support_notification_whatsapp.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	start := strings.Index(source, "func (repo Repository) dispatchWhatsAppNotification(")
+	end := strings.Index(source, "func shouldFallbackToGlobalNotificationWhatsAppSender(")
+	if start < 0 || end <= start {
+		t.Fatal("could not isolate WhatsApp sender selection")
+	}
+	dispatch := source[start:end]
+	if strings.Contains(dispatch, "shouldFallbackToGlobalNotificationWhatsAppSender") {
+		t.Fatal("sender selection must not run again after the organization provider call")
+	}
+	organizationSend := strings.Index(dispatch, `return repo.dispatchWhatsAppViaEvolutionGo(ctx, session`)
+	global := strings.Index(dispatch, "notificationConfigUsesDirectInstance(config)")
+	if organizationSend < 0 || global < 0 || organizationSend > global {
+		t.Fatal("a connected organization sender must terminate the selected branch before global preflight")
+	}
+}
+
 func TestTransactionalWhatsAppTimeoutIsOutcomeUnknownAndWebhookReconciled(t *testing.T) {
 	t.Parallel()
 
@@ -344,25 +457,31 @@ func TestTransactionalWhatsAppTimeoutIsOutcomeUnknownAndWebhookReconciled(t *tes
 	)
 	expectedID := deterministicNotificationWhatsAppMessageID(idempotencyKey)
 	requestObserved := make(chan string, 1)
-	provider := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	client := &http.Client{Transport: notificationRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		trace := httptrace.ContextClientTrace(request.Context())
+		if trace == nil || trace.WroteRequest == nil {
+			t.Fatal("transactional request must install the write-observation trace")
+		}
+		trace.WroteRequest(httptrace.WroteRequestInfo{})
+
 		var body map[string]any
 		_ = json.NewDecoder(request.Body).Decode(&body)
 		requestObserved <- stringFromMap(body, "id")
-		time.Sleep(200 * time.Millisecond)
-		_ = json.NewEncoder(response).Encode(map[string]any{"messageId": body["id"]})
-	}))
-	defer provider.Close()
+		<-request.Context().Done()
+		return nil, request.Context().Err()
+	})}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
 	defer cancel()
-	repo := Repository{evolutionGoAPIURL: provider.URL, evolutionGoAPIKey: "provider-token"}
-	result, err := repo.dispatchWhatsAppViaEvolutionGo(
+	repo := Repository{evolutionGoAPIURL: "https://evolution.invalid", evolutionGoAPIKey: "provider-token"}
+	result, err := repo.dispatchWhatsAppViaEvolutionGoWithClient(
 		ctx,
 		notificationWhatsAppSession{InstanceKey: "platform-sender"},
 		"5511999991111",
 		"Pagamento confirmado",
 		"evolution_go_global_instance",
 		idempotencyKey,
+		client,
 	)
 	if err == nil {
 		t.Fatal("provider timeout must return an error")

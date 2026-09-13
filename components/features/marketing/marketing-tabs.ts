@@ -5,14 +5,9 @@ export const MARKETING_TABS = [
     description: "Resumo de mídia, aquisição e resultado comercial.",
   },
   {
-    key: "acquisition",
-    label: "Aquisição",
-    description: "Jornada dos anúncios até os resultados no CRM.",
-  },
-  {
     key: "paid",
-    label: "Tráfego pago",
-    description: "Campanhas, investimento e eficiência da Meta.",
+    label: "Campanhas",
+    description: "Desempenho detalhado das campanhas da Meta.",
   },
   {
     key: "media",
@@ -20,24 +15,14 @@ export const MARKETING_TABS = [
     description: "Criativos sincronizados e seus resultados.",
   },
   {
+    key: "acquisition",
+    label: "Aquisição",
+    description: "Jornada dos anúncios até os resultados no CRM.",
+  },
+  {
     key: "social",
     label: "Social",
-    description: "Presença orgânica do Facebook e Instagram.",
-  },
-  {
-    key: "relationship",
-    label: "Relacionamento",
-    description: "Conversas atribuídas e acompanhamento da base.",
-  },
-  {
-    key: "reputation",
-    label: "Reputação",
-    description: "Menções, sentimento e percepção da marca.",
-  },
-  {
-    key: "intelligence",
-    label: "Inteligência",
-    description: "Eficiência comercial e retorno dos investimentos.",
+    description: "Conteúdo e audiência do Instagram profissional.",
   },
 ] as const;
 
@@ -49,9 +34,13 @@ export type MarketingSearchParams = Record<
   string | string[] | undefined
 >;
 
-const MARKETING_TAB_KEYS = new Set<string>(MARKETING_TABS.map((tab) => tab.key));
+const MARKETING_TAB_KEYS = new Set<string>(
+  MARKETING_TABS.map((tab) => tab.key),
+);
 
-export function normalizeMarketingTab(value: string | string[] | undefined): MarketingTab {
+export function normalizeMarketingTab(
+  value: string | string[] | undefined,
+): MarketingTab {
   const candidate = Array.isArray(value) ? value[0] : value;
   return candidate && MARKETING_TAB_KEYS.has(candidate)
     ? (candidate as MarketingTab)

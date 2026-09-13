@@ -191,6 +191,31 @@ func TestAuthenticatedWebhooksRemainAvailableDuringPortalDrain(t *testing.T) {
 	}
 }
 
+func TestGrupoOLXReentryAdvancesBoardOrderWithoutResettingStageClock(t *testing.T) {
+	repository := readPortalContractFile(t, "repository_leads.go")
+	start := strings.Index(repository, "reentry = err == nil")
+	if start < 0 {
+		t.Fatal("Grupo OLX reentry branch was not found")
+	}
+	flow := repository[start:]
+	end := strings.Index(flow, "\t} else {")
+	if end < 0 {
+		t.Fatal("Grupo OLX lead insert branch was not found")
+	}
+	update := flow[:end]
+
+	if !strings.Contains(update, "stage_entered_at = case") ||
+		!strings.Contains(update, "then stage_entered_at") {
+		t.Fatal("Grupo OLX reentry must preserve stage_entered_at in the same stage")
+	}
+	if !strings.Contains(update, "board_order_at = clock_timestamp(),") {
+		t.Fatal("Grupo OLX reentry must promote the card even in the same stage")
+	}
+	if strings.Contains(update, "board_order_at = case") {
+		t.Fatal("Grupo OLX board ordering must not depend on a stage change")
+	}
+}
+
 func TestFeedNeverConvertsModuleLookupFailureIntoEmptyDrainXML(t *testing.T) {
 	repository := readPortalContractFile(t, "repository.go")
 	for _, required := range []string{
@@ -210,6 +235,30 @@ func TestFeedNeverConvertsModuleLookupFailureIntoEmptyDrainXML(t *testing.T) {
 
 func readPortalContractFile(t *testing.T, name string) string {
 	t.Helper()
+	if name == "repository.go" {
+		var repository strings.Builder
+		for _, module := range []string{
+			"repository.go",
+			"repository_settings.go",
+			"repository_publications.go",
+			"repository_feed.go",
+			"repository_lead_routing.go",
+			"repository_leads.go",
+			"repository_reports.go",
+			"repository_integration.go",
+			"repository_webhook.go",
+			"repository_payload.go",
+			"repository_helpers.go",
+		} {
+			raw, err := os.ReadFile(module)
+			if err != nil {
+				t.Fatalf("read %s: %v", module, err)
+			}
+			repository.Write(raw)
+			repository.WriteByte('\n')
+		}
+		return repository.String()
+	}
 	raw, err := os.ReadFile(name)
 	if err != nil {
 		t.Fatalf("read %s: %v", name, err)

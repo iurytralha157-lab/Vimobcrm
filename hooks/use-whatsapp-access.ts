@@ -3,8 +3,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { whatsappAPI } from "@/lib/api/whatsapp";
 
 export function useHasWhatsAppAccess(options?: { enabled?: boolean }) {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id ?? profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
   const shouldFetch = options?.enabled ?? true;
 
   return useQuery({

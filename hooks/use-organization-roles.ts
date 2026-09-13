@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
 import { settingsAPI, type SettingsJSON } from '@/lib/api/settings';
+import { stringifyErrorMessage as getErrorMessage } from '@/lib/api/vimob-error';
 import { toast } from 'sonner';
 
 export interface OrganizationRole {
@@ -36,20 +37,16 @@ export interface UserOrganizationRole {
   created_at: string;
 }
 
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
-
 export function useOrganizationRoles() {
-  const { organization } = useAuth();
+  const { activeOrganization, organization } = useAuth();
 
   return useQuery({
-    queryKey: ['organization-roles', organization?.id],
+    queryKey: ['organization-roles', activeOrganization.organizationId],
     queryFn: async () => {
-      if (!organization?.id) return [];
-      return settingsAPI.listRoles<OrganizationRole>(organization.id);
+      if (!activeOrganization.organizationId) return [];
+      return settingsAPI.listRoles<OrganizationRole>(activeOrganization.organizationId);
     },
-    enabled: !!organization?.id,
+    enabled: !!activeOrganization.organizationId,
   });
 }
 
@@ -75,21 +72,21 @@ export function useRolePermissions(roleId: string | null) {
 }
 
 export function useUserOrganizationRoles() {
-  const { organization } = useAuth();
+  const { activeOrganization, organization } = useAuth();
 
   return useQuery({
-    queryKey: ['user-organization-roles', organization?.id],
+    queryKey: ['user-organization-roles', activeOrganization.organizationId],
     queryFn: async () => {
-      if (!organization?.id) return [];
-      return settingsAPI.listUserRoles<UserOrganizationRole>(organization.id);
+      if (!activeOrganization.organizationId) return [];
+      return settingsAPI.listUserRoles<UserOrganizationRole>(activeOrganization.organizationId);
     },
-    enabled: !!organization?.id,
+    enabled: !!activeOrganization.organizationId,
   });
 }
 
 export function useCreateRole() {
   const queryClient = useQueryClient();
-  const { organization } = useAuth();
+  const { activeOrganization, organization } = useAuth();
 
   return useMutation({
     mutationFn: async (data: {
@@ -98,8 +95,8 @@ export function useCreateRole() {
       color?: string;
       permissions?: string[];
     }) => {
-      if (!organization?.id) throw new Error('Organização não encontrada');
-      return settingsAPI.createRole<OrganizationRole>(data as unknown as SettingsJSON, organization.id);
+      if (!activeOrganization.organizationId) throw new Error('Organização não encontrada');
+      return settingsAPI.createRole<OrganizationRole>(data as unknown as SettingsJSON, activeOrganization.organizationId);
     },
     onSuccess: () => {
       toast.success('Função criada com sucesso!');
@@ -113,7 +110,7 @@ export function useCreateRole() {
 
 export function useUpdateRole() {
   const queryClient = useQueryClient();
-  const { organization } = useAuth();
+  const { activeOrganization, organization } = useAuth();
 
   return useMutation({
     mutationFn: async (data: {
@@ -124,7 +121,7 @@ export function useUpdateRole() {
       is_active?: boolean;
     }) => {
       const { id, ...updates } = data;
-      return settingsAPI.updateRole<OrganizationRole>(id, updates as SettingsJSON, organization?.id);
+      return settingsAPI.updateRole<OrganizationRole>(id, updates as SettingsJSON, activeOrganization.organizationId);
     },
     onSuccess: () => {
       toast.success('Função atualizada!');
@@ -138,10 +135,10 @@ export function useUpdateRole() {
 
 export function useDeleteRole() {
   const queryClient = useQueryClient();
-  const { organization } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
-    mutationFn: (roleId: string) => settingsAPI.deleteRole(roleId, organization?.id),
+    mutationFn: (roleId: string) => settingsAPI.deleteRole(roleId, activeOrganization.organizationId),
     onSuccess: () => {
       toast.success('Função excluída!');
       queryClient.invalidateQueries({ queryKey: ['organization-roles'] });
@@ -155,11 +152,11 @@ export function useDeleteRole() {
 
 export function useUpdateRolePermissions() {
   const queryClient = useQueryClient();
-  const { organization } = useAuth();
+  const { activeOrganization, organization } = useAuth();
 
   return useMutation({
     mutationFn: (data: { roleId: string; permissions: string[] }) =>
-      settingsAPI.replaceRolePermissions(data.roleId, data.permissions, organization?.id),
+      settingsAPI.replaceRolePermissions(data.roleId, data.permissions, activeOrganization.organizationId),
     onSuccess: (_, variables) => {
       toast.success('Permissões atualizadas!');
       queryClient.invalidateQueries({ queryKey: ['role-permissions', variables.roleId] });
@@ -172,11 +169,11 @@ export function useUpdateRolePermissions() {
 
 export function useAssignUserRole() {
   const queryClient = useQueryClient();
-  const { organization } = useAuth();
+  const { activeOrganization, organization } = useAuth();
 
   return useMutation({
     mutationFn: (data: { userId: string; roleId: string | null }) =>
-      settingsAPI.assignUserRole(data, organization?.id),
+      settingsAPI.assignUserRole(data, activeOrganization.organizationId),
     onSuccess: () => {
       toast.success('Função do usuário atualizada!');
       queryClient.invalidateQueries({ queryKey: ['user-organization-roles'] });
@@ -189,15 +186,17 @@ export function useAssignUserRole() {
 }
 
 export function useHasPermission(permissionKey: string) {
-  const { profile, isSuperAdmin } = useAuth();
+  const { activeOrganization, profile, isSuperAdmin } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
-    queryKey: ['has-permission', profile?.id, isSuperAdmin, permissionKey],
+    queryKey: ['has-permission', organizationId, profile?.id, isSuperAdmin, permissionKey],
     queryFn: async () => {
       if (!profile?.id) return false;
       if (isSuperAdmin) return true;
-      return settingsAPI.hasPermission(permissionKey);
+      if (!organizationId) return false;
+      return settingsAPI.hasPermission(permissionKey, organizationId);
     },
-    enabled: !!profile?.id,
+    enabled: Boolean(profile?.id && (isSuperAdmin || organizationId)),
   });
 }

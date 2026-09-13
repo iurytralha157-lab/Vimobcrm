@@ -105,11 +105,10 @@ func TestUpdateStageSerializesQualifiedMarkerPerPipeline(t *testing.T) {
 	}
 	lockSource := repositorySource[lockStart : lockStart+lockEnd]
 	for _, contract := range []string{
-		"join public.stages as s",
-		"where p.organization_id = $1::uuid",
-		"and s.organization_id = $1::uuid",
-		"and s.id = $2::uuid",
-		"for update of p",
+		"select pipeline_id::text",
+		"repo.ensurePipeline(ctx, tx, organizationID, pipelineID)",
+		"and pipeline_id = $3::uuid",
+		"for update",
 	} {
 		if !strings.Contains(lockSource, contract) {
 			t.Fatalf("qualified-stage pipeline lock must contain %q", contract)
@@ -128,14 +127,80 @@ func TestUpdateStageSerializesQualifiedMarkerPerPipeline(t *testing.T) {
 	for _, contract := range []string{
 		"coalesce(is_won, false)",
 		"coalesce(is_lost, false)",
+		"coalesce(is_qualified, false)",
 		"coalesce(is_active, true)",
-		"input.IsWon.Resolve(isWon)",
-		"input.IsLost.Resolve(isLost)",
-		"!input.IsActive.Resolve(isActive)",
+		"nextIsWon := input.IsWon.Resolve(isWon)",
+		"nextIsLost := input.IsLost.Resolve(isLost)",
+		"nextIsQualified := qualifiedPatch.Resolve(isQualified)",
+		"nextIsActive := input.IsActive.Resolve(isActive)",
+		"if nextIsWon && nextIsLost",
+		"if isActive && !nextIsActive",
+		"and stage_id = $2::uuid",
+		"return ErrHasLeads",
 		"ErrInvalidInput",
 	} {
 		if !strings.Contains(eligibilitySource, contract) {
 			t.Fatalf("qualified-stage eligibility must contain %q", contract)
+		}
+	}
+}
+
+func TestPipelineAndStageMutationsUseLocksAndAtomicDeleteGuards(t *testing.T) {
+	source, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatalf("read repository.go: %v", err)
+	}
+	repositorySource := string(source)
+
+	for _, contract := range []string{
+		"func (repo Repository) lockOrganizationForPipelineMutation",
+		"from public.organizations",
+		"func (repo Repository) ensurePipeline",
+		"from public.pipelines",
+		"for update",
+		"and not exists (",
+		"left join public.stages lead_stage",
+		"isForeignKeyViolation(err)",
+	} {
+		if !strings.Contains(repositorySource, contract) {
+			t.Fatalf("mutation locking/delete contract must contain %q", contract)
+		}
+	}
+
+	reorderStart := strings.Index(repositorySource, "func (repo Repository) ReorderStages")
+	reorderEnd := strings.Index(repositorySource[reorderStart:], "func (repo Repository) DeleteStage")
+	if reorderStart < 0 || reorderEnd < 0 {
+		t.Fatal("could not isolate ReorderStages")
+	}
+	reorderSource := repositorySource[reorderStart : reorderStart+reorderEnd]
+	for _, contract := range []string{
+		"repo.ensurePipeline(ctx, tx",
+		"order by coalesce(position, 0), created_at, id",
+		"for update",
+		"set position = position + $3",
+		"if tag.RowsAffected() != 1",
+	} {
+		if !strings.Contains(reorderSource, contract) {
+			t.Fatalf("reorder serialization contract must contain %q", contract)
+		}
+	}
+}
+
+func TestFirstPipelineAndDefaultDeletionKeepDefaultInvariant(t *testing.T) {
+	source, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatalf("read repository.go: %v", err)
+	}
+	repositorySource := string(source)
+	for _, contract := range []string{
+		"if pipelineCount == 0",
+		"input.IsDefault = true",
+		"set another pipeline as default before unsetting the current default",
+		"with replacement as (",
+		"set is_default = true",
+	} {
+		if !strings.Contains(repositorySource, contract) {
+			t.Fatalf("default pipeline invariant must contain %q", contract)
 		}
 	}
 }

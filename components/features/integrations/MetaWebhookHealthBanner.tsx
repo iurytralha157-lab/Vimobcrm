@@ -11,8 +11,8 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 export function MetaWebhookHealthBanner() {
-  const { profile } = useAuth();
-  const orgId = profile?.organization_id;
+  const { activeOrganization, profile } = useAuth();
+  const orgId = activeOrganization.organizationId;
 
   const { data } = useQuery({
     queryKey: ["meta-webhook-health", orgId],

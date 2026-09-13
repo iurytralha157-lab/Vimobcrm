@@ -86,7 +86,7 @@ async function getPushNotificationsPlugin(): Promise<CapacitorPushNotifications 
 }
 
 export function usePushNotifications() {
-  const { profile, organization, tenantContext } = useAuth();
+  const { activeOrganization, profile, organization, tenantContext } = useAuth();
   const router = useRouter();
   const queryClient = useQueryClient();
   const initialized = useRef(false);
@@ -95,7 +95,7 @@ export function usePushNotifications() {
   const tokenOwnerProfileId = useRef<string | null>(null);
   const listenerHandles = useRef<CapacitorPluginListenerHandle[]>([]);
   const profileId = profile?.id;
-  const activeOrganizationId = organization?.id || profile?.organization_id;
+  const activeOrganizationId = activeOrganization.organizationId;
   const hasCurrentTenantContext = isTenantContextForOrganization(
     activeOrganizationId,
     tenantContext,

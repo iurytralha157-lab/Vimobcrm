@@ -5,12 +5,113 @@ export type PipelineBoardQueryKey = readonly unknown[];
 export interface PipelineBoardLeadLike {
   id: string;
   stage_id?: string | null;
+  assigned_user_id?: string | null;
+  deal_status?: string | null;
+  name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  source?: string | null;
+  created_at?: string | null;
+  won_at?: string | null;
+  lost_at?: string | null;
+  tags?: Array<{ id?: string | null }> | null;
+  lead_meta?: Array<{
+    campaign_id?: string | null;
+    campaign_name?: string | null;
+    adset_id?: string | null;
+    adset_name?: string | null;
+    ad_id?: string | null;
+    ad_name?: string | null;
+    platform?: string | null;
+  }> | null;
+  valor_interesse?: number | null;
+  interest_property?: { preco?: number | null } | null;
+  property?: { preco?: number | null } | null;
+}
+
+export function pipelineLeadMatchesQueryKeyScope(
+  queryKey: PipelineBoardQueryKey,
+  lead: PipelineBoardLeadLike,
+) {
+  const filterUserId = typeof queryKey[3] === 'string' ? queryKey[3] : undefined;
+  if (filterUserId && filterUserId !== 'all' && filterUserId !== lead.assigned_user_id) {
+    return false;
+  }
+
+  const dealStatus = typeof queryKey[7] === 'string' ? queryKey[7] : undefined;
+  if (dealStatus && dealStatus !== 'all' && dealStatus !== lead.deal_status) {
+    return false;
+  }
+
+  const dateFrom = typeof queryKey[4] === 'string' ? Date.parse(queryKey[4]) : NaN;
+  const dateTo = typeof queryKey[5] === 'string' ? Date.parse(queryKey[5]) : NaN;
+  if (Number.isFinite(dateFrom) && Number.isFinite(dateTo)) {
+    const dateMode = queryKey[14] === 'origin' ? 'origin' : 'operational';
+    const isOpenOperational = dateMode === 'operational' && lead.deal_status === 'open';
+    const eventAt = dateMode === 'origin'
+      ? lead.created_at
+      : lead.deal_status === 'won'
+        ? lead.won_at
+        : lead.deal_status === 'lost'
+          ? lead.lost_at
+          : lead.created_at;
+    const eventTime = eventAt ? Date.parse(eventAt) : NaN;
+    if (!isOpenOperational && (!Number.isFinite(eventTime) || eventTime < dateFrom || eventTime > dateTo)) {
+      return false;
+    }
+  }
+
+  const tagId = typeof queryKey[6] === 'string' ? queryKey[6] : undefined;
+  if (tagId && !lead.tags?.some((tag) => tag.id === tagId)) return false;
+
+  const search = typeof queryKey[8] === 'string' ? queryKey[8].trim().toLocaleLowerCase('pt-BR') : '';
+  if (search) {
+    const searchable = [lead.name, lead.email, lead.phone]
+      .filter((value): value is string => typeof value === 'string')
+      .join(' ')
+      .toLocaleLowerCase('pt-BR');
+    if (!searchable.includes(search)) return false;
+  }
+
+  const metaFilters = [
+    { index: 9, values: ['campaign_id', 'campaign_name'] as const },
+    { index: 10, values: ['adset_id', 'adset_name'] as const },
+    { index: 11, values: ['ad_id', 'ad_name'] as const },
+  ];
+  for (const metaFilter of metaFilters) {
+    const expected = typeof queryKey[metaFilter.index] === 'string'
+      ? queryKey[metaFilter.index]
+      : undefined;
+    if (
+      expected &&
+      !lead.lead_meta?.some((meta) =>
+        metaFilter.values.some((field) => meta[field] === expected),
+      )
+    ) {
+      return false;
+    }
+  }
+
+  const expectedSource = typeof queryKey[12] === 'string' ? queryKey[12] : undefined;
+  if (expectedSource && lead.source !== expectedSource) {
+    return false;
+  }
+
+  const serializedUserIds = typeof queryKey[13] === 'string' ? queryKey[13] : undefined;
+  if (serializedUserIds === '__none__') return false;
+  if (serializedUserIds) {
+    const visibleUserIds = new Set(serializedUserIds.split(',').filter(Boolean));
+    if (!lead.assigned_user_id || !visibleUserIds.has(lead.assigned_user_id)) return false;
+  }
+
+  return true;
 }
 
 export interface PipelineBoardStageLike<TLead extends PipelineBoardLeadLike> {
   id: string;
   leads: TLead[];
   total_lead_count: number;
+  total_value?: number;
   has_more: boolean;
 }
 
@@ -174,6 +275,7 @@ export function restorePipelineLeadSnapshot<
   if (!snapshotLocation) return current;
 
   const currentLocation = findPipelineLeadLocation<TLead, TStage>(current, leadId);
+  const leadValue = getPipelineLeadValue(currentLocation?.lead ?? snapshotLocation.lead);
   const withoutLead = current.map((stage) => {
     const leads = stage.leads.filter((lead) => lead.id !== leadId);
     return leads.length === stage.leads.length ? stage : { ...stage, leads };
@@ -208,21 +310,112 @@ export function restorePipelineLeadSnapshot<
       countDelta -= 1;
     }
 
-    if (!isTargetStage && countDelta === 0) return stage;
-
     const totalLeadCount = Math.max(
       Number(stage.total_lead_count ?? stage.leads.length) + countDelta,
       leads.length,
       0,
     );
+    const currentTotalValue = Number(stage.total_value);
+    const shouldUpdateTotalValue = Number.isFinite(currentTotalValue) && leadValue > 0;
+    const totalValue = shouldUpdateTotalValue
+      ? Math.max(currentTotalValue + countDelta * leadValue, 0)
+      : stage.total_value;
+
+    if (
+      !isTargetStage &&
+      countDelta === 0 &&
+      totalValue === stage.total_value
+    ) {
+      return stage;
+    }
 
     return {
       ...stage,
       leads,
       total_lead_count: totalLeadCount,
+      total_value: totalValue,
       has_more: totalLeadCount > leads.length,
     };
   });
+}
+
+export function patchPipelineLeadInBoard<
+  TLead extends PipelineBoardLeadLike,
+  TStage extends PipelineBoardStageLike<TLead>,
+>(
+  board: TStage[] | undefined,
+  leadId: string,
+  patch: Partial<TLead>,
+  options?: { keepInDestination?: boolean; destinationIndex?: number },
+) {
+  if (!board) return board;
+
+  const currentLocation = findPipelineLeadLocation<TLead, TStage>(board, leadId);
+  if (!currentLocation) return board;
+
+  const destinationStageId =
+    typeof patch.stage_id === 'string' && patch.stage_id
+      ? patch.stage_id
+      : currentLocation.stageId;
+
+  if (destinationStageId !== currentLocation.stageId) {
+    return applyPendingPipelineMoves(board, [
+      {
+        leadId,
+        sourceStageId: currentLocation.stageId,
+        destinationStageId,
+        destinationIndex: options?.destinationIndex ?? 0,
+        fallbackLead: currentLocation.lead,
+        optimisticPatch: patch,
+        keepInDestination: options?.keepInDestination ?? true,
+        version: 0,
+      },
+    ]);
+  }
+
+  const keepLead = options?.keepInDestination ?? true;
+  const patchedLead = { ...currentLocation.lead, ...patch } as TLead;
+  const previousValue = getPipelineLeadValue(currentLocation.lead);
+  const nextValue = keepLead ? getPipelineLeadValue(patchedLead) : 0;
+
+  return board.map((stage) => {
+    if (stage.id !== currentLocation.stageId) return stage;
+    const leads = keepLead
+      ? stage.leads.map((lead) => lead.id === leadId ? patchedLead : lead)
+      : stage.leads.filter((lead) => lead.id !== leadId);
+    const totalLeadCount = Math.max(
+      Number(stage.total_lead_count ?? stage.leads.length) + (keepLead ? 0 : -1),
+      leads.length,
+      0,
+    );
+    const currentTotalValue = Number(stage.total_value);
+    const totalValue = Number.isFinite(currentTotalValue)
+      ? Math.max(currentTotalValue + nextValue - previousValue, 0)
+      : stage.total_value;
+
+    return {
+      ...stage,
+      leads,
+      total_lead_count: totalLeadCount,
+      total_value: totalValue,
+      has_more: totalLeadCount > leads.length,
+    };
+  });
+}
+
+export function getPipelineLeadValue(lead?: PipelineBoardLeadLike | null) {
+  const candidates = [
+    lead?.valor_interesse,
+    lead?.interest_property?.preco,
+    lead?.property?.preco,
+  ];
+
+  for (const candidate of candidates) {
+    const value = Number(candidate ?? 0);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+
+  return 0;
 }
 
 function applyPendingPipelineMove<
@@ -264,6 +457,7 @@ function applyPendingPipelineMove<
     id: move.leadId,
     stage_id: move.destinationStageId,
   } as TLead;
+  const leadValue = getPipelineLeadValue(optimisticLead);
 
   const withDestination = withoutLead.map((stage) => {
     if (!move.keepInDestination || stage.id !== move.destinationStageId) {
@@ -290,10 +484,16 @@ function applyPendingPipelineMove<
       0,
     );
     const hasMore = totalLeadCount > stage.leads.length;
+    const currentTotalValue = Number(stage.total_value);
+    const shouldUpdateTotalValue = Number.isFinite(currentTotalValue) && leadValue > 0;
+    const totalValue = shouldUpdateTotalValue
+      ? Math.max(currentTotalValue + countDelta * leadValue, 0)
+      : stage.total_value;
 
     if (
       totalLeadCount === stage.total_lead_count &&
-      hasMore === stage.has_more
+      hasMore === stage.has_more &&
+      totalValue === stage.total_value
     ) {
       return stage;
     }
@@ -301,6 +501,7 @@ function applyPendingPipelineMove<
     return {
       ...stage,
       total_lead_count: totalLeadCount,
+      total_value: totalValue,
       has_more: hasMore,
     };
   });

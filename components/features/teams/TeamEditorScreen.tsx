@@ -34,14 +34,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { useAuth } from "@/contexts/AuthContext";
-import {
-  useTeamMembersAvailability,
-} from "@/hooks/use-member-availability";
+import { useTeamMembersAvailability } from "@/hooks/use-member-availability";
+import { useOrganizationPresenceList } from "@/hooks/presence";
 import { useCreateTeam, useTeam, useUpdateTeam } from "@/hooks/use-teams";
 import { useUserAccessScope } from "@/hooks/use-user-access-scope";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { useUsers } from "@/hooks/use-users";
 import { teamsAPI } from "@/lib/api/teams";
+import { getInitials } from "@/lib/user-display";
 import { cn } from "@/lib/utils";
 
 import {
@@ -54,10 +54,11 @@ import {
   toAvailabilityInput,
   type DaySchedule,
 } from "./availability-week";
+import { TeamChangeHistory } from "./TeamChangeHistory";
+import { TeamOperationalOverview } from "./TeamOperationalOverview";
 
 type TeamEditorScreenProps =
-  | { mode: "create"; teamId?: never }
-  | { mode: "edit"; teamId: string };
+  { mode: "create"; teamId?: never } | { mode: "edit"; teamId: string };
 
 interface MemberSelection {
   userId: string;
@@ -67,15 +68,35 @@ interface MemberSelection {
 type ScheduleWarning = "missing" | "incomplete";
 
 const MANAGEMENT_TEAMS_URL = "/crm/management?tab=teams";
+const TEAM_EDITOR_PANEL_HEIGHT_CLASS = "h-[600px] xl:h-full xl:min-h-0";
+const TEAM_EDITOR_LOADING_PANEL_HEIGHT_CLASS = "h-[600px]";
 
-function getInitials(value?: string | null) {
-  return (value || "?")
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((part) => part[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
+function buildEditorFingerprint({
+  name,
+  logoUrl,
+  isActive,
+  members,
+  weeksByUserId,
+}: {
+  name: string;
+  logoUrl: string | null;
+  isActive: boolean;
+  members: MemberSelection[];
+  weeksByUserId: Record<string, DaySchedule[]>;
+}) {
+  return JSON.stringify({
+    name: name.trim(),
+    logoUrl: logoUrl || null,
+    isActive,
+    members: [...members]
+      .sort((left, right) => left.userId.localeCompare(right.userId))
+      .map((member) => ({
+        ...member,
+        availability: [...(weeksByUserId[member.userId] || [])].sort(
+          (left, right) => left.day_of_week - right.day_of_week,
+        ),
+      })),
+  });
 }
 
 export default function TeamEditorScreen(props: TeamEditorScreenProps) {
@@ -86,19 +107,20 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const initializedRef = useRef<string | null>(null);
 
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || null;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId || null;
   const access = useUserAccessScope();
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
   const canManageAllTeams =
-    access.isAdmin ||
-    (!access.isTeamLeader && hasPermission("team_manage"));
+    access.isAdmin || (!access.isTeamLeader && hasPermission("team_manage"));
   const canAccessEditor = isEditing
     ? canManageAllTeams ||
       (access.isTeamLeader && access.ledTeamIds.includes(props.teamId))
     : canManageAllTeams;
 
-  const teamQuery = useTeam(teamId, { enabled: isEditing });
+  const teamQuery = useTeam(teamId, {
+    enabled: isEditing && canAccessEditor,
+  });
   const usersQuery = useUsers({ enabled: canAccessEditor });
   const team = teamQuery.data;
   const teamMemberIds = useMemo(
@@ -115,12 +137,21 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [isActive, setIsActive] = useState(true);
   const [selectedMembers, setSelectedMembers] = useState<MemberSelection[]>([]);
-  const [weeksByUserId, setWeeksByUserId] = useState<Record<string, DaySchedule[]>>({});
-  const [warningByUserId, setWarningByUserId] = useState<Record<string, ScheduleWarning>>({});
-  const [confirmedWarnings, setConfirmedWarnings] = useState<Set<string>>(new Set());
-  const [activeScheduleUserId, setActiveScheduleUserId] = useState<string | null>(null);
+  const [weeksByUserId, setWeeksByUserId] = useState<
+    Record<string, DaySchedule[]>
+  >({});
+  const [warningByUserId, setWarningByUserId] = useState<
+    Record<string, ScheduleWarning>
+  >({});
+  const [confirmedWarnings, setConfirmedWarnings] = useState<Set<string>>(
+    new Set(),
+  );
+  const [activeScheduleUserId, setActiveScheduleUserId] = useState<
+    string | null
+  >(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [savedFingerprint, setSavedFingerprint] = useState<string | null>(null);
 
   const activeUsers = useMemo(
     () =>
@@ -132,6 +163,19 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
   const activeUserIds = useMemo(
     () => new Set(activeUsers.map((user) => user.id)),
     [activeUsers],
+  );
+  const presenceQuery = useOrganizationPresenceList({
+    enabled: canAccessEditor && activeUsers.length > 0,
+  });
+  const presenceByUserId = useMemo(
+    () =>
+      new Map(
+        (presenceQuery.data?.users || []).map((presence) => [
+          presence.user_id,
+          presence,
+        ]),
+      ),
+    [presenceQuery.data?.users],
   );
   const selectedUserIds = useMemo(
     () => new Set(selectedMembers.map((member) => member.userId)),
@@ -166,6 +210,15 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
       setWarningByUserId({});
       setConfirmedWarnings(new Set());
       setActiveScheduleUserId(null);
+      setSavedFingerprint(
+        buildEditorFingerprint({
+          name: "",
+          logoUrl: null,
+          isActive: true,
+          members: [],
+          weeksByUserId: {},
+        }),
+      );
       setIsInitialized(true);
       return;
     }
@@ -173,7 +226,8 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
     if (
       !team ||
       (teamMemberIds.length > 0 &&
-        (availabilityQuery.isLoading || availabilityQuery.isError))
+        (availabilityQuery.isLoading ||
+          (availabilityQuery.isError && availabilityQuery.data === undefined)))
     ) {
       return;
     }
@@ -193,21 +247,30 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
       }
     }
 
+    const members = (team.members || []).map((member) => ({
+      userId: member.user_id,
+      isLeader: member.is_leader || false,
+    }));
+
     initializedRef.current = key;
     setName(team.name);
     setLogoUrl(team.logo_url || null);
     setLogoFile(null);
     setIsActive(team.is_active !== false);
-    setSelectedMembers(
-      (team.members || []).map((member) => ({
-        userId: member.user_id,
-        isLeader: member.is_leader || false,
-      })),
-    );
+    setSelectedMembers(members);
     setWeeksByUserId(weeks);
     setWarningByUserId(warnings);
     setConfirmedWarnings(new Set());
     setActiveScheduleUserId(team.members?.[0]?.user_id || null);
+    setSavedFingerprint(
+      buildEditorFingerprint({
+        name: team.name,
+        logoUrl: team.logo_url || null,
+        isActive: team.is_active !== false,
+        members,
+        weeksByUserId: weeks,
+      }),
+    );
     setIsInitialized(true);
   }, [
     availabilityQuery.data,
@@ -226,7 +289,20 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
     (canAccessEditor && usersQuery.isLoading) ||
     (isEditing && teamQuery.isLoading) ||
     (isEditing && teamMemberIds.length > 0 && availabilityQuery.isLoading);
-  const queryError = teamQuery.error || usersQuery.error || availabilityQuery.error;
+  const accessScopeError =
+    access.isError && !access.hasTenantTeamScope && !canManageAllTeams
+      ? access.error
+      : null;
+  const queryError =
+    (teamQuery.data === undefined ? teamQuery.error : null) ||
+    (usersQuery.data === undefined ? usersQuery.error : null) ||
+    (availabilityQuery.data === undefined ? availabilityQuery.error : null);
+  const hasStaleEditorData = Boolean(
+    (access.isError && (access.hasTenantTeamScope || canManageAllTeams)) ||
+    (teamQuery.isError && teamQuery.data !== undefined) ||
+    (usersQuery.isError && usersQuery.data !== undefined) ||
+    (availabilityQuery.isError && availabilityQuery.data !== undefined),
+  );
 
   const savedMemberByUserId = useMemo(
     () =>
@@ -236,25 +312,41 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
   const selectedScheduleUsers = activeUsers.filter((user) =>
     selectedUserIds.has(user.id),
   );
-  const activeScheduleUser = selectedScheduleUsers.find(
-    (user) => user.id === activeScheduleUserId,
-  ) || selectedScheduleUsers[0];
+  const activeScheduleUser =
+    activeUsers.find((user) => user.id === activeScheduleUserId) ||
+    selectedScheduleUsers[0];
+  const activeScheduleSelection = activeScheduleUser
+    ? selectedMembers.find((member) => member.userId === activeScheduleUser.id)
+    : undefined;
   const activeWeek = activeScheduleUser
     ? weeksByUserId[activeScheduleUser.id]
     : undefined;
 
   const unresolvedWarnings = Object.keys(warningByUserId).filter(
-    (userId) =>
-      selectedUserIds.has(userId) && !confirmedWarnings.has(userId),
+    (userId) => selectedUserIds.has(userId) && !confirmedWarnings.has(userId),
   );
   const allWeeksValid = selectedMembers.every((member) =>
     isValidAvailabilityWeek(weeksByUserId[member.userId] || []),
   );
+  const editorFingerprint = buildEditorFingerprint({
+    name,
+    logoUrl,
+    isActive,
+    members: selectedMembers,
+    weeksByUserId,
+  });
+  const hasUnsavedChanges =
+    Boolean(logoFile) ||
+    editorFingerprint !== savedFingerprint ||
+    Object.keys(warningByUserId).some(
+      (userId) => selectedUserIds.has(userId) && confirmedWarnings.has(userId),
+    );
   const canSubmit =
     isInitialized &&
     Boolean(name.trim()) &&
     allWeeksValid &&
     unresolvedWarnings.length === 0 &&
+    hasUnsavedChanges &&
     !isSubmitting;
 
   const toggleMember = (userId: string) => {
@@ -272,7 +364,7 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
         [userId]: createDefaultAvailabilityWeek(),
       }));
     }
-    setActiveScheduleUserId((current) => current || userId);
+    setActiveScheduleUserId(userId);
   };
 
   const toggleLeader = (userId: string) => {
@@ -311,15 +403,9 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
 
   const uploadLogo = async () => {
     if (!canManageAllTeams || !logoFile) return logoUrl;
-    const allowedTypes = [
-      "image/jpeg",
-      "image/png",
-      "image/webp",
-      "image/gif",
-      "image/svg+xml",
-    ];
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
     if (!allowedTypes.includes(logoFile.type)) {
-      throw new Error("Use uma imagem JPG, PNG, WEBP, GIF ou SVG.");
+      throw new Error("Use uma imagem JPG, PNG, WEBP ou GIF.");
     }
     if (logoFile.size > 5 * 1024 * 1024) {
       throw new Error("A logo deve ter no máximo 5 MB.");
@@ -330,7 +416,9 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
   const handleSubmit = async () => {
     if (!canSubmit) {
       if (unresolvedWarnings.length > 0) {
-        toast.error("Confirme a regularização das escalas antigas antes de salvar.");
+        toast.error(
+          "Confirme a regularização das escalas antigas antes de salvar.",
+        );
       } else {
         toast.error("Revise o nome e os sete dias da escala de cada membro.");
       }
@@ -340,6 +428,13 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
     setIsSubmitting(true);
     try {
       const finalLogoUrl = await uploadLogo();
+      if (logoFile && finalLogoUrl) {
+        // Keep a successfully uploaded asset in the form if the team mutation
+        // fails, so retrying does not create another orphaned object.
+        setLogoUrl(finalLogoUrl);
+        setLogoFile(null);
+        setLogoPreview(null);
+      }
       const validMembers = selectedMembers.filter((member) =>
         activeUserIds.has(member.userId),
       );
@@ -352,7 +447,7 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
       }));
 
       if (isEditing && team) {
-        await updateTeam.mutateAsync({
+        const updatedTeam = await updateTeam.mutateAsync({
           id: team.id,
           members,
           preserveLeadership: !canManageAllTeams,
@@ -364,15 +459,31 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
               }
             : {}),
         });
+        const savedLogoUrl = updatedTeam.logo_url || finalLogoUrl || null;
+        setSavedFingerprint(
+          buildEditorFingerprint({
+            name,
+            logoUrl: savedLogoUrl,
+            isActive,
+            members: validMembers,
+            weeksByUserId,
+          }),
+        );
+        setSelectedMembers(validMembers);
+        setLogoUrl(savedLogoUrl);
+        setLogoFile(null);
+        setLogoPreview(null);
+        setWarningByUserId({});
+        setConfirmedWarnings(new Set());
       } else {
-        await createTeam.mutateAsync({
+        const createdTeam = await createTeam.mutateAsync({
           name: name.trim(),
           logo_url: finalLogoUrl || null,
           is_active: true,
           members,
         });
+        router.replace(`/crm/management/teams/${createdTeam.id}/edit`);
       }
-      router.push(MANAGEMENT_TEAMS_URL);
     } catch (error) {
       console.error("Error saving team editor:", error);
       toast.error(
@@ -388,7 +499,29 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
   if (isLoading) {
     return (
       <AppLayout title={title}>
-        <TeamEditorLoading />
+        <TeamEditorLoading isEditing={isEditing} />
+      </AppLayout>
+    );
+  }
+
+  if (accessScopeError) {
+    return (
+      <AppLayout title={title}>
+        <EditorMessage
+          icon={AlertTriangle}
+          title="Não foi possível validar seu acesso"
+          description="Confira sua conexão e tente novamente. Nenhuma alteração foi enviada."
+          action={
+            <Button
+              type="button"
+              onClick={() => void access.refetch()}
+              className="h-9 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-white shadow-none hover:bg-primary"
+            >
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Tentar novamente
+            </Button>
+          }
+        />
       </AppLayout>
     );
   }
@@ -414,7 +547,11 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
       <AppLayout title={title}>
         <EditorMessage
           icon={AlertTriangle}
-          title="Não foi possível carregar a equipe"
+          title={
+            isEditing
+              ? "Não foi possível carregar a equipe"
+              : "Não foi possível preparar a nova equipe"
+          }
           description="Confira sua conexão e tente novamente. Nenhuma alteração foi enviada."
           action={
             <Button
@@ -423,6 +560,7 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
                 teamQuery.refetch();
                 usersQuery.refetch();
                 availabilityQuery.refetch();
+                void access.refetch();
               }}
               className="h-9 rounded-[6px] bg-primary/50 px-3 text-[12px] font-light text-white shadow-none hover:bg-primary"
             >
@@ -436,9 +574,12 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
   }
 
   return (
-    <AppLayout title={title}>
-      <div className="mx-auto w-full max-w-[1180px] space-y-3 pb-8 text-[12px] font-light">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+    <AppLayout title={title} disableMainScroll>
+      <div
+        data-tour="management-team-editor"
+        className="flex h-full min-h-0 w-full flex-col gap-3 overflow-x-hidden overflow-y-auto pb-8 text-[12px] font-light xl:pb-0"
+      >
+        <div className="flex shrink-0 items-center">
           <Button
             asChild
             variant="ghost"
@@ -449,16 +590,47 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
               Voltar para Gestão
             </Link>
           </Button>
-          <span className="text-[11px] text-[var(--app-text-tertiary)]">
-            Horário de referência: America/Sao_Paulo
-          </span>
         </div>
 
-        <section className="rounded-[8px] bg-[var(--app-surface-solid)] p-3 sm:p-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        {isEditing && team && (
+          <TeamOperationalOverview
+            team={team}
+            availability={availabilityQuery.data || []}
+            activeUserIds={usersQuery.isSuccess ? activeUserIds : undefined}
+          />
+        )}
+
+        {hasStaleEditorData && (
+          <div
+            role="status"
+            className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-[8px] bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300"
+          >
+            <span>Alguns dados podem estar desatualizados.</span>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                teamQuery.refetch();
+                usersQuery.refetch();
+                availabilityQuery.refetch();
+                void access.refetch();
+              }}
+              className="h-7 rounded-[5px] px-2 text-[10px] font-light"
+            >
+              <RefreshCw className="mr-1.5 h-3 w-3" />
+              Atualizar
+            </Button>
+          </div>
+        )}
+
+        <section
+          data-tour="management-team-identity"
+          className="shrink-0 rounded-[8px] bg-[var(--app-surface-solid)] p-2.5 sm:p-3"
+        >
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <button
               type="button"
-              className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-[6px] bg-primary/50 text-white transition-colors enabled:hover:bg-primary disabled:cursor-default"
+              className="group relative h-10 w-10 shrink-0 overflow-hidden rounded-[6px] bg-primary/50 text-white transition-colors enabled:hover:bg-primary disabled:cursor-default"
               onClick={() => fileInputRef.current?.click()}
               disabled={!canManageAllTeams}
               aria-label="Alterar logo da equipe"
@@ -466,7 +638,7 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
               <Avatar className="h-full w-full rounded-[6px]">
                 <AvatarImage src={logoPreview || logoUrl || undefined} />
                 <AvatarFallback className="rounded-[6px] bg-primary/50 text-[12px] font-light text-white">
-                  {getInitials(name || "Equipe")}
+                  {getInitials(name || "Equipe", { fallback: "?" })}
                 </AvatarFallback>
               </Avatar>
               {canManageAllTeams && (
@@ -478,12 +650,12 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif,image/svg+xml"
+              accept="image/jpeg,image/png,image/webp,image/gif"
               className="hidden"
               onChange={(event) => setLogoFile(event.target.files?.[0] || null)}
             />
             <div className="min-w-0 flex-1">
-              <Label htmlFor="team-name" className="mb-1.5 block text-[11px] font-light text-[var(--app-text-tertiary)]">
+              <Label htmlFor="team-name" className="sr-only">
                 Nome da equipe
               </Label>
               <Input
@@ -497,48 +669,95 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
               />
             </div>
             {isEditing && canManageAllTeams && (
-              <div className="flex h-14 min-w-[150px] items-center justify-between rounded-[6px] bg-[var(--app-surface-soft)] px-3">
-                <div>
-                  <p className="text-[12px] text-[var(--app-text-primary)]">Equipe ativa</p>
-                  <p className="text-[10px] text-[var(--app-text-tertiary)]">Participa da operação</p>
-                </div>
-                <Switch checked={isActive} onCheckedChange={setIsActive} />
+              <div className="flex h-9 min-w-[140px] items-center justify-between rounded-[6px] bg-[var(--app-surface-soft)] px-2.5">
+                <p className="text-[11px] text-[var(--app-text-primary)]">
+                  Equipe ativa
+                </p>
+                <Switch
+                  checked={isActive}
+                  onCheckedChange={setIsActive}
+                  aria-label="Equipe ativa"
+                />
               </div>
             )}
           </div>
         </section>
 
-        <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(300px,0.38fr)_minmax(0,0.62fr)]">
-          <section className="min-w-0 rounded-[8px] bg-[var(--app-surface-solid)] p-2 sm:p-3">
+        <div
+          className={cn(
+            "grid min-w-0 shrink-0 gap-3 lg:grid-cols-[minmax(280px,0.36fr)_minmax(0,0.64fr)] xl:min-h-[360px] xl:max-h-[600px] xl:flex-1",
+            isEditing &&
+              "xl:grid-cols-[minmax(280px,340px)_minmax(520px,1fr)_minmax(260px,320px)]",
+          )}
+        >
+          <section
+            data-tour="management-team-members"
+            data-team-panel="members"
+            className={cn(
+              TEAM_EDITOR_PANEL_HEIGHT_CLASS,
+              "flex min-w-0 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] p-2 sm:p-3",
+            )}
+          >
             <div className="flex items-center justify-between gap-2 px-1 pb-2">
               <div className="flex items-center gap-2">
                 <span className="grid h-8 w-8 place-items-center rounded-[6px] bg-primary/50 text-white">
                   <Users className="h-4 w-4" />
                 </span>
-                <div>
-                  <h2 className="text-[13px] font-normal">Membros</h2>
-                  <p className="text-[10px] text-[var(--app-text-tertiary)]">
-                    {selectedMembers.length} selecionado(s)
-                  </p>
-                </div>
+                <h2 className="text-[13px] font-normal">Membros</h2>
               </div>
+              <span
+                className="shrink-0 rounded-[5px] bg-[var(--app-surface-soft)] px-2 py-1 text-[10px] text-[var(--app-text-secondary)]"
+                aria-label={`${selectedMembers.length} membros selecionados`}
+              >
+                {selectedMembers.length}
+              </span>
             </div>
 
-            <div className="max-h-[560px] space-y-1 overflow-y-auto pr-1">
+            <div
+              data-team-members-scroll
+              className="scrollbar-thin -mr-2 min-h-0 flex-1 space-y-1 overflow-y-auto [scrollbar-gutter:stable] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/30"
+              role="region"
+              aria-label="Lista rolável de membros"
+              tabIndex={0}
+            >
               {activeUsers.map((user) => {
                 const selection = selectedMembers.find(
                   (member) => member.userId === user.id,
                 );
                 const savedMember = savedMemberByUserId.get(user.id);
-                const lockedLeader = !canManageAllTeams && savedMember?.is_leader;
+                const lockedLeader =
+                  !canManageAllTeams && savedMember?.is_leader;
+                const isFocused = activeScheduleUser?.id === user.id;
+                const presence = presenceByUserId.get(user.id);
+                const presenceLabel = !presenceQuery.canViewPresence
+                  ? null
+                  : presenceQuery.isPending
+                    ? "Carregando presença"
+                    : presenceQuery.isError
+                      ? "Presença indisponível"
+                      : presence?.presence_status === "online"
+                        ? "Online agora"
+                        : presence?.presence_status === "idle"
+                          ? "Ausente"
+                          : presence
+                            ? "Offline"
+                            : "Sem dados de presença";
+                const scheduleLabel = !selection
+                  ? "Fora da equipe"
+                  : warningByUserId[user.id] ||
+                      !isValidAvailabilityWeek(weeksByUserId[user.id] || [])
+                    ? "Revisar escala"
+                    : "Escala pronta";
                 return (
                   <div
                     key={user.id}
                     className={cn(
                       "flex min-w-0 items-center gap-2 rounded-[6px] p-2 transition-colors",
-                      selection
-                        ? "bg-[var(--app-surface-hover)]"
-                        : "bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-hover)]",
+                      isFocused
+                        ? "bg-primary/5 ring-1 ring-inset ring-primary/25"
+                        : selection
+                          ? "bg-[var(--app-surface-hover)]"
+                          : "bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-hover)]",
                     )}
                   >
                     <Switch
@@ -547,26 +766,55 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
                       disabled={lockedLeader}
                       aria-label={`${selection ? "Remover" : "Adicionar"} ${user.name || "usuário"}`}
                     />
-                    <Avatar className="h-8 w-8 shrink-0 rounded-[6px]">
-                      <AvatarImage src={user.avatar_url || undefined} />
-                      <AvatarFallback className="rounded-[6px] bg-primary/50 text-[10px] font-light text-white">
-                        {getInitials(user.name)}
-                      </AvatarFallback>
-                    </Avatar>
                     <button
                       type="button"
-                      className="min-w-0 flex-1 text-left"
-                      onClick={() => {
-                        if (!selection) toggleMember(user.id);
-                        setActiveScheduleUserId(user.id);
-                      }}
+                      className="group/schedule flex min-w-0 flex-1 items-center gap-2 rounded-[5px] px-1.5 py-1 text-left transition-colors hover:bg-[var(--app-surface-solid)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/30"
+                      onClick={() => setActiveScheduleUserId(user.id)}
+                      aria-pressed={isFocused}
+                      aria-label={`Ver escala de ${user.name || "usuário"}`}
                     >
-                      <p className="truncate text-[12px] text-[var(--app-text-primary)]">
-                        {user.name || "Usuário"}
-                      </p>
-                      <p className="truncate text-[10px] text-[var(--app-text-tertiary)]">
-                        {user.email}
-                      </p>
+                      <span className="relative shrink-0">
+                        <Avatar className="h-8 w-8 rounded-[6px]">
+                          <AvatarImage src={user.avatar_url || undefined} />
+                          <AvatarFallback className="rounded-[6px] bg-primary/50 text-[10px] font-light text-white">
+                            {getInitials(user.name, { fallback: "?" })}
+                          </AvatarFallback>
+                        </Avatar>
+                        {presenceQuery.canViewPresence && presence && (
+                          <span
+                            className={cn(
+                              "absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[var(--app-surface-solid)]",
+                              presence.presence_status === "online"
+                                ? "bg-success"
+                                : presence.presence_status === "idle"
+                                  ? "bg-warning"
+                                  : "bg-[var(--app-text-tertiary)]",
+                            )}
+                            aria-hidden="true"
+                          />
+                        )}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[12px] text-[var(--app-text-primary)]">
+                          {user.name || "Usuário"}
+                        </span>
+                        <span className="block truncate text-[10px] text-[var(--app-text-tertiary)]">
+                          {presenceLabel
+                            ? `${presenceLabel} · ${scheduleLabel}`
+                            : scheduleLabel}
+                        </span>
+                      </span>
+                      <span
+                        className={cn(
+                          "grid h-7 w-7 shrink-0 place-items-center rounded-[5px] transition-colors",
+                          isFocused
+                            ? "bg-primary text-white"
+                            : "bg-[var(--app-surface-solid)] text-[var(--app-text-tertiary)] group-hover/schedule:bg-primary/10 group-hover/schedule:text-primary",
+                        )}
+                        aria-hidden="true"
+                      >
+                        <Clock3 className="h-3.5 w-3.5" />
+                      </span>
                     </button>
                     {selection && (
                       <button
@@ -590,75 +838,65 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
             </div>
           </section>
 
-          <section className="min-w-0 rounded-[8px] bg-[var(--app-surface-solid)] p-2 sm:p-3">
-            {activeScheduleUser && activeWeek ? (
-              <div className="space-y-3">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <section
+            data-tour="management-team-schedule"
+            data-team-panel="schedule"
+            className={cn(
+              TEAM_EDITOR_PANEL_HEIGHT_CLASS,
+              "flex min-w-0 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] p-2 sm:p-3",
+            )}
+          >
+            {activeScheduleUser && activeScheduleSelection && activeWeek ? (
+              <div className="flex min-h-0 flex-1 flex-col gap-3">
+                <div className="flex shrink-0 items-center justify-between gap-2 px-1">
                   <div className="flex items-center gap-2">
                     <span className="grid h-8 w-8 place-items-center rounded-[6px] bg-primary/50 text-white">
                       <Clock3 className="h-4 w-4" />
                     </span>
-                    <div>
-                      <h2 className="text-[13px] font-normal">Escala de atendimento</h2>
-                      <p className="text-[10px] text-[var(--app-text-tertiary)]">
-                        Sete dias explícitos; dias desligados não recebem leads.
-                      </p>
-                    </div>
+                    <h2 className="text-[13px] font-normal">
+                      Escala de atendimento
+                    </h2>
                   </div>
-                  <Select
-                    value={activeScheduleUser.id}
-                    onValueChange={setActiveScheduleUserId}
+                  <span
+                    className="max-w-[45%] truncate rounded-[5px] bg-[var(--app-surface-soft)] px-2 py-1 text-[10px] text-[var(--app-text-secondary)]"
+                    title={activeScheduleUser.name || activeScheduleUser.email}
                   >
-                    <SelectTrigger className="h-9 w-full rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none sm:w-[220px]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="rounded-[8px] border-0 p-1">
-                      {selectedScheduleUsers.map((user) => (
-                        <SelectItem
-                          key={user.id}
-                          value={user.id}
-                          className="rounded-[6px] text-[12px] font-light"
-                        >
-                          {user.name || user.email}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    {activeScheduleUser.name || activeScheduleUser.email}
+                  </span>
                 </div>
 
                 {warningByUserId[activeScheduleUser.id] && (
-                  <div className="rounded-[6px] bg-amber-500/10 p-3 text-amber-700 dark:text-amber-300">
-                    <div className="flex items-start gap-2">
-                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                      <div className="min-w-0">
-                        <p className="text-[12px] font-normal">
-                          {warningByUserId[activeScheduleUser.id] === "missing"
-                            ? "Sem escala configurada: recebe leads 24h"
-                            : "Escala antiga incompleta: a disponibilidade pode estar incorreta"}
-                        </p>
-                        <p className="mt-1 text-[10px] leading-4 opacity-80">
-                          Ao salvar, os sete dias abaixo serão gravados. O padrão sugerido é segunda a sexta, das 08:00 às 18:00.
-                        </p>
-                        <label className="mt-2 flex cursor-pointer items-center gap-2 text-[11px]">
-                          <input
-                            type="checkbox"
-                            checked={confirmedWarnings.has(activeScheduleUser.id)}
-                            onChange={(event) =>
-                              confirmScheduleWarning(
-                                activeScheduleUser.id,
-                                event.target.checked,
-                              )
-                            }
-                            className="h-3.5 w-3.5 rounded-[4px] accent-primary"
-                          />
-                          Confirmo que revisei e quero salvar esta escala.
-                        </label>
-                      </div>
+                  <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-[6px] bg-amber-500/10 px-2.5 py-2 text-amber-700 dark:text-amber-300">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 shrink-0" />
+                      <p className="text-[11px] font-normal">
+                        Revise esta escala antes de salvar.
+                      </p>
                     </div>
+                    <label className="flex cursor-pointer items-center gap-2 rounded-[5px] bg-amber-500/10 px-2 py-1 text-[10px]">
+                      <input
+                        type="checkbox"
+                        checked={confirmedWarnings.has(activeScheduleUser.id)}
+                        onChange={(event) =>
+                          confirmScheduleWarning(
+                            activeScheduleUser.id,
+                            event.target.checked,
+                          )
+                        }
+                        className="h-3.5 w-3.5 rounded-[4px] accent-primary"
+                      />
+                      Escala revisada
+                    </label>
                   </div>
                 )}
 
-                <div className="space-y-1.5">
+                <div
+                  data-team-schedule-scroll
+                  className="scrollbar-thin -mr-2 min-h-0 flex-1 space-y-1.5 overflow-y-auto [scrollbar-gutter:stable] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/30"
+                  role="region"
+                  aria-label={`Escala semanal de ${activeScheduleUser.name || activeScheduleUser.email}`}
+                  tabIndex={0}
+                >
                   {activeWeek.map((day) => (
                     <div
                       key={day.day_of_week}
@@ -673,12 +911,18 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
                         <Switch
                           checked={day.is_active}
                           onCheckedChange={(checked) =>
-                            updateSchedule(activeScheduleUser.id, day.day_of_week, {
-                              is_active: checked,
-                            })
+                            updateSchedule(
+                              activeScheduleUser.id,
+                              day.day_of_week,
+                              {
+                                is_active: checked,
+                              },
+                            )
                           }
                         />
-                        <span className="text-[11px]">{DAYS_OF_WEEK[day.day_of_week]}</span>
+                        <span className="text-[11px]">
+                          {DAYS_OF_WEEK[day.day_of_week]}
+                        </span>
                       </div>
                       {day.is_active ? (
                         <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
@@ -686,9 +930,13 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
                             <Switch
                               checked={day.is_all_day}
                               onCheckedChange={(checked) =>
-                                updateSchedule(activeScheduleUser.id, day.day_of_week, {
-                                  is_all_day: checked,
-                                })
+                                updateSchedule(
+                                  activeScheduleUser.id,
+                                  day.day_of_week,
+                                  {
+                                    is_all_day: checked,
+                                  },
+                                )
                               }
                               className="scale-75"
                             />
@@ -704,75 +952,139 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
                                 value={day.start_time}
                                 label={`Início de ${DAYS_OF_WEEK[day.day_of_week]}`}
                                 onChange={(value) =>
-                                  updateSchedule(activeScheduleUser.id, day.day_of_week, {
-                                    start_time: value,
-                                  })
+                                  updateSchedule(
+                                    activeScheduleUser.id,
+                                    day.day_of_week,
+                                    {
+                                      start_time: value,
+                                    },
+                                  )
                                 }
                               />
-                              <span className="text-[10px] text-[var(--app-text-tertiary)]">até</span>
+                              <span className="text-[10px] text-[var(--app-text-tertiary)]">
+                                até
+                              </span>
                               <TimeSelect
                                 value={day.end_time}
                                 label={`Fim de ${DAYS_OF_WEEK[day.day_of_week]}`}
                                 onChange={(value) =>
-                                  updateSchedule(activeScheduleUser.id, day.day_of_week, {
-                                    end_time: value,
-                                  })
+                                  updateSchedule(
+                                    activeScheduleUser.id,
+                                    day.day_of_week,
+                                    {
+                                      end_time: value,
+                                    },
+                                  )
                                 }
                               />
                             </div>
                           )}
                         </div>
                       ) : (
-                        <span className="text-[10px]">Não recebe leads neste dia</span>
+                        <span className="text-[10px]">
+                          Não recebe leads neste dia
+                        </span>
                       )}
                     </div>
                   ))}
                 </div>
               </div>
             ) : (
-              <div className="flex min-h-[360px] flex-col items-center justify-center px-5 text-center">
+              <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-5 text-center">
                 <span className="mb-3 grid h-10 w-10 place-items-center rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)]">
                   <UserPlus className="h-5 w-5" />
                 </span>
-                <h2 className="text-[13px] font-normal">Selecione um membro</h2>
+                <h2 className="text-[13px] font-normal">
+                  {activeScheduleUser
+                    ? `${activeScheduleUser.name || "Usuário"} está fora da equipe`
+                    : "Selecione um membro"}
+                </h2>
                 <p className="mt-1 max-w-sm text-[11px] leading-4 text-[var(--app-text-tertiary)]">
-                  Cada membro adicionado recebe uma escala explícita de sete dias. Por padrão, segunda a sexta das 08:00 às 18:00.
+                  {activeScheduleUser
+                    ? "A pessoa continua visível na lista. Ative o vínculo para configurar e salvar a escala."
+                    : "Clique em uma pessoa na lista para abrir a escala correspondente."}
                 </p>
+                {activeScheduleUser && (
+                  <Button
+                    type="button"
+                    onClick={() => toggleMember(activeScheduleUser.id)}
+                    className="mt-3 h-8 rounded-[6px] bg-primary/50 px-3 text-[11px] font-light text-white shadow-none hover:bg-primary"
+                  >
+                    Adicionar à equipe
+                  </Button>
+                )}
               </div>
             )}
           </section>
+
+          {isEditing && team && (
+            <div
+              className={cn(
+                TEAM_EDITOR_PANEL_HEIGHT_CLASS,
+                "min-w-0 w-full lg:col-span-2 xl:col-span-1",
+              )}
+            >
+              <TeamChangeHistory teamId={team.id} />
+            </div>
+          )}
         </div>
 
         {!allWeeksValid && selectedMembers.length > 0 && (
-          <div className="rounded-[6px] bg-destructive/10 px-3 py-2 text-[11px] text-destructive">
-            Há uma escala inválida. Mantenha ao menos um dia ativo, confira os sete dias e use horários inicial e final diferentes.
+          <div className="shrink-0 rounded-[6px] bg-destructive/10 px-3 py-2 text-[11px] text-destructive">
+            Há uma escala inválida. Mantenha ao menos um dia ativo, confira os
+            sete dias e use horários inicial e final diferentes.
           </div>
         )}
 
-        <div className="sticky bottom-2 z-10 ml-auto grid w-full grid-cols-[minmax(0,3fr)_minmax(0,7fr)] gap-2 rounded-[8px] bg-[var(--app-surface-solid)] p-2 sm:max-w-[420px]">
-          <Button
-            asChild
-            type="button"
-            className="h-9 rounded-[6px] bg-[var(--app-surface-soft)] text-[12px] font-light text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]"
+        <div className="sticky bottom-0 z-20 mx-auto flex w-full max-w-[680px] shrink-0 flex-col gap-2 rounded-[8px] bg-[var(--app-surface-solid)] p-2 shadow-[0_-10px_30px_rgba(15,23,42,0.12)] sm:flex-row sm:items-center sm:justify-between">
+          <p
+            className="px-1 text-[10px] text-[var(--app-text-tertiary)]"
+            aria-live="polite"
           >
-            <Link href={MANAGEMENT_TEAMS_URL}>Cancelar</Link>
-          </Button>
-          <Button
-            type="button"
-            data-tour="management-team-save"
-            onClick={handleSubmit}
-            disabled={!canSubmit}
-            className="h-9 rounded-[6px] bg-primary/50 text-[12px] font-light text-white shadow-none hover:bg-primary disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isSubmitting ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : isEditing ? (
-              <Save className="mr-2 h-4 w-4" />
-            ) : (
-              <Check className="mr-2 h-4 w-4" />
-            )}
-            {isEditing ? "Salvar alterações" : "Criar equipe"}
-          </Button>
+            {isSubmitting
+              ? isEditing
+                ? "Salvando alterações..."
+                : "Criando equipe..."
+              : canSubmit
+                ? "Tudo pronto para salvar."
+                : isEditing && !hasUnsavedChanges
+                  ? "Nenhuma alteração para salvar."
+                  : unresolvedWarnings.length > 0
+                    ? "Revise e confirme as escalas sinalizadas."
+                    : "Preencha o nome e mantenha uma escala válida para cada membro."}
+          </p>
+          <div className="grid w-full grid-cols-[minmax(0,3fr)_minmax(0,7fr)] gap-2 sm:w-[330px]">
+            <Button
+              asChild
+              type="button"
+              className="h-9 rounded-[6px] bg-[var(--app-surface-soft)] text-[12px] font-light text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]"
+            >
+              <Link href={MANAGEMENT_TEAMS_URL}>Cancelar</Link>
+            </Button>
+            <Button
+              type="button"
+              data-tour="management-team-save"
+              onClick={handleSubmit}
+              disabled={!canSubmit}
+              aria-busy={isSubmitting}
+              className="h-9 rounded-[6px] bg-primary text-[12px] font-light text-white shadow-none hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isSubmitting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : isEditing ? (
+                <Save className="mr-2 h-4 w-4" />
+              ) : (
+                <Check className="mr-2 h-4 w-4" />
+              )}
+              {isSubmitting
+                ? isEditing
+                  ? "Salvando..."
+                  : "Criando..."
+                : isEditing
+                  ? "Salvar alterações"
+                  : "Criar equipe"}
+            </Button>
+          </div>
         </div>
       </div>
     </AppLayout>
@@ -811,14 +1123,34 @@ function TimeSelect({
   );
 }
 
-function TeamEditorLoading() {
+function TeamEditorLoading({ isEditing }: { isEditing: boolean }) {
   return (
-    <div className="mx-auto w-full max-w-[1180px] space-y-3 pb-8">
+    <div className="w-full space-y-3 pb-8">
       <Skeleton className="h-8 w-40 rounded-[6px]" />
-      <Skeleton className="h-24 w-full rounded-[8px]" />
-      <div className="grid gap-3 lg:grid-cols-[minmax(300px,0.38fr)_minmax(0,0.62fr)]">
-        <Skeleton className="h-[480px] rounded-[8px]" />
-        <Skeleton className="h-[480px] rounded-[8px]" />
+      {isEditing && (
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, index) => (
+            <Skeleton key={index} className="h-[70px] rounded-[8px]" />
+          ))}
+        </div>
+      )}
+      <Skeleton className="h-16 w-full rounded-[8px]" />
+      <div
+        className={cn(
+          "grid min-w-0 gap-3 lg:grid-cols-[minmax(280px,0.36fr)_minmax(0,0.64fr)]",
+          isEditing &&
+            "xl:grid-cols-[minmax(280px,340px)_minmax(520px,1fr)_minmax(260px,320px)]",
+        )}
+      >
+        {Array.from({ length: isEditing ? 3 : 2 }).map((_, index) => (
+          <Skeleton
+            key={index}
+            className={cn(
+              TEAM_EDITOR_LOADING_PANEL_HEIGHT_CLASS,
+              "rounded-[8px]",
+            )}
+          />
+        ))}
       </div>
     </div>
   );

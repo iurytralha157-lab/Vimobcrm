@@ -222,9 +222,7 @@ select is(
   'manual lead creates a stage cycle'
 );
 
-set local role authenticated;
-select set_config('request.jwt.claim.sub', 'a1000000-0000-0000-0000-000000000001', true);
-select set_config('request.jwt.claim.role', 'authenticated', true);
+set local role service_role;
 
 select lives_ok(
   $$
@@ -244,12 +242,12 @@ select lives_ok(
       'a3000000-0000-0000-0000-000000000001',
       'a4000000-0000-0000-0000-000000000001',
       'a1000000-0000-0000-0000-000000000001',
-      'Authenticated browser lead',
+      'Backend API lead',
       '5511999999003',
       'manual'
     )
   $$,
-  'authenticated lead creation can materialize backend-owned attention cycles'
+  'backend lead creation can materialize backend-owned attention cycles'
 );
 
 reset role;
@@ -257,7 +255,7 @@ reset role;
 select is(
   (select attention_eligible from public.leads where id = 'a5000000-0000-0000-0000-000000000003'),
   true,
-  'authenticated lead creation participates in operational attention'
+  'backend lead creation participates in operational attention'
 );
 
 select is(
@@ -269,7 +267,7 @@ select is(
     where l.id = 'a5000000-0000-0000-0000-000000000003'
   ),
   2::bigint,
-  'authenticated lead creation opens assignment and stage cycles'
+  'backend lead creation opens assignment and stage cycles'
 );
 
 -- Integration-created leads follow the same all-leads enrollment contract.

@@ -40,12 +40,12 @@ interface UseDREParams {
 }
 
 export function useDREExecutive({ startDate, endDate, regime, compareWithPrevious = false }: UseDREParams) {
-  const { organization } = useAuth();
+  const { activeOrganization, organization } = useAuth();
 
   return useQuery({
-    queryKey: ['dre-executive', organization?.id, startDate.toISOString(), endDate.toISOString(), regime, compareWithPrevious],
+    queryKey: ['dre-executive', activeOrganization.organizationId, startDate.toISOString(), endDate.toISOString(), regime, compareWithPrevious],
     queryFn: async (): Promise<DREData> => {
-      if (!organization?.id) throw new Error('Organização não encontrada.');
+      if (!activeOrganization.organizationId) throw new Error('Organização não encontrada.');
 
       return analyticsAPI.dreExecutive<DREData>({
         startDate: format(startDate, 'yyyy-MM-dd'),
@@ -54,6 +54,6 @@ export function useDREExecutive({ startDate, endDate, regime, compareWithPreviou
         compareWithPrevious,
       });
     },
-    enabled: !!organization?.id,
+    enabled: !!activeOrganization.organizationId,
   });
 }

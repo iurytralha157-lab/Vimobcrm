@@ -65,27 +65,43 @@ func TestDirectMemberResolutionValidatesUserBeforeTeamContext(t *testing.T) {
 func repositoryFunctionSource(t *testing.T, functionName string) string {
 	t.Helper()
 
-	source, err := os.ReadFile("repository.go")
-	if err != nil {
-		t.Fatalf("read repository.go: %v", err)
-	}
-
 	files := token.NewFileSet()
-	parsed, err := parser.ParseFile(files, "repository.go", source, 0)
-	if err != nil {
-		t.Fatalf("parse repository.go: %v", err)
-	}
-	for _, declaration := range parsed.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Name.Name != functionName {
-			continue
+	for _, fileName := range []string{
+		"repository.go",
+		"repository_sources.go",
+		"repository_queue_read.go",
+		"repository_queue_write.go",
+		"repository_queue_validation.go",
+		"repository_rules.go",
+		"repository_meta_forms.go",
+		"repository_whatsapp_rules.go",
+		"repository_members.go",
+		"repository_member_resolution.go",
+		"repository_rule_conflicts.go",
+		"repository_scanners.go",
+		"repository_values.go",
+		"repository_scope.go",
+	} {
+		source, err := os.ReadFile(fileName)
+		if err != nil {
+			t.Fatalf("read %s: %v", fileName, err)
 		}
-		start := files.Position(function.Pos()).Offset
-		end := files.Position(function.End()).Offset
-		return string(source[start:end])
+		parsed, err := parser.ParseFile(files, fileName, source, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", fileName, err)
+		}
+		for _, declaration := range parsed.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Name.Name != functionName {
+				continue
+			}
+			start := files.Position(function.Pos()).Offset
+			end := files.Position(function.End()).Offset
+			return string(source[start:end])
+		}
 	}
 
-	t.Fatalf("function %s not found in repository.go", functionName)
+	t.Fatalf("function %s not found in repository modules", functionName)
 	return ""
 }
 

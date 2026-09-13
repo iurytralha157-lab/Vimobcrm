@@ -391,6 +391,8 @@ export const automationsAPI = {
 
   async listExecutions(params: {
     automationId?: string;
+    leadId?: string;
+    activeOnly?: boolean;
     limit?: number;
     organizationId?: string | null;
   }) {
@@ -398,6 +400,8 @@ export const automationsAPI = {
       organizationId: params.organizationId,
       query: {
         automationId: params.automationId,
+        leadId: params.leadId,
+        activeOnly: params.activeOnly,
         limit: params.limit,
       },
     });

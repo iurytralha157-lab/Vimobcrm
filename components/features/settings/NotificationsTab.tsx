@@ -20,7 +20,7 @@ import { useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 
 export const NotificationsTab = () => {
-  const { user, profile, organization } = useAuth();
+  const { activeOrganization, user, profile, organization } = useAuth();
   const {
     isSupported,
     permission,
@@ -34,7 +34,7 @@ export const NotificationsTab = () => {
   } = useWebPush();
   const [testing, setTesting] = useState(false);
   const [disableDialogOpen, setDisableDialogOpen] = useState(false);
-  const organizationId = organization?.id || profile?.organization_id;
+  const organizationId = activeOrganization.organizationId;
   const {
     data: devices = [],
     isFetching: loadingDevices,
@@ -109,18 +109,10 @@ export const NotificationsTab = () => {
       });
 
       if (result.error) throw new Error(String(result.error));
-      const push = result.push;
-      if (!push?.ok || !push.attempted || (push.sent ?? 0) < 1) {
-        const code = push?.error || 'push_delivery_not_confirmed';
-        if (code === 'push_tokens_missing') {
-          throw new Error('Nenhum dispositivo ativo foi encontrado. Desative e ative novamente neste aparelho.');
-        }
-        if (code === 'push_sender_not_configured' || code === 'vapid_private_key_missing') {
-          throw new Error('O servidor de push ainda não está configurado para este ambiente.');
-        }
-        throw new Error(`O provedor não confirmou a entrega (${code}).`);
+      if (!result.success || !result.queued || !result.notification) {
+        throw new Error('O backend não confirmou o enfileiramento do teste.');
       }
-      toast.success(`Push entregue em ${push.sent} dispositivo(s).`);
+      toast.success('Push de teste enfileirado. A entrega será processada em segundo plano.');
       await loadDevices();
     } catch (err) {
       console.error('Erro ao testar push:', err);

@@ -10,6 +10,7 @@ import { useUserPermissions } from "@/hooks/use-user-permissions";
 
 export default function MetaSettingsScreen() {
   const {
+    activeOrganization,
     profile,
     organization,
     isSuperAdmin,
@@ -18,7 +19,7 @@ export default function MetaSettingsScreen() {
     organizationsLoaded,
   } = useAuth();
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
-  const activeOrganizationId = organization?.id || profile?.organization_id;
+  const activeOrganizationId = activeOrganization.organizationId;
   const activeMemberRole = userOrganizations.find(
     (item) => item.organization_id === activeOrganizationId,
   )?.member_role;
@@ -30,8 +31,8 @@ export default function MetaSettingsScreen() {
     loading || !organizationsLoaded || permissionsLoading || !profile;
 
   return (
-    <AppLayout title="Facebook / Meta" borderless>
-      <div className="mx-auto w-full max-w-[1280px] space-y-4 pb-8 sm:pt-2">
+    <AppLayout title="Facebook / Meta" borderless disableMainScroll>
+      <div className="flex h-full min-h-0 w-full min-w-0 flex-col sm:pt-2">
         {accessLoading ? (
           <div className="space-y-3" aria-label="Carregando integração Meta">
             <Skeleton className="h-16 w-full rounded-[8px]" />

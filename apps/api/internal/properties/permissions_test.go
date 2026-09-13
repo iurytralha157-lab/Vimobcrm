@@ -1,11 +1,33 @@
 package properties
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
+
+func TestDeactivateOwnerRequiresPropertyManageBeforeDatabaseAccess(t *testing.T) {
+	repo := Repository{}
+	userContext := tenant.Context{
+		UserID:         "user-1",
+		OrganizationID: "org-1",
+		MemberRole:     "user",
+		Permissions:    []string{"property_view"},
+	}
+
+	err := repo.DeactivateOwner(
+		context.Background(),
+		userContext,
+		"00000000-0000-4000-8000-000000000001",
+		"2026-09-08T12:00:00Z",
+	)
+	if !errors.Is(err, tenant.ErrOrganizationAccessDenied) {
+		t.Fatalf("DeactivateOwner error = %v, want organization access denied", err)
+	}
+}
 
 func TestCanCreatePropertyOwners(t *testing.T) {
 	userContext := tenant.Context{

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { integrationsAPI } from '@/lib/api';
+import { stringifyErrorMessage as getErrorMessage } from '@/lib/api/vimob-error';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 
@@ -23,14 +24,9 @@ type ImoviewSyncResult = {
   errors?: string[];
 };
 
-const getErrorMessage = (error: unknown) => {
-  if (error instanceof Error) return error.message;
-  return String(error);
-};
-
 export function useImoviewIntegration(options: { enabled?: boolean } = {}) {
-  const { profile } = useAuth();
-  const orgId = profile?.organization_id;
+  const { activeOrganization, profile } = useAuth();
+  const orgId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ['imoview-integration', orgId],
@@ -40,9 +36,9 @@ export function useImoviewIntegration(options: { enabled?: boolean } = {}) {
 }
 
 export function useSaveImoviewIntegration() {
-  const { profile } = useAuth();
+  const { activeOrganization, profile } = useAuth();
   const queryClient = useQueryClient();
-  const orgId = profile?.organization_id;
+  const orgId = activeOrganization.organizationId;
 
   return useMutation<ImoviewIntegration, Error, { api_key: string }>({
     mutationFn: ({ api_key }: { api_key: string }) => {
@@ -58,14 +54,14 @@ export function useSaveImoviewIntegration() {
 }
 
 export function useTestImoviewConnection() {
-  const { profile } = useAuth();
+  const { activeOrganization, profile } = useAuth();
 
   return useMutation<ImoviewTestResult, Error>({
     mutationFn: async () => {
       const data = await integrationsAPI.invokeFunction<ImoviewTestResult>('imoview-sync', {
         action: 'test',
-        organization_id: profile?.organization_id,
-      }, profile?.organization_id);
+        organization_id: activeOrganization.organizationId,
+      }, activeOrganization.organizationId);
       if (!data) throw new Error('Resposta vazia ao testar Imoview');
       return data;
     },
@@ -73,15 +69,15 @@ export function useTestImoviewConnection() {
 }
 
 export function useSyncImoviewProperties() {
-  const { profile } = useAuth();
+  const { activeOrganization, profile } = useAuth();
   const queryClient = useQueryClient();
 
   return useMutation<ImoviewSyncResult, Error>({
     mutationFn: async () => {
       const data = await integrationsAPI.invokeFunction<ImoviewSyncResult>('imoview-sync', {
         action: 'sync',
-        organization_id: profile?.organization_id,
-      }, profile?.organization_id);
+        organization_id: activeOrganization.organizationId,
+      }, activeOrganization.organizationId);
       if (!data) throw new Error('Resposta vazia ao sincronizar Imoview');
       return data;
     },
@@ -95,13 +91,13 @@ export function useSyncImoviewProperties() {
 }
 
 export function useDeleteImoviewIntegration() {
-  const { profile } = useAuth();
+  const { activeOrganization, profile } = useAuth();
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: () => {
-      if (!profile?.organization_id) throw new Error('Organização não encontrada.');
-      return integrationsAPI.deleteImoview(profile.organization_id);
+      if (!activeOrganization.organizationId) throw new Error('Organização não encontrada.');
+      return integrationsAPI.deleteImoview(activeOrganization.organizationId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['imoview-integration'] });

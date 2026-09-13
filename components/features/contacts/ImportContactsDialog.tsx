@@ -2,9 +2,9 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
-  SheetDescription,
 } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import {
@@ -29,8 +29,13 @@ import {
 } from 'lucide-react';
 import { usePipelines, useStages } from '@/hooks/use-stages';
 import { useOrganizationUsers } from '@/hooks/use-users';
-import { useImportLeads, type CreateLeadInput, type ImportLeadsResult } from '@/hooks/use-leads';
-import { useTeams } from '@/hooks/use-teams';
+import {
+  useImportLeads,
+  type CreateLeadInput,
+  type ImportLeadsProgress,
+  type ImportLeadsResult,
+} from '@/hooks/use-leads';
+import { useRoundRobins } from '@/hooks/use-round-robins';
 import { useTags, useCreateTag } from '@/hooks/use-tags';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
@@ -39,8 +44,20 @@ import ExcelJS from 'exceljs';
 import { cn } from '@/lib/utils';
 import { contactsAPI } from '@/lib/api/contacts';
 import { pipelinesAPI } from '@/lib/api/pipelines';
-import { parseContactsCSV } from './parse-contacts-csv';
+import {
+  decodeContactsCSV,
+  excelCellValueToText,
+  parseContactsCSVRecords,
+} from './parse-contacts-csv';
 import { DEFAULT_TAG_COLOR } from '@/config/tag-colors';
+import { formatPtBRNumber } from '@/lib/utils/formatting';
+import {
+  countPendingDistribution,
+  createEmptyImportDistributionSummary,
+} from '@/lib/lead-distribution-outcome';
+import { createTagInputSchema } from '@/lib/validation/crm-support';
+import { leadCreateInputSchema } from '@/lib/validation/leads';
+import { resolveImportRowTagsIfValid } from './import-contacts-validation';
 
 interface ImportContactsDialogProps {
   open: boolean;
@@ -48,6 +65,7 @@ interface ImportContactsDialogProps {
 }
 
 interface ParsedContact {
+  rowNumber: number;
   nome: string;
   telefone?: string;
   email?: string;
@@ -59,17 +77,31 @@ interface ParsedContact {
   fonte?: string;
   motivo_perda?: string;
   mensagem?: string;
-  [key: string]: string | undefined;
+  [key: string]: string | number | undefined;
 }
 
 const MAX_IMPORT_FILE_BYTES = 10 * 1024 * 1024;
-const MAX_IMPORT_ROWS = 2_000;
 
 const getStagePosition = (stage: object) => {
   if (!('position' in stage)) return 0;
 
   const value = (stage as { position?: unknown }).position;
   return typeof value === 'number' ? value : 0;
+};
+
+const normalizeLookupValue = (value: string) => value.trim().toLocaleLowerCase('pt-BR');
+
+const resolveDealStatus = (value?: string) => {
+  const normalized = normalizeLookupValue(value || '');
+  if (!normalized || normalized === 'open' || normalized === 'aberto' || normalized === 'em aberto') {
+    return { status: 'open' as const };
+  }
+  if (normalized === 'won' || normalized.includes('ganho')) return { status: 'won' as const };
+  if (normalized === 'lost' || normalized.includes('perdido')) return { status: 'lost' as const };
+  return {
+    status: 'open' as const,
+    error: `Status "${value?.trim()}" não reconhecido`,
+  };
 };
 
 export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialogProps) {
@@ -80,31 +112,48 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
   const [selectedSource, setSelectedSource] = useState<string>('import');
   const [customSource, setCustomSource] = useState<string>('');
   const [showCustomSourceInput, setShowCustomSourceInput] = useState(false);
+  const [isParsing, setIsParsing] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [importPhase, setImportPhase] = useState<'preparing' | 'importing' | null>(null);
+  const [importProgress, setImportProgress] = useState<ImportLeadsProgress | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [importResult, setImportResult] = useState<ImportLeadsResult | null>(null);
   const [isAutoDistribute, setIsAutoDistribute] = useState(false);
-  const [selectedTeam, setSelectedTeam] = useState<string>('none');
+  const [selectedRoundRobin, setSelectedRoundRobin] = useState<string>('automatic');
   const [dynamicSources, setDynamicSources] = useState<string[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const parseRequestRef = useRef(0);
+  const lastProgressUpdateRef = useRef(0);
   const { hasPermission } = useUserPermissions();
   const canAssignImportedLeads = hasPermission('lead_operate');
+  const canSelectDistributionQueue =
+    canAssignImportedLeads && hasPermission('distribution_manage');
   const canManageTags = hasPermission('tag_manage');
 
   const { data: pipelines = [] } = usePipelines();
-  const { data: stagesData = [] } = useStages(selectedPipeline || undefined);
+  const {
+    data: stagesData = [],
+    isLoading: isLoadingStages,
+    error: stagesError,
+  } = useStages(selectedPipeline || undefined);
   const { data: users = [] } = useOrganizationUsers({
     enabled: open && canAssignImportedLeads,
   });
-  const { data: teams = [] } = useTeams({
-    enabled: open && canAssignImportedLeads && hasPermission('team_view'),
+  const {
+    data: roundRobins = [],
+    isLoading: isLoadingRoundRobins,
+  } = useRoundRobins({
+    enabled: open && isAutoDistribute && canSelectDistributionQueue,
   });
   const { data: allTags = [] } = useTags({ enabled: open });
   const importLeads = useImportLeads();
   const createTag = useCreateTag();
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id ?? profile?.organization_id ?? null;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId ?? null;
+  const activeRoundRobins = roundRobins.filter(
+    roundRobin => roundRobin.is_active !== false,
+  );
 
   const sourceOptions = [
     { value: 'import', label: 'Importação' },
@@ -146,6 +195,11 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
   }, [open, organizationId]);
 
   const handleFileChange = (selectedFile: File) => {
+    if (isImporting) {
+      toast.info('Aguarde a importação terminar antes de trocar o arquivo');
+      return;
+    }
+
     const validTypes = [
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'text/csv',
@@ -157,31 +211,48 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
     if (!validTypes.includes(selectedFile.type) &&
         !normalizedName.endsWith('.csv') &&
         !normalizedName.endsWith('.xlsx')) {
+      parseRequestRef.current += 1;
+      setFile(null);
+      setParsedData([]);
+      setIsParsing(false);
       toast.error('Formato inválido. Use arquivos .xlsx ou .csv');
       return;
     }
 
     if (selectedFile.size > MAX_IMPORT_FILE_BYTES) {
+      parseRequestRef.current += 1;
+      setFile(null);
+      setParsedData([]);
+      setIsParsing(false);
       toast.error('O arquivo deve ter no máximo 10 MB');
       return;
     }
 
+    const requestId = parseRequestRef.current + 1;
+    parseRequestRef.current = requestId;
     setFile(selectedFile);
-    parseFile(selectedFile);
+    setParsedData([]);
+    setImportResult(null);
+    setImportProgress(null);
+    setIsParsing(true);
+    void parseFile(selectedFile, requestId);
   };
 
-  const parseFile = async (file: File) => {
+  const parseFile = async (file: File, requestId: number) => {
     try {
-      const jsonData: Record<string, string>[] = [];
+      const sourceRows: Array<{ rowNumber: number; values: Record<string, string> }> = [];
 
       if (file.name.toLowerCase().endsWith('.csv')) {
-        const text = await file.text();
-        const parsedRows = parseContactsCSV(text);
+        const text = decodeContactsCSV(await file.arrayBuffer());
+        const parsedRows = parseContactsCSVRecords(text);
         if (parsedRows.length === 0) {
+          if (parseRequestRef.current !== requestId) return;
+          setFile(null);
+          setParsedData([]);
           toast.error('Arquivo CSV vazio ou inválido');
           return;
         }
-        jsonData.push(...parsedRows);
+        sourceRows.push(...parsedRows);
       } else {
         const workbook = new ExcelJS.Workbook();
         const arrayBuffer = await file.arrayBuffer();
@@ -189,6 +260,9 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
 
         const worksheet = workbook.worksheets[0];
         if (!worksheet) {
+          if (parseRequestRef.current !== requestId) return;
+          setFile(null);
+          setParsedData([]);
           toast.error('Planilha vazia ou inválida');
           return;
         }
@@ -198,82 +272,85 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
         worksheet.eachRow((row, rowNumber) => {
           if (rowNumber === 1) {
             row.eachCell((cell, colNumber) => {
-              headers[colNumber - 1] = String(cell.value || '').toLowerCase().trim();
+              headers[colNumber - 1] = excelCellValueToText(cell.value, cell.text).toLowerCase().trim();
             });
           } else {
             const rowData: Record<string, string> = {};
             row.eachCell((cell, colNumber) => {
               const header = headers[colNumber - 1];
               if (header) {
-                rowData[header] = String(cell.value || '');
+                rowData[header] = excelCellValueToText(cell.value, cell.text);
               }
             });
-            if (Object.keys(rowData).length > 0) {
-              jsonData.push(rowData);
+            if (Object.values(rowData).some(value => value.length > 0)) {
+              sourceRows.push({ rowNumber, values: rowData });
             }
           }
         });
       }
 
-      if (jsonData.length > MAX_IMPORT_ROWS) {
-        setFile(null);
-        setParsedData([]);
-        toast.error(`A importação aceita até ${MAX_IMPORT_ROWS.toLocaleString('pt-BR')} contatos por arquivo`);
-        return;
-      }
-
-      const normalizedData = jsonData.map(row => {
-        const normalized: ParsedContact = { nome: '' };
-        Object.entries(row).forEach(([key, value]) => {
+      const normalizedData = sourceRows.map(({ rowNumber, values }) => {
+        const normalized: ParsedContact = { rowNumber, nome: '' };
+        Object.entries(values).forEach(([key, value]) => {
           const lowerKey = key.toLowerCase().trim();
           if (lowerKey === 'nome' || lowerKey === 'name') {
-            normalized.nome = String(value || '');
+            normalized.nome = value.trim();
           } else if (lowerKey === 'telefone' || lowerKey === 'phone' || lowerKey === 'tel') {
-            normalized.telefone = String(value || '');
+            normalized.telefone = value.trim();
           } else if (lowerKey === 'email' || lowerKey === 'e-mail') {
-            normalized.email = String(value || '');
+            normalized.email = value.trim();
           } else if (lowerKey === 'status' || lowerKey === 'situacao' || lowerKey === 'situação') {
-            normalized.status = String(value || '');
+            normalized.status = value.trim();
           } else if (lowerKey === 'pipeline' || lowerKey === 'funil') {
-            normalized.pipeline = String(value || '');
+            normalized.pipeline = value.trim();
           } else if (lowerKey === 'estagio' || lowerKey === 'estágio' || lowerKey === 'stage' || lowerKey === 'fase') {
-            normalized.estagio = String(value || '');
+            normalized.estagio = value.trim();
           } else if (lowerKey === 'responsavel' || lowerKey === 'responsável' || lowerKey === 'corretor' || lowerKey === 'assignee') {
-            normalized.responsavel = String(value || '');
+            normalized.responsavel = value.trim();
           } else if (lowerKey === 'tags' || lowerKey === 'etiquetas') {
-            normalized.tags = String(value || '');
+            normalized.tags = value.trim();
           } else if (lowerKey === 'fonte' || lowerKey === 'origem' || lowerKey === 'source') {
-            normalized.fonte = String(value || '');
+            normalized.fonte = value.trim();
           } else if (lowerKey === 'motivo de perda' || lowerKey === 'motivo_perda' || lowerKey === 'loss_reason') {
-            normalized.motivo_perda = String(value || '');
+            normalized.motivo_perda = value.trim();
           } else if (lowerKey === 'mensagem' || lowerKey === 'message' || lowerKey === 'observacao' || lowerKey === 'observação' || lowerKey === 'note') {
-            normalized.mensagem = String(value || '');
+            normalized.mensagem = value.trim();
           } else {
-            normalized[lowerKey] = String(value || '');
+            normalized[lowerKey] = value.trim();
           }
         });
         return normalized;
-      }).filter(row => row.nome);
+      });
 
+      if (parseRequestRef.current !== requestId) return;
       setParsedData(normalizedData);
 
       if (normalizedData.length === 0) {
-        toast.error('Nenhum contato válido encontrado. Verifique se a coluna "nome" existe.');
+        setFile(null);
+        toast.error('Nenhuma linha preenchida foi encontrada no arquivo.');
       } else {
-        toast.success(`${normalizedData.length} contatos encontrados`);
+        const invalidNames = normalizedData.filter(row => row.nome.trim().length < 2).length;
+        toast.success(`${formatPtBRNumber(normalizedData.length)} linhas encontradas`);
+        if (invalidNames > 0) {
+          toast.info(`${formatPtBRNumber(invalidNames)} linha(s) sem um nome válido serão registradas como falha`);
+        }
       }
     } catch (error) {
+      if (parseRequestRef.current !== requestId) return;
       console.error('Error parsing file:', error);
       setFile(null);
       setParsedData([]);
       toast.error('Erro ao processar arquivo');
+    } finally {
+      if (parseRequestRef.current === requestId) setIsParsing(false);
     }
   };
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
+    if (isImporting) return;
     setIsDragging(true);
-  }, []);
+  }, [isImporting]);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -283,6 +360,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
+    if (isImporting) return;
     const droppedFile = e.dataTransfer.files[0];
     if (droppedFile) {
       handleFileChange(droppedFile);
@@ -290,6 +368,11 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
   };
 
   const handleImport = async () => {
+    if (isParsing) {
+      toast.info('Aguarde a leitura da planilha terminar');
+      return;
+    }
+
     if (!selectedPipeline || parsedData.length === 0) {
       toast.error('Selecione uma pipeline e carregue um arquivo válido');
       return;
@@ -305,133 +388,324 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
       return;
     }
 
+    const defaultPipeline = pipelines.find(
+      pipeline => pipeline.id === selectedPipeline && pipeline.is_active !== false,
+    );
+    if (!defaultPipeline) {
+      toast.error('O funil de destino não está mais disponível. Selecione outro funil.');
+      return;
+    }
+
+    if (isLoadingStages) {
+      toast.info('Aguarde o carregamento dos estágios do funil de destino');
+      return;
+    }
+    if (stagesError) {
+      toast.error('Não foi possível validar os estágios do funil de destino');
+      return;
+    }
+
+    const sortedDefaultStages = [...stagesData]
+      .filter(stage => stage.is_active !== false)
+      .sort((left, right) => getStagePosition(left) - getStagePosition(right));
+    if (sortedDefaultStages.length === 0) {
+      toast.error('O funil de destino precisa ter ao menos um estágio ativo');
+      return;
+    }
+
+    if (isAutoDistribute) {
+      if (
+        selectedRoundRobin !== 'automatic'
+        && (!canSelectDistributionQueue
+          || !activeRoundRobins.some(roundRobin => roundRobin.id === selectedRoundRobin))
+      ) {
+        toast.error('A fila de distribuição selecionada não está mais disponível');
+        return;
+      }
+    } else if (
+      selectedAssignee !== 'none'
+      && !users.some(user => user.id === selectedAssignee && user.is_active)
+    ) {
+      toast.error('O responsável selecionado não está mais disponível');
+      return;
+    }
+
     setIsImporting(true);
+    setImportPhase('preparing');
+    setImportResult(null);
+    setImportProgress({
+      total: parsedData.length,
+      processed: 0,
+      success: 0,
+      failed: 0,
+      remaining: parsedData.length,
+      created: 0,
+      reentered: 0,
+      distribution: createEmptyImportDistributionSummary(),
+    });
     try {
       const pipelineMap = new Map<string, string>();
-      pipelines.forEach(p => pipelineMap.set(p.name.toLowerCase(), p.id));
+      const pipelineNameById = new Map<string, string>();
+      pipelines
+        .filter(pipeline => pipeline.is_active !== false)
+        .forEach(pipeline => {
+          pipelineMap.set(normalizeLookupValue(pipeline.name), pipeline.id);
+          pipelineNameById.set(pipeline.id, pipeline.name);
+        });
 
       const usersMap = new Map<string, string>();
       if (canAssignImportedLeads) {
-        users.forEach(u => {
-          usersMap.set(u.name.toLowerCase(), u.id);
-          if (u.email) usersMap.set(u.email.toLowerCase(), u.id);
-        });
+        users
+          .filter(user => user.is_active)
+          .forEach(user => {
+            usersMap.set(normalizeLookupValue(user.name), user.id);
+            if (user.email) usersMap.set(normalizeLookupValue(user.email), user.id);
+          });
       }
 
       const tagsMap = new Map<string, string>();
-      allTags.forEach(t => tagsMap.set(t.name.toLowerCase(), t.id));
+      allTags.forEach(tag => tagsMap.set(normalizeLookupValue(tag.name), tag.id));
+      const unavailableTags = new Map<string, string>();
 
       const defaultPipelineId = selectedPipeline;
-      const sortedDefaultStages = [...stagesData].sort((a, b) => (a.position || 0) - (b.position || 0));
       const defaultStageId = sortedDefaultStages[0]?.id;
       const defaultAssigneeId =
-        canAssignImportedLeads && selectedAssignee !== 'none'
+        canAssignImportedLeads && !isAutoDistribute && selectedAssignee !== 'none'
           ? selectedAssignee
           : undefined;
       const finalSource = selectedSource === 'custom' ? customSource.trim() : selectedSource;
-      const stagesByPipeline = new Map<string, typeof stagesData>();
-      stagesByPipeline.set(defaultPipelineId, sortedDefaultStages);
+      type StageLookup = { stages: typeof stagesData; error?: string };
+      const stagesByPipeline = new Map<string, StageLookup>();
+      stagesByPipeline.set(defaultPipelineId, { stages: sortedDefaultStages });
 
       const getStagesForPipeline = async (pipelineId: string) => {
         const cached = stagesByPipeline.get(pipelineId);
         if (cached) return cached;
 
-        const stages = await pipelinesAPI.getStages(pipelineId, organizationId);
-        const sorted = [...stages].sort((a, b) => getStagePosition(a) - getStagePosition(b));
-        stagesByPipeline.set(pipelineId, sorted);
-        return sorted;
+        try {
+          const stages = await pipelinesAPI.getStages(pipelineId, organizationId);
+          const lookup: StageLookup = {
+            stages: [...stages]
+              .filter(stage => stage.is_active !== false)
+              .sort((left, right) => getStagePosition(left) - getStagePosition(right)),
+          };
+          stagesByPipeline.set(pipelineId, lookup);
+          return lookup;
+        } catch {
+          const lookup: StageLookup = {
+            stages: [],
+            error: `Não foi possível carregar os estágios do funil "${pipelineNameById.get(pipelineId) || pipelineId}"`,
+          };
+          stagesByPipeline.set(pipelineId, lookup);
+          return lookup;
+        }
       };
 
       const rows: CreateLeadInput[] = [];
-      const skippedTagNames = new Set<string>();
       for (const contact of parsedData) {
+        const validationErrors: string[] = [];
+        const contactName = contact.nome.trim();
+        if (contactName.length < 2) {
+          validationErrors.push('Nome ausente ou com menos de 2 caracteres');
+        }
+
         let contactPipelineId = defaultPipelineId;
         if (contact.pipeline) {
-          contactPipelineId = pipelineMap.get(contact.pipeline.toLowerCase()) || defaultPipelineId;
+          const mappedPipelineId = pipelineMap.get(normalizeLookupValue(contact.pipeline));
+          if (mappedPipelineId) contactPipelineId = mappedPipelineId;
+          else validationErrors.push(`Funil "${contact.pipeline}" não encontrado`);
         }
 
-        const contactStages = await getStagesForPipeline(contactPipelineId);
-        const contactStageId = contact.estagio
-          ? contactStages.find(stage => stage.name.toLowerCase() === contact.estagio?.toLowerCase())?.id
-            || contactStages[0]?.id
-          : contactPipelineId === defaultPipelineId
-            ? defaultStageId
-            : contactStages[0]?.id;
+        const stageLookup = await getStagesForPipeline(contactPipelineId);
+        if (stageLookup.error) validationErrors.push(stageLookup.error);
+        if (stageLookup.stages.length === 0 && !stageLookup.error) {
+          validationErrors.push(
+            `O funil "${pipelineNameById.get(contactPipelineId) || contactPipelineId}" não possui estágio ativo`,
+          );
+        }
+        let contactStageId = contactPipelineId === defaultPipelineId
+          ? defaultStageId
+          : stageLookup.stages[0]?.id;
+        if (contact.estagio) {
+          const mappedStage = stageLookup.stages.find(
+            stage => normalizeLookupValue(stage.name) === normalizeLookupValue(contact.estagio || ''),
+          );
+          if (mappedStage) contactStageId = mappedStage.id;
+          else validationErrors.push(`Estágio "${contact.estagio}" não encontrado no funil informado`);
+        }
 
         let contactAssigneeId = defaultAssigneeId;
-        if (canAssignImportedLeads && contact.responsavel) {
-          contactAssigneeId = usersMap.get(contact.responsavel.toLowerCase()) || defaultAssigneeId;
-        }
-
-        const tagIds: string[] = [];
-        if (contact.tags) {
-          const tagNames = Array.from(
-            new Set(contact.tags.split(',').map(tag => tag.trim()).filter(Boolean)),
-          );
-          for (const tagName of tagNames) {
-            let tagId = tagsMap.get(tagName.toLowerCase());
-            if (!tagId && canManageTags) {
-              try {
-                const newTag = await createTag.mutateAsync({ name: tagName, color: DEFAULT_TAG_COLOR });
-                tagId = newTag.id;
-                tagsMap.set(tagName.toLowerCase(), tagId);
-              } catch (error) {
-                console.error('Error creating tag:', error);
-              }
-            }
-            if (!tagId) skippedTagNames.add(tagName);
-            if (tagId) tagIds.push(tagId);
+        if (!isAutoDistribute && contact.responsavel) {
+          if (!canAssignImportedLeads) {
+            validationErrors.push(`Responsável "${contact.responsavel}" não pode ser aplicado com sua permissão`);
+          } else {
+            const mappedAssigneeId = usersMap.get(normalizeLookupValue(contact.responsavel));
+            if (mappedAssigneeId) contactAssigneeId = mappedAssigneeId;
+            else validationErrors.push(`Responsável "${contact.responsavel}" não encontrado`);
           }
         }
 
-        let dealStatus: 'open' | 'won' | 'lost' = 'open';
-        if (contact.status?.toLowerCase().includes('ganho')) dealStatus = 'won';
-        else if (contact.status?.toLowerCase().includes('perdido')) dealStatus = 'lost';
+        const statusResolution = resolveDealStatus(contact.status);
+        if (statusResolution.error) validationErrors.push(statusResolution.error);
+        const dealStatus = statusResolution.status;
+        const lostReason = dealStatus === 'lost'
+          ? contact.motivo_perda?.trim() || 'Outros: Importado sem motivo informado'
+          : undefined;
+        const roundRobinId =
+          isAutoDistribute && selectedRoundRobin !== 'automatic'
+            ? selectedRoundRobin
+            : undefined;
+
+        if (validationErrors.length === 0) {
+          const leadValidation = leadCreateInputSchema.safeParse({
+            name: contactName,
+            phone: contact.telefone?.trim() || undefined,
+            email: contact.email?.trim() || undefined,
+            message: contact.mensagem?.trim() || undefined,
+            source: contact.fonte?.trim() || finalSource,
+            pipelineId: contactPipelineId,
+            stageId: contactStageId,
+            assignedUserId: isAutoDistribute ? undefined : contactAssigneeId,
+            dealStatus,
+            lostReason,
+            importMode: true,
+            autoDistribute: isAutoDistribute,
+            roundRobinId,
+          });
+          if (!leadValidation.success) {
+            leadValidation.error.issues.forEach(issue => {
+              const message = issue.message.trim();
+              if (message && !validationErrors.includes(message)) validationErrors.push(message);
+            });
+          }
+        }
+
+        const tagIds: string[] = [];
+        const tagNames = contact.tags
+          ? Array.from(
+              new Set(contact.tags.split(/[,;|]/).map(tag => tag.trim()).filter(Boolean)),
+            )
+          : [];
+        if (tagNames.length > 50) {
+          validationErrors.push('A linha possui mais de 50 tags');
+        }
+
+        if (validationErrors.length === 0) {
+          for (const tagName of tagNames) {
+            const tagValidation = createTagInputSchema.safeParse({
+              name: tagName,
+              color: DEFAULT_TAG_COLOR,
+            });
+            if (!tagValidation.success) {
+              validationErrors.push(
+                `Tag "${tagName}" inválida: ${tagValidation.error.issues[0]?.message || 'dados inválidos'}`,
+              );
+              continue;
+            }
+
+            const normalizedTagName = normalizeLookupValue(tagName);
+            const cachedTagError = unavailableTags.get(normalizedTagName);
+            if (cachedTagError) {
+              validationErrors.push(cachedTagError);
+            } else if (!tagsMap.has(normalizedTagName) && !canManageTags) {
+              const reason = `Tag "${tagName}" não existe e você não possui permissão para criá-la`;
+              unavailableTags.set(normalizedTagName, reason);
+              validationErrors.push(reason);
+            }
+          }
+        }
+
+        const resolvedTagIds = await resolveImportRowTagsIfValid(validationErrors, async () => {
+          const ids: string[] = [];
+          for (const tagName of tagNames) {
+            const normalizedTagName = normalizeLookupValue(tagName);
+            let tagId = tagsMap.get(normalizedTagName);
+            if (!tagId) {
+              try {
+                const newTag = await createTag.mutateAsync({ name: tagName, color: DEFAULT_TAG_COLOR });
+                tagId = newTag.id;
+                tagsMap.set(normalizedTagName, tagId);
+              } catch (error) {
+                console.error('Error creating tag:', error);
+                const reason = error instanceof Error && error.message
+                  ? `Tag "${tagName}" não pôde ser criada: ${error.message}`
+                  : `Tag "${tagName}" não pôde ser criada`;
+                unavailableTags.set(normalizedTagName, reason);
+                validationErrors.push(reason);
+                break;
+              }
+            }
+            ids.push(tagId);
+          }
+          return ids;
+        });
+        if (resolvedTagIds && validationErrors.length === 0) tagIds.push(...resolvedTagIds);
 
         rows.push({
-          name: contact.nome,
-          phone: contact.telefone,
-          email: contact.email,
-          message: contact.mensagem,
-          source: contact.fonte || finalSource,
+          name: contactName,
+          phone: contact.telefone?.trim() || undefined,
+          email: contact.email?.trim() || undefined,
+          message: contact.mensagem?.trim() || undefined,
+          source: contact.fonte?.trim() || finalSource,
           pipeline_id: contactPipelineId,
           stage_id: contactStageId,
-          assigned_user_id: contactAssigneeId,
-          team_id:
-            canAssignImportedLeads &&
-            isAutoDistribute &&
-            !contactAssigneeId &&
-            selectedTeam !== 'none'
-              ? selectedTeam
-              : undefined,
+          assigned_user_id: isAutoDistribute ? undefined : contactAssigneeId,
           tag_ids: tagIds,
           deal_status: dealStatus,
-          lost_reason:
-            dealStatus === 'lost'
-              ? contact.motivo_perda?.trim() || 'Outros: Importado sem motivo informado'
-              : undefined,
+          lost_reason: lostReason,
           import_mode: true,
+          auto_distribute: isAutoDistribute,
+          round_robin_id: roundRobinId,
+          import_row_number: contact.rowNumber,
+          import_validation_error: validationErrors.length > 0
+            ? validationErrors.join('; ')
+            : undefined,
         });
       }
 
-      if (skippedTagNames.size > 0) {
-        toast.info(
-          `${skippedTagNames.size} tag(s) nova(s) foram ignoradas por falta de permissão ou falha na criação`,
-        );
-      }
-
-      const result = await importLeads.mutateAsync(rows);
+      setImportPhase('importing');
+      lastProgressUpdateRef.current = 0;
+      const result = await importLeads.mutateAsync({
+        rows,
+        onProgress: progress => {
+          const now = Date.now();
+          if (
+            progress.processed === progress.total
+            || now - lastProgressUpdateRef.current >= 100
+          ) {
+            lastProgressUpdateRef.current = now;
+            setImportProgress(progress);
+          }
+        },
+      });
+      setImportProgress({
+        total: result.total,
+        processed: result.processed,
+        success: result.success,
+        failed: result.failed,
+        remaining: result.remaining,
+        created: result.created,
+        reentered: result.reentered,
+        distribution: result.distribution,
+      });
       setImportResult(result);
 
       if (result.success > 0) {
-        toast.success(`${result.success} contatos importados com sucesso!`);
+        toast.success(`${formatPtBRNumber(result.success)} contatos processados com sucesso!`);
       }
       if (result.failed > 0) {
-        toast.error(`${result.failed} contatos falharam na importação`);
+        toast.error(`${formatPtBRNumber(result.failed)} contatos falharam na importação`);
+      }
+      const pendingDistribution = countPendingDistribution(result.distribution);
+      if (pendingDistribution > 0) {
+        toast.warning(
+          `${formatPtBRNumber(pendingDistribution)} contatos foram importados, mas ainda precisam de atribuição`,
+        );
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Não foi possível concluir a importação');
     } finally {
+      setImportPhase(null);
       setIsImporting(false);
     }
   };
@@ -509,6 +783,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
         fgColor: { argb: 'FF000000' }
       };
       worksheet.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' };
+      worksheet.getColumn('Telefone').numFmt = '@';
 
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -528,6 +803,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
   };
 
   const resetDialog = () => {
+    parseRequestRef.current += 1;
     setFile(null);
     setParsedData([]);
     setSelectedPipeline('');
@@ -536,7 +812,11 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
     setCustomSource('');
     setShowCustomSourceInput(false);
     setIsAutoDistribute(false);
-    setSelectedTeam('none');
+    setSelectedRoundRobin('automatic');
+    setIsParsing(false);
+    setImportPhase(null);
+    setImportProgress(null);
+    setIsDragging(false);
     setImportResult(null);
   };
 
@@ -562,33 +842,182 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
               </span>
               Importar contatos/leads
             </SheetTitle>
-            <SheetDescription className="pl-[46px] text-[12px] font-light leading-5 text-[var(--app-text-tertiary)]">
-              Importe uma planilha mantendo pipeline, estágio, responsável, origem e tags.
+            <SheetDescription className="sr-only">
+              Envie uma planilha para importar contatos e acompanhe o processamento.
             </SheetDescription>
           </SheetHeader>
         </div>
 
+        {!importResult && isImporting && importProgress && (
+          <div
+            className="space-y-2 bg-[var(--app-surface-solid)] px-4 pb-4"
+            role="status"
+            aria-live="polite"
+          >
+            <div className="flex items-center justify-between text-[11px] font-light text-[var(--app-text-tertiary)]">
+              <span>{importPhase === 'preparing' ? 'Preparando linhas' : 'Importando contatos'}</span>
+              <span>
+                {formatPtBRNumber(importProgress.processed)} de {formatPtBRNumber(importProgress.total)}
+              </span>
+            </div>
+            <div
+              className="h-1.5 overflow-hidden rounded-full bg-[var(--app-surface-soft)]"
+              role="progressbar"
+              aria-label="Progresso da importação"
+              aria-valuemin={0}
+              aria-valuemax={importProgress.total}
+              aria-valuenow={importProgress.processed}
+            >
+              <div
+                className="h-full rounded-full bg-primary transition-[width] duration-200"
+                style={{
+                  width: importProgress.total > 0
+                    ? `${Math.round((importProgress.processed / importProgress.total) * 100)}%`
+                    : '0%',
+                }}
+              />
+            </div>
+            <div className="grid grid-cols-4 gap-1 text-center">
+              {[
+                ['Processados', importProgress.processed],
+                ['Importados', importProgress.success],
+                ['Falhas', importProgress.failed],
+                ['Restantes', importProgress.remaining],
+              ].map(([label, value]) => (
+                <div key={String(label)} className="rounded-[6px] bg-[var(--app-surface-soft)] px-1 py-1.5">
+                  <p className="text-[11px] font-medium text-[var(--app-text-primary)]">
+                    {formatPtBRNumber(Number(value))}
+                  </p>
+                  <p className="text-[9px] font-light text-[var(--app-text-tertiary)]">{label}</p>
+                </div>
+              ))}
+            </div>
+            {importPhase === 'importing' && (
+              <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-light text-[var(--app-text-tertiary)]">
+                {[
+                  ['Distribuídos', importProgress.distribution.assigned],
+                  ['Já atribuídos', importProgress.distribution.already_assigned],
+                  ['Sem fila', importProgress.distribution.no_matching_queue],
+                  ['Sem membros', importProgress.distribution.no_available_members],
+                  ['Distribuição desativada', importProgress.distribution.skipped],
+                  ['Reentrada mantida', importProgress.distribution.reentry_preserved],
+                  ['Sem confirmação', importProgress.distribution.unknown],
+                ].filter(([, value]) => Number(value) > 0).map(([label, value]) => (
+                  <span key={String(label)}>
+                    {label}: <span className="font-medium text-[var(--app-text-secondary)]">{formatPtBRNumber(Number(value))}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {importResult ? (
-          <div className="flex flex-1 flex-col items-center justify-center p-6 text-center">
+          <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto p-6 text-center">
             <div className="flex h-10 w-10 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
               <CheckCircle2 className="h-4 w-4" />
             </div>
-            <div className="mt-3 space-y-1">
+            <div className="mt-3 w-full max-w-[440px] space-y-3">
               <p className="text-[14px] font-medium text-[var(--app-text-primary)]">Importação concluída!</p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {[
+                  ['Total', importResult.total],
+                  ['Criados', importResult.created],
+                  ['Reentradas', importResult.reentered],
+                  ['Falhas', importResult.failed],
+                ].map(([label, value]) => (
+                  <div key={String(label)} className="rounded-[6px] bg-[var(--app-surface-soft)] p-2">
+                    <p className="text-[14px] font-medium text-[var(--app-text-primary)]">
+                      {formatPtBRNumber(Number(value))}
+                    </p>
+                    <p className="text-[10px] font-light text-[var(--app-text-tertiary)]">{label}</p>
+                  </div>
+                ))}
+              </div>
               <p className="text-[12px] font-light leading-5 text-[var(--app-text-tertiary)]">
-                <span className="font-normal text-foreground">{importResult.success}</span> contatos importados com sucesso
+                <span className="font-normal text-foreground">{formatPtBRNumber(importResult.success)}</span> com sucesso
                 {importResult.failed > 0 && (
-                  <>
-                    <span className="mt-1 block text-red-500">
-                      <span className="font-normal">{importResult.failed}</span> falharam durante o processo
-                    </span>
-                    <span className="mt-1 block max-w-[420px] text-[11px] text-[var(--app-text-tertiary)]">
-                      {importResult.failures.slice(0, 3).map(failure => failure.name).join(', ')}
-                      {importResult.failures.length > 3 ? ` e mais ${importResult.failures.length - 3}` : ''}
-                    </span>
-                  </>
+                  <span className="ml-1 text-red-500">
+                    · {formatPtBRNumber(importResult.failed)} não importados
+                  </span>
                 )}
               </p>
+              {importResult.success > 0 && (
+                <div className="space-y-1 rounded-[6px] bg-[var(--app-surface-soft)] p-2 text-left">
+                  <p className="px-1 text-[10px] font-medium uppercase tracking-wide text-[var(--app-text-tertiary)]">
+                    Resultado da atribuição
+                  </p>
+                  {[
+                    {
+                      code: 'assigned',
+                      count: importResult.distribution.assigned,
+                      message: 'Distribuídos automaticamente',
+                      warning: false,
+                    },
+                    {
+                      code: 'already_assigned',
+                      count: importResult.distribution.already_assigned,
+                      message: 'Já tinham responsável e foram preservados',
+                      warning: false,
+                    },
+                    {
+                      code: 'no_matching_queue',
+                      count: importResult.distribution.no_matching_queue,
+                      message: 'Criados sem atribuição: nenhuma fila ativa correspondeu às regras',
+                      warning: true,
+                    },
+                    {
+                      code: 'no_available_members',
+                      count: importResult.distribution.no_available_members,
+                      message: 'Criados sem atribuição: a fila não tinha membro disponível',
+                      warning: true,
+                    },
+                    {
+                      code: 'skipped',
+                      count: importResult.distribution.skipped,
+                      message: 'Distribuição automática desativada',
+                      warning: false,
+                    },
+                    {
+                      code: 'reentry_preserved',
+                      count: importResult.distribution.reentry_preserved,
+                      message: 'Reentradas mantiveram o responsável anterior e não foram redistribuídas',
+                      warning: false,
+                    },
+                    {
+                      code: 'unknown',
+                      count: importResult.distribution.unknown,
+                      message: 'Importados, mas sem confirmação do resultado da distribuição',
+                      warning: true,
+                    },
+                  ].filter(item => item.count > 0).map(item => (
+                    <div key={item.code} className="flex items-start justify-between gap-3 rounded-[4px] px-1 py-1 text-[11px]">
+                      <span className="font-light leading-4 text-[var(--app-text-secondary)]">{item.message}</span>
+                      <span className={cn('shrink-0 font-medium', item.warning ? 'text-amber-600' : 'text-primary')}>
+                        {formatPtBRNumber(item.count)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {importResult.reasons.length > 0 && (
+                <div className="max-h-44 space-y-1 overflow-y-auto rounded-[6px] bg-[var(--app-surface-soft)] p-2 text-left">
+                  <p className="px-1 text-[10px] font-medium uppercase tracking-wide text-[var(--app-text-tertiary)]">
+                    Motivos das falhas
+                  </p>
+                  {importResult.reasons.slice(0, 8).map(reason => (
+                    <div key={`${reason.code}:${reason.message}`} className="flex items-start justify-between gap-3 rounded-[4px] px-1 py-1 text-[11px]">
+                      <span className="font-light leading-4 text-[var(--app-text-secondary)]">{reason.message}</span>
+                      <span className="shrink-0 font-medium text-red-500">{formatPtBRNumber(reason.count)}</span>
+                    </div>
+                  ))}
+                  {importResult.reasons.length > 8 && (
+                    <p className="px-1 pt-1 text-[10px] font-light text-[var(--app-text-tertiary)]">
+                      Mais {formatPtBRNumber(importResult.reasons.length - 8)} motivo(s) agrupado(s)
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
             <Button onClick={() => handleClose(false)} className="mt-4 h-9 rounded-[6px] bg-primary/50 px-4 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary hover:text-primary-foreground">
               Concluir e ver leads
@@ -602,7 +1031,8 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
                 className={cn(
                   "group rounded-[8px] bg-[var(--app-surface-soft)] p-4 text-center transition-colors duration-200",
                   isDragging ? "bg-primary/10 ring-1 ring-primary/25" : "hover:bg-[var(--app-surface-hover)]",
-                  file && "bg-primary/10"
+                  file && "bg-primary/10",
+                  isImporting && "pointer-events-none opacity-60",
                 )}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
@@ -613,6 +1043,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
                   type="file"
                   accept=".xlsx,.csv"
                   aria-label="Selecionar planilha de contatos"
+                  disabled={isImporting}
                   onChange={(event) => {
                     const selectedFile = event.target.files?.[0];
                     if (selectedFile) handleFileChange(selectedFile);
@@ -624,11 +1055,15 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
                 {file ? (
                   <div className="space-y-3">
                     <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
-                      <FileSpreadsheet className="h-4 w-4" />
+                      {isParsing ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
                     </div>
                     <div>
                       <p className="mx-auto max-w-[300px] truncate text-[14px] font-medium text-[var(--app-text-primary)]">{file.name}</p>
-                      <p className="mt-1 text-[12px] font-light text-primary">{parsedData.length} contatos encontrados para importar</p>
+                      <p className="mt-1 text-[12px] font-light text-primary">
+                        {isParsing
+                          ? 'Lendo e validando a planilha...'
+                          : `${formatPtBRNumber(parsedData.length)} linhas encontradas para importar`}
+                      </p>
                     </div>
                     <Button
                       type="button"
@@ -636,6 +1071,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
                       size="sm"
                       className="mt-2 h-8 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-3 text-[11px] font-light shadow-none hover:bg-[var(--app-surface-hover)]"
                       onClick={() => fileInputRef.current?.click()}
+                      disabled={isParsing || isImporting}
                     >
                       Alterar arquivo
                     </Button>
@@ -655,6 +1091,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
                       size="sm"
                       className="mt-2 h-8 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-3 text-[11px] font-light shadow-none hover:bg-[var(--app-surface-hover)]"
                       onClick={() => fileInputRef.current?.click()}
+                      disabled={isImporting}
                     >
                       Selecionar arquivo
                     </Button>
@@ -669,7 +1106,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
                     <FileSpreadsheet className="h-4 w-4 text-primary" />
                     Pipeline Padrão
                   </Label>
-                  <Select value={selectedPipeline} onValueChange={setSelectedPipeline}>
+                  <Select value={selectedPipeline} onValueChange={setSelectedPipeline} disabled={isImporting}>
                     <SelectTrigger aria-label="Pipeline padrão da importação" className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none">
                       <SelectValue placeholder="Selecione o funil de destino" />
                     </SelectTrigger>
@@ -698,12 +1135,14 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
                         className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none"
                         value={customSource}
                         onChange={(e) => setCustomSource(e.target.value)}
+                        disabled={isImporting}
                         autoFocus
                       />
                       <Button
                         variant="ghost"
                         size="sm"
                         className="h-9 rounded-[6px] px-3 text-[11px] font-light"
+                        disabled={isImporting}
                         onClick={() => {
                           setShowCustomSourceInput(false);
                           setSelectedSource('import');
@@ -713,7 +1152,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
                       </Button>
                     </div>
                   ) : (
-                    <Select value={selectedSource} onValueChange={(val) => {
+                    <Select value={selectedSource} disabled={isImporting} onValueChange={(val) => {
                       if (val === 'custom') {
                         setSelectedSource('custom');
                         setShowCustomSourceInput(true);
@@ -744,58 +1183,49 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
                       </div>
                       <div className="space-y-0.5">
                         <p className="text-[13px] font-medium text-[var(--app-text-primary)]">Distribuição automática</p>
-                        <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">Aplicar as regras e horários da equipe</p>
+                        <p className="text-[11px] font-light text-[var(--app-text-tertiary)]">Aplicar filas, regras, disponibilidade e horários configurados</p>
                       </div>
                     </div>
                     <Switch
                       checked={isAutoDistribute}
-                      onCheckedChange={setIsAutoDistribute}
+                      onCheckedChange={(checked) => {
+                        setIsAutoDistribute(checked);
+                        if (checked) setSelectedAssignee('none');
+                        else setSelectedRoundRobin('automatic');
+                      }}
+                      disabled={isImporting}
                       aria-label="Ativar distribuição automática dos contatos importados"
                     />
                   </div>
 
                   {isAutoDistribute ? (
-                    <div className="grid grid-cols-1 gap-4 animate-in fade-in slide-in-from-top-2 duration-300 md:grid-cols-2">
-                      <div className="space-y-1.5">
-                        <Label className="text-[11px] font-light">Distribuir para equipe</Label>
-                        <Select
-                          value={selectedTeam}
-                          onValueChange={(value) => {
-                            setSelectedTeam(value);
-                            if (value !== 'none') setSelectedAssignee('none');
-                          }}
-                        >
-                          <SelectTrigger aria-label="Equipe para distribuição automática" className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none">
-                            <SelectValue placeholder="Selecione a equipe" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">Nenhuma equipe</SelectItem>
-                            {teams.map(t => (
-                              <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-[11px] font-light">Ou usuário específico</Label>
-                        <Select
-                          value={selectedAssignee}
-                          onValueChange={(value) => {
-                            setSelectedAssignee(value);
-                            if (value !== 'none') setSelectedTeam('none');
-                          }}
-                        >
-                          <SelectTrigger aria-label="Responsável específico da importação" className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none">
-                            <SelectValue placeholder="Nenhum" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">Sem responsável</SelectItem>
-                            {users.map(u => (
-                              <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
+                    <div className="space-y-1.5 animate-in fade-in slide-in-from-top-2 duration-300">
+                      <Label className="text-[11px] font-light">Destino da distribuição</Label>
+                      <Select
+                        value={selectedRoundRobin}
+                        onValueChange={setSelectedRoundRobin}
+                        disabled={isImporting || isLoadingRoundRobins}
+                      >
+                        <SelectTrigger aria-label="Fila para distribuição automática" className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none">
+                          <SelectValue placeholder="Selecione a fila" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="automatic">Pelas regras automáticas</SelectItem>
+                          {canSelectDistributionQueue && activeRoundRobins.map(roundRobin => (
+                            <SelectItem key={roundRobin.id} value={roundRobin.id}>
+                              {roundRobin.name}
+                              {roundRobin.target_pipeline?.name
+                                ? ` · ${roundRobin.target_pipeline.name}`
+                                : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[10px] font-light leading-4 text-[var(--app-text-tertiary)]">
+                        {selectedRoundRobin === 'automatic'
+                          ? 'O CRM escolherá uma fila ativa pelas regras do contato e pelo funil. Responsáveis da planilha não serão aplicados.'
+                          : 'A fila escolhida será validada e usada explicitamente para todos os contatos do arquivo.'}
+                      </p>
                     </div>
                   ) : (
                     <div className="space-y-1.5">
@@ -803,7 +1233,7 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
                         <UserIcon className="h-4 w-4 text-primary" />
                         Responsável único
                       </Label>
-                      <Select value={selectedAssignee} onValueChange={setSelectedAssignee}>
+                      <Select value={selectedAssignee} onValueChange={setSelectedAssignee} disabled={isImporting}>
                         <SelectTrigger aria-label="Responsável único da importação" className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none">
                           <SelectValue placeholder="Nenhum responsável definido" />
                         </SelectTrigger>
@@ -847,7 +1277,8 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
                     type="button"
                     variant="link"
                     aria-label="Baixar modelo de importação"
-                    className="h-8 w-8 rounded-[6px] bg-primary/50 p-0 text-primary-foreground shadow-none transition-colors hover:bg-primary hover:text-primary-foreground"
+                   className="h-8 w-8 rounded-[6px] bg-primary/50 p-0 text-primary-foreground shadow-none transition-colors hover:bg-primary hover:text-primary-foreground"
+                    disabled={isImporting}
                     onClick={(e) => {
                       e.stopPropagation();
                       void downloadSample();
@@ -870,17 +1301,31 @@ export function ImportContactsDialog({ open, onOpenChange }: ImportContactsDialo
               className="h-9 flex-[2] rounded-[6px] bg-primary/50 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary hover:text-primary-foreground"
               type="button"
               onClick={handleImport}
-              disabled={!file || !selectedPipeline || parsedData.length === 0 || isImporting}
+              disabled={
+                !file
+                || !selectedPipeline
+                || parsedData.length === 0
+                || isParsing
+                || isLoadingStages
+                || isImporting
+                || (isAutoDistribute
+                  && selectedRoundRobin !== 'automatic'
+                  && !activeRoundRobins.some(roundRobin => roundRobin.id === selectedRoundRobin))
+              }
             >
               {isImporting ? (
                 <>
-                  <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                  Processando {parsedData.length} leads...
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  {importPhase === 'preparing'
+                    ? `Preparando ${formatPtBRNumber(parsedData.length)} linhas...`
+                    : importProgress
+                      ? `${formatPtBRNumber(importProgress.processed)}/${formatPtBRNumber(importProgress.total)} · restam ${formatPtBRNumber(importProgress.remaining)}`
+                      : 'Importando...'}
                 </>
               ) : (
                 <>
-                  <Upload className="h-5 w-5 mr-2" />
-                  Iniciar importação {parsedData.length > 0 ? `(${parsedData.length})` : ''}
+                  <Upload className="mr-2 h-4 w-4" />
+                  Iniciar importação {parsedData.length > 0 ? `(${formatPtBRNumber(parsedData.length)})` : ''}
                 </>
               )}
             </Button>

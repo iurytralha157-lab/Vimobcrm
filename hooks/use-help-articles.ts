@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import { adminAPI, type AdminJSON } from '@/lib/api/admin';
+import { getErrorMessageOrFallback as getErrorMessage } from '@/lib/api/vimob-error';
 
 export interface HelpArticleAnnotation {
   x: number;
@@ -319,10 +320,6 @@ function normalizeUpdatePayload(input: HelpArticleUpdateInput): AdminJSON {
   return payload;
 }
 
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : 'Não foi possível concluir a operação.';
-}
-
 export function useHelpArticles() {
   const queryClient = useQueryClient();
 
@@ -369,7 +366,7 @@ export function useHelpArticles() {
       void queryClient.invalidateQueries({ queryKey: HELP_ARTICLES_QUERY_KEY });
     },
     onError: (error) => {
-      toast.error(`Erro ao criar artigo: ${getErrorMessage(error)}`);
+      toast.error(`Erro ao criar artigo: ${getErrorMessage(error, 'Não foi possível concluir a operação.')}`);
     },
   });
 
@@ -398,7 +395,7 @@ export function useHelpArticles() {
       void queryClient.invalidateQueries({ queryKey: HELP_ARTICLES_QUERY_KEY });
     },
     onError: (error) => {
-      toast.error(`Erro ao atualizar artigo: ${getErrorMessage(error)}`);
+      toast.error(`Erro ao atualizar artigo: ${getErrorMessage(error, 'Não foi possível concluir a operação.')}`);
     },
   });
 
@@ -412,7 +409,7 @@ export function useHelpArticles() {
       void queryClient.invalidateQueries({ queryKey: HELP_ARTICLES_QUERY_KEY });
     },
     onError: (error) => {
-      toast.error(`Erro ao excluir artigo: ${getErrorMessage(error)}`);
+      toast.error(`Erro ao excluir artigo: ${getErrorMessage(error, 'Não foi possível concluir a operação.')}`);
     },
   });
 

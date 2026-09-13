@@ -8,6 +8,8 @@ import {
   clearPendingPipelineMove,
   clearPendingPipelineMoves,
   getPendingPipelineMoves,
+  patchPipelineLeadInBoard,
+  pipelineLeadMatchesQueryKeyScope,
   pipelineBoardMatchesMove,
   reconcilePipelineBoardSnapshot,
   registerPendingPipelineMove,
@@ -20,6 +22,9 @@ type TestLead = {
   stage_id: string;
   name: string;
   board_order_at?: string;
+  valor_interesse?: number | null;
+  assigned_user_id?: string | null;
+  deal_status?: string | null;
 };
 
 type TestStage = {
@@ -27,6 +32,7 @@ type TestStage = {
   name: string;
   leads: TestLead[];
   total_lead_count: number;
+  total_value?: number;
   has_more: boolean;
 };
 
@@ -208,4 +214,160 @@ test('rollback restaura uma unica copia na posicao original', () => {
   );
   assert.equal(restoredBoard[0].total_lead_count, 2);
   assert.equal(restoredBoard[1].total_lead_count, 0);
+});
+
+test('movimento otimista e rollback reconciliam os totais monetarios', () => {
+  const initialBoard = createBoard();
+  initialBoard[0].leads[0].valor_interesse = 250_000;
+  initialBoard[0].total_value = 400_000;
+  initialBoard[1].total_value = 100_000;
+
+  const optimisticBoard = applyPendingPipelineMoves(initialBoard, [createMove()]);
+  assert.ok(optimisticBoard);
+  assert.equal(optimisticBoard[0].total_value, 150_000);
+  assert.equal(optimisticBoard[1].total_value, 350_000);
+
+  const restoredBoard = restorePipelineLeadSnapshot(
+    optimisticBoard,
+    initialBoard,
+    'lead-1',
+  );
+  assert.ok(restoredBoard);
+  assert.equal(restoredBoard[0].total_value, 400_000);
+  assert.equal(restoredBoard[1].total_value, 100_000);
+});
+
+test('patch de etapa vindo do detalhe move o card entre colunas imediatamente', () => {
+  const initialBoard = createBoard();
+  initialBoard[0].leads[0].valor_interesse = 250_000;
+  initialBoard[0].total_value = 400_000;
+  initialBoard[1].total_value = 100_000;
+
+  const updatedBoard = patchPipelineLeadInBoard(initialBoard, 'lead-1', {
+    stage_id: 'contacted',
+  });
+
+  assert.ok(updatedBoard);
+  assert.deepEqual(leadLocations(updatedBoard, 'lead-1'), ['contacted']);
+  assert.equal(updatedBoard[0].total_lead_count, 1);
+  assert.equal(updatedBoard[1].total_lead_count, 1);
+  assert.equal(updatedBoard[0].total_value, 150_000);
+  assert.equal(updatedBoard[1].total_value, 350_000);
+});
+
+test('atualizacao do detalhe respeita usuario, equipe e status da chave do board', () => {
+  const lead = {
+    id: 'lead-1',
+    assigned_user_id: 'user-2',
+    deal_status: 'open',
+  };
+
+  assert.equal(
+    pipelineLeadMatchesQueryKeyScope(
+      ['stages-with-leads', 'org-1', 'pipeline-1', undefined, null, null, null, 'open', null, null, null, null, null, 'user-1,user-2'],
+      lead,
+    ),
+    true,
+  );
+  assert.equal(
+    pipelineLeadMatchesQueryKeyScope(
+      ['stages-with-leads', 'org-1', 'pipeline-1', undefined, null, null, null, 'won', null, null, null, null, null, 'user-1,user-2'],
+      lead,
+    ),
+    false,
+  );
+  assert.equal(
+    pipelineLeadMatchesQueryKeyScope(
+      ['stages-with-leads', 'org-1', 'pipeline-1', undefined, null, null, null, undefined, null, null, null, null, null, '__none__'],
+      lead,
+    ),
+    false,
+  );
+});
+
+test('patch na mesma etapa ajusta o total de 100 para 250', () => {
+  const board = createBoard();
+  board[0].leads[0].valor_interesse = 100;
+  board[0].total_value = 100;
+
+  const updated = patchPipelineLeadInBoard(board, 'lead-1', {
+    valor_interesse: 250,
+  });
+
+  assert.ok(updated);
+  assert.equal(updated[0].total_value, 250);
+  assert.equal(updated[0].leads[0].valor_interesse, 250);
+});
+
+test('remove lead, contagem e valor quando ele deixa de pertencer ao escopo', () => {
+  const board = createBoard();
+  board[0].leads[0].valor_interesse = 250;
+  board[0].total_value = 400;
+
+  const updated = patchPipelineLeadInBoard(board, 'lead-1', {
+    assigned_user_id: 'user-fora',
+  }, { keepInDestination: false });
+
+  assert.ok(updated);
+  assert.deepEqual(updated[0].leads.map((lead) => lead.id), ['lead-2']);
+  assert.equal(updated[0].total_lead_count, 1);
+  assert.equal(updated[0].total_value, 150);
+});
+
+test('nao mantem card quando um filtro nao pode ser confirmado pelos dados do cache', () => {
+  const filteredKey = [
+    'stages-with-leads',
+    'org-1',
+    'pipeline-1',
+    undefined,
+    '2026-09-01T00:00:00.000Z',
+    '2026-09-30T23:59:59.999Z',
+    undefined,
+    undefined,
+    undefined,
+    'campaign-unknown',
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    'origin',
+  ] as const;
+
+  assert.equal(pipelineLeadMatchesQueryKeyScope(filteredKey, {
+    id: 'lead-1',
+    deal_status: 'open',
+    created_at: '2026-09-08T12:00:00.000Z',
+  }), false);
+});
+
+test('filtro de origem do cache segue exatamente a coluna source do backend', () => {
+  const filteredKey = [
+    'stages-with-leads',
+    'org-1',
+    'pipeline-1',
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    'api',
+    undefined,
+    'operational',
+  ] as const;
+  const lead = {
+    id: 'lead-1',
+    source: 'webhook',
+    deal_status: 'open',
+    lead_meta: [{ platform: 'api' }],
+  };
+
+  assert.equal(pipelineLeadMatchesQueryKeyScope(filteredKey, lead), false);
+  assert.equal(
+    pipelineLeadMatchesQueryKeyScope(filteredKey, { ...lead, source: 'api' }),
+    true,
+  );
 });

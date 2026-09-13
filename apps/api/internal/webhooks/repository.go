@@ -8,13 +8,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/mail"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/propertyscope"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/publicingress"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -27,7 +32,46 @@ func NewRepository(db *dbpkg.Postgres) Repository {
 	return Repository{db: db}
 }
 
+func (repo Repository) AllowIncomingWebhook(ctx context.Context, clientIP string, token string) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ErrInvalidToken
+	}
+
+	allowed, err := publicingress.Allow(
+		ctx,
+		repo.db.Pool(),
+		"generic_webhook_ip",
+		[]string{clientIP},
+		300,
+		time.Minute,
+	)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrRateLimited
+	}
+
+	allowed, err = publicingress.Allow(
+		ctx,
+		repo.db.Pool(),
+		"generic_webhook_ip_token",
+		[]string{clientIP, token},
+		120,
+		time.Minute,
+	)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrRateLimited
+	}
+	return nil
+}
+
 func (repo Repository) List(ctx context.Context, tenantContext tenant.Context) ([]map[string]any, error) {
+	canReadProperties := propertyscope.CanRead(tenantContext)
 	rows, err := repo.db.Pool().Query(ctx, `
 		select jsonb_build_object(
 			'id', w.id::text,
@@ -38,11 +82,13 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context) (
 			'webhook_url', w.webhook_url,
 			'target_pipeline_id', w.target_pipeline_id::text,
 			'target_team_id', w.target_team_id::text,
-			'target_team_id', w.target_team_id::text,
 			'target_stage_id', w.target_stage_id::text,
 			'target_tag_ids', w.target_tag_ids,
-			'target_property_id', w.target_property_id::text,
-			'field_mapping', w.field_mapping,
+			'target_property_id', case when pr.id is null then null else pr.id::text end,
+			'field_mapping', case
+				when pr.id is null then coalesce(w.field_mapping, '{}'::jsonb) - 'interest_property_id'
+				else w.field_mapping
+			end,
 			'is_active', w.is_active,
 			'leads_received', w.leads_received,
 			'last_lead_at', w.last_lead_at,
@@ -58,14 +104,30 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context) (
 			'creator', case when u.id is null then null else jsonb_build_object('id', u.id::text, 'name', u.name) end
 		)
 		from public.webhooks_integrations w
-		left join public.pipelines p on p.id = w.target_pipeline_id
-		left join public.teams t on t.id = w.target_team_id
-		left join public.stages s on s.id = w.target_stage_id
-		left join public.properties pr on pr.id = w.target_property_id
+		left join public.pipelines p
+		  on p.id = w.target_pipeline_id and p.organization_id = w.organization_id
+		left join public.teams t
+		  on t.id = w.target_team_id and t.organization_id = w.organization_id
+		left join public.stages s
+		  on s.id = w.target_stage_id and s.organization_id = w.organization_id
+		left join public.properties pr
+		  on pr.id::text = coalesce(
+			w.target_property_id::text,
+			nullif(btrim(w.field_mapping->>'interest_property_id'), '')
+		  )
+		 and pr.organization_id = w.organization_id
+		 and $2::boolean
+		 and `+propertyscope.VisibilitySQL("pr", "$3", "$4", "$5")+`
 		left join public.users u on u.id = w.created_by
 		where w.organization_id = $1::uuid
 		order by w.created_at desc
-	`, tenantContext.OrganizationID)
+	`,
+		tenantContext.OrganizationID,
+		canReadProperties,
+		canReadProperties && propertyscope.CanViewAll(tenantContext),
+		tenantContext.UserID,
+		canReadProperties && propertyscope.CanViewTeam(tenantContext),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -87,13 +149,12 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context) (
 }
 
 func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context, request WebhookRequest) (map[string]any, error) {
-	name := cleanString(request.Name)
-	webhookType := cleanString(request.Type)
-	if name == nil || webhookType == nil {
+	request, err := normalizeWebhookCreateRequest(request)
+	if err != nil {
 		return nil, ErrInvalidInput
 	}
-	if *webhookType != "incoming" && *webhookType != "outgoing" {
-		return nil, ErrInvalidInput
+	if err := repo.validateWebhookReferences(ctx, tenantContext, request); err != nil {
+		return nil, err
 	}
 	token, err := generateToken()
 	if err != nil {
@@ -118,7 +179,7 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		)
 		values ($1::uuid, $2, $3, $4, $5::uuid, $6::uuid, $7::uuid, $8, $9::uuid, $10::jsonb, $11, $12, $13::uuid)
 		returning id::text
-	`, tenantContext.OrganizationID, *name, *webhookType, token, cleanString(request.TargetPipelineID), cleanString(request.TargetTeamID), cleanString(request.TargetStageID), targetTags, cleanString(request.TargetPropertyID), string(fieldMapping), cleanString(request.WebhookURL), triggerEvents, tenantContext.UserID).Scan(&id)
+	`, tenantContext.OrganizationID, *request.Name, *request.Type, token, cleanString(request.TargetPipelineID), cleanString(request.TargetTeamID), cleanString(request.TargetStageID), targetTags, cleanString(request.TargetPropertyID), string(fieldMapping), cleanString(request.WebhookURL), triggerEvents, tenantContext.UserID).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
@@ -143,13 +204,27 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if !ok {
 		return nil, ErrInvalidInput
 	}
+	webhookType, currentURL, currentEvents, err := repo.currentWebhookContract(ctx, tenantContext, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrWebhookNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	request, err = normalizeWebhookUpdateRequest(request, webhookType, currentURL, currentEvents)
+	if err != nil {
+		return nil, err
+	}
+	if err := repo.validateWebhookReferences(ctx, tenantContext, request); err != nil {
+		return nil, err
+	}
 	var fieldMappingValue *string
 	if request.FieldMapping != nil {
 		fieldMapping, _ := json.Marshal(request.FieldMapping)
 		value := string(fieldMapping)
 		fieldMappingValue = &value
 	}
-	_, err := repo.db.Pool().Exec(ctx, `
+	_, err = repo.db.Pool().Exec(ctx, `
 		update public.webhooks_integrations
 		set
 			name = coalesce($3, name),
@@ -222,6 +297,64 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 	if err != nil {
 		return IncomingLeadResult{}, err
 	}
+	webhookID := webhook.ID
+	return repo.receiveLead(ctx, webhook, payload, leadIngressOptions{
+		Source:                "webhook",
+		Provider:              "generic_webhook",
+		SourceWebhookID:       &webhookID,
+		IncrementWebhookStats: true,
+	})
+}
+
+// ReceiveAPILead uses the same transactional intake path as generic webhooks,
+// including canonical distribution and lead-entry accounting. The API key ID
+// scopes idempotency without ever persisting the raw credential.
+func (repo Repository) ReceiveAPILead(
+	ctx context.Context,
+	organizationID string,
+	apiKeyID string,
+	idempotencyKey string,
+	payload map[string]any,
+) (IncomingLeadResult, error) {
+	organizationID, organizationOK := normalizeUUID(organizationID)
+	apiKeyID, apiKeyOK := normalizeUUID(apiKeyID)
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if !organizationOK || !apiKeyOK || len(idempotencyKey) < 8 || len(idempotencyKey) > 128 {
+		return IncomingLeadResult{}, ErrInvalidInput
+	}
+	for _, character := range idempotencyKey {
+		if character < 0x21 || character > 0x7e {
+			return IncomingLeadResult{}, ErrInvalidInput
+		}
+	}
+
+	return repo.receiveLead(ctx, incomingWebhook{
+		ID:             apiKeyID,
+		OrganizationID: organizationID,
+		Name:           "API publica",
+		FieldMapping:   map[string]string{},
+	}, payload, leadIngressOptions{
+		Source:          "api",
+		Provider:        "public_api",
+		ProviderEventID: &idempotencyKey,
+		RequirePhone:    true,
+	})
+}
+
+func (repo Repository) receiveLead(
+	ctx context.Context,
+	webhook incomingWebhook,
+	payload map[string]any,
+	options leadIngressOptions,
+) (IncomingLeadResult, error) {
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	options.Source = strings.TrimSpace(options.Source)
+	options.Provider = strings.TrimSpace(options.Provider)
+	if options.Source == "" || options.Provider == "" {
+		return IncomingLeadResult{}, ErrInvalidInput
+	}
 
 	name := mappedPayloadString(webhook, payload, "name", "name", "nome", "full_name", "fullName")
 	if name == nil || len([]rune(*name)) < 2 {
@@ -230,6 +363,9 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 
 	email := mappedPayloadString(webhook, payload, "email", "email")
 	phone := mappedPayloadString(webhook, payload, "phone", "phone", "telefone", "whatsapp")
+	if options.RequirePhone && phone == nil {
+		return IncomingLeadResult{}, ErrInvalidInput
+	}
 	message := mappedPayloadString(webhook, payload, "message", "message", "mensagem", "contact_notes", "notes")
 	propertyCode := mappedPayloadString(webhook, payload, "property_code", "property_code", "propertyCode", "codigo_imovel")
 	sourceDetail := mappedPayloadString(webhook, payload, "form_name", "form_name", "formName", "source_detail")
@@ -245,12 +381,15 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 	adID := payloadString(payload, "ad_id", "adId")
 	adName := payloadString(payload, "ad_name", "adName")
 	formID := payloadString(payload, "form_id", "formId")
-	providerEventID := payloadString(payload,
-		"event_id", "eventId",
-		"submission_id", "submissionId",
-		"leadgen_id", "leadgenId",
-		"external_id", "externalId",
-	)
+	providerEventID := options.ProviderEventID
+	if providerEventID == nil {
+		providerEventID = payloadString(payload,
+			"event_id", "eventId",
+			"submission_id", "submissionId",
+			"leadgen_id", "leadgenId",
+			"external_id", "externalId",
+		)
+	}
 	providerEventKey := providerEventID
 	if providerEventID != nil {
 		qualified := webhook.ID + ":" + *providerEventID
@@ -261,16 +400,45 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 	utmCampaign := payloadString(payload, "utm_campaign", "utmCampaign")
 	utmTerm := payloadString(payload, "utm_term", "utmTerm")
 	utmContent := payloadString(payload, "utm_content", "utmContent")
+	if err := validateIncomingLeadFields(
+		*name,
+		email,
+		phone,
+		message,
+		propertyCode,
+		sourceDetail,
+		providerEventID,
+		campaignID,
+		campaignName,
+		adsetID,
+		adsetName,
+		adID,
+		adName,
+		formID,
+		utmSource,
+		utmMedium,
+		utmCampaign,
+		utmContent,
+		utmTerm,
+	); err != nil {
+		return IncomingLeadResult{}, err
+	}
 
 	metadata := map[string]any{
-		"source":                "generic_webhook",
-		"provider":              "generic_webhook",
+		"source":                options.Source,
+		"provider":              options.Provider,
 		"provider_event_id":     nullableString(providerEventKey),
 		"external_event_id":     nullableString(providerEventID),
-		"webhook_id":            webhook.ID,
-		"webhook_name":          webhook.Name,
+		"integration_id":        webhook.ID,
+		"integration_name":      webhook.Name,
 		"payload":               payload,
 		"distribution_deferred": true,
+	}
+	if options.SourceWebhookID != nil {
+		metadata["webhook_id"] = *options.SourceWebhookID
+		metadata["webhook_name"] = webhook.Name
+	} else {
+		metadata["api_key_id"] = webhook.ID
 	}
 	if formAnswers := webhookFormAnswers(payload); len(formAnswers) > 0 {
 		metadata["form_answers"] = formAnswers
@@ -282,7 +450,7 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 		distributionIdentity = *providerEventKey
 	}
 	distributionDigest := sha256.Sum256([]byte(webhook.ID + ":" + distributionIdentity))
-	distributionKey := "generic-webhook:" + hex.EncodeToString(distributionDigest[:])
+	distributionKey := options.Provider + ":" + hex.EncodeToString(distributionDigest[:])
 	occurredAt := webhookOccurredAt(payload)
 
 	tx, err := repo.db.Pool().Begin(ctx)
@@ -290,32 +458,58 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 		return IncomingLeadResult{}, err
 	}
 	defer tx.Rollback(ctx)
+	if propertyID != nil {
+		var propertyExists bool
+		if err := tx.QueryRow(ctx, `
+			select exists (
+				select 1
+				from public.properties property
+				where property.organization_id = $1::uuid
+				  and property.id = $2::uuid
+			)
+		`, webhook.OrganizationID, *propertyID).Scan(&propertyExists); err != nil {
+			return IncomingLeadResult{}, err
+		}
+		if !propertyExists {
+			return IncomingLeadResult{}, ErrInvalidInput
+		}
+	}
 
 	if providerEventKey != nil {
 		if _, err := tx.Exec(ctx, `
 			select pg_advisory_xact_lock(
-				hashtextextended('lead-entry:generic_webhook:' || $1 || ':' || $2, 0)
+				hashtextextended('lead-entry:' || $3 || ':' || $1 || ':' || $2, 0)
 			)
-		`, webhook.OrganizationID, *providerEventKey); err != nil {
+		`, webhook.OrganizationID, *providerEventKey, options.Provider); err != nil {
 			return IncomingLeadResult{}, err
 		}
 
 		var duplicateLeadID string
+		var duplicatePayloadMatches bool
+		var duplicateWasReentry bool
 		err := tx.QueryRow(ctx, `
-			select lead_id::text
+			select lead_id::text, payload = $4::jsonb, entry_type = 'reentry'
 			from public.lead_entry_events
 			where organization_id = $1::uuid
-			  and provider = 'generic_webhook'
+			  and provider = $3
 			  and provider_event_id = $2
 			  and is_countable = true
 			order by occurred_at, created_at, id
 			limit 1
-		`, webhook.OrganizationID, *providerEventKey).Scan(&duplicateLeadID)
+		`, webhook.OrganizationID, *providerEventKey, options.Provider, string(payloadJSON)).Scan(
+			&duplicateLeadID,
+			&duplicatePayloadMatches,
+			&duplicateWasReentry,
+		)
 		if err == nil {
+			if !duplicatePayloadMatches {
+				return IncomingLeadResult{}, ErrIdempotencyConflict
+			}
 			return IncomingLeadResult{
 				OK:             true,
 				OrganizationID: webhook.OrganizationID,
 				LeadID:         duplicateLeadID,
+				Reentry:        duplicateWasReentry,
 				Idempotent:     true,
 				Message:        "Evento ja processado",
 			}, nil
@@ -355,7 +549,7 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 			set name = $3,
 			    email = coalesce($4, email),
 			    phone = coalesce($5, phone),
-			    source = coalesce(nullif(source, ''), 'webhook'),
+			    source = coalesce(nullif(source, ''), $23),
 			    source_detail = coalesce(source_detail, $6),
 			    source_webhook_id = coalesce(source_webhook_id, $7::uuid),
 			    message = coalesce($8, message),
@@ -377,17 +571,14 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 			      when $21::uuid is null or stage_id is not distinct from $21::uuid then stage_entered_at
 			      else now()
 			    end,
-			    board_order_at = case
-			      when $21::uuid is null or stage_id is not distinct from $21::uuid then coalesce(board_order_at, stage_entered_at, created_at)
-			      else now()
-			    end,
+			    board_order_at = now(),
 			    metadata = coalesce(metadata, '{}'::jsonb) || $22::jsonb,
 			    last_entry_at = now(),
 			    reentry_count = coalesce(reentry_count, 0) + 1,
 			    updated_at = now()
 			where organization_id = $1::uuid
 			  and id = $2::uuid
-		`, webhook.OrganizationID, leadID, *name, nullableString(email), nullableString(phone), nullableString(sourceDetail), webhook.ID, nullableString(message), nullableString(propertyCode), nullableString(propertyID), nullableString(campaignID), nullableString(adsetID), nullableString(adID), nullableString(formID), nullableString(utmSource), nullableString(utmMedium), nullableString(utmCampaign), nullableString(utmTerm), nullableString(utmContent), nullableString(pipelineID), nullableString(stageID), string(metadataJSON))
+		`, webhook.OrganizationID, leadID, *name, nullableString(email), nullableString(phone), nullableString(sourceDetail), nullableString(options.SourceWebhookID), nullableString(message), nullableString(propertyCode), nullableString(propertyID), nullableString(campaignID), nullableString(adsetID), nullableString(adID), nullableString(formID), nullableString(utmSource), nullableString(utmMedium), nullableString(utmCampaign), nullableString(utmTerm), nullableString(utmContent), nullableString(pipelineID), nullableString(stageID), string(metadataJSON), options.Source)
 	} else {
 		err = tx.QueryRow(ctx, `
 			insert into public.leads (
@@ -428,7 +619,7 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 				$5,
 				$6,
 				$7,
-				'webhook',
+				$23,
 				$8,
 				$9::uuid,
 				$10,
@@ -449,22 +640,23 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 				now()
 			)
 			returning id::text
-		`, webhook.OrganizationID, nullableString(pipelineID), nullableString(stageID), nullableString(propertyID), *name, nullableString(email), nullableString(phone), nullableString(sourceDetail), webhook.ID, nullableString(message), nullableString(propertyCode), nullableString(campaignID), nullableString(adsetID), nullableString(adID), nullableString(formID), nullableString(utmSource), nullableString(utmMedium), nullableString(utmCampaign), nullableString(utmTerm), nullableString(utmContent), string(metadataJSON), nullableString(webhook.TargetTeamID)).Scan(&leadID)
+		`, webhook.OrganizationID, nullableString(pipelineID), nullableString(stageID), nullableString(propertyID), *name, nullableString(email), nullableString(phone), nullableString(sourceDetail), nullableString(options.SourceWebhookID), nullableString(message), nullableString(propertyCode), nullableString(campaignID), nullableString(adsetID), nullableString(adID), nullableString(formID), nullableString(utmSource), nullableString(utmMedium), nullableString(utmCampaign), nullableString(utmTerm), nullableString(utmContent), string(metadataJSON), nullableString(webhook.TargetTeamID), options.Source).Scan(&leadID)
 	}
 	if err != nil {
 		return IncomingLeadResult{}, err
 	}
 
-	if err := repo.insertLeadMeta(ctx, tx, webhook.OrganizationID, leadID, campaignID, campaignName, adsetID, adsetName, adID, adName, formID, payloadJSON); err != nil {
+	if err := repo.insertLeadMeta(ctx, tx, webhook.OrganizationID, leadID, options.Provider, campaignID, campaignName, adsetID, adsetName, adID, adName, formID, payloadJSON); err != nil {
 		return IncomingLeadResult{}, err
 	}
 	if err := repo.insertLeadTags(ctx, tx, webhook.OrganizationID, leadID, webhook.TargetTagIDs); err != nil {
 		return IncomingLeadResult{}, err
 	}
-	if err := repo.insertWebhookLeadEntry(ctx, tx, webhook, leadID, propertyID, sourceDetail, providerEventKey, campaignID, campaignName, adsetID, adsetName, adID, adName, formID, utmSource, utmMedium, utmCampaign, utmContent, utmTerm, occurredAt, payloadJSON, reentry); err != nil {
+	_, err = repo.insertWebhookLeadEntry(ctx, tx, webhook, options.Source, options.Provider, leadID, propertyID, sourceDetail, providerEventKey, campaignID, campaignName, adsetID, adsetName, adID, adName, formID, utmSource, utmMedium, utmCampaign, utmContent, utmTerm, occurredAt, payloadJSON, reentry)
+	if err != nil {
 		return IncomingLeadResult{}, err
 	}
-	distributionSource := "webhook"
+	distributionSource := options.Source
 	if _, err := distribution.Distribute(ctx, tx, distribution.Request{
 		OrganizationID:   webhook.OrganizationID,
 		LeadID:           leadID,
@@ -475,11 +667,13 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 	}); err != nil {
 		return IncomingLeadResult{}, err
 	}
-	if err := repo.insertWebhookActivity(ctx, tx, webhook, leadID, *name, reentry, metadata); err != nil {
+	if err := repo.insertWebhookActivity(ctx, tx, webhook, leadID, *name, options.Source, reentry, metadata); err != nil {
 		return IncomingLeadResult{}, err
 	}
-	if err := repo.incrementWebhookStats(ctx, tx, webhook.ID); err != nil {
-		return IncomingLeadResult{}, err
+	if options.IncrementWebhookStats {
+		if err := repo.incrementWebhookStats(ctx, tx, webhook.ID); err != nil {
+			return IncomingLeadResult{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return IncomingLeadResult{}, err
@@ -506,6 +700,7 @@ func (repo Repository) findIncomingWebhookByToken(ctx context.Context, token str
 			'organization_id', w.organization_id::text,
 			'name', w.name,
 			'target_pipeline_id', w.target_pipeline_id::text,
+			'target_team_id', w.target_team_id::text,
 			'target_stage_id', w.target_stage_id::text,
 			'target_tag_ids', coalesce((
 				select jsonb_agg(tag_id::text)
@@ -515,9 +710,31 @@ func (repo Repository) findIncomingWebhookByToken(ctx context.Context, token str
 			'field_mapping', w.field_mapping
 		)
 		from public.webhooks_integrations w
+		join public.organizations organization
+		  on organization.id = w.organization_id
+		 and coalesce(organization.is_active, true) = true
 		where w.api_token = $1
 		  and w.type = 'incoming'
 		  and w.is_active = true
+		  and exists (
+			select 1
+			from public.organization_modules module
+			where module.organization_id = w.organization_id
+			  and lower(trim(module.module_name)) = 'webhooks'
+			  and coalesce(module.is_enabled, false) = true
+		  )
+		  and (
+			(lower(trim(organization.subscription_type)) = 'free'
+			  and lower(trim(organization.subscription_status)) = 'active')
+			or (lower(trim(organization.subscription_type)) = 'trial'
+			  and lower(trim(organization.subscription_status)) = 'trial'
+			  and organization.trial_ends_at > now())
+			or (lower(trim(organization.subscription_type)) = 'paid' and (
+			  lower(trim(organization.subscription_status)) = 'active'
+			  or (lower(trim(organization.subscription_status)) in ('overdue', 'past_due')
+			    and organization.billing_grace_until > now())
+			))
+		  )
 		limit 1
 	`, token).Scan(&raw)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -631,7 +848,7 @@ func (repo Repository) findExistingLeadByPhone(ctx context.Context, tx pgx.Tx, o
 	return leadID, err
 }
 
-func (repo Repository) insertLeadMeta(ctx context.Context, tx pgx.Tx, organizationID string, leadID string, campaignID *string, campaignName *string, adsetID *string, adsetName *string, adID *string, adName *string, formID *string, payload []byte) error {
+func (repo Repository) insertLeadMeta(ctx context.Context, tx pgx.Tx, organizationID string, leadID string, provider string, campaignID *string, campaignName *string, adsetID *string, adsetName *string, adID *string, adName *string, formID *string, payload []byte) error {
 	_, err := tx.Exec(ctx, `
 		insert into public.lead_meta (
 			organization_id,
@@ -646,7 +863,7 @@ func (repo Repository) insertLeadMeta(ctx context.Context, tx pgx.Tx, organizati
 			form_id,
 			payload
 		)
-		values ($1::uuid, $2::uuid, 'webhook', $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+		values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
 		on conflict (lead_id) do update
 		set platform = excluded.platform,
 		    campaign_id = coalesce(excluded.campaign_id, public.lead_meta.campaign_id),
@@ -658,7 +875,7 @@ func (repo Repository) insertLeadMeta(ctx context.Context, tx pgx.Tx, organizati
 		    form_id = coalesce(excluded.form_id, public.lead_meta.form_id),
 		    payload = excluded.payload,
 		    updated_at = now()
-	`, organizationID, leadID, nullableString(campaignID), nullableString(campaignName), nullableString(adsetID), nullableString(adsetName), nullableString(adID), nullableString(adName), nullableString(formID), string(payload))
+	`, organizationID, leadID, provider, nullableString(campaignID), nullableString(campaignName), nullableString(adsetID), nullableString(adsetName), nullableString(adID), nullableString(adName), nullableString(formID), string(payload))
 	return err
 }
 
@@ -689,6 +906,8 @@ func (repo Repository) insertWebhookLeadEntry(
 	ctx context.Context,
 	tx pgx.Tx,
 	webhook incomingWebhook,
+	source string,
+	provider string,
 	leadID string,
 	propertyID *string,
 	sourceDetail *string,
@@ -708,17 +927,18 @@ func (repo Repository) insertWebhookLeadEntry(
 	occurredAt time.Time,
 	payload []byte,
 	reentry bool,
-) error {
+) (string, error) {
 	entryType := "initial"
 	if reentry {
 		entryType = "reentry"
 	}
 
 	if !reentry {
-		tag, err := tx.Exec(ctx, `
+		var eventID string
+		err := tx.QueryRow(ctx, `
 			update public.lead_entry_events
-			set source = 'webhook',
-			    provider = 'generic_webhook',
+			set source = $20,
+			    provider = $21,
 			    provider_event_id = $3,
 			    occurred_at = $4,
 			    is_countable = true,
@@ -746,16 +966,18 @@ func (repo Repository) insertWebhookLeadEntry(
 				order by initial.created_at, initial.id
 				limit 1
 			)
-		`, webhook.OrganizationID, leadID, nullableString(providerEventID), occurredAt, nullableString(sourceDetail), nullableString(propertyID), nullableString(campaignID), nullableString(campaignName), nullableString(adsetID), nullableString(adsetName), nullableString(adID), nullableString(adName), nullableString(formID), nullableString(utmSource), nullableString(utmMedium), nullableString(utmCampaign), nullableString(utmContent), nullableString(utmTerm), string(payload))
-		if err != nil {
-			return err
+			returning id::text
+		`, webhook.OrganizationID, leadID, nullableString(providerEventID), occurredAt, nullableString(sourceDetail), nullableString(propertyID), nullableString(campaignID), nullableString(campaignName), nullableString(adsetID), nullableString(adsetName), nullableString(adID), nullableString(adName), nullableString(formID), nullableString(utmSource), nullableString(utmMedium), nullableString(utmCampaign), nullableString(utmContent), nullableString(utmTerm), string(payload), source, provider).Scan(&eventID)
+		if err == nil {
+			return eventID, nil
 		}
-		if tag.RowsAffected() > 0 {
-			return nil
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return "", err
 		}
 	}
 
-	tag, err := tx.Exec(ctx, `
+	var eventID string
+	err := tx.QueryRow(ctx, `
 		insert into public.lead_entry_events (
 			organization_id,
 			lead_id,
@@ -782,18 +1004,19 @@ func (repo Repository) insertWebhookLeadEntry(
 			payload
 		)
 		values (
-			$1::uuid, $2::uuid, 'webhook', 'generic_webhook', $3, $4, true, $5,
+			$1::uuid, $2::uuid, $21, $22, $3, $4, true, $5,
 			$6, $7::uuid, $8, $9, $10, $11, $12, $13, $14,
 			$15, $16, $17, $18, $19, $20::jsonb
 		)
 		on conflict (organization_id, provider, provider_event_id)
 			where provider_event_id is not null and is_countable = true
 		do nothing
-	`, webhook.OrganizationID, leadID, nullableString(providerEventID), occurredAt, nullableString(sourceDetail), entryType, nullableString(propertyID), nullableString(campaignID), nullableString(campaignName), nullableString(adsetID), nullableString(adsetName), nullableString(adID), nullableString(adName), nullableString(formID), nullableString(utmSource), nullableString(utmMedium), nullableString(utmCampaign), nullableString(utmContent), nullableString(utmTerm), string(payload))
-	if err == nil && providerEventID != nil && tag.RowsAffected() == 0 {
-		return errors.New("generic webhook event was already processed")
+		returning id::text
+	`, webhook.OrganizationID, leadID, nullableString(providerEventID), occurredAt, nullableString(sourceDetail), entryType, nullableString(propertyID), nullableString(campaignID), nullableString(campaignName), nullableString(adsetID), nullableString(adsetName), nullableString(adID), nullableString(adName), nullableString(formID), nullableString(utmSource), nullableString(utmMedium), nullableString(utmCampaign), nullableString(utmContent), nullableString(utmTerm), string(payload), source, provider).Scan(&eventID)
+	if errors.Is(err, pgx.ErrNoRows) && providerEventID != nil {
+		return "", errors.New("lead ingress event was already processed")
 	}
-	return err
+	return eventID, err
 }
 
 func webhookOccurredAt(payload map[string]any) time.Time {
@@ -817,12 +1040,12 @@ func webhookOccurredAt(payload map[string]any) time.Time {
 	return time.Now().UTC()
 }
 
-func (repo Repository) insertWebhookActivity(ctx context.Context, tx pgx.Tx, webhook incomingWebhook, leadID string, leadName string, reentry bool, metadata map[string]any) error {
+func (repo Repository) insertWebhookActivity(ctx context.Context, tx pgx.Tx, webhook incomingWebhook, leadID string, leadName string, source string, reentry bool, metadata map[string]any) error {
 	activityType := "lead_created"
-	content := fmt.Sprintf(`Lead "%s" foi criado por webhook`, leadName)
+	content := fmt.Sprintf(`Lead "%s" foi criado por %s`, leadName, source)
 	if reentry {
 		activityType = "lead_reentry"
-		content = fmt.Sprintf(`Lead "%s" retornou por webhook`, leadName)
+		content = fmt.Sprintf(`Lead "%s" retornou por %s`, leadName, source)
 	}
 	metadataJSON, _ := json.Marshal(metadata)
 	_, err := tx.Exec(ctx, `
@@ -860,14 +1083,7 @@ func generateToken() (string, error) {
 }
 
 func normalizeUUID(value string) (string, bool) {
-	var uuid pgtype.UUID
-	if err := uuid.Scan(strings.TrimSpace(value)); err != nil {
-		return "", false
-	}
-	if !uuid.Valid {
-		return "", false
-	}
-	return uuid.String(), true
+	return pgvalue.NormalizeUUID(value)
 }
 
 func cleanString(value *string) *string {
@@ -925,6 +1141,81 @@ func payloadText(value any) *string {
 	default:
 		return nil
 	}
+}
+
+func validateIncomingLeadFields(
+	name string,
+	email *string,
+	phone *string,
+	message *string,
+	propertyCode *string,
+	sourceDetail *string,
+	providerEventID *string,
+	campaignID *string,
+	campaignName *string,
+	adsetID *string,
+	adsetName *string,
+	adID *string,
+	adName *string,
+	formID *string,
+	utmSource *string,
+	utmMedium *string,
+	utmCampaign *string,
+	utmContent *string,
+	utmTerm *string,
+) error {
+	if utf8.RuneCountInString(name) < 2 || utf8.RuneCountInString(name) > 180 {
+		return ErrInvalidInput
+	}
+	for _, field := range []struct {
+		value *string
+		max   int
+	}{
+		{message, 10_000},
+		{propertyCode, 120},
+		{sourceDetail, 500},
+		{providerEventID, 512},
+		{campaignID, 240},
+		{campaignName, 500},
+		{adsetID, 240},
+		{adsetName, 500},
+		{adID, 240},
+		{adName, 500},
+		{formID, 240},
+		{utmSource, 500},
+		{utmMedium, 500},
+		{utmCampaign, 500},
+		{utmContent, 500},
+		{utmTerm, 500},
+	} {
+		if field.value != nil && utf8.RuneCountInString(*field.value) > field.max {
+			return ErrInvalidInput
+		}
+	}
+	if email != nil {
+		if utf8.RuneCountInString(*email) > 320 {
+			return ErrInvalidInput
+		}
+		address, err := mail.ParseAddress(*email)
+		if err != nil || !strings.EqualFold(address.Address, *email) {
+			return ErrInvalidInput
+		}
+	}
+	if phone != nil {
+		if utf8.RuneCountInString(*phone) > 32 {
+			return ErrInvalidInput
+		}
+		digits := 0
+		for _, character := range *phone {
+			if character >= '0' && character <= '9' {
+				digits++
+			}
+		}
+		if digits < 10 || digits > 15 {
+			return ErrInvalidInput
+		}
+	}
+	return nil
 }
 
 var webhookTechnicalFields = map[string]struct{}{
@@ -1259,17 +1550,11 @@ func valuePointer(value string) *string {
 }
 
 func nullableString(value *string) any {
-	if value == nil {
-		return nil
-	}
-	return *value
+	return pgvalue.NullableStringPointer(value)
 }
 
 func textPointer(value pgtype.Text) *string {
-	if !value.Valid {
-		return nil
-	}
-	return &value.String
+	return pgvalue.TextPointer(value)
 }
 
 func digitsOnly(value any) string {

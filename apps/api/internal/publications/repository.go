@@ -12,6 +12,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/propertyscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -719,6 +721,13 @@ func (repo Repository) loadPublicationSource(
 		         )
 		       ),
 		       coalesce(p.responsible_user_id, p.created_by) is not null,
+		       exists (
+		         select 1
+		         from public.property_assets as any_photo
+		         where any_photo.organization_id = p.organization_id
+		           and any_photo.property_id = p.id
+		           and any_photo.asset_type = 'photo'
+		       ),
 		       coalesce(site.is_active, false) and coalesce(org.is_active, false),
 		       exists (
 		         select 1 from public.organization_modules module
@@ -746,6 +755,7 @@ func (repo Repository) loadPublicationSource(
 		&source.Status,
 		&source.OwnerPresent,
 		&source.ResponsiblePresent,
+		&source.HasAssetPhotos,
 		&source.SiteActive,
 		&source.SiteModuleActive,
 		&customDomain,
@@ -869,6 +879,7 @@ func (repo Repository) loadPublicationSource(
 		       coalesce(checksum_sha256, '')
 		from public.property_assets
 		where organization_id = $1::uuid and property_id = $2::uuid
+		  and lower(btrim(coalesce(metadata->>'integration_retired', 'false'))) not in ('true', 't', '1', 'yes', 'on')
 		order by is_primary desc, sort_order, id
 	`, tenantContext.OrganizationID, propertyID)
 	if err != nil {
@@ -1206,35 +1217,15 @@ func (repo Repository) listRecentJobs(ctx context.Context, queryer publicationQu
 }
 
 func publicationVisibilitySQL(alias string, canViewAll string, userID string, canViewTeam string) string {
-	return `(
-		` + canViewAll + `::boolean
-		or ` + alias + `.responsible_user_id = ` + userID + `::uuid
-		or ` + alias + `.created_by = ` + userID + `::uuid
-		or (
-			` + canViewTeam + `::boolean
-			and exists (
-				select 1
-				from public.team_members leader
-				join public.team_members member
-				  on member.organization_id = leader.organization_id
-				 and member.team_id = leader.team_id
-				 and member.is_active = true
-				where leader.organization_id = ` + alias + `.organization_id
-				  and leader.user_id = ` + userID + `::uuid
-				  and leader.is_active = true
-				  and leader.is_leader = true
-				  and (member.user_id = ` + alias + `.responsible_user_id or member.user_id = ` + alias + `.created_by)
-			)
-		)
-	)`
+	return propertyscope.VisibilitySQL(alias, canViewAll, userID, canViewTeam)
 }
 
 func canViewAllProperties(tenantContext tenant.Context) bool {
-	return tenantContext.HasPermission(permissions.PropertyManage)
+	return propertyscope.CanViewAll(tenantContext)
 }
 
 func canViewTeamProperties(tenantContext tenant.Context) bool {
-	return tenantContext.IsTeamLeader || tenantContext.HasPermission(permissions.LeadViewTeam)
+	return propertyscope.CanViewTeam(tenantContext)
 }
 
 func decodeSnapshotPreview(payload map[string]any) (Preview, bool) {
@@ -1294,10 +1285,7 @@ func pointerText(value *string) string {
 }
 
 func nullableString(value *string) any {
-	if value == nil || strings.TrimSpace(*value) == "" {
-		return nil
-	}
-	return strings.TrimSpace(*value)
+	return pgvalue.NullableTrimmedStringPointer(value)
 }
 
 func timestampMatchesRevision(value time.Time, revision string) bool {

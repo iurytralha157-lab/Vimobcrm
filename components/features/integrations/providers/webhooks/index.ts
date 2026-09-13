@@ -1,0 +1,1 @@
+export { webhooksIntegrationProviderManifest } from "./manifest";

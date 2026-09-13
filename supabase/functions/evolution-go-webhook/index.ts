@@ -36,6 +36,13 @@ import {
   removeConversationUnreadEffect,
   storedEvolutionGoEffectState,
 } from "./message-effects.ts";
+import {
+  decodeBoundedWhatsAppMediaBase64,
+  isEncryptedWhatsAppMediaURL,
+  validateWhatsAppPlaintextMedia,
+  WHATSAPP_MEDIA_MAX_BYTES,
+  WhatsAppMediaValidationError,
+} from "./media-security.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -46,10 +53,14 @@ const corsHeaders = {
 type JsonRecord = Record<string, any>;
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const EVOLUTION_GO_API_URL = (Deno.env.get("EVOLUTION_GO_API_URL") || "").replace(/\/+$/, "");
 const EVOLUTION_GO_API_KEY = Deno.env.get("EVOLUTION_GO_API_KEY") || "";
 const EVOLUTION_WEBHOOK_SECRET = Deno.env.get("EVOLUTION_WEBHOOK_SECRET") || "";
 const VIMOB_API_URL = Deno.env.get("VIMOB_API_URL") || Deno.env.get("VIMOB_API_BASE_URL") || "";
 const AI_AUTOREPLY_TOKEN = Deno.env.get("AI_AUTOREPLY_TOKEN") || Deno.env.get("INTERNAL_WEBHOOK_TOKEN") || "";
+// Stay below Evolution's callback retry window; failures persist as pending.
+const EVOLUTION_GO_MEDIA_TIMEOUT_MS = 20_000;
+const EVOLUTION_GO_MEDIA_RESPONSE_MAX_BYTES = Math.ceil(WHATSAPP_MEDIA_MAX_BYTES / 3) * 4 + 1024 * 1024;
 
 let supabase: any;
 
@@ -999,6 +1010,36 @@ function detectMediaBlock(messageNode: any, message: any) {
   return { type: "", block: null };
 }
 
+function evolutionProviderMediaMessage(type: string, block: JsonRecord | null) {
+  const blockNames: Record<string, string> = {
+    image: "imageMessage",
+    video: "videoMessage",
+    audio: "audioMessage",
+    document: "documentMessage",
+    sticker: "stickerMessage",
+  };
+  const blockName = blockNames[type];
+  return blockName && isRecord(block) ? { [blockName]: block } : null;
+}
+
+function hasEncryptedMediaDescriptor(block: JsonRecord | null) {
+  if (!isRecord(block)) return false;
+  return [
+    block.mediaKey,
+    block.MediaKey,
+    block.directPath,
+    block.DirectPath,
+    block.fileSha256,
+    block.fileSHA256,
+    block.FileSHA256,
+    block.FileSha256,
+    block.fileEncSha256,
+    block.fileEncSHA256,
+    block.FileEncSHA256,
+    block.FileEncSha256,
+  ].some((value) => value !== undefined && value !== null && value !== "");
+}
+
 function extractContent(messageNode: any, message: any, mediaBlock: any) {
   return firstPresent(
     typeof messageNode === "string" ? messageNode : null,
@@ -1082,81 +1123,218 @@ function fallbackMimeType(type: string) {
   return map[type] || "application/octet-stream";
 }
 
-function decodeBase64(base64: string) {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return bytes;
+type InboundMediaStoreResult = {
+  path: string | null;
+  status: "ready" | "pending";
+  error: string | null;
+  contentType: string | null;
+  size: number | null;
+};
+
+class InboundMediaRecoveryError extends Error {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "InboundMediaRecoveryError";
+    this.code = code;
+  }
 }
 
-async function fetchInboundMedia(sourceUrl: string | null) {
-  const url = normalizeText(sourceUrl).trim();
-  if (!/^https?:\/\//i.test(url)) return null;
+function providerMediaInstanceKey(session: JsonRecord) {
+  return normalizeText(firstPresent(
+    session.advanced_settings?.evolution_go_resolved_instance_key,
+    session.instance_id,
+    session.provider_instance_id,
+    session.instance_name,
+  )).trim();
+}
 
-  const headerVariants: HeadersInit[] = [
-    {},
-    EVOLUTION_GO_API_KEY ? { apikey: EVOLUTION_GO_API_KEY, Authorization: `Bearer ${EVOLUTION_GO_API_KEY}` } : {},
-  ];
+function providerMediaToken(session: JsonRecord) {
+  const sessionToken = normalizeText(session.advanced_settings?.token).trim();
+  return sessionToken && sessionToken !== "default_token" ? sessionToken : EVOLUTION_GO_API_KEY;
+}
 
-  for (const headers of headerVariants) {
-    try {
-      const response = await fetch(url, { headers });
-      if (!response.ok) continue;
+function dataURLMimeType(value: string) {
+  const match = value.trim().match(/^data:([^;,]+)(?:;[^,]*)?,/i);
+  return match?.[1]?.trim().toLowerCase() || null;
+}
 
-      const declaredSize = Number(response.headers.get("content-length") || 0);
-      if (declaredSize > 26 * 1024 * 1024) {
-        throw new Error("Arquivo de midia acima do limite de 25MB.");
-      }
+async function readBoundedEvolutionMediaJSON(response: Response) {
+  const declaredSize = Number(response.headers.get("content-length") || 0);
+  if (declaredSize > EVOLUTION_GO_MEDIA_RESPONSE_MAX_BYTES) {
+    throw new InboundMediaRecoveryError("media_too_large", "Evolution Go media response exceeds the configured limit");
+  }
+  if (!response.body) return null;
 
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      if (bytes.byteLength === 0 || bytes.byteLength > 26 * 1024 * 1024) {
-        throw new Error("Arquivo de midia vazio ou acima do limite de 25MB.");
-      }
-
-      return {
-        bytes,
-        contentType: normalizeText(response.headers.get("content-type")).split(";")[0],
-        size: bytes.byteLength,
-      };
-    } catch (error) {
-      console.warn("Unable to fetch inbound WhatsApp media", { sourceUrl: url, error });
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > EVOLUTION_GO_MEDIA_RESPONSE_MAX_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      throw new InboundMediaRecoveryError("media_too_large", "Evolution Go media response exceeds the configured limit");
     }
+    chunks.push(value);
   }
 
-  return null;
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  const text = new TextDecoder().decode(bytes);
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new InboundMediaRecoveryError("media_provider_response_invalid", "Evolution Go returned invalid media JSON");
+  }
+}
+
+function evolutionMediaResponseBase64(response: any) {
+  return normalizeText(firstPresent(
+    response?.data?.data?.base64,
+    response?.data?.base64,
+    response?.base64,
+    response?.data?.data?.data?.base64,
+  )).trim();
+}
+
+async function downloadInboundMediaViaEvolution(
+  session: JsonRecord,
+  providerMessage: JsonRecord,
+) {
+  const instanceKey = providerMediaInstanceKey(session);
+  const token = providerMediaToken(session);
+  if (!EVOLUTION_GO_API_URL || !instanceKey || !token) {
+    throw new InboundMediaRecoveryError(
+      "media_provider_config_missing",
+      "Evolution Go media recovery is not configured for this session",
+    );
+  }
+
+  const request = async (path: "/message/downloadmedia" | "/message/downloadimage") => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), EVOLUTION_GO_MEDIA_TIMEOUT_MS);
+    try {
+      const response = await fetch(`${EVOLUTION_GO_API_URL}${path}`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          apikey: token,
+          instanceId: instanceKey,
+        },
+        body: JSON.stringify({ message: providerMessage }),
+        signal: controller.signal,
+      });
+      const body = await readBoundedEvolutionMediaJSON(response);
+      return { ok: response.ok, status: response.status, body };
+    } catch (error) {
+      if (error instanceof InboundMediaRecoveryError) throw error;
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new InboundMediaRecoveryError("media_provider_timeout", "Evolution Go media recovery timed out");
+      }
+      throw new InboundMediaRecoveryError("media_provider_unavailable", "Evolution Go media recovery request failed");
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+
+  let response = await request("/message/downloadmedia");
+  if (!response.ok && (response.status === 404 || response.status === 405)) {
+    response = await request("/message/downloadimage");
+  }
+  if (!response.ok) {
+    const code = response.status === 401 || response.status === 403
+      ? "media_provider_auth_failed"
+      : (response.status === 413 ? "media_too_large" : "media_provider_rejected");
+    throw new InboundMediaRecoveryError(code, `Evolution Go media recovery failed with status ${response.status}`);
+  }
+
+  const encoded = evolutionMediaResponseBase64(response.body);
+  if (!encoded) {
+    throw new InboundMediaRecoveryError("media_provider_response_invalid", "Evolution Go media response has no base64 data");
+  }
+  return {
+    bytes: decodeBoundedWhatsAppMediaBase64(encoded),
+    contentType: dataURLMimeType(encoded),
+  };
+}
+
+function inboundMediaErrorCode(error: unknown) {
+  if (error instanceof WhatsAppMediaValidationError || error instanceof InboundMediaRecoveryError) return error.code;
+  return "media_storage_upload_failed";
 }
 
 async function storeInboundMedia(params: {
-  organizationId: string;
-  sessionId: string;
-  messageId: string;
-  type: string;
-  mimeType: string;
-  base64: string | null;
-  sourceUrl?: string | null;
-}) {
-  const fetched = params.base64
-    ? {
-      bytes: decodeBase64(params.base64),
-      contentType: params.mimeType.split(";")[0] || fallbackMimeType(params.type),
-      size: undefined,
+  session: JsonRecord;
+  message: NonNullable<ReturnType<typeof normalizeMessage>>;
+}): Promise<InboundMediaStoreResult> {
+  const { session, message } = params;
+  try {
+    let recovered: { bytes: Uint8Array; contentType: string | null };
+    if (message.mediaBase64) {
+      recovered = {
+        bytes: decodeBoundedWhatsAppMediaBase64(message.mediaBase64),
+        contentType: dataURLMimeType(message.mediaBase64),
+      };
+    } else if (message.providerMediaMessage) {
+      recovered = await downloadInboundMediaViaEvolution(session, message.providerMediaMessage);
+    } else {
+      throw new InboundMediaRecoveryError(
+        "media_descriptor_missing",
+        "WhatsApp media has no provider descriptor or decrypted base64",
+      );
     }
-    : await fetchInboundMedia(params.sourceUrl || null);
 
-  if (!fetched) return null;
-
-  const contentType = normalizeText(fetched.contentType) || params.mimeType.split(";")[0] || fallbackMimeType(params.type);
-  const extension = mediaExtension(contentType, params.type);
-  const path = `orgs/${params.organizationId}/sessions/${params.sessionId}/incoming/${params.messageId}.${extension}`;
-  const { error } = await supabase.storage
-    .from("whatsapp-media")
-    .upload(path, fetched.bytes, {
-      contentType,
-      upsert: true,
+    const validated = await validateWhatsAppPlaintextMedia({
+      bytes: recovered.bytes,
+      messageType: message.messageType,
+      declaredMimeType: message.mediaMimeType,
+      providerMimeType: recovered.contentType,
+      declaredSize: message.mediaSize,
+      fileSha256: message.mediaFileSha256,
+      fileEncSha256: message.mediaFileEncSha256,
+      requirePlaintextSha256: message.hasEncryptedMediaDescriptor,
     });
+    const extension = mediaExtension(validated.contentType, message.messageType);
+    const path = `orgs/${session.organization_id}/sessions/${session.id}/incoming/${message.messageId}.${extension}`;
+    const { error } = await supabase.storage
+      .from("whatsapp-media")
+      .upload(path, validated.bytes, {
+        contentType: validated.contentType,
+        upsert: true,
+      });
+    if (error) throw error;
 
-  if (error) throw error;
-  return path;
+    return {
+      path,
+      status: "ready",
+      error: null,
+      contentType: validated.contentType,
+      size: validated.size,
+    };
+  } catch (error) {
+    const code = inboundMediaErrorCode(error);
+    console.warn("Inbound WhatsApp media remains pending", {
+      session_id: session.id,
+      message_id: message.messageId,
+      media_error: code,
+    });
+    return {
+      path: null,
+      status: "pending",
+      error: code,
+      contentType: message.mediaMimeType || null,
+      size: message.mediaSize || null,
+    };
+  }
 }
 
 // A completed managed lifecycle is immutable, but an exact provider retry may
@@ -1189,29 +1367,39 @@ async function reconcileHandledWhatsAppMessageTransport(
   }
   if (!existing?.id) return;
 
-  let mediaStoragePath = normalizeText(existing.media_storage_path).trim() || null;
-  if (!mediaStoragePath) {
-    mediaStoragePath = await storeInboundMedia({
-      organizationId: session.organization_id,
-      sessionId: session.id,
-      messageId: message.messageId,
-      type: message.messageType,
-      mimeType: message.mediaMimeType || "application/octet-stream",
-      base64: message.mediaBase64,
-      sourceUrl: message.mediaUrl,
-    });
+  const existingStoragePath = normalizeText(existing.media_storage_path).trim() || null;
+  if (existingStoragePath) return;
+  const media = await storeInboundMedia({ session, message });
+
+  if (media.path) {
+    const mediaStoragePath = media.path;
+    const { error: readyUpdateError } = await supabase
+      .from("whatsapp_messages")
+      .update({
+        media_url: existing.media_url || message.mediaUrl || null,
+        media_mime_type: media.contentType || existing.media_mime_type || message.mediaMimeType || null,
+        media_storage_path: mediaStoragePath,
+        media_status: "ready",
+        media_error: null,
+        media_size: media.size || existing.media_size || message.mediaSize || null,
+      })
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .eq("id", existing.id)
+      .eq("from_me", false);
+    if (readyUpdateError) throw readyUpdateError;
+    return;
   }
-  if (!mediaStoragePath) return;
 
   const { error: updateError } = await supabase
     .from("whatsapp_messages")
     .update({
       media_url: existing.media_url || message.mediaUrl || null,
-      media_mime_type: existing.media_mime_type || message.mediaMimeType || null,
-      media_storage_path: mediaStoragePath,
-      media_status: "ready",
-      media_error: null,
-      media_size: existing.media_size || message.mediaSize || null,
+      media_mime_type: media.contentType || existing.media_mime_type || message.mediaMimeType || null,
+      media_storage_path: null,
+      media_status: "pending",
+      media_error: media.error,
+      media_size: media.size || existing.media_size || message.mediaSize || null,
     })
     .eq("organization_id", session.organization_id)
     .eq("session_id", session.id)
@@ -1358,45 +1546,33 @@ function normalizeMessage(message: any, currentEnvelope: JsonRecord | null = nul
     message.mimeType,
   )) || (messageType === "text" ? "" : fallbackMimeType(messageType));
 
-  const mediaUrl = normalizeText(firstPresent(
-    mediaBlock.url,
-    mediaBlock.URL,
-    mediaBlock.mediaUrl,
-    mediaBlock.media_url,
-    messageNode?.url,
-    messageNode?.URL,
+  // URL/URL on imageMessage/audioMessage/etc. points to WhatsApp's encrypted
+  // transport object. Only provider-promoted top-level media URLs are metadata;
+  // media recovery itself always uses decrypted base64 or downloadmedia below.
+  const promotedMediaUrl = normalizeText(firstPresent(
     messageNode?.mediaUrl,
     messageNode?.media_url,
     message.media_url,
     message.mediaUrl,
-    message.url,
-  )) || null;
+  )).trim() || null;
+  const mediaUrl = promotedMediaUrl && !isEncryptedWhatsAppMediaURL(promotedMediaUrl)
+    ? promotedMediaUrl
+    : null;
 
   const base64 = normalizeBase64(firstPresent(
     message.base64,
     message.Base64,
     message.media,
     message.file,
-    message.thumbnail,
-    message.thumbnailBase64,
-    message.jpegThumbnail,
     messageNode?.base64,
     messageNode?.Base64,
     messageNode?.media,
     messageNode?.file,
-    messageNode?.thumbnail,
-    messageNode?.thumbnailBase64,
-    messageNode?.jpegThumbnail,
     messageNode?.data?.base64,
     messageNode?.Data?.Base64,
-    mediaBlock.base64,
-    mediaBlock.Base64,
-    mediaBlock.media,
-    mediaBlock.file,
-    mediaBlock.thumbnail,
-    mediaBlock.thumbnailBase64,
-    mediaBlock.jpegThumbnail,
   ));
+  const providerMediaMessage = evolutionProviderMediaMessage(messageType, isRecord(mediaBlock) ? mediaBlock : null);
+  const encryptedMediaDescriptor = hasEncryptedMediaDescriptor(isRecord(mediaBlock) ? mediaBlock : null);
 
   const reaction = firstPresent(messageNode?.reactionMessage, messageNode?.ReactionMessage, message.reaction, null);
   const encryptedReaction = firstPresent(
@@ -1437,6 +1613,20 @@ function normalizeMessage(message: any, currentEnvelope: JsonRecord | null = nul
     mediaMimeType: mimeType || null,
     mediaBase64: base64,
     mediaSize: Number(firstPresent(mediaBlock.fileLength, mediaBlock.FileLength, message.mediaSize, message.fileSize)) || null,
+    mediaFileSha256: normalizeText(firstPresent(
+      mediaBlock.fileSha256,
+      mediaBlock.fileSHA256,
+      mediaBlock.FileSHA256,
+      mediaBlock.FileSha256,
+    )).trim() || null,
+    mediaFileEncSha256: normalizeText(firstPresent(
+      mediaBlock.fileEncSha256,
+      mediaBlock.fileEncSHA256,
+      mediaBlock.FileEncSHA256,
+      mediaBlock.FileEncSha256,
+    )).trim() || null,
+    providerMediaMessage,
+    hasEncryptedMediaDescriptor: encryptedMediaDescriptor,
     reactionToMessageId: isReaction ? normalizeText(firstPresent(
       reactionPayload?.key?.id,
       reactionPayload?.key?.ID,
@@ -1953,23 +2143,34 @@ async function resolvePropertyByCode(organizationId: string, propertyCode: strin
   const code = cleanText(propertyCode);
   if (!code) return null;
 
+  const matches = new Map<string, JsonRecord>();
   for (const column of ["code", "referencia_alternativa", "external_id", "imoview_codigo", "vista_codigo"]) {
     const { data, error } = await supabase
       .from("properties")
       .select("id, code, title")
       .eq("organization_id", organizationId)
       .eq(column, code)
-      .limit(1)
-      .maybeSingle();
+      .limit(2);
 
     if (error) {
       if (error.code === "42703") continue;
       throw error;
     }
-    if (data?.id) return data;
+    for (const property of data || []) {
+      const propertyId = optionalUuid(property?.id);
+      if (!propertyId) continue;
+      matches.set(propertyId, property as JsonRecord);
+      if (matches.size > 1) {
+        console.warn("[evolution-go-webhook] ambiguous property code; leaving lead unlinked", {
+          organization_id: organizationId,
+          property_code: code,
+        });
+        return null;
+      }
+    }
   }
 
-  return null;
+  return matches.size === 1 ? [...matches.values()][0] : null;
 }
 
 async function ensureLead(
@@ -3071,18 +3272,17 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
 
   if (existingError) throw existingError;
 
-  const mediaStoragePath = await storeInboundMedia({
-    organizationId: session.organization_id,
-    sessionId: session.id,
-    messageId: message.messageId,
-    type: message.messageType,
-    mimeType: message.mediaMimeType || "application/octet-stream",
-    base64: message.mediaBase64,
-    sourceUrl: message.mediaUrl,
-  });
   const isMedia = ["image", "video", "audio", "document", "sticker"].includes(message.messageType);
-  const mediaStatus = isMedia ? (mediaStoragePath ? "ready" : "pending") : null;
-  const mediaError = isMedia && !mediaStoragePath ? "media_download_pending" : null;
+  const media = isMedia && !existing?.media_storage_path
+    ? await storeInboundMedia({ session, message })
+    : null;
+  const mediaStoragePath = media?.path || existing?.media_storage_path || null;
+  const mediaStatus = isMedia
+    ? (mediaStoragePath ? "ready" : (media?.status || "pending"))
+    : null;
+  const mediaError = isMedia && !mediaStoragePath
+    ? (media?.error || "media_download_pending")
+    : null;
 
   const row = {
     organization_id: session.organization_id,
@@ -3095,11 +3295,11 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
     message_type: message.messageType,
     content: message.content,
     media_url: message.mediaUrl,
-    media_mime_type: message.mediaMimeType,
+    media_mime_type: media?.contentType || message.mediaMimeType,
     media_storage_path: mediaStoragePath,
     media_status: mediaStatus,
     media_error: mediaError,
-    media_size: message.mediaSize,
+    media_size: media?.size || message.mediaSize,
     remote_jid: conversation.remote_jid || message.remoteJid,
     sender_jid: message.senderJid,
     sender_name: message.senderName,
@@ -4172,15 +4372,18 @@ Deno.serve(async (req) => {
 
     const labelsProcessed = event.includes("label") ? await upsertLabels(resolved.session, payload) : 0;
     const groupsProcessed = event.includes("group") ? await upsertGroups(resolved.session, payload) : 0;
-    const statusUpdated = event.includes("status") || event.includes("receipt") || event.includes("ack")
+    const isMessageStatusEvent = event.includes("status") || event.includes("receipt") || event.includes("ack");
+    const statusUpdated = isMessageStatusEvent
       ? await handleMessageStatus(resolved.session, payload)
       : 0;
-    const messageResult = await handleMessages(
-      resolved.session,
-      payload,
-      event,
-      authorization,
-    );
+    const messageResult = isMessageStatusEvent
+      ? { processed: 0, duplicates: 0, inProgress: 0 }
+      : await handleMessages(
+        resolved.session,
+        payload,
+        event,
+        authorization,
+      );
 
     return json({
       ok: true,

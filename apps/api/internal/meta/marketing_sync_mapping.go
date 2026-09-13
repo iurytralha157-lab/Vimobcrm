@@ -182,6 +182,196 @@ func fetchMarketingSyncEntityCatalog(ctx context.Context, graph *marketingSyncGr
 	return catalog
 }
 
+func scopeMarketingSyncCatalogToTarget(catalog marketingSyncEntityCatalog, target marketingSyncTarget) (marketingSyncEntityCatalog, error) {
+	if len(catalog.Errors) > 0 {
+		return marketingSyncEntityCatalog{}, newMarketingSyncFailure("shared_ad_account_catalog_incomplete", 503, nil)
+	}
+	pageID := strings.TrimSpace(target.PageID)
+	instagramID := strings.TrimSpace(target.InstagramBusinessAccountID)
+	if pageID == "" && instagramID == "" {
+		return marketingSyncEntityCatalog{}, newMarketingSyncFailure("shared_ad_account_asset_scope_missing", 422, nil)
+	}
+	allowedForms := marketingSyncStringSet(target.ActiveLeadFormIDs)
+	if target.FormScopedPaidData && len(allowedForms) == 0 {
+		return marketingSyncEntityCatalog{}, newMarketingSyncFailure("shared_ad_account_form_scope_missing", 422, nil)
+	}
+
+	scoped := marketingSyncEntityCatalog{
+		Campaigns: make(map[string]map[string]any),
+		Adsets:    make(map[string]map[string]any),
+		Ads:       make(map[string]map[string]any),
+		Creatives: make(map[string]map[string]any),
+	}
+	unresolvedOwner := false
+	unresolvedForm := false
+	for adID, ad := range catalog.Ads {
+		creative := marketingSyncCreativeForAd(ad, catalog)
+		ownerIDs := marketingSyncCreativeOwnerIDs(creative)
+		if len(ownerIDs) == 0 {
+			unresolvedOwner = true
+			continue
+		}
+		if !marketingSyncOwnerIDsMatchTarget(ownerIDs, pageID, instagramID) {
+			continue
+		}
+		if target.FormScopedPaidData {
+			formIDs := marketingSyncCreativeLeadFormIDs(creative)
+			if len(formIDs) != 1 {
+				unresolvedForm = true
+				continue
+			}
+			ownedForm := false
+			for formID := range formIDs {
+				_, ownedForm = allowedForms[formID]
+			}
+			if !ownedForm {
+				continue
+			}
+		}
+		scoped.Ads[adID] = ad
+		campaignID := marketingSyncText(ad["campaign_id"])
+		if campaign, ok := catalog.Campaigns[campaignID]; ok {
+			scoped.Campaigns[campaignID] = campaign
+		}
+		adsetID := marketingSyncText(ad["adset_id"])
+		if adset, ok := catalog.Adsets[adsetID]; ok {
+			scoped.Adsets[adsetID] = adset
+		}
+		creativeID := marketingSyncText(creative["id"])
+		if creativeID != "" {
+			scoped.Creatives[creativeID] = creative
+		}
+	}
+	if unresolvedOwner {
+		scoped.Errors = append(scoped.Errors, "shared_ad_account_asset_scope_excluded")
+	}
+	if unresolvedForm {
+		scoped.Errors = append(scoped.Errors, "shared_ad_account_form_scope_excluded")
+	}
+	scoped.Errors = deduplicateMarketingSyncErrors(scoped.Errors)
+	return scoped, nil
+}
+
+// marketingSyncCatalogRequiresPageScope detects an agency-style account from
+// provider data as well as from CRM bindings. A single CRM tenant does not prove
+// that the external account contains only that tenant's Page/Instagram ads.
+func marketingSyncCatalogRequiresPageScope(catalog marketingSyncEntityCatalog, target marketingSyncTarget) bool {
+	if len(catalog.Errors) > 0 {
+		return true
+	}
+	pageID := strings.TrimSpace(target.PageID)
+	instagramID := strings.TrimSpace(target.InstagramBusinessAccountID)
+	if pageID == "" && instagramID == "" {
+		return len(catalog.Ads) > 0
+	}
+	for _, ad := range catalog.Ads {
+		creative := marketingSyncCreativeForAd(ad, catalog)
+		ownerIDs := marketingSyncCreativeOwnerIDs(creative)
+		if len(ownerIDs) == 0 || !marketingSyncOwnerIDsMatchTarget(ownerIDs, pageID, instagramID) {
+			return true
+		}
+	}
+	return false
+}
+
+func marketingSyncCreativeLeadFormIDs(creative map[string]any) map[string]struct{} {
+	result := make(map[string]struct{})
+	var visit func(any)
+	visit = func(value any) {
+		switch typed := value.(type) {
+		case map[string]any:
+			for key, nested := range typed {
+				if strings.EqualFold(strings.TrimSpace(key), "lead_gen_form_id") {
+					if formID := strings.TrimSpace(marketingSyncText(nested)); formID != "" {
+						result[formID] = struct{}{}
+					}
+					continue
+				}
+				visit(nested)
+			}
+		case []any:
+			for _, nested := range typed {
+				visit(nested)
+			}
+		}
+	}
+	if creative != nil {
+		visit(creative["object_story_spec"])
+		visit(creative["asset_feed_spec"])
+		if formID := strings.TrimSpace(marketingSyncText(creative["lead_gen_form_id"])); formID != "" {
+			result[formID] = struct{}{}
+		}
+	}
+	return result
+}
+
+func marketingSyncStringSet(values []string) map[string]struct{} {
+	result := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if normalized := strings.TrimSpace(value); normalized != "" {
+			result[normalized] = struct{}{}
+		}
+	}
+	return result
+}
+
+func marketingSyncCreativeOwnerIDs(creative map[string]any) map[string]struct{} {
+	owners := make(map[string]struct{})
+	add := func(value any) {
+		valueText := strings.TrimSpace(marketingSyncText(value))
+		if valueText != "" {
+			owners[valueText] = struct{}{}
+		}
+	}
+	for _, key := range []string{"page_id", "actor_id", "instagram_actor_id", "instagram_user_id"} {
+		add(creative[key])
+	}
+	story := marketingSyncRecord(creative["object_story_spec"])
+	for _, key := range []string{"page_id", "instagram_actor_id"} {
+		add(story[key])
+	}
+	for _, key := range []string{"effective_object_story_id", "object_story_id"} {
+		storyID := strings.TrimSpace(marketingSyncText(creative[key]))
+		if storyID == "" {
+			continue
+		}
+		if separator := strings.IndexAny(storyID, "_:"); separator > 0 {
+			storyID = storyID[:separator]
+		}
+		add(storyID)
+	}
+	return owners
+}
+
+func marketingSyncOwnerIDsMatchTarget(ownerIDs map[string]struct{}, pageID, instagramID string) bool {
+	for _, candidate := range []string{strings.TrimSpace(pageID), strings.TrimSpace(instagramID)} {
+		if candidate == "" {
+			continue
+		}
+		if _, ok := ownerIDs[candidate]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func filterMarketingSyncInsightsToCatalog(items []map[string]any, scopedCatalog, accountCatalog marketingSyncEntityCatalog) ([]map[string]any, int) {
+	filtered := make([]map[string]any, 0, len(items))
+	missing := 0
+	for _, item := range items {
+		adID := marketingSyncText(item["ad_id"])
+		if _, known := accountCatalog.Ads[adID]; !known {
+			missing++
+			continue
+		}
+		if _, owned := scopedCatalog.Ads[adID]; !owned {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered, missing
+}
+
 func marketingSyncCollectionWithFieldFallback(ctx context.Context, graph *marketingSyncGraphClient, path, primary, fallback string, maximum int) (marketingSyncGraphCollection, error) {
 	collection, err := graph.collection(ctx, path, map[string]any{"fields": primary, "limit": 100}, maximum)
 	if err != nil && marketingSyncErrorCode(err) == "meta_unsupported_parameter" && fallback != primary {
@@ -321,6 +511,20 @@ func marketingSyncPerformanceRowFromInsight(insight map[string]any, level string
 	creativeID := marketingSyncText(creative["id"])
 	if creativeID == "" {
 		creativeID = marketingSyncText(marketingSyncRecord(ad["creative"])["id"])
+	}
+	if target.FormScopedPaidData {
+		metrics.RawActions["vimob_scope"] = "lead_form"
+		metrics.RawActions["vimob_page_id"] = strings.TrimSpace(target.PageID)
+		metrics.RawActions["vimob_instagram_account_id"] = strings.TrimSpace(target.InstagramBusinessAccountID)
+		if formIDs := marketingSyncCreativeLeadFormIDs(creative); len(formIDs) == 1 {
+			for formID := range formIDs {
+				metrics.RawActions["vimob_lead_form_id"] = formID
+			}
+		}
+	} else if target.PageScopedPaidData {
+		metrics.RawActions["vimob_scope"] = "page_asset"
+		metrics.RawActions["vimob_page_id"] = strings.TrimSpace(target.PageID)
+		metrics.RawActions["vimob_instagram_account_id"] = strings.TrimSpace(target.InstagramBusinessAccountID)
 	}
 	return marketingSyncPerformanceRow{
 		OrganizationID: target.OrganizationID, IntegrationID: target.IntegrationID,

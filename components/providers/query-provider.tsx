@@ -49,10 +49,18 @@ function WhatsAppTenantCacheBoundary() {
 }
 
 export function QueryProvider({ children }: { children: ReactNode }) {
-  const { user, profile, organization, tenantContext, isSuperAdmin, impersonating } = useAuth()
+  const {
+    user,
+    profile,
+    organization,
+    activeOrganization,
+    tenantContext,
+    isSuperAdmin,
+    impersonating,
+  } = useAuth()
   const accessSignature = createTenantQueryAccessSignature({
     userId: user?.id ?? profile?.id,
-    organizationId: organization?.id ?? profile?.organization_id,
+    organizationId: activeOrganization.organizationId,
     memberRole: tenantContext?.memberRole,
     permissions: tenantContext?.permissions,
     enabledModules: tenantContext?.enabledModules,

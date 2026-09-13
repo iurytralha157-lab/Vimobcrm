@@ -1,4 +1,5 @@
 import {
+  adminCreateOrganizationInputSchema,
   adminFeatureRequestInputSchema,
   adminInvitationInputSchema,
   adminListLimitSchema,
@@ -6,20 +7,26 @@ import {
   adminNotificationDispatchSettingsInputSchema,
   adminOrganizationAccessInputSchema,
   adminOrganizationDeleteInputSchema,
-  adminOrganizationMutationInputSchema,
+  adminUpdateOrganizationInputSchema,
   adminOrganizationQuerySchema,
   adminPeriodSchema,
-  adminUserMutationInputSchema,
-  apiAdminOrganizationMutationResponseSchema,
+  adminUpdateUserInputSchema,
+  apiAdminCreateOrganizationResponseSchema,
+  apiAdminOrganizationListResponseSchema,
+  apiAdminUserListResponseSchema,
   apiAdminNotificationDispatchSettingsResponseSchema,
+  apiAdminNotificationDeliveryOperationsResponseSchema,
   apiCountResponseSchema,
   apiDynamicRecordListResponseSchema,
   apiDynamicRecordResponseSchema,
   apiOptionalDynamicRecordResponseSchema,
   nonEmptyDynamicRecordSchema,
+  notificationDeliveryOperationsQuerySchema,
   okResponseSchema,
+  organizationInvitationRoleInputSchema,
   invitationTokenSchema,
   parseDomainInput,
+  replayNotificationDeliveryInputSchema,
   safePathSegmentSchema,
   uuidSchema,
   validateDomainResponse,
@@ -50,20 +57,78 @@ export type AdminNotificationDispatchSettings = {
   updatedAt?: string;
 };
 
+export type AdminNotificationDeliveryStatus =
+  | 'queued'
+  | 'leased'
+  | 'sending'
+  | 'accepted'
+  | 'delivered'
+  | 'retry_wait'
+  | 'blocked_dependency'
+  | 'dead_letter'
+  | 'cancelled'
+  | 'permanent_failed';
+
+export type AdminNotificationDeliveryMetric = {
+  organizationId: string;
+  channel: 'whatsapp' | 'push' | 'email';
+  status: AdminNotificationDeliveryStatus;
+  deliveryCount: number;
+  dueCount: number;
+  oldestCreatedAt?: string | null;
+  oldestNextAttemptAt?: string | null;
+  oldestLeaseExpiresAt?: string | null;
+  maxAttemptCount: number;
+};
+
+export type AdminNotificationDeliveryOperation = {
+  id: string;
+  notificationId: string;
+  organizationId: string;
+  organizationName?: string | null;
+  userId?: string | null;
+  eventKey?: string | null;
+  title: string;
+  channel: 'whatsapp' | 'push' | 'email';
+  recipientKey: string;
+  status: AdminNotificationDeliveryStatus;
+  priority: number;
+  attemptCount: number;
+  maxAttempts: number;
+  nextAttemptAt?: string | null;
+  expiresAt: string;
+  leaseExpiresAt?: string | null;
+  dependencyKey?: string | null;
+  provider?: string | null;
+  providerMessageId?: string | null;
+  providerStatus?: string | null;
+  acceptedAt?: string | null;
+  deliveredAt?: string | null;
+  terminalAt?: string | null;
+  lastErrorCode?: string | null;
+  lastErrorMessage?: string | null;
+  lastErrorAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AdminNotificationDeliveryOperations = {
+  metrics: AdminNotificationDeliveryMetric[];
+  deliveries: AdminNotificationDeliveryOperation[];
+};
+
 export const adminAPI = {
   async listOrganizations(params: { search?: string; status?: string; segment?: string } = {}) {
     const query = parseDomainInput(adminOrganizationQuerySchema, params, 'admin.organizations.list');
     const response = await vimobAPIRequest<Envelope<AdminJSON[]>>('/v1/admin/organizations', {
       query,
     });
-    validateDomainResponse(apiDynamicRecordListResponseSchema, response, 'admin.organizations.list');
-    return response.data;
+    return validateDomainResponse(apiAdminOrganizationListResponseSchema, response, 'admin.organizations.list').data;
   },
 
   async listUsers() {
     const response = await vimobAPIRequest<Envelope<AdminJSON[]>>('/v1/admin/users');
-    validateDomainResponse(apiDynamicRecordListResponseSchema, response, 'admin.users.list');
-    return response.data;
+    return validateDomainResponse(apiAdminUserListResponseSchema, response, 'admin.users.list').data;
   },
 
   async listActiveAnnouncements<T = AdminJSON>() {
@@ -122,6 +187,22 @@ export const adminAPI = {
       body: validatedBody,
     });
     validateDomainResponse(apiDynamicRecordResponseSchema, response, 'admin.invitations.create');
+    return response.data;
+  },
+
+  async updateInvitation<T = AdminJSON>(id: string, body: AdminJSON, organizationId?: string | null) {
+    const validatedId = parseDomainInput(uuidSchema, id, 'admin.invitations.update.id');
+    const validatedBody = parseDomainInput(
+      organizationInvitationRoleInputSchema,
+      body,
+      'admin.invitations.update',
+    );
+    const response = await vimobAPIRequest<Envelope<T>>(`/v1/invitations/${validatedId}`, {
+      method: 'PATCH',
+      organizationId,
+      body: validatedBody,
+    });
+    validateDomainResponse(apiDynamicRecordResponseSchema, response, 'admin.invitations.update');
     return response.data;
   },
 
@@ -283,6 +364,40 @@ export const adminAPI = {
     return response.data;
   },
 
+  async getNotificationDeliveryOperations(
+    params: { status?: AdminNotificationDeliveryStatus | 'all' | 'problems'; limit?: number } = {},
+  ) {
+    const query = parseDomainInput(
+      notificationDeliveryOperationsQuerySchema,
+      params,
+      'admin.notification-deliveries.list',
+    );
+    const response = await vimobAPIRequest<Envelope<AdminNotificationDeliveryOperations>>('/v1/admin/notification-deliveries', {
+      query,
+    });
+    validateDomainResponse(
+      apiAdminNotificationDeliveryOperationsResponseSchema,
+      response,
+      'admin.notification-deliveries.list',
+    );
+    return response.data;
+  },
+
+  async replayNotificationDelivery(id: string, reason: string) {
+    const validatedId = parseDomainInput(uuidSchema, id, 'admin.notification-deliveries.replay.id');
+    const body = parseDomainInput(
+      replayNotificationDeliveryInputSchema,
+      { reason },
+      'admin.notification-deliveries.replay',
+    );
+    const response = await vimobAPIRequest<{ ok: boolean }>(`/v1/admin/notification-deliveries/${validatedId}/replay`, {
+      method: 'POST',
+      body,
+    });
+    validateDomainResponse(okResponseSchema, response, 'admin.notification-deliveries.replay');
+    return response;
+  },
+
   async orphanMemberStats<T = AdminJSON>() {
     const response = await vimobAPIRequest<Envelope<T>>('/v1/admin/orphan-members');
     validateDomainResponse(apiDynamicRecordResponseSchema, response, 'admin.orphans.stats');
@@ -297,20 +412,23 @@ export const adminAPI = {
     return response.data;
   },
 
-  async createOrganization(input: AdminJSON) {
-    const body = parseDomainInput(adminOrganizationMutationInputSchema, input, 'admin.organizations.create');
-    const response = await vimobAPIRequest<{ organization: AdminJSON }>('/v1/admin/organizations', {
+  async createOrganization(input: unknown) {
+    const body = parseDomainInput(adminCreateOrganizationInputSchema, input, 'admin.organizations.create');
+    const response = await vimobAPIRequest<unknown>('/v1/admin/organizations', {
       method: 'POST',
       body,
     });
-    validateDomainResponse(apiAdminOrganizationMutationResponseSchema, response, 'admin.organizations.create');
-    return response;
+    return validateDomainResponse(apiAdminCreateOrganizationResponseSchema, response, 'admin.organizations.create');
   },
 
-  async updateOrganization(input: AdminJSON & { id: string }) {
-    const { id, ...body } = input;
+  async updateOrganization(input: unknown) {
+    const inputWithId = input as { id?: unknown };
+    const id = inputWithId.id;
+    const body = typeof input === 'object' && input !== null
+      ? Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'id'))
+      : input;
     const validatedId = parseDomainInput(uuidSchema, id, 'admin.organizations.update.id');
-    const validatedBody = parseDomainInput(adminOrganizationMutationInputSchema, body, 'admin.organizations.update');
+    const validatedBody = parseDomainInput(adminUpdateOrganizationInputSchema, body, 'admin.organizations.update');
     const response = await vimobAPIRequest<{ ok: boolean }>(`/v1/admin/organizations/${validatedId}`, {
       method: 'PATCH',
       body: validatedBody,
@@ -374,10 +492,14 @@ export const adminAPI = {
     return response;
   },
 
-  async updateUser(input: AdminJSON & { userId: string }) {
-    const { userId, ...body } = input;
+  async updateUser(input: unknown) {
+    const inputWithId = input as { userId?: unknown };
+    const userId = inputWithId.userId;
+    const body = typeof input === 'object' && input !== null
+      ? Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'userId'))
+      : input;
     const validatedUserId = parseDomainInput(uuidSchema, userId, 'admin.users.update.id');
-    const validatedBody = parseDomainInput(adminUserMutationInputSchema, body, 'admin.users.update');
+    const validatedBody = parseDomainInput(adminUpdateUserInputSchema, body, 'admin.users.update');
     const response = await vimobAPIRequest<{ ok: boolean }>(`/v1/admin/users/${validatedUserId}`, {
       method: 'PATCH',
       body: validatedBody,

@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
-import type { TablesUpdate } from '@/integrations/supabase/types';
+import type { TablesUpdate } from '@/lib/supabase/types';
 import { toast } from 'sonner';
 import { leadsAPI } from '@/lib/api/leads';
 import { lostReasonSchema } from '@/lib/validation';
@@ -7,6 +7,8 @@ import type { PipelineLead, StageWithLeads } from '@/hooks/use-stages';
 import type { Lead } from '@/hooks/use-leads';
 import type { UnifiedHistoryEvent } from '@/hooks/use-lead-history';
 import { appendOptimisticHistoryEvent, invalidateLeadHistorySoon } from '@/hooks/use-optimistic-lead-history';
+import { formatBRLCurrencyWithDefaultDecimals } from '@/lib/utils/formatting';
+import { notifyLeadRealtimeChange } from '@/contexts/LeadRealtimeBus';
 
 interface ChangeDealStatusParams {
   leadId: string;
@@ -286,35 +288,40 @@ export function useDealStatusChange() {
         );
       }
 
-      queryClient.invalidateQueries({ queryKey: ['stages-with-leads'], refetchType: 'inactive' });
-      queryClient.invalidateQueries({ queryKey: ['leads'], refetchType: 'inactive' });
-      queryClient.invalidateQueries({ queryKey: ['lead'], refetchType: 'inactive' });
+      queryClient.invalidateQueries({ queryKey: ['stages-with-leads'], refetchType: 'none' });
+      queryClient.invalidateQueries({ queryKey: ['leads'], refetchType: 'none' });
+      queryClient.invalidateQueries({ queryKey: ['lead'], refetchType: 'none' });
+      notifyLeadRealtimeChange({
+        organizationId: variables.organizationId,
+        leadId: variables.leadId,
+        reason: 'lead.updated',
+      });
       invalidateLeadHistorySoon(queryClient, variables.leadId);
-      queryClient.invalidateQueries({ queryKey: ['activities'], refetchType: 'inactive' });
-      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'], refetchType: 'inactive' });
-      queryClient.invalidateQueries({ queryKey: ['enhanced-dashboard-stats'], refetchType: 'inactive' });
-      queryClient.invalidateQueries({ queryKey: ['home'] });
+      queryClient.invalidateQueries({ queryKey: ['activities'], refetchType: 'none' });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'], refetchType: 'none' });
+      queryClient.invalidateQueries({ queryKey: ['enhanced-dashboard-stats'], refetchType: 'none' });
+      queryClient.invalidateQueries({ queryKey: ['home'], refetchType: 'none' });
 
       const propertyAvailabilityChanged = newStatus === 'won' || newStatus === 'open';
       if (propertyAvailabilityChanged) {
-        queryClient.invalidateQueries({ queryKey: ['properties'], refetchType: 'inactive' });
-        queryClient.invalidateQueries({ queryKey: ['properties-infinite'], refetchType: 'inactive' });
-        queryClient.invalidateQueries({ queryKey: ['property'], refetchType: 'inactive' });
+        queryClient.invalidateQueries({ queryKey: ['properties'], refetchType: 'none' });
+        queryClient.invalidateQueries({ queryKey: ['properties-infinite'], refetchType: 'none' });
+        queryClient.invalidateQueries({ queryKey: ['property'], refetchType: 'none' });
         if (variables.propertyId) {
           queryClient.invalidateQueries({
             queryKey: ['property', variables.organizationId, variables.propertyId],
-            refetchType: 'inactive',
+            refetchType: 'none',
           });
         }
       }
 
       if (newStatus === 'won') {
-        queryClient.invalidateQueries({ queryKey: ['notifications'], refetchType: 'inactive' });
-        queryClient.invalidateQueries({ queryKey: ['unread-notifications-count'], refetchType: 'inactive' });
+        queryClient.invalidateQueries({ queryKey: ['notifications'], refetchType: 'none' });
+        queryClient.invalidateQueries({ queryKey: ['unread-notifications-count'], refetchType: 'none' });
 
         toast.success('Negocio fechado!', {
           description: variables.valorInteresse
-            ? `R$ ${variables.valorInteresse.toLocaleString('pt-BR')}`
+            ? formatBRLCurrencyWithDefaultDecimals(variables.valorInteresse)
             : undefined,
         });
 

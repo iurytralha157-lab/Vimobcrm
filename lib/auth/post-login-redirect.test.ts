@@ -11,7 +11,9 @@ import {
 } from './post-login-redirect';
 import {
   initializeSignedInUserContext,
+  runAuthOperationWithTimeout,
   runBestEffortAuthOperation,
+  shouldForceOrganizationSelectionForAuthEvent,
   shouldWaitForPostLoginRouting,
   shouldShowOrganizationSelectionLoader,
 } from './frontend-auth-reliability';
@@ -128,6 +130,23 @@ test('limita uma operacao de autenticacao pendente sem propagar falhas', { timeo
   );
 });
 
+test('preserva o resultado ou a falha tipada de uma operacao de login limitada', { timeout: 1_000 }, async () => {
+  assert.deepEqual(
+    await runAuthOperationWithTimeout(() => Promise.resolve({ error: null }), 100),
+    { status: 'completed', value: { error: null } },
+  );
+
+  const failure = new Error('offline');
+  assert.deepEqual(
+    await runAuthOperationWithTimeout(() => Promise.reject(failure), 100),
+    { status: 'failed', error: failure },
+  );
+  assert.deepEqual(
+    await runAuthOperationWithTimeout(() => new Promise(() => undefined), 5),
+    { status: 'timed_out' },
+  );
+});
+
 test('resolve perfil antes das organizacoes para impedir desvio da selecao multi-organizacao', async () => {
   const order: string[] = [];
 
@@ -142,6 +161,37 @@ test('resolve perfil antes das organizacoes para impedir desvio da selecao multi
   );
 
   assert.deepEqual(order, ['profile', 'organizations']);
+});
+
+test('forca escolha de organizacao somente no login iniciado pelo formulario atual', () => {
+  assert.equal(
+    shouldForceOrganizationSelectionForAuthEvent({
+      authEvent: 'SIGNED_IN',
+      credentialSignInInFlight: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldForceOrganizationSelectionForAuthEvent({
+      authEvent: 'SIGNED_IN',
+      credentialSignInInFlight: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldForceOrganizationSelectionForAuthEvent({
+      authEvent: 'INITIAL_SESSION',
+      credentialSignInInFlight: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldForceOrganizationSelectionForAuthEvent({
+      authEvent: 'USER_UPDATED',
+      credentialSignInInFlight: true,
+    }),
+    false,
+  );
 });
 
 test('aguarda toda a resolucao organizacional antes do redirecionamento pos-login', () => {

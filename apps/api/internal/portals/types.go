@@ -9,7 +9,9 @@ import (
 
 const (
 	PortalGrupoOLX          = "grupo_olx"
+	PortalChavesNaMao       = "chaves_na_mao"
 	maxGrupoOLXFeedListings = 50000
+	maxChavesNaMaoListings  = 50000
 )
 
 var (
@@ -24,6 +26,9 @@ var (
 	ErrCanonicalProductLocked   = errors.New("canonical portal product can change only while fully unpublished")
 	ErrDuplicateListingID       = errors.New("portal ListingID is already used by another property")
 	ErrFeedListingLimit         = errors.New("grupo olx feed listing limit exceeded")
+	ErrChavesNaMaoListingLimit  = errors.New("chaves na mao feed listing limit exceeded")
+	ErrChavesNaMaoFeedSize      = errors.New("chaves na mao feed size limit exceeded")
+	ErrChavesNaMaoHomologation  = errors.New("chaves na mao integration is not homologated")
 	ErrWebhookSecretUnavailable = errors.New("grupo olx CRM webhook secret is not configured")
 	ErrRateLimited              = errors.New("portal public ingress rate limit exceeded")
 	ErrFeedNotActivated         = errors.New("grupo olx feed is not activated")
@@ -39,6 +44,13 @@ type GrupoOLXSettingsRequest struct {
 	DefaultAssignedUserID OptionalString `json:"defaultAssignedUserId"`
 	DefaultRoundRobinID   OptionalString `json:"defaultRoundRobinId"`
 	Settings              map[string]any `json:"settings"`
+}
+
+// ChavesNaMaoSettingsRequest deliberately contains only feed settings. The
+// provider does not publish a current real-estate lead webhook contract, so we
+// do not expose routing or webhook configuration that could imply otherwise.
+type ChavesNaMaoSettingsRequest struct {
+	Settings map[string]any `json:"settings"`
 }
 
 // OptionalString distinguishes an omitted field from an explicit null or empty

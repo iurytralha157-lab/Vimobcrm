@@ -1,6 +1,8 @@
 package settings
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -23,6 +25,7 @@ var (
 	ErrAsaasAmbiguous           = errors.New("Asaas subscription update outcome is ambiguous")
 	ErrPaymentNotFound          = errors.New("billing payment was not found")
 	ErrPaymentProviderMismatch  = errors.New("billing payment provider identity mismatch")
+	ErrPropertySettingsConflict = errors.New("property settings were updated concurrently")
 )
 
 type UserPermissionItem struct {
@@ -37,6 +40,10 @@ type UserPermissionItem struct {
 
 type UserPermissionProfile struct {
 	UserID      string               `json:"userId"`
+	Name        string               `json:"name"`
+	Email       string               `json:"email"`
+	AvatarURL   *string              `json:"avatarUrl"`
+	IsActive    bool                 `json:"isActive"`
 	Profile     string               `json:"profile"`
 	Locked      bool                 `json:"locked"`
 	Permissions []UserPermissionItem `json:"permissions"`
@@ -58,6 +65,7 @@ type APIKey struct {
 	IsActive       bool    `json:"is_active"`
 	LastUsedAt     *string `json:"last_used_at"`
 	CreatedBy      *string `json:"created_by"`
+	ExpiresAt      *string `json:"expires_at"`
 	CreatedAt      string  `json:"created_at"`
 	UpdatedAt      string  `json:"updated_at"`
 }
@@ -123,6 +131,39 @@ type UpdateOrganizationRequest struct {
 	DefaultCommissionPercentage    *float64 `json:"default_commission_percentage"`
 	PropertyEditPolicy             *string  `json:"property_edit_policy"`
 	PropertyOwnerContactVisibility *string  `json:"property_owner_contact_visibility"`
+}
+
+type UpdatePropertySettingsRequest struct {
+	PropertyEditPolicy             propertySettingsPatchString `json:"property_edit_policy"`
+	PropertyOwnerContactVisibility propertySettingsPatchString `json:"property_owner_contact_visibility"`
+	ExpectedUpdatedAt              string                      `json:"expected_updated_at"`
+}
+
+type PropertySettingsUpdateResult struct {
+	OK        bool   `json:"ok"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// propertySettingsPatchString keeps PATCH omission distinct from an explicit
+// JSON null. These organization settings are non-nullable, so null must fail
+// instead of being silently interpreted as "leave unchanged".
+type propertySettingsPatchString struct {
+	Set   bool
+	Value *string
+}
+
+func (value *propertySettingsPatchString) UnmarshalJSON(data []byte) error {
+	value.Set = true
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		value.Value = nil
+		return nil
+	}
+	var decoded string
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	value.Value = &decoded
+	return nil
 }
 
 type AssetUpload struct {

@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -29,6 +33,14 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(postgres.Close)
+
+	var signingRequests atomic.Int32
+	storage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		signingRequests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"signedURL":"/object/sign/whatsapp-media/authorized?token=test"}`))
+	}))
+	defer storage.Close()
 
 	fixtureSuffix := fmt.Sprintf("authz-%d", time.Now().UnixNano())
 	var organizationID, foreignOrganizationID string
@@ -180,6 +192,36 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	mismatchedOwnConversationMessageID := insertMessage(ownConversationID, thirdLeadID, "text")
 	mismatchedOtherConversationMediaID := insertMessage(otherConversationID, thirdLeadID, "image")
 
+	var foreignConversationID, foreignMediaMessageID string
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.whatsapp_conversations (
+			organization_id, session_id, lead_id, remote_jid, contact_name
+		) values ($1::uuid, $2::uuid, $3::uuid, $4, $4)
+		returning id::text
+	`, foreignOrganizationID, foreignSessionID, foreignLeadID, fixtureSuffix+"-foreign@s.whatsapp.net").Scan(&foreignConversationID); err != nil {
+		t.Fatal(err)
+	}
+	foreignMediaPath := fmt.Sprintf(
+		"orgs/%s/sessions/%s/incoming/%s-foreign.jpg",
+		foreignOrganizationID,
+		foreignSessionID,
+		fixtureSuffix,
+	)
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.whatsapp_messages (
+			organization_id, conversation_id, session_id, lead_id,
+			message_id, content, message_type, media_status,
+			media_storage_path, status
+		) values (
+			$1::uuid, $2::uuid, $3::uuid, $4::uuid,
+			$5, 'foreign media', 'image', 'ready', $6, 'received'
+		)
+		returning id::text
+	`, foreignOrganizationID, foreignConversationID, foreignSessionID, foreignLeadID,
+		fixtureSuffix+"-foreign-media", foreignMediaPath).Scan(&foreignMediaMessageID); err != nil {
+		t.Fatal(err)
+	}
+
 	var crossOrganizationSessionConversationID string
 	legacyFixtureTx, err := postgres.Pool().Begin(ctx)
 	if err != nil {
@@ -203,8 +245,32 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	}
 	insertMessage(crossOrganizationSessionConversationID, sessionMismatchLeadID, "text")
 
-	repo := NewRepository(postgres, nil, StorageConfig{})
-	broker := tenant.Context{OrganizationID: organizationID, UserID: brokerID, MemberRole: "user"}
+	repo := NewRepository(postgres, nil, StorageConfig{
+		ProjectURL: storage.URL,
+		APIKey:     "service-role-test-key",
+	})
+	broker := tenant.Context{
+		OrganizationID: organizationID,
+		UserID:         brokerID,
+		MemberRole:     "user",
+		Permissions:    []string{permissions.LeadViewOwn},
+	}
+	otherBroker := tenant.Context{
+		OrganizationID: organizationID,
+		UserID:         otherBrokerID,
+		MemberRole:     "user",
+		Permissions:    []string{permissions.LeadViewOwn},
+	}
+
+	t.Run("media rejects a cross-organization message id without signing", func(t *testing.T) {
+		before := signingRequests.Load()
+		if _, err := repo.GetMessageMediaURL(ctx, broker, foreignMediaMessageID); !errors.Is(err, ErrMessageNotFound) {
+			t.Fatalf("cross-organization media error = %v, want message not found", err)
+		}
+		if got := signingRequests.Load(); got != before {
+			t.Fatalf("cross-organization denial reached Storage signing: before=%d after=%d", before, got)
+		}
+	})
 
 	sessionMismatchHistory, err := repo.GetHistoryAccess(ctx, broker, HistoryAccessFilter{LeadID: sessionMismatchLeadID})
 	if err != nil {
@@ -277,16 +343,27 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	`, organizationID, sessionID, thirdLeadID, fixtureSuffix+"-relinked@s.whatsapp.net").Scan(&relinkedConversationID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := postgres.Pool().Exec(ctx, `
+	var relinkedHistoricalMediaID string
+	historicalMediaPath := fmt.Sprintf(
+		"orgs/%s/sessions/%s/incoming/%s-historical-own.jpg",
+		organizationID,
+		sessionID,
+		fixtureSuffix,
+	)
+	if err := postgres.Pool().QueryRow(ctx, `
 		insert into public.whatsapp_messages (
 		  organization_id, conversation_id, session_id, lead_id,
-		  message_id, content, message_type, status, remote_jid, sent_at
+		  message_id, content, message_type, status, remote_jid, sent_at,
+		  media_status, media_storage_path
 		) values (
 		  $1::uuid, $2::uuid, $3::uuid, $4::uuid,
-		  $5, 'historical own lead message', 'text', 'received', $6, now()
+		  $5, 'historical own lead message', 'image', 'received', $6, now(),
+		  'ready', $7
 		)
+		returning id::text
 	`, organizationID, relinkedConversationID, sessionID, ownLeadID,
-		fixtureSuffix+"-relinked-history", fixtureSuffix+"-historical-own@s.whatsapp.net"); err != nil {
+		fixtureSuffix+"-relinked-history", fixtureSuffix+"-historical-own@s.whatsapp.net",
+		historicalMediaPath).Scan(&relinkedHistoricalMediaID); err != nil {
 		t.Fatal(err)
 	}
 	relinkedHistory, err := repo.GetHistoryAccess(ctx, broker, HistoryAccessFilter{LeadID: ownLeadID, MessageFilter: MessageFilter{Limit: 50}})
@@ -315,6 +392,67 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 		t.Fatalf("relinked history leaked current lead metadata: %s", serializedHistorical)
 	}
 
+	t.Run("media follows the immutable message lead after conversation relink", func(t *testing.T) {
+		media, err := repo.GetMessageMediaURL(ctx, broker, relinkedHistoricalMediaID)
+		if err != nil {
+			t.Fatalf("historical message media: %v", err)
+		}
+		if media.MessageID != relinkedHistoricalMediaID || media.URL == "" {
+			t.Fatalf("historical message media = %#v, want signed URL for %s", media, relinkedHistoricalMediaID)
+		}
+	})
+
+	var formerlyThirdLeadMediaID string
+	formerlyThirdLeadMediaPath := fmt.Sprintf(
+		"orgs/%s/sessions/%s/incoming/%s-formerly-third.jpg",
+		organizationID,
+		sessionID,
+		fixtureSuffix,
+	)
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.whatsapp_messages (
+		  organization_id, conversation_id, session_id, lead_id,
+		  message_id, content, message_type, status,
+		  media_status, media_storage_path, sent_at
+		) values (
+		  $1::uuid, $2::uuid, $3::uuid, $4::uuid,
+		  $5, 'historical third lead media', 'image', 'received',
+		  'ready', $6, now()
+		)
+		returning id::text
+	`, organizationID, relinkedConversationID, sessionID, thirdLeadID,
+		fixtureSuffix+"-formerly-third-media", formerlyThirdLeadMediaPath).Scan(&formerlyThirdLeadMediaID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_conversations
+		set lead_id = $3::uuid, updated_at = now()
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+	`, organizationID, relinkedConversationID, ownLeadID); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("media relink cannot grant access to another leads historical message", func(t *testing.T) {
+		before := signingRequests.Load()
+		if _, err := repo.GetMessageMediaURL(ctx, broker, formerlyThirdLeadMediaID); !errors.Is(err, ErrMessageNotFound) {
+			t.Fatalf("same-organization relink BOLA error = %v, want message not found", err)
+		}
+		if got := signingRequests.Load(); got != before {
+			t.Fatalf("same-organization relink denial reached Storage signing: before=%d after=%d", before, got)
+		}
+	})
+
+	t.Run("historical lead owner retains media after conversation relink", func(t *testing.T) {
+		media, err := repo.GetMessageMediaURL(ctx, otherBroker, formerlyThirdLeadMediaID)
+		if err != nil {
+			t.Fatalf("former lead historical media: %v", err)
+		}
+		if media.MessageID != formerlyThirdLeadMediaID || media.URL == "" {
+			t.Fatalf("former lead historical media = %#v, want signed URL for %s", media, formerlyThirdLeadMediaID)
+		}
+	})
+
 	if _, err := repo.GetHistoryAccess(ctx, broker, HistoryAccessFilter{LeadID: otherLeadID}); !errors.Is(err, ErrInvalidReference) {
 		t.Fatalf("same-organization BOLA error = %v, want invalid reference", err)
 	}
@@ -325,7 +463,6 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 		t.Fatalf("cross-organization BOLA error = %v, want invalid reference", err)
 	}
 
-	otherBroker := tenant.Context{OrganizationID: organizationID, UserID: otherBrokerID, MemberRole: "user"}
 	if _, err := repo.ReactToMessage(ctx, otherBroker, otherConversationID, mismatchedOtherConversationMediaID, reactToMessageInput{
 		Emoji:            "👍",
 		ClientReactionID: fixtureSuffix + "-mismatched-reaction",

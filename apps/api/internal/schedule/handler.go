@@ -45,6 +45,50 @@ func (handler Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]Event]{Data: events})
 }
 
+func (handler Handler) ShowDashboard(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.FromContext(r.Context())
+	if !ok || tenantContext.OrganizationID == "" {
+		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+		return
+	}
+
+	filter, err := ParseDashboardFilter(r.URL.Query())
+	if err != nil {
+		writeScheduleError(w, r, err)
+		return
+	}
+
+	report, err := handler.repo.Dashboard(r.Context(), tenantContext, filter)
+	if err != nil {
+		writeScheduleError(w, r, err)
+		return
+	}
+
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[DashboardReport]{Data: report})
+}
+
+func (handler Handler) ListDashboardEvents(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.FromContext(r.Context())
+	if !ok || tenantContext.OrganizationID == "" {
+		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+		return
+	}
+
+	filter, err := ParseDashboardEventsFilter(r.URL.Query())
+	if err != nil {
+		writeScheduleError(w, r, err)
+		return
+	}
+
+	page, err := handler.repo.DashboardEvents(r.Context(), tenantContext, filter)
+	if err != nil {
+		writeScheduleError(w, r, err)
+		return
+	}
+
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[DashboardEventsPage]{Data: page})
+}
+
 func (handler Handler) CreateEvent(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := tenant.FromContext(r.Context())
 	if !ok || tenantContext.OrganizationID == "" {
@@ -135,19 +179,66 @@ func (handler Handler) CompleteEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	event, err := handler.repo.Complete(r.Context(), tenantContext, r.PathValue("id"), request.Status)
+	input, err := request.Validate(tenantContext.UserID)
 	if err != nil {
 		writeScheduleError(w, r, err)
 		return
 	}
 
-	handler.publishScheduleEvent(tenantContext, "schedule.event.completed", event.ID, event.LeadID, map[string]any{
+	event, err := handler.repo.Complete(r.Context(), tenantContext, r.PathValue("id"), input)
+	if err != nil {
+		writeScheduleError(w, r, err)
+		return
+	}
+
+	eventName := "schedule.event." + normalizeScheduleStatus(event.Status)
+	handler.publishScheduleEvent(tenantContext, eventName, event.ID, event.LeadID, map[string]any{
 		"eventId": event.ID,
 		"leadId":  event.LeadID,
 		"userId":  event.UserID,
 		"status":  event.Status,
 	})
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[Event]{Data: event})
+}
+
+func (handler Handler) RescheduleEvent(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.FromContext(r.Context())
+	if !ok || tenantContext.OrganizationID == "" {
+		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+		return
+	}
+
+	defer r.Body.Close()
+	var request RescheduleRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+		return
+	}
+
+	input, err := request.Validate()
+	if err != nil {
+		writeScheduleError(w, r, err)
+		return
+	}
+
+	result, err := handler.repo.Reschedule(r.Context(), tenantContext, r.PathValue("id"), input)
+	if err != nil {
+		writeScheduleError(w, r, err)
+		return
+	}
+
+	if !result.wasReplay {
+		handler.publishScheduleEvent(tenantContext, "schedule.event.rescheduled", result.NewEvent.ID, result.NewEvent.LeadID, map[string]any{
+			"eventId":         result.NewEvent.ID,
+			"previousEventId": result.PreviousEvent.ID,
+			"leadId":          result.NewEvent.LeadID,
+			"userId":          result.NewEvent.UserID,
+			"status":          result.NewEvent.Status,
+		})
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[RescheduleResult]{Data: result})
 }
 
 func (handler Handler) DeleteEvent(w http.ResponseWriter, r *http.Request) {

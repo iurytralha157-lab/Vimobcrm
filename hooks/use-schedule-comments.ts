@@ -2,18 +2,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { scheduleAPI, type ScheduleComment } from '@/lib/api/schedule'
 import { useAuth } from '@/contexts/AuthContext'
 import { useToast } from '@/hooks/use-toast'
+import { stringifyErrorMessage as getErrorMessage } from '@/lib/api/vimob-error'
 
 export type { ScheduleComment }
 
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
 export function useScheduleComments(eventId: string | undefined) {
-  const { profile, organization } = useAuth()
+  const { activeOrganization, profile, organization } = useAuth()
   const { toast } = useToast()
   const queryClient = useQueryClient()
-  const organizationId = organization?.id ?? profile?.organization_id
+  const organizationId = activeOrganization.organizationId
 
   const { data: comments = [], isLoading } = useQuery({
     queryKey: ['schedule_comments', organizationId, eventId],

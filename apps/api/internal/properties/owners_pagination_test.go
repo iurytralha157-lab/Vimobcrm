@@ -9,13 +9,13 @@ import (
 	"time"
 )
 
-func TestParseOwnerListFilterKeepsLegacyCallsUnbounded(t *testing.T) {
+func TestParseOwnerListFilterAppliesStrictDefaultPage(t *testing.T) {
 	filter, err := parseOwnerListFilter(url.Values{})
 	if err != nil {
 		t.Fatalf("parse owner list filter: %v", err)
 	}
-	if filter.Paginated || filter.Limit != 0 || filter.Cursor != nil || filter.Search != "" {
-		t.Fatalf("legacy filter = %#v, want unpaginated empty filter", filter)
+	if !filter.Paginated || filter.Limit != ownerPageDefaultLimit || filter.Cursor != nil || filter.Search != "" {
+		t.Fatalf("default filter = %#v, want a bounded first page", filter)
 	}
 }
 
@@ -102,5 +102,16 @@ func TestOwnerPageQueryKeepsTenantSearchAndKeysetGuards(t *testing.T) {
 	}
 	if strings.Index(source, "page_owners as materialized") > strings.Index(source, "left join lateral") {
 		t.Fatal("owner page must be materialized before per-owner property aggregates")
+	}
+}
+
+func TestOwnerPageAlwaysBindsBoundedLimit(t *testing.T) {
+	raw, err := os.ReadFile("owners.go")
+	if err != nil {
+		t.Fatalf("read owners.go: %v", err)
+	}
+	source := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	if !strings.Contains(source, "args = append(args, queryLimit)") {
+		t.Fatal("owner page must always bind the $12 page limit")
 	}
 }

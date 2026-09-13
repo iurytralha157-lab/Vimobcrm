@@ -1,16 +1,18 @@
 import { useMemo } from 'react'
 
 import { useAuth } from '@/contexts/AuthContext'
+import { useActiveOrganization } from '@/hooks/use-active-organization'
 import {
   createWhatsAppAccessScope,
   type WhatsAppQueryScope,
 } from '@/lib/whatsapp-query-cache'
 
 export function useWhatsAppQueryScope(): WhatsAppQueryScope {
-  const { profile, organization, tenantContext } = useAuth()
+  const { profile, tenantContext } = useAuth()
+  const activeOrganization = useActiveOrganization()
 
   return useMemo(() => ({
-    organizationId: organization?.id ?? profile?.organization_id ?? null,
+    organizationId: activeOrganization.organizationId,
     userId: profile?.id ?? null,
     accessScope: createWhatsAppAccessScope({
       memberRole: tenantContext?.memberRole,
@@ -21,5 +23,5 @@ export function useWhatsAppQueryScope(): WhatsAppQueryScope {
       ledPipelineIds: tenantContext?.ledPipelineIds,
       isSuperAdmin: tenantContext?.isSuperAdmin,
     }),
-  }), [organization?.id, profile?.id, profile?.organization_id, tenantContext])
+  }), [activeOrganization.organizationId, profile?.id, tenantContext])
 }

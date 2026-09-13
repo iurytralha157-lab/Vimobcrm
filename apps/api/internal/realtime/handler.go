@@ -82,14 +82,27 @@ func (handler Handler) Events(w http.ResponseWriter, r *http.Request) {
 			lastSentID = replay.Cursor
 			resyncRequired = true
 		} else {
-			for _, event := range replay.Events {
-				if err := writeSSE(w, flusher, event); err != nil {
-					return
-				}
+			latestMembershipEventIndex := latestTargetedMembershipEventIndex(
+				replay.Events,
+				tenantContext.UserID,
+			)
+			for index, event := range replay.Events {
 				if eventID := parseCursor(event.ID); eventID > lastSentID {
 					lastSentID = eventID
 				}
+				// A durable replay can contain a revoke followed by a later
+				// reactivation. Only expose the latest membership state so an old
+				// revoke cannot redirect an already-reactivated user.
+				if isTargetedMembershipEvent(event, tenantContext.UserID) && index != latestMembershipEventIndex {
+					continue
+				}
+				if err := writeSSE(w, flusher, event); err != nil {
+					return
+				}
 				replayedEvents++
+				if membershipEventRevokesAccess(event, tenantContext.UserID) {
+					return
+				}
 			}
 			if replay.Cursor > lastSentID {
 				lastSentID = replay.Cursor
@@ -139,6 +152,9 @@ func (handler Handler) Events(w http.ResponseWriter, r *http.Request) {
 			if err := writeSSE(w, flusher, event); err != nil {
 				return
 			}
+			if membershipEventRevokesAccess(event, tenantContext.UserID) {
+				return
+			}
 		case <-ticker.C:
 			if err := writeSSEComment(w, flusher, "ping"); err != nil {
 				return
@@ -151,6 +167,29 @@ func (handler Handler) Events(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+func latestTargetedMembershipEventIndex(events []Event, userID string) int {
+	latest := -1
+	for index, event := range events {
+		if isTargetedMembershipEvent(event, userID) {
+			latest = index
+		}
+	}
+	return latest
+}
+
+func isTargetedMembershipEvent(event Event, userID string) bool {
+	return event.Type == EventAccessMembershipChanged &&
+		strings.EqualFold(strings.TrimSpace(event.AudienceUserID), strings.TrimSpace(userID))
+}
+
+func membershipEventRevokesAccess(event Event, userID string) bool {
+	if !isTargetedMembershipEvent(event, userID) {
+		return false
+	}
+	revoked, ok := event.Data["revoked"].(bool)
+	return ok && revoked
 }
 
 func writeSSEComment(w http.ResponseWriter, flusher http.Flusher, value string) error {

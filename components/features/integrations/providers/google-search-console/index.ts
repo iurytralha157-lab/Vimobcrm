@@ -1,0 +1,1 @@
+export { googleSearchConsoleIntegrationProviderManifest } from "./manifest";

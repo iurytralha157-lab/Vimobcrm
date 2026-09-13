@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -197,14 +198,7 @@ func (repo Repository) UpdateOrganizationUser(ctx context.Context, tenantContext
 	if err != nil {
 		return User{}, err
 	}
-	currentMemberRole, err := repo.organizationMemberRole(ctx, tenantContext.OrganizationID, userID)
-	if err != nil {
-		return User{}, err
-	}
 	if existing.Role == "super_admin" {
-		return User{}, tenant.ErrOrganizationAccessDenied
-	}
-	if !canManageOrganizationMemberRole(tenantContext, currentMemberRole, currentMemberRole) {
 		return User{}, tenant.ErrOrganizationAccessDenied
 	}
 	if userID == tenantContext.UserID {
@@ -220,6 +214,18 @@ func (repo Repository) UpdateOrganizationUser(ctx context.Context, tenantContext
 		defer tx.Rollback(ctx)
 		if err := lockCanonicalUserAccess(ctx, tx, userID); err != nil {
 			return User{}, err
+		}
+		currentMemberRole, err := organizationMemberRoleForUpdate(
+			ctx,
+			tx,
+			tenantContext.OrganizationID,
+			userID,
+		)
+		if err != nil {
+			return User{}, err
+		}
+		if !canManageOrganizationMemberRole(tenantContext, currentMemberRole, currentMemberRole) {
+			return User{}, tenant.ErrOrganizationAccessDenied
 		}
 
 		tag, err := tx.Exec(ctx, `
@@ -254,22 +260,14 @@ func (repo Repository) UpdateOrganizationUser(ctx context.Context, tenantContext
 		}
 	}
 
-	memberRole := currentMemberRole
+	var desiredMemberRole *string
 	if input.Role != nil {
 		role := normalizeRole(*input.Role)
 		if role == "" {
 			return User{}, ErrInvalidInput
 		}
-		desiredMemberRole := memberRoleFromUserRole(role)
-		if desiredMemberRole != currentMemberRole {
-			if userID == tenantContext.UserID {
-				return User{}, ErrInvalidInput
-			}
-			if !canManageOrganizationMemberRole(tenantContext, currentMemberRole, desiredMemberRole) {
-				return User{}, tenant.ErrOrganizationAccessDenied
-			}
-			memberRole = desiredMemberRole
-		}
+		desired := memberRoleFromUserRole(role)
+		desiredMemberRole = &desired
 	}
 
 	isActive := existing.IsActive
@@ -284,6 +282,28 @@ func (repo Repository) UpdateOrganizationUser(ctx context.Context, tenantContext
 	defer tx.Rollback(ctx)
 	if err := lockCanonicalUserAccess(ctx, tx, userID); err != nil {
 		return User{}, err
+	}
+	currentMemberRole, err := organizationMemberRoleForUpdate(
+		ctx,
+		tx,
+		tenantContext.OrganizationID,
+		userID,
+	)
+	if err != nil {
+		return User{}, err
+	}
+	if !canManageOrganizationMemberRole(tenantContext, currentMemberRole, currentMemberRole) {
+		return User{}, tenant.ErrOrganizationAccessDenied
+	}
+	memberRole := currentMemberRole
+	if desiredMemberRole != nil && *desiredMemberRole != currentMemberRole {
+		if userID == tenantContext.UserID {
+			return User{}, ErrInvalidInput
+		}
+		if !canManageOrganizationMemberRole(tenantContext, currentMemberRole, *desiredMemberRole) {
+			return User{}, tenant.ErrOrganizationAccessDenied
+		}
+		memberRole = *desiredMemberRole
 	}
 
 	tag, err := tx.Exec(ctx, `
@@ -398,6 +418,29 @@ func (repo Repository) DeleteOrganizationUser(ctx context.Context, tenantContext
 	if err := lockCanonicalUserAccess(ctx, tx, userID); err != nil {
 		return DeleteUserResult{}, err
 	}
+	lockedMemberRole, err := organizationMemberRoleForUpdate(
+		ctx,
+		tx,
+		tenantContext.OrganizationID,
+		userID,
+	)
+	if err != nil {
+		return DeleteUserResult{}, err
+	}
+	if !canManageOrganizationMemberRole(tenantContext, lockedMemberRole, lockedMemberRole) {
+		return DeleteUserResult{}, tenant.ErrOrganizationAccessDenied
+	}
+	var lockedCanonicalRole string
+	if err := tx.QueryRow(ctx, `
+		select coalesce(nullif(lower(btrim(role)), ''), 'user')
+		from public.users
+		where id = $1::uuid
+	`, userID).Scan(&lockedCanonicalRole); err != nil {
+		return DeleteUserResult{}, err
+	}
+	if lockedCanonicalRole == "super_admin" {
+		return DeleteUserResult{}, tenant.ErrOrganizationAccessDenied
+	}
 
 	impact, err := repo.getDeleteUserImpact(ctx, tx, tenantContext.OrganizationID, userID)
 	if err != nil {
@@ -405,7 +448,7 @@ func (repo Repository) DeleteOrganizationUser(ctx context.Context, tenantContext
 	}
 
 	if impact.Leads > 0 {
-		targetID, err := repo.normalizeTransferTarget(ctx, tenantContext.OrganizationID, userID, input.TransferLeadsToUserID)
+		targetID, err := repo.normalizeTransferTarget(ctx, tx, tenantContext.OrganizationID, userID, input.TransferLeadsToUserID)
 		if err != nil {
 			return DeleteUserResult{}, err
 		}
@@ -421,19 +464,36 @@ func (repo Repository) DeleteOrganizationUser(ctx context.Context, tenantContext
 	}
 
 	if impact.Properties > 0 {
-		targetID, err := repo.normalizeTransferTarget(ctx, tenantContext.OrganizationID, userID, input.TransferPropertiesToUserID)
+		targetID, err := repo.normalizeTransferTarget(ctx, tx, tenantContext.OrganizationID, userID, input.TransferPropertiesToUserID)
 		if err != nil {
 			return DeleteUserResult{}, err
 		}
 		if _, err := tx.Exec(ctx, `
 			update public.properties
-			set responsible_user_id = $3::uuid,
-			    cadastrado_por = $3::uuid,
+			set responsible_user_id = case
+			      when responsible_user_id = $2::uuid
+			        or (responsible_user_id is null and created_by = $2::uuid)
+			      then $3::uuid
+			      else responsible_user_id
+			    end,
+			    cadastrado_por = case
+			      when responsible_user_id = $2::uuid
+			        or (responsible_user_id is null and created_by = $2::uuid)
+			        or nullif(btrim(cadastrado_por), '') = $2
+			      then $3
+			      else cadastrado_por
+			    end,
+			    corretor_id = case
+			      when corretor_id = $2::uuid then $3::uuid
+			      else corretor_id
+			    end,
 			    updated_at = now()
 			where organization_id = $1::uuid
 			  and (
 			    responsible_user_id = $2::uuid
 			    or (responsible_user_id is null and created_by = $2::uuid)
+			    or corretor_id = $2::uuid
+			    or nullif(btrim(cadastrado_por), '') = $2
 			  )
 		`, tenantContext.OrganizationID, userID, targetID); err != nil {
 			return DeleteUserResult{}, err
@@ -494,6 +554,8 @@ func (repo Repository) getDeleteUserImpact(ctx context.Context, runner queryRowe
 				  and (
 				    responsible_user_id = $2::uuid
 				    or (responsible_user_id is null and created_by = $2::uuid)
+				    or corretor_id = $2::uuid
+				    or nullif(btrim(cadastrado_por), '') = $2
 				  )
 			) as properties,
 			(
@@ -512,7 +574,7 @@ func (repo Repository) getDeleteUserImpact(ctx context.Context, runner queryRowe
 	return impact, nil
 }
 
-func (repo Repository) normalizeTransferTarget(ctx context.Context, organizationID string, sourceUserID string, value *string) (string, error) {
+func (repo Repository) normalizeTransferTarget(ctx context.Context, runner queryRower, organizationID string, sourceUserID string, value *string) (string, error) {
 	if value == nil {
 		return "", ErrInvalidInput
 	}
@@ -521,11 +583,31 @@ func (repo Repository) normalizeTransferTarget(ctx context.Context, organization
 		return "", ErrInvalidInput
 	}
 
-	target, err := repo.getOrganizationUser(ctx, organizationID, targetID)
+	var targetRole string
+	var targetIsActive bool
+	err := runner.QueryRow(ctx, `
+		select
+			case
+			  when u.role = 'super_admin' then 'super_admin'
+			  else coalesce(nullif(lower(btrim(om.role)), ''), 'user')
+			end,
+			(coalesce(u.is_active, false) and coalesce(om.is_active, false))
+		from public.users u
+		join public.organization_members om
+		  on om.user_id = u.id
+		 and om.organization_id = $1::uuid
+		where u.id = $2::uuid
+		  and om.deleted_at is null
+		limit 1
+		for key share of u, om
+	`, organizationID, targetID).Scan(&targetRole, &targetIsActive)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrUserNotFound
+	}
 	if err != nil {
 		return "", err
 	}
-	if target.Role == "super_admin" || !target.IsActive {
+	if targetRole == "super_admin" || !targetIsActive {
 		return "", ErrInvalidInput
 	}
 
@@ -655,6 +737,28 @@ func (repo Repository) organizationMemberRole(ctx context.Context, organizationI
 		  and user_id = $2::uuid
 		  and deleted_at is null
 		limit 1
+	`, organizationID, userID).Scan(&role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrUserNotFound
+	}
+	return role, err
+}
+
+func organizationMemberRoleForUpdate(
+	ctx context.Context,
+	runner queryRower,
+	organizationID string,
+	userID string,
+) (string, error) {
+	var role string
+	err := runner.QueryRow(ctx, `
+		select coalesce(nullif(lower(btrim(role)), ''), 'user')
+		from public.organization_members
+		where organization_id = $1::uuid
+		  and user_id = $2::uuid
+		  and deleted_at is null
+		limit 1
+		for update
 	`, organizationID, userID).Scan(&role)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrUserNotFound
@@ -1007,14 +1111,14 @@ func syncCanonicalUserAccess(
 				membership.organization_id,
 				membership.role
 			from public.organization_members membership
-			join public.users current_user on current_user.id = membership.user_id
+			join public.users canonical_user on canonical_user.id = membership.user_id
 			join public.organizations organization on organization.id = membership.organization_id
 			where membership.user_id = $1::uuid
 			  and membership.is_active = true
 			  and membership.deleted_at is null
 			  and coalesce(organization.is_active, true) = true
 			order by
-				(membership.organization_id = current_user.organization_id) desc,
+				(membership.organization_id = canonical_user.organization_id) desc,
 				(membership.organization_id = $2::uuid) desc,
 				membership.updated_at desc,
 				membership.organization_id
@@ -1065,21 +1169,9 @@ func normalizeUserIDs(values []string) []string {
 }
 
 func normalizeUUID(value string) (string, bool) {
-	var uuid pgtype.UUID
-	if err := uuid.Scan(strings.TrimSpace(value)); err != nil {
-		return "", false
-	}
-	if !uuid.Valid {
-		return "", false
-	}
-
-	return uuid.String(), true
+	return pgvalue.NormalizeUUID(value)
 }
 
 func textPointer(value pgtype.Text) *string {
-	if !value.Valid {
-		return nil
-	}
-
-	return &value.String
+	return pgvalue.TextPointer(value)
 }

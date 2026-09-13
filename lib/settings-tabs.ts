@@ -4,7 +4,6 @@ export const SETTINGS_PAGE_TABS = [
   "team",
   "subscription",
   "integrations",
-  "properties",
 ] as const;
 
 export const SETTINGS_LEGACY_INTEGRATION_TABS = [

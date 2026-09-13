@@ -1,10 +1,8 @@
 package developments
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -47,8 +45,7 @@ func (handler Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input CreateDevelopmentInput
-	if err := decodeDevelopmentJSON(w, r, &input); err != nil {
-		writeInvalidDevelopmentJSON(w, r)
+	if err := httpserver.DecodeJSON(w, r, &input, developmentBodyLimit); err != nil {
 		return
 	}
 	response, err := handler.repo.Create(r.Context(), tenantContext, input)
@@ -96,8 +93,7 @@ func (handler Handler) CreatePhase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input CreatePhaseInput
-	if err := decodeDevelopmentJSON(w, r, &input); err != nil {
-		writeInvalidDevelopmentJSON(w, r)
+	if err := httpserver.DecodeJSON(w, r, &input, developmentBodyLimit); err != nil {
 		return
 	}
 	phase, err := handler.repo.CreatePhase(r.Context(), tenantContext, r.PathValue("id"), input)
@@ -114,8 +110,7 @@ func (handler Handler) CreateBuilding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input CreateBuildingInput
-	if err := decodeDevelopmentJSON(w, r, &input); err != nil {
-		writeInvalidDevelopmentJSON(w, r)
+	if err := httpserver.DecodeJSON(w, r, &input, developmentBodyLimit); err != nil {
 		return
 	}
 	building, err := handler.repo.CreateBuilding(r.Context(), tenantContext, r.PathValue("id"), input)
@@ -132,8 +127,7 @@ func (handler Handler) CreateFloorPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input CreateFloorPlanInput
-	if err := decodeDevelopmentJSON(w, r, &input); err != nil {
-		writeInvalidDevelopmentJSON(w, r)
+	if err := httpserver.DecodeJSON(w, r, &input, developmentBodyLimit); err != nil {
 		return
 	}
 	floorPlan, err := handler.repo.CreateFloorPlan(r.Context(), tenantContext, r.PathValue("id"), input)
@@ -150,8 +144,7 @@ func (handler Handler) BulkCreateUnits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input BulkCreateUnitsInput
-	if err := decodeDevelopmentJSON(w, r, &input); err != nil {
-		writeInvalidDevelopmentJSON(w, r)
+	if err := httpserver.DecodeJSON(w, r, &input, developmentBodyLimit); err != nil {
 		return
 	}
 	result, err := handler.repo.BulkCreateUnits(r.Context(), tenantContext, r.PathValue("id"), input)
@@ -168,8 +161,7 @@ func (handler Handler) UpdateUnit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input UpdateUnitInput
-	if err := decodeDevelopmentJSON(w, r, &input); err != nil {
-		writeInvalidDevelopmentJSON(w, r)
+	if err := httpserver.DecodeJSON(w, r, &input, developmentBodyLimit); err != nil {
 		return
 	}
 	unit, err := handler.repo.UpdateUnit(
@@ -186,14 +178,86 @@ func (handler Handler) UpdateUnit(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, http.StatusOK, map[string]Unit{"data": unit})
 }
 
+func (handler Handler) LinkUnitProperty(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := developmentTenant(w, r)
+	if !ok {
+		return
+	}
+	idempotencyKey, ok := requiredDevelopmentIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	var input LinkUnitPropertyInput
+	if err := httpserver.DecodeJSON(w, r, &input, developmentBodyLimit); err != nil {
+		return
+	}
+	result, err := handler.repo.LinkUnitProperty(
+		r.Context(), tenantContext, r.PathValue("id"), r.PathValue("unitId"), idempotencyKey, input,
+	)
+	if err != nil {
+		writeDevelopmentError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, map[string]UnitPropertyLinkResult{"data": result})
+}
+
+func (handler Handler) PromoteUnitProperty(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := developmentTenant(w, r)
+	if !ok {
+		return
+	}
+	idempotencyKey, ok := requiredDevelopmentIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	var input PromoteUnitPropertyInput
+	if err := httpserver.DecodeJSON(w, r, &input, developmentBodyLimit); err != nil {
+		return
+	}
+	result, err := handler.repo.PromoteUnitProperty(
+		r.Context(), tenantContext, r.PathValue("id"), r.PathValue("unitId"), idempotencyKey, input,
+	)
+	if err != nil {
+		writeDevelopmentError(w, r, err)
+		return
+	}
+	status := http.StatusCreated
+	if result.Replayed {
+		status = http.StatusOK
+	}
+	httpserver.WriteJSON(w, status, map[string]UnitPropertyLinkResult{"data": result})
+}
+
+func (handler Handler) UnlinkUnitProperty(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := developmentTenant(w, r)
+	if !ok {
+		return
+	}
+	idempotencyKey, ok := requiredDevelopmentIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	var input UnlinkUnitPropertyInput
+	if err := httpserver.DecodeJSON(w, r, &input, developmentBodyLimit); err != nil {
+		return
+	}
+	result, err := handler.repo.UnlinkUnitProperty(
+		r.Context(), tenantContext, r.PathValue("id"), r.PathValue("unitId"), idempotencyKey, input,
+	)
+	if err != nil {
+		writeDevelopmentError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, map[string]UnitPropertyLinkResult{"data": result})
+}
+
 func (handler Handler) ActivatePriceTable(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := developmentTenant(w, r)
 	if !ok {
 		return
 	}
 	var input ActivatePriceTableInput
-	if err := decodeDevelopmentJSON(w, r, &input); err != nil {
-		writeInvalidDevelopmentJSON(w, r)
+	if err := httpserver.DecodeJSON(w, r, &input, developmentBodyLimit); err != nil {
 		return
 	}
 	priceTable, err := handler.repo.ActivatePriceTable(
@@ -239,8 +303,7 @@ func (handler Handler) CreateReservation(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var input CreateReservationInput
-	if err := decodeDevelopmentJSON(w, r, &input); err != nil {
-		writeInvalidDevelopmentJSON(w, r)
+	if err := httpserver.DecodeJSON(w, r, &input, developmentBodyLimit); err != nil {
 		return
 	}
 	result, err := handler.repo.CreateReservation(
@@ -268,8 +331,7 @@ func (handler Handler) CancelReservation(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var input CancelReservationInput
-	if err := decodeDevelopmentJSON(w, r, &input); err != nil {
-		writeInvalidDevelopmentJSON(w, r)
+	if err := httpserver.DecodeJSON(w, r, &input, developmentBodyLimit); err != nil {
 		return
 	}
 	reservation, err := handler.repo.CancelReservation(
@@ -288,8 +350,7 @@ func (handler Handler) ConvertReservation(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var input ReservationTransitionInput
-	if err := decodeDevelopmentJSON(w, r, &input); err != nil {
-		writeInvalidDevelopmentJSON(w, r)
+	if err := httpserver.DecodeJSON(w, r, &input, developmentBodyLimit); err != nil {
 		return
 	}
 	reservation, err := handler.repo.ConvertReservation(
@@ -308,8 +369,7 @@ func (handler Handler) ExtendReservation(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var input ExtendReservationInput
-	if err := decodeDevelopmentJSON(w, r, &input); err != nil {
-		writeInvalidDevelopmentJSON(w, r)
+	if err := httpserver.DecodeJSON(w, r, &input, developmentBodyLimit); err != nil {
 		return
 	}
 	reservation, err := handler.repo.ExtendReservation(
@@ -328,8 +388,7 @@ func (handler Handler) UpdateUnitPrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input UpdateUnitPriceInput
-	if err := decodeDevelopmentJSON(w, r, &input); err != nil {
-		writeInvalidDevelopmentJSON(w, r)
+	if err := httpserver.DecodeJSON(w, r, &input, developmentBodyLimit); err != nil {
 		return
 	}
 	result, err := handler.repo.UpdateUnitPrice(
@@ -351,24 +410,13 @@ func developmentTenant(w http.ResponseWriter, r *http.Request) (tenant.Context, 
 	return tenantContext, true
 }
 
-func decodeDevelopmentJSON(w http.ResponseWriter, r *http.Request, destination any) error {
-	defer r.Body.Close()
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, developmentBodyLimit))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		return err
+func requiredDevelopmentIdempotencyKey(w http.ResponseWriter, r *http.Request) (string, bool) {
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if idempotencyKey == "" {
+		writeDevelopmentError(w, r, fmt.Errorf("%w: Idempotency-Key is required", ErrInvalidInput))
+		return "", false
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return errors.New("request body must contain one JSON value")
-		}
-		return err
-	}
-	return nil
-}
-
-func writeInvalidDevelopmentJSON(w http.ResponseWriter, r *http.Request) {
-	httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+	return idempotencyKey, true
 }
 
 func writeDevelopmentError(w http.ResponseWriter, r *http.Request, err error) {

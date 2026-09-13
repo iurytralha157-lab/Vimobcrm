@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { financialAPI } from '@/lib/api/financial';
 import { toast } from 'sonner';
+import { formatBRLCurrencyWithMinimumTwoDecimals } from '@/lib/utils/formatting';
 
 export interface SmartInstallment {
   id: string;
@@ -139,7 +140,7 @@ export function usePayInstallment() {
       if (data.newStatus === 'paid') {
         toast.success('Parcela paga integralmente!');
       } else {
-        toast.success(`Pagamento parcial registrado - R$ ${data.newPaidAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
+        toast.success(`Pagamento parcial registrado - ${formatBRLCurrencyWithMinimumTwoDecimals(data.newPaidAmount)}`);
       }
     },
     onError: (error: Error) => {

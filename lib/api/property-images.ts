@@ -15,19 +15,17 @@ type PropertyImageUploadResponse = {
 
 type UploadPropertyImageOptions = {
   organizationId?: string | null
-  propertyId?: string | null
+  propertyId: string
 }
 
 export async function uploadPropertyImage(
   file: File,
-  options: UploadPropertyImageOptions = {},
+  options: UploadPropertyImageOptions,
 ) {
   const formData = new FormData()
   formData.append('file', file)
 
-  if (options.propertyId) {
-    formData.append('propertyId', parseDomainInput(entityIdSchema, options.propertyId, 'property-images.upload.property-id'))
-  }
+  formData.append('propertyId', parseDomainInput(entityIdSchema, options.propertyId, 'property-images.upload.property-id'))
 
   const response = await vimobAPIRequest<PropertyImageUploadResponse>('/v1/property-images', {
     method: 'POST',

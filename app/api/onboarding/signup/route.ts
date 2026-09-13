@@ -3,7 +3,8 @@ import {
   onboardingSignupSchema,
   type ParsedOnboardingSignupResponse,
 } from '@/lib/validation/onboarding'
-import { RequestBodyTooLargeError, readRequestTextWithLimit } from '@/lib/security/limited-request-body'
+import { RequestBodyTooLargeError, readRequestJSONWithLimit } from '@/lib/security/limited-request-body'
+import { getVimobServerAPIBaseURL as getAPIBaseURL } from '@/lib/api/vimob-server-url'
 import {
   enforceServerRateLimit,
   getForwardedForHeader,
@@ -30,10 +31,6 @@ function jsonResponse(body: SignupResponseBody, status: number, headers?: Header
   const responseHeaders = new Headers(headers)
   responseHeaders.set('Cache-Control', 'no-store')
   return Response.json(body, { status, headers: responseHeaders })
-}
-
-function getAPIBaseURL() {
-  return (process.env.VIMOB_API_URL || process.env.NEXT_PUBLIC_VIMOB_API_URL || 'http://localhost:8081').replace(/\/+$/, '')
 }
 
 async function postPublicBackend(path: string, body: unknown, forwardedFor: string | null) {
@@ -81,8 +78,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const rawText = await readRequestTextWithLimit(request, SIGNUP_MAX_BODY_BYTES)
-    rawBody = JSON.parse(rawText)
+    rawBody = await readRequestJSONWithLimit(request, SIGNUP_MAX_BODY_BYTES)
   } catch (error) {
     const tooLarge = error instanceof RequestBodyTooLargeError
     return jsonResponse(

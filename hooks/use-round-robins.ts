@@ -1,19 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { useAuth } from '@/contexts/AuthContext';
+import { useActiveOrganizationId } from '@/hooks/use-active-organization';
 import { roundRobinsAPI } from '@/lib/api/round-robins';
-import type { Json } from '@/integrations/supabase/types';
+import { requireActiveOrganizationId as requireOrganizationId } from '@/lib/auth/active-organization';
+import type { Json } from '@/lib/supabase/types';
 import { useWhatsAppQueryScope } from '@/hooks/use-whatsapp-query-scope';
-
-function useActiveOrganizationId() {
-  const { organization, profile } = useAuth();
-  return organization?.id || profile?.organization_id || null;
-}
-
-function requireOrganizationId(organizationId: string | null) {
-  if (!organizationId) throw new Error('Organização não selecionada.');
-  return organizationId;
-}
 
 function roundRobinsQueryKey(organizationId: string | null) {
   return ['round-robins', organizationId] as const;
@@ -34,6 +25,7 @@ export interface RoundRobinMember {
   team_id: string | null;
   position: number;
   weight: number | null;
+  is_active?: boolean | null;
   user?: { id: string; name: string; email?: string; avatar_url: string | null };
   leads_count?: number;
 }
@@ -87,6 +79,47 @@ export function useRoundRobins(options: { enabled?: boolean } = {}) {
       return roundRobinsAPI.getRoundRobins(requireOrganizationId(organizationId)) as Promise<RoundRobin[]>;
     },
     enabled: Boolean(organizationId) && options.enabled !== false,
+  });
+}
+
+export function useRoundRobin(
+  roundRobinId?: string | null,
+  options: { enabled?: boolean } = {},
+) {
+  const organizationId = useActiveOrganizationId();
+
+  return useQuery({
+    queryKey: ['round-robin', organizationId, roundRobinId],
+    queryFn: () =>
+      roundRobinsAPI.getRoundRobin(
+        roundRobinId as string,
+        requireOrganizationId(organizationId),
+      ) as Promise<RoundRobin>,
+    enabled:
+      Boolean(organizationId && roundRobinId) && options.enabled !== false,
+    staleTime: 60_000,
+  });
+}
+
+export function useRoundRobinHistory(
+  roundRobinId?: string | null,
+  options: { enabled?: boolean } = {},
+) {
+  const organizationId = useActiveOrganizationId();
+
+  return useQuery({
+    queryKey: ['round-robin-history', organizationId, roundRobinId],
+    queryFn: () =>
+      roundRobinsAPI.getHistory(
+        roundRobinId as string,
+        requireOrganizationId(organizationId),
+      ),
+    enabled:
+      Boolean(organizationId && roundRobinId) && options.enabled !== false,
+    staleTime: 30_000,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: 'always',
   });
 }
 
@@ -144,8 +177,18 @@ export function useUpdateRoundRobin() {
         reentry_behavior: updates.reentry_behavior,
       }, requireOrganizationId(organizationId));
     },
-    onSuccess: () => {
+    onSuccess: (queue, variables) => {
+      queryClient.setQueryData(
+        ['round-robin', organizationId, variables.id],
+        queue,
+      );
       queryClient.invalidateQueries({ queryKey: roundRobinsQueryKey(organizationId) });
+      queryClient.invalidateQueries({
+        queryKey: ['round-robin', organizationId, variables.id],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ['round-robin-history', organizationId, variables.id],
+      });
     },
     onError: (error) => {
       toast.error('Erro ao atualizar roleta: ' + error.message);

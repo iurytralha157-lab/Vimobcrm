@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 	"golang.org/x/sync/singleflight"
 )
@@ -758,14 +759,5 @@ func isUndefinedSchemaError(err error) bool {
 }
 
 func normalizeUUID(value string) (string, bool) {
-	var uuid pgtype.UUID
-	if err := uuid.Scan(strings.TrimSpace(value)); err != nil {
-		return "", false
-	}
-
-	if !uuid.Valid {
-		return "", false
-	}
-
-	return uuid.String(), true
+	return pgvalue.NormalizeUUID(value)
 }

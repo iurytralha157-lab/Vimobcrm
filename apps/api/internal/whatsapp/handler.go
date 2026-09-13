@@ -33,6 +33,11 @@ func (handler Handler) WithWorkerConfig(config WorkerConfig) Handler {
 
 func (handler Handler) EvolutionGoWebhook(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
+		if err := handler.repo.ensureEvolutionWebhookSchema(r.Context()); err != nil {
+			w.Header().Set("Retry-After", "5")
+			httpserver.WriteError(w, r, http.StatusServiceUnavailable, "whatsapp_webhook_schema_unavailable", "WhatsApp webhook storage is not ready.")
+			return
+		}
 		httpserver.WriteJSON(w, http.StatusOK, map[string]any{
 			"ok":      true,
 			"service": "evolution-go-webhook-proxy",
@@ -89,12 +94,17 @@ func (handler Handler) EvolutionGoWebhook(w http.ResponseWriter, r *http.Request
 			httpserver.WriteError(w, r, http.StatusForbidden, "whatsapp_webhook_session_mismatch", "WhatsApp webhook instance does not match the configured session.")
 		case errors.Is(err, ErrSessionNotFound):
 			httpserver.WriteError(w, r, http.StatusNotFound, "whatsapp_webhook_session_not_found", "WhatsApp webhook session was not found.")
+		case errors.Is(err, errWebhookSchemaUnavailable):
+			w.Header().Set("Retry-After", "5")
+			httpserver.WriteError(w, r, http.StatusServiceUnavailable, "whatsapp_webhook_schema_unavailable", "WhatsApp webhook storage is not ready.")
 		default:
 			httpserver.WriteError(w, r, http.StatusInternalServerError, "whatsapp_webhook_enqueue_failed", "Unable to persist WhatsApp webhook.")
 		}
 		return
 	}
-	wakeWhatsAppWebhookWorker()
+	if !receipt.Inline && (receipt.Status == "pending" || receipt.Status == "retry") {
+		wakeWhatsAppWebhookWorker()
+	}
 	httpserver.WriteJSON(w, http.StatusAccepted, map[string]any{"ok": true, "receipt": receipt})
 }
 
@@ -237,6 +247,10 @@ func (handler Handler) ToggleNotificationSession(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
+	if !canManageNotificationSender(tenantContext) {
+		writeWhatsAppError(w, r, tenant.ErrOrganizationAccessDenied)
+		return
+	}
 
 	var request ToggleNotificationRequest
 	if !decodeWhatsAppJSON(w, r, &request, 1<<16) {
@@ -351,6 +365,30 @@ func (handler Handler) ListConversations(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+func (handler Handler) CountUnreadConversations(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := requireTenant(w, r)
+	if !ok {
+		return
+	}
+
+	// Reuse the inbox filters and authorization boundary. Pagination values are
+	// parsed for consistent input validation, but the repository always counts
+	// the complete matching scope.
+	filter, err := ParseConversationListFilter(r.URL.Query())
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+
+	count, err := handler.repo.CountUnreadMessages(r.Context(), tenantContext, filter)
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+
+	httpserver.WriteJSON(w, http.StatusOK, map[string]int64{"count": count})
+}
+
 func (handler Handler) StartConversation(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := requireTenant(w, r)
 	if !ok {
@@ -447,6 +485,21 @@ func (handler Handler) ListMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[MessagePage]{Data: page})
+}
+
+func (handler Handler) GetMessageMediaURL(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := requireTenant(w, r)
+	if !ok {
+		return
+	}
+
+	media, err := handler.repo.GetMessageMediaURL(r.Context(), tenantContext, r.PathValue("id"))
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[MessageMediaURL]{Data: media})
 }
 
 func (handler Handler) SendMessage(w http.ResponseWriter, r *http.Request) {

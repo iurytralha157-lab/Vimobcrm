@@ -29,6 +29,9 @@ func TestStoredJPEGVerificationUsesAuthenticatedBytesNotUploaderMetadata(t *test
 				if r.Header.Get("apikey") != "service-key" {
 					t.Fatalf("authenticated Storage read omitted server credential: %#v", r.Header)
 				}
+				if authorization := r.Header.Get("Authorization"); authorization != "" {
+					t.Fatalf("opaque secret leaked into Authorization: %q", authorization)
+				}
 				switch {
 				case strings.Contains(r.URL.Path, "/object/info/"):
 					_ = json.NewEncoder(w).Encode(map[string]any{
@@ -61,6 +64,71 @@ func TestStoredJPEGVerificationUsesAuthenticatedBytesNotUploaderMetadata(t *test
 			}
 			if input.MIMEType == nil || *input.MIMEType != "image/jpeg" || input.FileSizeBytes == nil || *input.FileSizeBytes != 4096 {
 				t.Fatalf("verified metadata = mime %#v size %#v", input.MIMEType, input.FileSizeBytes)
+			}
+		})
+	}
+}
+
+func TestStoredAssetVerificationDistinguishesInvalidObjectsFromStorageOutages(t *testing.T) {
+	tests := []struct {
+		name             string
+		infoStatus       int
+		prefixStatus     int
+		clientTimeout    time.Duration
+		infoResponseWait time.Duration
+		wantInvalid      bool
+	}{
+		{name: "missing object", infoStatus: http.StatusNotFound, wantInvalid: true},
+		{name: "info unavailable", infoStatus: http.StatusServiceUnavailable},
+		{name: "bytes unavailable", prefixStatus: http.StatusServiceUnavailable},
+		{name: "info timeout", clientTimeout: 5 * time.Millisecond, infoResponseWait: 50 * time.Millisecond},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.Contains(r.URL.Path, "/object/info/"):
+					if test.infoResponseWait > 0 {
+						time.Sleep(test.infoResponseWait)
+					}
+					if test.infoStatus != 0 {
+						http.Error(w, "object info unavailable", test.infoStatus)
+						return
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"metadata": map[string]any{"mimetype": "image/jpeg", "size": float64(4096)},
+					})
+				case strings.Contains(r.URL.Path, "/object/authenticated/"):
+					if test.prefixStatus != 0 {
+						http.Error(w, "object bytes unavailable", test.prefixStatus)
+						return
+					}
+					w.WriteHeader(http.StatusPartialContent)
+					_, _ = w.Write([]byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+
+			storagePath := "orgs/example/properties/example/asset/photo.jpg"
+			input := CreatePropertyAssetInput{AssetType: "photo", StoragePath: &storagePath}
+			storage := newStorageClient(StorageConfig{ProjectURL: server.URL, APIKey: "service-key"})
+			if test.clientTimeout > 0 {
+				storage.httpClient = &http.Client{Timeout: test.clientTimeout}
+			}
+			repo := Repository{storage: storage}
+			err := repo.verifyStoredPropertyAsset(context.Background(), &input)
+
+			if test.wantInvalid {
+				if !errors.Is(err, ErrInvalidInput) || errors.Is(err, ErrStorageOperation) {
+					t.Fatalf("verification error = %v, want invalid input only", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrStorageOperation) || errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("verification error = %v, want Storage operation failure only", err)
 			}
 		})
 	}
@@ -113,18 +181,6 @@ func TestPropertyStorageSignedUploadInfoBatchAndRemove(t *testing.T) {
 	}
 	if len(requests) != 4 {
 		t.Fatalf("storage request count = %d, want 4: %#v", len(requests), requests)
-	}
-}
-
-func TestPropertyStorageUsesAPIKeyOnlyForOpaqueSecret(t *testing.T) {
-	request := httptest.NewRequest(http.MethodPost, "https://project.supabase.co/storage/v1/object", nil)
-	client := newStorageClient(StorageConfig{ProjectURL: "https://project.supabase.co", APIKey: "sb_secret_example"})
-	client.setAuthorizedHeaders(request)
-	if request.Header.Get("apikey") != "sb_secret_example" {
-		t.Fatal("opaque Supabase secret is missing apikey header")
-	}
-	if authorization := request.Header.Get("Authorization"); authorization != "" {
-		t.Fatalf("opaque Supabase secret must not be sent as Bearer, got %q", authorization)
 	}
 }
 

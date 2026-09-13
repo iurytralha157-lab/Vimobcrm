@@ -8,10 +8,13 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/propertyscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -26,14 +29,28 @@ type scanner interface {
 }
 
 type propertySnapshot struct {
-	ID                string
-	CreatorID         string
-	ResponsibleUserID string
-	PropertyType      string
-	Title             string
-	Code              string
-	Status            string
-	PublishedOnSite   bool
+	ID                   string
+	CreatorID            string
+	ResponsibleUserID    string
+	PropertyType         string
+	Title                string
+	Code                 string
+	Status               string
+	PublishedOnSite      bool
+	OwnerID              string
+	OwnerName            string
+	OwnerPhoneHome       string
+	OwnerPhoneWork       string
+	OwnerCellphone       string
+	OwnerEmail           string
+	OwnerMediaSource     string
+	OwnerNotifyEmail     bool
+	DealType             string
+	AcceptsFinancing     bool
+	HasCondominiumCharge bool
+	HasPropertyTaxCharge bool
+	Metadata             map[string]any
+	UpdatedAt            time.Time
 }
 
 func NewRepository(db *dbpkg.Postgres, storageConfig StorageConfig) Repository {
@@ -55,7 +72,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	if filter.Search != "" {
 		args = append(args, normalizedSearchPattern(filter.Search))
 		index := len(args)
-		where = append(where, propertySearchClause(index))
+		where = append(where, propertySearchClause(index, canManageProperties(tenantContext)))
 	}
 	if filter.Status != "" {
 		addFilter("lower(trim(coalesce(p.status, ''))) = any($%d::text[])", propertyStatusAliases(filter.Status))
@@ -90,7 +107,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 		addFilter("coalesce(p.published_on_site, false) = $%d::boolean", *filter.PublishedOnSite)
 	}
 	if filter.OwnerID != "" {
-		addFilter("p.owner_id = $%d::uuid", filter.OwnerID)
+		addFilter(propertyOwnerFilterClause(), filter.OwnerID)
 	}
 	if filter.CondominiumID != "" {
 		addFilter("p.condominium_id = $%d::uuid", filter.CondominiumID)
@@ -145,7 +162,8 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	rows, err := repo.db.Pool().Query(ctx, `
 		select
 			count(*) over() as total_count,
-			jsonb_build_object(
+			(
+				jsonb_build_object(
 				'id', p.id,
 				'organization_id', p.organization_id,
 				'code', p.code,
@@ -172,7 +190,9 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 				'vagas', p.vagas,
 				'area_util', p.area_util,
 				'area_total', p.area_total,
-				'mobilia', p.mobilia,
+				'mobilia', p.mobilia
+			)
+			|| jsonb_build_object(
 				'preco', p.preco,
 				'valor_locacao', p.valor_locacao,
 				'condominio', p.condominio,
@@ -185,13 +205,51 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 				'destaque', p.destaque,
 				'super_destaque', p.super_destaque,
 				'published_on_site', p.published_on_site,
+				'created_at', p.created_at,
+				'updated_at', p.updated_at,
+				'_property_edit_policy', coalesce(property_organization.property_edit_policy, 'responsible_or_admin'),
 				'created_by', p.created_by,
 				'responsible_user_id', p.responsible_user_id,
 				'cadastrado_por', p.cadastrado_por,
 				'commission_percentage', p.commission_percentage,
-				'imagem_principal', coalesce(nullif(p.imagem_principal, ''), '')
+				'metadata', p.metadata,
+				'imagem_principal', case
+					when asset_photo_exists.has_photo then coalesce(asset_cover.external_url, '')
+					else coalesce(nullif(p.imagem_principal, ''), '')
+				end,
+				'image_urls', case
+					when asset_photo_exists.has_photo then '{}'::text[]
+					else p.image_urls
+				end,
+				'fotos', case
+					when asset_photo_exists.has_photo then '[]'::jsonb
+					else p.fotos
+				end,
+				'_asset_cover_storage_path', asset_cover.storage_path
+			)
 			)::text
 		from public.properties p
+		join public.organizations property_organization
+		  on property_organization.id = p.organization_id
+		left join lateral (
+			select true as has_photo
+			from public.property_assets as any_photo
+			where any_photo.organization_id = p.organization_id
+			  and any_photo.property_id = p.id
+			  and any_photo.asset_type = 'photo'
+			limit 1
+		) as asset_photo_exists on true
+		left join lateral (
+			select asset.storage_path, asset.external_url
+			from public.property_assets as asset
+			where asset.organization_id = p.organization_id
+			  and asset.property_id = p.id
+			  and asset.asset_type = 'photo'
+			  and asset.visibility <> 'confidential'
+			  and `+activePropertyAssetSQL("asset")+`
+			order by asset.is_primary desc, asset.sort_order, asset.created_at, asset.id
+			limit 1
+		) as asset_cover on true
 		where `+strings.Join(where, " and ")+`
 		order by p.created_at desc, p.id desc
 		limit $`+fmt.Sprint(limitIndex)+`
@@ -217,6 +275,23 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 		return ListResponse{}, err
 	}
 
+	repo.attachSignedPropertyCoverURLs(ctx, properties)
+	for index := range properties {
+		attachPropertyManagedTerms(properties[index])
+		authorization := propertyUpdateAuthorizationFromProperty(
+			tenantContext,
+			properties[index],
+			anyString(properties[index]["_property_edit_policy"]),
+			"",
+		)
+		properties[index]["can_edit"] = authorization.CanEdit
+		properties[index] = projectWorkspaceProperty(
+			properties[index],
+			canManageProperties(tenantContext),
+			false,
+		)
+	}
+
 	return ListResponse{
 		Data:   properties,
 		Total:  total,
@@ -237,7 +312,7 @@ func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, 
 	if filter.Search != "" {
 		args = append(args, normalizedSearchPattern(filter.Search))
 		index := len(args)
-		where = append(where, propertySearchClause(index))
+		where = append(where, propertySearchClause(index, canManageProperties(tenantContext)))
 	}
 	if filter.Status != "" {
 		addFilter("lower(trim(coalesce(p.status, ''))) = any($%d::text[])", propertyStatusAliases(filter.Status))
@@ -272,7 +347,7 @@ func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, 
 		addFilter("coalesce(p.published_on_site, false) = $%d::boolean", *filter.PublishedOnSite)
 	}
 	if filter.OwnerID != "" {
-		addFilter("p.owner_id = $%d::uuid", filter.OwnerID)
+		addFilter(propertyOwnerFilterClause(), filter.OwnerID)
 	}
 	if filter.CondominiumID != "" {
 		addFilter("p.condominium_id = $%d::uuid", filter.CondominiumID)
@@ -322,23 +397,29 @@ func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, 
 
 	saleAliasIndex := len(args) + 1
 	rentalAliasIndex := len(args) + 2
-	args = append(args, dealTypeAliases("venda"), dealTypeAliases("locacao"))
+	launchAliasIndex := len(args) + 3
+	args = append(
+		args,
+		dealTypeAliases("venda"),
+		dealTypeAliases("rental_catalog"),
+		dealTypeAliases("lancamento"),
+	)
 
 	var stats StatsResponse
 	err := repo.db.Pool().QueryRow(ctx, `
 		with filtered as (
 			select
 				coalesce(nullif(lower(trim(p.status)), ''), 'active') as status,
-				lower(trim(coalesce(p.finalidade, ''))) as finalidade,
-				lower(trim(coalesce(p.tipo_de_negocio, ''))) as tipo_de_negocio,
+				`+propertyDealTypeSQL("p")+` as deal_type,
 				p.published_on_site
 			from public.properties p
 			where `+strings.Join(where, " and ")+`
 		)
 		select
 			count(*)::bigint,
-			count(*) filter (where finalidade = any($`+fmt.Sprint(saleAliasIndex)+`::text[]) or tipo_de_negocio = any($`+fmt.Sprint(saleAliasIndex)+`::text[]))::bigint,
-			count(*) filter (where finalidade = any($`+fmt.Sprint(rentalAliasIndex)+`::text[]) or tipo_de_negocio = any($`+fmt.Sprint(rentalAliasIndex)+`::text[]))::bigint,
+			count(*) filter (where deal_type = any($`+fmt.Sprint(saleAliasIndex)+`::text[]))::bigint,
+			count(*) filter (where deal_type = any($`+fmt.Sprint(rentalAliasIndex)+`::text[]))::bigint,
+			count(*) filter (where deal_type = any($`+fmt.Sprint(launchAliasIndex)+`::text[]))::bigint,
 			count(*) filter (where status not in ('sold', 'vendido', 'rented', 'alugado', 'locado', 'reserved', 'reservado', 'inactive', 'inativo', 'archived', 'arquivado', 'draft', 'rascunho'))::bigint,
 			count(*) filter (where status in ('reserved', 'reservado'))::bigint,
 			count(*) filter (where status in ('sold', 'vendido'))::bigint,
@@ -349,6 +430,7 @@ func (repo Repository) Stats(ctx context.Context, tenantContext tenant.Context, 
 		&stats.Total,
 		&stats.Sale,
 		&stats.Rental,
+		&stats.Launches,
 		&stats.Available,
 		&stats.Reserved,
 		&stats.Sold,
@@ -420,39 +502,54 @@ func addPropertyTypeFilter(args []any, where []string, propertyType string) ([]a
 	return args, where
 }
 
-func propertySearchClause(index int) string {
+func propertySearchClause(index int, includeInternalIdentifiers bool) string {
 	placeholder := fmt.Sprintf("$%d", index)
+	internalIdentifierClause := ""
+	if includeInternalIdentifiers {
+		internalIdentifierClause = fmt.Sprintf(
+			"\n\t\tor %s like %s",
+			normalizedTextSQL("p.external_id"),
+			placeholder,
+		)
+	}
 	return fmt.Sprintf(`(
 		%[2]s like %[1]s
-		or %[3]s like %[1]s
-		or %[4]s like %[1]s
-		or %[5]s like %[1]s
-		or %[6]s like %[1]s
-		or %[7]s like %[1]s
-		or %[8]s like %[1]s
-		or %[9]s like %[1]s
-		or %[10]s like %[1]s
-		or %[11]s like %[1]s
+		%[4]s
 		or exists (
 			select 1
 			from public.property_condominiums co
 			where co.id = p.condominium_id
 			  and co.organization_id = p.organization_id
-			  and %[12]s like %[1]s
+			  and %[3]s like %[1]s
 		)
 	)`,
 		placeholder,
-		normalizedTextSQL("p.code"),
-		normalizedTextSQL("p.title"),
-		normalizedTextSQL("p.endereco"),
-		normalizedTextSQL("p.bairro"),
-		normalizedTextSQL("p.cidade"),
-		normalizedTextSQL("p.uf"),
-		normalizedTextSQL("p.tipo"),
-		normalizedTextSQL("p.tipo_de_imovel"),
-		normalizedTextSQL("p.finalidade"),
-		normalizedTextSQL("p.external_id"),
+		propertySearchDocumentSQL("p"),
 		normalizedTextSQL("co.name"),
+		internalIdentifierClause,
+	)
+}
+
+func propertySearchDocumentSQL(alias string) string {
+	fields := []string{
+		"code",
+		"title",
+		"endereco",
+		"bairro",
+		"cidade",
+		"uf",
+		"tipo",
+		"tipo_de_imovel",
+		"finalidade",
+		"finalidade_uso",
+	}
+	parts := make([]string, 0, len(fields))
+	for _, field := range fields {
+		parts = append(parts, fmt.Sprintf("coalesce(%s.%s, '')", alias, field))
+	}
+	return fmt.Sprintf(
+		"translate(lower(%s), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc')",
+		strings.Join(parts, " || ' ' || "),
 	)
 }
 
@@ -510,8 +607,39 @@ func condominiumHouseLinkedTypeAliases() []string {
 func dealTypeFilterClause() string {
 	return `(
 		lower(trim(coalesce(p.finalidade, ''))) = any($%[1]d::text[])
-		or lower(trim(coalesce(p.tipo_de_negocio, ''))) = any($%[1]d::text[])
+		or (
+			trim(coalesce(p.finalidade, '')) = ''
+			and lower(trim(coalesce(p.tipo_de_negocio, ''))) = any($%[1]d::text[])
+		)
 	)`
+}
+
+func propertyOwnerFilterClause() string {
+	return `(
+		p.owner_id = $%[1]d::uuid
+		or exists (
+			select 1
+			from public.property_ownerships filtered_ownership
+			where filtered_ownership.organization_id = p.organization_id
+			  and filtered_ownership.property_id = p.id
+			  and filtered_ownership.owner_id = $%[1]d::uuid
+			  and filtered_ownership.valid_from <= current_date
+			  and (filtered_ownership.valid_to is null or current_date < filtered_ownership.valid_to)
+		)
+	)`
+}
+
+func propertyDealTypeSQL(alias string) string {
+	return `(case
+		when lower(trim(coalesce(` + alias + `.finalidade, ''))) in (
+			'venda', 'sale', 'locacao', 'locação', 'aluguel', 'locacao anual',
+			'locação anual', 'rent', 'temporada', 'season', 'lancamento',
+			'lançamento', 'launch', 'release', 'venda_locacao', 'venda e aluguel',
+			'venda e locacao', 'venda e locação', 'venda/locacao',
+			'venda/locação', 'venda/aluguel'
+		) then lower(trim(` + alias + `.finalidade))
+		else lower(trim(coalesce(` + alias + `.tipo_de_negocio, '')))
+	end)`
 }
 
 func addPropertyPriceRangeFilter(args []any, where []string, dealType string, minPrice float64, maxPrice float64) ([]any, []string) {
@@ -544,7 +672,7 @@ func addPropertyPriceRangeFilter(args []any, where []string, dealType string, mi
 	switch dealType {
 	case "venda":
 		where = append(where, columnRange("p.preco"))
-	case "locacao", "temporada":
+	case "locacao", "temporada", "rental_catalog":
 		where = append(where, columnRange("p.valor_locacao"))
 	default:
 		where = append(where, "("+columnRange("p.preco")+" or "+columnRange("p.valor_locacao")+")")
@@ -584,6 +712,8 @@ func dealTypeAliases(dealType string) []string {
 		}
 	case "temporada":
 		return []string{"temporada", "season"}
+	case "rental_catalog":
+		return append(dealTypeAliases("locacao"), dealTypeAliases("temporada")...)
 	case "lancamento":
 		return []string{"lancamento", "lançamento", "launch", "release"}
 	case "venda_locacao":
@@ -618,8 +748,15 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, pr
 	args, where = addScopedPropertyVisibility(args, where, tenantContext, "p", "")
 
 	property, err := scanProperty(repo.db.Pool().QueryRow(ctx, `
-		select to_jsonb(p)::text
+		select (
+			to_jsonb(p) || jsonb_build_object(
+				'_property_edit_policy', coalesce(property_organization.property_edit_policy, 'responsible_or_admin'),
+				'_property_owner_contact_visibility', coalesce(property_organization.property_owner_contact_visibility, 'hidden')
+			)
+		)::text
 		from public.properties p
+		join public.organizations property_organization
+		  on property_organization.id = p.organization_id
 		where `+strings.Join(where, " and ")+`
 		limit 1
 	`, args...))
@@ -630,14 +767,15 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, pr
 		return nil, err
 	}
 
-	canViewContacts, err := repo.canViewPropertyOwnerContacts(ctx, tenantContext)
-	if err != nil {
-		return nil, err
-	}
-	if !canViewContacts {
-		redactPropertyOwnerContacts(property)
-	}
-	return property, err
+	authorization := propertyUpdateAuthorizationFromProperty(
+		tenantContext,
+		property,
+		anyString(property["_property_edit_policy"]),
+		anyString(property["_property_owner_contact_visibility"]),
+	)
+	property["can_edit"] = authorization.CanEdit
+	attachPropertyManagedTerms(property)
+	return projectWorkspaceProperty(property, canManageProperties(tenantContext), authorization.CanViewOwnerContacts), nil
 }
 
 func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context, input propertyRequest) (Property, error) {
@@ -650,6 +788,33 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+
+	property, err := repo.createPropertyTx(ctx, tx, tenantContext, input)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	return property, nil
+}
+
+// createPropertyTx is the single transactional property-creation path. Domain
+// workflows that must atomically create and relate a property (for example a
+// development unit promotion) use this helper so code generation, tenant
+// references, audit activity and demo cleanup cannot drift from the regular
+// property endpoint.
+func (repo Repository) createPropertyTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	tenantContext tenant.Context,
+	input propertyRequest,
+) (Property, error) {
+	if !canCreateProperties(tenantContext) {
+		return nil, tenant.ErrOrganizationAccessDenied
+	}
 
 	if !canAssignProperties(tenantContext) {
 		input["created_by"] = tenantContext.UserID
@@ -664,7 +829,18 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	if input["cadastrado_por"] == nil {
 		input["cadastrado_por"] = input["responsible_user_id"]
 	}
-	if err := repo.validatePropertyReferences(ctx, tx, tenantContext.OrganizationID, input); err != nil {
+	if err := enforcePropertyManagedTerms(input, propertySnapshot{
+		DealType:         anyString(input["finalidade"]),
+		AcceptsFinancing: anyBool(input["aceita_financiamento"]),
+		Metadata:         map[string]any{},
+	}, true); err != nil {
+		return nil, err
+	}
+	ownerID, ownerChanged, err := resolvePropertyOwnerForMutation(ctx, tx, tenantContext, input, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := repo.validatePropertyReferences(ctx, tx, tenantContext.OrganizationID, "", input); err != nil {
 		return nil, err
 	}
 
@@ -689,6 +865,22 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		returning to_jsonb(properties)::text
 	`, args...).Scan((*jsonTextProperty)(&property))
 	if err != nil {
+		return nil, normalizeWorkspaceDatabaseError(err)
+	}
+	propertyID := anyString(property["id"])
+	if ownerChanged && ownerID != "" {
+		if err := syncPropertyOwnerIDToOwnerships(ctx, tx, tenantContext, propertyID, ownerID); err != nil {
+			return nil, err
+		}
+		if err := syncLegacyPropertyOwnerProjection(ctx, tx, tenantContext.OrganizationID, propertyID); err != nil {
+			return nil, err
+		}
+	}
+	// AFTER INSERT compatibility triggers can create normalized offers and touch
+	// the property revision. Return the committed row version, not the stale
+	// INSERT ... RETURNING snapshot, so the first optimistic PATCH can succeed.
+	property, err = reloadPropertyForMutation(ctx, tx, tenantContext.OrganizationID, propertyID)
+	if err != nil {
 		return nil, err
 	}
 	property = normalizePropertyOutput(property)
@@ -697,12 +889,10 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		slog.Warn("property activity insert skipped", "error", err)
 	}
 
-	if err := repo.removeDemoProperties(ctx, tx, tenantContext.OrganizationID); err != nil {
-		slog.Warn("demo property cleanup skipped", "error", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+	if shouldCleanupDemoPropertiesAfterCreate(property) {
+		if err := repo.removeDemoProperties(ctx, tx, tenantContext.OrganizationID, propertyID); err != nil {
+			slog.Warn("demo property cleanup skipped", "error", err)
+		}
 	}
 
 	return property, nil
@@ -712,6 +902,10 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	propertyID, ok := normalizeUUID(propertyID)
 	if !ok {
 		return nil, ErrPropertyNotFound
+	}
+	expectedUpdatedAt, enforceVersion, err := popExpectedPropertyUpdatedAt(input)
+	if err != nil {
+		return nil, err
 	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
@@ -724,9 +918,20 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if err != nil {
 		return nil, err
 	}
-	if !canEditProperty(tenantContext, current.CreatorID, current.ResponsibleUserID) &&
+	authorization, err := repo.propertyUpdateAuthorization(ctx, tx, tenantContext, propertyID)
+	if err != nil {
+		return nil, err
+	}
+	if !authorization.CanEdit &&
 		!canUpdatePropertyAvailability(tenantContext, input) {
 		return nil, tenant.ErrOrganizationAccessDenied
+	}
+	if !canManageProperties(tenantContext) &&
+		(hasProtectedPropertyInternalUpdate(input) || hasProtectedPropertyMediaUpdate(input)) {
+		return nil, tenant.ErrOrganizationAccessDenied
+	}
+	if !authorization.CanViewOwnerContacts {
+		removeProtectedPropertyOwnerUpdates(input)
 	}
 	if !canAssignProperties(tenantContext) {
 		if isPropertyAssignmentChange(input, current) {
@@ -736,8 +941,48 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		delete(input, "responsible_user_id")
 		delete(input, "cadastrado_por")
 	}
-	if err := repo.validatePropertyReferences(ctx, tx, tenantContext.OrganizationID, input); err != nil {
+	if enforceVersion && !propertyVersionMatches(current.UpdatedAt, expectedUpdatedAt) {
+		return nil, ErrPropertyWorkspaceConflict
+	}
+	if err := enforcePropertyManagedTerms(input, current, canManageProperties(tenantContext)); err != nil {
 		return nil, err
+	}
+	if dealType, changesDealType := input["finalidade"].(string); changesDealType && dealType != "lancamento" {
+		linked, err := repo.propertyHasDevelopmentUnitLink(ctx, tx, tenantContext.OrganizationID, propertyID)
+		if err != nil {
+			return nil, err
+		}
+		if linked {
+			return nil, ErrPropertyManagedByDevelopmentUnit
+		}
+	}
+	if err := validateEmbeddedOwnerNotification(input, current.OwnerEmail, current.OwnerNotifyEmail); err != nil {
+		return nil, err
+	}
+	ownerID, ownerChanged, err := resolvePropertyOwnerForMutation(ctx, tx, tenantContext, input, &current)
+	if err != nil {
+		return nil, err
+	}
+	if err := repo.validatePropertyReferences(ctx, tx, tenantContext.OrganizationID, propertyID, input); err != nil {
+		return nil, err
+	}
+	if ownerChanged {
+		if err := syncPropertyOwnerIDToOwnerships(ctx, tx, tenantContext, propertyID, ownerID); err != nil {
+			return nil, err
+		}
+		if ownerID == "" {
+			for _, field := range propertyOwnerContactFields {
+				if _, supplied := input[field]; !supplied {
+					input[field] = nil
+				}
+			}
+			if _, supplied := input["owner_name"]; !supplied {
+				input["owner_name"] = nil
+			}
+			if _, supplied := input["owner_notify_email"]; !supplied {
+				input["owner_notify_email"] = false
+			}
+		}
 	}
 
 	if nextType, ok := input["tipo"].(string); ok && strings.TrimSpace(nextType) != "" && normalizeASCII(nextType) != normalizeASCII(current.PropertyType) {
@@ -763,6 +1008,28 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		return nil, ErrPropertyNotFound
 	}
 	if err != nil {
+		if isPropertyPhotoCapacityViolation(err) {
+			return nil, fmt.Errorf(
+				"%w: each property can have at most %d photos",
+				ErrInvalidInput,
+				propertyAssetMaxPhotos,
+			)
+		}
+		if isPropertyDevelopmentUnitConsistencyViolation(err) {
+			return nil, ErrPropertyManagedByDevelopmentUnit
+		}
+		return nil, normalizeWorkspaceDatabaseError(err)
+	}
+	if ownerChanged && ownerID != "" {
+		if err := syncLegacyPropertyOwnerProjection(ctx, tx, tenantContext.OrganizationID, propertyID); err != nil {
+			return nil, err
+		}
+	}
+	// AFTER UPDATE compatibility triggers may touch the property revision while
+	// projecting legacy media/offers into normalized catalogs. Always reload the
+	// committed row image so the response cannot hand the next PATCH a stale CAS.
+	property, err = reloadPropertyForMutation(ctx, tx, tenantContext.OrganizationID, propertyID)
+	if err != nil {
 		return nil, err
 	}
 	property = normalizePropertyOutput(property)
@@ -774,11 +1041,34 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-
-	return property, nil
+	property["can_edit"] = authorization.CanEdit
+	attachPropertyManagedTerms(property)
+	return projectWorkspaceProperty(
+		property,
+		canManageProperties(tenantContext),
+		authorization.CanViewOwnerContacts,
+	), nil
 }
 
-func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context, propertyID string) error {
+func (repo Repository) propertyHasDevelopmentUnitLink(
+	ctx context.Context,
+	tx pgx.Tx,
+	organizationID string,
+	propertyID string,
+) (bool, error) {
+	var linked bool
+	err := tx.QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.property_development_units
+			where organization_id = $1::uuid
+			  and property_id = $2::uuid
+		)
+	`, organizationID, propertyID).Scan(&linked)
+	return linked, err
+}
+
+func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context, propertyID string, input DeletePropertyInput) error {
 	propertyID, ok := normalizeUUID(propertyID)
 	if !ok {
 		return ErrPropertyNotFound
@@ -786,8 +1076,39 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 	if !canDeleteProperties(tenantContext) {
 		return tenant.ErrOrganizationAccessDenied
 	}
+	if err := input.Validate(); err != nil {
+		return err
+	}
+	expectedUpdatedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(input.ExpectedUpdatedAt))
+	if err != nil {
+		return fmt.Errorf("%w: expected_updated_at must be an RFC3339 timestamp", ErrInvalidInput)
+	}
 
-	tag, err := repo.db.Pool().Exec(ctx, `
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var currentUpdatedAt time.Time
+	err = tx.QueryRow(ctx, `
+		select updated_at
+		from public.properties
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		for update
+	`, tenantContext.OrganizationID, propertyID).Scan(&currentUpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrPropertyNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if !currentUpdatedAt.Equal(expectedUpdatedAt) {
+		return ErrPropertyWorkspaceConflict
+	}
+
+	tag, err := tx.Exec(ctx, `
 		delete from public.properties
 		where organization_id = $1::uuid
 		  and id = $2::uuid
@@ -796,13 +1117,21 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 		if isPropertyHasLinkedLeadsForeignKeyViolation(err) {
 			return ErrPropertyHasLinkedLeads
 		}
+		if isPropertyDependencyForeignKeyViolation(err) {
+			return ErrPropertyHasDependencies
+		}
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrPropertyNotFound
 	}
 
-	return nil
+	return tx.Commit(ctx)
+}
+
+func isPropertyDependencyForeignKeyViolation(err error) bool {
+	var databaseError *pgconn.PgError
+	return errors.As(err, &databaseError) && databaseError.Code == "23503"
 }
 
 func isPropertyHasLinkedLeadsForeignKeyViolation(err error) bool {
@@ -810,6 +1139,30 @@ func isPropertyHasLinkedLeadsForeignKeyViolation(err error) bool {
 	return errors.As(err, &databaseError) &&
 		databaseError.Code == "23503" &&
 		databaseError.ConstraintName == "leads_property_id_fkey"
+}
+
+func isPropertyPhotoCapacityViolation(err error) bool {
+	var databaseError *pgconn.PgError
+	return errors.As(err, &databaseError) &&
+		databaseError.Code == "23514" &&
+		databaseError.ConstraintName == "property_assets_photo_capacity"
+}
+
+func isPropertyDevelopmentUnitConsistencyViolation(err error) bool {
+	var databaseError *pgconn.PgError
+	if !errors.As(err, &databaseError) || databaseError.Code != "23514" {
+		return false
+	}
+
+	switch databaseError.ConstraintName {
+	case "property_development_unit_status_sync",
+		"property_development_unit_price_sync",
+		"property_development_unit_publication_sync",
+		"property_development_unit_deal_type_sync":
+		return true
+	default:
+		return false
+	}
 }
 
 func (repo Repository) ListHistory(ctx context.Context, tenantContext tenant.Context, propertyID string) ([]HistoryEvent, error) {
@@ -930,6 +1283,8 @@ func (repo Repository) ListHistory(ctx context.Context, tenantContext tenant.Con
 func (repo Repository) getSnapshotForUpdate(ctx context.Context, tx pgx.Tx, organizationID string, propertyID string) (propertySnapshot, error) {
 	var snapshot propertySnapshot
 	var creatorID, responsibleUserID, propertyType, title, code, status pgtype.Text
+	var ownerID, ownerName, ownerPhoneHome, ownerPhoneWork, ownerCellphone, ownerEmail, ownerMediaSource, dealType pgtype.Text
+	var metadataJSON string
 	err := tx.QueryRow(ctx, `
 		select
 			id::text,
@@ -939,12 +1294,49 @@ func (repo Repository) getSnapshotForUpdate(ctx context.Context, tx pgx.Tx, orga
 			title,
 			code,
 			coalesce(status, 'active'),
-			coalesce(published_on_site, false)
+			coalesce(published_on_site, false),
+			coalesce(owner_id::text, ''),
+			coalesce(owner_name, ''),
+			coalesce(owner_phone_residential, ''),
+			coalesce(owner_phone_commercial, ''),
+			coalesce(owner_cellphone, ''),
+			coalesce(owner_email, ''),
+			coalesce(owner_media_source, origin_media, ''),
+			coalesce(owner_notify_email, false),
+			coalesce(finalidade, tipo_de_negocio, ''),
+			coalesce(aceita_financiamento, false),
+			condominio is not null,
+			iptu is not null,
+			coalesce(metadata, '{}'::jsonb)::text,
+			updated_at
 		from public.properties
 		where organization_id = $1::uuid
 		  and id = $2::uuid
 		for update
-	`, organizationID, propertyID).Scan(&snapshot.ID, &creatorID, &responsibleUserID, &propertyType, &title, &code, &status, &snapshot.PublishedOnSite)
+	`, organizationID, propertyID).Scan(
+		&snapshot.ID,
+		&creatorID,
+		&responsibleUserID,
+		&propertyType,
+		&title,
+		&code,
+		&status,
+		&snapshot.PublishedOnSite,
+		&ownerID,
+		&ownerName,
+		&ownerPhoneHome,
+		&ownerPhoneWork,
+		&ownerCellphone,
+		&ownerEmail,
+		&ownerMediaSource,
+		&snapshot.OwnerNotifyEmail,
+		&dealType,
+		&snapshot.AcceptsFinancing,
+		&snapshot.HasCondominiumCharge,
+		&snapshot.HasPropertyTaxCharge,
+		&metadataJSON,
+		&snapshot.UpdatedAt,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return propertySnapshot{}, ErrPropertyNotFound
 	}
@@ -958,6 +1350,15 @@ func (repo Repository) getSnapshotForUpdate(ctx context.Context, tx pgx.Tx, orga
 	snapshot.Title = textValue(title)
 	snapshot.Code = textValue(code)
 	snapshot.Status = textValue(status)
+	snapshot.OwnerID = textValue(ownerID)
+	snapshot.OwnerName = textValue(ownerName)
+	snapshot.OwnerPhoneHome = textValue(ownerPhoneHome)
+	snapshot.OwnerPhoneWork = textValue(ownerPhoneWork)
+	snapshot.OwnerCellphone = textValue(ownerCellphone)
+	snapshot.OwnerEmail = textValue(ownerEmail)
+	snapshot.OwnerMediaSource = textValue(ownerMediaSource)
+	snapshot.DealType = textValue(dealType)
+	snapshot.Metadata = propertyMetadataMap(metadataJSON)
 	return snapshot, nil
 }
 
@@ -1396,12 +1797,20 @@ func (repo Repository) getUserDisplayName(ctx context.Context, tx pgx.Tx, userID
 	return userID, nil
 }
 
-func (repo Repository) removeDemoProperties(ctx context.Context, tx pgx.Tx, organizationID string) error {
+func shouldCleanupDemoPropertiesAfterCreate(created Property) bool {
+	return !anyBool(created["is_demo"])
+}
+
+func (repo Repository) removeDemoProperties(ctx context.Context, tx pgx.Tx, organizationID string, createdPropertyID string) error {
 	_, err := tx.Exec(ctx, `
 		delete from public.properties
 		where organization_id = $1::uuid
-		  and metadata ->> 'is_demo' = 'true'
-	`, organizationID)
+		  and id <> $2::uuid
+		  and (
+			coalesce(is_demo, false) = true
+			or lower(trim(coalesce(metadata ->> 'is_demo', ''))) = 'true'
+		  )
+	`, organizationID, createdPropertyID)
 	return err
 }
 
@@ -1431,7 +1840,13 @@ func updateParts(input propertyRequest, firstPlaceholder int) ([]string, []any) 
 		args = append(args, input[key])
 		placeholder := typedPlaceholder(firstPlaceholder+len(args)-1, def.kind)
 		if def.column == "metadata" {
-			assignments = append(assignments, fmt.Sprintf("%s = coalesce(%s, '{}'::jsonb) || %s", def.column, def.column, placeholder))
+			assignments = append(assignments, fmt.Sprintf(
+				"%s = (case when jsonb_typeof(%s) = 'object' then %s else '{}'::jsonb end) || %s",
+				def.column,
+				def.column,
+				def.column,
+				placeholder,
+			))
 			continue
 		}
 		assignments = append(assignments, fmt.Sprintf("%s = %s", def.column, placeholder))
@@ -1524,14 +1939,12 @@ func normalizePropertyOutput(property Property) Property {
 	if strings.TrimSpace(anyString(property["tipo_de_imovel"])) == "" {
 		property["tipo_de_imovel"] = anyString(property["tipo"])
 	}
-	dealType := anyString(property["tipo_de_negocio"])
+	dealType := anyString(property["finalidade"])
 	if normalizedDealTypeForFilter(dealType) == "" {
-		dealType = anyString(property["finalidade"])
+		dealType = anyString(property["tipo_de_negocio"])
 	}
 	property["tipo_de_negocio"] = displayDealType(dealType)
-	if usage := anyString(property["finalidade_uso"]); usage != "" {
-		property["finalidade"] = usage
-	}
+	property["finalidade"] = property["finalidade_uso"]
 	property["status"] = displayPropertyStatus(anyString(property["status"]))
 	property["destaque"] = anyBool(property["is_featured"])
 	property["anunciar"] = anyBool(property["published_on_site"])
@@ -1568,7 +1981,11 @@ func normalizePropertyOutput(property Property) Property {
 		}
 	}
 
-	metadata, _ := property["metadata"].(map[string]any)
+	metadata, ok := property["metadata"].(map[string]any)
+	if !ok {
+		metadata = map[string]any{}
+		property["metadata"] = metadata
+	}
 	legacy, _ := metadata["legacy"].(map[string]any)
 	for key, value := range legacy {
 		if _, exists := property[key]; !exists {
@@ -1669,14 +2086,7 @@ func textValue(value pgtype.Text) string {
 }
 
 func normalizeUUID(value string) (string, bool) {
-	var uuid pgtype.UUID
-	if err := uuid.Scan(strings.TrimSpace(value)); err != nil {
-		return "", false
-	}
-	if !uuid.Valid {
-		return "", false
-	}
-	return uuid.String(), true
+	return pgvalue.NormalizeUUID(value)
 }
 
 func propertyPrefix(propertyType string) string {
@@ -1739,41 +2149,19 @@ func addScopedPropertyVisibility(args []any, where []string, tenantContext tenan
 }
 
 func propertyVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder string, canViewTeamPlaceholder string, alias string) string {
-	return `(
-		` + canViewAllPlaceholder + `::boolean
-		or ` + alias + `.responsible_user_id = ` + userIDPlaceholder + `::uuid
-		or ` + alias + `.created_by = ` + userIDPlaceholder + `::uuid
-		or (
-			` + canViewTeamPlaceholder + `::boolean
-			and exists (
-				select 1
-				from public.team_members leader
-				join public.team_members member
-				  on member.organization_id = leader.organization_id
-				 and member.team_id = leader.team_id
-				 and member.is_active = true
-				where leader.organization_id = ` + alias + `.organization_id
-				  and leader.user_id = ` + userIDPlaceholder + `::uuid
-				  and leader.is_active = true
-				  and leader.is_leader = true
-				  and (member.user_id = ` + alias + `.responsible_user_id or member.user_id = ` + alias + `.created_by)
-			)
-		)
-	)`
+	return propertyscope.VisibilitySQL(alias, canViewAllPlaceholder, userIDPlaceholder, canViewTeamPlaceholder)
 }
 
 func canViewAllProperties(tenantContext tenant.Context) bool {
-	return canManageProperties(tenantContext)
+	return propertyscope.CanViewAll(tenantContext)
 }
 
 func canViewTeamProperties(tenantContext tenant.Context) bool {
-	return tenantContext.IsTeamLeader || tenantContext.HasPermission("lead_view_team")
+	return propertyscope.CanViewTeam(tenantContext)
 }
 
 func canManageProperties(tenantContext tenant.Context) bool {
-	return tenantContext.IsSuperAdmin ||
-		tenantContext.HasRole("owner", "admin") ||
-		tenantContext.HasPermission("property_manage")
+	return propertyscope.CanViewAll(tenantContext)
 }
 
 func canCreateProperties(tenantContext tenant.Context) bool {

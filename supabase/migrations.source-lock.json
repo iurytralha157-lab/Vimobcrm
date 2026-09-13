@@ -1,0 +1,543 @@
+{
+  "schema_version": 1,
+  "algorithm": "sha256-utf8-lf-v1",
+  "purpose": "Detect edits, removals, reordering collisions, and empty files in the active Supabase migration chain.",
+  "migrations": [
+    {
+      "file": "20260721000000_required_extensions.sql",
+      "sha256": "239f920f79e9ca4c5f684adcb8732595db99cb7739deaae4bc9a928ba87e584b"
+    },
+    {
+      "file": "20260722000000_production_public_private_baseline.sql",
+      "sha256": "855a206f13ebbe19d1fe221fa15ca4f8e566edc9d9a38d243ad392db8d1023f1"
+    },
+    {
+      "file": "20260722000001_baseline_alignment.sql",
+      "sha256": "eac66fc3e23c60e12b95b547c951470962e451caf96479510bfe7c0b62c63002"
+    },
+    {
+      "file": "20260722000002_external_schema_objects.sql",
+      "sha256": "2d21dcc59b9af89db7ca5d3561c9707c5f3fe2a5865455766a27f8957f439afb"
+    },
+    {
+      "file": "20260722103039_stop_redistribution_on_stage_move.sql",
+      "sha256": "f8baffa9a69a139422634ebe99aafe9140b88bb53fda0f685c7a0e279e29251f"
+    },
+    {
+      "file": "20260722210631_announcements_schedule.sql",
+      "sha256": "1fc0ff548e096173185ec2260cc4fdff7873151dcccf806a246a65f74bdd5550"
+    },
+    {
+      "file": "20260724134246_guard_whatsapp_notification_sender_admin.sql",
+      "sha256": "3aaf867ebe77e64f16a227306a7bd31d5819470b9d458f4cf878fba800152a4a"
+    },
+    {
+      "file": "20260724141952_add_site_control_center_states.sql",
+      "sha256": "37b3de142b36ba66ec3d8471951a80d4f0f47b51708c1ffa6a6bf1b6ebb5fd9b"
+    },
+    {
+      "file": "20260726171103_lead_entry_attribution_history.sql",
+      "sha256": "5d820790ba3cdde7fc6210333f22db719aedf0ea68ae8512e06a929ae6319b37"
+    },
+    {
+      "file": "20260726171236_index_lead_entry_event_foreign_keys.sql",
+      "sha256": "cfda085acb7182d0d57594931c4d218cf05473b23f71ea1a808afab4fb2d978e"
+    },
+    {
+      "file": "20260726171717_hydrate_lead_entry_attribution.sql",
+      "sha256": "01f6261a07f32bcaa079ed0fa06b257b350f869a71e32935d99f9d6513d92768"
+    },
+    {
+      "file": "20260726235820_google_calendar_bidirectional_sync.sql",
+      "sha256": "93e588c5a10c9c7e3b7f3a265eff726aaf2f0cb4cf93122df483ac9fb1a5b4fa"
+    },
+    {
+      "file": "20260727001955_google_calendar_foreign_key_indexes.sql",
+      "sha256": "1169c7267109c0419c87cc22fee801921275042d41c7ad0908ffae9f33e1c30a"
+    },
+    {
+      "file": "20260727012856_align_schedule_event_visibility.sql",
+      "sha256": "38de05661719e95b72f0dc290e7a097132cc4ea423ab009f85c59743642f4a75"
+    },
+    {
+      "file": "20260727125756_add_daily_schedule_recurrence.sql",
+      "sha256": "25a1db47c48be47d816f9fcc924fdd09d0548e92fcda245b1c0314b9e6a7d195"
+    },
+    {
+      "file": "20260728143210_harden_prospecting_reports_and_whatsapp_media.sql",
+      "sha256": "639e3818aef3adfb949447a1792c14077a5f26cf6279768299b66eb087d54dfe"
+    },
+    {
+      "file": "20260728144912_harden_asaas_webhook_reconciliation.sql",
+      "sha256": "a0f3a4870a0981f37a1cbf41ba7e490aa670197a3580432a9771ad5d9e7a3d4e"
+    },
+    {
+      "file": "20260728151745_harden_gamification_mission_visibility.sql",
+      "sha256": "c030d74c8d076d8a13beaf16b935461052510c51bd5829fabd04738ffa68b352"
+    },
+    {
+      "file": "20260728160000_harden_lead_attention_enrollment.sql",
+      "sha256": "29263de1d8df9ed245d53e69e65f9b7579b7f28b7e0b879ee208161944e4d1af"
+    },
+    {
+      "file": "20260728170000_harden_whatsapp_backend_only_contract.sql",
+      "sha256": "fe0c46ce497c3978a51cdaadf3d5982e2d7f2efc75af75947b7920d86ac976ba"
+    },
+    {
+      "file": "20260728181626_durable_realtime_event_bus.sql",
+      "sha256": "c13fefbe7135de87a28ba30da1a90879a7afcb9c9104fac12f9359a6ccbf4cf4"
+    },
+    {
+      "file": "20260728183232_harden_billing_access_state.sql",
+      "sha256": "11ae27814544f616a85dd48eda82698b95ff15effa1936afaa29136fcb0767ac"
+    },
+    {
+      "file": "20260728183851_unify_lead_distribution.sql",
+      "sha256": "3cfbabcc8ea71a97b9bd599fa0e79b456ea33d5529bd20bb7680636d726888e1"
+    },
+    {
+      "file": "20260728190000_backfill_pipeline_default_round_robin.sql",
+      "sha256": "49d44cd8b66f4ed99aa651d4dcadacddcf8b2c629775b8f3005ae0aff99a5329"
+    },
+    {
+      "file": "20260728194701_align_whatsapp_realtime_authorization.sql",
+      "sha256": "9a57d295a837c23b5cf4a142e63e1ac60e25663e0c0fd490a04827e316119b17"
+    },
+    {
+      "file": "20260728222738_index_property_reservation_notification_outbox.sql",
+      "sha256": "3d70710e38803c822b8fa304feccbd27b26a59be136fdaff9dbc60a504b107e9"
+    },
+    {
+      "file": "20260728235050_relax_distribution_lead_lock.sql",
+      "sha256": "ae7e4e9a6dacad9c58a9eba83912e0de0c52d6de4f089622a60d60ce5e742424"
+    },
+    {
+      "file": "20260729011728_forward_distribution_ticket_upgrade.sql",
+      "sha256": "a535f8b6626e17ab68bccdc92f143018ab8f4de2b5ff3a0049259330218ecf1e"
+    },
+    {
+      "file": "20260729014500_harden_public_ingress_rate_limits.sql",
+      "sha256": "2aded900cf770645ffed0cfc9c9081214c51181f8e35d10e361e345e86c510f2"
+    },
+    {
+      "file": "20260729021500_remove_ticket_sequence_runtime_acl_ddl.sql",
+      "sha256": "587fb9e693d912db38ea8c8e4c6fa0a444bb3af8aa89f7fc76f2ddf548859a3b"
+    },
+    {
+      "file": "20260729091638_create_home_publications.sql",
+      "sha256": "a2f5f756bae5edcaee7d8f424237c1d4b8b8836453f665787145d0bdf0303dea"
+    },
+    {
+      "file": "20260729110946_expand_help_center.sql",
+      "sha256": "28ad223ff2b1e5f786d5ba4c28aa4109864035c35644e507c57aab87b7bdae53"
+    },
+    {
+      "file": "20260729121552_calibrate_help_screenshot_annotations.sql",
+      "sha256": "f0e6090a142b25ef6bded624ec1a6e5c83c1a14714145dfea14d99c5c87517b4"
+    },
+    {
+      "file": "20260731082305_stage_operational_rules.sql",
+      "sha256": "b742083f666f2ec40063b350fdc652542e3627b796919e58adf4f763c5dd6459"
+    },
+    {
+      "file": "20260731110919_harden_property_tenant_security.sql",
+      "sha256": "9f665f3d74479dae5ac3cd63c0628481e1ff8e773b646be19d8788bfb9fa8bc4"
+    },
+    {
+      "file": "20260731110940_real_estate_foundation.sql",
+      "sha256": "5d6421f90d7eb80cd543b1266fae3060ad5efb4ca57e583feb367a8667a8b61e"
+    },
+    {
+      "file": "20260731112918_hosted_billing_checkout_and_history_hardening.sql",
+      "sha256": "ede37feacc3a71693d24f009aa9f13b7b38febfbeb0ad028722a35939aaa22ef"
+    },
+    {
+      "file": "20260731113702_separate_billing_profile_fields.sql",
+      "sha256": "06f40bb06de113281c43ce28b07383db7d9617b8782e0967b5838da183924b10"
+    },
+    {
+      "file": "20260731120000_marketing_intelligence_foundation.sql",
+      "sha256": "2c5ef5b8f9e617823e7eed1bd2de1d0ffdebfdd96679f84bbd736f7688a8c8d3"
+    },
+    {
+      "file": "20260731134638_property_developments_foundation.sql",
+      "sha256": "8003d5f586a50dff6e096f1f9c9df6b4bd1a0ad64791f3739355af5aaa72efd4"
+    },
+    {
+      "file": "20260731174655_audit_property_development_reservation_lifecycle.sql",
+      "sha256": "a56e7c1ab82d57ac5716e2a39501ebf51aaefebd020cc45b036b4a482e10a1d8"
+    },
+    {
+      "file": "20260801131312_harden_property_workspace_compatibility.sql",
+      "sha256": "6ba393ed4f5b20cd18e534426bc9f7f73e05d52978ade1138a1b241324a266f2"
+    },
+    {
+      "file": "20260801131841_meta_crm_conversion_feedback.sql",
+      "sha256": "1a208c86ef269f0056e4ffc0a2a199277d5528fdf0212f0a61448d8c3af5cede"
+    },
+    {
+      "file": "20260801142351_harden_property_owners_assets_crud.sql",
+      "sha256": "333731689b9f93496d83b3dfca7c637e764fcb6ad13cd4f3c73403cddf7de08c"
+    },
+    {
+      "file": "20260801152401_enforce_core_organization_modules.sql",
+      "sha256": "c22f5856a20255e490f4df9027bc4cd102f52be8811f306d700ac39d1c6bb4dd"
+    },
+    {
+      "file": "20260801153323_property_publication_center.sql",
+      "sha256": "e7bf4306e173ce8107db0f1ef159715a09e3d541d5ec12890f1b1539e9aed4b5"
+    },
+    {
+      "file": "20260801160000_harden_portal_backend_boundary.sql",
+      "sha256": "9d8a53ca7edc06c4c81cd0fe58da9668833681adf4d748aa86173b710e5be34a"
+    },
+    {
+      "file": "20260801163000_touch_property_revision_from_publication_sources.sql",
+      "sha256": "45ede723e8c0c59ea8fae10232d077c48538a53509b77502ed000e3d101a3734"
+    },
+    {
+      "file": "20260801164000_harden_grupo_olx_import_report_inbox.sql",
+      "sha256": "4bc9c4f11ebed9c56888b041c8088ee7c8df75b079160a77ae9b8d890a59e714"
+    },
+    {
+      "file": "20260802153202_align_onboarding_plan_catalog.sql",
+      "sha256": "3719e54436a23f4cddbd127e1036adbeaeacbc69652ef8c61caab0ae4f4450d7"
+    },
+    {
+      "file": "20260803182722_add_boleto_checkout.sql",
+      "sha256": "32106103b8dff7645940f67b11f5958d1d84350497add65b1c201c0a1ae6052a"
+    },
+    {
+      "file": "20260803190934_add_billing_checkout_recovery_state.sql",
+      "sha256": "273f6fa7c7bc6c3459cf02b8bdcdde96497c97a0288efa120604b33a1229520e"
+    },
+    {
+      "file": "20260803194730_harden_billing_checkout_terminal_recovery.sql",
+      "sha256": "0387b8858b42595a9c16b326d3e3f564480c2766e2ac3845e2d9eaf0d81bbe9f"
+    },
+    {
+      "file": "20260803202340_hotfix_auth_user_least_privilege.sql",
+      "sha256": "a99725ef4911aa2b82e1564e0eb9f41651471aed50bd136a7c64b4784e955fcf"
+    },
+    {
+      "file": "20260803203736_harden_onboarding_delivery_receipts.sql",
+      "sha256": "583a98ee05d7ddb261ecb64bb47cb750403936f75d025f320de91dde162cf533"
+    },
+    {
+      "file": "20260803213359_reconcile_resend_email_delivery.sql",
+      "sha256": "3c41c30730a05c64756d706f9fc737c08b32b3d176bebdd73f7490be75eb1187"
+    },
+    {
+      "file": "20260803215053_index_onboarding_billing_delivery_foreign_keys.sql",
+      "sha256": "47d3921ff9f7013e10c70850c121969dc8758c29dd73b438f07de9edd6dbf3f2"
+    },
+    {
+      "file": "20260803215531_add_public_signup_idempotency.sql",
+      "sha256": "67d1726c43821837792669eb08f3ac539654e8ace95b593c88790ddfa17ed91f"
+    },
+    {
+      "file": "20260803223259_harden_registration_capability_storage.sql",
+      "sha256": "500a2c4967c71ea0b7cd14047c25c58571ee71452d18ea80635fae2d06ddb1f5"
+    },
+    {
+      "file": "20260803223939_lock_notification_delivery_outbox.sql",
+      "sha256": "c9543ccd3867e8460102c64528b7086caf1139cf884c4d941f1b30591308e35d"
+    },
+    {
+      "file": "20260803224049_hide_onboarding_recovery_capabilities.sql",
+      "sha256": "8b9734e584129ec9babbcd52b2dcd4c1fcf201928f2c2e75a85afd1d7db180f0"
+    },
+    {
+      "file": "20260804020928_fix_public_signup_claim_leases.sql",
+      "sha256": "47074832a5a5b5e7fdd82dc90f66c4c1609ee2faa2935db6f5c7aafbede4b7ee"
+    },
+    {
+      "file": "20260804023027_harden_billing_receipt_delivery_state.sql",
+      "sha256": "279af0bbd001d804f521eeb79f9e08d87547dff3652faf65e5312631645f1fea"
+    },
+    {
+      "file": "20260804023420_schedule_managed_billing_plan_changes.sql",
+      "sha256": "92d7ec85ff6fe3e7cbfa80f4af9940f81811dea3a3d7d38ba062c4ce2440bc20"
+    },
+    {
+      "file": "20260804030810_reconcile_public_ingress_rate_limit_foundation.sql",
+      "sha256": "d95ff85fb24510ccd20bcce2319d9eee2b317cee9c83d119468f9e8a97dcbd04"
+    },
+    {
+      "file": "20260804032351_harden_asaas_payment_reversal_states.sql",
+      "sha256": "46b2ddf93d55e95e8bbe6d4b1f37382fa494c93b74a06545f2831191dc31c295"
+    },
+    {
+      "file": "20260804033645_harden_billing_renewal_intent_confirmation.sql",
+      "sha256": "b83f76bcd8c0afff31166ba06cac0fa20d4ef612a98e54b1b9403b3836fe4386"
+    },
+    {
+      "file": "20260804040714_harden_billing_intent_payment_trigger_ordering.sql",
+      "sha256": "1baa5564c5c6f41ebf1e473ffb24766c6b65f812c4f316822110fd026ba0a0ca"
+    },
+    {
+      "file": "20260804101152_add_asaas_payment_confirmed_date.sql",
+      "sha256": "586adab9ae04b1f9e34da6ca02676b22b257789b4f2727aa231aaa1813a10f7e"
+    },
+    {
+      "file": "20260804101153_secure_billing_payment_checkout_capabilities.sql",
+      "sha256": "dda69247e3cd3b060e231d315a8ef0d39af88a389ecd0dd55c28d96855f6fa38"
+    },
+    {
+      "file": "20260805120452_harden_refund_denied_receipt_delivery.sql",
+      "sha256": "dad37f710e6b12aef95577f3713d74ba905dd814b3b794d7027838419397136d"
+    },
+    {
+      "file": "20260812165022_bound_whatsapp_retention.sql",
+      "sha256": "6d96936dc50e6f7fd1d44d6631c3666efb1d43282c8a3c8e548a4e9060e9995f"
+    },
+    {
+      "file": "20260812180000_optimize_whatsapp_retention_claims.sql",
+      "sha256": "0cde41bc2b7413965fb68ee8ac85bf378573c1e181d43c784459a55a1f64bf36"
+    },
+    {
+      "file": "20260813023843_protect_dead_whatsapp_message_webhooks.sql",
+      "sha256": "4955e2f4769b5ba4ee8524178020c14481f79121236efc0d7461f04d7acd64cf"
+    },
+    {
+      "file": "20260823193000_support_international_lead_phones.sql",
+      "sha256": "4a1369193a23216d311894439fedf119023a90741fee506fa7574915a1ea6e47"
+    },
+    {
+      "file": "20260825000000_whatsapp_message_distribution.sql",
+      "sha256": "037e59c08c3b92fe427963f46dc3d04ff6f385b464a118927c03d0fb6537b62c"
+    },
+    {
+      "file": "20260826023154_bind_whatsapp_distribution_to_session.sql",
+      "sha256": "43fd98d66342b56c83ffa0c5703f388bd4319ba678929877f01982942a85c299"
+    },
+    {
+      "file": "20260827000000_distinguish_disabled_and_deleted_organization_members.sql",
+      "sha256": "93de2ccf4eaca7b1f410b7b0a1af00f2c1f34a427338c132f7639106fffe564d"
+    },
+    {
+      "file": "20260828045322_reconcile_whatsapp_managed_with_canonical_distribution.sql",
+      "sha256": "26611a4221b05829e0aceb48c62dc3f2ca8c98e090407e04fa9183212c5529bb"
+    },
+    {
+      "file": "20260831045322_harden_development_unit_property_link.sql",
+      "sha256": "a3ecbccfcbe3844a8d623fb454015db90e1c018e2d0a6e2adb83581a2d9c31dd"
+    },
+    {
+      "file": "20260831050325_harden_legacy_property_offer_prices.sql",
+      "sha256": "68d0d6b74ac845ecada0fa9a7808608bc270a27983e0e54ceec34e18fbe965b0"
+    },
+    {
+      "file": "20260831053204_allow_shared_meta_pages_with_form_scoped_webhooks.sql",
+      "sha256": "a07a69f365220dcb43e28e39015d76380645b129ab4be663455989b42f9883c9"
+    },
+    {
+      "file": "20260901090000_harden_marketing_integration_readiness.sql",
+      "sha256": "43de9c1780e7dd1c8466255daa0d5c5694dce9a1631749ebaeedbcfe8e6bb940"
+    },
+    {
+      "file": "20260901090500_revoke_marketing_vault_trigger_execution.sql",
+      "sha256": "6eafe2bda7e4ef1a9be06caead87a4fa030f783a52ad4389eae46d92165ea563"
+    },
+    {
+      "file": "20260902022227_route_managed_whatsapp_leads_through_canonical_distribution.sql",
+      "sha256": "1df30e06a552dc69f675e5ad578eccfc8a806fd1f599e152d482245071c745aa"
+    },
+    {
+      "file": "20260902055716_secure_user_presence_foundation.sql",
+      "sha256": "1dec2ef27625ed564749777725fc64507f01ac145b75033f243264b054bf3ce6"
+    },
+    {
+      "file": "20260903045350_refine_managed_whatsapp_reentry_and_queue_tags.sql",
+      "sha256": "6db82f0b96de4e5d026f83fc4574c385d0eefa0c89659d7421f40687413eab38"
+    },
+    {
+      "file": "20260903204548_require_ctwa_ad_lead_creation_and_attribution.sql",
+      "sha256": "1943f92d4fd572450f1056a42ba48e443fb85d8718e93ebe6565aaaf8d40b1ba"
+    },
+    {
+      "file": "20260904121500_add_ctwa_ad_v2_evolution_clid_contract.sql",
+      "sha256": "4f50175aed44b40acb6a3611aea1e9e79abba409645da08fc74074d0e7aeb627"
+    },
+    {
+      "file": "20260904123000_managed_whatsapp_distribution_auto_reply.sql",
+      "sha256": "0b8803ec92a201f84684d0da45a03cb4a6bdcaede506958a75235bfb61e70416"
+    },
+    {
+      "file": "20260904184040_lock_team_domain_to_backend_gateway.sql",
+      "sha256": "d3d60fd736a862e608336ee678a5c68fad1b46923997f3aba48b57a954b0dbf9"
+    },
+    {
+      "file": "20260904203000_capture_team_distribution_event_snapshots.sql",
+      "sha256": "5996b36d45c5c37404d538281cc98466b33b249be0b07d3927db0ffe4df39453"
+    },
+    {
+      "file": "20260904225214_harden_whatsapp_media_queue.sql",
+      "sha256": "6f4e4177a19d9a671d9bb1c34caa059a3ced9f8bc2ba19b00d849647c250dbe2"
+    },
+    {
+      "file": "20260905093544_normalize_notification_delivery_outbox.sql",
+      "sha256": "f606d40a4661a223c8dde67b617354a7f1303975bbec0ac8dbb3feae81e87b15"
+    },
+    {
+      "file": "20260905093744_track_user_activity_idle_since.sql",
+      "sha256": "015713d5ae673f5211413325c48834db2e57f3df112304b400f6fc239cd33d1e"
+    },
+    {
+      "file": "20260905120000_sync_available_permission_catalog.sql",
+      "sha256": "19246c0ac17fe419e787099b9d4acd771f68cb839b4ecd0b335c9dc72c2e88a6"
+    },
+    {
+      "file": "20260905120830_harden_user_activity_timestamps.sql",
+      "sha256": "75bc1c5170890e1ab08e84d15e4845753b0570fbb78b76f272e143cad00fbe16"
+    },
+    {
+      "file": "20260905121500_lock_organization_members_to_backend_gateway.sql",
+      "sha256": "c43db269f27ef7446ad5ea8498b6647cad92eaa551f9bc3b0d7c3361501fa2e6"
+    },
+    {
+      "file": "20260905121600_reconcile_custom_role_storage_contract.sql",
+      "sha256": "e1aed03af54574294667907bd912526bf8fb1356ef3f70e8acd3475a9b0e0e01"
+    },
+    {
+      "file": "20260905154916_serialize_user_assignment_with_membership_lifecycle.sql",
+      "sha256": "233e11674627da1b177c88f1b67696fa672ff145f48f8a3514f322db85b857d5"
+    },
+    {
+      "file": "20260906201339_lock_site_analytics_to_backend_gateway.sql",
+      "sha256": "c6d06b658df95403265db68651ade88bfc2f080f41cdad5a5871fb5ce509c98c"
+    },
+    {
+      "file": "20260906210000_track_site_analytics_last_seen.sql",
+      "sha256": "991e538a1aecd5d1ec3a6f81fcff7550b4cb5fad0f81e08d8ce10f9c9a676204"
+    },
+    {
+      "file": "20260907230410_google_search_console_verification.sql",
+      "sha256": "2d1d7e9c2b0f035444a70f03f6db4920aef939bb9c5834a6800d52c4953c3479"
+    },
+    {
+      "file": "20260907230630_add_durable_outgoing_webhook_delivery.sql",
+      "sha256": "98a15e630a998b4ee2916ab7e6a045dc94b9e0a3b87ac29988657b5d05819190"
+    },
+    {
+      "file": "20260907230953_google_calendar_reliability_sweep.sql",
+      "sha256": "80095e372bbc70c2cf2b6023fe4fac71099a724bb5a8f30d1ed95d5a229dddda"
+    },
+    {
+      "file": "20260908000631_harden_property_domain_invariants.sql",
+      "sha256": "0614a60cd9b1d2247ed472b730b649e0053dd17217ea843b0108d820556e9adc"
+    },
+    {
+      "file": "20260908000636_normalize_property_media_lifecycle.sql",
+      "sha256": "12a0584ef7017727d882a449ea9bb01c16c2dc1d1caa60c3c09dd265be5bdde2"
+    },
+    {
+      "file": "20260908000640_optimize_property_catalog_security.sql",
+      "sha256": "6e6bf37e054f3163a5ed75aac673f61707ebcc506667afe92d5546372adcc625"
+    },
+    {
+      "file": "20260908033712_lock_pipeline_and_lead_mutations_to_backend_gateway.sql",
+      "sha256": "c88af672ce98393861135de34a6c79d316d308ab38d5358db609962667a22ae6"
+    },
+    {
+      "file": "20260908034000_harden_stage_automation_targets.sql",
+      "sha256": "e047525f4de4f3e1513a45267b5c2d28b59a73de63744f322749493f0d41e18d"
+    },
+    {
+      "file": "20260908034600_harden_edge_reentry_and_pool_redistribution.sql",
+      "sha256": "8ae021dcac4da2a01e7c8cf8afcbc5354cdcf0b27bf0dd5448181cce0bb7125a"
+    },
+    {
+      "file": "20260908062156_add_schedule_outcomes_and_dashboard_indexes.sql",
+      "sha256": "4596930cc749825e8993f02ccabb08150020d8b1caf644d0b3f65ea9283e330e"
+    },
+    {
+      "file": "20260908064750_enable_chaves_na_mao_portal.sql",
+      "sha256": "0b56c33f87f61c780f494bf925818832412a09bf28b6701f340cfb7a1f090070"
+    },
+    {
+      "file": "20260908065613_make_edge_reentry_processing_atomic.sql",
+      "sha256": "6b300371d411423b78b7094336ba922d7e4a12c8bd7a5b7f4d00026e5824b407"
+    },
+    {
+      "file": "20260908071500_harden_pool_warning_delivery.sql",
+      "sha256": "1221f3c6a3a3417d73237b9ad10dcfc90671c7578dbc0694dec065b1d21eef28"
+    },
+    {
+      "file": "20260908071838_lock_legacy_property_catalog_mutations_to_backend_gateway.sql",
+      "sha256": "b7b0841597b93e983f4d9584f4016b286718197e517e25b0b5bb0533602f9a2d"
+    },
+    {
+      "file": "20260908081513_fix_whatsapp_realtime_without_lead.sql",
+      "sha256": "d25f0172f935ef74f82294129a5cf99e852225d251ac78d6e61ae5ed6fc36bf1"
+    },
+    {
+      "file": "20260908081519_index_active_automation_executions_by_lead.sql",
+      "sha256": "a6bc3574677064e0e686b12b07c05fa53db8153add27cdf06bdfa8cf33be37ad"
+    },
+    {
+      "file": "20260908101026_reconcile_provider_property_assets.sql",
+      "sha256": "882a6ac3f75e1721739aa39afecac98c7b6712fe0685797695439f8201c307b5"
+    },
+    {
+      "file": "20260908113000_archive_provider_property_assets.sql",
+      "sha256": "8b8dc1d5c192e6dcd60355b45e29608c6e331c169e507829c099d7bad909253e"
+    },
+    {
+      "file": "20260908114000_guard_legacy_property_owner_deactivation.sql",
+      "sha256": "2349fc079980a26ce77764beade69461f21c7c236e2b52d38bfff43af567a3cd"
+    },
+    {
+      "file": "20260908115000_serialize_property_catalog_references.sql",
+      "sha256": "f814380b2aa24dad0612ddfc1d5af8236ea8e6492ab871519eb66e7571f06f35"
+    },
+    {
+      "file": "20260908130733_guard_legacy_property_location_catalog_mutations.sql",
+      "sha256": "b723576f43a814f13cdc185e98e8e70c601afa3259e2df025291c62bc9efb453"
+    },
+    {
+      "file": "20260909152547_optimize_whatsapp_webhook_fair_claim.sql",
+      "sha256": "eb5aacfb43d4c58119340dd544430f5d93a7ca96daca604c1a1642afec540b9e"
+    },
+    {
+      "file": "20260909164702_optimize_whatsapp_outbox_fast_lane.sql",
+      "sha256": "9ddfdca71e1779a5980e6e7cfdf158e42aacf26f351e04b2b9fdb24fb35bc73a"
+    },
+    {
+      "file": "20260910011500_repair_observed_legacy_idle_since.sql",
+      "sha256": "aafc179c93efe41239f8e7eac7898f7cf72d15c24d490957e5ae2e9c51d92eea"
+    },
+    {
+      "file": "20260912132937_harden_whatsapp_backend_only_boundary.sql",
+      "sha256": "c05ac490ac223963650a419d2ba1affc03b18fbc5e054192dd1a8ee9ff434ce3"
+    },
+    {
+      "file": "20260912134500_lock_schedule_mutations_to_backend_gateway.sql",
+      "sha256": "2267757a814e6526e502ae5b2cec642cc617373cfd9184949a81cf9ddeee6c7e"
+    },
+    {
+      "file": "20260912152432_scale_whatsapp_media_queue_safely.sql",
+      "sha256": "0a4a9bf3fa88b3e30da1af55aee323ec196e5612666c5799113c8039cf45ac6f"
+    },
+    {
+      "file": "20260912160000_optimize_whatsapp_outbox_finalization_claim.sql",
+      "sha256": "93596d2ef93b1f81981a944d478fd06e9a4c3f8be36432c03ebd7290b1ef5c82"
+    },
+    {
+      "file": "20260912172606_advance_pipeline_board_order_on_reentry_and_distribution.sql",
+      "sha256": "305f90a36f5606d3e3f3b15bb34c0268601c47ac0dccffb9333e1292425c9abd"
+    },
+    {
+      "file": "20260912173704_harden_whatsapp_session_supervisor_state.sql",
+      "sha256": "b110ef0d2ce240b9c1d667852c3ade36af359167edd35622551f60c28dc36fea"
+    },
+    {
+      "file": "20260912183453_isolate_whatsapp_outbox_lane_claims.sql",
+      "sha256": "bb71d35fd7d65172c607572a95c95a62107b8c422fb1723971d1971bfc983b58"
+    },
+    {
+      "file": "20260912193000_repair_legacy_google_all_day_ranges.sql",
+      "sha256": "3cbb4cb0de110943c06c0bbe2df2a8e0c19ea47ba931f8bf4619ce4bb1a7f7a7"
+    }
+  ]
+}

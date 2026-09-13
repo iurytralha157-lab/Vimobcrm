@@ -34,7 +34,9 @@ import {
   type PropertySiteInfo,
 } from "@/lib/api/property-support";
 import { cleanPropertyDescription } from "@/lib/property-description";
+import { getPropertyMetadataString as metadataString } from "@/lib/property-display-utils";
 import { buildPropertySiteUrl } from "@/lib/property-site-url";
+import { formatFixedBRLCurrency } from "@/lib/utils/formatting";
 import useEmblaCarousel from "embla-carousel-react";
 import { toast } from "sonner";
 import {
@@ -91,10 +93,6 @@ function getPropertyMetadata(property?: Property | null): PropertyMetadata {
   return raw && typeof raw === "object" && !Array.isArray(raw)
     ? (raw as PropertyMetadata)
     : {};
-}
-
-function metadataString(value: unknown) {
-  return typeof value === "string" ? value : "";
 }
 
 function metadataLocationValue(value: unknown) {
@@ -310,9 +308,7 @@ export function PropertyPreviewDialog({
   const extraDetails = property?.detalhes_extras ?? [];
   const proximities = property?.proximidades ?? [];
   const formatCurrency = (value?: number | null) =>
-    value
-      ? `R$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-      : null;
+    value ? formatFixedBRLCurrency(value) : null;
   const formatBoolean = (value?: boolean | null) => {
     if (value === null || value === undefined) return null;
     return value ? "Sim" : "Não";
@@ -323,6 +319,7 @@ export function PropertyPreviewDialog({
     updateProperty.mutate({
       id: property.id,
       status: nextActive ? "ativo" : "inativo",
+      expected_updated_at: property.updated_at,
     });
   };
 
@@ -569,11 +566,7 @@ export function PropertyPreviewDialog({
                 Condomínio
               </span>
               <span className="font-normal text-primary">
-                R${" "}
-                {property.condominio.toLocaleString("pt-BR", {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}
+                {formatFixedBRLCurrency(property.condominio)}
               </span>
             </div>
           )}
@@ -581,11 +574,7 @@ export function PropertyPreviewDialog({
             <div className="flex items-center justify-between gap-3 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 py-2">
               <span className="text-xs text-muted-foreground block">IPTU</span>
               <span className="font-normal text-primary">
-                R${" "}
-                {property.iptu.toLocaleString("pt-BR", {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}
+                {formatFixedBRLCurrency(property.iptu)}
               </span>
             </div>
           )}
@@ -595,11 +584,7 @@ export function PropertyPreviewDialog({
                 Seguro incêndio
               </span>
               <span className="font-normal text-primary">
-                R${" "}
-                {property.seguro_incendio.toLocaleString("pt-BR", {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}
+                {formatFixedBRLCurrency(property.seguro_incendio)}
               </span>
             </div>
           )}
@@ -609,11 +594,7 @@ export function PropertyPreviewDialog({
                 Taxa de serviço
               </span>
               <span className="font-normal text-primary">
-                R${" "}
-                {property.taxa_de_servico.toLocaleString("pt-BR", {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}
+                {formatFixedBRLCurrency(property.taxa_de_servico)}
               </span>
             </div>
           )}
@@ -927,17 +908,13 @@ export function PropertyPreviewDialog({
           )}
         </div>
 
-        <div className="mt-5 hidden space-y-5 lg:block">
-          {propertySummarySection}
-        </div>
+        <div className="mt-5 space-y-5">{propertySummarySection}</div>
       </div>
 
       {/* Right Side - Property Details */}
       <div className="lg:w-[48%] min-h-0">
         <ScrollArea className="h-auto pr-0 lg:h-full lg:pr-3">
           <div className="space-y-5">
-            <div className="lg:hidden">{propertySummarySection}</div>
-
             {responsibleSection}
             {propertyDetailsSection}
             {extraDetailsSection}

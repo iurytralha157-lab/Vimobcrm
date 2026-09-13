@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { adminUpdateOrganizationInputSchema } from './admin'
 import { apiEnvelopeSchema, nonNegativeIntegerSchema, timestampSchema, uuidSchema } from './common'
 
 export const dynamicRecordSchema = z.record(z.unknown())
@@ -36,7 +37,7 @@ export const adminModuleAccessInputSchema = z.object({
   isEnabled: z.boolean(),
 }).strict()
 export const adminOrganizationAccessInputSchema = z.object({
-  organizationUpdates: dynamicRecordSchema,
+  organizationUpdates: adminUpdateOrganizationInputSchema,
   modules: z.array(z.string().trim().min(1).max(120)).max(500),
 }).strict()
 export const adminOrganizationDeleteInputSchema = z.object({
@@ -44,8 +45,6 @@ export const adminOrganizationDeleteInputSchema = z.object({
 }).strict()
 export const adminPeriodSchema = z.number().int().min(1).max(3650)
 export const adminListLimitSchema = z.number().int().min(1).max(500)
-export const adminOrganizationMutationInputSchema = nonEmptyDynamicRecordSchema
-export const adminUserMutationInputSchema = nonEmptyDynamicRecordSchema
 const adminWriteOnlySecretSchema = z.object({
   action: z.enum(['unchanged', 'replace', 'clear']),
   value: z.string().max(4_096).optional(),
@@ -77,10 +76,6 @@ export const adminNotificationDispatchSettingsInputSchema = adminNotificationDis
   })
   .strict()
 export const apiAdminNotificationDispatchSettingsResponseSchema = apiEnvelopeSchema(adminNotificationDispatchSettingsSchema)
-export const apiAdminOrganizationMutationResponseSchema = z.object({
-  organization: dynamicRecordSchema,
-}).passthrough()
-
 export const aiAgentStatusSchema = z.enum(['draft', 'active', 'paused'])
 export const aiAgentConfigSchema = z.object({
   type: z.string().trim().min(1).max(80),
@@ -532,8 +527,10 @@ export const apiDashboardStatsSchema = z.object({
   wonAverageConversionDays: nonNegativeIntegerSchema.nullable(),
   wonConversionBuckets: z.array(apiDashboardWonConversionBucketSchema),
   wonDeals: z.array(apiDashboardWonDealSchema),
+  wonDealsTruncated: z.boolean().optional().default(false),
   lostReasonBuckets: z.array(apiDashboardLostReasonBucketSchema),
   lostDeals: z.array(apiDashboardLostDealSchema),
+  lostDealsTruncated: z.boolean().optional().default(false),
   avgResponseTime: dashboardTextSchema(32),
   totalSalesValue: dashboardNonNegativeNumberSchema,
   pendingCommissions: dashboardNonNegativeNumberSchema,

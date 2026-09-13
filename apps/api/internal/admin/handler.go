@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -10,16 +9,22 @@ import (
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/publicingress"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 type Handler struct {
 	repo                   Repository
 	publicClientIPResolver publicingress.ClientIPResolver
+	publisher              realtime.Publisher
 }
 
-func NewHandler(repo Repository) Handler {
-	return Handler{repo: repo}
+func NewHandler(repo Repository, publishers ...realtime.Publisher) Handler {
+	publisher := realtime.Publisher(realtime.NoopPublisher{})
+	if len(publishers) > 0 && publishers[0] != nil {
+		publisher = publishers[0]
+	}
+	return Handler{repo: repo, publisher: publisher}
 }
 
 func (handler Handler) WithPublicClientIPResolver(
@@ -97,7 +102,7 @@ func (handler Handler) CreateFeatureRequest(w http.ResponseWriter, r *http.Reque
 	}
 	defer r.Body.Close()
 	payload := map[string]any{}
-	if err := decodeJSON(w, r, &payload); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &payload, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.CreateFeatureRequest(r.Context(), tenantContext, payload)
@@ -128,7 +133,7 @@ func (handler Handler) RespondFeatureRequestAdmin(w http.ResponseWriter, r *http
 	}
 	defer r.Body.Close()
 	payload := map[string]any{}
-	if err := decodeJSON(w, r, &payload); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &payload, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.RespondFeatureRequestAdmin(r.Context(), tenantContext, r.PathValue("id"), payload)
@@ -161,7 +166,7 @@ func (handler Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) 
 	}
 	defer r.Body.Close()
 	var request InvitationRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.CreateInvitation(r.Context(), tenantContext, request)
@@ -170,6 +175,25 @@ func (handler Handler) CreateInvitation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	httpserver.WriteJSON(w, http.StatusCreated, Envelope[map[string]any]{Data: item})
+}
+
+func (handler Handler) UpdateInvitationRole(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.FromContext(r.Context())
+	if !ok || tenantContext.UserID == "" {
+		httpserver.WriteError(w, r, http.StatusUnauthorized, "unauthorized", "Missing authenticated user.")
+		return
+	}
+	defer r.Body.Close()
+	var request InvitationRoleUpdateRequest
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
+		return
+	}
+	item, err := handler.repo.UpdateInvitationRole(r.Context(), tenantContext, r.PathValue("id"), request)
+	if err != nil {
+		writeAdminError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[map[string]any]{Data: item})
 }
 
 func (handler Handler) ResendInvitation(w http.ResponseWriter, r *http.Request) {
@@ -200,6 +224,7 @@ func (handler Handler) DeleteInvitation(w http.ResponseWriter, r *http.Request) 
 }
 
 func (handler Handler) ShowInvitationByToken(w http.ResponseWriter, r *http.Request) {
+	setInvitationCapabilityResponseHeaders(w)
 	item, err := handler.repo.ShowInvitationByToken(r.Context(), r.PathValue("token"))
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -213,9 +238,10 @@ func (handler Handler) ShowInvitationByToken(w http.ResponseWriter, r *http.Requ
 }
 
 func (handler Handler) AcceptInvitationPublic(w http.ResponseWriter, r *http.Request) {
+	setInvitationCapabilityResponseHeaders(w)
 	defer r.Body.Close()
 	var request AcceptInvitationRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	request = invitationAcceptanceRequestWithHTTPMetadata(
@@ -229,6 +255,7 @@ func (handler Handler) AcceptInvitationPublic(w http.ResponseWriter, r *http.Req
 		writeAdminError(w, r, err)
 		return
 	}
+	handler.publishInvitationAccepted(result)
 
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[AcceptInvitationResult]{Data: result})
 }
@@ -244,6 +271,7 @@ func invitationAcceptanceRequestWithHTTPMetadata(
 }
 
 func (handler Handler) AcceptInvitationAuthenticated(w http.ResponseWriter, r *http.Request) {
+	setInvitationCapabilityResponseHeaders(w)
 	defer r.Body.Close()
 	user, ok := httpserver.UserFromContext(r.Context())
 	if !ok || user.ID == "" {
@@ -251,7 +279,7 @@ func (handler Handler) AcceptInvitationAuthenticated(w http.ResponseWriter, r *h
 		return
 	}
 	var request AcceptInvitationRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	request = invitationAcceptanceRequestWithHTTPMetadata(
@@ -270,14 +298,38 @@ func (handler Handler) AcceptInvitationAuthenticated(w http.ResponseWriter, r *h
 		writeAdminError(w, r, err)
 		return
 	}
+	handler.publishInvitationAccepted(result)
 
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[AcceptInvitationResult]{Data: result})
+}
+
+func (handler Handler) publishInvitationAccepted(result AcceptInvitationResult) {
+	if handler.publisher == nil || !result.Success || !result.AcceptedNow ||
+		strings.TrimSpace(result.OrganizationID) == "" ||
+		strings.TrimSpace(result.TargetUserID) == "" {
+		return
+	}
+
+	handler.publisher.Publish(realtime.NewEvent(
+		realtime.EventOrganizationUsersChanged,
+		result.OrganizationID,
+		result.TargetUserID,
+		map[string]any{
+			"targetUserId": result.TargetUserID,
+			"changeKind":   "invitation_accepted",
+		},
+	))
+}
+
+func setInvitationCapabilityResponseHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Pragma", "no-cache")
 }
 
 func (handler Handler) PublicOnboardingSignup(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var request OnboardingSignupRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	request.IPAddress = handler.publicClientIPResolver.Resolve(r)
@@ -293,7 +345,7 @@ func (handler Handler) PublicOnboardingSignup(w http.ResponseWriter, r *http.Req
 func (handler Handler) PublicOnboardingValidateStep(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var request PublicOnboardingStepValidationRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	request.ipAddress = handler.publicClientIPResolver.Resolve(r)
@@ -308,7 +360,7 @@ func (handler Handler) PublicOnboardingValidateStep(w http.ResponseWriter, r *ht
 func (handler Handler) PublicResendOnboardingEmailConfirmation(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var request ResendOnboardingEmailConfirmationRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	request.IPAddress = handler.publicClientIPResolver.Resolve(r)
@@ -345,7 +397,7 @@ func (handler Handler) PublicResendOnboardingEmailConfirmation(w http.ResponseWr
 func (handler Handler) PublicRecoverOnboardingSignup(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var request PublicSignupRecoveryRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	request.IPAddress = handler.publicClientIPResolver.Resolve(r)
@@ -384,7 +436,7 @@ func (handler Handler) PublicRecoverOnboardingSignup(w http.ResponseWriter, r *h
 func (handler Handler) PublicCheckoutPlan(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var request CheckoutPlanRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.PublicCheckoutPlan(r.Context(), request)
@@ -426,7 +478,7 @@ func (handler Handler) CreateOnboardingRequest(w http.ResponseWriter, r *http.Re
 	}
 	defer r.Body.Close()
 	payload := map[string]any{}
-	if err := decodeJSON(w, r, &payload); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &payload, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.CreateOnboardingRequest(r.Context(), tenantContext, payload)
@@ -457,7 +509,7 @@ func (handler Handler) UpdateOnboardingRequestAdmin(w http.ResponseWriter, r *ht
 	}
 	defer r.Body.Close()
 	payload := map[string]any{}
-	if err := decodeJSON(w, r, &payload); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &payload, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.UpdateOnboardingRequestAdmin(r.Context(), tenantContext, r.PathValue("id"), payload)
@@ -511,7 +563,7 @@ func (handler Handler) CreateTableRow(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	payload := map[string]any{}
-	if err := decodeJSON(w, r, &payload); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &payload, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.CreateTableRow(r.Context(), tenantContext, r.PathValue("table"), payload)
@@ -529,7 +581,7 @@ func (handler Handler) UpdateTableRow(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	payload := map[string]any{}
-	if err := decodeJSON(w, r, &payload); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &payload, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.UpdateTableRow(r.Context(), tenantContext, r.PathValue("table"), r.PathValue("id"), payload)
@@ -572,7 +624,7 @@ func (handler Handler) UpdateNotificationDispatchSettings(w http.ResponseWriter,
 	}
 	defer r.Body.Close()
 	var request UpdateNotificationDispatchSettingsRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.UpdateNotificationDispatchSettings(r.Context(), tenantContext, request)
@@ -581,6 +633,46 @@ func (handler Handler) UpdateNotificationDispatchSettings(w http.ResponseWriter,
 		return
 	}
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[NotificationDispatchSettings]{Data: item})
+}
+
+func (handler Handler) ShowNotificationDeliveryOperations(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := adminContext(w, r)
+	if !ok {
+		return
+	}
+	item, err := handler.repo.NotificationDeliveryOperations(
+		r.Context(),
+		tenantContext,
+		r.URL.Query().Get("status"),
+		parsePositiveInt(r.URL.Query().Get("limit"), defaultNotificationDeliveryListLimit),
+	)
+	if err != nil {
+		writeAdminError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[NotificationDeliveryOperations]{Data: item})
+}
+
+func (handler Handler) ReplayNotificationDelivery(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := adminContext(w, r)
+	if !ok {
+		return
+	}
+	defer r.Body.Close()
+	var request ReplayNotificationDeliveryRequest
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
+		return
+	}
+	if err := handler.repo.ReplayNotificationDelivery(
+		r.Context(),
+		tenantContext,
+		r.PathValue("id"),
+		request.Reason,
+	); err != nil {
+		writeAdminError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (handler Handler) OrphanMemberStats(w http.ResponseWriter, r *http.Request) {
@@ -697,7 +789,7 @@ func (handler Handler) CreateOrganization(w http.ResponseWriter, r *http.Request
 	}
 	defer r.Body.Close()
 	var request CreateOrganizationRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.CreateOrganization(r.Context(), tenantContext, request)
@@ -715,7 +807,7 @@ func (handler Handler) UpdateOrganization(w http.ResponseWriter, r *http.Request
 	}
 	defer r.Body.Close()
 	var request OrganizationUpdateRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	if err := handler.repo.UpdateOrganization(r.Context(), tenantContext, r.PathValue("id"), request); err != nil {
@@ -732,7 +824,7 @@ func (handler Handler) UpdateOrganizationAccess(w http.ResponseWriter, r *http.R
 	}
 	defer r.Body.Close()
 	var request OrganizationAccessRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	if err := handler.repo.UpdateOrganizationAccess(r.Context(), tenantContext, r.PathValue("id"), request); err != nil {
@@ -749,7 +841,7 @@ func (handler Handler) DeleteOrganization(w http.ResponseWriter, r *http.Request
 	}
 	defer r.Body.Close()
 	var request OrganizationDeleteRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	result, err := handler.repo.DeleteOrganization(r.Context(), tenantContext, r.PathValue("id"), request)
@@ -767,7 +859,7 @@ func (handler Handler) UpdateModuleAccess(w http.ResponseWriter, r *http.Request
 	}
 	defer r.Body.Close()
 	var request ModuleAccessRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	if err := handler.repo.UpdateModuleAccess(r.Context(), tenantContext, request); err != nil {
@@ -784,7 +876,7 @@ func (handler Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var request UserUpdateRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	if err := handler.repo.UpdateUser(r.Context(), tenantContext, r.PathValue("id"), request); err != nil {
@@ -826,16 +918,6 @@ func adminContext(w http.ResponseWriter, r *http.Request) (tenant.Context, bool)
 		return tenant.Context{}, false
 	}
 	return tenantContext, true
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
-		return err
-	}
-	return nil
 }
 
 func parsePositiveInt(value string, fallback int) int {

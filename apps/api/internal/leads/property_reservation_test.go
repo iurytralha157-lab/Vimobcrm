@@ -53,17 +53,13 @@ func (propertyReservationLockRow) Scan(destinations ...any) error {
 }
 
 func TestWonLeadPropertyIsLockedBeforeMutation(t *testing.T) {
-	status := "won"
 	tx := &propertyReservationLockTx{}
-	reservation, err := (Repository{}).lockWonLeadPropertyForUpdate(
+	reservation, err := (Repository{}).lockWonLeadPropertyForTrustedSystem(
 		context.Background(),
 		tx,
 		"11111111-1111-4111-8111-111111111111",
-		leadSnapshot{
-			DealStatus:         "open",
-			InterestPropertyID: "44444444-4444-4444-8444-444444444444",
-		},
-		updateInput{DealStatus: patchString{Set: true, Value: &status}},
+		"",
+		"44444444-4444-4444-8444-444444444444",
 	)
 	if err != nil {
 		t.Fatalf("lock won property: %v", err)
@@ -131,19 +127,14 @@ func (row propertyReservationRetryRow) Scan(destinations ...any) error {
 func TestWonLeadPropertyRetryRespectsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	status := "won"
 	tx := &propertyReservationRetryTx{}
 
-	_, err := (Repository{}).lockWonLeadPropertyForUpdate(
+	_, err := (Repository{}).lockWonLeadPropertyForTrustedSystem(
 		ctx,
 		tx,
 		"11111111-1111-4111-8111-111111111111",
-		leadSnapshot{
-			ID:                 "33333333-3333-4333-8333-333333333333",
-			DealStatus:         "open",
-			InterestPropertyID: "44444444-4444-4444-8444-444444444444",
-		},
-		updateInput{DealStatus: patchString{Set: true, Value: &status}},
+		"33333333-3333-4333-8333-333333333333",
+		"44444444-4444-4444-8444-444444444444",
 	)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("retry error = %v, want context.Canceled", err)

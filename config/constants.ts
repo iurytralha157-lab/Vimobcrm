@@ -21,6 +21,12 @@ export const ROUTES = {
   RESET_PASSWORD: '/reset-password',
 } as const
 
+export const PWA_INSTALL_PROMPT_EXCLUDED_ROUTES = [
+  ROUTES.LOGIN,
+  ROUTES.SIGNUP,
+  ROUTES.RESET_PASSWORD,
+] as const
+
 const DEFAULT_PUBLIC_APP_ORIGIN = 'https://app.vimobcrm.com.br'
 export const VIMOB_MARKETING_SITE_URL = 'https://vimobcrm.com.br' as const
 

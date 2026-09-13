@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 )
 
 var (
@@ -262,6 +262,9 @@ func (request UpdateStageRequest) Validate() (updateStageInput, error) {
 		}
 		input.Color.Value = &color
 	}
+	if input.IsWon.IsTrue() && input.IsLost.IsTrue() {
+		return updateStageInput{}, fmt.Errorf("%w: a stage cannot be both won and lost", ErrInvalidInput)
+	}
 	if _, err := qualifiedPatchForStageUpdate(input); err != nil {
 		return updateStageInput{}, err
 	}
@@ -386,12 +389,5 @@ func buildStageKey(name string) string {
 }
 
 func normalizeUUID(value string) (string, bool) {
-	var uuid pgtype.UUID
-	if err := uuid.Scan(strings.TrimSpace(value)); err != nil {
-		return "", false
-	}
-	if !uuid.Valid {
-		return "", false
-	}
-	return uuid.String(), true
+	return pgvalue.NormalizeUUID(value)
 }

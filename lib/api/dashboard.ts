@@ -57,12 +57,16 @@ type DashboardRequestContext = {
 
 export async function getDashboardStats(params: DashboardRequestContext & {
   filters?: DashboardAPIFilters
+  includeDetails?: boolean
 }) {
   const organizationId = parseDashboardOrganizationId(params.organizationId, 'dashboard.stats')
   const filters = parseDomainInput(dashboardFiltersSchema, normalizeDashboardFilters(params.filters), 'dashboard.stats')
   const response = await vimobAPIRequest<unknown>('/v1/dashboard/stats', {
     organizationId,
-    query: buildDashboardQuery(filters),
+    query: {
+      ...buildDashboardQuery(filters),
+      includeDetails: params.includeDetails ? true : undefined,
+    },
     signal: params.signal,
   })
   const validated = validateDomainResponse(apiDashboardStatsResponseSchema, response, 'dashboard.stats')

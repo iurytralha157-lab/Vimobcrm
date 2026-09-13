@@ -13,13 +13,41 @@ type LookupContext = MentionLookupContext & {
 
 type CacheValue = string | null;
 type GroupParticipant = string | Record<string, unknown>;
+type CacheSubscriber = () => void;
 
 const cache = new Map<string, CacheValue>();
-const subscribers = new Set<() => void>();
+const subscribersByCacheKey = new Map<string, Set<CacheSubscriber>>();
 const conversationsCache = new Map<string, Promise<WhatsAppConversation[]>>();
 
-function notify() {
-  subscribers.forEach((cb) => cb());
+function subscribeToCacheKeys(keys: readonly string[], subscriber: CacheSubscriber): () => void {
+  const uniqueKeys = new Set(keys);
+  if (uniqueKeys.size === 0) return () => undefined;
+
+  uniqueKeys.forEach((key) => {
+    const subscribers = subscribersByCacheKey.get(key) || new Set<CacheSubscriber>();
+    subscribers.add(subscriber);
+    subscribersByCacheKey.set(key, subscribers);
+  });
+
+  return () => {
+    uniqueKeys.forEach((key) => {
+      const subscribers = subscribersByCacheKey.get(key);
+      if (!subscribers) return;
+
+      subscribers.delete(subscriber);
+      if (subscribers.size === 0) subscribersByCacheKey.delete(key);
+    });
+  };
+}
+
+function notifyCacheKeys(keys: readonly string[]) {
+  const subscribersToNotify = new Set<CacheSubscriber>();
+  new Set(keys).forEach((key) => {
+    subscribersByCacheKey.get(key)?.forEach((subscriber) => {
+      subscribersToNotify.add(subscriber);
+    });
+  });
+  subscribersToNotify.forEach((subscriber) => subscriber());
 }
 
 function normalize(raw: string): string {
@@ -236,14 +264,14 @@ async function fetchName(digits: string, context?: LookupContext): Promise<strin
 }
 
 export function useMentionNames(rawDigitsList: string[], context?: MentionLookupContext): Record<string, string> {
-  const { profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const [, force] = useState(0);
   const rawDigitsKey = rawDigitsList.join(",");
   const contextGroupJid = context?.groupJid;
   const contextSessionId = context?.sessionId;
-  const organizationId = profile?.organization_id;
+  const organizationId = activeOrganization.organizationId;
   const normalizedDigits = useMemo(
-    () => rawDigitsKey.split(",").map(normalize).filter(Boolean),
+    () => Array.from(new Set(rawDigitsKey.split(",").map(normalize).filter(Boolean))),
     [rawDigitsKey],
   );
   const lookupContext = useMemo<LookupContext | undefined>(
@@ -254,26 +282,38 @@ export function useMentionNames(rawDigitsList: string[], context?: MentionLookup
     ),
     [contextGroupJid, contextSessionId, organizationId],
   );
+  const subscriptionKeys = useMemo(
+    () => normalizedDigits.map((digits) => cacheKey(digits, lookupContext)),
+    [lookupContext, normalizedDigits],
+  );
 
   useEffect(() => {
-    const cb = () => force((n) => n + 1);
-    subscribers.add(cb);
-    return () => {
-      subscribers.delete(cb);
-    };
-  }, []);
+    if (subscriptionKeys.length === 0) return;
+    return subscribeToCacheKeys(subscriptionKeys, () => force((n) => n + 1));
+  }, [subscriptionKeys]);
 
   useEffect(() => {
     const toFetch = normalizedDigits.filter((digits) => !cache.has(cacheKey(digits, lookupContext)));
     if (toFetch.length === 0) return;
 
     toFetch.forEach((digits) => cache.set(cacheKey(digits, lookupContext), null));
-    Promise.all(
+    void Promise.all(
       toFetch.map(async (digits) => {
-        const name = await fetchName(digits, lookupContext);
-        cache.set(cacheKey(digits, lookupContext), name);
+        const key = cacheKey(digits, lookupContext);
+        let name = formatPhone(digits);
+        try {
+          name = await fetchName(digits, lookupContext);
+        } catch {
+          // Mantém o fallback já exibido e conclui a entrada para não prender o cache em loading.
+        }
+
+        const changed = cache.get(key) !== name;
+        cache.set(key, name);
+        return changed ? key : null;
       }),
-    ).then(() => notify());
+    ).then((changedKeys) => {
+      notifyCacheKeys(changedKeys.filter((key): key is string => Boolean(key)));
+    });
   }, [lookupContext, normalizedDigits]);
 
   const result: Record<string, string> = {};

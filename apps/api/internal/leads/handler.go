@@ -133,17 +133,19 @@ func (handler Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	handler.publishLeadEvent(tenantContext, "lead.created", result.Lead.ID, map[string]any{
-		"leadId":           result.Lead.ID,
-		"pipelineId":       result.Lead.PipelineID,
-		"stageId":          result.Lead.StageID,
-		"assignedUserId":   result.Lead.AssignedUserID,
-		"reentry":          result.Reentry,
-		"assignedUserName": result.AssignedUserName,
+		"leadId":              result.Lead.ID,
+		"pipelineId":          result.Lead.PipelineID,
+		"stageId":             result.Lead.StageID,
+		"assignedUserId":      result.Lead.AssignedUserID,
+		"reentry":             result.Reentry,
+		"assignedUserName":    result.AssignedUserName,
+		"distributionOutcome": result.DistributionOutcome,
 	})
 	httpserver.WriteJSON(w, http.StatusCreated, CreateResponse{
-		Data:             result.Lead,
-		Reentry:          result.Reentry,
-		AssignedUserName: result.AssignedUserName,
+		Data:                result.Lead,
+		Reentry:             result.Reentry,
+		AssignedUserName:    result.AssignedUserName,
+		DistributionOutcome: result.DistributionOutcome,
 	})
 }
 
@@ -197,7 +199,13 @@ func (handler Handler) MoveStage(w http.ResponseWriter, r *http.Request) {
 
 	defer r.Body.Close()
 
-	if !handler.allowMoveStageRequest(tenantContext) {
+	allowed, err := handler.allowMoveStageRequest(r.Context(), tenantContext)
+	if err != nil {
+		slog.Error("move-stage shared rate limiter failed", "error", err, "organization_id", tenantContext.OrganizationID)
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "lead_move_rate_limit_unavailable", "Unable to validate the movement rate limit.")
+		return
+	}
+	if !allowed {
 		httpserver.WriteError(w, r, http.StatusTooManyRequests, "lead_move_rate_limited", "Muitas movimentacoes em sequencia. Aguarde um instante e tente novamente.")
 		return
 	}
@@ -389,6 +397,8 @@ func (handler Handler) publishLeadEvent(tenantContext tenant.Context, eventType 
 
 func writeLeadError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, ErrLostReasonRequired):
+		httpserver.WriteError(w, r, http.StatusBadRequest, "lead_lost_reason_required", "lostReason is required when dealStatus is lost")
 	case errors.Is(err, ErrInvalidInput):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_lead_input", err.Error())
 	case errors.Is(err, ErrNoLeadChanges):

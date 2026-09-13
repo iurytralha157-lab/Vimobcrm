@@ -1,0 +1,1 @@
+export { googleCalendarIntegrationProviderManifest } from "./manifest";

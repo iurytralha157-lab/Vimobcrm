@@ -1,9 +1,15 @@
-import { supabase } from '@/integrations/supabase/client'
+import { supabase } from '@/lib/supabase/client'
 import {
   VimobAPIError,
   getTechnicalErrorMessage,
 } from '@/lib/api/vimob-error'
 import { isPasswordRecoveryAccessToken } from '@/lib/auth/password-recovery'
+import {
+  LOCAL_READ_ONLY_ERROR_CODE,
+  LOCAL_READ_ONLY_ERROR_MESSAGE,
+  shouldBlockLocalMutation,
+} from '@/lib/local-read-only'
+import { parseJSONOrNull } from '@/lib/utils/json'
 
 export { VimobAPIError } from '@/lib/api/vimob-error'
 
@@ -69,6 +75,13 @@ export function setVimobAPIAccessToken(
 
 export async function vimobAPIRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   throwIfAborted(options.signal)
+
+  if (shouldBlockLocalMutation(options.method)) {
+    throw new VimobAPIError(LOCAL_READ_ONLY_ERROR_MESSAGE, {
+      code: LOCAL_READ_ONLY_ERROR_CODE,
+      status: 409,
+    })
+  }
 
   const accessToken = await resolveWithAbortSignal(getAccessTokenForAPI(), options.signal)
   assertAccessTokenAllowedForRequest(path, options.method, accessToken)
@@ -319,7 +332,7 @@ async function makeRequest(path: string, options: RequestOptions, headers: Heade
       baseURL,
       response,
       text,
-      payload: text ? safeJSONParse(text) : null,
+      payload: text ? parseJSONOrNull(text) : null,
     }
   } catch (error) {
     if (requestSignal.abortSource() === 'external') {
@@ -647,6 +660,7 @@ async function reportAPIError(
   error: VimobAPIError,
 ) {
   if (path === '/v1/telemetry/errors') return
+  if (process.env.NEXT_PUBLIC_DISABLE_ERROR_TELEMETRY === 'true') return
 
   try {
     const telemetryHeaders = new Headers({
@@ -717,12 +731,4 @@ function serializeRequestBody(body: unknown) {
 
 function isFormDataBody(body: unknown): body is FormData {
   return typeof FormData !== 'undefined' && body instanceof FormData
-}
-
-function safeJSONParse(value: string): unknown {
-  try {
-    return JSON.parse(value)
-  } catch {
-    return null
-  }
 }

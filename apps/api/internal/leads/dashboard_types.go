@@ -16,20 +16,21 @@ const (
 )
 
 type DashboardFilter struct {
-	DateFrom    *time.Time
-	DateTo      *time.Time
-	Granularity string
-	TeamID      string
-	UserID      string
-	Source      string
-	CampaignID  string
-	AdSetID     string
-	AdID        string
-	TagID       string
-	DealStatus  string
-	SearchQuery string
-	PipelineID  string
-	Limit       int
+	DateFrom       *time.Time
+	DateTo         *time.Time
+	Granularity    string
+	TeamID         string
+	UserID         string
+	Source         string
+	CampaignID     string
+	AdSetID        string
+	AdID           string
+	TagID          string
+	DealStatus     string
+	SearchQuery    string
+	PipelineID     string
+	Limit          int
+	IncludeDetails bool
 }
 
 type DashboardStats struct {
@@ -44,8 +45,10 @@ type DashboardStats struct {
 	WonAverageConversionDays *int                  `json:"wonAverageConversionDays"`
 	WonConversionBuckets     []WonConversionBucket `json:"wonConversionBuckets"`
 	WonDeals                 []WonDealDetail       `json:"wonDeals"`
+	WonDealsTruncated        bool                  `json:"wonDealsTruncated"`
 	LostReasonBuckets        []LostReasonBucket    `json:"lostReasonBuckets"`
 	LostDeals                []LostDealDetail      `json:"lostDeals"`
+	LostDealsTruncated       bool                  `json:"lostDealsTruncated"`
 	AverageResponseTime      string                `json:"avgResponseTime"`
 	TotalSalesValue          float64               `json:"totalSalesValue"`
 	PendingCommissions       float64               `json:"pendingCommissions"`
@@ -211,6 +214,14 @@ func ParseDashboardFilter(values url.Values) (DashboardFilter, error) {
 		return DashboardFilter{}, fmt.Errorf("%w: invalid granularity", ErrInvalidInput)
 	}
 
+	includeDetails := false
+	if rawIncludeDetails := strings.TrimSpace(values.Get("includeDetails")); rawIncludeDetails != "" {
+		includeDetails, err = strconv.ParseBool(rawIncludeDetails)
+		if err != nil {
+			return DashboardFilter{}, fmt.Errorf("%w: invalid includeDetails", ErrInvalidInput)
+		}
+	}
+
 	teamID, err := normalizeDashboardUUIDFilter("teamId", values.Get("teamId"))
 	if err != nil {
 		return DashboardFilter{}, err
@@ -254,20 +265,21 @@ func ParseDashboardFilter(values url.Values) (DashboardFilter, error) {
 	}
 
 	return DashboardFilter{
-		DateFrom:    dateFrom,
-		DateTo:      dateTo,
-		Granularity: granularity,
-		TeamID:      teamID,
-		UserID:      userID,
-		Source:      source,
-		CampaignID:  campaignID,
-		AdSetID:     adSetID,
-		AdID:        adID,
-		TagID:       tagID,
-		DealStatus:  dealStatus,
-		SearchQuery: searchQuery,
-		PipelineID:  pipelineID,
-		Limit:       limit,
+		DateFrom:       dateFrom,
+		DateTo:         dateTo,
+		Granularity:    granularity,
+		TeamID:         teamID,
+		UserID:         userID,
+		Source:         source,
+		CampaignID:     campaignID,
+		AdSetID:        adSetID,
+		AdID:           adID,
+		TagID:          tagID,
+		DealStatus:     dealStatus,
+		SearchQuery:    searchQuery,
+		PipelineID:     pipelineID,
+		Limit:          limit,
+		IncludeDetails: includeDetails,
 	}, nil
 }
 

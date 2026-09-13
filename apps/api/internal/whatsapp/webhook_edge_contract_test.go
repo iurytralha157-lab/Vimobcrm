@@ -101,8 +101,27 @@ func TestNativeManagedHandledRetryReconcilesTransportAndAutoReplyBeforeBusinessN
 		t.Fatalf("read native processor: %v", err)
 	}
 	source := string(raw)
-	pattern := `(?s)rule, err := findNativeInboundRule\(ctx, tx, session, message\).*?if nativeManagedProviderEventAlreadyHandled\(rule\) \{\s*if err := reconcileNativeHandledMessageTransport\(ctx, tx, session, message\); err != nil \{\s*return err\s*\}.*?recoverNativeHandledAutoReplyInput\(.*?message\.ProviderMessageID,\s*rule\.ManagedProviderEventLeadID,\s*\).*?autoReplyInputs = append\(autoReplyInputs, recoveredInput\).*?continue\s*\}\s*conversation, err := ensureNativeEvolutionConversation`
+	pattern := `(?s)rule, err := findNativeInboundRule\(ctx, tx, session, message\).*?if nativeManagedProviderEventAlreadyHandled\(rule\) \{\s*if err := reconcileNativeHandledMessageTransport\(ctx, tx, session, message\); err != nil \{\s*return err\s*\}.*?recoverNativeHandledAutoReplyInput\(.*?message\.ProviderMessageID,\s*rule\.ManagedProviderEventLeadID,\s*\).*?autoReplyInputs = append\(autoReplyInputs, recoveredInput\).*?leadID := strings\.TrimSpace\(rule\.ManagedProviderEventLeadID\).*?leadIDsToPublish\[leadID\] = struct\{\}\{\}.*?continue\s*\}\s*conversation, err := ensureNativeEvolutionConversation`
 	if !regexp.MustCompile(pattern).MatchString(source) {
 		t.Fatal("completed native retries must reconcile transport and auto-reply enqueue state before stopping business effects")
+	}
+}
+
+func TestNativeConversationUpsertUsesCanonicalSessionRemoteJIDConflictTarget(t *testing.T) {
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("unable to locate native processor contract test")
+	}
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(sourceFile), "webhook_native_processor.go"))
+	if err != nil {
+		t.Fatalf("read native processor: %v", err)
+	}
+	source := string(raw)
+	if strings.Contains(source, "on conflict (organization_id, session_id, remote_jid)") {
+		t.Fatal("native conversation upsert must not target a non-existent three-column unique constraint")
+	}
+	pattern := `(?s)if conversationMissing \{.*?insert into public\.whatsapp_conversations.*?on conflict \(session_id, remote_jid\).*?returning id::text, coalesce\(lead_id::text, ''\), remote_jid`
+	if !regexp.MustCompile(pattern).MatchString(source) {
+		t.Fatal("native missing-conversation path must use the canonical session/remote_jid conflict target")
 	}
 }

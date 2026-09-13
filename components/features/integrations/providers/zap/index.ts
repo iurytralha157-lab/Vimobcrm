@@ -1,0 +1,1 @@
+export { zapIntegrationProviderManifest } from "./manifest";

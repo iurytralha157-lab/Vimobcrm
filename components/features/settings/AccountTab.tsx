@@ -34,7 +34,9 @@ import { usePasswordChangeStatus } from "@/hooks/use-password-change-status";
 import { usePasswordStrength, type PasswordStrength } from "@/hooks/use-password-strength";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { settingsAPI } from "@/lib/api/settings";
+import { getErrorMessageOrFallback as getErrorMessage } from "@/lib/api/vimob-error";
 import { canManageOrganization } from "@/lib/access/organization";
+import { PASSWORD_POLICY } from "@/lib/validation/password";
 import { toast } from "sonner";
 import { Language, languageNames } from "@/i18n";
 
@@ -67,11 +69,6 @@ const STRENGTH_LABELS: Record<PasswordStrength["level"], string> = {
   strong: "Forte",
 };
 
-const getErrorMessage = (error: unknown, fallback: string) => {
-  if (error instanceof Error) return error.message;
-  return fallback;
-};
-
 interface ProfileFormData {
   name: string;
   whatsapp: string;
@@ -101,7 +98,7 @@ interface OrganizationFormData {
 }
 
 export function AccountTab() {
-  const { profile, organization, refreshProfile, isSuperAdmin, userOrganizations } = useAuth();
+  const { activeOrganization, profile, organization, refreshProfile, isSuperAdmin, userOrganizations } = useAuth();
   const { language, setLanguage, t } = useLanguage();
   const { setTheme } = useTheme();
   const { hasPermission } = useUserPermissions();
@@ -125,7 +122,7 @@ export function AccountTab() {
   const [cropDialogOpen, setCropDialogOpen] = useState(false);
   const [pendingLogoUrl, setPendingLogoUrl] = useState<string | null>(null);
   const [editingOrg, setEditingOrg] = useState(false);
-  const activeOrganizationId = organization?.id || profile?.organization_id;
+  const activeOrganizationId = activeOrganization.organizationId;
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
   const isAdmin =
     canManageOrganization({ isSuperAdmin, memberRole: activeMemberRole }) ||
@@ -269,7 +266,7 @@ export function AccountTab() {
   };
 
   const handleSaveOrganization = async () => {
-    if (!organization?.id || !isAdmin) return;
+    if (!activeOrganizationId || organization?.id !== activeOrganizationId || !isAdmin) return;
     setSavingOrg(true);
     try {
       await settingsAPI.updateOrganization({
@@ -293,7 +290,7 @@ export function AccountTab() {
         default_commission_percentage: Number.isFinite(Number.parseFloat(orgForm.default_commission_percentage))
           ? Number.parseFloat(orgForm.default_commission_percentage)
           : 5,
-      }, organization.id);
+      }, activeOrganizationId);
       await refreshProfile();
       toast.success(t.settings.organization.saveSuccess);
       setEditingOrg(false);
@@ -315,11 +312,11 @@ export function AccountTab() {
   };
 
   const onCropComplete = async (blob: Blob) => {
-    if (!organization?.id) return;
+    if (!activeOrganizationId || organization?.id !== activeOrganizationId) return;
     setCropDialogOpen(false);
     setUploadingLogo(true);
     try {
-      await settingsAPI.uploadOrganizationLogo(blob, organization.id);
+      await settingsAPI.uploadOrganizationLogo(blob, activeOrganizationId);
       await refreshProfile();
       toast.success("Logo atualizada com sucesso!");
     } catch (error: unknown) {
@@ -697,11 +694,15 @@ export function AccountTab() {
             {editingPassword && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Nova senha</Label>
+                  <Label htmlFor="account-new-password" className="text-xs">Nova senha</Label>
                   <div className="relative">
                     <Input
+                      id="account-new-password"
                       type={showNewPassword ? "text" : "password"}
                       placeholder="Minimo 8 caracteres"
+                      minLength={PASSWORD_POLICY.minLength}
+                      maxLength={PASSWORD_POLICY.maxLength}
+                      autoComplete="new-password"
                       value={passwordData.newPassword}
                       onChange={(e) => setPasswordData((prev) => ({ ...prev, newPassword: e.target.value }))}
                       className="pr-10 h-9"
@@ -711,6 +712,7 @@ export function AccountTab() {
                       type="button"
                       onClick={() => setShowNewPassword(!showNewPassword)}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      aria-label={showNewPassword ? "Ocultar nova senha" : "Mostrar nova senha"}
                     >
                       {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
@@ -741,11 +743,15 @@ export function AccountTab() {
                   )}
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Confirmar nova senha</Label>
+                  <Label htmlFor="account-confirm-password" className="text-xs">Confirmar nova senha</Label>
                   <div className="relative">
                     <Input
+                      id="account-confirm-password"
                       type={showConfirmPassword ? "text" : "password"}
                       placeholder="Confirme a senha"
+                      minLength={PASSWORD_POLICY.minLength}
+                      maxLength={PASSWORD_POLICY.maxLength}
+                      autoComplete="new-password"
                       value={passwordData.confirmPassword}
                       onChange={(e) => setPasswordData((prev) => ({ ...prev, confirmPassword: e.target.value }))}
                       className="pr-10 h-9"
@@ -755,6 +761,7 @@ export function AccountTab() {
                       type="button"
                       onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      aria-label={showConfirmPassword ? "Ocultar confirmação da senha" : "Mostrar confirmação da senha"}
                     >
                       {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
@@ -769,7 +776,7 @@ export function AccountTab() {
                 <p className="text-xs text-muted-foreground">
                   {passwordStatus.isLocked
                     ? `Bloqueado por ${passwordStatus.remainingText}`
-                    : "Use uma senha boa ou forte para atualizar."}
+                    : "Use uma senha que cumpra todos os requisitos."}
                 </p>
                 <Button
                   size="sm"

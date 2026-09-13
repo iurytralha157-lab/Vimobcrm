@@ -9,6 +9,7 @@ var (
 	ErrFunctionNotAllowed         = errors.New("integration function is not allowed")
 	ErrMetaUpstream               = errors.New("meta upstream request failed")
 	ErrMetaDeliveryUncertain      = errors.New("meta delivery result is uncertain")
+	ErrMetaFormRouteConflict      = errors.New("meta form is already routed to another organization")
 	ErrIdempotencyConflict        = errors.New("idempotency key is already bound to another request")
 )
 

@@ -1,7 +1,6 @@
 package financial
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -20,7 +19,7 @@ func NewHandler(repo Repository) Handler {
 }
 
 func (handler Handler) ListCategories(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -29,11 +28,11 @@ func (handler Handler) ListCategories(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
-	payload, ok := decodeMap(w, r)
+	payload, ok := httpserver.DecodeJSONMap(w, r, 2<<20)
 	if !ok {
 		return
 	}
@@ -42,7 +41,7 @@ func (handler Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) ListEntries(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -51,11 +50,11 @@ func (handler Handler) ListEntries(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) CreateEntry(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
-	payload, ok := decodeMap(w, r)
+	payload, ok := httpserver.DecodeJSONMap(w, r, 2<<20)
 	if !ok {
 		return
 	}
@@ -64,11 +63,11 @@ func (handler Handler) CreateEntry(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) UpdateEntry(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
-	payload, ok := decodeMap(w, r)
+	payload, ok := httpserver.DecodeJSONMap(w, r, 2<<20)
 	if !ok {
 		return
 	}
@@ -77,7 +76,7 @@ func (handler Handler) UpdateEntry(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) DeleteEntry(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -86,11 +85,11 @@ func (handler Handler) DeleteEntry(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) MarkEntryPaid(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
-	payload, ok := decodeMap(w, r)
+	payload, ok := httpserver.DecodeJSONMap(w, r, 2<<20)
 	if !ok {
 		return
 	}
@@ -99,7 +98,7 @@ func (handler Handler) MarkEntryPaid(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -108,7 +107,7 @@ func (handler Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) ListContracts(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -117,7 +116,7 @@ func (handler Handler) ListContracts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) ShowContract(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -126,11 +125,11 @@ func (handler Handler) ShowContract(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) CreateContract(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
-	payload, ok := decodeMap(w, r)
+	payload, ok := httpserver.DecodeJSONMap(w, r, 2<<20)
 	if !ok {
 		return
 	}
@@ -139,11 +138,11 @@ func (handler Handler) CreateContract(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) UpdateContract(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
-	payload, ok := decodeMap(w, r)
+	payload, ok := httpserver.DecodeJSONMap(w, r, 2<<20)
 	if !ok {
 		return
 	}
@@ -152,7 +151,7 @@ func (handler Handler) UpdateContract(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) DeleteContract(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -161,12 +160,12 @@ func (handler Handler) DeleteContract(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) ActivateContract(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request ContractActivationRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.ActivateContract(r.Context(), tenantContext, r.PathValue("id"), request.SkipCommissions)
@@ -174,7 +173,7 @@ func (handler Handler) ActivateContract(w http.ResponseWriter, r *http.Request) 
 }
 
 func (handler Handler) RegenerateCommissions(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -183,7 +182,7 @@ func (handler Handler) RegenerateCommissions(w http.ResponseWriter, r *http.Requ
 }
 
 func (handler Handler) ListContractDocuments(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -192,7 +191,7 @@ func (handler Handler) ListContractDocuments(w http.ResponseWriter, r *http.Requ
 }
 
 func (handler Handler) UploadContractDocument(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -224,12 +223,12 @@ func (handler Handler) UploadContractDocument(w http.ResponseWriter, r *http.Req
 }
 
 func (handler Handler) DeleteContractDocument(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request ContractDocumentRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	err := handler.repo.DeleteContractDocument(r.Context(), tenantContext, r.PathValue("id"), request.Path)
@@ -237,12 +236,12 @@ func (handler Handler) DeleteContractDocument(w http.ResponseWriter, r *http.Req
 }
 
 func (handler Handler) ContractDocumentSignedURL(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request ContractDocumentRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.ContractDocumentSignedURL(r.Context(), tenantContext, r.PathValue("id"), request.Path)
@@ -250,7 +249,7 @@ func (handler Handler) ContractDocumentSignedURL(w http.ResponseWriter, r *http.
 }
 
 func (handler Handler) ListCommissionRules(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -259,11 +258,11 @@ func (handler Handler) ListCommissionRules(w http.ResponseWriter, r *http.Reques
 }
 
 func (handler Handler) CreateCommissionRule(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
-	payload, ok := decodeMap(w, r)
+	payload, ok := httpserver.DecodeJSONMap(w, r, 2<<20)
 	if !ok {
 		return
 	}
@@ -272,11 +271,11 @@ func (handler Handler) CreateCommissionRule(w http.ResponseWriter, r *http.Reque
 }
 
 func (handler Handler) UpdateCommissionRule(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
-	payload, ok := decodeMap(w, r)
+	payload, ok := httpserver.DecodeJSONMap(w, r, 2<<20)
 	if !ok {
 		return
 	}
@@ -285,7 +284,7 @@ func (handler Handler) UpdateCommissionRule(w http.ResponseWriter, r *http.Reque
 }
 
 func (handler Handler) DeleteCommissionRule(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -294,7 +293,7 @@ func (handler Handler) DeleteCommissionRule(w http.ResponseWriter, r *http.Reque
 }
 
 func (handler Handler) ListCommissions(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -303,12 +302,12 @@ func (handler Handler) ListCommissions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) CommissionStatus(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request CommissionStatusRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	action := strings.TrimSpace(r.PathValue("action"))
@@ -317,7 +316,7 @@ func (handler Handler) CommissionStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 func (handler Handler) CommissionsByBroker(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -326,7 +325,7 @@ func (handler Handler) CommissionsByBroker(w http.ResponseWriter, r *http.Reques
 }
 
 func (handler Handler) DREInput(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -335,7 +334,7 @@ func (handler Handler) DREInput(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) DREGroups(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -344,7 +343,7 @@ func (handler Handler) DREGroups(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) DREMappings(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -353,11 +352,11 @@ func (handler Handler) DREMappings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) CreateDREMapping(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
-	payload, ok := decodeMap(w, r)
+	payload, ok := httpserver.DecodeJSONMap(w, r, 2<<20)
 	if !ok {
 		return
 	}
@@ -366,7 +365,7 @@ func (handler Handler) CreateDREMapping(w http.ResponseWriter, r *http.Request) 
 }
 
 func (handler Handler) DeleteDREMapping(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -375,46 +374,12 @@ func (handler Handler) DeleteDREMapping(w http.ResponseWriter, r *http.Request) 
 }
 
 func (handler Handler) InitializeDREGroups(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	err := handler.repo.InitializeDREGroups(r.Context(), tenantContext)
 	writeOK(w, r, err)
-}
-
-func organizationContext(w http.ResponseWriter, r *http.Request) (tenant.Context, bool) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.OrganizationID == "" {
-		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
-		return tenant.Context{}, false
-	}
-	return tenantContext, true
-}
-
-func decodeMap(w http.ResponseWriter, r *http.Request) (map[string]any, bool) {
-	defer r.Body.Close()
-	var payload map[string]any
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20))
-	if err := decoder.Decode(&payload); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
-		return nil, false
-	}
-	if payload == nil {
-		payload = map[string]any{}
-	}
-	return payload, true
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
-	defer r.Body.Close()
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
-		return false
-	}
-	return true
 }
 
 func writeData[T any](w http.ResponseWriter, r *http.Request, data T, err error) {

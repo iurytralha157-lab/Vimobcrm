@@ -108,12 +108,28 @@ func TestUpdateOrganizationUserPreservesRawMemberRoleAndEnforcesAuthority(t *tes
 	}
 	function := text[start : start+1+end]
 	for _, required := range []string{
-		"repo.organizationMemberRole",
+		"lockCanonicalUserAccess",
+		"organizationMemberRoleForUpdate",
 		"canManageOrganizationMemberRole",
-		"memberRole = desiredMemberRole",
+		"memberRole = *desiredMemberRole",
 	} {
 		if !strings.Contains(function, required) {
 			t.Fatalf("UpdateOrganizationUser is missing %q", required)
 		}
+	}
+	firstLock := strings.Index(function, "lockCanonicalUserAccess")
+	firstRoleRead := strings.Index(function, "organizationMemberRoleForUpdate")
+	lastLock := strings.LastIndex(function, "lockCanonicalUserAccess")
+	lastRoleRead := strings.LastIndex(function, "organizationMemberRoleForUpdate")
+	if firstLock >= firstRoleRead || lastLock >= lastRoleRead {
+		t.Fatal("UpdateOrganizationUser must lock the canonical user before every target-role revalidation")
+	}
+	if strings.Contains(function, "repo.organizationMemberRole") {
+		t.Fatal("UpdateOrganizationUser must not authorize against a pre-transaction target-role snapshot")
+	}
+
+	helperStart := strings.Index(text, "func organizationMemberRoleForUpdate(")
+	if helperStart < 0 || !strings.Contains(text[helperStart:], "for update") {
+		t.Fatal("target membership role revalidation must lock the membership row")
 	}
 }

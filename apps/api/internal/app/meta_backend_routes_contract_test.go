@@ -1,17 +1,12 @@
 package app
 
 import (
-	"os"
 	"strings"
 	"testing"
 )
 
 func TestMetaIntegrationRoutesAreOwnedByGoBackend(t *testing.T) {
-	raw, err := os.ReadFile("app.go")
-	if err != nil {
-		t.Fatalf("read app.go: %v", err)
-	}
-	source := string(raw)
+	source := readAppWiringSource(t)
 	for _, route := range []string{
 		`GET /v1/public/integrations/meta/oauth/callback`,
 		`POST /v1/integrations/meta/oauth/actions`,

@@ -64,7 +64,7 @@ class NotificationService {
   }: SendNotificationParams): Promise<DispatchNotificationResult> {
     const finalEventKey = eventKey || templateSlug;
     if (!finalEventKey) {
-      return { success: false, error: 'eventKey or templateSlug is required' };
+      return { success: false, queued: false, error: 'eventKey or templateSlug is required' };
     }
 
     console.log(`[NotificationService] Dispatching event: ${finalEventKey} for org: ${organizationId}`);
@@ -85,14 +85,14 @@ class NotificationService {
       if (data.error) {
         const message = describeNotificationError(data.error);
         console.warn(`[NotificationService] Dispatcher unavailable for ${finalEventKey}: ${message}`);
-        return { success: false, error: message };
+        return { success: false, queued: false, error: message };
       }
 
       return data;
     } catch (err) {
       const message = describeNotificationError(err);
       console.warn(`[NotificationService] Dispatcher unavailable for ${finalEventKey}: ${message}`);
-      return { success: false, error: message };
+      return { success: false, queued: false, error: message };
     }
   }
 }

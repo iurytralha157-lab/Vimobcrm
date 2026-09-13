@@ -61,3 +61,51 @@ test('nao duplica cache quando o mesmo escopo de usuarios muda de ordem', () => 
     }),
   );
 });
+
+test('separa cache irrestrito de um escopo explicitamente vazio', () => {
+  const base = {
+    organizationId: 'org-1',
+    pipelineId: 'pipeline-1',
+  };
+
+  const unrestricted = stageWithLeadsQueryKey(base);
+  const emptyScope = stageWithLeadsQueryKey({
+    ...base,
+    filters: { filterUserIds: [] },
+  });
+
+  assert.notDeepEqual(unrestricted, emptyScope);
+  assert.equal(unrestricted[13], undefined);
+  assert.equal(emptyScope[13], '__none__');
+});
+
+test('omite modo sem periodo e preserva compatibilidade operacional quando ha datas', () => {
+  const base = {
+    organizationId: 'org-1',
+    pipelineId: 'pipeline-1',
+  };
+
+  const defaultMode = stageWithLeadsQueryKey(base);
+  const modeWithoutDate = stageWithLeadsQueryKey({
+    ...base,
+    filters: { dateMode: 'operational' },
+  });
+  const dateRange = {
+    from: new Date('2026-09-01T00:00:00.000Z'),
+    to: new Date('2026-09-30T23:59:59.999Z'),
+  };
+  const operationalMode = stageWithLeadsQueryKey({
+    ...base,
+    filters: { dateRange, dateMode: 'operational' },
+  });
+  const originMode = stageWithLeadsQueryKey({
+    ...base,
+    filters: { dateRange, dateMode: 'origin' },
+  });
+
+  assert.deepEqual(defaultMode, modeWithoutDate);
+  assert.equal(defaultMode[14], undefined);
+  assert.equal(operationalMode[14], 'operational');
+  assert.equal(originMode[14], 'origin');
+  assert.notDeepEqual(operationalMode, originMode);
+});

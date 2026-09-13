@@ -51,6 +51,7 @@ func (repo Repository) createPublicSignupAuthUser(
 			reconciliationContext,
 			attemptID,
 			email,
+			password,
 		)
 		if reconcileErr != nil {
 			return publicSignupAuthUser{}, errors.Join(
@@ -67,6 +68,7 @@ func (repo Repository) createPublicSignupAuthUser(
 			reconciledUserID,
 			attemptID,
 			email,
+			password,
 		); err != nil {
 			return publicSignupAuthUser{}, errors.Join(
 				createErr,
@@ -85,6 +87,7 @@ func (repo Repository) createPublicSignupAuthUser(
 		createdUser.UserID,
 		attemptID,
 		email,
+		password,
 	); err != nil {
 		// Preserve the exact, provisionally signed identity. A retry can prove
 		// that it belongs to this attempt, promote the binding to app_metadata,
@@ -108,16 +111,21 @@ func (repo Repository) requestPublicSignupAuthUser(
 	if err != nil {
 		return publicSignupAuthUser{}, err
 	}
+	passwordBinding, err := repo.publicSignupAuthPasswordBinding(attemptID, email, password)
+	if err != nil {
+		return publicSignupAuthUser{}, err
+	}
 	redirectTo := strings.TrimRight(repo.appURL, "/") + "/login?emailConfirmation=success"
 	payload, err := json.Marshal(map[string]any{
 		"type":     "signup",
 		"email":    email,
 		"password": password,
 		"data": map[string]any{
-			"name":                   name,
-			"signup_attempt_id":      attemptID,
-			"provisioning_source":    "public_onboarding",
-			"signup_attempt_binding": provisionalBinding,
+			"name":                    name,
+			"signup_attempt_id":       attemptID,
+			"provisioning_source":     "public_onboarding",
+			"signup_attempt_binding":  provisionalBinding,
+			"signup_password_binding": passwordBinding,
 		},
 	})
 	if err != nil {
@@ -224,19 +232,45 @@ func (repo Repository) publicSignupAuthProvisionalBinding(attemptID string, emai
 	return base64.RawURLEncoding.EncodeToString(signature.Sum(nil)), nil
 }
 
+// publicSignupAuthPasswordBinding proves that a retry supplied the same
+// credential as the original request without persisting or exposing the
+// password itself. The server secret prevents offline password guessing from
+// Auth metadata, while the attempt and e-mail keep the binding scope exact.
+func (repo Repository) publicSignupAuthPasswordBinding(
+	attemptID string,
+	email string,
+	password string,
+) (string, error) {
+	key, err := repo.publicSignupRecoveryKey()
+	if err != nil {
+		return "", err
+	}
+	signature := hmac.New(sha256.New, key)
+	_, _ = signature.Write([]byte(
+		"public-signup-password/v1\n" + attemptID + "\n" +
+			strings.ToLower(strings.TrimSpace(email)) + "\n" + password,
+	))
+	return base64.RawURLEncoding.EncodeToString(signature.Sum(nil)), nil
+}
+
 // reconcilePublicSignupAuthUser closes the process-crash/ambiguous-response
 // window after Auth creation. It never adopts an account by email alone and it
 // never changes a password. Only the exact attempt-owned, still-unconfirmed
-// orphan is safe to resume.
+// orphan with the exact original password is safe to resume.
 func (repo Repository) reconcilePublicSignupAuthUser(
 	ctx context.Context,
 	attemptID string,
 	email string,
+	password string,
 ) (string, bool, error) {
 	if repo.db == nil {
 		return "", false, errors.New("database is unavailable for auth reconciliation")
 	}
 	provisionalBinding, err := repo.publicSignupAuthProvisionalBinding(attemptID, email)
+	if err != nil {
+		return "", false, err
+	}
+	passwordBinding, err := repo.publicSignupAuthPasswordBinding(attemptID, email, password)
 	if err != nil {
 		return "", false, err
 	}
@@ -259,6 +293,15 @@ func (repo Repository) reconcilePublicSignupAuthUser(
 		  )
 		  and auth_user.deleted_at is null
 		  and auth_user.email_confirmed_at is null
+		  and (
+			auth_user.raw_app_meta_data ->> 'signup_password_binding' = $4
+			or auth_user.raw_user_meta_data ->> 'signup_password_binding' = $4
+			or (
+			  coalesce(auth_user.raw_app_meta_data ->> 'signup_password_binding', '') = ''
+			  and coalesce(auth_user.raw_user_meta_data ->> 'signup_password_binding', '') = ''
+			  and auth_user.encrypted_password = extensions.crypt($5, auth_user.encrypted_password)
+			)
+		  )
 		  and (
 			not exists (
 			  select 1
@@ -286,7 +329,7 @@ func (repo Repository) reconcilePublicSignupAuthUser(
 			where organization.created_by = auth_user.id
 		  )
 		limit 2
-	`, email, attemptID, provisionalBinding)
+	`, email, attemptID, provisionalBinding, passwordBinding, password)
 	if err != nil {
 		return "", false, err
 	}
@@ -321,14 +364,20 @@ func (repo Repository) bindPublicSignupAuthUserAttempt(
 	userID string,
 	attemptID string,
 	email string,
+	password string,
 ) error {
 	if repo.projectURL == "" || repo.apiKey == "" {
 		return ErrInvalidInput
 	}
+	passwordBinding, err := repo.publicSignupAuthPasswordBinding(attemptID, email, password)
+	if err != nil {
+		return err
+	}
 	payload, err := json.Marshal(map[string]any{
 		"app_metadata": map[string]any{
-			"signup_attempt_id":   attemptID,
-			"provisioning_source": "public_onboarding",
+			"signup_attempt_id":       attemptID,
+			"provisioning_source":     "public_onboarding",
+			"signup_password_binding": passwordBinding,
 		},
 	})
 	if err != nil {
@@ -367,7 +416,8 @@ func (repo Repository) bindPublicSignupAuthUserAttempt(
 					strings.EqualFold(strings.TrimSpace(parsed.Email), email) &&
 					parsed.EmailConfirmedAt == nil &&
 					stringValue(parsed.AppMetadata["signup_attempt_id"]) == attemptID &&
-					stringValue(parsed.AppMetadata["provisioning_source"]) == "public_onboarding" {
+					stringValue(parsed.AppMetadata["provisioning_source"]) == "public_onboarding" &&
+					stringValue(parsed.AppMetadata["signup_password_binding"]) == passwordBinding {
 					return nil
 				}
 				requestErr = errors.New("auth signup attempt binding response has an invalid contract")
@@ -391,6 +441,7 @@ func (repo Repository) bindPublicSignupAuthUserAttempt(
 		userID,
 		attemptID,
 		email,
+		passwordBinding,
 	)
 	if reconcileErr == nil && bound {
 		return nil
@@ -409,6 +460,7 @@ func (repo Repository) publicSignupAuthUserAttemptBound(
 	userID string,
 	attemptID string,
 	email string,
+	passwordBinding string,
 ) (bool, error) {
 	if repo.db == nil {
 		return false, errors.New("database is unavailable for auth binding reconciliation")
@@ -422,6 +474,7 @@ func (repo Repository) publicSignupAuthUserAttemptBound(
 			  and auth_user.email = $2
 			  and auth_user.raw_app_meta_data ->> 'signup_attempt_id' = $3
 			  and auth_user.raw_app_meta_data ->> 'provisioning_source' = 'public_onboarding'
+			  and auth_user.raw_app_meta_data ->> 'signup_password_binding' = $4
 			  and auth_user.deleted_at is null
 			  and auth_user.email_confirmed_at is null
 			  and not exists (
@@ -433,7 +486,7 @@ func (repo Repository) publicSignupAuthUserAttemptBound(
 				where organization.created_by = auth_user.id
 			  )
 		)
-	`, userID, email, attemptID).Scan(&bound)
+	`, userID, email, attemptID, passwordBinding).Scan(&bound)
 	return bound, err
 }
 

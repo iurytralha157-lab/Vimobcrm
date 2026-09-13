@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 
 import { useAuth } from '@/contexts/AuthContext'
 import { createTenantQueryAccessSignature } from '@/lib/access/tenant-query-cache'
+import { stringifyErrorMessage as getErrorMessage } from '@/lib/api/vimob-error'
 import {
   propertyWorkspaceAPI,
   type PropertyWorkspace,
@@ -38,25 +39,19 @@ export const propertyWorkspaceKeys = {
     ...propertyWorkspaceKeys.root(organizationId, accessSignature),
     propertyId,
   ] as const,
-  ownerOptions: (organizationId: string | undefined, accessSignature: string) => [
-    ...propertyWorkspaceKeys.root(organizationId, accessSignature),
-    'owner-options',
-  ] as const,
 }
 
 function useWorkspaceQueryScope() {
   const {
+    activeOrganization,
     user,
     profile,
     organization,
-    organizationsLoaded,
-    isInitializingOrg,
     tenantContext,
     isSuperAdmin,
     impersonating,
   } = useAuth()
-  const organizationId = organization?.id
-    ?? ((!organizationsLoaded || isInitializingOrg) ? undefined : profile?.organization_id || undefined)
+  const organizationId = activeOrganization.organizationId || undefined
 
   return {
     organizationId,
@@ -80,10 +75,6 @@ function useWorkspaceQueryScope() {
 
 function useWorkspaceOrganizationId() {
   return useWorkspaceQueryScope().organizationId
-}
-
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error)
 }
 
 function useInvalidatePropertyWorkspace(propertyId: string | null) {
@@ -119,23 +110,6 @@ export function usePropertyWorkspace(propertyId: string | null) {
     refetchInterval: 30_000,
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
-    retry: false,
-  })
-}
-
-export function usePropertyOwnerOptions(enabled = true) {
-  const { user } = useAuth()
-  const { organizationId, accessSignature } = useWorkspaceQueryScope()
-
-  return useQuery({
-    queryKey: propertyWorkspaceKeys.ownerOptions(organizationId, accessSignature),
-    queryFn: async () => {
-      if (!organizationId) return []
-      return propertyWorkspaceAPI.listOwnerOptions(organizationId)
-    },
-    enabled: Boolean(enabled && user?.id && organizationId),
-    gcTime: 0,
-    staleTime: 30_000,
     retry: false,
   })
 }
@@ -282,6 +256,7 @@ export function useCreatePropertyAsset(propertyId: string | null) {
       if (!organizationId || !propertyId) throw new Error('Organizacao ou imovel nao identificado')
 
       let createInput: PropertyAssetCreateInput = { ...input, storage_path: null }
+      let uploadedStoragePath: string | null = null
       if (file) {
         if (!['photo', 'floor_plan', 'document'].includes(input.asset_type)) {
           throw new Error('Videos e tours virtuais devem usar uma URL externa')
@@ -292,6 +267,7 @@ export function useCreatePropertyAsset(propertyId: string | null) {
           input.asset_type as 'photo' | 'floor_plan' | 'document',
           file,
         )
+        uploadedStoragePath = uploaded.storage_path
         createInput = {
           ...createInput,
           storage_path: uploaded.storage_path,
@@ -302,7 +278,16 @@ export function useCreatePropertyAsset(propertyId: string | null) {
         }
       }
 
-      return propertyWorkspaceAPI.createAsset(organizationId, propertyId, createInput)
+      try {
+        return await propertyWorkspaceAPI.createAsset(organizationId, propertyId, createInput)
+      } catch (error) {
+        if (uploadedStoragePath) {
+          await propertyWorkspaceAPI.discardAssetUpload(organizationId, propertyId, {
+            storage_path: uploadedStoragePath,
+          }).catch(() => undefined)
+        }
+        throw error
+      }
     },
     onSuccess: async () => {
       await invalidate()

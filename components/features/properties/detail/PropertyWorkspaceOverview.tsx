@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import Image from 'next/image'
 import {
   Bath,
@@ -19,6 +19,13 @@ import {
 
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { cleanPropertyDescription } from '@/lib/property-description'
+import {
+  formatPropertyArea as formatArea,
+  formatPropertyBoolean as formatBoolean,
+  formatPropertyCurrency as formatCurrency,
+  formatPropertyDate as formatDate,
+} from '@/lib/property-display-utils'
 import type { PropertyWorkspaceAsset, PropertyWorkspacePayload } from '@/lib/validation'
 import { cn } from '@/lib/utils'
 
@@ -48,34 +55,6 @@ const ASSET_VISIBILITY_LABELS: Record<PropertyWorkspaceAsset['visibility'], stri
   public: 'Público',
   internal: 'Interno',
   confidential: 'Confidencial',
-}
-
-function formatCurrency(value: number | null | undefined) {
-  if (value == null) return 'Não informado'
-  return new Intl.NumberFormat('pt-BR', {
-    style: 'currency',
-    currency: 'BRL',
-    maximumFractionDigits: 2,
-  }).format(value)
-}
-
-function formatDate(value?: string | null, withTime = false) {
-  if (!value) return 'Não informado'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat(
-    'pt-BR',
-    withTime ? { dateStyle: 'short', timeStyle: 'short' } : { dateStyle: 'short' },
-  ).format(date)
-}
-
-function formatBoolean(value: boolean | null | undefined) {
-  if (value == null) return 'Não informado'
-  return value ? 'Sim' : 'Não'
-}
-
-function formatArea(value: number | null | undefined) {
-  return value == null ? 'Não informado' : `${value.toLocaleString('pt-BR')} m²`
 }
 
 function formatFileSize(value: number | null) {
@@ -228,7 +207,13 @@ export function PropertyGallery({ images, title }: { images: string[]; title: st
   )
 }
 
-export function AssetCatalog({ assets }: { assets: PropertyWorkspaceAsset[] }) {
+export function AssetCatalog({
+  assets,
+  renderActions,
+}: {
+  assets: PropertyWorkspaceAsset[]
+  renderActions?: (asset: PropertyWorkspaceAsset) => ReactNode
+}) {
   if (assets.length === 0) {
     return (
       <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-5 text-center text-[12px] font-light text-muted-foreground">
@@ -242,6 +227,9 @@ export function AssetCatalog({ assets }: { assets: PropertyWorkspaceAsset[] }) {
       {assets.map((asset) => {
         const href = asset.access_url || asset.external_url
         const displayName = asset.title || asset.file_name || ASSET_TYPE_LABELS[asset.asset_type]
+        const visibilityLabel = asset.external_url && asset.visibility !== 'public'
+          ? 'Oculta dos canais · origem externa não protegida'
+          : ASSET_VISIBILITY_LABELS[asset.visibility]
 
         return (
           <article key={asset.id} className="min-w-0 rounded-[8px] bg-[var(--app-surface-soft)] p-4">
@@ -253,7 +241,7 @@ export function AssetCatalog({ assets }: { assets: PropertyWorkspaceAsset[] }) {
                 <div className="min-w-0">
                   <h4 className="break-words text-[12px] font-normal text-[var(--app-text-primary)]">{displayName}</h4>
                   <p className="mt-0.5 text-[10px] font-light text-muted-foreground">
-                    {ASSET_TYPE_LABELS[asset.asset_type]} · {ASSET_VISIBILITY_LABELS[asset.visibility]}
+                    {ASSET_TYPE_LABELS[asset.asset_type]} · {visibilityLabel}
                   </p>
                 </div>
               </div>
@@ -330,6 +318,7 @@ export function AssetCatalog({ assets }: { assets: PropertyWorkspaceAsset[] }) {
                 <ExternalLink className="h-3 w-3" />
               </a>
             )}
+            {renderActions?.(asset)}
           </article>
         )
       })}
@@ -432,13 +421,13 @@ export function PropertyWorkspaceOverview({
             <div className="rounded-[6px] bg-[var(--app-surface-soft)] p-3">
               <p className="text-[10px] font-light uppercase tracking-[0.08em] text-[var(--app-text-tertiary)]">Descrição pública</p>
               <p className="mt-2 whitespace-pre-wrap text-[12px] font-light leading-5 text-[var(--app-text-secondary)]">
-                {property.descricao_site || 'Nenhuma descrição pública cadastrada.'}
+                {cleanPropertyDescription(property.descricao_site) || 'Nenhuma descrição pública cadastrada.'}
               </p>
             </div>
             <div className="rounded-[6px] bg-[var(--app-surface-soft)] p-3">
               <p className="text-[10px] font-light uppercase tracking-[0.08em] text-[var(--app-text-tertiary)]">Descrição do cadastro</p>
               <p className="mt-2 whitespace-pre-wrap text-[12px] font-light leading-5 text-[var(--app-text-secondary)]">
-                {property.descricao || 'Nenhuma descrição cadastrada.'}
+                {cleanPropertyDescription(property.descricao) || 'Nenhuma descrição cadastrada.'}
               </p>
             </div>
           </CardContent>

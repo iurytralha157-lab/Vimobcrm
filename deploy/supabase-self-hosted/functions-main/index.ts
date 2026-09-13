@@ -8,14 +8,25 @@
 import * as jose from 'jsr:@panva/jose@6'
 
 type FunctionManifest = {
-  functions?: Array<{ slug?: string; verify_jwt?: boolean }>
+  schema_version?: number
+  functions?: Array<{
+    slug?: string
+    status?: string
+    lifecycle?: string
+    verify_jwt?: boolean
+  }>
 }
 
 const FUNCTIONS_ROOT = '/home/deno/functions'
 const manifest = await loadManifest()
 const jwtPolicy = new Map(
-  (manifest.functions ?? [])
-    .filter((item) => typeof item.slug === 'string')
+  (manifest.schema_version === 2 ? manifest.functions ?? [] : [])
+    .filter(
+      (item) =>
+        typeof item.slug === 'string' &&
+        item.status === 'ACTIVE' &&
+        (item.lifecycle === 'LIVE' || item.lifecycle === 'TOMBSTONE'),
+    )
     .map((item) => [item.slug as string, item.verify_jwt !== false]),
 )
 

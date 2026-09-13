@@ -30,6 +30,8 @@ type scanner interface {
 
 type ExecutionFilter struct {
 	AutomationID string
+	LeadID       string
+	ActiveOnly   bool
 	Limit        int
 }
 
@@ -827,6 +829,17 @@ func (repo Repository) ListExecutions(ctx context.Context, tenantContext tenant.
 		}
 		args = append(args, automationID)
 		where = append(where, "ae.automation_id = $"+strconv.Itoa(len(args))+"::uuid")
+	}
+	if filter.LeadID != "" {
+		leadID, ok := normalizeUUID(filter.LeadID)
+		if !ok {
+			return nil, ErrInvalidInput
+		}
+		args = append(args, leadID)
+		where = append(where, "ae.lead_id = $"+strconv.Itoa(len(args))+"::uuid")
+	}
+	if filter.ActiveOnly {
+		where = append(where, "ae.status in ('queued', 'running', 'waiting')")
 	}
 
 	rows, err := repo.db.Pool().Query(ctx, `

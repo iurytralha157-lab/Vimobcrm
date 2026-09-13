@@ -227,9 +227,17 @@ func (client *oauthGraphClient) debugUserToken(ctx context.Context, userToken st
 		return oauthTokenDebug{}, newOAuthFailure("oauth_user_token_invalid", http.StatusUnauthorized)
 	}
 	var expiresAt *time.Time
-	if seconds := oauthNumber(data["expires_at"]); seconds > 0 {
-		value := time.Unix(seconds, 0).UTC()
-		expiresAt = &value
+	// A token stops being operational at the first provider deadline. Meta may
+	// return both the token expiry and the independent data-access expiry; using
+	// only expires_at can leave the UI claiming that Marketing is available
+	// after data access has already ended.
+	for _, field := range []string{"expires_at", "data_access_expires_at"} {
+		if seconds := oauthNumber(data[field]); seconds > 0 {
+			value := time.Unix(seconds, 0).UTC()
+			if expiresAt == nil || value.Before(*expiresAt) {
+				expiresAt = &value
+			}
+		}
 	}
 	scopes := oauthStringSlice(data["scopes"], 100)
 	return oauthTokenDebug{UserID: userID, ExpiresAt: expiresAt, Scopes: scopes}, nil

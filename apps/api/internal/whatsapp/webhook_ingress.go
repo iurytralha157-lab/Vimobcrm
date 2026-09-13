@@ -11,15 +11,96 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 )
 
 var (
-	errWebhookUnauthorized    = errors.New("whatsapp webhook unauthorized")
-	errWebhookSessionMismatch = errors.New("whatsapp webhook session mismatch")
+	errWebhookUnauthorized      = errors.New("whatsapp webhook unauthorized")
+	errWebhookSessionMismatch   = errors.New("whatsapp webhook session mismatch")
+	errWebhookSchemaUnavailable = errors.New("whatsapp webhook schema unavailable")
 )
+
+const evolutionWebhookSchemaCompatibilityQuery = `
+	select
+		to_regclass('public.whatsapp_webhook_inbox') is not null
+		and exists (
+			select 1
+			from pg_catalog.pg_attribute
+			where attrelid = to_regclass('public.whatsapp_webhook_inbox')
+			  and attname = 'processing_lane'
+			  and attnum > 0
+			  and not attisdropped
+		)
+		and exists (
+			select 1
+			from pg_catalog.pg_attribute
+			where attrelid = to_regclass('public.whatsapp_webhook_inbox')
+			  and attname = 'provider_occurred_at'
+			  and attnum > 0
+			  and not attisdropped
+		)
+		and coalesce((
+			select indisready and indisvalid
+			from pg_catalog.pg_index
+			where indexrelid = to_regclass('public.whatsapp_webhook_inbox_lane_session_due_head_idx')
+		), false)
+		and coalesce((
+			select indisready and indisvalid
+			from pg_catalog.pg_index
+			where indexrelid = to_regclass('public.whatsapp_webhook_inbox_session_processing_idx')
+		), false)
+`
+
+const releaseWhatsAppOutboxRetriesAfterReconnectQuery = `
+	update public.whatsapp_outbox
+	set next_attempt_at = now(),
+	    updated_at = now()
+	where organization_id = $1::uuid
+	  and session_id = $2::uuid
+	  and status = 'retry'
+	  and attempts < max_attempts
+	  and next_attempt_at > now()
+`
+
+type evolutionWebhookSchemaGate struct {
+	mu        sync.Mutex
+	checkedAt time.Time
+	err       error
+}
+
+func (repo Repository) ensureEvolutionWebhookSchema(ctx context.Context) error {
+	gate := repo.webhookSchemaGate
+	if gate == nil {
+		gate = &evolutionWebhookSchemaGate{}
+	}
+
+	gate.mu.Lock()
+	defer gate.mu.Unlock()
+	now := time.Now()
+	cacheTTL := 5 * time.Minute
+	if gate.err != nil {
+		cacheTTL = 5 * time.Second
+	}
+	if !gate.checkedAt.IsZero() && now.Sub(gate.checkedAt) < cacheTTL {
+		return gate.err
+	}
+
+	checkContext, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	compatible := false
+	err := repo.db.Pool().QueryRow(checkContext, evolutionWebhookSchemaCompatibilityQuery).Scan(&compatible)
+	if err == nil && !compatible {
+		err = fmt.Errorf("%w: required inbox columns or fair-claim indexes are missing", errWebhookSchemaUnavailable)
+	} else if err != nil {
+		err = fmt.Errorf("%w: %v", errWebhookSchemaUnavailable, err)
+	}
+	gate.checkedAt = now
+	gate.err = err
+	return err
+}
 
 type evolutionWebhookEnvelope struct {
 	SessionID           string
@@ -170,6 +251,41 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 		eventKey = evolutionWebhookEventKey(session.ID, envelope.Payload)
 	}
 	envelope.EventKey = eventKey
+	if evolutionWebhookIsHistorySyncControl(pendingEvolutionWebhook{
+		EventType: envelope.EventType,
+		Payload:   envelope.Payload,
+	}) {
+		return evolutionWebhookReceipt{
+			ID:        eventKey,
+			SessionID: session.ID,
+			EventType: envelope.EventType,
+			Status:    "processed",
+			Inline:    true,
+		}, nil
+	}
+	filteredItem, groupOnly, err := prepareEvolutionWebhookWithoutGroupMessages(pendingEvolutionWebhook{
+		EventType: envelope.EventType,
+		Payload:   envelope.Payload,
+	})
+	if err != nil {
+		return evolutionWebhookReceipt{}, err
+	}
+	if groupOnly {
+		// Group traffic is outside the CRM lead channel. Acknowledge it only
+		// after the session and webhook credentials were validated, but before
+		// inserting anything in the durable inbox.
+		return evolutionWebhookReceipt{
+			ID:        eventKey,
+			SessionID: session.ID,
+			EventType: envelope.EventType,
+			Status:    "processed",
+			Inline:    true,
+		}, nil
+	}
+	// A provider normally emits one message per callback. If a version sends a
+	// mixed batch, persist only its direct members so a lead is not discarded
+	// together with group traffic.
+	envelope.Payload = filteredItem.Payload
 	inlineState, err := evolutionWebhookInlineSessionState(envelope)
 	if err != nil {
 		return evolutionWebhookReceipt{}, err
@@ -186,9 +302,31 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 			Inline:    true,
 		}, nil
 	}
+	if err := repo.ensureEvolutionWebhookSchema(ctx); err != nil {
+		return evolutionWebhookReceipt{}, err
+	}
+	parts, err := prepareEvolutionWebhookDurableParts(envelope)
+	if err != nil {
+		return evolutionWebhookReceipt{}, err
+	}
+	if len(parts) == 0 {
+		return evolutionWebhookReceipt{}, fmt.Errorf("prepare Evolution webhook durable delivery: no payload parts")
+	}
 
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return evolutionWebhookReceipt{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Insert the original event key first. Besides preserving the public receipt
+	// contract, this is a rolling-deploy fence: if an older API replica already
+	// persisted the unsplit callback, this replica must not add derived rows that
+	// would process the same provider messages twice.
+	first := parts[0]
 	var receipt evolutionWebhookReceipt
-	err = repo.db.Pool().QueryRow(ctx, `
+	var firstCreatedAt time.Time
+	err = tx.QueryRow(ctx, `
 		insert into public.whatsapp_webhook_inbox (
 			organization_id,
 			session_id,
@@ -197,8 +335,11 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 			event_key,
 			event_type,
 			payload,
+			processing_lane,
+			provider_occurred_at,
 			status,
 			next_attempt_at,
+			created_at,
 			expires_at
 		)
 		values (
@@ -209,31 +350,432 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 			$4,
 			$5,
 			$6::jsonb,
+			$7,
+			$8,
 			'pending',
 			now(),
+			clock_timestamp(),
 			now() + interval '30 days'
 		)
 		on conflict (event_key) do nothing
-		returning id::text, session_id::text, event_type, status
-	`, session.OrganizationID, session.ID, firstNonEmpty(session.InstanceID, session.InstanceName), eventKey, envelope.EventType, string(envelope.Payload)).Scan(
+		returning id::text, session_id::text, event_type, status, created_at
+	`, session.OrganizationID, session.ID, firstNonEmpty(session.InstanceID, session.InstanceName), first.EventKey, first.EventType, string(first.Payload), first.ProcessingLane, first.ProviderOccurredAt).Scan(
 		&receipt.ID,
 		&receipt.SessionID,
 		&receipt.EventType,
 		&receipt.Status,
+		&firstCreatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		receipt.Duplicate = true
-		err = repo.db.Pool().QueryRow(ctx, `
-			select id::text, session_id::text, event_type, status
+		err = tx.QueryRow(ctx, `
+			select id::text, session_id::text, event_type, status, created_at
 			from public.whatsapp_webhook_inbox
-			where event_key = $1
+			where organization_id = $1::uuid
+			  and session_id = $2::uuid
+			  and event_key = $3
 			limit 1
-		`, eventKey).Scan(&receipt.ID, &receipt.SessionID, &receipt.EventType, &receipt.Status)
+		`, session.OrganizationID, session.ID, eventKey).Scan(&receipt.ID, &receipt.SessionID, &receipt.EventType, &receipt.Status, &firstCreatedAt)
 	}
 	if err != nil {
 		return evolutionWebhookReceipt{}, err
 	}
+	if receipt.Duplicate {
+		if err := tx.Commit(ctx); err != nil {
+			return evolutionWebhookReceipt{}, err
+		}
+		return receipt, nil
+	}
+
+	if len(parts) > 1 {
+		encodedParts, err := json.Marshal(parts[1:])
+		if err != nil {
+			return evolutionWebhookReceipt{}, fmt.Errorf("encode Evolution webhook batch parts: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			insert into public.whatsapp_webhook_inbox (
+				organization_id,
+				session_id,
+				provider,
+				provider_instance_id,
+				event_key,
+				event_type,
+				payload,
+				processing_lane,
+				provider_occurred_at,
+				status,
+				next_attempt_at,
+				created_at,
+				expires_at
+			)
+			select
+				$1::uuid,
+				$2::uuid,
+				'evolution_go',
+				nullif($3, ''),
+				part.event_key,
+				part.event_type,
+				part.payload,
+				part.processing_lane,
+				part.provider_occurred_at,
+				'pending',
+				now(),
+				$5::timestamptz + (part.ordinal::double precision * interval '1 microsecond'),
+				now() + interval '30 days'
+			from jsonb_to_recordset($4::jsonb) as part (
+				event_key text,
+				event_type text,
+				payload jsonb,
+				processing_lane text,
+				provider_occurred_at timestamptz,
+				ordinal integer
+			)
+			order by part.ordinal
+			on conflict (event_key) do nothing
+		`, session.OrganizationID, session.ID, firstNonEmpty(session.InstanceID, session.InstanceName), string(encodedParts), firstCreatedAt); err != nil {
+			return evolutionWebhookReceipt{}, fmt.Errorf("persist Evolution webhook batch parts: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return evolutionWebhookReceipt{}, err
+	}
 	return receipt, nil
+}
+
+const (
+	evolutionWebhookLiveWindow       = 10 * time.Minute
+	evolutionWebhookMaxSplitMessages = 128
+	evolutionWebhookMaxRoutingBytes  = 256
+	evolutionWebhookRoutingMetaKey   = "__vimob_ingress"
+	evolutionWebhookSessionRoute     = "__session__"
+)
+
+type evolutionWebhookDurablePart struct {
+	EventKey           string          `json:"event_key"`
+	EventType          string          `json:"event_type"`
+	Payload            json.RawMessage `json:"payload"`
+	ProcessingLane     string          `json:"processing_lane"`
+	ProviderOccurredAt *time.Time      `json:"provider_occurred_at"`
+	Ordinal            int             `json:"ordinal"`
+}
+
+type evolutionWebhookMessageListLocation struct {
+	topLevelKey string
+	nestedKey   string
+	values      []any
+}
+
+// prepareEvolutionWebhookDurableParts isolates a provider batch without doing
+// provider I/O. Every part remains in the same database transaction, the first
+// part keeps the original event key, and later parts receive deterministic
+// derived keys. This preserves fast ACK and callback-level deduplication while
+// letting a current text use the live lane independently from history/media.
+func prepareEvolutionWebhookDurableParts(envelope evolutionWebhookEnvelope) ([]evolutionWebhookDurablePart, error) {
+	payloadParts, split, err := splitEvolutionWebhookMessageBatch(envelope.Payload)
+	if err != nil {
+		return nil, err
+	}
+	if !split {
+		payloadParts = [][]byte{envelope.Payload}
+	}
+
+	parts := make([]evolutionWebhookDurablePart, 0, len(payloadParts))
+	for index, payloadPart := range payloadParts {
+		annotatedPayload, err := annotateEvolutionWebhookRouting(payloadPart)
+		if err != nil {
+			return nil, fmt.Errorf("annotate Evolution webhook batch part %d: %w", index, err)
+		}
+		partEnvelope := envelope
+		partEnvelope.Payload = annotatedPayload
+		lane, occurredAt := evolutionWebhookProcessingLane(partEnvelope)
+		partKey := envelope.EventKey
+		if index > 0 {
+			partKey = evolutionWebhookBatchPartEventKey(envelope.EventKey, index, payloadPart)
+		}
+		parts = append(parts, evolutionWebhookDurablePart{
+			EventKey:           partKey,
+			EventType:          envelope.EventType,
+			Payload:            json.RawMessage(annotatedPayload),
+			ProcessingLane:     lane,
+			ProviderOccurredAt: occurredAt,
+			Ordinal:            index,
+		})
+	}
+	return parts, nil
+}
+
+func splitEvolutionWebhookMessageBatch(payload []byte) ([][]byte, bool, error) {
+	decoded, err := decodeNativeEvolutionPayload(payload)
+	if err != nil {
+		return nil, false, nil
+	}
+	locations := evolutionWebhookMessageListLocations(decoded)
+	if len(locations) != 1 {
+		return nil, false, nil
+	}
+	location := locations[0]
+	if len(location.values) < 2 || len(location.values) > evolutionWebhookMaxSplitMessages {
+		return nil, false, nil
+	}
+	if messages := extractNativeEvolutionMessages(decoded); len(messages) != len(location.values) {
+		// Fail closed when a provider shape contains wrappers or unknown members.
+		// The original callback remains durable as one row; nothing is discarded.
+		return nil, false, nil
+	}
+
+	parts := make([][]byte, 0, len(location.values))
+	for _, value := range location.values {
+		clone := cloneEvolutionWebhookMap(decoded)
+		if location.nestedKey == "" {
+			clone[location.topLevelKey] = []any{value}
+		} else {
+			container := cloneEvolutionWebhookMap(mapFromAny(clone[location.topLevelKey]))
+			if len(container) == 0 {
+				return nil, false, nil
+			}
+			container[location.nestedKey] = []any{value}
+			clone[location.topLevelKey] = container
+		}
+		encoded, err := json.Marshal(clone)
+		if err != nil {
+			return nil, false, fmt.Errorf("encode Evolution webhook message batch member: %w", err)
+		}
+		verified, err := decodeNativeEvolutionPayload(encoded)
+		if err != nil || len(extractNativeEvolutionMessages(verified)) != 1 {
+			return nil, false, nil
+		}
+		parts = append(parts, encoded)
+	}
+	return parts, true, nil
+}
+
+func evolutionWebhookMessageListLocations(payload map[string]any) []evolutionWebhookMessageListLocation {
+	locations := make([]evolutionWebhookMessageListLocation, 0, 2)
+	for _, key := range []string{"messages", "Messages", "message", "Message"} {
+		if values, ok := payload[key].([]any); ok && len(values) > 0 {
+			locations = append(locations, evolutionWebhookMessageListLocation{topLevelKey: key, values: values})
+		}
+	}
+	for _, dataKey := range []string{"data", "Data"} {
+		if values, ok := payload[dataKey].([]any); ok && len(values) > 0 {
+			locations = append(locations, evolutionWebhookMessageListLocation{topLevelKey: dataKey, values: values})
+			continue
+		}
+		data := mapFromAny(payload[dataKey])
+		if len(data) == 0 {
+			continue
+		}
+		for _, key := range []string{"messages", "Messages", "message", "Message"} {
+			if values, ok := data[key].([]any); ok && len(values) > 0 {
+				locations = append(locations, evolutionWebhookMessageListLocation{topLevelKey: dataKey, nestedKey: key, values: values})
+			}
+		}
+	}
+	return locations
+}
+
+func cloneEvolutionWebhookMap(payload map[string]any) map[string]any {
+	clone := make(map[string]any, len(payload))
+	for key, value := range payload {
+		clone[key] = value
+	}
+	return clone
+}
+
+func annotateEvolutionWebhookRouting(payload []byte) ([]byte, error) {
+	decoded, err := decodeNativeEvolutionPayload(payload)
+	if err != nil {
+		return nil, err
+	}
+	delete(decoded, evolutionWebhookRoutingMetaKey)
+	decoded[evolutionWebhookRoutingMetaKey] = map[string]any{
+		"routing_key": evolutionWebhookPayloadRoutingKey(decoded),
+	}
+	return json.Marshal(decoded)
+}
+
+func evolutionWebhookPayloadRoutingKey(payload map[string]any) string {
+	messages := withoutNativeEvolutionGroupMessages(extractNativeEvolutionMessages(payload))
+	if len(messages) == 0 {
+		return evolutionWebhookSessionRoute
+	}
+	route := ""
+	for _, message := range messages {
+		candidate := ""
+		// ContactPhone was already normalized by the identity parser. Do not run
+		// a bare international number through locale-sensitive canonicalization a
+		// second time or two callbacks could receive different ordering keys.
+		if phone := normalizeDigits(message.ContactPhone); len(phone) >= 8 && len(phone) <= 20 {
+			candidate = "phone:" + phone
+		} else if remoteJID := normalizeRemoteAlias(message.RemoteJID); remoteJID != "" && !isOpaqueWhatsAppJID(remoteJID) {
+			candidate = "jid:" + remoteJID
+		}
+		if candidate == "" || len(candidate) > evolutionWebhookMaxRoutingBytes {
+			return evolutionWebhookSessionRoute
+		}
+		if route == "" {
+			route = candidate
+			continue
+		}
+		if route != candidate {
+			return evolutionWebhookSessionRoute
+		}
+	}
+	return route
+}
+
+func evolutionWebhookBatchPartEventKey(eventKey string, index int, payload []byte) string {
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(eventKey))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write([]byte(fmt.Sprintf("%d", index)))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write(payload)
+	return "evolution_go_part:" + hex.EncodeToString(hash.Sum(nil))
+}
+
+func evolutionWebhookProviderPayload(payload []byte) []byte {
+	decoded, err := decodeNativeEvolutionPayload(payload)
+	if err != nil {
+		return payload
+	}
+	delete(decoded, evolutionWebhookRoutingMetaKey)
+	encoded, err := json.Marshal(decoded)
+	if err != nil {
+		return payload
+	}
+	return encoded
+}
+
+// evolutionWebhookProcessingLane keeps recently-created provider messages out
+// of a historical replay backlog. Current media is also live: the native
+// processor only persists its placeholder and enqueues an isolated download,
+// so a slow video or audio transfer cannot hold the inbox lane. Existing rows
+// remain in the backlog lane and no row is discarded: the worker reserves
+// capacity for both lanes.
+//
+// A provider timestamp is mandatory for the live lane. This prevents a delayed
+// reconnect replay from entering the live lane merely because it reached the
+// API now. Known mixed message arrays are split before this classifier runs; a
+// defensive any-current fallback prevents an unknown batch shape from holding
+// current text behind historical members.
+func evolutionWebhookProcessingLane(envelope evolutionWebhookEnvelope) (string, *time.Time) {
+	payload, err := decodeNativeEvolutionPayload(envelope.Payload)
+	if err != nil {
+		return evolutionWebhookLaneBacklog, nil
+	}
+	messages := withoutNativeEvolutionHistorySyncControls(extractNativeEvolutionMessages(payload))
+	messages = withoutNativeEvolutionGroupMessages(messages)
+	if len(messages) == 0 {
+		statuses := extractNativeEvolutionStatuses(payload)
+		if len(statuses) == 0 {
+			return evolutionWebhookLaneBacklog, nil
+		}
+		providerOccurredAt, present := nativeEvolutionStatusProviderOccurredAt(payload)
+		if !present {
+			return evolutionWebhookLaneBacklog, nil
+		}
+		providerOccurredAt = providerOccurredAt.UTC()
+		// Delivery receipts are useful, but they must never occupy the lane
+		// reserved for lead text. Their provider timestamp remains persisted for
+		// diagnostics and eventual backlog ordering.
+		return evolutionWebhookLaneBacklog, &providerOccurredAt
+	}
+
+	receivedAt := envelope.ReceivedAt.UTC()
+	if receivedAt.IsZero() {
+		receivedAt = time.Now().UTC()
+	}
+	var earliestProviderTime *time.Time
+	currentLatencyCritical := false
+	for _, message := range messages {
+		occurredAt, present := nativeEvolutionMessageProviderOccurredAt(message)
+		if present {
+			occurredAt = occurredAt.UTC()
+			if earliestProviderTime == nil || occurredAt.Before(*earliestProviderTime) {
+				copyOfOccurredAt := occurredAt
+				earliestProviderTime = &copyOfOccurredAt
+			}
+		}
+		if !nativeEvolutionMessageIsLatencyCritical(message) || !present {
+			continue
+		}
+		if evolutionWebhookOccurredInLiveWindow(receivedAt, occurredAt) {
+			currentLatencyCritical = true
+		}
+	}
+	if currentLatencyCritical {
+		return evolutionWebhookLaneLive, earliestProviderTime
+	}
+	return evolutionWebhookLaneBacklog, earliestProviderTime
+}
+
+func nativeEvolutionMessageIsLatencyCritical(message nativeEvolutionMessage) bool {
+	if message.IsGroup ||
+		message.UnsupportedID ||
+		message.UnsupportedMessage ||
+		message.IsReaction ||
+		message.IsDeletion {
+		return false
+	}
+
+	messageType := strings.ToLower(strings.TrimSpace(message.MessageType))
+	if nativeIsMediaType(messageType) {
+		return true
+	}
+	return messageType == "text" && strings.TrimSpace(message.Content) != ""
+}
+
+func evolutionWebhookOccurredInLiveWindow(receivedAt time.Time, occurredAt time.Time) bool {
+	receivedAt = receivedAt.UTC()
+	if receivedAt.IsZero() {
+		receivedAt = time.Now().UTC()
+	}
+	occurredAt = occurredAt.UTC()
+	return !occurredAt.Before(receivedAt.Add(-evolutionWebhookLiveWindow)) && !occurredAt.After(receivedAt.Add(5*time.Minute))
+}
+
+func nativeEvolutionMessageProviderOccurredAt(message nativeEvolutionMessage) (time.Time, bool) {
+	info := nativeFirstMap(message.Raw, "Info", "info")
+	value := nativeFirstValue(info, "Timestamp", "timestamp")
+	if value == nil {
+		value = nativeFirstValue(message.Raw, "messageTimestamp", "timestamp", "createdAt", "created_at")
+	}
+	occurredAt := nativeTimestamp(value)
+	return occurredAt, !occurredAt.IsZero()
+}
+
+func nativeEvolutionStatusProviderOccurredAt(payload map[string]any) (time.Time, bool) {
+	data := nativeFirstValue(payload, "data", "Data")
+	dataMap := mapFromAny(data)
+	candidates := []any{
+		nativeFirstValue(dataMap, "statuses", "Statuses"),
+		nativeFirstValue(dataMap, "status", "Status"),
+		nativeFirstValue(dataMap, "receipts", "Receipts"),
+		data,
+	}
+	var earliest time.Time
+	for _, candidate := range candidates {
+		for _, entry := range nativeObjectList(candidate) {
+			ids := nativeStringList(nativeFirstValue(entry, "MessageIDs", "messageIds", "message_ids"))
+			ids = append(ids, firstString(entry, "messageId", "message_id", "id", "ID", "key.id", "Key.ID"))
+			status := nativeProviderStatus(firstNonEmpty(
+				firstString(entry, "status", "Status", "state", "State", "ack", "Ack", "type", "Type"),
+				firstString(payload, "state", "State", "status", "Status"),
+			))
+			if len(uniqueStrings(ids...)) == 0 || status == "" {
+				continue
+			}
+			occurredAt := nativeTimestamp(nativeFirstValue(entry, "timestamp", "Timestamp", "time", "date"))
+			if occurredAt.IsZero() {
+				continue
+			}
+			if earliest.IsZero() || occurredAt.Before(earliest) {
+				earliest = occurredAt
+			}
+		}
+	}
+	return earliest, !earliest.IsZero()
 }
 
 const (
@@ -261,6 +803,13 @@ func evolutionWebhookInlineSessionState(envelope evolutionWebhookEnvelope) (evol
 	}
 	event := nativeEvolutionEventName(payload, envelope.EventType)
 	compactEvent := strings.NewReplacer(".", "", "_", "", "-", "", " ", "").Replace(strings.ToLower(event))
+	if compactEvent == "qrtimeout" {
+		// QR_TIMEOUT is a provider lifecycle pulse, not a lead message. The
+		// provider emits another QRCODE while attempts remain, so persisting every
+		// timeout only creates backlog and clearing the current QR here would make
+		// the pairing UI flicker between attempts.
+		return evolutionWebhookSessionState{Handled: true}, nil
+	}
 	isSessionEvent := strings.Contains(compactEvent, "connection") ||
 		strings.Contains(compactEvent, "instance") ||
 		strings.Contains(compactEvent, "session") ||
@@ -379,6 +928,10 @@ func (repo Repository) applyEvolutionWebhookSessionState(ctx context.Context, se
 		  and coalesce(is_active, true) = true
 		  and coalesce(status, '') <> 'deleted'
 		  and coalesce(status, '') <> 'connected'
+		  and not (
+		    lower(coalesce(advanced_settings->>'auto_reconnect_enabled', 'true')) = 'false'
+		    and lower(coalesce(advanced_settings->>'auto_reconnect_blocked_reason', '')) = 'user_logged_out'
+		  )
 		  and (
 		    case
 		      when coalesce(advanced_settings->>'webhook_state_event_at_ms', '') ~ '^[0-9]{1,19}$'
@@ -399,7 +952,13 @@ func (repo Repository) applyEvolutionWebhookSessionState(ctx context.Context, se
 	if state.Status == "" {
 		return nil
 	}
-	_, err := repo.db.Pool().Exec(ctx, `
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	result, err := tx.Exec(ctx, `
 		update public.whatsapp_sessions
 		set status = $3,
 		    qr_code = null,
@@ -420,6 +979,13 @@ func (repo Repository) applyEvolutionWebhookSessionState(ctx context.Context, se
 		  and coalesce(is_active, true) = true
 		  and coalesce(status, '') <> 'deleted'
 		  and (
+		    $3 not in ('connected', 'qr_ready')
+		    or not (
+		      lower(coalesce(advanced_settings->>'auto_reconnect_enabled', 'true')) = 'false'
+		      and lower(coalesce(advanced_settings->>'auto_reconnect_blocked_reason', '')) = 'user_logged_out'
+		    )
+		  )
+		  and (
 		    case
 		      when coalesce(advanced_settings->>'webhook_state_event_at_ms', '') ~ '^[0-9]{1,19}$'
 		        then (advanced_settings->>'webhook_state_event_at_ms')::bigint
@@ -433,7 +999,46 @@ func (repo Repository) applyEvolutionWebhookSessionState(ctx context.Context, se
 		    coalesce(advanced_settings->>'webhook_state_event_key', '')
 		  ) < ($7::bigint, $8::integer, $9::text)
 	`, session.OrganizationID, session.ID, state.Status, state.PhoneNumber, state.ProfileName, state.ConnectionError, eventMillis, state.Rank, state.EventKey, state.ProviderTimestamp)
-	return err
+	if err != nil {
+		return err
+	}
+	reconnected := state.Status == "connected" && result.RowsAffected() > 0
+
+	// A disconnected provider moves durable sends into retry backoff. Once a
+	// newer provider event proves the session connected again, make those rows
+	// immediately eligible and wake the worker instead of adding up to five
+	// minutes of avoidable post-reconnect latency.
+	if reconnected {
+		if _, err := tx.Exec(
+			ctx,
+			releaseWhatsAppOutboxRetriesAfterReconnectQuery,
+			session.OrganizationID,
+			session.ID,
+		); err != nil {
+			return fmt.Errorf("release WhatsApp outbox retry after reconnect: %w", err)
+		}
+		// Only a causally newer, tuple-CAS accepted event may release a
+		// definitive-disconnect media fence. An outcome-unknown download keeps
+		// its full cooldown because connected does not prove detached work ended.
+		// The timestamp condition also protects a quarantine created after this
+		// provider event but before its delayed webhook was processed.
+		if _, err := tx.Exec(ctx, `
+			delete from private.whatsapp_media_session_quarantine
+			where session_id = $1::uuid
+			  and reason = 'media_provider_disconnected'
+			  and updated_at <= $2::timestamptz
+		`, session.ID, state.OccurredAt.UTC()); err != nil {
+			return fmt.Errorf("release WhatsApp media disconnect quarantine after reconnect: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if reconnected {
+		wakeWhatsAppOutboxWorker()
+		wakeWhatsAppMediaWorker()
+	}
+	return nil
 }
 
 func (repo Repository) evolutionWebhookSession(ctx context.Context, sessionID string) (evolutionWebhookSession, error) {
@@ -519,7 +1124,7 @@ func removeEvolutionWebhookPayloadCredentials(value any) {
 		for key, nested := range typed {
 			normalized := strings.NewReplacer("_", "", "-", "").Replace(strings.ToLower(strings.TrimSpace(key)))
 			switch normalized {
-			case "instancetoken", "webhooktoken", "apikey", "accesstoken", "authorization", "signature":
+			case "instancetoken", "webhooktoken", "apikey", "accesstoken", "authorization", "signature", "vimobingress":
 				delete(typed, key)
 				continue
 			}

@@ -24,7 +24,7 @@ import { useTeams } from '@/hooks/use-teams';
 import { useUpdateLead } from '@/hooks/use-leads';
 import type { Lead } from '@/hooks/use-leads';
 import { searchTextIncludes } from '@/lib/search-text';
-import type { TablesUpdate } from '@/integrations/supabase/types';
+import type { TablesUpdate } from '@/lib/supabase/types';
 import { leadsAPI } from '@/lib/api/leads';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -64,7 +64,7 @@ export function SdrDistributionButton({ lead, refetchStages }: SdrDistributionBu
   const { data: teams = [] } = useTeams({ enabled: canUseTeamDistribution });
   const { data: stages = [] } = useStages(selectedPipelineId || undefined);
   const updateLead = useUpdateLead();
-  const { organization } = useAuth();
+  const { activeOrganization } = useAuth();
 
   const allowedTeamIds = accessScope.isAdmin ? null : new Set(accessScope.ledTeamIds);
   const allowedPipelineIds = accessScope.isAdmin ? null : new Set(accessScope.ledPipelineIds);
@@ -162,7 +162,10 @@ export function SdrDistributionButton({ lead, refetchStages }: SdrDistributionBu
 
       await updateLead.mutateAsync(leadUpdate);
 
-      const distribution = await leadsAPI.redistributeLeadRoundRobin(lead.id, organization?.id);
+      const distribution = await leadsAPI.redistributeLeadRoundRobin(
+        lead.id,
+        activeOrganization.organizationId || undefined,
+      );
       if (distribution.error || !distribution.success) {
         throw new Error(distribution.error || 'Distribuição automática não encontrou uma fila disponível.');
       }

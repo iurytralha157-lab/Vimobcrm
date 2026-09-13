@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(55);
+select plan(57);
 
 select is(
   (
@@ -50,9 +50,10 @@ select is(
         'marketing_media_assets',
         'marketing_sync_runs'
       ])
+      and policy.permissive = 'PERMISSIVE'
   ),
   0::bigint,
-  'raw Marketing intelligence tables expose no Data API policy'
+  'raw Marketing intelligence tables expose no permissive Data API policy'
 );
 
 select ok(
@@ -301,6 +302,40 @@ select is(
   ),
   0::bigint,
   'Meta plaintext user-token storage is always null after Vault migration'
+);
+
+select ok(
+  not has_function_privilege(
+    'anon',
+    'private.meta_store_access_token()',
+    'execute'
+  )
+  and not has_function_privilege(
+    'authenticated',
+    'private.meta_store_access_token()',
+    'execute'
+  )
+  and not has_function_privilege(
+    'service_role',
+    'private.meta_store_access_token()',
+    'execute'
+  )
+  and not has_function_privilege(
+    'anon',
+    'private.meta_store_user_access_token()',
+    'execute'
+  )
+  and not has_function_privilege(
+    'authenticated',
+    'private.meta_store_user_access_token()',
+    'execute'
+  )
+  and not has_function_privilege(
+    'service_role',
+    'private.meta_store_user_access_token()',
+    'execute'
+  ),
+  'Data API roles cannot invoke the Meta Vault trigger functions directly'
 );
 
 select ok(
@@ -1098,16 +1133,32 @@ select is(
     from pg_index as index_row
     join pg_class as index_relation
       on index_relation.oid = index_row.indexrelid
-    where index_row.indrelid = 'public.meta_integrations'::regclass
-      and index_relation.relname = any(array[
-        'uq_meta_integrations_connected_page_owner',
-        'uq_meta_integrations_connected_instagram_owner'
-      ])
+    where index_row.indrelid = 'public.meta_form_configs'::regclass
+      and index_relation.relname =
+        'uq_meta_form_configs_active_provider_route'
       and index_row.indisunique
       and index_row.indpred is not null
   ),
+  1::bigint,
+  'active Meta Forms have one provider webhook route across tenants'
+);
+
+select is(
+  (
+    select count(*)
+    from pg_index as index_row
+    join pg_class as index_relation
+      on index_relation.oid = index_row.indexrelid
+    where index_row.indrelid = 'public.meta_integrations'::regclass
+      and index_relation.relname = any(array[
+        'idx_meta_integrations_connected_page_route',
+        'idx_meta_integrations_connected_instagram_route'
+      ])
+      and not index_row.indisunique
+      and index_row.indpred is not null
+  ),
   2::bigint,
-  'connected Meta Page and Instagram assets have one tenant owner'
+  'shared Meta Page and Instagram connections retain indexed fail-closed routing'
 );
 
 select * from finish();

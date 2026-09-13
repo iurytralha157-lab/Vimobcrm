@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -313,8 +314,8 @@ func translatePolicyWriteError(err error) error {
 }
 
 func validUUID(value string) bool {
-	var uuid pgtype.UUID
-	return uuid.Scan(strings.TrimSpace(value)) == nil && uuid.Valid
+	_, ok := pgvalue.NormalizeUUID(value)
+	return ok
 }
 
 func nullableText(value *string) any {
@@ -332,11 +333,7 @@ func nullableInt(value *int) any {
 }
 
 func textPointer(value pgtype.Text) *string {
-	if !value.Valid {
-		return nil
-	}
-	copy := value.String
-	return &copy
+	return pgvalue.TextPointer(value)
 }
 
 func intPointer(value pgtype.Int4) *int {

@@ -74,3 +74,35 @@ func TestPropertyHasLinkedLeadsForeignKeyViolationRejectsUnrelatedDatabaseErrors
 		})
 	}
 }
+
+func TestPropertyDependencyForeignKeyViolationUsesGenericConflictContract(t *testing.T) {
+	databaseError := &pgconn.PgError{
+		Code:           "23503",
+		ConstraintName: "property_development_units_property_id_fkey",
+	}
+	if !isPropertyDependencyForeignKeyViolation(fmt.Errorf("delete property: %w", databaseError)) {
+		t.Fatal("expected a property dependency foreign key to be recognized")
+	}
+	if isPropertyDependencyForeignKeyViolation(&pgconn.PgError{Code: "23505"}) {
+		t.Fatal("did not expect a non-foreign-key error to be recognized")
+	}
+
+	request := httptest.NewRequest(http.MethodDelete, "/v1/properties/11111111-1111-4111-8111-111111111111", nil)
+	response := httptest.NewRecorder()
+	writePropertyError(response, request, ErrPropertyHasDependencies)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusConflict)
+	}
+
+	var payload struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Error.Code != "property_has_dependencies" {
+		t.Fatalf("error code = %q, want property_has_dependencies", payload.Error.Code)
+	}
+}

@@ -31,27 +31,28 @@ func NewMarketingSyncHTTPHandler(service *MarketingSyncService) MarketingSyncHTT
 }
 
 func (handler MarketingSyncHTTPHandler) Sync(w http.ResponseWriter, request *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if request.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
-		writeMarketingSyncResult(w, http.StatusMethodNotAllowed, MarketingSyncResult{Errors: []string{"method_not_allowed"}})
+		httpserver.WriteError(w, request, http.StatusMethodNotAllowed, "method_not_allowed", "Method is not allowed.")
 		return
 	}
 	tenantContext, ok := tenant.FromContext(request.Context())
 	if !ok || strings.TrimSpace(tenantContext.OrganizationID) == "" || strings.TrimSpace(tenantContext.UserID) == "" {
-		writeMarketingSyncResult(w, http.StatusForbidden, MarketingSyncResult{Errors: []string{"organization_required"}})
+		httpserver.WriteError(w, request, http.StatusForbidden, "organization_required", "Organization context is required.")
 		return
 	}
 	if !tenantContext.HasRole("owner", "admin") {
-		writeMarketingSyncResult(w, http.StatusForbidden, MarketingSyncResult{Errors: []string{"organization_admin_required"}})
+		httpserver.WriteError(w, request, http.StatusForbidden, "organization_admin_required", "Organization owner or administrator access is required.")
 		return
 	}
 	if handler.syncer == nil {
-		writeMarketingSyncResult(w, http.StatusServiceUnavailable, MarketingSyncResult{Errors: []string{"marketing_sync_unavailable"}})
+		httpserver.WriteError(w, request, http.StatusServiceUnavailable, "marketing_sync_unavailable", "Marketing synchronization is unavailable.")
 		return
 	}
 	contentType := strings.ToLower(strings.TrimSpace(request.Header.Get("Content-Type")))
 	if !strings.HasPrefix(contentType, "application/json") {
-		writeMarketingSyncResult(w, http.StatusUnsupportedMediaType, MarketingSyncResult{Errors: []string{"content_type_must_be_json"}})
+		httpserver.WriteError(w, request, http.StatusUnsupportedMediaType, "content_type_must_be_json", "Content-Type must be application/json.")
 		return
 	}
 	defer request.Body.Close()
@@ -62,11 +63,11 @@ func (handler MarketingSyncHTTPHandler) Sync(w http.ResponseWriter, request *htt
 	decoder := json.NewDecoder(http.MaxBytesReader(w, request.Body, marketingSyncMaxRequestBytes))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&body); err != nil {
-		writeMarketingSyncResult(w, http.StatusBadRequest, MarketingSyncResult{Errors: []string{"invalid_json_body"}})
+		httpserver.WriteError(w, request, http.StatusBadRequest, "invalid_json_body", "Request body is invalid.")
 		return
 	}
 	if err := ensureMarketingSyncJSONEOF(decoder); err != nil {
-		writeMarketingSyncResult(w, http.StatusBadRequest, MarketingSyncResult{Errors: []string{"invalid_json_body"}})
+		httpserver.WriteError(w, request, http.StatusBadRequest, "invalid_json_body", "Request body is invalid.")
 		return
 	}
 
@@ -88,11 +89,7 @@ func (handler MarketingSyncHTTPHandler) Sync(w http.ResponseWriter, request *htt
 		if errors.As(err, &failure) {
 			status = failure.HTTPStatus
 		}
-		result.Success = false
-		if len(result.Errors) == 0 {
-			result.Errors = []string{marketingSyncErrorCode(err)}
-		}
-		writeMarketingSyncResult(w, status, result)
+		httpserver.WriteError(w, request, status, marketingSyncErrorCode(err), "Meta Marketing synchronization failed.")
 		return
 	}
 	writeMarketingSyncResult(w, http.StatusOK, result)
@@ -102,7 +99,6 @@ func writeMarketingSyncResult(w http.ResponseWriter, status int, result Marketin
 	if result.Errors == nil {
 		result.Errors = []string{}
 	}
-	w.Header().Set("Cache-Control", "no-store")
 	httpserver.WriteJSON(w, status, result)
 }
 

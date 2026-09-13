@@ -239,18 +239,25 @@ export async function seedE2EData() {
 	await db.query(`
 	  insert into public.properties (
 		id, organization_id, code, title, finalidade, status, published_on_site,
-		cidade, bairro, preco, created_by
+		cidade, bairro, preco, created_by, responsible_user_id, cadastrado_por
 	  ) values (
 		$1::uuid, $2::uuid, 'E2E-SITE-001', 'Imovel publico E2E', 'venda', 'active', true,
-		'Sao Paulo', 'Centro', 750000, $3::uuid
+		'Sao Paulo', 'Centro', 750000, $3::uuid, $4::uuid, $4
 	  )
 	  on conflict (id) do update set
 		organization_id = excluded.organization_id,
 		code = excluded.code,
 		title = excluded.title,
+		finalidade = excluded.finalidade,
 		status = 'active',
-		published_on_site = true
-	`, [E2E_PROPERTY_ID, E2E_ORGANIZATION_ID, userIds.admin]);
+		published_on_site = true,
+		cidade = excluded.cidade,
+		bairro = excluded.bairro,
+		preco = excluded.preco,
+		created_by = excluded.created_by,
+		responsible_user_id = excluded.responsible_user_id,
+		cadastrado_por = excluded.cadastrado_por
+	`, [E2E_PROPERTY_ID, E2E_ORGANIZATION_ID, userIds.admin, userIds.user]);
 
     const leadFixtures = [
       [E2E_LEADS.leaderOwn, 'Lead do Lider E2E', userIds.leader, E2E_TEAM_ID],

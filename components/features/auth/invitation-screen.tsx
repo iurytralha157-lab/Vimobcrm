@@ -7,7 +7,7 @@ import { Loader2 } from "lucide-react";
 import { adminAPI } from "@/lib/api/admin";
 import { authAPI } from "@/lib/api/auth";
 import { VimobAPIError } from "@/lib/api/vimob-client";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase/client";
 import { useInvitationByToken } from "@/hooks/use-invitation-by-token";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -21,6 +21,11 @@ import {
   CURRENT_PRIVACY_VERSION,
   CURRENT_TERMS_VERSION,
 } from "@/lib/validation/onboarding";
+import {
+  evaluatePasswordPolicy,
+  PASSWORD_POLICY,
+  strongPasswordSchema,
+} from "@/lib/validation/password";
 import { AuthLogo } from "./auth-logo";
 
 type AcceptResult = {
@@ -142,6 +147,10 @@ export function InvitationScreen({ token }: { token: string | null; }) {
     return "Usuario";
   }, [invitation?.role]);
   const existingAccount = Boolean(invitation?.existing_account || requiresLogin);
+  const passwordRequirements = useMemo(
+    () => evaluatePasswordPolicy(password),
+    [password],
+  );
   const loggedEmailMatches = Boolean(
     currentUserEmail && email && currentUserEmail.toLowerCase() === email.toLowerCase(),
   );
@@ -192,8 +201,12 @@ export function InvitationScreen({ token }: { token: string | null; }) {
       setErrorMessage("Informe um WhatsApp valido ou deixe o campo vazio.");
       return;
     }
-    if (Array.from(password).length < 8 || Array.from(password).length > 128) {
-      setErrorMessage("A senha precisa ter entre 8 e 128 caracteres.");
+    const passwordValidation = strongPasswordSchema.safeParse(password);
+    if (!passwordValidation.success) {
+      setErrorMessage(
+        passwordValidation.error.issues[0]?.message
+          || "Crie uma senha que atenda a todos os requisitos.",
+      );
       return;
     }
     if (password !== passwordConfirm) {
@@ -509,13 +522,16 @@ export function InvitationScreen({ token }: { token: string | null; }) {
                       name="password"
                       type="password"
                       autoComplete="new-password"
-                      minLength={8}
-                      maxLength={128}
+                      minLength={PASSWORD_POLICY.minLength}
+                      maxLength={PASSWORD_POLICY.maxLength}
                       required
                       value={password}
                       onChange={(event) => setPassword(event.target.value)}
                       aria-invalid={Boolean(errorMessage)}
-                      aria-describedby={errorMessage ? "invitation-form-message" : undefined}
+                      aria-describedby={[
+                        "invitation-password-requirements",
+                        errorMessage ? "invitation-form-message" : null,
+                      ].filter(Boolean).join(" ")}
                       className={invitationFieldClass}
                       placeholder="Mín. 8 caracteres"
                     />
@@ -529,8 +545,8 @@ export function InvitationScreen({ token }: { token: string | null; }) {
                       name="passwordConfirm"
                       type="password"
                       autoComplete="new-password"
-                      minLength={8}
-                      maxLength={128}
+                      minLength={PASSWORD_POLICY.minLength}
+                      maxLength={PASSWORD_POLICY.maxLength}
                       required
                       value={passwordConfirm}
                       onChange={(event) => setPasswordConfirm(event.target.value)}
@@ -540,6 +556,23 @@ export function InvitationScreen({ token }: { token: string | null; }) {
                       placeholder="Repita a senha"
                     />
                   </div>
+                </div>
+
+                <div
+                  id="invitation-password-requirements"
+                  className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-light"
+                >
+                  {passwordRequirements.map((requirement) => (
+                    <span
+                      key={requirement.id}
+                      className={requirement.isValid ? "text-primary" : "text-white/50"}
+                    >
+                      {requirement.label}
+                      <span className="sr-only">
+                        {requirement.isValid ? ": requisito atendido" : ": requisito pendente"}
+                      </span>
+                    </span>
+                  ))}
                 </div>
 
                 <div className="space-y-2 pt-1">

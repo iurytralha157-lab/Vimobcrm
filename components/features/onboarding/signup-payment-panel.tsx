@@ -7,6 +7,7 @@ import {
   buildCheckoutPaymentPath,
   type CheckoutPaymentMethod,
 } from "@/lib/billing/checkout-ui-state";
+import { formatPtBRNumber } from "@/lib/utils/formatting";
 
 type SignupPaymentPlan = {
   id?: string;
@@ -49,7 +50,7 @@ const paymentMethodCopy: Record<PaymentMethod, { label: string; action: string }
 
 function formatLimit(value?: number | null) {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "--";
-  return value.toLocaleString("pt-BR");
+  return formatPtBRNumber(value);
 }
 
 function getTrialDays(plan: SignupPaymentPlan) {

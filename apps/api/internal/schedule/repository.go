@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/propertyscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -33,16 +35,21 @@ type queryRower interface {
 }
 
 type eventSnapshot struct {
-	ID             string
-	OrganizationID string
-	UserID         string
-	LeadID         string
-	Title          string
-	EventType      string
-	StartTime      time.Time
-	EndTime        time.Time
-	Status         string
-	Visibility     string
+	ID                string
+	OrganizationID    string
+	UserID            string
+	LeadID            string
+	Title             string
+	EventType         string
+	StartTime         time.Time
+	EndTime           time.Time
+	IsAllDay          bool
+	Status            string
+	Outcome           string
+	PerformedBy       string
+	RescheduledFromID string
+	RescheduledToID   string
+	Visibility        string
 }
 
 func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder) Repository {
@@ -54,15 +61,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
 	canViewAll := canViewAllScheduleEvents(tenantContext)
-	args := []any{
-		tenantContext.OrganizationID,
-		tenantContext.UserID,
-		canViewAll,
-		canViewAllLeads(tenantContext),
-		tenantContext.UserID,
-		tenantContext.HasPermission(permissions.LeadViewTeam),
-		canViewProperties(tenantContext),
-	}
+	args := scheduleEventsQueryArgs(tenantContext, canViewAll)
 	where := []string{
 		"se.organization_id = $1::uuid",
 		scheduleEventListScopeSQL("$2", "$3"),
@@ -129,6 +128,21 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	return events, nil
 }
 
+func scheduleEventsQueryArgs(tenantContext tenant.Context, canViewAllSchedule bool) []any {
+	return []any{
+		tenantContext.OrganizationID,
+		tenantContext.UserID,
+		canViewAllSchedule,
+		canViewAllLeads(tenantContext),
+		tenantContext.UserID,
+		tenantContext.HasPermission(permissions.LeadViewTeam),
+		propertyscope.CanRead(tenantContext),
+		propertyscope.CanViewAll(tenantContext),
+		tenantContext.UserID,
+		propertyscope.CanViewTeam(tenantContext),
+	}
+}
+
 func scheduleEventListScopeSQL(userIDPlaceholder string, canManagePlaceholder string) string {
 	return `(
 		se.visibility in ('default', 'public')
@@ -168,26 +182,37 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, ev
 }
 
 func (repo Repository) Capabilities(ctx context.Context, tenantContext tenant.Context) (Capabilities, error) {
-	if canManageSchedule(tenantContext) {
-		return Capabilities{IsTeamLeader: true}, nil
-	}
-
-	var isTeamLeader bool
+	var capabilities Capabilities
 	err := repo.db.Pool().QueryRow(ctx, `
-		select exists (
-			select 1
-			from public.team_members tm
-			where tm.organization_id = $1::uuid
-			  and tm.user_id = $2::uuid
-			  and tm.is_active = true
-			  and tm.is_leader = true
-		)
-	`, tenantContext.OrganizationID, tenantContext.UserID).Scan(&isTeamLeader)
+		select
+			$3::boolean or exists (
+				select 1
+				from public.team_members tm
+				where tm.organization_id = $1::uuid
+				  and tm.user_id = $2::uuid
+				  and tm.is_active = true
+				  and tm.is_leader = true
+			) as is_team_leader,
+			coalesce(
+				(
+					select timezone_name.name
+					from public.organization_attention_settings organization_settings
+					join pg_catalog.pg_timezone_names timezone_name
+					  on timezone_name.name = nullif(btrim(organization_settings.timezone), '')
+					where organization_settings.organization_id = $1::uuid
+					limit 1
+				),
+				'America/Sao_Paulo'
+			) as time_zone
+	`, tenantContext.OrganizationID, tenantContext.UserID, canManageSchedule(tenantContext)).Scan(
+		&capabilities.IsTeamLeader,
+		&capabilities.TimeZone,
+	)
 	if err != nil {
 		return Capabilities{}, err
 	}
 
-	return Capabilities{IsTeamLeader: isTeamLeader}, nil
+	return capabilities, nil
 }
 
 func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context, input createInput) (Event, error) {
@@ -207,6 +232,9 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		return Event{}, err
 	}
 	if err := repo.validateProperty(ctx, tx, tenantContext, input.PropertyID); err != nil {
+		return Event{}, err
+	}
+	if err := repo.validateTeam(ctx, tx, tenantContext.OrganizationID, input.TeamID); err != nil {
 		return Event{}, err
 	}
 	if err := repo.validateAssignees(ctx, tx, tenantContext, input.AssigneeIDs); err != nil {
@@ -229,6 +257,9 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 			user_id,
 			lead_id,
 			property_id,
+			created_by,
+			team_id,
+			lead_source_snapshot,
 			title,
 			description,
 			event_type,
@@ -247,21 +278,29 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 			$2::uuid,
 			$3::uuid,
 			$4::uuid,
-			$5,
-			$6,
+			$5::uuid,
+			$6::uuid,
+			(
+				select coalesce(left(nullif(btrim(l.source), ''), 160), '__none__')
+				from public.leads l
+				where l.organization_id = $1::uuid
+				  and l.id = $3::uuid
+			),
 			$7,
-			$8::timestamptz,
-			$9::timestamptz,
-			$10::boolean,
-			$11,
-			$12,
-			$13::integer,
+			$8,
+			$9,
+			$10::timestamptz,
+			$11::timestamptz,
+			$12::boolean,
+			$13,
 			$14,
-			$15::timestamptz,
-			$16::integer
+			$15::integer,
+			$16,
+			$17::timestamptz,
+			$18::integer
 		)
 		returning id::text
-	`, tenantContext.OrganizationID, input.UserID, nullable(input.LeadID), nullable(input.PropertyID), input.Title, nullable(input.Description), input.EventType, input.StartTime, input.EndTime, input.IsAllDay, nullable(input.Location), input.Visibility, input.ReminderMinutes, nullable(input.RecurrenceRule), recurrenceUntil, recurrenceCount).Scan(&eventID)
+	`, tenantContext.OrganizationID, input.UserID, nullable(input.LeadID), nullable(input.PropertyID), input.CreatedBy, nullable(input.TeamID), input.Title, nullable(input.Description), input.EventType, input.StartTime, input.EndTime, input.IsAllDay, nullable(input.Location), input.Visibility, input.ReminderMinutes, nullable(input.RecurrenceRule), recurrenceUntil, recurrenceCount).Scan(&eventID)
 	if err != nil {
 		return Event{}, err
 	}
@@ -287,6 +326,7 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		EventType:      input.EventType,
 		StartTime:      input.StartTime,
 		EndTime:        input.EndTime,
+		IsAllDay:       input.IsAllDay,
 		Status:         "scheduled",
 		Visibility:     input.Visibility,
 	}
@@ -304,6 +344,17 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		"schedule_event_id": eventID,
 		"event_type":        input.EventType,
 	}); err != nil {
+		return Event{}, err
+	}
+	if err := repo.enqueueScheduleGoogleMutation(
+		ctx,
+		tx,
+		tenantContext.OrganizationID,
+		tenantContext.UserID,
+		eventID,
+		"",
+		input.UserID,
+	); err != nil {
 		return Event{}, err
 	}
 
@@ -338,6 +389,11 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	} else if !ok {
 		return Event{}, tenant.ErrOrganizationAccessDenied
 	}
+	if input.hasChanges() {
+		if err := validateFinalAppointmentMutation(current); err != nil {
+			return Event{}, err
+		}
+	}
 
 	if input.UserID.Set && input.UserID.Value != nil {
 		if err := repo.ensureAssignableUser(ctx, tx, tenantContext, *input.UserID.Value); err != nil {
@@ -354,6 +410,23 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 			return Event{}, err
 		}
 	}
+	if input.TeamID.Set {
+		if err := repo.validateTeam(ctx, tx, tenantContext.OrganizationID, input.TeamID.Value); err != nil {
+			return Event{}, err
+		}
+	}
+	if input.PerformedBy.Set && input.PerformedBy.Value != nil {
+		if err := repo.ensureEventPerformer(
+			ctx,
+			tx,
+			tenantContext,
+			current,
+			input,
+			*input.PerformedBy.Value,
+		); err != nil {
+			return Event{}, err
+		}
+	}
 	if input.AssigneeIDs.Set {
 		nextPrimaryUserID := current.UserID
 		if input.UserID.Set && input.UserID.Value != nil {
@@ -367,6 +440,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		}
 		input.AssigneeIDs.Value = nextAssigneeIDs
 	}
+	if input.Status.Set && input.Status.Value != nil && normalizeScheduleStatus(*input.Status.Value) != "completed" && !input.PerformedBy.Set {
+		input.PerformedBy = patchString{Set: true, Value: nil}
+	}
 
 	nextStart := current.StartTime
 	if input.StartTime.Set && input.StartTime.Value != nil {
@@ -378,6 +454,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	}
 	if nextEnd.Before(nextStart) {
 		return Event{}, fmt.Errorf("%w: event time is invalid", ErrInvalidInput)
+	}
+	if err := validateEventOutcomeTransition(current, input); err != nil {
+		return Event{}, err
 	}
 
 	assignments := []string{}
@@ -423,15 +502,42 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	addTimeAssignment("end_time", input.EndTime)
 	addBoolAssignment("is_all_day", input.IsAllDay)
 	addUUIDAssignment("user_id", input.UserID)
-	addUUIDAssignment("lead_id", input.LeadID)
+	if input.LeadID.Set {
+		addUUIDAssignment("lead_id", input.LeadID)
+		args = append(args, nullablePatchString(input.LeadID))
+		leadIDIndex := len(args)
+		assignments = append(assignments, fmt.Sprintf(`lead_source_snapshot = (
+			select coalesce(left(nullif(btrim(l.source), ''), 160), '__none__')
+			from public.leads l
+			where l.organization_id = $1::uuid
+			  and l.id = $%d::uuid
+		)`, leadIDIndex))
+	}
 	addUUIDAssignment("property_id", input.PropertyID)
+	addUUIDAssignment("team_id", input.TeamID)
 	addTextAssignment("location", input.Location)
 	addTextAssignment("status", input.Status)
 	addTextAssignment("visibility", input.Visibility)
 	addIntAssignment("reminder_minutes", input.ReminderMinutes)
 	addTextAssignment("recurrence_rule", input.RecurrenceRule)
+	addTextAssignment("outcome", input.Outcome)
+	addTextAssignment("outcome_notes", input.OutcomeNotes)
+	addUUIDAssignment("performed_by", input.PerformedBy)
+	nextStatus := normalizeScheduleStatus(current.Status)
+	if input.Status.Set && input.Status.Value != nil {
+		nextStatus = normalizeScheduleStatus(*input.Status.Value)
+	}
+	if input.Status.Set || input.Outcome.Set {
+		if nextStatus == "scheduled" {
+			assignments = append(assignments, "outcome_recorded_at = null")
+		} else {
+			assignments = append(assignments, "outcome_recorded_at = now()")
+		}
+	}
 
-	statusChangedToCompleted := input.Status.Set && input.Status.Value != nil && *input.Status.Value == "completed" && current.Status != "completed"
+	statusChangedToCompleted := input.Status.Set && input.Status.Value != nil && *input.Status.Value == "completed" && normalizeScheduleStatus(current.Status) != "completed"
+	statusChangedToNoShow := input.Status.Set && input.Status.Value != nil && *input.Status.Value == "no_show" && normalizeScheduleStatus(current.Status) != "no_show"
+	statusChangedToCancelled := input.Status.Set && input.Status.Value != nil && *input.Status.Value == "cancelled" && normalizeScheduleStatus(current.Status) != "cancelled"
 	if input.Status.Set && input.Status.Value != nil {
 		if *input.Status.Value == "completed" {
 			addAssignment("completed_by", tenantContext.UserID)
@@ -508,8 +614,28 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 			if err := repo.insertScheduleActivity(ctx, tx, tenantContext.OrganizationID, updated, "completed"); err != nil {
 				return Event{}, err
 			}
-
 		}
+		if statusChangedToNoShow {
+			if err := repo.insertTimelineEvent(ctx, tx, tenantContext, updated, "no_show"); err != nil {
+				return Event{}, err
+			}
+		}
+		if statusChangedToCancelled {
+			if err := repo.insertTimelineEvent(ctx, tx, tenantContext, updated, "cancelled"); err != nil {
+				return Event{}, err
+			}
+		}
+	}
+	if err := repo.enqueueScheduleGoogleMutation(
+		ctx,
+		tx,
+		tenantContext.OrganizationID,
+		tenantContext.UserID,
+		updatedID,
+		current.UserID,
+		updated.UserID,
+	); err != nil {
+		return Event{}, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -534,18 +660,8 @@ func (repo Repository) recordScheduleGamification(tenantContext tenant.Context, 
 	}()
 }
 
-func (repo Repository) Complete(ctx context.Context, tenantContext tenant.Context, eventID string, status string) (Event, error) {
-	status = strings.TrimSpace(status)
-	if status == "" {
-		status = "completed"
-	}
-	if !validEnum(status, "scheduled", "completed", "cancelled", "canceled", "no_show") {
-		return Event{}, fmt.Errorf("%w: status is invalid", ErrInvalidInput)
-	}
-
-	return repo.Update(ctx, tenantContext, eventID, updateInput{
-		Status: patchString{Set: true, Value: &status},
-	})
+func (repo Repository) Complete(ctx context.Context, tenantContext tenant.Context, eventID string, input updateInput) (Event, error) {
+	return repo.Update(ctx, tenantContext, eventID, input)
 }
 
 func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context, eventID string) (Event, error) {
@@ -573,6 +689,18 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 		return Event{}, err
 	} else if !ok {
 		return Event{}, tenant.ErrOrganizationAccessDenied
+	}
+	if err := validateEventDeletion(current); err != nil {
+		return Event{}, err
+	}
+	if err := repo.enqueueScheduleGoogleDelete(
+		ctx,
+		tx,
+		tenantContext.OrganizationID,
+		tenantContext.UserID,
+		eventID,
+	); err != nil {
+		return Event{}, err
 	}
 
 	tag, err := tx.Exec(ctx, `
@@ -775,6 +903,9 @@ func (repo Repository) AddAssignee(ctx context.Context, tenantContext tenant.Con
 	} else if !ok {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
+	if err := validateFinalAppointmentMutation(current); err != nil {
+		return nil, err
+	}
 	if err := repo.ensureAssignableUser(ctx, tx, tenantContext, userID); err != nil {
 		return nil, err
 	}
@@ -837,6 +968,9 @@ func (repo Repository) RemoveAssignee(ctx context.Context, tenantContext tenant.
 	} else if !ok {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
+	if err := validateFinalAppointmentMutation(current); err != nil {
+		return nil, err
+	}
 
 	_, err = tx.Exec(ctx, `
 		delete from public.schedule_event_assignees
@@ -874,6 +1008,9 @@ func (repo Repository) insertRecurringEvents(ctx context.Context, tx pgx.Tx, org
 				user_id,
 				lead_id,
 				property_id,
+				created_by,
+				team_id,
+				lead_source_snapshot,
 				title,
 				description,
 				event_type,
@@ -893,22 +1030,30 @@ func (repo Repository) insertRecurringEvents(ctx context.Context, tx pgx.Tx, org
 				$2::uuid,
 				$3::uuid,
 				$4::uuid,
-				$5,
-				$6,
+				$5::uuid,
+				$6::uuid,
+				(
+					select coalesce(left(nullif(btrim(l.source), ''), 160), '__none__')
+					from public.leads l
+					where l.organization_id = $1::uuid
+					  and l.id = $3::uuid
+				),
 				$7,
-				$8::timestamptz,
-				$9::timestamptz,
-				$10::boolean,
-				$11,
-				$12,
-				$13::integer,
-				$14::uuid,
-				$15,
-				$16::timestamptz,
-				$17::integer
+				$8,
+				$9,
+				$10::timestamptz,
+				$11::timestamptz,
+				$12::boolean,
+				$13,
+				$14,
+				$15::integer,
+				$16::uuid,
+				$17,
+				$18::timestamptz,
+				$19::integer
 			)
 			returning id::text
-		`, organizationID, input.UserID, nullable(input.LeadID), nullable(input.PropertyID), input.Title, nullable(input.Description), input.EventType, nextStart, nextEnd, input.IsAllDay, nullable(input.Location), input.Visibility, input.ReminderMinutes, parentID, *input.RecurrenceRule, recurrenceUntil, maxOccurrences)
+		`, organizationID, input.UserID, nullable(input.LeadID), nullable(input.PropertyID), input.CreatedBy, nullable(input.TeamID), input.Title, nullable(input.Description), input.EventType, nextStart, nextEnd, input.IsAllDay, nullable(input.Location), input.Visibility, input.ReminderMinutes, parentID, *input.RecurrenceRule, recurrenceUntil, maxOccurrences)
 	}
 
 	results := tx.SendBatch(ctx, batch)
@@ -1052,6 +1197,31 @@ func (repo Repository) validateUser(ctx context.Context, querier queryRower, org
 	return nil
 }
 
+func (repo Repository) validateTeam(ctx context.Context, querier queryRower, organizationID string, teamID *string) error {
+	if teamID == nil {
+		return nil
+	}
+
+	var exists bool
+	err := querier.QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.teams t
+			where t.organization_id = $1::uuid
+			  and t.id = $2::uuid
+			  and coalesce(t.is_active, true) = true
+		)
+	`, organizationID, *teamID).Scan(&exists)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return ErrInvalidReference
+	}
+
+	return nil
+}
+
 func (repo Repository) validateLead(ctx context.Context, querier queryRower, tenantContext tenant.Context, leadID *string) error {
 	if leadID == nil {
 		return nil
@@ -1095,8 +1265,15 @@ func (repo Repository) validateProperty(ctx context.Context, querier queryRower,
 			from public.properties p
 			where p.organization_id = $1::uuid
 			  and p.id = $2::uuid
+			  and `+propertyscope.VisibilitySQL("p", "$3", "$4", "$5")+`
 		)
-	`, tenantContext.OrganizationID, *propertyID).Scan(&exists)
+	`,
+		tenantContext.OrganizationID,
+		*propertyID,
+		propertyscope.CanViewAll(tenantContext),
+		tenantContext.UserID,
+		propertyscope.CanViewTeam(tenantContext),
+	).Scan(&exists)
 	if err != nil {
 		return err
 	}
@@ -1154,9 +1331,58 @@ func (repo Repository) ensureAssignableUser(ctx context.Context, querier queryRo
 	return nil
 }
 
+func (repo Repository) ensureEventPerformer(
+	ctx context.Context,
+	querier queryRower,
+	tenantContext tenant.Context,
+	current eventSnapshot,
+	input updateInput,
+	userID string,
+) error {
+	if err := repo.ensureAssignableUser(ctx, querier, tenantContext, userID); err != nil {
+		return err
+	}
+
+	nextPrimaryUserID := current.UserID
+	if input.UserID.Set && input.UserID.Value != nil {
+		nextPrimaryUserID = *input.UserID.Value
+	}
+	if userID == nextPrimaryUserID {
+		return nil
+	}
+
+	if input.AssigneeIDs.Set {
+		for _, assigneeID := range input.AssigneeIDs.Value {
+			if assigneeID == userID {
+				return nil
+			}
+		}
+		return fmt.Errorf("%w: performed_by must identify an event participant", ErrInvalidInput)
+	}
+
+	var isAssignee bool
+	err := querier.QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.schedule_event_assignees sea
+			where sea.organization_id = $1::uuid
+			  and sea.event_id = $2::uuid
+			  and sea.user_id = $3::uuid
+		)
+	`, tenantContext.OrganizationID, current.ID, userID).Scan(&isAssignee)
+	if err != nil {
+		return err
+	}
+	if !isAssignee {
+		return fmt.Errorf("%w: performed_by must identify an event participant", ErrInvalidInput)
+	}
+
+	return nil
+}
+
 func (repo Repository) getSnapshotForUpdate(ctx context.Context, tx pgx.Tx, organizationID string, eventID string) (eventSnapshot, error) {
 	var snapshot eventSnapshot
-	var leadID pgtype.Text
+	var leadID, outcome, performedBy, rescheduledFromID, rescheduledToID pgtype.Text
 	err := tx.QueryRow(ctx, `
 		select
 			id::text,
@@ -1167,14 +1393,19 @@ func (repo Repository) getSnapshotForUpdate(ctx context.Context, tx pgx.Tx, orga
 			event_type,
 			start_time,
 			end_time,
+			coalesce(is_all_day, false),
 			status,
+			outcome,
+			performed_by::text,
+			rescheduled_from_event_id::text,
+			rescheduled_to_event_id::text,
 			visibility
 		from public.schedule_events
 		where organization_id = $1::uuid
 		  and id = $2::uuid
 		limit 1
 		for update
-	`, organizationID, eventID).Scan(&snapshot.ID, &snapshot.OrganizationID, &snapshot.UserID, &leadID, &snapshot.Title, &snapshot.EventType, &snapshot.StartTime, &snapshot.EndTime, &snapshot.Status, &snapshot.Visibility)
+	`, organizationID, eventID).Scan(&snapshot.ID, &snapshot.OrganizationID, &snapshot.UserID, &leadID, &snapshot.Title, &snapshot.EventType, &snapshot.StartTime, &snapshot.EndTime, &snapshot.IsAllDay, &snapshot.Status, &outcome, &performedBy, &rescheduledFromID, &rescheduledToID, &snapshot.Visibility)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return eventSnapshot{}, ErrEventNotFound
 	}
@@ -1183,6 +1414,10 @@ func (repo Repository) getSnapshotForUpdate(ctx context.Context, tx pgx.Tx, orga
 	}
 
 	snapshot.LeadID = textValue(leadID)
+	snapshot.Outcome = textValue(outcome)
+	snapshot.PerformedBy = textValue(performedBy)
+	snapshot.RescheduledFromID = textValue(rescheduledFromID)
+	snapshot.RescheduledToID = textValue(rescheduledToID)
 	return snapshot, nil
 }
 
@@ -1401,6 +1636,10 @@ func (repo Repository) getComment(ctx context.Context, organizationID string, co
 }
 
 func (repo Repository) insertTimelineEvent(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, snapshot eventSnapshot, action string) error {
+	return repo.insertTimelineEventWithMetadata(ctx, tx, tenantContext, snapshot, action, nil)
+}
+
+func (repo Repository) insertTimelineEventWithMetadata(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, snapshot eventSnapshot, action string, additionalMetadata map[string]any) error {
 	if snapshot.LeadID == "" {
 		return nil
 	}
@@ -1409,6 +1648,7 @@ func (repo Repository) insertTimelineEvent(ctx context.Context, tx pgx.Tx, tenan
 		"created":     "Atividade agendada",
 		"rescheduled": "Atividade remarcada",
 		"completed":   "Atividade concluida",
+		"no_show":     "Cliente nao compareceu",
 		"cancelled":   "Atividade cancelada",
 		"commented":   "Comentario em atividade",
 	}[action]
@@ -1417,6 +1657,15 @@ func (repo Repository) insertTimelineEvent(ctx context.Context, tx pgx.Tx, tenan
 	}
 
 	description := fmt.Sprintf("%s: %s", title, snapshot.Title)
+	metadata := map[string]any{
+		"schedule_event_id": snapshot.ID,
+		"event_type":        snapshot.EventType,
+		"start_time":        snapshot.StartTime,
+		"assigned_to":       snapshot.UserID,
+	}
+	for key, value := range additionalMetadata {
+		metadata[key] = value
+	}
 	_, err := tx.Exec(ctx, `
 		insert into public.lead_timeline_events (
 			organization_id,
@@ -1438,12 +1687,7 @@ func (repo Repository) insertTimelineEvent(ctx context.Context, tx pgx.Tx, tenan
 			$6,
 			$7::jsonb
 		)
-	`, tenantContext.OrganizationID, snapshot.LeadID, tenantContext.UserID, "agenda_"+action, title, description, jsonb(map[string]any{
-		"schedule_event_id": snapshot.ID,
-		"event_type":        snapshot.EventType,
-		"start_time":        snapshot.StartTime,
-		"assigned_to":       snapshot.UserID,
-	}))
+	`, tenantContext.OrganizationID, snapshot.LeadID, tenantContext.UserID, "agenda_"+action, title, description, jsonb(metadata))
 	return err
 }
 
@@ -1508,6 +1752,7 @@ func (repo Repository) insertScheduleNotifications(ctx context.Context, tx pgx.T
 			},
 		}
 	}
+	targetURL := scheduleNotificationTargetURL(metadata)
 
 	seen := map[string]struct{}{}
 	for _, recipientID := range recipientIDs {
@@ -1539,16 +1784,24 @@ func (repo Repository) insertScheduleNotifications(ctx context.Context, tx pgx.T
 				$4,
 				'schedule',
 				'in_app',
-				'/agenda',
-				$5::jsonb
+				$5,
+				$6::jsonb
 			)
-		`, organizationID, recipientID, title, content, jsonb(metadata))
+		`, organizationID, recipientID, title, content, targetURL, jsonb(metadata))
 		if err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+func scheduleNotificationTargetURL(metadata map[string]any) string {
+	rawEventID, _ := metadata["schedule_event_id"].(string)
+	if eventID, ok := normalizeUUID(rawEventID); ok {
+		return "/agenda?event=" + eventID
+	}
+	return "/agenda"
 }
 
 func scheduleEventsQuery(whereClause string) string {
@@ -1589,7 +1842,10 @@ func scheduleEventsQuery(whereClause string) string {
 			v.organization_id::text,
 			case when v.is_masked then null else v.user_id::text end,
 			case when v.is_masked then null else v.lead_id::text end,
-			case when v.is_masked then null else v.property_id::text end,
+			case when v.is_masked or p.id is null then null else v.property_id::text end,
+			case when v.is_masked then null else v.created_by::text end,
+			case when v.is_masked then null else v.team_id::text end,
+			case when v.is_masked then null else v.lead_source_snapshot end,
 			case when v.is_masked then 'Horario ocupado' else v.title end,
 			case when v.is_masked then 'Informacao privada' else v.description end,
 			case when v.is_masked then 'task' else v.event_type end,
@@ -1607,6 +1863,12 @@ func scheduleEventsQuery(whereClause string) string {
 			case when v.is_masked then null else v.google_event_id end,
 			case when v.is_masked then null else v.completed_by::text end,
 			v.completed_at,
+			case when v.is_masked then null else v.outcome end,
+			case when v.is_masked then null else v.outcome_notes end,
+			case when v.is_masked then null else v.performed_by::text end,
+			v.outcome_recorded_at,
+			case when v.is_masked then null else v.rescheduled_from_event_id::text end,
+			case when v.is_masked then null else v.rescheduled_to_event_id::text end,
 			v.created_at,
 			v.updated_at,
 			case when v.is_masked then null else u.id::text end,
@@ -1620,16 +1882,25 @@ func scheduleEventsQuery(whereClause string) string {
 			case when v.is_masked then null else p.code end,
 			case when v.is_masked then null else cu.id::text end,
 			case when v.is_masked then null else cu.name end,
+			case when v.is_masked then null else pu.id::text end,
+			case when v.is_masked then null else pu.name end,
 			case when v.is_masked then '[]' else v.assignee_user_ids_json end,
 			v.is_masked
 		from visible v
 		left join public.users u on u.id = v.user_id
 		left join public.leads l on l.id = v.lead_id
-		left join public.properties p
-		  on p.id = v.property_id
-		 and $7::boolean
+		` + schedulePropertyJoinSQL("v", "p", "$7", "$8", "$9", "$10") + `
 		left join public.users cu on cu.id = v.completed_by
+		left join public.users pu on pu.id = v.performed_by
 		order by v.start_time asc, v.created_at asc, v.id asc`
+}
+
+func schedulePropertyJoinSQL(eventAlias string, propertyAlias string, canReadPlaceholder string, canViewAllPlaceholder string, userIDPlaceholder string, canViewTeamPlaceholder string) string {
+	return `left join public.properties ` + propertyAlias + `
+		  on ` + propertyAlias + `.id = ` + eventAlias + `.property_id
+		 and ` + propertyAlias + `.organization_id = ` + eventAlias + `.organization_id
+		 and ` + canReadPlaceholder + `::boolean
+		 and ` + propertyscope.VisibilitySQL(propertyAlias, canViewAllPlaceholder, userIDPlaceholder, canViewTeamPlaceholder)
 }
 
 func scheduleEventScopeSQL(userIDPlaceholder string, canManagePlaceholder string) string {
@@ -1750,13 +2021,14 @@ func leadVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder string, c
 
 func scanEvent(row scanner) (Event, error) {
 	var event Event
-	var userID, leadID, propertyID, description, location, recurrenceParentID, recurrenceRule, googleEventID, completedBy pgtype.Text
+	var userID, leadID, propertyID, createdBy, teamID, leadSourceSnapshot, description, location, recurrenceParentID, recurrenceRule, googleEventID, completedBy pgtype.Text
+	var outcome, outcomeNotes, performedBy, rescheduledFromID, rescheduledToID pgtype.Text
 	var reminderMinutes, recurrenceCount pgtype.Int4
-	var recurrenceUntil, completedAt pgtype.Timestamptz
+	var recurrenceUntil, completedAt, outcomeRecordedAt pgtype.Timestamptz
 	var userRefID, userName, userAvatarURL pgtype.Text
 	var leadRefID, leadName, leadPhone pgtype.Text
 	var propertyRefID, propertyTitle, propertyCode pgtype.Text
-	var completedUserID, completedUserName pgtype.Text
+	var completedUserID, completedUserName, performedUserID, performedUserName pgtype.Text
 	var assigneesJSON string
 
 	if err := row.Scan(
@@ -1765,6 +2037,9 @@ func scanEvent(row scanner) (Event, error) {
 		&userID,
 		&leadID,
 		&propertyID,
+		&createdBy,
+		&teamID,
+		&leadSourceSnapshot,
 		&event.Title,
 		&description,
 		&event.EventType,
@@ -1782,6 +2057,12 @@ func scanEvent(row scanner) (Event, error) {
 		&googleEventID,
 		&completedBy,
 		&completedAt,
+		&outcome,
+		&outcomeNotes,
+		&performedBy,
+		&outcomeRecordedAt,
+		&rescheduledFromID,
+		&rescheduledToID,
 		&event.CreatedAt,
 		&event.UpdatedAt,
 		&userRefID,
@@ -1795,6 +2076,8 @@ func scanEvent(row scanner) (Event, error) {
 		&propertyCode,
 		&completedUserID,
 		&completedUserName,
+		&performedUserID,
+		&performedUserName,
 		&assigneesJSON,
 		&event.IsMasked,
 	); err != nil {
@@ -1804,6 +2087,9 @@ func scanEvent(row scanner) (Event, error) {
 	event.UserID = textPtr(userID)
 	event.LeadID = textPtr(leadID)
 	event.PropertyID = textPtr(propertyID)
+	event.CreatedBy = textPtr(createdBy)
+	event.TeamID = textPtr(teamID)
+	event.LeadSourceSnapshot = textPtr(leadSourceSnapshot)
 	event.Description = textPtr(description)
 	event.Location = textPtr(location)
 	event.ReminderMinutes = intPtr(reminderMinutes)
@@ -1814,6 +2100,12 @@ func scanEvent(row scanner) (Event, error) {
 	event.GoogleEventID = textPtr(googleEventID)
 	event.CompletedBy = textPtr(completedBy)
 	event.CompletedAt = timePtr(completedAt)
+	event.Outcome = textPtr(outcome)
+	event.OutcomeNotes = textPtr(outcomeNotes)
+	event.PerformedBy = textPtr(performedBy)
+	event.OutcomeRecordedAt = timePtr(outcomeRecordedAt)
+	event.RescheduledFromID = textPtr(rescheduledFromID)
+	event.RescheduledToID = textPtr(rescheduledToID)
 	event.AssigneeUserIDs = decodeStringArrayJSON(assigneesJSON)
 
 	if userRefID.Valid {
@@ -1827,6 +2119,9 @@ func scanEvent(row scanner) (Event, error) {
 	}
 	if completedUserID.Valid {
 		event.CompletedByUser = &UserRef{ID: completedUserID.String, Name: textValue(completedUserName)}
+	}
+	if performedUserID.Valid {
+		event.PerformedByUser = &UserRef{ID: performedUserID.String, Name: textValue(performedUserName)}
 	}
 
 	return event, nil
@@ -1907,9 +2202,7 @@ func canViewAllLeads(tenantContext tenant.Context) bool {
 }
 
 func canViewProperties(tenantContext tenant.Context) bool {
-	return tenantContext.IsSuperAdmin ||
-		tenantContext.HasRole("owner", "admin") ||
-		tenantContext.HasPermission(permissions.PropertyView)
+	return propertyscope.CanRead(tenantContext)
 }
 
 func nullable(value *string) any {
@@ -1945,11 +2238,7 @@ func textValue(value pgtype.Text) string {
 }
 
 func textPtr(value pgtype.Text) *string {
-	if !value.Valid {
-		return nil
-	}
-
-	return &value.String
+	return pgvalue.TextPointer(value)
 }
 
 func timePtr(value pgtype.Timestamptz) *time.Time {

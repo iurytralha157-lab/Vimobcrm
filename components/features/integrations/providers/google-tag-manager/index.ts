@@ -1,0 +1,1 @@
+export { googleTagManagerIntegrationProviderManifest } from "./manifest";

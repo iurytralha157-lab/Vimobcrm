@@ -9,6 +9,7 @@ export type TenantNavigationContext = {
   memberRole?: string
   permissions: string[]
   enabledModules: string[]
+  isTeamLeader?: boolean
   isSuperAdmin: boolean
 }
 
@@ -37,6 +38,24 @@ export function getTenantPermissions(context: TenantNavigationContext): string[]
   }
 
   return context.permissions
+}
+
+export function canViewOrganizationPresence(
+  organizationId: string | null | undefined,
+  context: TenantNavigationContext | null | undefined,
+  hasPresencePermission: boolean,
+) {
+  if (!hasPresencePermission || !isTenantContextForOrganization(organizationId, context)) {
+    return false
+  }
+
+  const memberRole = context?.memberRole?.trim().toLowerCase()
+  return Boolean(
+    context?.isSuperAdmin ||
+    memberRole === 'owner' ||
+    memberRole === 'admin' ||
+    context?.isTeamLeader,
+  )
 }
 
 export function hasDefaultModule(moduleName: SystemModuleKey) {

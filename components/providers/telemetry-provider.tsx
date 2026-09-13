@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 
 import { reportErrorEvent } from '@/lib/api/telemetry'
 import { getTechnicalErrorMessage } from '@/lib/api/vimob-error'
+import { getSafeTelemetryLocation } from '@/lib/auth/telemetry-location'
 
 function getReasonMessage(reason: unknown) {
   return getTechnicalErrorMessage(reason, 'Unhandled promise rejection')
@@ -33,7 +34,8 @@ export function TelemetryProvider() {
       component?: string
       metadata?: Record<string, unknown>
     }) => {
-      const fingerprint = `${payload.category}:${payload.message}:${window.location.pathname}`
+      const safeLocation = getSafeTelemetryLocation(new URL(window.location.href))
+      const fingerprint = `${payload.category}:${payload.message}:${safeLocation.pathname}`
       if (shouldSkipDuplicate(fingerprint)) return
 
       void reportErrorEvent({
@@ -44,12 +46,12 @@ export function TelemetryProvider() {
         stack: payload.stack,
         component: payload.component,
         fingerprint,
-        url: window.location.href,
+        url: safeLocation.url,
         userAgent: navigator.userAgent,
         browserContext: {
-          pathname: window.location.pathname,
-          search: window.location.search,
-          origin: window.location.origin,
+          pathname: safeLocation.pathname,
+          search: safeLocation.search,
+          origin: safeLocation.origin,
           viewport: `${window.innerWidth}x${window.innerHeight}`,
         },
         metadata: payload.metadata,

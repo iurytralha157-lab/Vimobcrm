@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { getLeadVisibility } from '@/lib/api/lead-visibility';
+import { shouldRetryPipelineQuery } from '@/lib/pipeline-reliability';
 
 export interface LeadVisibility {
   canViewAll: boolean;
@@ -9,8 +10,12 @@ export interface LeadVisibility {
   userId?: string;
 }
 
-async function fetchLeadVisibility(userId: string, organizationId?: string | null): Promise<LeadVisibility> {
-  const visibility = await getLeadVisibility({ organizationId });
+async function fetchLeadVisibility(
+  userId: string,
+  organizationId?: string | null,
+  signal?: AbortSignal,
+): Promise<LeadVisibility> {
+  const visibility = await getLeadVisibility({ organizationId, signal });
   if (!visibility.canViewAll && !visibility.teamMemberIds?.length && !visibility.userId) {
     return { canViewAll: false, userId };
   }
@@ -18,14 +23,16 @@ async function fetchLeadVisibility(userId: string, organizationId?: string | nul
 }
 
 export function useLeadVisibility(userId: string | undefined) {
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ['lead-visibility', userId, organizationId],
-    queryFn: () => fetchLeadVisibility(userId!, organizationId),
+    queryFn: ({ signal }) => fetchLeadVisibility(userId!, organizationId, signal),
     enabled: !!userId && !!organizationId,
     staleTime: 1000 * 60 * 15,
+    retry: shouldRetryPipelineQuery,
+    retryDelay: 800,
   });
 }
 

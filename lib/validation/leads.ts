@@ -6,6 +6,7 @@ import {
   uuidSchema,
 } from './common'
 import { normalizePhoneToE164 } from '../phone-utils'
+import { LEAD_DISTRIBUTION_OUTCOMES } from '../lead-distribution-outcome'
 
 const optionalText = (max: number) => z.string().trim().max(max).nullish()
 const optionalUUID = uuidSchema.nullish()
@@ -35,6 +36,18 @@ const decimalStringSchema = z.string().trim().max(40).refine(
 )
 
 export const leadDealStatusSchema = z.enum(['open', 'won', 'lost'])
+export const leadDistributionOutcomeSchema = z.enum(LEAD_DISTRIBUTION_OUTCOMES)
+export const leadCustomSourceNameSchema = z.string()
+  .refine(
+    (value) => !/[\u0000-\u001f\u007f]/.test(value),
+    'A origem contem caracteres invalidos',
+  )
+  .transform((value) => value.trim().replace(/\s+/g, ' '))
+  .pipe(
+    z.string()
+      .min(1, 'Informe o nome da origem')
+      .max(80, 'A origem pode ter no maximo 80 caracteres'),
+  )
 
 const leadProfileSchema = z.object({
   personType: z.enum(['individual', 'company']).optional(),
@@ -82,12 +95,21 @@ export const leadCreateInputSchema = z.object({
   faixaValorImovel: optionalText(80),
   profile: leadProfileSchema.optional(),
   importMode: z.boolean().optional(),
+  autoDistribute: z.boolean().optional(),
+  roundRobinId: uuidSchema.optional(),
 }).strict().superRefine((input, ctx) => {
   if (input.dealStatus === 'lost' && !input.lostReason) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['lostReason'],
       message: 'Motivo da perda e obrigatorio',
+    })
+  }
+  if (input.roundRobinId && input.autoDistribute !== true) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['roundRobinId'],
+      message: 'Fila de distribuicao exige distribuicao automatica',
     })
   }
 })
@@ -137,6 +159,7 @@ export const leadMoveStageInputSchema = z.object({
   stageId: uuidSchema,
   isOwnResource: z.boolean().nullish(),
   boardOrderAt: timestampSchema.nullish(),
+  lostReason: optionalText(300),
 }).strict()
 
 export const leadAssignInputSchema = z.object({
@@ -250,6 +273,7 @@ export const apiLeadResponseSchema = z.object({
   data: apiLeadSchema,
   reentry: z.boolean().optional(),
   assignedUserName: z.string().optional(),
+  distributionOutcome: leadDistributionOutcomeSchema.optional(),
 }).passthrough()
 
 export const apiLeadRoundRobinResponseSchema = z.object({

@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    "**/*.mts"
+  ],
+  "exclude": [
+    "node_modules",
+    ".next*/**/*",
+    ".validation-tests/**/*",
+    "supabase/functions",
+    "deploy/edge-retirement",
+    "deploy/supabase-self-hosted/functions-main"
+  ]
+}

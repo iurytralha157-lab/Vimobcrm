@@ -13,10 +13,16 @@ type Envelope<T> = {
   data: T
 }
 
+type TagsListOptions = {
+  signal?: AbortSignal
+}
+
 export const tagsAPI = {
-  async list(organizationId?: string | null) {
+  async list(organizationId?: string | null, options: TagsListOptions = {}) {
     const response = await vimobAPIRequest<Envelope<Tag[]>>('/v1/tags', {
       organizationId,
+      signal: options.signal,
+      retry: false,
     })
     validateDomainResponse(apiTagListResponseSchema, response, 'tags.list')
     return response.data

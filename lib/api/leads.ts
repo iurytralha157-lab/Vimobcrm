@@ -1,4 +1,4 @@
-import type { Tables, TablesInsert, TablesUpdate } from '@/integrations/supabase/types'
+import type { Tables, TablesInsert, TablesUpdate } from '@/lib/supabase/types'
 import {
   apiLeadListResponseSchema,
   apiLeadResponseSchema,
@@ -14,6 +14,7 @@ import {
   validateDomainResponse,
 } from '@/lib/validation'
 import { vimobAPIRequest } from './vimob-client'
+import type { LeadDistributionOutcome } from '@/lib/lead-distribution-outcome'
 
 type LeadInsert = TablesInsert<'leads'>
 export type LeadUpdateInput = TablesUpdate<'leads'> & {
@@ -119,6 +120,7 @@ type APILeadResponse = {
   data: APILead
   reentry?: boolean
   assignedUserName?: string
+  distributionOutcome?: LeadDistributionOutcome
 }
 
 type APIRoundRobinResponse = {
@@ -150,6 +152,8 @@ type LeadCreateInput = Partial<LeadInsert> & {
   tag_ids?: string[]
   conversation_id?: string
   import_mode?: boolean
+  auto_distribute?: boolean
+  round_robin_id?: string
   team_id?: string
   feedback?: string
   interest_property_ids?: string[]
@@ -171,6 +175,7 @@ type LeadMoveStageInput = {
   stageId: string
   isOwnResource?: boolean | null
   boardOrderAt?: string | null
+  lostReason?: string | null
 }
 
 // Leads API functions
@@ -254,6 +259,8 @@ export const leadsAPI = {
       faixaValorImovel: data.faixa_valor_imovel,
       profile: data.profile,
       importMode: data.import_mode,
+      autoDistribute: data.auto_distribute,
+      roundRobinId: data.round_robin_id,
     }, 'leads.create')
     const response = await vimobAPIRequest<APILeadResponse>('/v1/leads', {
       method: 'POST',
@@ -267,6 +274,7 @@ export const leadsAPI = {
       error: null,
       reentry: Boolean(response.reentry),
       assignedUserName: response.assignedUserName,
+      distributionOutcome: response.distributionOutcome,
     }
   },
 
@@ -526,7 +534,7 @@ export function toLegacyLead(lead: APILead): LeadRow & {
     interest_plan_id: null,
     interest_property_id: lead.interestPropertyId || null,
     is_own_resource: lead.isOwnResource ?? null,
-    last_contact_at: null,
+    last_contact_at: lead.lastContactAt || null,
     last_entry_at: null,
     last_redistributed_at: null,
     lost_at: null,
@@ -540,14 +548,14 @@ export function toLegacyLead(lead: APILead): LeadRow & {
     meta_lead_id: null,
     metadata: lead.additionalFields || null,
     name: lead.name,
-    next_follow_up_at: null,
+    next_follow_up_at: lead.nextFollowUpAt || null,
     numero: lead.additionalFields?.numero || null,
     organization_id: lead.organizationId,
     owner_last_activity_at: null,
     owner_last_activity_user_id: null,
     phone: lead.phone || null,
     pipeline_id: lead.pipelineId || null,
-    priority: null,
+    priority: lead.priority || null,
     procura_financiamento: lead.procuraFinanciamento ?? null,
     profissao: lead.additionalFields?.profissao || null,
     property_code: lead.propertyCode || null,
@@ -568,7 +576,7 @@ export function toLegacyLead(lead: APILead): LeadRow & {
     board_order_at: lead.boardOrderAt || null,
     stage_entered_at: lead.stageEnteredAt || null,
     stage_id: lead.stageId || null,
-    status: null,
+    status: lead.status || null,
     team_id: lead.teamId || null,
     trabalha: lead.trabalha ?? null,
     uf: lead.additionalFields?.uf || null,

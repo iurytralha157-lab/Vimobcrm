@@ -14,28 +14,26 @@ import {
 } from '@/components/ui/alert-dialog'
 import type { PropertyWorkspaceAsset } from '@/lib/validation'
 
-interface PropertyAssetDeleteDialogProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  asset: PropertyWorkspaceAsset
-  pending?: boolean
-  onConfirm: () => Promise<void>
-}
-
 export function PropertyAssetDeleteDialog({
   open,
   onOpenChange,
   asset,
   pending = false,
   onConfirm,
-}: PropertyAssetDeleteDialogProps) {
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  asset: PropertyWorkspaceAsset
+  pending?: boolean
+  onConfirm: () => Promise<void>
+}) {
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
+      <AlertDialogContent className="rounded-[8px]">
         <AlertDialogHeader>
           <AlertDialogTitle>Remover mídia ou documento?</AlertDialogTitle>
           <AlertDialogDescription>
-            {asset.title || asset.file_name || 'Este ativo'} deixará de fazer parte da ficha. Essa ação não pode ser desfeita pela interface.
+            {asset.title || asset.file_name || 'Este ativo'} será removido da ficha e do armazenamento protegido. Uma versão já publicada precisa ser despublicada antes.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -44,7 +42,7 @@ export function PropertyAssetDeleteDialog({
             disabled={pending}
             onClick={(event) => {
               event.preventDefault()
-              void onConfirm()
+              void onConfirm().catch(() => undefined)
             }}
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >

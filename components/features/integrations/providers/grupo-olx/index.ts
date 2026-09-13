@@ -1,0 +1,1 @@
+export { grupoOLXIntegrationProviderManifest } from "./manifest";

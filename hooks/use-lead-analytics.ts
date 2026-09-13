@@ -3,6 +3,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import { analyticsAPI } from '@/lib/api/analytics';
 import { VimobAPIError } from '@/lib/api/vimob-error';
 import { DomainValidationError, formatSiteAnalyticsDate } from '@/lib/validation';
+import { getSiteAnalyticsPollingOptions } from '@/lib/site/analytics-polling';
+
+export {
+  SITE_ANALYTICS_POLLING_PROFILES,
+  getSiteAnalyticsPollingOptions,
+} from '@/lib/site/analytics-polling';
 
 export type {
   DailyView,
@@ -41,13 +47,9 @@ function shouldRetryAnalyticsRequest(failureCount: number, error: unknown) {
   return failureCount < 2;
 }
 
-function analyticsRefetchInterval(query: { state: { error: unknown } }) {
-  return query.state.error ? false : 30_000;
-}
-
 export function useLeadAnalytics(dateFrom: Date, dateTo: Date) {
-  const { loading, organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, loading } = useAuth();
+  const organizationId = activeOrganization.organizationId;
   const range = siteAnalyticsRangeQuery(dateFrom, dateTo);
 
   return useQuery({
@@ -58,14 +60,13 @@ export function useLeadAnalytics(dateFrom: Date, dateTo: Date) {
     },
     enabled: !loading,
     retry: shouldRetryAnalyticsRequest,
-    refetchInterval: analyticsRefetchInterval,
-    staleTime: 20_000,
+    ...getSiteAnalyticsPollingOptions('journeys'),
   });
 }
 
 export function useSiteAnalytics(dateFrom: Date, dateTo: Date) {
-  const { loading, organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, loading } = useAuth();
+  const organizationId = activeOrganization.organizationId;
   const range = siteAnalyticsRangeQuery(dateFrom, dateTo);
 
   return useQuery({
@@ -76,14 +77,13 @@ export function useSiteAnalytics(dateFrom: Date, dateTo: Date) {
     },
     enabled: !loading,
     retry: shouldRetryAnalyticsRequest,
-    refetchInterval: analyticsRefetchInterval,
-    staleTime: 20_000,
+    ...getSiteAnalyticsPollingOptions('summary'),
   });
 }
 
 export function useSiteAnalyticsDetailed(dateFrom: Date, dateTo: Date) {
-  const { loading, organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, loading } = useAuth();
+  const organizationId = activeOrganization.organizationId;
   const range = siteAnalyticsRangeQuery(dateFrom, dateTo);
 
   return useQuery({
@@ -94,7 +94,6 @@ export function useSiteAnalyticsDetailed(dateFrom: Date, dateTo: Date) {
     },
     enabled: !loading,
     retry: shouldRetryAnalyticsRequest,
-    refetchInterval: analyticsRefetchInterval,
-    staleTime: 20_000,
+    ...getSiteAnalyticsPollingOptions('detailed'),
   });
 }

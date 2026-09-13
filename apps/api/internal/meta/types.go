@@ -10,7 +10,7 @@ var (
 	ErrInvalidSignature              = errors.New("invalid meta webhook signature")
 	ErrMissingAppSecret              = errors.New("missing meta app secret")
 	ErrMissingVerifyToken            = errors.New("missing meta webhook verify token")
-	ErrAmbiguousPageIntegration      = errors.New("ambiguous connected Meta integration for page")
+	ErrAmbiguousLeadgenRoute         = errors.New("ambiguous connected Meta integration for lead form")
 	ErrAmbiguousMessagingIntegration = errors.New("ambiguous connected Meta integration for messaging destination")
 )
 

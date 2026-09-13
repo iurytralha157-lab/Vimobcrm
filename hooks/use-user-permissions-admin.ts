@@ -5,8 +5,8 @@ import { useAuth } from '@/contexts/AuthContext'
 import { settingsAPI } from '@/lib/api/settings'
 
 export function useUserPermissionsAdmin(userId: string) {
-  const { profile, organization } = useAuth()
-  const organizationId = organization?.id ?? profile?.organization_id
+  const { activeOrganization, profile, organization } = useAuth()
+  const organizationId = activeOrganization.organizationId
 
   return useQuery({
     queryKey: ['user-permissions-admin', organizationId, userId],
@@ -16,8 +16,8 @@ export function useUserPermissionsAdmin(userId: string) {
 }
 
 export function useReplaceUserPermissions(userId: string) {
-  const { profile, organization } = useAuth()
-  const organizationId = organization?.id ?? profile?.organization_id
+  const { activeOrganization, profile, organization } = useAuth()
+  const organizationId = activeOrganization.organizationId
   const queryClient = useQueryClient()
 
   return useMutation({
@@ -31,8 +31,8 @@ export function useReplaceUserPermissions(userId: string) {
 }
 
 export function useResetUserPermissions(userId: string) {
-  const { profile, organization } = useAuth()
-  const organizationId = organization?.id ?? profile?.organization_id
+  const { activeOrganization, profile, organization } = useAuth()
+  const organizationId = activeOrganization.organizationId
   const queryClient = useQueryClient()
 
   return useMutation({

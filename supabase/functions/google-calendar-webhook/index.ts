@@ -1,6 +1,8 @@
 import {
+  constantTimeEqual,
   enqueueSyncJob,
   errorMessage,
+  getGoogleScheduleCapability,
   handleOptions,
   jsonResponse,
   sha256Hex,
@@ -43,12 +45,29 @@ Deno.serve(async (req) => {
     }
 
     const tokenHash = await sha256Hex(channelToken);
-    if (tokenHash !== channel.token_hash) {
+    if (!constantTimeEqual(tokenHash, String(channel.token_hash || ""))) {
       return jsonResponse({ ok: false, error: "Token do canal invalido." }, 403);
     }
 
     if (resourceId && channel.resource_id && resourceId !== channel.resource_id) {
       return jsonResponse({ ok: true, ignored: true, reason: "RESOURCE_MISMATCH" });
+    }
+
+    const { data: connection, error: connectionError } = await supabase
+      .from("google_calendar_tokens")
+      .select("organization_id, user_id, sync_enabled, disconnected_at")
+      .eq("id", channel.connection_id)
+      .maybeSingle();
+    if (connectionError) throw connectionError;
+    if (!connection || !connection.sync_enabled || connection.disconnected_at) {
+      return jsonResponse({ ok: true, ignored: true, reason: "SYNC_DISABLED" });
+    }
+    const capability = await getGoogleScheduleCapability(
+      connection.user_id,
+      connection.organization_id,
+    );
+    if (!capability.allowed) {
+      return jsonResponse({ ok: true, ignored: true, reason: capability.reason });
     }
 
     await enqueueSyncJob({

@@ -6,14 +6,20 @@ const (
 	defaultAIWorkerInterval                      = time.Minute
 	defaultAIFollowUpWorkerInterval              = 10 * time.Minute
 	defaultWhatsAppOutboxWorkerInterval          = time.Second
-	defaultWhatsAppOutboxWorkerBatch             = 5
+	defaultWhatsAppOutboxWorkerBatch             = 10
+	defaultWhatsAppOutboxWorkerConcurrency       = 4
+	maxWhatsAppOutboxWorkerConcurrency           = 16
 	defaultWhatsAppWebhookWorkerInterval         = time.Second
-	defaultWhatsAppWebhookWorkerBatch            = 5
+	defaultWhatsAppWebhookWorkerBatch            = 10
 	defaultWhatsAppWebhookWorkerConcurrency      = 4
 	maxWhatsAppWebhookWorkerConcurrency          = 16
+	defaultWhatsAppMediaWorkerInterval           = 2 * time.Second
+	defaultWhatsAppMediaWorkerLease              = 5 * time.Minute
+	defaultWhatsAppMediaWorkerConcurrency        = 4
+	maxWhatsAppMediaWorkerConcurrency            = 16
 	defaultWhatsAppSessionSupervisorInitialDelay = 30 * time.Second
 	defaultWhatsAppSessionSupervisorInterval     = time.Minute
-	defaultWhatsAppSessionSupervisorBatch        = 10
+	defaultWhatsAppSessionSupervisorBatch        = 50
 )
 
 type WorkerConfig struct {
@@ -24,10 +30,15 @@ type WorkerConfig struct {
 	OutboxWorkerEnabled           bool
 	OutboxWorkerInterval          time.Duration
 	OutboxWorkerBatch             int
+	OutboxWorkerConcurrency       int
 	WebhookWorkerEnabled          bool
 	WebhookWorkerInterval         time.Duration
 	WebhookWorkerBatch            int
 	WebhookWorkerConcurrency      int
+	MediaWorkerEnabled            bool
+	MediaWorkerInterval           time.Duration
+	MediaWorkerLease              time.Duration
+	MediaWorkerConcurrency        int
 	SessionSupervisorEnabled      bool
 	SessionSupervisorInitialDelay time.Duration
 	SessionSupervisorInterval     time.Duration
@@ -44,10 +55,15 @@ func DefaultWorkerConfig() WorkerConfig {
 		OutboxWorkerEnabled:           true,
 		OutboxWorkerInterval:          defaultWhatsAppOutboxWorkerInterval,
 		OutboxWorkerBatch:             defaultWhatsAppOutboxWorkerBatch,
+		OutboxWorkerConcurrency:       defaultWhatsAppOutboxWorkerConcurrency,
 		WebhookWorkerEnabled:          true,
 		WebhookWorkerInterval:         defaultWhatsAppWebhookWorkerInterval,
 		WebhookWorkerBatch:            defaultWhatsAppWebhookWorkerBatch,
 		WebhookWorkerConcurrency:      defaultWhatsAppWebhookWorkerConcurrency,
+		MediaWorkerEnabled:            false,
+		MediaWorkerInterval:           defaultWhatsAppMediaWorkerInterval,
+		MediaWorkerLease:              defaultWhatsAppMediaWorkerLease,
+		MediaWorkerConcurrency:        defaultWhatsAppMediaWorkerConcurrency,
 		SessionSupervisorEnabled:      true,
 		SessionSupervisorInitialDelay: defaultWhatsAppSessionSupervisorInitialDelay,
 		SessionSupervisorInterval:     defaultWhatsAppSessionSupervisorInterval,
@@ -71,6 +87,7 @@ func (config WorkerConfig) normalized() WorkerConfig {
 	if config.OutboxWorkerBatch <= 0 || config.OutboxWorkerBatch > 100 {
 		config.OutboxWorkerBatch = defaults.OutboxWorkerBatch
 	}
+	config.OutboxWorkerConcurrency = normalizeOutboxWorkerConcurrency(config.OutboxWorkerConcurrency)
 	if config.WebhookWorkerInterval <= 0 {
 		config.WebhookWorkerInterval = defaults.WebhookWorkerInterval
 	}
@@ -78,6 +95,13 @@ func (config WorkerConfig) normalized() WorkerConfig {
 		config.WebhookWorkerBatch = defaults.WebhookWorkerBatch
 	}
 	config.WebhookWorkerConcurrency = normalizeWebhookWorkerConcurrency(config.WebhookWorkerConcurrency)
+	if config.MediaWorkerInterval <= 0 {
+		config.MediaWorkerInterval = defaults.MediaWorkerInterval
+	}
+	if config.MediaWorkerLease < 30*time.Second || config.MediaWorkerLease > 30*time.Minute {
+		config.MediaWorkerLease = defaults.MediaWorkerLease
+	}
+	config.MediaWorkerConcurrency = normalizeMediaWorkerConcurrency(config.MediaWorkerConcurrency)
 	if config.SessionSupervisorInitialDelay <= 0 {
 		config.SessionSupervisorInitialDelay = defaults.SessionSupervisorInitialDelay
 	}
@@ -91,9 +115,23 @@ func (config WorkerConfig) normalized() WorkerConfig {
 	return config
 }
 
+func normalizeOutboxWorkerConcurrency(value int) int {
+	if value < 1 || value > maxWhatsAppOutboxWorkerConcurrency {
+		return defaultWhatsAppOutboxWorkerConcurrency
+	}
+	return value
+}
+
 func normalizeWebhookWorkerConcurrency(value int) int {
 	if value <= 0 || value > maxWhatsAppWebhookWorkerConcurrency {
 		return defaultWhatsAppWebhookWorkerConcurrency
+	}
+	return value
+}
+
+func normalizeMediaWorkerConcurrency(value int) int {
+	if value < 1 || value > maxWhatsAppMediaWorkerConcurrency {
+		return defaultWhatsAppMediaWorkerConcurrency
 	}
 	return value
 }

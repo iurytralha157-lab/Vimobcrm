@@ -183,25 +183,102 @@ func TestOAuthAdvancedAssetsFailClosedWhenMarketingModuleIsDisabled(t *testing.T
 func TestOAuthWebhookCompensationNeverBreaksAHealthyIntegration(t *testing.T) {
 	source := readOAuthSource(t, "oauth_service.go")
 	connect := oauthSourceSection(t, source, "func (service *oauthService) connectPage", "func (service *oauthService) updatePage")
+	providerState := strings.Index(connect, "pageSubscriptionState(")
+	providerSubscribe := strings.Index(connect, "subscribePageWebhook(")
+	if providerState < 0 || providerSubscribe < providerState {
+		t.Fatal("connect must inspect the shared Page subscription before mutating the provider")
+	}
+	if !strings.Contains(connect, "providerState.ConnectedCount == 0 || (requestedMessaging && !providerMessagingSubscribed)") {
+		t.Fatal("connect may only create the first Page subscription or perform a monotonic messaging upgrade")
+	}
 	persist := strings.Index(connect, "persistConnectedIntegration(")
-	stateCheck := strings.Index(connect, "integrationConnected(")
+	stateCheck := strings.Index(connect, "connectedPageIntegrationCount(")
 	compensate := strings.LastIndex(connect, "unsubscribePageWebhook(")
 	if persist < 0 || stateCheck < persist || compensate < stateCheck {
-		t.Fatal("connect compensation must check the stored connected state before unsubscribing")
+		t.Fatal("connect compensation must check every tenant connection for the Page before unsubscribing")
+	}
+	if !strings.Contains(connect, "acquireMetaPageSubscriptionLock(") {
+		t.Fatal("connect must serialize provider subscription mutations across tenants")
 	}
 
 	disconnect := oauthSourceSection(t, source, "func (service *oauthService) disconnectPage", "func (service *oauthService) togglePage")
 	disconnecting := strings.Index(disconnect, `"health_status": "disconnecting"`)
+	sharedStateCheck := strings.Index(disconnect, "connectedPageIntegrationCount(")
 	unsubscribe := strings.Index(disconnect, "unsubscribePageWebhook(")
-	if disconnecting < 0 || unsubscribe < disconnecting {
-		t.Fatal("disconnect must persist a non-healthy state before removing the provider webhook")
+	if disconnecting < 0 || sharedStateCheck < disconnecting || unsubscribe < sharedStateCheck {
+		t.Fatal("disconnect must persist state and check every tenant connection before removing the provider webhook")
+	}
+	if !strings.Contains(disconnect, `"webhook_preserved_for_shared_page": connectedCount > 0`) {
+		t.Fatal("disconnect must report that a shared Page subscription was preserved")
 	}
 
 	toggle := oauthSourceSection(t, source, "func (service *oauthService) togglePage", "func (service *oauthService) updateAdAccounts")
 	paused := strings.Index(toggle, `"health_status": "paused"`)
+	toggleSharedStateCheck := strings.Index(toggle, "connectedPageIntegrationCount(")
 	toggleUnsubscribe := strings.Index(toggle, "unsubscribePageWebhook(")
-	if paused < 0 || toggleUnsubscribe < paused {
-		t.Fatal("pause must be durable before removing the provider webhook")
+	if paused < 0 || toggleSharedStateCheck < paused || toggleUnsubscribe < toggleSharedStateCheck {
+		t.Fatal("pause must be durable and shared-Page-aware before removing the provider webhook")
+	}
+	if !strings.Contains(toggle, "acquireMetaPageSubscriptionLock(") {
+		t.Fatal("toggle must serialize provider subscription mutations across tenants")
+	}
+}
+
+func TestOAuthSharedPageStateIsGlobalAndCredentialFree(t *testing.T) {
+	source := readOAuthSource(t, "oauth_postgres.go")
+	state := oauthSourceSection(
+		t,
+		source,
+		"type oauthPageSubscriptionState struct",
+		"func (store oauthPostgresStore) persistConnectedIntegration",
+	)
+	normalized := strings.Join(strings.Fields(state), " ")
+	for _, required := range []string{
+		"count(*)::bigint",
+		"bool_or(",
+		`coalesce(subscribed_fields, '[]'::jsonb) @> '["messages"]'::jsonb`,
+		"btrim(page_id) = btrim($1)",
+		"coalesce(is_connected, false) = true",
+	} {
+		if !strings.Contains(normalized, required) {
+			t.Fatalf("shared Page provider state is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"organization_id =",
+		"access_token",
+		"user_access_token",
+	} {
+		if strings.Contains(normalized, forbidden) {
+			t.Fatalf("shared Page provider state must be global and credential-free; found %q", forbidden)
+		}
+	}
+}
+
+func TestMetaPageProviderMutationLockIsProcessSafeAndDoesNotHoldATransaction(t *testing.T) {
+	source := readOAuthSource(t, "page_subscription_lock.go")
+	for _, required := range []string{
+		"pg_advisory_lock(",
+		"meta-page-subscription:",
+		"pg_advisory_unlock(",
+		"connection.Hijack()",
+		"underlying.Close(closeContext)",
+		"sync.Once",
+		"pool.Config().MaxConns",
+		"acquireMetaPageSubscriptionPoolSlot(ctx, pool)",
+		"defer releasePoolSlot()",
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("Page subscription lock is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"pg_advisory_xact_lock",
+		"connection.Begin(",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("provider HTTP coordination must not hold a database transaction: found %q", forbidden)
+		}
 	}
 }
 

@@ -5,6 +5,7 @@ import {
   type HelpArticle,
   type HelpArticleSummary,
 } from '@/lib/validation/help'
+import { normalizeSearchText } from '@/lib/search-text'
 
 export type HelpContentAudience = 'authenticated' | 'public'
 
@@ -22,13 +23,6 @@ function isVisibleForAudience(
     return visibility === 'authenticated' || visibility === 'all'
   }
   return visibility === 'public' || visibility === 'all'
-}
-
-function normalizeSearchText(value: string) {
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLocaleLowerCase('pt-BR')
 }
 
 function toSummary(

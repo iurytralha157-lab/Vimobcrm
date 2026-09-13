@@ -5,12 +5,15 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
@@ -148,19 +151,49 @@ func (client notificationEmailClient) sendHTML(ctx context.Context, recipient st
 	}
 
 	result.Attempted = true
+	var requestWriteObserved atomic.Bool
+	trace := &httptrace.ClientTrace{
+		WroteRequest: func(httptrace.WroteRequestInfo) {
+			requestWriteObserved.Store(true)
+		},
+	}
+	request = request.WithContext(httptrace.WithClientTrace(request.Context(), trace))
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		result.Error = err.Error()
+		if requestWriteObserved.Load() {
+			result.OutcomeUnknown = true
+			result.Error = "resend_delivery_outcome_unknown: " + trimMax(err.Error(), 200)
+		} else {
+			result.Error = err.Error()
+		}
 		return result
 	}
 	defer response.Body.Close()
 	result.Status = response.StatusCode
-	raw, _ := io.ReadAll(io.LimitReader(response.Body, 8192))
+	result.RetryAfter = parseNotificationRetryAfter(response.Header.Get("Retry-After"), time.Now())
+	raw, readErr := io.ReadAll(io.LimitReader(response.Body, 8192))
+	if readErr != nil {
+		if response.StatusCode >= 200 && response.StatusCode < 300 {
+			result.OutcomeUnknown = true
+			result.Error = "resend_delivery_outcome_unknown: " + trimMax(readErr.Error(), 200)
+		} else {
+			result.Error = readErr.Error()
+		}
+		return result
+	}
 	var providerResponse resendEmailResponse
-	_ = json.Unmarshal(raw, &providerResponse)
+	parseErr := json.Unmarshal(raw, &providerResponse)
 	result.MessageID = strings.TrimSpace(providerResponse.ID)
 	result.OK = response.StatusCode >= 200 && response.StatusCode < 300 && result.MessageID != ""
 	if !result.OK {
+		if response.StatusCode >= 200 && response.StatusCode < 300 {
+			result.OutcomeUnknown = true
+			result.Error = "resend_delivery_outcome_unknown"
+			if parseErr != nil {
+				result.Error += ": " + trimMax(parseErr.Error(), 200)
+			}
+			return result
+		}
 		result.Error = trimMax(firstNotificationText(
 			strings.TrimSpace(providerResponse.Message),
 			strings.TrimSpace(providerResponse.Error),
@@ -502,7 +535,13 @@ func (client *notificationPushClient) sendWeb(ctx context.Context, subscription 
 
 	result.Attempted = true
 	result.Provider = "web_push"
-	response, err := webpush.SendNotificationWithContext(ctx, message, &webpush.Subscription{
+	var requestWriteObserved atomic.Bool
+	trace := &httptrace.ClientTrace{
+		WroteRequest: func(httptrace.WroteRequestInfo) {
+			requestWriteObserved.Store(true)
+		},
+	}
+	response, err := webpush.SendNotificationWithContext(httptrace.WithClientTrace(ctx, trace), message, &webpush.Subscription{
 		Endpoint: subscription.Endpoint,
 		Keys: webpush.Keys{
 			Auth:   subscription.Auth,
@@ -516,11 +555,17 @@ func (client *notificationPushClient) sendWeb(ctx context.Context, subscription 
 		TTL:             60 * 60,
 	})
 	if err != nil {
-		result.Error = err.Error()
+		if requestWriteObserved.Load() {
+			result.OutcomeUnknown = true
+			result.Error = "web_push_delivery_outcome_unknown: " + trimMax(err.Error(), 200)
+		} else {
+			result.Error = err.Error()
+		}
 		return result
 	}
 	defer response.Body.Close()
 	result.Status = response.StatusCode
+	result.RetryAfter = parseNotificationRetryAfter(response.Header.Get("Retry-After"), time.Now())
 	result.OK = response.StatusCode >= 200 && response.StatusCode < 300
 	if !result.OK {
 		raw, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
@@ -547,9 +592,14 @@ func (client *notificationPushClient) sendNativeFCM(ctx context.Context, subscri
 }
 
 func (client *notificationPushClient) sendNativeFCMV1(ctx context.Context, token string, payload pushPayload) DispatchChannelResult {
-	result := DispatchChannelResult{Enabled: true, Provider: "fcm_v1"}
+	result := DispatchChannelResult{Enabled: true, Attempted: true, Provider: "fcm_v1"}
 	accessToken, projectID, err := client.fcmV1AccessToken(ctx)
 	if err != nil {
+		var providerError *fcmAccessTokenHTTPError
+		if errors.As(err, &providerError) {
+			result.Status = providerError.Status
+			result.RetryAfter = providerError.RetryAfter
+		}
 		result.Error = trimMax(err.Error(), 240)
 		return result
 	}
@@ -594,14 +644,26 @@ func (client *notificationPushClient) sendNativeFCMV1(ctx context.Context, token
 	request.Header.Set("Authorization", "Bearer "+accessToken)
 	request.Header.Set("Content-Type", "application/json")
 
-	result.Attempted = true
+	var requestWriteObserved atomic.Bool
+	trace := &httptrace.ClientTrace{
+		WroteRequest: func(httptrace.WroteRequestInfo) {
+			requestWriteObserved.Store(true)
+		},
+	}
+	request = request.WithContext(httptrace.WithClientTrace(request.Context(), trace))
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		result.Error = err.Error()
+		if requestWriteObserved.Load() {
+			result.OutcomeUnknown = true
+			result.Error = "fcm_delivery_outcome_unknown: " + trimMax(err.Error(), 200)
+		} else {
+			result.Error = err.Error()
+		}
 		return result
 	}
 	defer response.Body.Close()
 	result.Status = response.StatusCode
+	result.RetryAfter = parseNotificationRetryAfter(response.Header.Get("Retry-After"), time.Now())
 	result.OK = response.StatusCode >= 200 && response.StatusCode < 300
 	if !result.OK {
 		raw, _ := io.ReadAll(io.LimitReader(response.Body, 8192))
@@ -639,13 +701,26 @@ func (client *notificationPushClient) sendNativeFCMLegacy(ctx context.Context, t
 
 	result.Attempted = true
 	result.Provider = "fcm_legacy"
+	var requestWriteObserved atomic.Bool
+	trace := &httptrace.ClientTrace{
+		WroteRequest: func(httptrace.WroteRequestInfo) {
+			requestWriteObserved.Store(true)
+		},
+	}
+	request = request.WithContext(httptrace.WithClientTrace(request.Context(), trace))
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		result.Error = err.Error()
+		if requestWriteObserved.Load() {
+			result.OutcomeUnknown = true
+			result.Error = "fcm_delivery_outcome_unknown: " + trimMax(err.Error(), 200)
+		} else {
+			result.Error = err.Error()
+		}
 		return result
 	}
 	defer response.Body.Close()
 	result.Status = response.StatusCode
+	result.RetryAfter = parseNotificationRetryAfter(response.Header.Get("Retry-After"), time.Now())
 	result.OK = response.StatusCode >= 200 && response.StatusCode < 300
 	raw, _ := io.ReadAll(io.LimitReader(response.Body, 8192))
 	if result.OK {

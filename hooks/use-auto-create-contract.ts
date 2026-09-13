@@ -21,13 +21,13 @@ interface AutoCreateContractParams {
  */
 export function useAutoCreateContract() {
   const queryClient = useQueryClient();
-  const { profile, user, organization } = useAuth();
+  const { activeOrganization, profile, user, organization } = useAuth();
 
   return useMutation({
     mutationFn: async (params: AutoCreateContractParams) => {
       void params;
 
-      const orgId = organization?.id || profile?.organization_id;
+      const orgId = activeOrganization.organizationId;
       if (!orgId) throw new Error('Organização não encontrada');
       if (!user?.id) throw new Error('Usuário não autenticado');
 
@@ -44,7 +44,10 @@ export function useAutoCreateContract() {
       queryClient.invalidateQueries({ queryKey: ['commissions'] });
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       queryClient.invalidateQueries({ queryKey: ['stages'] });
-      queryClient.invalidateQueries({ queryKey: ['stages-with-leads'] });
+      queryClient.invalidateQueries(
+        { queryKey: ['stages-with-leads'] },
+        { cancelRefetch: false },
+      );
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
       queryClient.invalidateQueries({ queryKey: ['enhanced-dashboard-stats'] });
 

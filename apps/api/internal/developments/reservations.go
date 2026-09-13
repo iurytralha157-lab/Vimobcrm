@@ -140,6 +140,9 @@ func (repo Repository) ListReservations(
 	developmentID string,
 	filter ReservationListFilter,
 ) (ReservationListResponse, error) {
+	if !canManage(tenantContext) {
+		return ReservationListResponse{}, tenant.ErrOrganizationAccessDenied
+	}
 	organizationID := strings.TrimSpace(tenantContext.OrganizationID)
 	developmentID = strings.TrimSpace(developmentID)
 	if organizationID == "" || !uuidPattern.MatchString(developmentID) {

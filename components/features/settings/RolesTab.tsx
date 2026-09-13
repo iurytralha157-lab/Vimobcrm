@@ -80,7 +80,7 @@ const PERMISSION_GROUPS: Record<string, { label: string; keys: string[] }> = {
   org_settings: { label: 'Configurações', keys: ['settings_organization', 'settings_integrations', 'settings_ai', 'settings_site', 'settings_billing'] },
   team_management: { label: 'Gestão de Equipes', keys: ['team_view', 'team_manage', 'distribution_manage'] },
   crm_management: { label: 'Configuração do CRM', keys: ['pipeline_manage', 'tag_manage'] },
-  user_management: { label: 'Gestão de Usuários', keys: ['users_manage', 'permissions_manage'] },
+  user_management: { label: 'Gestão de Usuários', keys: ['users_presence_view', 'users_manage', 'permissions_manage'] },
 };
 
 const COLOR_OPTIONS = [

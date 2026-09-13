@@ -23,7 +23,12 @@ func (handler Handler) MetaInsights(w http.ResponseWriter, r *http.Request) {
 
 func (handler Handler) CampaignInsights(w http.ResponseWriter, r *http.Request) {
 	item, err := handler.repo.CampaignInsights(r.Context(), mustTenant(w, r), r.URL.Query())
-	handler.writeObject(w, r, item, err)
+	if err != nil {
+		status, code, message := marketingAnalyticsErrorResponse(err)
+		httpserver.WriteError(w, r, status, code, message)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, map[string]map[string]any{"data": item})
 }
 
 func (handler Handler) EnterpriseKPIs(w http.ResponseWriter, r *http.Request) {
@@ -118,54 +123,4 @@ func mustTenant(w http.ResponseWriter, r *http.Request) tenant.Context {
 		return tenant.Context{}
 	}
 	return tenantContext
-}
-
-func emptyLeadAnalytics() map[string]any {
-	return map[string]any{
-		"journeys":          []any{},
-		"funnel":            []any{},
-		"top_pages":         []any{},
-		"daily_views":       []any{},
-		"total_sessions":    0,
-		"total_conversions": 0,
-		"device_breakdown":  []any{},
-		"locations":         []any{},
-	}
-}
-
-func emptySiteSummary() map[string]any {
-	return map[string]any{
-		"totalViews":      0,
-		"totalPages":      0,
-		"uniquePages":     0,
-		"uniqueSessions":  0,
-		"avgDuration":     0,
-		"desktopPct":      0,
-		"mobilePct":       0,
-		"tabletPct":       0,
-		"directPct":       0,
-		"searchPct":       0,
-		"socialPct":       0,
-		"campaignPct":     0,
-		"conversions":     0,
-		"prevViews":       0,
-		"prevPages":       0,
-		"prevUniquePages": 0,
-		"prevAvgDuration": 0,
-		"prevDesktopPct":  0,
-		"prevMobilePct":   0,
-		"prevConversions": 0,
-	}
-}
-
-func emptySiteDetailed() map[string]any {
-	return map[string]any{
-		"topProperties":    []any{},
-		"topPages":         []any{},
-		"dailyViews":       []any{},
-		"conversionRate":   0,
-		"totalSessions":    0,
-		"totalConversions": 0,
-		"siteLeads":        0,
-	}
 }

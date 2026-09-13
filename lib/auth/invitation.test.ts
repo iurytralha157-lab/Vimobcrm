@@ -76,6 +76,14 @@ test('links juridicos do convite nao alternam o consentimento do checkbox', () =
   assert.match(consentHelper, /rel="noopener noreferrer"/)
 })
 
+test('cadastro por convite reutiliza a politica forte de senha e explica os requisitos', () => {
+  assert.match(invitationScreenSource, /strongPasswordSchema\.safeParse\(password\)/)
+  assert.match(invitationScreenSource, /evaluatePasswordPolicy\(password\)/)
+  assert.match(invitationScreenSource, /id="invitation-password-requirements"/)
+  assert.match(invitationScreenSource, /PASSWORD_POLICY\.minLength/)
+  assert.match(invitationScreenSource, /PASSWORD_POLICY\.maxLength/)
+})
+
 test('superficie ativa do convite preserva o contrato visual da Home', () => {
   assert.doesNotMatch(invitationScreenSource, /#[0-9a-f]{3,8}\b/i)
   assert.doesNotMatch(invitationScreenSource, /\bbg-(?:black|white)(?:\/(?:\[[^\]]+\]|\d+))?/)

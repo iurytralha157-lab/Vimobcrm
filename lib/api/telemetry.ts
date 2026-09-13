@@ -126,5 +126,9 @@ export const telemetryAPI = {
 }
 
 export function reportErrorEvent(input: ReportErrorEventInput) {
+  if (process.env.NEXT_PUBLIC_DISABLE_ERROR_TELEMETRY === 'true') {
+    return Promise.resolve(undefined)
+  }
+
   return telemetryAPI.reportErrorEvent(input)
 }

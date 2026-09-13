@@ -17,6 +17,7 @@ import {
 } from "@/hooks/use-meta-integration";
 import type { SharedFilters } from "@/hooks/use-shared-filters";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
+import { isMetaIntegrationConnected } from "@/lib/integration-catalog";
 
 type NumberRecord = Record<string, unknown>;
 
@@ -42,6 +43,7 @@ export interface MarketingCreative {
   impressions: number | null;
   reach: number | null;
   interactions: number | null;
+  media_type: string | null;
   source_kind: "paid" | "organic";
   provider: string;
   published_at: string | null;
@@ -119,7 +121,10 @@ function collectCreatives(
       ad_name: asset.ad_name || asset.title || "Mídia sem título",
       campaign_name: asset.campaign_name,
       adset_name: asset.adset_name,
-      leads_count: readNumber(asset.metrics, ["leads", "leads_count", "results"]),
+      // `marketing_media_assets.metrics.leads` is reported by the provider,
+      // not a confirmed CRM attribution. CRM counts are merged below from the
+      // campaign/ad aggregates only when attribution is available.
+      leads_count: null,
       won_count: hasCRMAttribution
         ? readNumber(asset.metrics, ["won", "won_count", "sales"])
         : null,
@@ -143,6 +148,7 @@ function collectCreatives(
         "engagement",
         "total_interactions",
       ]),
+      media_type: asset.media_type,
       source_kind: asset.source_kind,
       provider: asset.provider,
       published_at: asset.published_at,
@@ -176,6 +182,7 @@ function collectCreatives(
       impressions: existing?.impressions ?? null,
       reach: existing?.reach ?? null,
       interactions: existing?.interactions ?? null,
+      media_type: existing?.media_type ?? null,
       source_kind: "paid",
       provider: existing?.provider ?? "meta",
       published_at: existing?.published_at ?? null,
@@ -228,6 +235,7 @@ function collectCreatives(
           impressions: ad.impressions,
           reach: ad.reach,
           interactions: null,
+          media_type: null,
           source_kind: "paid",
           provider: "meta",
           published_at: null,
@@ -249,7 +257,12 @@ function integrationHasAdAccount(integration: MetaIntegration) {
   );
 }
 
-export function useMarketingDashboard(filters: SharedFilters) {
+export interface MarketingDashboardFilters extends SharedFilters {
+  accountId?: string | null;
+  objective?: string | null;
+}
+
+export function useMarketingDashboard(filters: MarketingDashboardFilters) {
   const { isSuperAdmin, tenantContext } = useAuth();
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
   const canManageIntegration =
@@ -266,11 +279,7 @@ export function useMarketingDashboard(filters: SharedFilters) {
 
   const connectedIntegrations = useMemo(
     () =>
-      (integrationsQuery.data ?? []).filter(
-        (integration) =>
-          integration.is_connected === true &&
-          (integration.token_status ?? "active") === "active",
-      ),
+      (integrationsQuery.data ?? []).filter(isMetaIntegrationConnected),
     [integrationsQuery.data],
   );
 
@@ -317,7 +326,11 @@ export function useMarketingDashboard(filters: SharedFilters) {
       hasMarketingToken:
         connectedIntegrations.some(
           (item) => item.marketing_token_available === true,
-        ) || analyticsConnection?.isConnected === true,
+        ) || analyticsConnection?.marketingTokenAvailable === true,
+      hasInstagramInsights:
+        connectedIntegrations.some(
+          (item) => item.instagram_insights_available === true,
+        ) || analyticsConnection?.instagramInsightsAvailable === true,
       pageCount: Math.max(
         new Set(
           connectedIntegrations
@@ -341,12 +354,6 @@ export function useMarketingDashboard(filters: SharedFilters) {
       pageName: connectedIntegrations.find((item) => item.page_name)?.page_name ?? null,
       lastValidatedAt: latestIsoDate(
         connectedIntegrations.map((item) => item.last_validated_at),
-      ),
-      lastIntegrationSyncAt: latestIsoDate(
-        [
-          ...connectedIntegrations.map((item) => item.last_sync_at),
-          analyticsConnection?.lastIntegrationSync,
-        ],
       ),
     };
   }, [connectedIntegrations, insightsQuery.data?.connection]);
@@ -467,6 +474,10 @@ export function useMarketingDashboard(filters: SharedFilters) {
   }, [filters.dateRange.from, filters.dateRange.to, syncMutation]);
 
   return {
+    dateRange: {
+      from: formatCalendarDate(filters.dateRange.from),
+      to: formatCalendarDate(filters.dateRange.to),
+    },
     canManageIntegration,
     canSyncIntegration,
     insightsQuery,
@@ -479,9 +490,9 @@ export function useMarketingDashboard(filters: SharedFilters) {
     campaignMetrics,
     integration,
     integrationState,
-    lastSyncAt:
-      insightsQuery.data?.lastSync ??
-      integrationState.lastIntegrationSyncAt ??
-      null,
+    // `meta_integrations.last_sync_at` also changes during integration/form
+    // maintenance and is not proof that Marketing facts were imported. Only
+    // the analytics payload can authoritatively label a Marketing sync.
+    lastSyncAt: insightsQuery.data?.lastSync ?? null,
   };
 }

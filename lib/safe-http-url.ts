@@ -12,3 +12,10 @@ export function getSafeAbsoluteHttpUrl(value: unknown): string | null {
     return null;
   }
 }
+
+export function getSafeHttpUrl(candidate: string | null | undefined): string | null {
+  if (!candidate) return null;
+  if (candidate.startsWith('/') && !candidate.startsWith('//')) return candidate;
+
+  return getSafeAbsoluteHttpUrl(candidate);
+}

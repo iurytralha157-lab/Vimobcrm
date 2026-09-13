@@ -2,7 +2,6 @@ package teams
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,7 +24,7 @@ func NewHandler(repo Repository) Handler {
 }
 
 func (handler Handler) List(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -39,7 +38,7 @@ func (handler Handler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) Get(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -51,13 +50,31 @@ func (handler Handler) Get(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[Team]{Data: team})
 }
 
+func (handler Handler) ListHistory(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
+	if !ok {
+		return
+	}
+	limit, err := parseTeamHistoryLimit(r.URL.Query().Get("limit"))
+	if err != nil {
+		writeTeamError(w, r, err)
+		return
+	}
+	items, err := handler.repo.ListHistory(r.Context(), tenantContext, r.PathValue("id"), limit)
+	if err != nil {
+		writeTeamError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]TeamHistoryEvent]{Data: items})
+}
+
 func (handler Handler) Create(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request CreateTeamRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	team, err := handler.repo.Create(r.Context(), tenantContext, request)
@@ -69,12 +86,12 @@ func (handler Handler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) Update(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request UpdateTeamRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	team, err := handler.repo.Update(r.Context(), tenantContext, r.PathValue("id"), request)
@@ -86,15 +103,19 @@ func (handler Handler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request UpdateTeamStatusRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
-	team, err := handler.repo.UpdateStatus(r.Context(), tenantContext, r.PathValue("id"), request.IsActive)
+	if request.IsActive == nil {
+		writeTeamError(w, r, ErrInvalidInput)
+		return
+	}
+	team, err := handler.repo.UpdateStatus(r.Context(), tenantContext, r.PathValue("id"), *request.IsActive)
 	if err != nil {
 		writeTeamError(w, r, err)
 		return
@@ -103,7 +124,7 @@ func (handler Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) Delete(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -115,7 +136,7 @@ func (handler Handler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) UploadLogo(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -136,7 +157,7 @@ func (handler Handler) UploadLogo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) ListTeamPipelines(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -149,12 +170,12 @@ func (handler Handler) ListTeamPipelines(w http.ResponseWriter, r *http.Request)
 }
 
 func (handler Handler) AssignPipelineToTeam(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request AssignPipelineRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.AssignPipelineToTeam(r.Context(), tenantContext, request)
@@ -166,7 +187,7 @@ func (handler Handler) AssignPipelineToTeam(w http.ResponseWriter, r *http.Reque
 }
 
 func (handler Handler) RemovePipelineFromTeam(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -182,12 +203,12 @@ func (handler Handler) RemovePipelineFromTeam(w http.ResponseWriter, r *http.Req
 }
 
 func (handler Handler) SetTeamLeader(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request SetTeamLeaderRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	if err := handler.repo.SetTeamLeader(r.Context(), tenantContext, request); err != nil {
@@ -198,7 +219,7 @@ func (handler Handler) SetTeamLeader(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) ListMemberAvailability(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -212,7 +233,7 @@ func (handler Handler) ListMemberAvailability(w http.ResponseWriter, r *http.Req
 }
 
 func (handler Handler) ListTeamMemberAvailability(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -225,12 +246,12 @@ func (handler Handler) ListTeamMemberAvailability(w http.ResponseWriter, r *http
 }
 
 func (handler Handler) UpsertAvailability(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request AvailabilityRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.UpsertAvailability(r.Context(), tenantContext, request)
@@ -242,12 +263,12 @@ func (handler Handler) UpsertAvailability(w http.ResponseWriter, r *http.Request
 }
 
 func (handler Handler) ReplaceAvailability(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request BulkAvailabilityRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	items, err := handler.repo.ReplaceAvailability(r.Context(), tenantContext, r.PathValue("id"), request.Availability)
@@ -267,26 +288,6 @@ func availabilityIDsFromQuery(r *http.Request) []string {
 		ids = append(ids, strings.Split(value, ",")...)
 	}
 	return ids
-}
-
-func organizationContext(w http.ResponseWriter, r *http.Request) (tenant.Context, bool) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.OrganizationID == "" {
-		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
-		return tenant.Context{}, false
-	}
-	return tenantContext, true
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
-	defer r.Body.Close()
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
-		return false
-	}
-	return true
 }
 
 func parseLogoUpload(w http.ResponseWriter, r *http.Request) (string, int64, string, io.Reader, func(), error) {
@@ -317,7 +318,7 @@ func parseLogoUpload(w http.ResponseWriter, r *http.Request) (string, int64, str
 		return "", 0, "", nil, nil, fmt.Errorf("%w: could not read file", ErrInvalidInput)
 	}
 	buffer = buffer[:readBytes]
-	contentType, err := normalizeLogoContentType(http.DetectContentType(buffer), fileHeader.Header.Get("Content-Type"))
+	contentType, err := normalizeLogoContentType(http.DetectContentType(buffer))
 	if err != nil {
 		file.Close()
 		cleanup()
@@ -329,14 +330,10 @@ func parseLogoUpload(w http.ResponseWriter, r *http.Request) (string, int64, str
 	}, nil
 }
 
-func normalizeLogoContentType(detected string, declared string) (string, error) {
+func normalizeLogoContentType(detected string) (string, error) {
 	detected = cleanContentType(detected)
-	declared = cleanContentType(declared)
 	if isAllowedLogoContentType(detected) {
 		return detected, nil
-	}
-	if isAllowedLogoContentType(declared) {
-		return declared, nil
 	}
 	return "", ErrInvalidInput
 }
@@ -351,7 +348,7 @@ func cleanContentType(value string) string {
 
 func isAllowedLogoContentType(value string) bool {
 	switch value {
-	case "image/jpeg", "image/png", "image/webp", "image/gif", "image/svg+xml":
+	case "image/jpeg", "image/png", "image/webp", "image/gif":
 		return true
 	default:
 		return false

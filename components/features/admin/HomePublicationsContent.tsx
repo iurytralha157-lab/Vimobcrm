@@ -683,15 +683,15 @@ export function HomePublicationsContent() {
         <div className="p-4">
           <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
             <div>
-              <Badge className="border-0 bg-primary/10 text-primary">
-                Canal da Home desativado
+              <Badge className="border-0 bg-emerald-500/10 text-emerald-500">
+                Carrossel da Home ativo
               </Badge>
               <h1 className="app-section-title mt-3">
-                Rascunhos da Home
+                Slides da Página inicial
               </h1>
               <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
-                Prepare blocos, público, ordem, botão e imagem. Enquanto o canal estiver
-                desativado, nenhum destes itens aparece para os usuários.
+                Publique novidades e orientações com público, período, botão, imagem e
+                ordem definidos. Os itens ativos aparecem no carrossel da Página inicial.
               </p>
             </div>
             <Button
@@ -699,7 +699,7 @@ export function HomePublicationsContent() {
               className="h-9 shrink-0 rounded-[6px] bg-primary text-primary-foreground shadow-none hover:bg-primary/90"
             >
               <Plus className="h-4 w-4" />
-              Novo rascunho
+              Novo slide
             </Button>
           </div>
         </div>
@@ -743,13 +743,13 @@ export function HomePublicationsContent() {
           <div className="flex h-12 w-12 items-center justify-center rounded-[8px] bg-primary/10 text-primary">
             <Sparkles className="h-5 w-5" />
           </div>
-          <h2 className="mt-4 text-base font-normal">Nenhum rascunho criado</h2>
+          <h2 className="mt-4 text-base font-normal">Nenhum slide criado</h2>
           <p className="mt-1 max-w-md text-sm leading-6 text-muted-foreground">
             Crie o primeiro bloco para apresentar um recurso, uma orientação ou uma novidade na página inicial.
           </p>
           <Button className="mt-4 bg-primary text-primary-foreground shadow-none hover:bg-primary/90" onClick={openCreate}>
             <Plus className="h-4 w-4" />
-            Criar rascunho
+            Criar slide
           </Button>
         </div>
       ) : (
@@ -776,7 +776,7 @@ export function HomePublicationsContent() {
         >
           <DialogHeader className="sticky top-0 z-20 border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] px-5 py-4">
             <DialogTitle className="text-base font-normal">
-              {editingPublication ? 'Editar rascunho' : 'Novo rascunho'}
+              {editingPublication ? 'Editar slide' : 'Novo slide'}
             </DialogTitle>
             <DialogDescription className="sr-only">
               Configure conteúdo, destino, período, público e imagem do bloco da Página Inicial.
@@ -1011,15 +1011,15 @@ export function HomePublicationsContent() {
               <div className="rounded-[8px] bg-[var(--app-surface-soft)] p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-normal">Pronto para publicação</p>
+                    <p className="text-sm font-normal">Exibir no carrossel</p>
                     <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                      Mantém o item preparado, mas o canal da Home continua desativado.
+                      Quando ativo, o slide respeita o período e o público configurados.
                     </p>
                   </div>
                   <Switch
                     checked={form.isActive}
                     onCheckedChange={(checked) => updateForm('isActive', checked)}
-                    aria-label="Marcar rascunho como pronto para publicação"
+                    aria-label="Exibir slide no carrossel da Página inicial"
                   />
                 </div>
               </div>
@@ -1154,11 +1154,11 @@ export function HomePublicationsContent() {
       }}>
         <AlertDialogContent className="rounded-[8px] shadow-none" aria-busy={deletePublication.isPending}>
           <AlertDialogHeader>
-            <AlertDialogTitle>Excluir rascunho?</AlertDialogTitle>
+            <AlertDialogTitle>Excluir slide?</AlertDialogTitle>
             <AlertDialogDescription>
-              “{publicationToDelete?.title}” será removida dos rascunhos da Home. O canal
-              está desativado, portanto este item não está visível aos usuários. A imagem
-              vinculada também será removida quando possível.
+              “{publicationToDelete?.title}” será removida do carrossel da Página inicial.
+              Se estiver publicada, deixará de aparecer imediatamente. A imagem vinculada
+              também será removida quando possível.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

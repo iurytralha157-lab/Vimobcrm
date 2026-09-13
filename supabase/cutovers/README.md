@@ -22,3 +22,13 @@ campos de autenticação. As constraints finais também estavam ausentes.
 
 Repita as verificações do roteiro antes de qualquer execução. Esses números são
 apenas um retrato datado do banco.
+
+## Fila de mídia do WhatsApp
+
+`20260909_prepare_whatsapp_media_queue.sql` é pré-requisito obrigatório para
+aplicar `20260904225214_harden_whatsapp_media_queue.sql` em um banco com dados.
+Desative primeiro o media-worker legado e confirme que não há job em
+`processing`; o script falha fechado se encontrar trabalho ambíguo. Ele preserva
+jobs `pending` e `failed`, valida os dados e cria os índices com
+`CREATE INDEX CONCURRENTLY`. Execute-o com cliente em autocommit, faça o readback
+dos blocos de verificação e só então avance com a migration transacional.

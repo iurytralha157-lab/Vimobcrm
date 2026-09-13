@@ -5,10 +5,14 @@ import { Send } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
 
+import { trackEvent } from "@/hooks/useTracking";
 import { publicSiteContactSchema } from "@/lib/validation";
 import { submitContactForm } from "@/hooks/use-public-site";
 import { cn } from "@/lib/utils";
-import { createPublicSubmissionId, getPublicSiteAttribution } from "@/lib/public-site-attribution";
+import {
+  createPublicSubmissionId,
+  getPublicSiteAttribution,
+} from "@/lib/public-site-attribution";
 
 type FormState = {
   name: string;
@@ -49,20 +53,26 @@ export function PublicContactForm({
   onSuccess?: () => void;
   siteTitle?: string;
 }>) {
-  const [formData, setFormData] = useState(() => buildInitialState(defaultMessage));
+  const [formData, setFormData] = useState(() =>
+    buildInitialState(defaultMessage),
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submissionId, setSubmissionId] = useState(() => createPublicSubmissionId());
+  const [submissionId, setSubmissionId] = useState(() =>
+    createPublicSubmissionId(),
+  );
   const [website, setWebsite] = useState("");
-  const fieldClass = "w-full rounded-[6px] border border-transparent px-3 text-[12px] font-light outline-none placeholder:text-current placeholder:opacity-55 focus:border-[var(--site-primary)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--site-primary)_18%,transparent)]";
+  const fieldClass =
+    "w-full rounded-[6px] border border-transparent px-3 text-[12px] font-light outline-none placeholder:text-current placeholder:opacity-55 focus:border-[var(--site-primary)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--site-primary)_18%,transparent)]";
   const fieldStyle = {
-    backgroundColor: "color-mix(in srgb, var(--site-card-fg) 8%, var(--site-card))",
+    backgroundColor:
+      "color-mix(in srgb, var(--site-card-fg) 8%, var(--site-card))",
     color: "var(--site-card-fg)",
   };
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    const attribution = getPublicSiteAttribution();
+    const attribution = getPublicSiteAttribution(organizationId);
     const payload = {
       organization_id: organizationId,
       name: formData.name,
@@ -81,22 +91,32 @@ export function PublicContactForm({
 
     const parsed = publicSiteContactSchema.safeParse(payload);
     if (!parsed.success) {
-      toast.error(parsed.error.issues[0]?.message || "Revise os dados do formulário.");
+      toast.error(
+        parsed.error.issues[0]?.message || "Revise os dados do formulário.",
+      );
       return;
     }
 
     setIsSubmitting(true);
     try {
-      const result = await submitContactForm<{ lead_id?: string; reentry?: boolean }>(parsed.data);
+      void trackEvent({
+        organizationId,
+        eventType: "session_start",
+        pagePath: window.location.pathname,
+        pageTitle: document.title,
+        propertyId,
+      });
+      const result = await submitContactForm(parsed.data);
       void result;
       toast.success("Interesse enviado. Em breve entraremos em contato.");
       setFormData(buildInitialState(defaultMessage));
       setSubmissionId(createPublicSubmissionId());
       onSuccess?.();
     } catch (error) {
-      const message = error instanceof z.ZodError
-        ? error.issues[0]?.message
-        : "Não foi possível enviar agora. Tente novamente em instantes.";
+      const message =
+        error instanceof z.ZodError
+          ? error.issues[0]?.message
+          : "Não foi possível enviar agora. Tente novamente em instantes.";
       toast.error(message);
     } finally {
       setIsSubmitting(false);
@@ -104,10 +124,23 @@ export function PublicContactForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className={cn("space-y-4", className)} aria-busy={isSubmitting}>
-      <label className="absolute -left-[10000px] h-px w-px overflow-hidden" aria-hidden="true">
+    <form
+      onSubmit={handleSubmit}
+      className={cn("space-y-4", className)}
+      aria-busy={isSubmitting}
+    >
+      <label
+        className="absolute -left-[10000px] h-px w-px overflow-hidden"
+        aria-hidden="true"
+      >
         Website
-        <input name="website" tabIndex={-1} autoComplete="off" value={website} onChange={(event) => setWebsite(event.target.value)} />
+        <input
+          name="website"
+          tabIndex={-1}
+          autoComplete="off"
+          value={website}
+          onChange={(event) => setWebsite(event.target.value)}
+        />
       </label>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block">
@@ -118,7 +151,12 @@ export function PublicContactForm({
             name="name"
             required
             value={formData.name}
-            onChange={(event) => setFormData((current) => ({ ...current, name: event.target.value }))}
+            onChange={(event) =>
+              setFormData((current) => ({
+                ...current,
+                name: event.target.value,
+              }))
+            }
             className={`${fieldClass} h-11`}
             placeholder="Seu nome"
             style={fieldStyle}
@@ -135,7 +173,12 @@ export function PublicContactForm({
             required
             type="tel"
             value={formData.phone}
-            onChange={(event) => setFormData((current) => ({ ...current, phone: event.target.value }))}
+            onChange={(event) =>
+              setFormData((current) => ({
+                ...current,
+                phone: event.target.value,
+              }))
+            }
             className={`${fieldClass} h-11`}
             placeholder="(00) 00000-0000"
             style={fieldStyle}
@@ -151,7 +194,12 @@ export function PublicContactForm({
           name="email"
           type="email"
           value={formData.email}
-          onChange={(event) => setFormData((current) => ({ ...current, email: event.target.value }))}
+          onChange={(event) =>
+            setFormData((current) => ({
+              ...current,
+              email: event.target.value,
+            }))
+          }
           className={`${fieldClass} h-11`}
           placeholder="voce@email.com"
           style={fieldStyle}
@@ -163,7 +211,12 @@ export function PublicContactForm({
         <select
           name="best_time"
           value={formData.bestTime}
-          onChange={(event) => setFormData((current) => ({ ...current, bestTime: event.target.value }))}
+          onChange={(event) =>
+            setFormData((current) => ({
+              ...current,
+              bestTime: event.target.value,
+            }))
+          }
           className={`${fieldClass} h-11 appearance-none`}
           style={fieldStyle}
         >
@@ -189,7 +242,12 @@ export function PublicContactForm({
           required
           minLength={2}
           value={formData.message}
-          onChange={(event) => setFormData((current) => ({ ...current, message: event.target.value }))}
+          onChange={(event) =>
+            setFormData((current) => ({
+              ...current,
+              message: event.target.value,
+            }))
+          }
           className={`${fieldClass} min-h-32 py-3`}
           placeholder="Conte o que você procura"
           style={fieldStyle}
@@ -202,12 +260,23 @@ export function PublicContactForm({
           type="checkbox"
           name="privacy_accepted"
           checked={formData.privacyAccepted}
-          onChange={(event) => setFormData((current) => ({ ...current, privacyAccepted: event.target.checked }))}
+          onChange={(event) =>
+            setFormData((current) => ({
+              ...current,
+              privacyAccepted: event.target.checked,
+            }))
+          }
           className="mt-1 h-4 w-4 rounded border-zinc-300 accent-[var(--site-primary)]"
         />
         <span>
           Li e concordo com a{" "}
-          <a href={privacyHref || "/politica-de-privacidade"} className="font-normal underline underline-offset-4" style={{ color: primaryColor }} target="_blank" rel="noopener noreferrer">
+          <a
+            href={privacyHref || "/politica-de-privacidade"}
+            className="font-normal underline underline-offset-4"
+            style={{ color: primaryColor }}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             Política de Privacidade
           </a>{" "}
           da {siteTitle}.

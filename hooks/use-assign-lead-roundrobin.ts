@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { leadsAPI } from '@/lib/api/leads';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import { notifyLeadRealtimeChange } from '@/contexts/LeadRealtimeBus';
 
 interface AssignLeadResult {
   success: boolean;
@@ -15,8 +16,8 @@ interface AssignLeadResult {
 
 export function useAssignLeadRoundRobin() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || undefined;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId || undefined;
 
   return useMutation({
     mutationFn: async (leadId: string): Promise<AssignLeadResult> => {
@@ -29,7 +30,13 @@ export function useAssignLeadRoundRobin() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['leads'] });
       queryClient.invalidateQueries({ queryKey: ['stages'] });
-      queryClient.invalidateQueries({ queryKey: ['stages-with-leads'] });
+      if (organizationId) {
+        notifyLeadRealtimeChange({
+          organizationId,
+          leadId: data.lead_id,
+          reason: 'lead.redistributed',
+        });
+      }
       queryClient.invalidateQueries({ queryKey: ['round-robins'] });
       queryClient.invalidateQueries({ queryKey: ['lead', data.lead_id] });
       queryClient.invalidateQueries({ queryKey: ['lead-history-v2', data.lead_id] });

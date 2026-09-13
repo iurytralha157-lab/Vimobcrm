@@ -2,5 +2,12 @@ import PropertyFormScreen from "@/components/features/properties/PropertyFormScr
 import { PermissionBoundary } from "@/components/shared/access/PermissionBoundary";
 
 export default function EditPropertyPage() {
-  return <PermissionBoundary title="Editar Imovel" permission="property_manage"><PropertyFormScreen /></PermissionBoundary>;
+  return (
+    <PermissionBoundary
+      title="Editar Imovel"
+      anyOf={["property_view", "property_manage"]}
+    >
+      <PropertyFormScreen />
+    </PermissionBoundary>
+  );
 }

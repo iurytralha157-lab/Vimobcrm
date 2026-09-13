@@ -1,0 +1,1 @@
+export { chatGPTIntegrationProviderManifest } from "./manifest";

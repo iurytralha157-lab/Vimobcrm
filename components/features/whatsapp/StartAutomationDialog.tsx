@@ -9,6 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
+import { getErrorObjectMessage as getErrorMessage } from "@/lib/api/vimob-error";
 
 interface StartAutomationDialogProps {
   open: boolean;
@@ -37,15 +38,6 @@ const getTriggerIcon = (type: TriggerType) => {
   }
 };
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "object" && error && "message" in error) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === "string") return message;
-  }
-  return "Erro desconhecido";
-}
-
 export function StartAutomationDialog({
   open,
   onOpenChange,
@@ -58,8 +50,8 @@ export function StartAutomationDialog({
   const canStartAutomations = hasModule("automations") && hasPermission("automations_manage");
   const permissionLoading = permissionsLoading || modulesLoading;
   const { data: automations, isLoading, error, refetch } = useAutomations(open && canStartAutomations);
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, organization, profile } = useAuth();
+  const organizationId = activeOrganization.organizationId;
   const queryClient = useQueryClient();
   const [starting, setStarting] = useState<string | null>(null);
 

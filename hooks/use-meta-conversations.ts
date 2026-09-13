@@ -42,8 +42,8 @@ export interface MetaMessage {
 }
 
 export function useMetaConversations(pageId?: string, options: { enabled?: boolean } = {}) {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id ?? profile?.organization_id ?? null;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId ?? null;
 
   return useQuery({
     queryKey: ["meta-conversations", organizationId, pageId],
@@ -59,8 +59,8 @@ export function useMetaConversations(pageId?: string, options: { enabled?: boole
 }
 
 export function useMetaMessages(conversationId: string | null, options: { enabled?: boolean } = {}) {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id ?? profile?.organization_id ?? null;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId ?? null;
 
   return useQuery({
     queryKey: ["meta-messages", organizationId, conversationId],
@@ -77,8 +77,8 @@ export function useMetaMessages(conversationId: string | null, options: { enable
 
 export function useSendMetaMessage() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id ?? profile?.organization_id ?? null;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId ?? null;
 
   return useMutation({
     mutationFn: async ({

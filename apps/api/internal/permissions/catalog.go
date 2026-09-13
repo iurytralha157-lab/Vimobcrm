@@ -43,6 +43,7 @@ const (
 	FinancialManage        = "financial_manage"
 	GamificationView       = "gamification_view"
 	GamificationManage     = "gamification_manage"
+	UsersPresenceView      = "users_presence_view"
 	UsersManage            = "users_manage"
 	PermissionsManage      = "permissions_manage"
 	SettingsIntegrations   = "settings_integrations"
@@ -83,8 +84,9 @@ var catalog = []Definition{
 	{FinancialManage, "Gerenciar financeiro", "Criar e alterar dados financeiros", "financial"},
 	{GamificationView, "Ver gamificação", "Visualizar arena, ranking e histórico", "gamification"},
 	{GamificationManage, "Configurar gamificação", "Gerenciar regras, missões e temporadas", "gamification"},
-	{UsersManage, "Gerenciar usuários", "Convidar, editar, desativar e excluir usuários", "settings"},
-	{PermissionsManage, "Gerenciar permissões", "Alterar o acesso individual dos usuários", "settings"},
+	{UsersPresenceView, "Ver presença da equipe", "Visualizar presença no escopo da organização, da concessão administrativa ou das equipes lideradas", "access"},
+	{UsersManage, "Gerenciar usuários", "Convidar, editar, desativar e excluir usuários", "access"},
+	{PermissionsManage, "Gerenciar permissões", "Alterar o acesso individual dos usuários", "access"},
 	{SettingsIntegrations, "Gerenciar integrações", "Configurar integrações da organização", "settings"},
 	{SettingsOrganization, "Gerenciar organização", "Alterar dados e preferências da organização", "settings"},
 	{SettingsAI, "Gerenciar IA", "Configurar agentes e regras de inteligência artificial", "settings"},
@@ -134,6 +136,8 @@ var permissionImplications = map[string][]string{
 	WhatsAppOperate:    {WhatsAppView},
 	WhatsAppManage:     {WhatsAppView, WhatsAppOperate},
 	TeamManage:         {TeamView},
+	DistributionManage: {TeamView},
+	PipelineManage:     {TeamView},
 	PropertyManage:     {PropertyView},
 	ScheduleManage:     {ScheduleView},
 	AutomationsManage:  {AutomationsView},
@@ -221,6 +225,7 @@ func DefaultSet(memberRole string, isTeamLeader bool) map[string]bool {
 		defaults[LeadViewTeam] = true
 		defaults[TeamView] = true
 		defaults[TeamManage] = true
+		defaults[UsersPresenceView] = true
 	}
 	return defaults
 }

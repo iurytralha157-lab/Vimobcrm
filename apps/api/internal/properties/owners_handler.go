@@ -1,7 +1,6 @@
 package properties
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
@@ -17,6 +16,11 @@ type ownerRequest struct {
 	MediaSource      string `json:"media_source"`
 	NotifyEmail      bool   `json:"notify_email"`
 	Notes            string `json:"notes"`
+}
+
+type ownerUpdateRequest struct {
+	ownerRequest
+	ExpectedUpdatedAt string `json:"expected_updated_at"`
 }
 
 func (handler Handler) ListOwners(w http.ResponseWriter, r *http.Request) {
@@ -56,12 +60,8 @@ func (handler Handler) CreateOwner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	defer r.Body.Close()
 	var request ownerRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+	if err := httpserver.DecodeJSON(w, r, &request, httpserver.DefaultJSONBodyLimit); err != nil {
 		return
 	}
 
@@ -91,24 +91,21 @@ func (handler Handler) UpdateOwner(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ownerID := r.PathValue("id")
-	defer r.Body.Close()
-	var request ownerRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+	var request ownerUpdateRequest
+	if err := httpserver.DecodeJSON(w, r, &request, httpserver.DefaultJSONBodyLimit); err != nil {
 		return
 	}
 
 	item, err := handler.repo.UpdateOwner(r.Context(), tenantContext, ownerID, OwnerInput{
-		Name:             request.Name,
-		PhoneResidential: request.PhoneResidential,
-		PhoneCommercial:  request.PhoneCommercial,
-		Cellphone:        request.Cellphone,
-		Email:            request.Email,
-		MediaSource:      request.MediaSource,
-		NotifyEmail:      request.NotifyEmail,
-		Notes:            request.Notes,
+		Name:              request.Name,
+		PhoneResidential:  request.PhoneResidential,
+		PhoneCommercial:   request.PhoneCommercial,
+		Cellphone:         request.Cellphone,
+		Email:             request.Email,
+		MediaSource:       request.MediaSource,
+		NotifyEmail:       request.NotifyEmail,
+		Notes:             request.Notes,
+		ExpectedUpdatedAt: request.ExpectedUpdatedAt,
 	})
 	if err != nil {
 		writePropertyError(w, r, err)
@@ -116,4 +113,22 @@ func (handler Handler) UpdateOwner(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpserver.WriteJSON(w, http.StatusOK, map[string]Owner{"data": item})
+}
+
+func (handler Handler) DeleteOwner(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.FromContext(r.Context())
+	if !ok || tenantContext.OrganizationID == "" {
+		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+		return
+	}
+
+	var request catalogVersionRequest
+	if err := httpserver.DecodeJSON(w, r, &request, httpserver.DefaultJSONBodyLimit); err != nil {
+		return
+	}
+	if err := handler.repo.DeactivateOwner(r.Context(), tenantContext, r.PathValue("id"), request.ExpectedUpdatedAt); err != nil {
+		writePropertyError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

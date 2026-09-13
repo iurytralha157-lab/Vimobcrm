@@ -23,11 +23,11 @@ export interface MetaCampaignInsight {
 }
 
 export function useMetaInsights(filters: DashboardFilters) {
-  const { organization } = useAuth();
+  const { activeOrganization, organization } = useAuth();
 
   return useQuery({
-    queryKey: ['meta-insights', organization?.id, filters.dateRange.from.toISOString(), filters.dateRange.to.toISOString(), filters.campaignId, filters.adSetId, filters.adId],
-    enabled: !!organization?.id,
+    queryKey: ['meta-insights', activeOrganization.organizationId, filters.dateRange.from.toISOString(), filters.dateRange.to.toISOString(), filters.campaignId, filters.adSetId, filters.adId],
+    enabled: !!activeOrganization.organizationId,
     queryFn: async () => {
       return analyticsAPI.metaInsights<MetaCampaignInsight>({
         dateFrom: filters.dateRange.from.toISOString(),

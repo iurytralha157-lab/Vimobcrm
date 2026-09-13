@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   apiPropertyDevelopmentListResponseSchema,
+	apiPropertyDevelopmentUnitPropertyLinkResponseSchema,
 	apiPropertyDevelopmentReservationListResponseSchema,
 	apiPropertyDevelopmentUnitListResponseSchema,
   propertyDevelopmentBulkUnitsInputSchema,
@@ -15,6 +16,9 @@ import {
 	propertyDevelopmentUnitEventTypeSchema,
 	propertyDevelopmentUnitListFiltersSchema,
   propertyDevelopmentUnitPatchInputSchema,
+	propertyDevelopmentUnitLinkInputSchema,
+	propertyDevelopmentUnitPromoteInputSchema,
+	propertyDevelopmentUnitUnlinkInputSchema,
 	propertyDevelopmentUnitPriceInputSchema,
 } from './property-developments'
 
@@ -293,5 +297,74 @@ test('unit price validates commercial bounds and reservation list KPIs', () => {
 	assert.equal(apiPropertyDevelopmentReservationListResponseSchema.safeParse({
 		...response,
 		data: [{ ...response.data[0], updated_at: 'not-a-timestamp' }],
+	}).success, false)
+})
+
+test('unit property link contracts are strict and concurrency aware', () => {
+	const propertyId = 'abcdefab-cdef-4abc-8def-abcdefabcdef'
+	const timestamp = '2026-08-31T12:00:00Z'
+
+	assert.equal(propertyDevelopmentUnitLinkInputSchema.safeParse({
+		property_id: propertyId,
+		expected_unit_updated_at: timestamp,
+		expected_property_updated_at: timestamp,
+	}).success, true)
+	assert.equal(propertyDevelopmentUnitLinkInputSchema.safeParse({
+		property_id: propertyId,
+		expected_unit_updated_at: timestamp,
+	}).success, false)
+	assert.equal(propertyDevelopmentUnitLinkInputSchema.safeParse({
+		property_id: propertyId,
+		expected_unit_updated_at: timestamp,
+		expected_property_updated_at: timestamp,
+		organization_id: organizationId,
+	}).success, false)
+
+	assert.equal(propertyDevelopmentUnitPromoteInputSchema.safeParse({
+		expected_unit_updated_at: timestamp,
+		property_type: 'Apartamento',
+	}).success, true)
+	assert.equal(propertyDevelopmentUnitPromoteInputSchema.safeParse({
+		property_type: 'Apartamento',
+	}).success, false)
+	assert.equal(propertyDevelopmentUnitUnlinkInputSchema.safeParse({
+		expected_unit_updated_at: timestamp,
+	}).success, true)
+	assert.equal(propertyDevelopmentUnitUnlinkInputSchema.safeParse({}).success, false)
+})
+
+test('unit property link response is explicit and rejects hidden payload drift', () => {
+	const timestamp = '2026-08-31T12:00:00Z'
+	const unit = {
+		id: '11111111-1111-4111-8111-111111111111',
+		organization_id: organizationId,
+		development_id: developmentId,
+		building_id: '22222222-2222-4222-8222-222222222222',
+		property_id: 'abcdefab-cdef-4abc-8def-abcdefabcdef',
+		code: 'T1-101',
+		unit_number: '101',
+		status: 'available',
+		published: false,
+		metadata: {},
+		created_at: timestamp,
+		updated_at: timestamp,
+	}
+	const payload = {
+		data: {
+			unit,
+			property: {
+				id: 'abcdefab-cdef-4abc-8def-abcdefabcdef',
+				code: 'AP-000001',
+				title: 'Residencial Horizonte - Unidade 101',
+				status: 'active',
+				updated_at: timestamp,
+			},
+			replayed: false,
+		},
+	}
+	assert.equal(apiPropertyDevelopmentUnitPropertyLinkResponseSchema.safeParse(payload).success, true)
+	assert.equal(apiPropertyDevelopmentUnitPropertyLinkResponseSchema.safeParse({
+		...payload,
+		data: { ...payload.data, internal: true },
 	}).success, false)
 })

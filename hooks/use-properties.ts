@@ -4,30 +4,52 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  type QueryClient,
 } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
-import type { Tables, TablesUpdate } from "@/integrations/supabase/types";
-import { propertiesAPI, type PropertyHistoryEvent } from "@/lib/api/properties";
+import { useOptionalActiveOrganizationId as useOrganizationId } from "@/hooks/use-active-organization";
+import {
+  propertiesAPI,
+  type PropertyHistoryEvent,
+  type PropertyRecord,
+  type PropertyUpdateInput as PropertyAPIUpdateInput,
+  type PropertyWithCapabilities,
+} from "@/lib/api/properties";
+import { stringifyErrorMessage as getErrorMessage } from "@/lib/api/vimob-error";
 import {
   enforceClientActionRateLimit,
   getClientRateLimitMessage,
 } from "@/lib/client-action-rate-limit";
-import { parseNumericFilter } from "@/lib/validation";
+import {
+  parseDomainInput,
+  parseNumericFilter,
+  propertyCreateInputSchema,
+  propertyUpdateInputSchema,
+} from "@/lib/validation";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
+import {
+  isPropertyWorkspaceConflict,
+  propertyConflictQueryKeys,
+  PROPERTY_WORKSPACE_CONFLICT_MESSAGE,
+} from "@/lib/property-concurrency";
 
-export type Property = Tables<"properties">;
+export type Property = PropertyWithCapabilities;
 const EMPTY_PROPERTIES: Property[] = [];
 
 type PropertyMutationInput = Omit<
-  Partial<Property>,
+  Partial<PropertyRecord>,
   "id" | "code" | "organization_id" | "created_at" | "updated_at"
 > & {
   metadata?: Record<string, unknown>;
 };
-type PropertyUpdateInput = Partial<Property> & {
+type PropertyUpdateInput = PropertyAPIUpdateInput & {
   id: string;
-  metadata?: Record<string, unknown>;
+  expected_updated_at: string;
+};
+type PropertyDeleteInput = {
+  id: string;
+  expected_updated_at: string;
 };
 
 export interface PropertyFilters {
@@ -61,6 +83,17 @@ export interface PropertyFilters {
 
 const sanitizeSearchTerm = (value?: string) => value?.trim() || undefined;
 
+async function refreshPropertyAfterConflict(
+  queryClient: QueryClient,
+  organizationId: string | undefined,
+  propertyId: string,
+) {
+  await Promise.all(
+    propertyConflictQueryKeys(organizationId, propertyId).map((queryKey) =>
+      queryClient.invalidateQueries({ queryKey }),
+    ),
+  );
+}
 
 function normalizeFilters(filters: PropertyFilters = {}) {
   return {
@@ -123,19 +156,6 @@ function normalizeFilters(filters: PropertyFilters = {}) {
   };
 }
 
-function useOrganizationId() {
-  const { profile, organization, organizationsLoaded, isInitializingOrg } =
-    useAuth();
-  if (organization?.id) return organization.id;
-  if (!organizationsLoaded || isInitializingOrg) return undefined;
-  return profile?.organization_id || undefined;
-}
-
-const getErrorMessage = (error: unknown) => {
-  if (error instanceof Error) return error.message;
-  return String(error);
-};
-
 export function useProperties(
   search?: string,
   filters: Pick<PropertyFilters, "scope"> = {},
@@ -170,7 +190,7 @@ export function useProperties(
       );
 
       if (error) throw error;
-      return data as Property[];
+      return data;
     },
     enabled:
       !!user?.id &&
@@ -226,11 +246,9 @@ export function useInfiniteProperties(
       if (error) throw error;
 
       return {
-        properties: data as Property[],
+        properties: data,
         nextPage:
-          (pageParam + 1) * pageSize < (count || 0)
-            ? pageParam + 1
-            : undefined,
+          (pageParam + 1) * pageSize < (count || 0) ? pageParam + 1 : undefined,
         totalCount: count || 0,
       };
     },
@@ -256,14 +274,17 @@ export function useProperty(id: string | null) {
       );
       if (error) throw error;
 
-      return data as Property;
+      return data;
     },
     enabled: !!id && !!organizationId,
     staleTime: 0,
   });
 }
 
-export function usePropertyHistory(id: string | null) {
+export function usePropertyHistory(
+  id: string | null,
+  options: { enabled?: boolean } = {},
+) {
   const organizationId = useOrganizationId();
 
   return useQuery({
@@ -279,12 +300,14 @@ export function usePropertyHistory(id: string | null) {
 
       return data;
     },
-    enabled: !!id && !!organizationId,
+    enabled: !!id && !!organizationId && options.enabled !== false,
     staleTime: 1000 * 30,
   });
 }
 
-export function useCreateProperty() {
+export function useCreateProperty(
+  options: { showSuccessToast?: boolean } = {},
+) {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const organizationId = useOrganizationId();
@@ -299,12 +322,17 @@ export function useCreateProperty() {
         { limit: 10, windowMs: 60_000 },
       ]);
 
-      const { data, error } = await propertiesAPI.createProperty(
-        organizationId,
+      const createInput = parseDomainInput(
+        propertyCreateInputSchema,
         {
           ...propertyInput,
           cadastrado_por: propertyInput.cadastrado_por || user.id,
         },
+        "properties.create",
+      );
+      const { data, error } = await propertiesAPI.createProperty(
+        organizationId,
+        createInput,
       );
 
       if (error) throw error;
@@ -318,7 +346,9 @@ export function useCreateProperty() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["properties"] });
       queryClient.invalidateQueries({ queryKey: ["properties-infinite"] });
-      toast.success("Imóvel cadastrado com sucesso!");
+      if (options.showSuccessToast !== false) {
+        toast.success("Imóvel cadastrado com sucesso!");
+      }
     },
     onError: (error) => {
       const rateLimitMessage = getClientRateLimitMessage(error);
@@ -346,11 +376,14 @@ export function useUpdateProperty() {
         { limit: 30, windowMs: 60_000 },
       ]);
 
+      const updateInput = parseDomainInput(
+        propertyUpdateInputSchema,
+        updates,
+        "properties.update",
+      );
       const { data, error } = await propertiesAPI.updateProperty(
         id,
-        updates as TablesUpdate<"properties"> & {
-          metadata?: Record<string, unknown>;
-        },
+        updateInput,
         organizationId,
       );
 
@@ -383,7 +416,16 @@ export function useUpdateProperty() {
       }
       toast.success("Imóvel atualizado!");
     },
-    onError: (error) => {
+    onError: async (error, variables) => {
+      if (isPropertyWorkspaceConflict(error)) {
+        await refreshPropertyAfterConflict(
+          queryClient,
+          organizationId,
+          variables.id,
+        );
+        toast.error(PROPERTY_WORKSPACE_CONFLICT_MESSAGE);
+        return;
+      }
       const rateLimitMessage = getClientRateLimitMessage(error);
       if (rateLimitMessage) {
         toast.error(rateLimitMessage);
@@ -400,7 +442,7 @@ export function useDeleteProperty() {
   const organizationId = useOrganizationId();
 
   return useMutation({
-    mutationFn: async (id: string) => {
+    mutationFn: async ({ id, expected_updated_at }: PropertyDeleteInput) => {
       if (!user?.id) throw new Error("Usuário não autenticado");
       if (!organizationId) throw new Error("Usuário não possui organização");
 
@@ -409,7 +451,11 @@ export function useDeleteProperty() {
         { limit: 10, windowMs: 60_000 },
       ]);
 
-      const { error } = await propertiesAPI.deleteProperty(id, organizationId);
+      const { error } = await propertiesAPI.deleteProperty(
+        id,
+        expected_updated_at,
+        organizationId,
+      );
       if (error) throw error;
     },
     onSuccess: () => {
@@ -417,7 +463,16 @@ export function useDeleteProperty() {
       queryClient.invalidateQueries({ queryKey: ["properties-infinite"] });
       toast.success("Imóvel excluído!");
     },
-    onError: (error) => {
+    onError: async (error, variables) => {
+      if (isPropertyWorkspaceConflict(error)) {
+        await refreshPropertyAfterConflict(
+          queryClient,
+          organizationId,
+          variables.id,
+        );
+        toast.error(PROPERTY_WORKSPACE_CONFLICT_MESSAGE);
+        return;
+      }
       const rateLimitMessage = getClientRateLimitMessage(error);
       if (rateLimitMessage) {
         toast.error(rateLimitMessage);

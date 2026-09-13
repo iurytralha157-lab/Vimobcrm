@@ -97,7 +97,7 @@ func (client storageClient) upload(ctx context.Context, bucket string, objectPat
 		"%s/storage/v1/object/%s/%s",
 		client.projectURL,
 		url.PathEscape(bucket),
-		escapeStorageObjectPath(objectPath),
+		supabasehttp.EscapeObjectPath(objectPath),
 	)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
 	if err != nil {
@@ -123,16 +123,7 @@ func (client storageClient) upload(ctx context.Context, bucket string, objectPat
 }
 
 func (client storageClient) publicURL(bucket string, objectPath string) string {
-	if client.projectURL == "" {
-		return ""
-	}
-
-	return fmt.Sprintf(
-		"%s/storage/v1/object/public/%s/%s",
-		client.projectURL,
-		url.PathEscape(bucket),
-		escapeStorageObjectPath(objectPath),
-	)
+	return supabasehttp.PublicObjectURL(client.projectURL, bucket, objectPath)
 }
 
 func (client authAdminClient) updatePassword(ctx context.Context, userID string, password string) error {
@@ -295,13 +286,4 @@ func firstNonEmpty(values ...string) string {
 	}
 
 	return ""
-}
-
-func escapeStorageObjectPath(value string) string {
-	parts := strings.Split(strings.Trim(value, "/"), "/")
-	for index, part := range parts {
-		parts[index] = url.PathEscape(part)
-	}
-
-	return strings.Join(parts, "/")
 }

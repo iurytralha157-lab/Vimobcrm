@@ -10,25 +10,6 @@ import (
 	"time"
 )
 
-func TestEnsureJSONEOF(t *testing.T) {
-	valid := json.NewDecoder(strings.NewReader("{}  \n"))
-	var value map[string]any
-	if err := valid.Decode(&value); err != nil {
-		t.Fatalf("decode valid JSON: %v", err)
-	}
-	if err := ensureJSONEOF(valid); err != nil {
-		t.Fatalf("expected one JSON value to be accepted: %v", err)
-	}
-
-	invalid := json.NewDecoder(strings.NewReader("{} {}"))
-	if err := invalid.Decode(&value); err != nil {
-		t.Fatalf("decode first JSON value: %v", err)
-	}
-	if err := ensureJSONEOF(invalid); err == nil {
-		t.Fatal("expected trailing JSON value to be rejected")
-	}
-}
-
 func TestBuildVRSyncFeedUsesOfficialAttributes(t *testing.T) {
 	integration := publicIntegration{Settings: map[string]any{
 		"contact_name":    "Imobiliaria Vimob",
@@ -169,6 +150,24 @@ func TestInternalAppraisalIsNotPublishedAsListPrice(t *testing.T) {
 	property := map[string]any{"valor_venda_avaliado": 500000}
 	if got := priceForSale(property, "For Sale"); got != nil {
 		t.Fatalf("internal appraisal leaked into ListPrice: %#v", got)
+	}
+}
+
+func TestConfidentialStatusDescriptionIsNotPublishedInFeed(t *testing.T) {
+	listing := validFeedListing("active")
+	listing.Property["descricao_site"] = ""
+	listing.Property["descricao"] = ""
+	listing.Property["status_descritivo"] = "SEGREDO INTERNO NAO PUBLICAR"
+
+	body, err := buildVRSyncFeed(validFeedIntegration(), []feedListing{listing})
+	if err != nil {
+		t.Fatalf("build feed: %v", err)
+	}
+	if strings.Contains(string(body), "SEGREDO INTERNO NAO PUBLICAR") {
+		t.Fatalf("confidential status description leaked into feed XML: %s", body)
+	}
+	if !containsValidationError(validateFeedListing(validFeedIntegration(), listing), "Descricao precisa ter entre 50 e 3000 caracteres.") {
+		t.Fatal("confidential status description satisfied the public description requirement")
 	}
 }
 

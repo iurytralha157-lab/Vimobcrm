@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 import type { Contact } from "@/hooks/use-contacts-list";
 import { ReentryBadge } from "@/components/features/leads/ReentryBadge";
 import { normalizePhoneToE164 } from "@/lib/phone-utils";
+import { getInitials } from "@/lib/user-display";
 
 const dealStatusConfig = {
   open: {
@@ -52,48 +53,15 @@ interface ContactCardProps {
   contact: Contact;
   sourceLabels: Record<string, string>;
   onViewDetails?: () => void;
+  onWhatsApp?: () => void;
   onDelete?: () => void;
-}
-
-function getInitials(name: string) {
-  return name
-    .split(" ")
-    .map((part) => part[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
-}
-
-function getTagForegroundClass(backgroundColor: string) {
-  const match = backgroundColor
-    .trim()
-    .match(/^#([\da-f]{3}|[\da-f]{6}|[\da-f]{8})$/i);
-  if (!match) return "text-white";
-
-  const value =
-    match[1].length === 3
-      ? match[1]
-          .split("")
-          .map((character) => character + character)
-          .join("")
-      : match[1].slice(0, 6);
-  const channels = [0, 2, 4].map(
-    (offset) => Number.parseInt(value.slice(offset, offset + 2), 16) / 255,
-  );
-  const [red, green, blue] = channels.map((channel) =>
-    channel <= 0.04045
-      ? channel / 12.92
-      : ((channel + 0.055) / 1.055) ** 2.4,
-  );
-  const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
-
-  return luminance > 0.179 ? "text-slate-950" : "text-white";
 }
 
 export function ContactCard({
   contact,
   sourceLabels,
   onViewDetails,
+  onWhatsApp,
   onDelete,
 }: ContactCardProps) {
   const isLost = contact.deal_status === "lost";
@@ -238,11 +206,8 @@ export function ContactCard({
                 <Badge
                   key={tag.id}
                   variant="secondary"
-                  className={cn(
-                    "h-5 rounded-[4px] border-0 px-1.5 text-[9px] font-light",
-                    getTagForegroundClass(tag.color),
-                  )}
-                  style={{ backgroundColor: tag.color }}
+                  className="h-5 rounded-[4px] border-0 px-1.5 text-[9px] font-light"
+                  style={{ backgroundColor: tag.color, color: "#ffffff" }}
                 >
                   {tag.name}
                 </Badge>
@@ -286,17 +251,14 @@ export function ContactCard({
             </DropdownMenuItem>
             {contact.phone && (
               <DropdownMenuItem
-                asChild
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onWhatsApp?.();
+                }}
                 className="cursor-pointer gap-2 rounded-[4px] px-2.5 py-2 text-[14px] font-light text-[var(--app-text-primary)] transition-colors focus:bg-[var(--app-surface-hover)] focus:text-[var(--app-text-primary)]"
               >
-                <a
-                  href={`https://wa.me/${contact.phone.replace(/\D/g, "")}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <MessageCircle className="h-3.5 w-3.5 shrink-0 text-[var(--app-text-tertiary)]" />
-                  WhatsApp
-                </a>
+                <MessageCircle className="h-3.5 w-3.5 shrink-0 text-[var(--app-text-tertiary)]" />
+                WhatsApp
               </DropdownMenuItem>
             )}
             {contact.email && (

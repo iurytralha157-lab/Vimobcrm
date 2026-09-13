@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs';
 import { Contract } from '@/hooks/use-contracts';
 import { format as formatDate } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { formatLocalizedBRLCurrency } from './utils/formatting';
 
 interface ExportOptions {
   contracts: Contract[];
@@ -24,10 +25,7 @@ const statusLabels: Record<string, string> = {
 
 function formatCurrency(value: number | null | undefined): string {
   if (value == null) return 'R$ 0,00';
-  return new Intl.NumberFormat('pt-BR', {
-    style: 'currency',
-    currency: 'BRL',
-  }).format(value);
+  return formatLocalizedBRLCurrency(value);
 }
 
 function formatDateSafe(date: string | null | undefined): string {

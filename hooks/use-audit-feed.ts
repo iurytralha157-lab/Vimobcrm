@@ -11,9 +11,9 @@ type UseAuditFeedOptions = {
 
 export function useAuditFeed(options: UseAuditFeedOptions = {}) {
   const queryClient = useQueryClient()
-  const { organization, profile, tenantContext, isSuperAdmin, userOrganizations } = useAuth()
+  const { activeOrganization, organization, profile, tenantContext, isSuperAdmin, userOrganizations } = useAuth()
   const onEvent = options.onEvent
-  const organizationId = options.organizationId || organization?.id || profile?.organization_id || null
+  const organizationId = options.organizationId || activeOrganization.organizationId || null
   const memberRole = useMemo(() => {
     if (!organizationId) return undefined
 

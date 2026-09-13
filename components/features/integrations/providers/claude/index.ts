@@ -1,0 +1,1 @@
+export { claudeIntegrationProviderManifest } from "./manifest";

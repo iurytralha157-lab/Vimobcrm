@@ -8864,6 +8864,7 @@ export type Database = {
           favicon_url: string | null
           google_ads_id: string | null
           google_analytics_id: string | null
+          google_search_console_verification: string | null
           gtm_id: string | null
           head_scripts: string | null
           hero_image_url: string | null
@@ -8924,6 +8925,7 @@ export type Database = {
           favicon_url?: string | null
           google_ads_id?: string | null
           google_analytics_id?: string | null
+          google_search_console_verification?: string | null
           gtm_id?: string | null
           head_scripts?: string | null
           hero_image_url?: string | null
@@ -8984,6 +8986,7 @@ export type Database = {
           favicon_url?: string | null
           google_ads_id?: string | null
           google_analytics_id?: string | null
+          google_search_console_verification?: string | null
           gtm_id?: string | null
           head_scripts?: string | null
           hero_image_url?: string | null
@@ -12449,6 +12452,7 @@ export type Database = {
           current_path: string | null
           disconnected_at: string | null
           id: string
+          idle_since_at: string | null
           last_seen_at: string
           metadata: Json
           organization_id: string
@@ -12465,6 +12469,7 @@ export type Database = {
           current_path?: string | null
           disconnected_at?: string | null
           id?: string
+          idle_since_at?: string | null
           last_seen_at?: string
           metadata?: Json
           organization_id: string
@@ -12481,6 +12486,7 @@ export type Database = {
           current_path?: string | null
           disconnected_at?: string | null
           id?: string
+          idle_since_at?: string | null
           last_seen_at?: string
           metadata?: Json
           organization_id?: string

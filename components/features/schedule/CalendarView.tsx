@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import {
   format,
   startOfMonth,
@@ -7,13 +7,11 @@ import {
   isSameMonth,
   isSameDay,
   isToday,
+  isWeekend,
   startOfWeek,
   endOfWeek,
   parseISO,
   addDays,
-  startOfDay,
-  endOfDay,
-  eachHourOfInterval,
   startOfYear,
   endOfYear,
   eachMonthOfInterval,
@@ -42,7 +40,25 @@ import {
   splitScheduleEventByDay,
   type ScheduleEventDaySegment,
 } from "@/lib/schedule-event-segments";
+import { layoutScheduleCalendarSegments } from "@/components/features/schedule/calendar-event-geometry";
 import { SCHEDULE_USER_EVENT_COLORS } from "@/config/schedule-event-colors";
+import {
+  getCalendarEventDensity,
+  isCalendarEventNarrow,
+} from "@/components/features/schedule/calendar-event-density";
+import {
+  DEFAULT_SCHEDULE_TIME_ZONE,
+  getScheduleLifecycleLabel,
+  getScheduleLifecycleState,
+  isAttendanceScheduleType,
+  type ScheduleLifecycleState,
+} from "@/lib/schedule-outcome";
+import {
+  formatScheduleZonedTime,
+  getScheduleZonedClockMinutes,
+  scheduleCivilDateTimeToDate,
+  scheduleInstantToLocalDateProxy,
+} from "@/lib/schedule-time-zone";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   DndContext,
@@ -74,9 +90,33 @@ function getUserEventColor(userId?: string | null) {
   return SCHEDULE_USER_EVENT_COLORS[hash % SCHEDULE_USER_EVENT_COLORS.length];
 }
 
+const calendarLifecycleBadgeClasses: Record<ScheduleLifecycleState, string> = {
+  open: "bg-white/15 text-white",
+  overdue: "bg-red-950/30 text-white",
+  completed: "bg-emerald-950/25 text-white",
+  no_show: "bg-amber-950/30 text-white",
+  rescheduled: "bg-blue-950/30 text-white",
+  cancelled: "bg-slate-950/25 text-white",
+};
+
+const eventTypeLabels: Record<string, string> = {
+  call: "Ligação",
+  email: "E-mail",
+  meeting: "Reunião",
+  task: "Tarefa",
+  message: "Mensagem",
+  visit: "Visita",
+};
+
 type ScheduleEventTimeUpdate = Partial<
   Pick<ScheduleEvent, "start_time" | "end_time">
 >;
+
+const CALENDAR_HOURS = Array.from({ length: 24 }, (_, hour) => hour);
+
+function formatCalendarHour(hour: number) {
+  return String(hour).padStart(2, "0");
+}
 
 interface ActivityCardProps {
   event: ScheduleEvent;
@@ -90,6 +130,9 @@ interface ActivityCardProps {
   className?: string;
   editable?: boolean;
   resizable?: boolean;
+  displayDurationMinutes?: number;
+  lifecycleNow: number;
+  timeZone: string;
 }
 
 function ActivityCard({
@@ -104,8 +147,11 @@ function ActivityCard({
   className,
   editable = false,
   resizable = true,
+  displayDurationMinutes,
+  lifecycleNow,
+  timeZone,
 }: ActivityCardProps) {
-  const { attributes, listeners, setNodeRef, transform } = useDraggable({
+  const { listeners, setNodeRef, transform } = useDraggable({
     id: dragId ?? event.id,
     data: event,
     disabled: !editable,
@@ -113,22 +159,56 @@ function ActivityCard({
 
   const [resizing, setResizing] = useState(false);
   const [tempHeight, setTempHeight] = useState<number | null>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const resizeClickResetRef = useRef<number | null>(null);
+  const suppressEditClickRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      resizeCleanupRef.current?.();
+      if (resizeClickResetRef.current !== null) {
+        window.clearTimeout(resizeClickResetRef.current);
+      }
+    };
+  }, []);
 
   const start = displayStart ?? parseISO(event.start_time);
   const end = displayEnd ?? parseISO(event.end_time);
-  const duration = event.is_all_day
-    ? 24 * 60
-    : Math.max(differenceInMinutes(end, start), 1);
+  const duration =
+    displayDurationMinutes ??
+    (event.is_all_day ? 24 * 60 : Math.max(differenceInMinutes(end, start), 1));
   const userColor = getUserEventColor(event.user_id);
+  const lifecycle = getScheduleLifecycleState({
+    status: event.status,
+    outcome: event.outcome,
+    startTime: event.start_time,
+    endTime: event.end_time,
+    isAllDay: event.is_all_day ?? false,
+    timeZone,
+    now: lifecycleNow,
+  });
+  const lifecycleLabel = getScheduleLifecycleLabel(lifecycle);
+  const isFinalized = [
+    "completed",
+    "no_show",
+    "rescheduled",
+    "cancelled",
+  ].includes(lifecycle);
   const styleWidth = typeof style?.width === "string" ? style.width : undefined;
-
-  // Granular density modes
-  const isTiny = duration <= 20; // 15-20 min slot
-  const isCompact = duration < 45; // 30 min
-  const isNarrow =
-    !!styleWidth &&
-    styleWidth.includes("calc(") &&
-    parseFloat(styleWidth.match(/calc\((\d+(?:\.\d+)?)/)?.[1] || "100") < 50;
+  const displayedDuration =
+    tempHeight === null
+      ? duration
+      : Math.max(Math.round(tempHeight / (56 / 60)), 1);
+  const density = getCalendarEventDensity(displayedDuration);
+  const isNarrow = isCalendarEventNarrow(styleWidth);
+  const activityTitle =
+    event.title.trim() ||
+    (event.event_type ? eventTypeLabels[event.event_type] : undefined) ||
+    "Compromisso";
+  const activityTimeLabel = event.is_all_day
+    ? "Dia inteiro"
+    : `${formatScheduleZonedTime(start, timeZone)} às ${formatScheduleZonedTime(end, timeZone)}`;
+  const activityAriaLabel = `${activityTitle}. ${activityTimeLabel}. ${lifecycleLabel}.`;
 
   const dragStyle = transform
     ? {
@@ -138,39 +218,115 @@ function ActivityCard({
       }
     : undefined;
 
-  const handleResizeMouseDown = (e: React.MouseEvent) => {
-    if (!editable || !resizable) return;
+  const scheduleResizeClickReset = () => {
+    suppressEditClickRef.current = true;
+    if (resizeClickResetRef.current !== null) {
+      window.clearTimeout(resizeClickResetRef.current);
+    }
+    resizeClickResetRef.current = window.setTimeout(() => {
+      suppressEditClickRef.current = false;
+      resizeClickResetRef.current = null;
+    }, 0);
+  };
+
+  const handleResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (
+      !editable ||
+      !resizable ||
+      !e.isPrimary ||
+      e.button !== 0 ||
+      resizeCleanupRef.current
+    ) {
+      return;
+    }
+
+    // The draggable card listens for pointerdown. Stop this event here so a
+    // resize gesture never arms the PointerSensor on the parent card.
     e.stopPropagation();
     e.preventDefault();
     setResizing(true);
 
+    const pointerId = e.pointerId;
     const startY = e.clientY;
     const initialHeight = duration * (56 / 60);
+    let latestHeight: number | null = null;
 
-    const onMouseMove = (moveEvent: MouseEvent) => {
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      if (moveEvent.cancelable) moveEvent.preventDefault();
       const deltaY = moveEvent.clientY - startY;
       const newHeight = Math.max(28, initialHeight + deltaY); // Min height 30 mins (28px)
       // Snap to 30 mins increments (28px)
       const snappedHeight = Math.round(newHeight / 28) * 28;
+      latestHeight = snappedHeight;
       setTempHeight(snappedHeight);
     };
 
-    const onMouseUp = () => {
-      setResizing(false);
-      setTempHeight((prev) => {
-        if (prev !== null) {
-          const newDuration = Math.round(prev / (56 / 60));
-          const newEnd = addMinutes(start, newDuration);
-          onEventUpdate?.(event.id, { end_time: newEnd.toISOString() });
-        }
-        return null;
-      });
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
+    const cleanup = () => {
+      document.removeEventListener("pointermove", onPointerMove, true);
+      document.removeEventListener("pointerup", onPointerUp, true);
+      document.removeEventListener("pointercancel", onPointerCancel, true);
+      if (resizeCleanupRef.current === cleanup) {
+        resizeCleanupRef.current = null;
+      }
     };
 
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
+    const finishResize = (commit: boolean) => {
+      setResizing(false);
+      setTempHeight(null);
+      cleanup();
+
+      if (commit && latestHeight !== null) {
+        const newDuration = Math.round(latestHeight / (56 / 60));
+        const newEnd = addMinutes(start, newDuration);
+        onEventUpdate?.(event.id, { end_time: newEnd.toISOString() });
+      }
+
+      scheduleResizeClickReset();
+    };
+
+    function onPointerUp(upEvent: PointerEvent) {
+      if (upEvent.pointerId !== pointerId) return;
+      if (upEvent.cancelable) upEvent.preventDefault();
+      upEvent.stopPropagation();
+      finishResize(true);
+    }
+
+    function onPointerCancel(cancelEvent: PointerEvent) {
+      if (cancelEvent.pointerId !== pointerId) return;
+      if (cancelEvent.cancelable) cancelEvent.preventDefault();
+      cancelEvent.stopPropagation();
+      finishResize(false);
+    }
+
+    resizeCleanupRef.current = cleanup;
+    document.addEventListener("pointermove", onPointerMove, {
+      capture: true,
+      passive: false,
+    });
+    document.addEventListener("pointerup", onPointerUp, true);
+    document.addEventListener("pointercancel", onPointerCancel, true);
+  };
+
+  const handleCardClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    if (suppressEditClickRef.current) {
+      e.preventDefault();
+      return;
+    }
+    onEditEvent?.(event);
+  };
+
+  const handleCardKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!onEditEvent || (e.key !== "Enter" && e.key !== " ")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onEditEvent(event);
+  };
+
+  const handleResizeClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
   };
 
   const currentHeight =
@@ -178,22 +334,25 @@ function ActivityCard({
       ? `${tempHeight}px`
       : (style?.height ?? `${duration * (56 / 60)}px`);
 
-  // Tiny mode: single line with just title + time on hover
-  if (isTiny) {
+  if (density === "compact") {
     return (
       <div
         ref={setNodeRef}
         {...listeners}
-        {...attributes}
-        onClick={(e) => {
-          e.stopPropagation();
-          onEditEvent?.(event);
-        }}
-        title={`${format(start, "HH:mm")} - ${format(end, "HH:mm")} · ${event.title}`}
+        role={onEditEvent ? "button" : undefined}
+        tabIndex={onEditEvent ? 0 : undefined}
+        aria-label={onEditEvent ? activityAriaLabel : undefined}
+        onKeyDown={handleCardKeyDown}
+        onClick={handleCardClick}
+        title={`${activityTitle} · ${formatScheduleZonedTime(start, timeZone)} - ${formatScheduleZonedTime(end, timeZone)} · ${lifecycleLabel}`}
+        data-calendar-event-density={density}
         className={cn(
-          "absolute left-0.5 right-0.5 z-10 flex items-center gap-1 overflow-hidden rounded-[4px] border-0 px-1.5 text-white shadow-none",
+          "group absolute left-0.5 right-0.5 z-10 flex items-center gap-1 overflow-hidden rounded-[4px] border-0 px-1.5 py-0.5 text-white shadow-none",
           editable && "cursor-grab active:cursor-grabbing",
           isDragging && "opacity-50 grayscale",
+          resizing && "z-50 ring-2 ring-primary ring-offset-1",
+          isFinalized && "opacity-75",
+          lifecycle === "cancelled" && "grayscale",
           className,
         )}
         style={{
@@ -203,12 +362,35 @@ function ActivityCard({
           height: currentHeight,
         }}
       >
-        <span className="shrink-0 text-[9px] font-light tabular-nums opacity-80">
-          {event.is_all_day ? "Dia inteiro" : format(start, "HH:mm")}
+        <span
+          data-calendar-event-title
+          className="min-w-0 flex-1 truncate text-[10px] font-medium leading-none"
+        >
+          {activityTitle}
         </span>
-        <span className="truncate text-[10px] font-normal leading-none">
-          {event.title}
-        </span>
+        {!isNarrow && (
+          <span
+            data-calendar-event-time
+            className="shrink-0 text-[9px] font-light leading-none tabular-nums opacity-80"
+          >
+            {event.is_all_day
+              ? "Dia inteiro"
+              : formatScheduleZonedTime(start, timeZone)}
+          </span>
+        )}
+        {lifecycle !== "open" && (
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-white ring-1 ring-black/10" />
+        )}
+        {editable && resizable && displayedDuration > 20 && (
+          <div
+            data-calendar-event-resize-handle
+            className="absolute bottom-0 left-0 right-0 flex h-1.5 touch-none cursor-ns-resize select-none items-center justify-center opacity-0 transition-opacity hover:bg-current/20 active:bg-current/40 group-hover:opacity-100"
+            onPointerDown={handleResizePointerDown}
+            onClick={handleResizeClick}
+          >
+            <div className="h-0.5 w-4 rounded-full bg-current/40" />
+          </div>
+        )}
       </div>
     );
   }
@@ -217,17 +399,20 @@ function ActivityCard({
     <div
       ref={setNodeRef}
       {...listeners}
-      {...attributes}
-      onClick={(e) => {
-        e.stopPropagation();
-        onEditEvent?.(event);
-      }}
-      title={`${format(start, "HH:mm")} - ${format(end, "HH:mm")} · ${event.title}`}
+      role={onEditEvent ? "button" : undefined}
+      tabIndex={onEditEvent ? 0 : undefined}
+      aria-label={onEditEvent ? activityAriaLabel : undefined}
+      onKeyDown={handleCardKeyDown}
+      onClick={handleCardClick}
+      title={`${activityTitle} · ${formatScheduleZonedTime(start, timeZone)} - ${formatScheduleZonedTime(end, timeZone)} · ${lifecycleLabel}`}
+      data-calendar-event-density={density}
       className={cn(
-        "absolute left-0.5 right-0.5 z-10 overflow-hidden rounded-[4px] border-0 text-white shadow-none",
+        "group absolute left-0.5 right-0.5 z-10 overflow-hidden rounded-[4px] border-0 text-white shadow-none",
         editable && "cursor-grab active:cursor-grabbing",
         isDragging && "opacity-50 grayscale",
         resizing && "z-50 ring-2 ring-primary ring-offset-1",
+        isFinalized && "opacity-75",
+        lifecycle === "cancelled" && "grayscale",
         className,
       )}
       style={{
@@ -238,38 +423,56 @@ function ActivityCard({
       }}
     >
       <div
-        className={cn(
-          "flex h-full relative min-h-0",
-          isCompact ? "flex-col gap-0 px-1.5 py-1" : "flex-col p-2",
-        )}
+        className={cn("flex h-full relative min-h-0", "flex-col px-2 py-1.5")}
       >
         <span
-          className={cn(
-            "truncate font-normal leading-tight",
-            isCompact ? "text-[10px]" : "text-[11px]",
-          )}
+          data-calendar-event-title
+          className="truncate text-[11px] font-medium leading-tight"
         >
-          {event.title}
+          {activityTitle}
         </span>
+
+        {density === "detailed" && !isNarrow && lifecycle !== "open" && (
+          <span
+            className={cn(
+              "mt-1 max-w-full truncate w-fit rounded-[3px] px-1 py-0.5 text-[8px] font-normal leading-none",
+              calendarLifecycleBadgeClasses[lifecycle],
+            )}
+          >
+            {lifecycleLabel}
+          </span>
+        )}
 
         <div
           className={cn(
             "flex min-w-0 shrink-0 items-center gap-2 text-[9px] font-light tabular-nums opacity-80",
-            isCompact ? "" : "mt-auto",
+            "mt-auto",
           )}
         >
           <div className="flex items-center gap-1 min-w-0">
-            {!isNarrow && !isCompact && (
+            {density === "detailed" && !isNarrow && (
               <Clock className="h-2.5 w-2.5 shrink-0" />
             )}
-            <span className="truncate">
-              {event.is_all_day ? "Dia inteiro" : format(start, "HH:mm")}
+            <span data-calendar-event-time className="truncate">
+              {event.is_all_day
+                ? "Dia inteiro"
+                : formatScheduleZonedTime(start, timeZone)}
               {!event.is_all_day &&
-                !isCompact &&
-                ` - ${format(tempHeight !== null ? addMinutes(start, Math.round(tempHeight / (56 / 60))) : end, "HH:mm")}`}
+                !isNarrow &&
+                ` - ${formatScheduleZonedTime(tempHeight !== null ? addMinutes(start, Math.round(tempHeight / (56 / 60))) : end, timeZone)}`}
             </span>
           </div>
-          {!isCompact && !isNarrow && event.lead && (
+          {density === "standard" && !isNarrow && lifecycle !== "open" && (
+            <span
+              className={cn(
+                "ml-auto max-w-[72px] truncate rounded-[3px] px-1 py-0.5 text-[8px] font-normal leading-none",
+                calendarLifecycleBadgeClasses[lifecycle],
+              )}
+            >
+              {lifecycleLabel}
+            </span>
+          )}
+          {density === "detailed" && !isNarrow && event.lead && (
             <div className="flex items-center gap-1 max-w-[80px] min-w-0">
               <User className="h-2.5 w-2.5 shrink-0" />
               <span className="truncate">{event.lead.name}</span>
@@ -280,8 +483,10 @@ function ActivityCard({
         {/* Resize handle */}
         {editable && resizable && (
           <div
-            className="absolute bottom-0 left-0 right-0 flex h-1.5 cursor-ns-resize items-center justify-center opacity-0 transition-opacity hover:bg-current/20 active:bg-current/40 group-hover:opacity-100"
-            onMouseDown={handleResizeMouseDown}
+            data-calendar-event-resize-handle
+            className="absolute bottom-0 left-0 right-0 flex h-1.5 touch-none cursor-ns-resize select-none items-center justify-center opacity-0 transition-opacity hover:bg-current/20 active:bg-current/40 group-hover:opacity-100"
+            onPointerDown={handleResizePointerDown}
+            onClick={handleResizeClick}
           >
             <div className="h-0.5 w-4 rounded-full bg-current/40" />
           </div>
@@ -296,14 +501,17 @@ function DroppableSlot({
   onQuickCreate,
   className,
   children,
+  disabled = false,
 }: {
   id: string;
   onQuickCreate?: () => void;
   className?: string;
   children?: React.ReactNode;
+  disabled?: boolean;
 }) {
   const { isOver, setNodeRef } = useDroppable({
     id: id,
+    disabled,
   });
 
   return (
@@ -311,9 +519,14 @@ function DroppableSlot({
       ref={setNodeRef}
       className={cn(
         className,
-        isOver && "bg-primary/[0.05] ring-2 ring-primary/20 ring-inset z-0",
+        disabled && "cursor-not-allowed bg-[var(--app-surface-soft)]/70",
+        isOver &&
+          !disabled &&
+          "bg-primary/[0.05] ring-2 ring-primary/20 ring-inset z-0",
       )}
-      onClick={onQuickCreate}
+      aria-disabled={disabled || undefined}
+      data-disabled={disabled || undefined}
+      onClick={disabled ? undefined : onQuickCreate}
     >
       {children}
     </div>
@@ -350,9 +563,10 @@ interface CalendarViewProps {
   viewMode: "day" | "week" | "month" | "year";
   onEditEvent?: (event: ScheduleEvent) => void;
   onEventUpdate?: (id: string, updates: ScheduleEventTimeUpdate) => void;
-  onQuickCreate?: (date: Date) => void;
+  onQuickCreate?: (date: Date, time?: string) => void;
   showThirtyMinLines?: boolean;
   canManageEvents?: boolean;
+  timeZone?: string;
 }
 
 export function CalendarView({
@@ -367,10 +581,16 @@ export function CalendarView({
   onQuickCreate,
   showThirtyMinLines = false,
   canManageEvents = false,
+  timeZone = DEFAULT_SCHEDULE_TIME_ZONE,
 }: CalendarViewProps) {
-  const isEventEditable = useCallback(
+  const isEventTimingEditable = useCallback(
     (event: ScheduleEvent) =>
-      canManageEvents && !event.is_masked && event.status !== "completed",
+      canManageEvents &&
+      !event.is_masked &&
+      !isAttendanceScheduleType(event.event_type) &&
+      !["completed", "no_show", "cancelled", "canceled"].includes(
+        event.status || "",
+      ),
     [canManageEvents],
   );
   const sensors = useSensors(
@@ -381,13 +601,11 @@ export function CalendarView({
     }),
   );
   const [activeEvent, setActiveEvent] = useState<ScheduleEvent | null>(null);
-  const [currentTime, setCurrentTime] = useState<Date | null>(null);
+  const [currentTime, setCurrentTime] = useState<number | null>(null);
 
   useEffect(() => {
-    if (viewMode !== "day" && viewMode !== "week") return;
-
     let intervalId: number | undefined;
-    const updateCurrentTime = () => setCurrentTime(new Date());
+    const updateCurrentTime = () => setCurrentTime(Date.now());
 
     updateCurrentTime();
     const timeoutId = window.setTimeout(
@@ -402,101 +620,27 @@ export function CalendarView({
       window.clearTimeout(timeoutId);
       if (intervalId !== undefined) window.clearInterval(intervalId);
     };
-  }, [viewMode]);
+  }, []);
 
+  const currentDisplayTime =
+    currentTime === null
+      ? null
+      : scheduleInstantToLocalDateProxy(currentTime, timeZone);
   const currentTimeTop = currentTime
-    ? ((currentTime.getHours() * 60 +
-        currentTime.getMinutes() +
-        currentTime.getSeconds() / 60) *
-        56) /
-      60
+    ? (getScheduleZonedClockMinutes(currentTime, timeZone) * 56) / 60
     : null;
 
   const handleDragStart = (event: DragStartEvent) => {
-    if (!canManageEvents) return;
-    setActiveEvent(event.active.data.current as ScheduleEvent);
+    const scheduleEvent = event.active.data.current as ScheduleEvent;
+    if (!isEventTimingEditable(scheduleEvent)) return;
+    setActiveEvent(scheduleEvent);
   };
 
   const calculateEventLayouts = useCallback(
     (daySegments: ScheduleEventDaySegment<ScheduleEvent>[]) => {
-      if (daySegments.length === 0) return [];
-
-      // Sort events by start time, then duration
-      const sorted = [...daySegments].sort((a, b) => {
-        const startA = a.start.getTime();
-        const startB = b.start.getTime();
-        if (startA !== startB) return startA - startB;
-
-        const durA = a.end.getTime() - startA;
-        const durB = b.end.getTime() - startB;
-        return durB - durA;
-      });
-
-      const layouts: {
-        segment: ScheduleEventDaySegment<ScheduleEvent>;
-        column: number;
-        totalColumns: number;
-      }[] = [];
-      let currentCluster: ScheduleEventDaySegment<ScheduleEvent>[] = [];
-      let clusterMaxEnd = 0;
-
-      const processCluster = (
-        cluster: ScheduleEventDaySegment<ScheduleEvent>[],
-      ) => {
-        if (cluster.length === 0) return;
-
-        const columns: ScheduleEventDaySegment<ScheduleEvent>[][] = [];
-        cluster.forEach((segment) => {
-          let placed = false;
-          const eventStart = segment.start.getTime();
-
-          for (let i = 0; i < columns.length; i++) {
-            const lastEventInCol = columns[i][columns[i].length - 1];
-            if (eventStart >= lastEventInCol.end.getTime()) {
-              columns[i].push(segment);
-              layouts.push({ segment, column: i, totalColumns: 0 });
-              placed = true;
-              break;
-            }
-          }
-
-          if (!placed) {
-            columns.push([segment]);
-            layouts.push({
-              segment,
-              column: columns.length - 1,
-              totalColumns: 0,
-            });
-          }
-        });
-
-        // Update totalColumns for all events in this cluster
-        cluster.forEach((segment) => {
-          const layout = layouts.find(
-            (item) => item.segment.key === segment.key,
-          );
-          if (layout) layout.totalColumns = columns.length;
-        });
-      };
-
-      sorted.forEach((segment) => {
-        const eventStart = segment.start.getTime();
-
-        if (eventStart >= clusterMaxEnd && currentCluster.length > 0) {
-          processCluster(currentCluster);
-          currentCluster = [];
-          clusterMaxEnd = 0;
-        }
-
-        currentCluster.push(segment);
-        const eventEnd = segment.end.getTime();
-        if (eventEnd > clusterMaxEnd) clusterMaxEnd = eventEnd;
-      });
-
-      processCluster(currentCluster);
-      return layouts;
+      return layoutScheduleCalendarSegments(daySegments, timeZone);
     },
-    [],
+    [timeZone],
   );
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -505,10 +649,14 @@ export function CalendarView({
 
     if (canManageEvents && over && active.id !== over.id) {
       const scheduleEvent = active.data.current as ScheduleEvent;
+      if (!isEventTimingEditable(scheduleEvent)) return;
       const [dateStr, hourStr] = (over.id as string).split("|");
 
-      const newStart = parseISO(`${dateStr}T${hourStr}:00`);
       const originalStart = parseISO(scheduleEvent.start_time);
+      const newStart = scheduleCivilDateTimeToDate(dateStr, hourStr, timeZone, {
+        preferredInstant: originalStart,
+      });
+      if (!newStart) return;
       const originalEnd = parseISO(scheduleEvent.end_time);
       const duration = differenceInMinutes(originalEnd, originalStart);
 
@@ -524,13 +672,13 @@ export function CalendarView({
   const eventsByDate = useMemo(() => {
     const map: Record<string, ScheduleEventDaySegment<ScheduleEvent>[]> = {};
     events.forEach((event) => {
-      splitScheduleEventByDay(event).forEach((segment) => {
+      splitScheduleEventByDay(event, timeZone).forEach((segment) => {
         if (!map[segment.dateKey]) map[segment.dateKey] = [];
         map[segment.dateKey].push(segment);
       });
     });
     return map;
-  }, [events]);
+  }, [events, timeZone]);
 
   const renderMonthView = () => {
     const monthStart = startOfMonth(pivotDate);
@@ -545,11 +693,17 @@ export function CalendarView({
 
     return (
       <div className="flex flex-col h-full overflow-hidden bg-transparent">
-        <div className="grid grid-cols-7 border-b border-[var(--schedule-grid-border)] bg-[var(--app-surface-solid)]">
-          {weekDays.map((day) => (
+        <div
+          data-calendar-header="month"
+          className="schedule-calendar-days-header sticky top-0 z-20 grid h-8 shrink-0 grid-cols-7"
+        >
+          {weekDays.map((day, index) => (
             <div
               key={day}
-              className="py-2.5 text-center text-[10px] font-light text-[var(--app-text-tertiary)]"
+              data-weekend={
+                index === 0 ? "sunday" : index === 6 ? "saturday" : undefined
+              }
+              className="schedule-calendar-days-header__cell flex h-8 items-center justify-center border-r border-[var(--schedule-grid-border)] px-2 text-center text-[10px] font-light text-[var(--app-text-tertiary)] last:border-r-0"
             >
               {day}
             </div>
@@ -561,7 +715,9 @@ export function CalendarView({
             const daySegments = eventsByDate[dateKey] || [];
             const isCurrentMonth = isSameMonth(day, pivotDate);
             const isSelected = isSameDay(day, selectedDate);
-            const isDayToday = isToday(day);
+            const isDayToday = currentDisplayTime
+              ? isSameDay(day, currentDisplayTime)
+              : isToday(day);
 
             const maxVisibleEvents = 3;
             const visibleEvents = daySegments.slice(0, maxVisibleEvents);
@@ -601,6 +757,15 @@ export function CalendarView({
                       eventTypeIcons[event.event_type as EventType] ||
                       CalendarIcon;
                     const userColor = getUserEventColor(event.user_id);
+                    const lifecycle = getScheduleLifecycleState({
+                      status: event.status,
+                      outcome: event.outcome,
+                      startTime: event.start_time,
+                      endTime: event.end_time,
+                      isAllDay: event.is_all_day ?? false,
+                      timeZone,
+                      now: currentTime ?? 0,
+                    });
                     return (
                       <div
                         key={segment.key}
@@ -610,13 +775,24 @@ export function CalendarView({
                         }}
                         className={cn(
                           "flex items-center gap-1.5 truncate rounded-[4px] border-0 px-2 py-1 text-[9px] font-light text-white shadow-none transition-opacity hover:opacity-90",
+                          [
+                            "completed",
+                            "no_show",
+                            "rescheduled",
+                            "cancelled",
+                          ].includes(lifecycle) && "opacity-70",
+                          lifecycle === "cancelled" && "grayscale",
                         )}
+                        title={`${event.title} · ${getScheduleLifecycleLabel(lifecycle)}`}
                         style={{ backgroundColor: userColor.background }}
                       >
                         <Icon className="h-2.5 w-2.5 flex-shrink-0 opacity-80" />
                         <span className="truncate tracking-tight">
                           {event.title}
                         </span>
+                        {lifecycle !== "open" && (
+                          <span className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-white/90" />
+                        )}
                       </div>
                     );
                   })}
@@ -645,6 +821,15 @@ export function CalendarView({
                               eventTypeIcons[event.event_type as EventType] ||
                               CalendarIcon;
                             const userColor = getUserEventColor(event.user_id);
+                            const lifecycle = getScheduleLifecycleState({
+                              status: event.status,
+                              outcome: event.outcome,
+                              startTime: event.start_time,
+                              endTime: event.end_time,
+                              isAllDay: event.is_all_day ?? false,
+                              timeZone,
+                              now: currentTime ?? 0,
+                            });
                             return (
                               <div
                                 key={segment.key}
@@ -654,7 +839,15 @@ export function CalendarView({
                                 }}
                                 className={cn(
                                   "flex cursor-pointer items-center gap-2 truncate rounded-[4px] border-0 px-2 py-1.5 text-[10px] font-light text-white shadow-none transition-opacity hover:opacity-90",
+                                  [
+                                    "completed",
+                                    "no_show",
+                                    "rescheduled",
+                                    "cancelled",
+                                  ].includes(lifecycle) && "opacity-75",
+                                  lifecycle === "cancelled" && "grayscale",
                                 )}
+                                title={`${event.title} · ${getScheduleLifecycleLabel(lifecycle)}`}
                                 style={{
                                   backgroundColor: userColor.background,
                                 }}
@@ -667,7 +860,11 @@ export function CalendarView({
                                   <span className="text-[8px] opacity-70">
                                     {event.is_all_day
                                       ? "Dia inteiro"
-                                      : format(segment.start, "HH:mm")}
+                                      : formatScheduleZonedTime(
+                                          segment.start,
+                                          timeZone,
+                                        )}{" "}
+                                    · {getScheduleLifecycleLabel(lifecycle)}
                                   </span>
                                 </div>
                               </div>
@@ -687,12 +884,9 @@ export function CalendarView({
   };
 
   const renderDayView = () => {
-    const hours = eachHourOfInterval({
-      start: startOfDay(pivotDate),
-      end: endOfDay(pivotDate),
-    });
-
-    const daySegments = eventsByDate[format(pivotDate, "yyyy-MM-dd")] || [];
+    const hours = CALENDAR_HOURS;
+    const dayDateKey = format(pivotDate, "yyyy-MM-dd");
+    const daySegments = eventsByDate[dayDateKey] || [];
 
     return (
       <DndContext
@@ -706,19 +900,19 @@ export function CalendarView({
             <div className="w-16 flex-shrink-0 border-r border-[var(--schedule-grid-border)] bg-[var(--app-surface-soft)]">
               {hours.map((hour) => (
                 <div
-                  key={hour.toString()}
+                  key={hour}
                   className="flex h-14 items-center justify-center border-b border-[var(--schedule-grid-border)]"
                 >
                   <span className="text-[10px] font-light tabular-nums text-[var(--app-text-tertiary)]">
-                    {format(hour, "HH:mm")}
+                    {formatCalendarHour(hour)}:00
                   </span>
                 </div>
               ))}
             </div>
 
-            {currentTime &&
+            {currentDisplayTime &&
               currentTimeTop !== null &&
-              isSameDay(pivotDate, currentTime) && (
+              isSameDay(pivotDate, currentDisplayTime) && (
                 <CurrentTimeIndicator
                   top={currentTimeTop}
                   className="left-16 right-0"
@@ -728,32 +922,44 @@ export function CalendarView({
             {/* Grid content */}
             <div className="flex-1 relative">
               {hours.map((hour) => {
-                const hourStr = format(hour, "HH");
+                const hourStr = formatCalendarHour(hour);
+                const hourStart = `${hourStr}:00`;
+                const halfHourStart = `${hourStr}:30`;
                 return (
                   <div
-                    key={hour.toString()}
+                    key={hour}
                     className="relative h-14 w-full border-b border-[var(--schedule-grid-border)]"
                   >
                     <DroppableSlot
-                      id={`${format(pivotDate, "yyyy-MM-dd")}|${hourStr}:00`}
+                      id={`${dayDateKey}|${hourStart}`}
+                      disabled={
+                        !scheduleCivilDateTimeToDate(
+                          dayDateKey,
+                          hourStart,
+                          timeZone,
+                        )
+                      }
                       className={cn(
                         "h-7 w-full cursor-pointer hover:bg-primary/[0.02] transition-colors",
                         showThirtyMinLines &&
                           "border-b border-[var(--schedule-grid-border)]",
                       )}
                       onQuickCreate={() => {
-                        const clickDate = new Date(pivotDate);
-                        clickDate.setHours(hour.getHours(), 0, 0, 0);
-                        onQuickCreate?.(clickDate);
+                        onQuickCreate?.(pivotDate, hourStart);
                       }}
                     />
                     <DroppableSlot
-                      id={`${format(pivotDate, "yyyy-MM-dd")}|${hourStr}:30`}
+                      id={`${dayDateKey}|${halfHourStart}`}
+                      disabled={
+                        !scheduleCivilDateTimeToDate(
+                          dayDateKey,
+                          halfHourStart,
+                          timeZone,
+                        )
+                      }
                       className="h-7 w-full cursor-pointer hover:bg-primary/[0.02] transition-colors"
                       onQuickCreate={() => {
-                        const clickDate = new Date(pivotDate);
-                        clickDate.setHours(hour.getHours(), 30, 0, 0);
-                        onQuickCreate?.(clickDate);
+                        onQuickCreate?.(pivotDate, halfHourStart);
                       }}
                     />
                   </div>
@@ -762,18 +968,15 @@ export function CalendarView({
 
               {/* Events */}
               {calculateEventLayouts(daySegments).map(
-                ({ segment, column, totalColumns }) => {
+                ({ segment, geometry, column, totalColumns }) => {
                   const { event, start, end } = segment;
-                  const top = event.is_all_day
-                    ? 0
-                    : (start.getHours() * 60 + start.getMinutes()) * (56 / 60);
-                  const duration = event.is_all_day
-                    ? 24 * 60
-                    : Math.max(
-                        (end.getTime() - start.getTime()) / (1000 * 60),
-                        15,
-                      );
-                  const height = duration * (56 / 60);
+                  const top = geometry.startMinutes * (56 / 60);
+                  const height = geometry.durationMinutes * (56 / 60);
+                  const realDurationMinutes =
+                    (end.getTime() - start.getTime()) / 60_000;
+                  const canResizeInGrid =
+                    Math.abs(geometry.durationMinutes - realDurationMinutes) <
+                    0.001;
 
                   const width = 100 / totalColumns;
                   const left = column * width;
@@ -784,15 +987,18 @@ export function CalendarView({
                       event={event}
                       displayStart={start}
                       displayEnd={end}
+                      displayDurationMinutes={geometry.durationMinutes}
                       dragId={segment.key}
                       onEditEvent={onEditEvent}
                       onEventUpdate={onEventUpdate}
-                      editable={isEventEditable(event)}
-                      resizable={segment.isLast}
+                      editable={isEventTimingEditable(event)}
+                      resizable={segment.isLast && canResizeInGrid}
+                      lifecycleNow={currentTime ?? 0}
+                      timeZone={timeZone}
                       style={{
                         top: `${top}px`,
                         height: `${height}px`,
-                        minHeight: "28px",
+                        minHeight: `${Math.min(28, height)}px`,
                         width: `calc(${width}% - 4px)`,
                         left: `calc(${left}% + 2px)`,
                       }}
@@ -807,6 +1013,8 @@ export function CalendarView({
           {activeEvent ? (
             <ActivityCard
               event={activeEvent}
+              lifecycleNow={currentTime ?? 0}
+              timeZone={timeZone}
               className="w-[150px] relative left-0 right-0"
               style={{ position: "relative", top: 0, height: "56px" }}
             />
@@ -819,10 +1027,7 @@ export function CalendarView({
   const renderWeekView = () => {
     const weekStart = startOfWeek(pivotDate, { weekStartsOn: 0 });
     const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
-    const hours = eachHourOfInterval({
-      start: startOfDay(new Date()),
-      end: endOfDay(new Date()),
-    });
+    const hours = CALENDAR_HOURS;
 
     return (
       <DndContext
@@ -833,31 +1038,59 @@ export function CalendarView({
         <ScrollArea className="h-full border-0 bg-transparent">
           <div className="relative flex flex-col min-w-[1000px] min-h-full">
             {/* Header */}
-            <div className="sticky top-0 z-20 flex border-b border-[var(--schedule-grid-border)] bg-[var(--app-surface-solid)]">
-              <div className="w-16 flex-shrink-0 border-r border-[var(--schedule-grid-border)] bg-[var(--app-surface-soft)]" />
-              {weekDays.map((day) => (
-                <div
-                  key={day.toString()}
-                  className="flex flex-1 items-center justify-center border-r border-[var(--schedule-grid-border)] py-2 last:border-r-0"
-                >
-                  <span
-                    className={cn(
-                      "inline-flex h-7 items-center justify-center gap-1 rounded-[6px] px-2.5 text-[10px] font-light transition-colors",
-                      isToday(day)
-                        ? "bg-primary/50 text-white"
-                        : "bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]",
-                    )}
+            <div
+              data-calendar-header="week"
+              className="schedule-calendar-days-header sticky top-0 z-20 flex h-9 shrink-0"
+            >
+              <div
+                aria-hidden="true"
+                className="h-9 w-16 flex-shrink-0 border-r border-[var(--schedule-grid-border)]"
+              />
+              {weekDays.map((day) => {
+                const isSelected = isSameDay(day, selectedDate);
+                const isDayToday = currentDisplayTime
+                  ? isSameDay(day, currentDisplayTime)
+                  : isToday(day);
+                const weekendKind = isWeekend(day)
+                  ? day.getDay() === 0
+                    ? "sunday"
+                    : "saturday"
+                  : undefined;
+
+                return (
+                  <button
+                    type="button"
+                    key={day.toString()}
+                    data-weekend={weekendKind}
+                    data-selected={isSelected || undefined}
+                    data-today={isDayToday || undefined}
+                    aria-current={isDayToday ? "date" : undefined}
+                    aria-pressed={isSelected}
+                    aria-label={format(day, "EEEE, d 'de' MMMM", {
+                      locale: ptBR,
+                    })}
+                    onClick={() => {
+                      onDateSelect(day);
+                      onPivotChange(day);
+                    }}
+                    className="schedule-calendar-days-header__cell group flex h-9 flex-1 items-center justify-center gap-1.5 border-r border-[var(--schedule-grid-border)] px-2 text-[10px] font-light text-[var(--app-text-secondary)] outline-none transition-colors last:border-r-0 hover:text-[var(--app-text-primary)] focus-visible:z-10 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/40"
                   >
-                    <span className="capitalize">
-                      {format(day, "EEEE", { locale: ptBR })}
+                    <span
+                      className={cn(
+                        "capitalize",
+                        weekendKind && !isSelected && !isDayToday
+                          ? "text-[var(--app-text-tertiary)]"
+                          : "text-inherit",
+                      )}
+                    >
+                      {format(day, "EEE", { locale: ptBR })}
                     </span>
-                    <span aria-hidden="true" className="opacity-60">
-                      /
+                    <span className="schedule-calendar-days-header__date inline-flex h-5 min-w-5 items-center justify-center rounded-[5px] px-1 text-[11px] tabular-nums transition-colors">
+                      {format(day, "d")}
                     </span>
-                    <span className="text-[11px]">{format(day, "d")}</span>
-                  </span>
-                </div>
-              ))}
+                  </button>
+                );
+              })}
             </div>
 
             {/* Grid */}
@@ -866,11 +1099,11 @@ export function CalendarView({
               <div className="w-16 flex-shrink-0 border-r border-[var(--schedule-grid-border)] bg-[var(--app-surface-soft)]">
                 {hours.map((hour) => (
                   <div
-                    key={hour.toString()}
+                    key={hour}
                     className="flex h-14 items-center justify-center border-b border-[var(--schedule-grid-border)]"
                   >
                     <span className="text-[10px] font-light tabular-nums text-[var(--app-text-tertiary)]">
-                      {format(hour, "HH:mm")}
+                      {formatCalendarHour(hour)}:00
                     </span>
                   </div>
                 ))}
@@ -883,41 +1116,54 @@ export function CalendarView({
                   className="relative flex-1 border-r border-[var(--schedule-grid-border)] last:border-r-0"
                 >
                   {hours.map((hour) => {
-                    const hourStr = format(hour, "HH");
+                    const hourStr = formatCalendarHour(hour);
+                    const dayDateKey = format(day, "yyyy-MM-dd");
+                    const hourStart = `${hourStr}:00`;
+                    const halfHourStart = `${hourStr}:30`;
                     return (
                       <div
-                        key={hour.toString()}
+                        key={hour}
                         className="relative h-14 w-full border-b border-[var(--schedule-grid-border)]"
                       >
                         <DroppableSlot
-                          id={`${format(day, "yyyy-MM-dd")}|${hourStr}:00`}
+                          id={`${dayDateKey}|${hourStart}`}
+                          disabled={
+                            !scheduleCivilDateTimeToDate(
+                              dayDateKey,
+                              hourStart,
+                              timeZone,
+                            )
+                          }
                           className={cn(
                             "h-7 w-full cursor-pointer hover:bg-primary/[0.01] transition-colors",
                             showThirtyMinLines &&
                               "border-b border-[var(--schedule-grid-border)]",
                           )}
                           onQuickCreate={() => {
-                            const clickDate = new Date(day);
-                            clickDate.setHours(hour.getHours(), 0, 0, 0);
-                            onQuickCreate?.(clickDate);
+                            onQuickCreate?.(day, hourStart);
                           }}
                         />
                         <DroppableSlot
-                          id={`${format(day, "yyyy-MM-dd")}|${hourStr}:30`}
+                          id={`${dayDateKey}|${halfHourStart}`}
+                          disabled={
+                            !scheduleCivilDateTimeToDate(
+                              dayDateKey,
+                              halfHourStart,
+                              timeZone,
+                            )
+                          }
                           className="h-7 w-full cursor-pointer hover:bg-primary/[0.01] transition-colors"
                           onQuickCreate={() => {
-                            const clickDate = new Date(day);
-                            clickDate.setHours(hour.getHours(), 30, 0, 0);
-                            onQuickCreate?.(clickDate);
+                            onQuickCreate?.(day, halfHourStart);
                           }}
                         />
                       </div>
                     );
                   })}
 
-                  {currentTime &&
+                  {currentDisplayTime &&
                     currentTimeTop !== null &&
-                    isSameDay(day, currentTime) && (
+                    isSameDay(day, currentDisplayTime) && (
                       <CurrentTimeIndicator
                         top={currentTimeTop}
                         className="left-0 right-0"
@@ -927,19 +1173,15 @@ export function CalendarView({
                   {/* Events for this day */}
                   {calculateEventLayouts(
                     eventsByDate[format(day, "yyyy-MM-dd")] || [],
-                  ).map(({ segment, column, totalColumns }) => {
+                  ).map(({ segment, geometry, column, totalColumns }) => {
                     const { event, start, end } = segment;
-                    const top = event.is_all_day
-                      ? 0
-                      : (start.getHours() * 60 + start.getMinutes()) *
-                        (56 / 60);
-                    const duration = event.is_all_day
-                      ? 24 * 60
-                      : Math.max(
-                          (end.getTime() - start.getTime()) / (1000 * 60),
-                          15,
-                        );
-                    const height = duration * (56 / 60);
+                    const top = geometry.startMinutes * (56 / 60);
+                    const height = geometry.durationMinutes * (56 / 60);
+                    const realDurationMinutes =
+                      (end.getTime() - start.getTime()) / 60_000;
+                    const canResizeInGrid =
+                      Math.abs(geometry.durationMinutes - realDurationMinutes) <
+                      0.001;
 
                     const width = 100 / totalColumns;
                     const left = column * width;
@@ -950,15 +1192,18 @@ export function CalendarView({
                         event={event}
                         displayStart={start}
                         displayEnd={end}
+                        displayDurationMinutes={geometry.durationMinutes}
                         dragId={segment.key}
                         onEditEvent={onEditEvent}
                         onEventUpdate={onEventUpdate}
-                        editable={isEventEditable(event)}
-                        resizable={segment.isLast}
+                        editable={isEventTimingEditable(event)}
+                        resizable={segment.isLast && canResizeInGrid}
+                        lifecycleNow={currentTime ?? 0}
+                        timeZone={timeZone}
                         style={{
                           top: `${top}px`,
                           height: `${height}px`,
-                          minHeight: "28px",
+                          minHeight: `${Math.min(28, height)}px`,
                           width: `calc(${width}% - 4px)`,
                           left: `calc(${left}% + 2px)`,
                         }}
@@ -974,6 +1219,8 @@ export function CalendarView({
           {activeEvent ? (
             <ActivityCard
               event={activeEvent}
+              lifecycleNow={currentTime ?? 0}
+              timeZone={timeZone}
               className="w-[150px] relative left-0 right-0"
               style={{ position: "relative", top: 0, height: "56px" }}
             />
@@ -1024,7 +1271,9 @@ export function CalendarView({
                   const hasEvents =
                     (eventsByDate[format(day, "yyyy-MM-dd")] || []).length > 0;
                   const isCurrentMonth = isSameMonth(day, month);
-                  const isDayToday = isToday(day);
+                  const isDayToday = currentDisplayTime
+                    ? isSameDay(day, currentDisplayTime)
+                    : isToday(day);
 
                   return (
                     <div

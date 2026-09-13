@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 )
 
 var (
@@ -229,6 +229,12 @@ type MessagePage struct {
 	NextCursor *string   `json:"nextCursor"`
 }
 
+type MessageMediaURL struct {
+	MessageID string `json:"messageId"`
+	URL       string `json:"url"`
+	ExpiresIn int    `json:"expiresIn"`
+}
+
 type HistoryAccessResponse struct {
 	Conversation  *Conversation  `json:"conversation,omitempty"`
 	Conversations []Conversation `json:"conversations,omitempty"`
@@ -269,9 +275,10 @@ type ConversationListMeta struct {
 }
 
 type MessageFilter struct {
-	Limit    int
-	CursorAt *time.Time
-	CursorID string
+	Limit            int
+	CursorAt         *time.Time
+	CursorID         string
+	IncludeMediaURLs bool
 }
 
 type FindConversationFilter struct {
@@ -507,8 +514,9 @@ func ParseConversationListFilter(values url.Values) (ConversationListFilter, err
 		}
 		filter.SessionID = value
 	}
-	if raw := strings.TrimSpace(values.Get("sessionIds")); raw != "" {
+	if values.Has("sessionIds") {
 		filter.AccessibleProvided = true
+		raw := strings.TrimSpace(values.Get("sessionIds"))
 		for _, item := range strings.Split(raw, ",") {
 			item = strings.TrimSpace(item)
 			if item == "" {
@@ -569,7 +577,14 @@ func ParseMessageFilter(values url.Values) (MessageFilter, error) {
 		limit = value
 	}
 
-	filter := MessageFilter{Limit: limit}
+	filter := MessageFilter{Limit: limit, IncludeMediaURLs: true}
+	if raw := strings.TrimSpace(values.Get("includeMediaUrls")); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			return MessageFilter{}, fmt.Errorf("%w: includeMediaUrls is invalid", ErrInvalidInput)
+		}
+		filter.IncludeMediaURLs = value
+	}
 	if raw := strings.TrimSpace(values.Get("cursor")); raw != "" {
 		parts := strings.Split(raw, "|")
 		if len(parts) > 2 {
@@ -796,13 +811,5 @@ func validEnum(value string, allowed ...string) bool {
 }
 
 func normalizeUUID(value string) (string, bool) {
-	var uuid pgtype.UUID
-	if err := uuid.Scan(strings.TrimSpace(value)); err != nil {
-		return "", false
-	}
-	if !uuid.Valid {
-		return "", false
-	}
-
-	return uuid.String(), true
+	return pgvalue.NormalizeUUID(value)
 }

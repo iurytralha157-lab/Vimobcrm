@@ -1,25 +1,4 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { format, differenceInMinutes, isSameDay } from "date-fns";
-import { ptBR } from "date-fns/locale";
-import {
-  Phone,
-  Mail,
-  MessageSquare,
-  X,
-  User,
-  Search,
-  Clock,
-  Plus,
-  Send,
-  Building2,
-  Users,
-  CheckCircle,
-  Trash2,
-  Lock,
-  Video,
-  ClipboardList,
-  Home,
-} from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -27,46 +6,12 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Calendar } from "@/components/ui/calendar";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
-import { cn, getCurrentTimeForInput, getBrasiliaTime } from "@/lib/utils";
-import { commandSearchFilter } from "@/lib/search-text";
+import { getCurrentTimeForInput, getBrasiliaTime } from "@/lib/utils";
 import {
   useCreateScheduleEvent,
+  useCompleteScheduleEvent,
+  useScheduleCapabilities,
+  useRescheduleScheduleEvent,
   useUpdateScheduleEvent,
   useDeleteScheduleEvent,
   EventType,
@@ -79,134 +24,53 @@ import { useProperties } from "@/hooks/use-properties";
 import { useScheduleComments } from "@/hooks/use-schedule-comments";
 import { useScheduleEventAssignees } from "@/hooks/use-schedule-event-assignees";
 import { useTeams } from "@/hooks/use-teams";
-import Link from "next/link";
-import { PropertyPickerDialog } from "@/components/features/properties/PropertyPickerDialog";
 import { PropertyPreviewDialog } from "@/components/features/properties/PropertyPreviewDialog";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useAuth } from "@/contexts/AuthContext";
 import { scheduleClockInputSchema } from "@/lib/validation/schedule";
-import { buildScheduleEventInterval } from "@/lib/schedule-event-draft";
-
-const eventTypes: {
-  type: EventType;
-  label: string;
-  icon: React.ElementType;
-}[] = [
-  { type: "call", label: "Ligação", icon: Phone },
-  { type: "email", label: "E-mail", icon: Mail },
-  { type: "meeting", label: "Reunião", icon: Video },
-  { type: "task", label: "Tarefa", icon: ClipboardList },
-  { type: "message", label: "Mensagem", icon: MessageSquare },
-  { type: "visit", label: "Visita ao imóvel", icon: Home },
-];
-
-const timeOptions = Array.from({ length: 24 * 4 }, (_, index) => {
-  const hours = Math.floor(index / 4);
-  const minutes = (index % 4) * 15;
-  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
-});
-
-const recurrenceOptions = [
-  { value: "none", label: "Não se repete" },
-  { value: "daily", label: "Diariamente" },
-  { value: "weekly", label: "Semanal" },
-  { value: "monthly", label: "Mensal" },
-  { value: "yearly", label: "Anual" },
-] as const;
-
-const visibilityOptions: {
-  value: ScheduleEventVisibility;
-  label: string;
-  description: string;
-}[] = [
-  {
-    value: "default",
-    label: "Padrão",
-    description: "Quem não participa vê somente que o horário está ocupado.",
-  },
-  {
-    value: "public",
-    label: "Público",
-    description: "Quem tem acesso à agenda vê os detalhes permitidos.",
-  },
-  {
-    value: "private",
-    label: "Privado",
-    description: "Somente responsáveis e administradores veem o evento.",
-  },
-];
-
-type RecurrenceRule = (typeof recurrenceOptions)[number]["value"];
-
-const recurrenceLimitLabels: Partial<Record<RecurrenceRule, string>> = {
-  daily: "Próximos 90 dias",
-  weekly: "Próximas 52 semanas",
-  monthly: "Próximos 24 meses",
-  yearly: "Próximos 5 anos",
-};
-
-const agendaFieldClass =
-  "rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light text-[var(--app-text-primary)] shadow-none outline-none ring-0 placeholder:font-light placeholder:text-[var(--app-text-tertiary)] focus-visible:ring-1 focus-visible:ring-primary/30 focus-visible:ring-offset-0";
-const agendaControlClass =
-  "rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light text-[var(--app-text-primary)] shadow-none outline-none ring-0 transition-colors hover:bg-[var(--app-surface-hover)] focus:ring-0 focus-visible:ring-1 focus-visible:ring-primary/30";
-const agendaMutedTextClass = "text-[var(--app-text-tertiary)]";
-const agendaPopoverClass =
-  "app-header-popover rounded-[8px] border-0 bg-[var(--app-surface-solid)] text-[12px] font-light text-[var(--app-text-primary)] [&_[role=option]]:rounded-[6px] [&_[role=option]]:text-[12px] [&_[role=option]]:font-light";
-
-function isRecurrenceRule(
-  value: string | null | undefined,
-): value is RecurrenceRule {
-  return (
-    value === "none" ||
-    value === "daily" ||
-    value === "weekly" ||
-    value === "monthly" ||
-    value === "yearly"
-  );
-}
-
-const formatPropertyPrice = (value: number | null, tipo: string | null) => {
-  if (!value) return "Pre\u00e7o n\u00e3o informado";
-  if (tipo === "Aluguel") {
-    return `R$ ${value.toLocaleString("pt-BR")}/m\u00eas`;
-  }
-  return `R$ ${value.toLocaleString("pt-BR")}`;
-};
-
-function getNextFutureQuarterHour() {
-  const next = getBrasiliaTime();
-  const nextQuarter = Math.floor(next.getMinutes() / 15) * 15 + 15;
-  next.setMinutes(nextQuarter, 0, 0);
-  return next;
-}
-
-function formatScheduleTimestamp(value: string | null | undefined) {
-  if (!value) return 'Data indisponível';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? 'Data indisponível'
-    : format(date, 'dd/MM HH:mm', { locale: ptBR });
-}
-
-function getInitialStartDate(defaultDate?: Date) {
-  const now = getBrasiliaTime();
-  const fallback = getNextFutureQuarterHour();
-  if (!defaultDate) return fallback;
-
-  const selected = new Date(defaultDate);
-  if (Number.isNaN(selected.getTime())) return fallback;
-  const hasExplicitTime =
-    selected.getHours() !== 0 ||
-    selected.getMinutes() !== 0 ||
-    selected.getSeconds() !== 0;
-
-  if (isSameDay(selected, now) && (!hasExplicitTime || selected <= now)) {
-    return fallback;
-  }
-
-  return selected;
-}
+import {
+  buildScheduleEventInterval,
+  buildScheduleEventTimingPatch,
+} from "@/lib/schedule-event-draft";
+import { EventAssigneesSection } from "@/components/features/schedule/event-sheet/EventAssigneesSection";
+import { EventNotesAndComments } from "@/components/features/schedule/event-sheet/EventNotesAndComments";
+import { EventRelationsSections } from "@/components/features/schedule/event-sheet/EventRelationsSections";
+import { EventSheetActions } from "@/components/features/schedule/event-sheet/EventSheetActions";
+import { EventSheetFeedback } from "@/components/features/schedule/event-sheet/EventSheetFeedback";
+import { EventSheetHeader } from "@/components/features/schedule/event-sheet/EventSheetHeader";
+import { EventTimingSection } from "@/components/features/schedule/event-sheet/EventTimingSection";
+import { EventVisibilitySection } from "@/components/features/schedule/event-sheet/EventVisibilitySection";
+import {
+  ScheduleOutcomeDialog,
+  type ScheduleOutcomeConfirmation,
+} from "@/components/features/schedule/ScheduleOutcomeDialog";
+import {
+  getSimpleScheduleCompletionOutcome,
+  DEFAULT_SCHEDULE_TIME_ZONE,
+  isAttendanceScheduleType,
+  scheduleStatusForOutcome,
+  shouldPreserveAttendanceHistory,
+} from "@/lib/schedule-outcome";
+import {
+  formatScheduleZonedTime,
+  getLocalScheduleCivilDateKey,
+  getScheduleCivilDateKey,
+  scheduleCivilDateKeyToLocalDate,
+  scheduleFutureCivilDateTimeToDate,
+} from "@/lib/schedule-time-zone";
+import {
+  applyTeamSelection,
+  buildDisplayAssignees,
+  formatPropertyPrice,
+  getAvailableAssignees,
+  getClockRangeDurationMinutes,
+  getDefaultDurationMinutes,
+  getStoredDurationMinutes,
+  isRecurrenceRule,
+  type RecurrenceRule,
+} from "@/components/features/schedule/event-sheet/model";
 
 interface EventSheetProps {
   open: boolean;
@@ -214,9 +78,102 @@ interface EventSheetProps {
   event?: ScheduleEvent | null;
   defaultUserId?: string;
   defaultDate?: Date;
+  defaultTime?: string;
   defaultType?: EventType;
   leadId?: string;
   leadName?: string;
+}
+
+interface ScheduleDraftStart {
+  date: Date;
+  time: string;
+  preferredStartTime: string | null;
+}
+
+function getNextScheduleQuarterHourDraft(
+  value: Date | string | number,
+  timeZone: string,
+): ScheduleDraftStart | null {
+  const instant = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(instant.getTime())) return null;
+
+  const quarterHour = 15 * 60 * 1000;
+  const nextInstant = new Date(
+    Math.floor(instant.getTime() / quarterHour) * quarterHour + quarterHour,
+  );
+  const civilDate = getScheduleCivilDateKey(nextInstant, timeZone);
+  const date = civilDate ? scheduleCivilDateKeyToLocalDate(civilDate) : null;
+  const time = formatScheduleZonedTime(nextInstant, timeZone);
+  return date && scheduleClockInputSchema.safeParse(time).success
+    ? { date, time, preferredStartTime: nextInstant.toISOString() }
+    : null;
+}
+
+function getInitialScheduleDraft({
+  defaultDate,
+  defaultTime,
+  now,
+  timeZone,
+}: {
+  defaultDate?: Date;
+  defaultTime?: string;
+  now: Date;
+  timeZone: string;
+}): ScheduleDraftStart {
+  const fallback = getNextScheduleQuarterHourDraft(now, timeZone);
+  const currentCivilDate = getScheduleCivilDateKey(now, timeZone);
+  const currentDate = currentCivilDate
+    ? scheduleCivilDateKeyToLocalDate(currentCivilDate)
+    : null;
+  const currentTime = formatScheduleZonedTime(now, timeZone);
+  const safeFallback =
+    fallback ||
+    (currentDate && scheduleClockInputSchema.safeParse(currentTime).success
+      ? {
+          date: currentDate,
+          time: currentTime,
+          preferredStartTime: now.toISOString(),
+        }
+      : {
+          date: getBrasiliaTime(),
+          time: getCurrentTimeForInput(),
+          preferredStartTime: null,
+        });
+
+  if (!defaultDate || Number.isNaN(defaultDate.getTime())) return safeFallback;
+
+  const civilDate = getLocalScheduleCivilDateKey(defaultDate);
+  const date = scheduleCivilDateKeyToLocalDate(civilDate);
+  if (!date) return safeFallback;
+
+  const parsedDefaultTime = scheduleClockInputSchema.safeParse(defaultTime);
+  const localClock = `${String(defaultDate.getHours()).padStart(2, "0")}:${String(
+    defaultDate.getMinutes(),
+  ).padStart(2, "0")}`;
+  const time = parsedDefaultTime.success ? parsedDefaultTime.data : localClock;
+  const hasExplicitTime =
+    parsedDefaultTime.success ||
+    defaultDate.getHours() !== 0 ||
+    defaultDate.getMinutes() !== 0 ||
+    defaultDate.getSeconds() !== 0;
+
+  if (civilDate === currentCivilDate) {
+    if (!hasExplicitTime) return safeFallback;
+    const futureStart = scheduleFutureCivilDateTimeToDate(
+      civilDate,
+      time,
+      timeZone,
+      now,
+    );
+    if (!futureStart) return safeFallback;
+    return {
+      date,
+      time,
+      preferredStartTime: futureStart.toISOString(),
+    };
+  }
+
+  return { date, time, preferredStartTime: null };
 }
 
 export function EventSheet({
@@ -225,31 +182,84 @@ export function EventSheet({
   event,
   defaultUserId,
   defaultDate,
+  defaultTime,
   defaultType,
   leadId,
   leadName,
 }: EventSheetProps) {
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
   const { hasPermission } = useUserPermissions();
   const { hasModule } = useOrganizationModules();
   const hasAgendaModule = hasModule("agenda");
-  const canManageSchedule =
-    hasAgendaModule && hasPermission("schedule_manage");
+  const canManageSchedule = hasAgendaModule && hasPermission("schedule_manage");
+  const scheduleCapabilitiesQuery = useScheduleCapabilities({
+    enabled: open && hasAgendaModule,
+  });
+  const scheduleCapabilities = scheduleCapabilitiesQuery.data;
+  const scheduleTimeZone =
+    scheduleCapabilities?.timeZone || DEFAULT_SCHEDULE_TIME_ZONE;
+  const scheduleTimeZoneReady =
+    scheduleCapabilitiesQuery.isSuccess &&
+    Boolean(scheduleCapabilities?.timeZone);
   const canViewProperties =
     hasModule("properties") &&
     (hasPermission("property_view") || hasPermission("property_manage"));
   const isExisting = !!event;
-  const isCompleted = event?.status === "completed";
+  const isCompleted = [
+    "completed",
+    "no_show",
+    "cancelled",
+    "canceled",
+  ].includes(event?.status || "");
+  const canReopen =
+    !isAttendanceScheduleType(event?.event_type) &&
+    (event?.status === "completed" ||
+      ((event?.status === "cancelled" || event?.status === "canceled") &&
+        event?.outcome !== "rescheduled"));
   const isMasked = Boolean(event?.is_masked);
+  const outcomeEventType: EventType = [
+    "call",
+    "email",
+    "meeting",
+    "task",
+    "message",
+    "visit",
+  ].includes(event?.event_type || "")
+    ? (event?.event_type as EventType)
+    : "task";
+  const requiresAttendanceOutcome = isAttendanceScheduleType(outcomeEventType);
+  const preservesAppointmentTiming = isExisting && requiresAttendanceOutcome;
+  const hasAttendanceHistoryLink =
+    requiresAttendanceOutcome &&
+    Boolean(event?.rescheduled_from_event_id || event?.rescheduled_to_event_id);
+  const preservesAttendanceHistory =
+    shouldPreserveAttendanceHistory(outcomeEventType, event?.status) ||
+    hasAttendanceHistoryLink;
   const [isEditing, setIsEditing] = useState(false);
   const { data: users = [] } = useScheduleUsers({
     enabled: open && hasAgendaModule,
   });
+  const outcomeUsers =
+    event?.user_id && !users.some((user) => user.id === event.user_id)
+      ? [
+          {
+            id: event.user_id,
+            name: event.user?.name || "Responsável do evento",
+            avatar_url: event.user?.avatar_url || null,
+          },
+          ...users,
+        ]
+      : users;
   const { data: teams = [] } = useTeams({
     enabled: open && canManageSchedule && !isMasked && isEditing,
   });
   const createEvent = useCreateScheduleEvent();
   const updateEvent = useUpdateScheduleEvent();
+  const completeEvent = useCompleteScheduleEvent();
+  const rescheduleEvent = useRescheduleScheduleEvent();
   const deleteEvent = useDeleteScheduleEvent();
+  const [outcomeDialogOpen, setOutcomeDialogOpen] = useState(false);
 
   const locked =
     !canManageSchedule || isMasked || isCompleted || (isExisting && !isEditing);
@@ -265,8 +275,21 @@ export function EventSheet({
   const [time, setTime] = useState("");
   const [duration, setDuration] = useState(30);
   const [isAllDay, setIsAllDay] = useState(false);
+  const [preferredStartTime, setPreferredStartTime] = useState<string | null>(
+    null,
+  );
+  const [reminderMinutes, setReminderMinutes] = useState<number | null>(30);
   const durationTouched = useRef(false);
+  const initializedDraftIdentityRef = useRef<string | null>(null);
+  const [initializedDraftIdentity, setInitializedDraftIdentity] = useState<
+    string | null
+  >(null);
   const [recurrenceRule, setRecurrenceRule] = useState<RecurrenceRule>("none");
+
+  const draftIdentity = event?.id
+    ? `${organizationId || "none"}:event:${event.id}`
+    : `${organizationId || "none"}:new:${leadId || ""}:${defaultDate?.getTime() ?? ""}:${defaultTime || ""}:${defaultType || ""}`;
+  const draftOrganizationIdRef = useRef(organizationId);
 
   const [leadSearch, setLeadSearch] = useState("");
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
@@ -353,28 +376,40 @@ export function EventSheet({
     if (open && !hasAgendaModule) onOpenChange(false);
   }, [hasAgendaModule, onOpenChange, open]);
 
+  useEffect(() => {
+    if (draftOrganizationIdRef.current === organizationId) return;
+    draftOrganizationIdRef.current = organizationId;
+    initializedDraftIdentityRef.current = null;
+    queueMicrotask(() => {
+      setInitializedDraftIdentity(null);
+      setPreferredStartTime(null);
+      if (open) onOpenChange(false);
+    });
+  }, [onOpenChange, open, organizationId]);
+
   const resetDraft = useCallback(() => {
     if (event) {
       const parsedStartDate = event.start_time
         ? new Date(event.start_time)
         : getBrasiliaTime();
-      const safeStartDate = Number.isNaN(parsedStartDate.getTime())
-        ? getBrasiliaTime()
-        : parsedStartDate;
-      let nextDuration =
-        event.event_type === "visit" || event.event_type === "meeting"
-          ? 60
-          : 30;
-      if (event.start_time && event.end_time) {
-        const parsedEndDate = new Date(event.end_time);
-        if (!Number.isNaN(parsedEndDate.getTime())) {
-          const parsedDuration = differenceInMinutes(
-            parsedEndDate,
-            safeStartDate,
-          );
-          if (parsedDuration > 0) nextDuration = parsedDuration;
-        }
-      }
+      const displayDateKey = getScheduleCivilDateKey(
+        event.start_time || Date.now(),
+        scheduleTimeZone,
+      );
+      const displayStartDate = displayDateKey
+        ? scheduleCivilDateKeyToLocalDate(displayDateKey)
+        : null;
+      const safeStartDate =
+        displayStartDate ||
+        (Number.isNaN(parsedStartDate.getTime())
+          ? getBrasiliaTime()
+          : parsedStartDate);
+      const nextDuration = getStoredDurationMinutes({
+        start: parsedStartDate,
+        end:
+          event.start_time && event.end_time ? new Date(event.end_time) : null,
+        eventType: event.event_type,
+      });
       setIsEditing(false);
       setSelectedType((event.event_type as EventType) || "task");
       setTitle(event.title || "");
@@ -383,12 +418,14 @@ export function EventSheet({
       setPrimaryUserId(event.user_id || defaultUserId || "");
       setVisibility(event.visibility || "default");
       setDate(safeStartDate);
+      setPreferredStartTime(event.start_time || null);
       setTime(
         event.start_time
-          ? format(safeStartDate, "HH:mm")
+          ? formatScheduleZonedTime(event.start_time, scheduleTimeZone)
           : getCurrentTimeForInput(),
       );
       setIsAllDay(Boolean(event.is_all_day));
+      setReminderMinutes(event.reminder_minutes ?? null);
       setSelectedLeadId(event.lead_id || null);
       setSelectedLeadName(event.lead?.name || null);
       setSelectedPropertyId(event.property_id || null);
@@ -423,10 +460,17 @@ export function EventSheet({
       setLocation("");
       setPrimaryUserId(defaultUserId || "");
       setVisibility("default");
-      const initialStart = getInitialStartDate(defaultDate);
-      setDate(initialStart);
-      setTime(format(initialStart, "HH:mm"));
+      const initialStart = getInitialScheduleDraft({
+        defaultDate,
+        defaultTime,
+        now: new Date(),
+        timeZone: scheduleTimeZone,
+      });
+      setDate(initialStart.date);
+      setTime(initialStart.time);
+      setPreferredStartTime(initialStart.preferredStartTime);
       setIsAllDay(false);
+      setReminderMinutes(30);
       setSelectedLeadId(leadId || null);
       setSelectedLeadName(leadName || null);
       setSelectedPropertyId(null);
@@ -438,7 +482,8 @@ export function EventSheet({
       assigneeFallbackHydratedForEvent.current = null;
       durationTouched.current = false;
     }
-    setSelectedTeamId("");
+    setSelectedTeamId(event?.team_id || "");
+    setOutcomeDialogOpen(false);
     setCommentText("");
     setLeadSearch("");
     setPropertySearch("");
@@ -447,17 +492,46 @@ export function EventSheet({
     setPropertyPickerOpen(false);
   }, [
     defaultDate,
+    defaultTime,
     defaultType,
     defaultUserId,
     event,
     leadId,
     leadName,
+    scheduleTimeZone,
   ]);
 
   useEffect(() => {
-    if (!open || !hasAgendaModule) return;
-    queueMicrotask(resetDraft);
-  }, [hasAgendaModule, open, resetDraft]);
+    if (!open) {
+      initializedDraftIdentityRef.current = null;
+      queueMicrotask(() => setInitializedDraftIdentity(null));
+      return;
+    }
+    if (
+      !hasAgendaModule ||
+      !scheduleTimeZoneReady ||
+      initializedDraftIdentityRef.current === draftIdentity
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled || initializedDraftIdentityRef.current === draftIdentity) {
+        return;
+      }
+      initializedDraftIdentityRef.current = draftIdentity;
+      resetDraft();
+      setInitializedDraftIdentity(draftIdentity);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [draftIdentity, hasAgendaModule, open, resetDraft, scheduleTimeZoneReady]);
+
+  const draftReady =
+    scheduleTimeZoneReady && initializedDraftIdentity === draftIdentity;
+  const draftLocked = locked || !draftReady;
 
   useEffect(() => {
     if (
@@ -494,14 +568,8 @@ export function EventSheet({
 
   useEffect(() => {
     if (locked || durationTouched.current) return;
-    setDuration(
-      selectedType === "visit" || selectedType === "meeting" ? 60 : 30,
-    );
+    setDuration(getDefaultDurationMinutes(selectedType));
   }, [selectedType, locked]);
-
-  const typeConf =
-    eventTypes.find((t) => t.type === selectedType) || eventTypes[3];
-  const TypeIcon = typeConf.icon;
 
   const endTimePreview = useMemo(() => {
     const interval = buildScheduleEventInterval({
@@ -509,9 +577,28 @@ export function EventSheet({
       time,
       isAllDay: false,
       durationMinutes: duration,
+      timeZone: scheduleTimeZone,
+      preferredStartTime,
     });
-    return interval ? format(new Date(interval.endTime), "HH:mm") : "";
-  }, [date, time, duration]);
+    return interval
+      ? formatScheduleZonedTime(interval.endTime, scheduleTimeZone)
+      : "";
+  }, [date, duration, preferredStartTime, scheduleTimeZone, time]);
+
+  const handleDateChange = (value: Date | undefined) => {
+    setPreferredStartTime(null);
+    setDate(value);
+  };
+
+  const handleTimeChange = (value: string) => {
+    setPreferredStartTime(null);
+    setTime(value);
+  };
+
+  const handleAllDayChange = (value: boolean) => {
+    setPreferredStartTime(null);
+    setIsAllDay(value);
+  };
 
   const handleEndTimeChange = (value: string) => {
     if (!date || !time) return;
@@ -521,16 +608,15 @@ export function EventSheet({
     ) {
       return;
     }
-    const [startHour, startMinute] = time.split(":").map(Number);
-    const [endHour, endMinute] = value.split(":").map(Number);
-    if ([startHour, startMinute, endHour, endMinute].some(Number.isNaN)) return;
-
-    const start = new Date(date);
-    start.setHours(startHour, startMinute, 0, 0);
-    const end = new Date(date);
-    end.setHours(endHour, endMinute, 0, 0);
-    const nextDuration = differenceInMinutes(end, start);
-    setDuration(nextDuration > 0 ? nextDuration : nextDuration + 24 * 60);
+    const nextDuration = getClockRangeDurationMinutes({
+      date,
+      startTime: time,
+      endTime: value,
+      timeZone: scheduleTimeZone,
+      preferredStartTime,
+    });
+    if (nextDuration === null) return;
+    setDuration(nextDuration);
     durationTouched.current = true;
   };
 
@@ -538,51 +624,39 @@ export function EventSheet({
   const eventUserName = event?.user?.name;
   const eventUserAvatarURL = event?.user?.avatar_url || null;
 
-  const allAssignees = useMemo(() => {
-    if (isMasked) return [];
+  const allAssignees = useMemo(
+    () =>
+      buildDisplayAssignees({
+        users,
+        loadedAssignees: assignees,
+        draftAssigneeIds,
+        primaryUserId,
+        eventUser:
+          eventUserId && eventUserName
+            ? {
+                id: eventUserId,
+                name: eventUserName,
+                avatar_url: eventUserAvatarURL,
+              }
+            : null,
+        isMasked,
+      }),
+    [
+      eventUserAvatarURL,
+      eventUserId,
+      eventUserName,
+      isMasked,
+      users,
+      primaryUserId,
+      assignees,
+      draftAssigneeIds,
+    ],
+  );
 
-    const list: {
-      id: string;
-      name: string;
-      avatar_url: string | null;
-      primary: boolean;
-    }[] = [];
-    const primary =
-      users.find((u) => u.id === primaryUserId) ||
-      (eventUserId === primaryUserId && eventUserName
-        ? {
-            id: eventUserId,
-            name: eventUserName,
-            avatar_url: eventUserAvatarURL,
-          }
-        : null);
-    if (primary) list.push({ ...primary, primary: true });
-
-    draftAssigneeIds.forEach((id) => {
-      const user =
-        assignees.find((assignee) => assignee.id === id) ||
-        users.find((candidate) => candidate.id === id);
-      if (user && user.id !== primaryUserId && !list.some((item) => item.id === user.id)) {
-        list.push({ ...user, primary: false });
-      }
-    });
-
-    return list;
-  }, [
-    eventUserAvatarURL,
-    eventUserId,
-    eventUserName,
-    isMasked,
+  const availableUsers = getAvailableAssignees(
     users,
     primaryUserId,
-    assignees,
     draftAssigneeIds,
-  ]);
-
-  const availableUsers = users.filter(
-    (u) =>
-      u.id !== primaryUserId &&
-      !draftAssigneeIds.includes(u.id),
   );
 
   const handleTeamSelect = (teamId: string) => {
@@ -594,24 +668,26 @@ export function EventSheet({
       .map((member) => member.user?.id || member.user_id)
       .filter((id): id is string => Boolean(id));
 
-    const nextPending = memberIds.filter(
-      (id) =>
-        id !== primaryUserId &&
-        !draftAssigneeIds.includes(id),
-    );
-
-    if (!primaryUserId && memberIds[0]) {
-      setPrimaryUserId(memberIds[0]);
+    const selection = applyTeamSelection({
+      memberIds,
+      primaryUserId,
+      draftAssigneeIds,
+    });
+    if (selection.primaryUserId !== primaryUserId) {
+      setPrimaryUserId(selection.primaryUserId);
     }
-    if (nextPending.length > 0) {
-      setDraftAssigneeIds((prev) =>
-        Array.from(new Set([...prev, ...nextPending])),
+    if (selection.draftAssigneeIds.length !== draftAssigneeIds.length) {
+      const pendingIds = selection.draftAssigneeIds.filter(
+        (userId) => !draftAssigneeIds.includes(userId),
+      );
+      setDraftAssigneeIds((current) =>
+        Array.from(new Set([...current, ...pendingIds])),
       );
     }
   };
 
   const handleSubmit = async () => {
-    if (!canManageSchedule || isMasked) return;
+    if (!canManageSchedule || isMasked || !draftReady) return;
     if (isExisting && !assigneeDraftReady) return;
     if (!title.trim() || !date || !primaryUserId) return;
     const interval = buildScheduleEventInterval({
@@ -619,23 +695,30 @@ export function EventSheet({
       time,
       isAllDay,
       durationMinutes: duration,
+      timeZone: scheduleTimeZone,
+      preferredStartTime,
     });
     if (!interval) return;
 
     const assigneeIds = draftAssigneeIds.filter(
       (userId) => userId !== primaryUserId,
     );
+    const reminderMinutesPayload =
+      event &&
+      typeof reminderMinutes === "number" &&
+      reminderMinutes > 120 &&
+      reminderMinutes === event.reminder_minutes
+        ? undefined
+        : reminderMinutes;
 
-    const basePayload = {
+    const sharedPayload = {
       title: title.trim(),
       description: description.trim() || undefined,
       event_type: selectedType,
-      start_time: interval.startTime,
-      end_time: interval.endTime,
-      is_all_day: isAllDay,
       user_id: primaryUserId,
       lead_id: selectedLeadId || undefined,
       property_id: selectedPropertyId,
+      team_id: selectedTeamId || null,
       location: location.trim() || undefined,
       visibility,
       assignee_ids: assigneeIds,
@@ -645,14 +728,25 @@ export function EventSheet({
       if (event) {
         await updateEvent.mutateAsync({
           id: event.id,
-          ...basePayload,
+          ...sharedPayload,
+          ...buildScheduleEventTimingPatch({
+            preserveAppointmentTiming: preservesAppointmentTiming,
+            startTime: interval.startTime,
+            endTime: interval.endTime,
+            isAllDay,
+            reminderMinutes: reminderMinutesPayload,
+          }),
           description: description.trim() || null,
           lead_id: selectedLeadId,
           location: location.trim() || null,
         });
       } else {
         await createEvent.mutateAsync({
-          ...basePayload,
+          ...sharedPayload,
+          start_time: interval.startTime,
+          end_time: interval.endTime,
+          is_all_day: isAllDay,
+          reminder_minutes: reminderMinutesPayload,
           recurrence_rule: recurrenceRule,
         });
       }
@@ -664,18 +758,63 @@ export function EventSheet({
 
   const handleMarkDone = async () => {
     if (!canManageSchedule || !event || isMasked) return;
+    if (requiresAttendanceOutcome) {
+      setOutcomeDialogOpen(true);
+      return;
+    }
+
     try {
-      await updateEvent.mutateAsync({ id: event.id, status: "completed" });
+      await completeEvent.mutateAsync({
+        id: event.id,
+        status: "completed",
+        outcome: getSimpleScheduleCompletionOutcome(event.event_type),
+      });
       onOpenChange(false);
     } catch {
       // The owning mutation reports the error; keep the activity open.
     }
   };
 
+  const handleOutcomeConfirm = async ({
+    outcome,
+    notes,
+    performedBy,
+    reschedule,
+  }: ScheduleOutcomeConfirmation) => {
+    if (!canManageSchedule || !event || isMasked) return;
+    try {
+      if (outcome === "rescheduled") {
+        if (!reschedule) return;
+        await rescheduleEvent.mutateAsync({
+          id: event.id,
+          start_time: reschedule.startTime,
+          end_time: reschedule.endTime,
+          is_all_day: reschedule.isAllDay,
+          reminder_minutes: reschedule.reminderMinutes,
+          outcome_notes: notes || null,
+        });
+        setOutcomeDialogOpen(false);
+        onOpenChange(false);
+        return;
+      }
+      await completeEvent.mutateAsync({
+        id: event.id,
+        status: scheduleStatusForOutcome(outcome),
+        outcome,
+        outcomeNotes: notes || null,
+        performedBy,
+      });
+      setOutcomeDialogOpen(false);
+      onOpenChange(false);
+    } catch {
+      // The owning mutation reports the error; keep the result dialog open.
+    }
+  };
+
   const handleReopen = async () => {
     if (!canManageSchedule || !event || isMasked) return;
     try {
-      await updateEvent.mutateAsync({ id: event.id, status: "scheduled" });
+      await completeEvent.mutateAsync({ id: event.id, status: "scheduled" });
       onOpenChange(false);
     } catch {
       // The owning mutation reports the error; keep the activity open.
@@ -683,7 +822,8 @@ export function EventSheet({
   };
 
   const handleDelete = async () => {
-    if (!canManageSchedule || !event || isMasked) return;
+    if (!canManageSchedule || !event || isMasked || preservesAttendanceHistory)
+      return;
     try {
       await deleteEvent.mutateAsync({ id: event.id });
       onOpenChange(false);
@@ -706,9 +846,13 @@ export function EventSheet({
   };
 
   const isLoading =
-    createEvent.isPending || updateEvent.isPending || deleteEvent.isPending;
+    createEvent.isPending ||
+    updateEvent.isPending ||
+    completeEvent.isPending ||
+    rescheduleEvent.isPending ||
+    deleteEvent.isPending;
   const handleSheetOpenChange = (nextOpen: boolean) => {
-    if (!nextOpen && isLoading) return;
+    if (!nextOpen && (isLoading || outcomeDialogOpen)) return;
     onOpenChange(nextOpen);
   };
   const hasValidTime = Boolean(
@@ -717,10 +861,12 @@ export function EventSheet({
       time,
       isAllDay,
       durationMinutes: duration,
+      timeZone: scheduleTimeZone,
+      preferredStartTime,
     }),
   );
   const canSubmit =
-    !locked &&
+    !draftLocked &&
     title.trim() &&
     date &&
     primaryUserId &&
@@ -743,6 +889,7 @@ export function EventSheet({
           onInteractOutside={(event) => {
             const target = event.target as HTMLElement | null;
             if (
+              outcomeDialogOpen ||
               target?.closest(
                 '[data-radix-popper-content-wrapper], [role="listbox"]',
               )
@@ -762,829 +909,187 @@ export function EventSheet({
             </SheetDescription>
           </SheetHeader>
 
-          <div className="grid shrink-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 border-b border-[var(--app-border)] px-4 pb-3 pt-3 sm:grid-cols-[minmax(0,1fr)_158px_auto] sm:border-b-0 sm:px-8 sm:pb-1 sm:pt-4">
-            <div className="col-start-2 row-start-1 min-w-0 sm:col-start-1">
-              {locked ? (
-                <h2
-                  className={cn(
-                    "min-h-10 px-3 py-2.5 text-[12px] font-light leading-tight sm:min-h-9 sm:py-2",
-                    agendaFieldClass,
-                  )}
-                >
-                  {title || "Sem título"}
-                </h2>
-              ) : (
-                <Input
-                  data-tour="agenda-event-title"
-                  aria-label="Título da atividade"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="Adicionar título"
-                  className={cn(
-                    "h-10 px-3 text-[12px] font-light sm:h-9",
-                    agendaFieldClass,
-                  )}
-                />
-              )}
-            </div>
-            <div className="col-span-2 min-w-0 sm:col-span-1">
-              {locked ? (
-                <FieldPill className="h-10 w-full justify-center px-3 text-xs sm:h-9">
-                  <TypeIcon className="h-3.5 w-3.5" />
-                  {typeConf.label}
-                </FieldPill>
-              ) : (
-                <Select
-                  value={selectedType}
-                  onValueChange={(value: EventType) => setSelectedType(value)}
-                >
-                  <SelectTrigger
-                    data-tour="agenda-event-type"
-                    aria-label="Tipo da atividade"
-                    className={cn(
-                      "h-10 w-full px-3 text-[12px] font-light leading-none sm:h-9 [&>span]:!flex [&>span]:items-center [&>span]:gap-2 [&>svg]:h-3.5 [&>svg]:w-3.5 [&>svg]:text-[var(--app-text-tertiary)]",
-                      agendaControlClass,
-                    )}
-                  >
-                    <span className="min-w-0">
-                      <TypeIcon className="h-3.5 w-3.5 shrink-0 text-[var(--app-text-tertiary)]" />
-                      <span className="truncate">{typeConf.label}</span>
-                    </span>
-                  </SelectTrigger>
-                  <SelectContent className={agendaPopoverClass}>
-                    {eventTypes.map(({ type, label, icon: Icon }) => (
-                      <SelectItem key={type} value={type}>
-                        <span className="inline-flex items-center gap-2">
-                          <Icon className="h-4 w-4" />
-                          {label}
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => handleSheetOpenChange(false)}
-              disabled={isLoading}
-              className="col-start-1 row-start-1 shrink-0 rounded-[6px] p-2 text-[var(--app-text-tertiary)] transition hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] sm:col-start-3 sm:p-1.5"
-              aria-label="Fechar"
-            >
-              <X size={18} strokeWidth={1.7} />
-            </button>
-          </div>
+          <EventSheetHeader
+            locked={draftLocked}
+            typeLocked={hasAttendanceHistoryLink}
+            title={title}
+            selectedType={selectedType}
+            isLoading={isLoading}
+            onTitleChange={setTitle}
+            onTypeChange={setSelectedType}
+            onClose={() => handleSheetOpenChange(false)}
+          />
 
           <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:px-8 sm:pb-2 sm:pt-0">
-            {isCompleted && (
-              <AgendaRow icon={<Lock size={18} />} align="center">
-                <span className="inline-flex h-8 items-center rounded-[6px] bg-emerald-500/10 px-3 text-[12px] font-light text-emerald-600 dark:text-emerald-300">
-                  Atividade concluída, somente leitura
-                </span>
-              </AgendaRow>
-            )}
+            <EventSheetFeedback
+              isCompleted={isCompleted}
+              isMasked={isMasked}
+              status={event?.status}
+              outcome={event?.outcome}
+              outcomeNotes={event?.outcome_notes}
+              performedByName={
+                event?.performed_by_user?.name ||
+                (event?.performed_by === event?.completed_by
+                  ? event?.completed_by_user?.name
+                  : null)
+              }
+              completedAt={event?.completed_at}
+              attendanceOutcome={requiresAttendanceOutcome}
+            />
+            <EventTimingSection
+              locked={draftLocked}
+              timingLocked={preservesAppointmentTiming}
+              date={date}
+              time={time}
+              endTimePreview={endTimePreview}
+              isAllDay={isAllDay}
+              recurrenceRule={recurrenceRule}
+              reminderMinutes={reminderMinutes}
+              isExisting={isExisting}
+              onDateChange={handleDateChange}
+              onTimeChange={handleTimeChange}
+              onEndTimeChange={handleEndTimeChange}
+              onAllDayChange={handleAllDayChange}
+              onRecurrenceChange={setRecurrenceRule}
+              onReminderChange={setReminderMinutes}
+            />
 
-            {isMasked && (
-              <AgendaRow icon={<Lock size={18} />} align="center">
-                <span className="inline-flex h-8 items-center rounded-[6px] bg-[var(--app-surface-soft)] px-3 text-[12px] font-light text-[var(--app-text-secondary)]">
-                  Informações privadas
-                </span>
-              </AgendaRow>
-            )}
+            <EventAssigneesSection
+              isMasked={isMasked}
+              locked={draftLocked}
+              assigneeDraftReady={assigneeDraftReady}
+              assigneesError={assigneesError}
+              assigneesFetching={assigneesFetching}
+              allAssignees={allAssignees}
+              availableUsers={availableUsers}
+              users={users}
+              assignableTeams={assignableTeams}
+              showAssigneePicker={showAssigneePicker}
+              selectedTeamId={selectedTeamId}
+              primaryUserId={primaryUserId}
+              onRetry={() => void refetchAssignees()}
+              onRemoveAssignee={(userId) =>
+                setDraftAssigneeIds((current) =>
+                  current.filter((id) => id !== userId),
+                )
+              }
+              onAssigneePickerChange={setShowAssigneePicker}
+              onAddAssignee={(userId) => {
+                if (!primaryUserId) setPrimaryUserId(userId);
+                else if (!draftAssigneeIds.includes(userId)) {
+                  setDraftAssigneeIds((current) => [...current, userId]);
+                }
+                setShowAssigneePicker(false);
+              }}
+              onTeamSelect={handleTeamSelect}
+              onPrimaryUserChange={setPrimaryUserId}
+            />
 
-            <AgendaRow
-              dataTour="agenda-event-date"
-              icon={<Clock size={19} />}
-              align={locked ? "center" : "start"}
-            >
-              {locked ? (
-                <div className="text-[12px] font-light text-[var(--app-text-primary)]">
-                  {date
-                    ? format(date, "EEEE, dd 'de' MMMM", { locale: ptBR })
-                    : "-"}{" "}
-                  · {time} - {endTimePreview || "-"}
-                </div>
-              ) : (
-                <div className="space-y-2 sm:space-y-1">
-                  <div className="grid grid-cols-2 items-end gap-2 sm:grid-cols-[minmax(0,1fr)_76px_12px_76px] sm:items-center">
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <button
-                          type="button"
-                          aria-label={date
-                            ? `Data da atividade: ${format(date, "dd/MM/yyyy")}`
-                            : "Selecionar data da atividade"}
-                          className="col-span-2 h-10 rounded-[6px] bg-[var(--app-surface-soft)] px-3 text-left text-[12px] font-light leading-tight text-[var(--app-text-secondary)] transition hover:bg-[var(--app-surface-hover)] hover:text-primary focus-visible:text-primary active:text-primary sm:col-span-1 sm:h-9"
-                        >
-                          {date
-                            ? format(date, "EEEE, dd 'de' MMMM", {
-                                locale: ptBR,
-                              })
-                            : "Selecionar data"}
-                        </button>
-                      </PopoverTrigger>
-                      <PopoverContent
-                        className={cn("w-auto p-0", agendaPopoverClass)}
-                        align="start"
-                      >
-                        <Calendar
-                          mode="single"
-                          selected={date}
-                          onSelect={setDate}
-                          locale={ptBR}
-                        />
-                      </PopoverContent>
-                    </Popover>
-                    <div className="min-w-0 space-y-1 sm:space-y-0">
-                      <span className="text-[11px] font-light text-[var(--app-text-tertiary)] sm:sr-only">
-                        Início
-                      </span>
-                      <TimePicker
-                        ariaLabel="Horário de início"
-                        value={time}
-                        onChange={setTime}
-                        disabled={isAllDay}
-                      />
-                    </div>
-                    <span className="hidden text-center text-[var(--app-text-tertiary)] sm:block">
-                      -
-                    </span>
-                    <div className="min-w-0 space-y-1 sm:space-y-0">
-                      <span className="text-[11px] font-light text-[var(--app-text-tertiary)] sm:sr-only">
-                        Fim
-                      </span>
-                      <TimePicker
-                        ariaLabel="Horário de fim"
-                        value={endTimePreview || time}
-                        onChange={handleEndTimeChange}
-                        disabled={isAllDay}
-                      />
-                    </div>
-                  </div>
+            <EventVisibilitySection
+              locked={draftLocked}
+              visibility={visibility}
+              onVisibilityChange={setVisibility}
+            />
 
-                  <div className="flex flex-wrap items-center gap-3 pl-0.5 text-xs text-[var(--app-text-tertiary)]">
-                    <label
-                      data-tour="agenda-event-all-day"
-                      className="inline-flex items-center gap-1.5"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isAllDay}
-                        onChange={(event) => setIsAllDay(event.target.checked)}
-                        className="h-4 w-4 rounded-sm bg-transparent accent-primary"
-                      />
-                      Dia inteiro
-                    </label>
-                    <Select
-                      value={recurrenceRule}
-                      disabled={isExisting}
-                      onValueChange={(value) => {
-                        if (isRecurrenceRule(value)) setRecurrenceRule(value);
-                      }}
-                    >
-                      <SelectTrigger
-                        data-tour="agenda-event-recurrence"
-                        aria-label="Recorrência"
-                        className="h-7 w-[132px] rounded-[6px] border-0 bg-transparent px-1.5 text-[12px] font-light text-[var(--app-text-tertiary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] focus:ring-0"
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {recurrenceOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {recurrenceRule !== "none" && (
-                      <span
-                        data-tour="agenda-event-recurrence-limit"
-                        className="text-[11px] text-[var(--app-text-tertiary)]"
-                      >
-                        {recurrenceLimitLabels[recurrenceRule]}
-                      </span>
-                    )}
-                    {isExisting && (
-                      <span className="text-[11px] text-[var(--app-text-tertiary)]">
-                        Definida na criação
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
-            </AgendaRow>
+            <EventRelationsSections
+              locked={draftLocked}
+              isExisting={isExisting}
+              isMasked={isMasked}
+              selectedLeadId={selectedLeadId}
+              selectedLeadName={selectedLeadName}
+              showLeadSelector={showLeadSelector}
+              leadSearch={leadSearch}
+              searchedLeads={searchedLeads}
+              canViewProperties={canViewProperties}
+              selectedPropertyId={selectedPropertyId}
+              selectedPropertyLabel={selectedPropertyLabel}
+              allProperties={allProperties}
+              propertiesLoading={propertiesLoading}
+              onRemoveLead={() => {
+                setSelectedLeadId(null);
+                setSelectedLeadName(null);
+              }}
+              onLeadSelectorChange={setShowLeadSelector}
+              onLeadSearchChange={setLeadSearch}
+              onLeadSelect={(selectedLead) => {
+                setSelectedLeadId(selectedLead.id);
+                setSelectedLeadName(selectedLead.name);
+                setShowLeadSelector(false);
+                setLeadSearch("");
+              }}
+              onPropertyPreview={() => setPropertyPreviewOpen(true)}
+              onRemoveProperty={() => {
+                setSelectedPropertyId(null);
+                setSelectedPropertyLabel(null);
+              }}
+              onPropertyPickerOpenChange={(nextOpen) => {
+                setPropertyPickerOpen(nextOpen);
+                if (!nextOpen) setPropertySearch("");
+              }}
+              onPropertySearchChange={setPropertySearch}
+              onPropertySelect={(property) => {
+                setSelectedPropertyId(property.id);
+                setSelectedPropertyLabel(
+                  `${property.code ? `${property.code} · ` : ""}${property.title || "Imóvel"}`,
+                );
+              }}
+            />
 
-            <AgendaRow
-              dataTour="agenda-event-assignees"
-              icon={<Users size={18} />}
-              label="Responsáveis"
-              inline
-            >
-              <div className="flex min-h-10 w-full flex-wrap items-center gap-2">
-                {isMasked ? (
-                  <span className="text-[12px] font-light text-[var(--app-text-tertiary)]">
-                    Informação privada
-                  </span>
-                ) : !assigneeDraftReady ? (
-                  <div className="flex items-center gap-2 text-[12px] font-light text-[var(--app-text-tertiary)]">
-                    <span>
-                      {assigneesError
-                        ? "Não foi possível carregar os responsáveis."
-                        : "Carregando responsáveis..."}
-                    </span>
-                    {assigneesError && (
-                      <button
-                        type="button"
-                        onClick={() => void refetchAssignees()}
-                        disabled={assigneesFetching}
-                        className="rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-1 text-primary transition-colors hover:bg-[var(--app-surface-hover)] disabled:opacity-50"
-                      >
-                        Tentar novamente
-                      </button>
-                    )}
-                  </div>
-                ) : allAssignees.length > 0 ? (
-                  allAssignees.map((a) => (
-                    <div key={a.id} className="group relative">
-                      <Avatar className="h-8 w-8" title={a.name}>
-                        <AvatarImage
-                          src={a.avatar_url || undefined}
-                          alt={a.name}
-                        />
-                        <AvatarFallback className="bg-primary/12 text-[10px] font-light text-primary">
-                          {a.name
-                            .split(" ")
-                            .slice(0, 2)
-                            .map((p) => p[0])
-                            .join("")
-                            .toUpperCase()}
-                        </AvatarFallback>
-                      </Avatar>
-                      {!locked && !a.primary && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setDraftAssigneeIds((current) =>
-                              current.filter((id) => id !== a.id),
-                            )
-                          }
-                          className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-destructive-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                          aria-label="Remover responsável"
-                        >
-                          <X size={8} strokeWidth={3} />
-                        </button>
-                      )}
-                    </div>
-                  ))
-                ) : (
-                  <span className="text-[12px] font-light text-[var(--app-text-tertiary)]">
-                    Adicionar convidados
-                  </span>
-                )}
-                {!locked && assigneeDraftReady && availableUsers.length > 0 && (
-                  <Popover
-                    open={showAssigneePicker}
-                    onOpenChange={setShowAssigneePicker}
-                  >
-                    <PopoverTrigger asChild>
-                      <button
-                        type="button"
-                        aria-label="Adicionar responsável"
-                        className={cn(
-                          "flex h-8 w-8 items-center justify-center rounded-[6px] text-[var(--app-text-secondary)] hover:text-primary",
-                          agendaControlClass,
-                        )}
-                      >
-                        <Plus size={14} />
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      className={cn("w-[260px] p-0", agendaPopoverClass)}
-                      align="start"
-                    >
-                      <Command
-                        filter={commandSearchFilter}
-                        className="bg-transparent [&_[cmdk-input-wrapper]]:border-b-0"
-                      >
-                        <CommandInput placeholder="Adicionar responsável..." />
-                        <CommandList>
-                          <CommandEmpty>Sem usuários disponíveis.</CommandEmpty>
-                          <CommandGroup>
-                            {availableUsers.map((u) => (
-                              <CommandItem
-                                key={u.id}
-                                onSelect={() => {
-                                  if (!primaryUserId)
-                                    setPrimaryUserId(u.id);
-                                  else if (!draftAssigneeIds.includes(u.id))
-                                    setDraftAssigneeIds((prev) => [
-                                      ...prev,
-                                      u.id,
-                                    ]);
-                                  setShowAssigneePicker(false);
-                                }}
-                              >
-                                <Avatar className="mr-2 h-5 w-5">
-                                  <AvatarImage
-                                    src={u.avatar_url || undefined}
-                                    alt={u.name}
-                                  />
-                                  <AvatarFallback className="bg-primary/12 text-[10px] font-light text-primary">
-                                    {u.name
-                                      .split(" ")
-                                      .slice(0, 2)
-                                      .map((p) => p[0])
-                                      .join("")}
-                                  </AvatarFallback>
-                                </Avatar>
-                                <span className="text-[12px] font-light">
-                                  {u.name}
-                                </span>
-                              </CommandItem>
-                            ))}
-                          </CommandGroup>
-                        </CommandList>
-                      </Command>
-                    </PopoverContent>
-                  </Popover>
-                )}
-                {!locked && assigneeDraftReady && assignableTeams.length > 0 && (
-                  <Select
-                    value={selectedTeamId}
-                    onValueChange={handleTeamSelect}
-                  >
-                    <SelectTrigger
-                      aria-label="Adicionar equipe responsável"
-                      className={cn(
-                        "h-10 min-w-[132px] flex-1 px-3 text-[12px] font-light sm:h-9 sm:flex-none",
-                        agendaControlClass,
-                      )}
-                    >
-                      <SelectValue placeholder="Equipe" />
-                    </SelectTrigger>
-                    <SelectContent className={agendaPopoverClass}>
-                      {assignableTeams.map((team) => (
-                        <SelectItem key={team.id} value={team.id}>
-                          {team.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
-              {!locked && assigneeDraftReady && !primaryUserId && (
-                <Select value={primaryUserId} onValueChange={setPrimaryUserId}>
-                  <SelectTrigger
-                    aria-label="Responsável principal"
-                    className={cn(
-                      "mt-2 h-10 text-[12px] font-light sm:h-9",
-                      agendaControlClass,
-                    )}
-                  >
-                    <SelectValue placeholder="Responsável principal..." />
-                  </SelectTrigger>
-                  <SelectContent className={agendaPopoverClass}>
-                    {users.map((u) => (
-                      <SelectItem key={u.id} value={u.id}>
-                        {u.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </AgendaRow>
-
-            <AgendaRow
-              dataTour="agenda-event-visibility"
-              icon={<Lock size={18} />}
-              label="Visibilidade"
-              inline
-            >
-              <div className="flex w-full flex-col items-start gap-1.5">
-                {locked ? (
-                  <FieldPill className="h-9 px-3 text-xs">
-                    {visibilityOptions.find(
-                      (option) => option.value === visibility,
-                    )?.label || "Padrão"}
-                  </FieldPill>
-                ) : (
-                  <div className="grid h-10 w-full grid-cols-3 rounded-[6px] bg-[var(--app-surface-soft)] p-1 sm:inline-flex sm:h-9 sm:w-auto">
-                    {visibilityOptions.map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => setVisibility(option.value)}
-                        title={option.description}
-                        aria-label={`${option.label}: ${option.description}`}
-                        aria-pressed={visibility === option.value}
-                        className={cn(
-                          "min-w-0 rounded-[6px] px-2 text-[12px] font-light transition sm:px-3",
-                          visibility === option.value
-                            ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                            : "text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]",
-                        )}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <p className="text-xs leading-4 text-[var(--app-text-tertiary)]">
-                  {
-                    visibilityOptions.find(
-                      (option) => option.value === visibility,
-                    )?.description
-                  }
-                </p>
-              </div>
-            </AgendaRow>
-
-            <AgendaRow icon={<User size={18} />} label="Lead/cliente" inline>
-              {selectedLeadId ? (
-                <div className="flex items-center justify-between gap-2">
-                  {isExisting ? (
-                    <Link
-                      href={`/crm/pipelines?lead=${selectedLeadId}`}
-                      className="truncate text-[12px] font-light text-primary hover:text-primary/80"
-                    >
-                      {selectedLeadName || "Lead vinculado"}
-                    </Link>
-                  ) : (
-                    <span className="truncate text-[12px] font-light text-[var(--app-text-primary)]">
-                      {selectedLeadName}
-                    </span>
-                  )}
-                  {!locked && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 shrink-0"
-                      aria-label="Remover lead vinculado"
-                      onClick={() => {
-                        setSelectedLeadId(null);
-                        setSelectedLeadName(null);
-                      }}
-                    >
-                      <X className="h-3 w-3" />
-                    </Button>
-                  )}
-                </div>
-              ) : !locked ? (
-                <Popover
-                  open={showLeadSelector}
-                  onOpenChange={setShowLeadSelector}
-                >
-                  <PopoverTrigger asChild>
-                    <button
-                      type="button"
-                      className={cn(
-                        "inline-flex h-10 w-full items-center gap-2 px-3 text-left text-[12px] font-light sm:h-9",
-                        agendaControlClass,
-                        agendaMutedTextClass,
-                      )}
-                    >
-                      <Search className="h-4 w-4" />
-                      Buscar por nome, tel...
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    className={cn(
-                      "w-[min(360px,calc(100vw-32px))] p-0",
-                      agendaPopoverClass,
-                    )}
-                    align="start"
-                  >
-                    <Command
-                      shouldFilter={false}
-                      className="bg-transparent [&_[cmdk-input-wrapper]]:border-b-0"
-                    >
-                      <CommandInput
-                        placeholder="Buscar por nome, telefone ou e-mail..."
-                        value={leadSearch}
-                        onValueChange={setLeadSearch}
-                      />
-                      <CommandList>
-                        <CommandEmpty>Nenhum lead encontrado.</CommandEmpty>
-                        <CommandGroup>
-                          {searchedLeads.map((l) => (
-                            <CommandItem
-                              key={l.id}
-                              value={l.id}
-                              onSelect={() => {
-                                setSelectedLeadId(l.id);
-                                setSelectedLeadName(l.name);
-                                setShowLeadSelector(false);
-                                setLeadSearch("");
-                              }}
-                            >
-                              <User className="mr-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                              <div className="flex min-w-0 flex-col">
-                                <span className="truncate text-[12px] font-light">
-                                  {l.name}
-                                </span>
-                                <span className="truncate text-[10px] text-muted-foreground">
-                                  {[l.phone, l.email]
-                                    .filter(Boolean)
-                                    .join(" · ") || "Sem contato"}
-                                </span>
-                              </div>
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
-              ) : (
-                <span className="text-[12px] font-light text-[var(--app-text-tertiary)]">
-                  {isMasked ? "Informação privada" : "Sem lead"}
-                </span>
-              )}
-            </AgendaRow>
-
-            {canViewProperties && (
-              <AgendaRow
-                dataTour="agenda-event-property"
-                icon={<Building2 size={18} />}
-                label="Imóvel vinculado"
-                inline
-              >
-                {selectedPropertyId ? (
-                  <div className="flex items-center justify-between gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setPropertyPreviewOpen(true)}
-                      className="truncate text-left text-[12px] font-light text-primary hover:text-primary/80"
-                    >
-                      {selectedPropertyLabel || "Imóvel selecionado"}
-                    </button>
-                    {!locked && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 shrink-0"
-                        aria-label="Remover imóvel vinculado"
-                        onClick={() => {
-                          setSelectedPropertyId(null);
-                          setSelectedPropertyLabel(null);
-                        }}
-                      >
-                        <X className="h-3 w-3" />
-                      </Button>
-                    )}
-                  </div>
-                ) : !locked ? (
-                  <PropertyPickerDialog
-                    properties={allProperties}
-                    selectedPropertyId={selectedPropertyId}
-                    isLoading={propertiesLoading}
-                    onOpenChange={(nextOpen) => {
-                      setPropertyPickerOpen(nextOpen);
-                      if (!nextOpen) setPropertySearch("");
-                    }}
-                    onSearchChange={setPropertySearch}
-                    onSelect={(p) => {
-                      setSelectedPropertyId(p.id);
-                      setSelectedPropertyLabel(
-                        `${p.code ? `${p.code} · ` : ""}${p.title || "Imóvel"}`,
-                      );
-                    }}
-                    trigger={
-                      <button
-                        type="button"
-                        className={cn(
-                          "inline-flex h-10 w-full items-center gap-2 px-3 text-left text-[12px] font-light sm:h-9",
-                          agendaControlClass,
-                          agendaMutedTextClass,
-                        )}
-                      >
-                        <Search className="h-4 w-4" />
-                        Buscar imóvel
-                      </button>
-                    }
-                  />
-                ) : (
-                  <span className="text-[12px] font-light text-[var(--app-text-tertiary)]">
-                    {isMasked ? "Informação privada" : "Sem imóvel"}
-                  </span>
-                )}
-              </AgendaRow>
-            )}
-
-            <AgendaRow
-              dataTour="agenda-event-notes"
-              icon={<MessageSquare size={19} />}
-              label="Observações"
-            >
-              {locked ? (
-                <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
-                  {description ||
-                    (isMasked ? "Informação privada" : "Sem descrição")}
-                </p>
-              ) : (
-                <Textarea
-                  aria-label="Observações"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Adicione observações"
-                  rows={4}
-                  className={cn(
-                    "min-h-[112px] resize-none px-3 py-3 text-[12px] font-light sm:min-h-[132px]",
-                    agendaFieldClass,
-                  )}
-                />
-              )}
-            </AgendaRow>
-
-            {isExisting && (
-              <AgendaRow icon={<MessageSquare size={19} />}>
-                <div className="space-y-3">
-                  {isMasked ? (
-                    <p className="text-[12px] font-light text-[var(--app-text-tertiary)]">
-                      Comentários privados
-                    </p>
-                  ) : (
-                    <>
-                      {comments.length === 0 && (
-                        <p className="text-[12px] font-light text-[var(--app-text-tertiary)]">
-                          Nenhum comentário
-                        </p>
-                      )}
-                      {comments.map((c) => (
-                        <div key={c.id} className="flex gap-2">
-                          <Avatar className="h-6 w-6 shrink-0">
-                            <AvatarImage
-                              src={c.user?.avatar_url || undefined}
-                              alt={c.user?.name || "Usuário"}
-                            />
-                            <AvatarFallback className="bg-primary/12 text-[10px] font-light text-primary">
-                              {(c.user?.name || "U")
-                                .split(" ")
-                                .slice(0, 2)
-                                .map((p) => p[0])
-                                .join("")}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div className="min-w-0 flex-1">
-                            <div className="mb-0.5 text-[10px] text-[var(--app-text-tertiary)]">
-                              <span className="font-light text-[var(--app-text-primary)]">
-                                {c.user?.name || "Usuário"}
-                              </span>
-                              {" · "}
-                              {formatScheduleTimestamp(c.created_at)}
-                            </div>
-                            <div className="rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 py-1.5 text-[12px] font-light leading-[18px] text-[var(--app-text-primary)]">
-                              {c.content}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                      <div className="flex gap-2">
-                        <Input
-                          value={commentText}
-                          onChange={(e) => setCommentText(e.target.value)}
-                          onKeyDown={(e) =>
-                            e.key === "Enter" && handleSendComment()
-                          }
-                          placeholder="Comentário..."
-                          className={cn(
-                            "h-9 text-[12px] font-light",
-                            agendaFieldClass,
-                          )}
-                          disabled={!canManageSchedule || isAdding}
-                        />
-                        <Button
-                          size="icon"
-                          onClick={handleSendComment}
-                          disabled={
-                            !canManageSchedule ||
-                            isAdding ||
-                            !commentText.trim()
-                          }
-                          className="h-9 w-9 shrink-0 rounded-[6px] border-0 bg-primary text-primary-foreground shadow-none hover:bg-primary/90 hover:text-primary-foreground"
-                          aria-label="Enviar comentário"
-                        >
-                          <Send size={13} />
-                        </Button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </AgendaRow>
-            )}
+            <EventNotesAndComments
+              locked={draftLocked}
+              isMasked={isMasked}
+              isExisting={isExisting}
+              description={description}
+              comments={comments}
+              commentText={commentText}
+              canManageSchedule={canManageSchedule}
+              isAdding={isAdding}
+              onDescriptionChange={setDescription}
+              onCommentChange={setCommentText}
+              onSendComment={handleSendComment}
+            />
           </div>
 
-          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[var(--app-border)] px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 sm:border-t-0 sm:px-5 sm:py-4">
-            {canManageSchedule && isExisting && !isMasked ? (
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-10 w-10 rounded-[6px] border-0 bg-destructive/10 p-0 text-destructive shadow-none hover:bg-destructive/15 hover:text-destructive sm:h-9 sm:w-9"
-                    aria-label="Excluir atividade"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent className="rounded-[8px] border-0 bg-[var(--app-surface-solid)] !shadow-none">
-                  <AlertDialogHeader>
-                    <AlertDialogTitle className="text-[14px] font-light">
-                      Excluir atividade?
-                    </AlertDialogTitle>
-                    <AlertDialogDescription className="text-[12px] font-light leading-[18px]">
-                      Esta ação não pode ser desfeita.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]">
-                      Cancelar
-                    </AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={handleDelete}
-                      className="h-9 rounded-[6px] border-0 bg-destructive/15 text-[12px] font-light text-destructive shadow-none hover:bg-destructive hover:text-destructive-foreground"
-                    >
-                      Excluir
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            ) : (
-              <span />
-            )}
-
-            <div className="ml-auto flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
-              {canManageSchedule && isExisting && !isMasked && !isCompleted && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleMarkDone}
-                  disabled={isLoading}
-                  className="h-10 gap-1.5 rounded-[6px] border-0 bg-emerald-500/15 px-3 text-[12px] font-light text-emerald-600 shadow-none hover:bg-emerald-500/25 hover:text-emerald-700 dark:text-emerald-300 dark:hover:text-emerald-200 sm:h-9"
-                >
-                  <CheckCircle size={13} /> Concluir
-                </Button>
-              )}
-              {canManageSchedule && isExisting && !isMasked && isCompleted && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleReopen}
-                  disabled={isLoading}
-                  className="h-10 gap-1.5 rounded-[6px] border-0 bg-amber-500/15 px-3 text-[12px] font-light text-amber-700 shadow-none hover:bg-amber-500/25 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200 sm:h-9"
-                >
-                  <Clock size={13} /> Reabrir
-                </Button>
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  if (
-                    canManageSchedule &&
-                    isExisting &&
-                    !isMasked &&
-                    !isCompleted
-                  ) {
-                    if (isEditing) resetDraft();
-                    else setIsEditing(true);
-                    return;
-                  }
-                  onOpenChange(false);
-                }}
-                disabled={isLoading}
-                className={cn(
-                  "h-10 min-w-0 rounded-[6px] border-0 text-[12px] font-light shadow-none sm:h-9",
-                  !locked
-                    ? "order-1 flex-[3] bg-[var(--app-surface-soft)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
-                    : "bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground",
-                )}
-              >
-                {canManageSchedule && isExisting && !isMasked
-                  ? isEditing
-                    ? "Cancelar"
-                    : "Editar"
-                  : "Fechar"}
-              </Button>
-              {!locked && (
-                <Button
-                  size="sm"
-                  onClick={handleSubmit}
-                  disabled={!canSubmit || isLoading}
-                  className="order-2 h-10 min-w-0 flex-[7] rounded-[6px] border-0 bg-primary px-5 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary/90 hover:text-primary-foreground sm:h-9 sm:px-7"
-                >
-                  {isLoading
-                    ? "Salvando..."
-                    : isExisting
-                      ? "Salvar"
-                      : "Adicionar"}
-                </Button>
-              )}
-            </div>
-          </div>
+          <EventSheetActions
+            canManageSchedule={canManageSchedule}
+            isExisting={isExisting}
+            isMasked={isMasked}
+            isCompleted={isCompleted}
+            canReopen={canReopen}
+            canDelete={!preservesAttendanceHistory}
+            requiresAttendanceOutcome={requiresAttendanceOutcome}
+            isLoading={isLoading}
+            locked={locked}
+            isEditing={isEditing}
+            canSubmit={Boolean(canSubmit)}
+            onDelete={() => void handleDelete()}
+            onMarkDone={() => void handleMarkDone()}
+            onReopen={() => void handleReopen()}
+            onReset={resetDraft}
+            onStartEditing={() => {
+              if (draftReady) setIsEditing(true);
+            }}
+            onClose={() => onOpenChange(false)}
+            onSubmit={() => void handleSubmit()}
+          />
         </SheetContent>
       </Sheet>
+      {event && outcomeDialogOpen && (
+        <ScheduleOutcomeDialog
+          open={outcomeDialogOpen}
+          onOpenChange={setOutcomeDialogOpen}
+          eventType={outcomeEventType}
+          users={outcomeUsers}
+          defaultPerformerId={event.user_id || outcomeUsers[0]?.id}
+          eventStartTime={event.start_time}
+          eventEndTime={event.end_time}
+          eventIsAllDay={event.is_all_day}
+          eventReminderMinutes={event.reminder_minutes}
+          timeZone={scheduleTimeZone}
+          isLoading={completeEvent.isPending || rescheduleEvent.isPending}
+          onConfirm={handleOutcomeConfirm}
+        />
+      )}
       <PropertyPreviewDialog
         property={previewProperty}
         open={propertyPreviewOpen}
@@ -1592,149 +1097,5 @@ export function EventSheet({
         formatPrice={formatPropertyPrice}
       />
     </>
-  );
-}
-
-function AgendaRow({
-  icon,
-  label,
-  children,
-  className,
-  dataTour,
-  inline = false,
-  align = "start",
-}: {
-  icon: React.ReactNode;
-  label?: React.ReactNode;
-  children: React.ReactNode;
-  className?: string;
-  dataTour?: string;
-  inline?: boolean;
-  align?: "start" | "center";
-}) {
-  if (inline) {
-    return (
-      <div
-        data-tour={dataTour}
-        className={cn(
-          "grid grid-cols-[24px_minmax(0,1fr)] items-start gap-x-3 gap-y-1 py-2 sm:grid-cols-[30px_124px_minmax(0,1fr)] sm:items-center sm:gap-2 sm:py-1.5",
-          className,
-        )}
-      >
-        <div className="flex justify-center pt-0.5 text-[var(--app-text-tertiary)] sm:pt-0">
-          {icon}
-        </div>
-        <div className="min-w-0 text-[12px] font-light text-[var(--app-text-secondary)]">
-          {label}
-        </div>
-        <div className="col-start-2 min-w-0 sm:col-start-3 sm:row-start-1">
-          {children}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      data-tour={dataTour}
-      className={cn(
-        "grid grid-cols-[24px_minmax(0,1fr)] gap-3 sm:grid-cols-[30px_minmax(0,1fr)]",
-        align === "center" ? "items-center py-1.5" : "items-start py-2",
-        className,
-      )}
-    >
-      <div
-        className={cn(
-          "flex justify-center text-[var(--app-text-tertiary)]",
-          align === "start" && "pt-2",
-        )}
-      >
-        {icon}
-      </div>
-      <div className="min-w-0">
-        {label && (
-          <div className="mb-1.5 text-[12px] font-light text-[var(--app-text-secondary)]">
-            {label}
-          </div>
-        )}
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function FieldPill({
-  children,
-  className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <div
-      className={cn(
-        "inline-flex h-10 items-center gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-3 text-[12px] font-light text-[var(--app-text-primary)] sm:h-9",
-        className,
-      )}
-    >
-      {children}
-    </div>
-  );
-}
-
-function TimePicker({
-  value,
-  disabled,
-  onChange,
-  ariaLabel,
-}: {
-  value: string;
-  disabled?: boolean;
-  onChange: (value: string) => void;
-  ariaLabel: string;
-}) {
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          disabled={disabled}
-          aria-label={`${ariaLabel}: ${value || "não definido"}`}
-          className="inline-flex h-10 w-full min-w-[76px] items-center justify-center rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light text-[var(--app-text-primary)] shadow-none transition hover:bg-[var(--app-surface-hover)] disabled:opacity-50 sm:h-9 sm:w-auto"
-        >
-          {value || "--:--"}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent
-        className={cn("w-[190px] p-2", agendaPopoverClass)}
-        align="center"
-      >
-        <Input
-          type="time"
-          aria-label={ariaLabel}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          className={cn("mb-2 h-9 text-[12px] font-light", agendaFieldClass)}
-        />
-        <div className="grid max-h-[190px] grid-cols-2 gap-1 overflow-y-auto pr-1">
-          {timeOptions.map((option) => (
-            <button
-              key={option}
-              type="button"
-              aria-pressed={option === value}
-              onClick={() => onChange(option)}
-              className={cn(
-                "rounded-[6px] px-2 py-1.5 text-[12px] font-light transition hover:bg-primary hover:text-primary-foreground",
-                option === value
-                  ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                  : "bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)]",
-              )}
-            >
-              {option}
-            </button>
-          ))}
-        </div>
-      </PopoverContent>
-    </Popover>
   );
 }

@@ -18,13 +18,20 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { cleanPropertyDescription } from '@/lib/property-description'
+import {
+  formatPropertyArea as formatArea,
+  formatPropertyBoolean as formatBoolean,
+  formatPropertyCurrency as formatCurrency,
+  formatPropertyDate as formatDate,
+} from '@/lib/property-display-utils'
 import type {
   PropertyWorkspaceMeta,
   PropertyWorkspaceOwnership,
   PropertyWorkspacePayload,
 } from '@/lib/validation'
 
-import { AssetCatalog } from './PropertyWorkspaceOverview'
+import { PropertyAssetManager } from './PropertyAssetManager'
 
 type WorkspaceProperty = PropertyWorkspacePayload['property']
 type WorkspaceSummary = PropertyWorkspacePayload['summary']
@@ -37,34 +44,6 @@ type DetailItem = {
 
 function hasField(property: WorkspaceProperty, field: keyof WorkspaceProperty) {
   return Object.prototype.hasOwnProperty.call(property, field)
-}
-
-function formatCurrency(value: number | null | undefined) {
-  if (value == null) return 'Não informado'
-  return new Intl.NumberFormat('pt-BR', {
-    style: 'currency',
-    currency: 'BRL',
-    maximumFractionDigits: 2,
-  }).format(value)
-}
-
-function formatDate(value?: string | null, withTime = false) {
-  if (!value) return 'Não informado'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat(
-    'pt-BR',
-    withTime ? { dateStyle: 'short', timeStyle: 'short' } : { dateStyle: 'short' },
-  ).format(date)
-}
-
-function formatBoolean(value: boolean | null | undefined) {
-  if (value == null) return 'Não informado'
-  return value ? 'Sim' : 'Não'
-}
-
-function formatArea(value: number | null | undefined) {
-  return value == null ? 'Não informado' : `${value.toLocaleString('pt-BR')} m²`
 }
 
 function DetailGrid({ items }: { items: DetailItem[] }) {
@@ -139,13 +118,13 @@ export function PropertyWorkspaceOverviewSection({
           <div className="rounded-[6px] bg-[var(--app-surface-soft)] p-3">
             <p className="text-[10px] font-light uppercase tracking-[0.08em] text-[var(--app-text-tertiary)]">Descrição pública</p>
             <p className="mt-2 whitespace-pre-wrap text-[12px] font-light leading-5 text-[var(--app-text-secondary)]">
-              {property.descricao_site || 'Nenhuma descrição pública cadastrada.'}
+              {cleanPropertyDescription(property.descricao_site) || 'Nenhuma descrição pública cadastrada.'}
             </p>
           </div>
           <div className="rounded-[6px] bg-[var(--app-surface-soft)] p-3">
             <p className="text-[10px] font-light uppercase tracking-[0.08em] text-[var(--app-text-tertiary)]">Descrição do cadastro</p>
             <p className="mt-2 whitespace-pre-wrap text-[12px] font-light leading-5 text-[var(--app-text-secondary)]">
-              {property.descricao || 'Nenhuma descrição cadastrada.'}
+              {cleanPropertyDescription(property.descricao) || 'Nenhuma descrição cadastrada.'}
             </p>
           </div>
         </div>
@@ -449,7 +428,6 @@ export function PropertyWorkspaceResponsiblesSection({
 
 export function PropertyWorkspaceMediaSection({
   property,
-  assets,
 }: {
   property: WorkspaceProperty
   assets: PropertyWorkspacePayload['assets']
@@ -467,7 +445,7 @@ export function PropertyWorkspaceMediaSection({
         </SectionCard>
       )}
       <SectionCard title="Mídias e documentos" icon={FileText}>
-        <AssetCatalog assets={assets} />
+        <PropertyAssetManager propertyId={property.id} />
       </SectionCard>
       {(hasField(property, 'documents') || hasField(property, 'arquivos')) && (
         <SectionCard title="Documentos do imóvel" icon={ShieldCheck}>

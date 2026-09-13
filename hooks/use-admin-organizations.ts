@@ -1,29 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { adminAPI } from '@/lib/api/admin';
+import type { AdminOrganizationSummary } from '@/lib/validation/admin';
 
-export interface AdminOrganization {
-  id: string;
-  name: string;
-  email: string | null;
-  cnpj: string | null;
-  logo_url: string | null;
-  is_active: boolean;
-  subscription_status: string;
-  subscription_type: string;
-  segment: string | null;
-  plan_id: string | null;
-  plan_name: string | null;
-  created_at: string;
-  last_access_at: string | null;
-  user_count: number;
-  lead_count: number;
-  automation_count: number;
-  mrr: number;
-  health_score: number;
-  days_trial_left: number;
-  overdue_amount: number;
-}
+export type AdminOrganization = AdminOrganizationSummary;
 
 export interface AdminOrganizationDeleteResult {
   ok: boolean;
@@ -37,7 +17,7 @@ export function useAdminOrganizationsList(filters: { search?: string; status?: s
   return useQuery({
     queryKey: ['admin-organizations-list', search, status, segment],
     queryFn: async (): Promise<AdminOrganization[]> => {
-      return (await adminAPI.listOrganizations({ search, status, segment })) as unknown as AdminOrganization[];
+      return adminAPI.listOrganizations({ search, status, segment });
     },
     staleTime: 30_000,
   });

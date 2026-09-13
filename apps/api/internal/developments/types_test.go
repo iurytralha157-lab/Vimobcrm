@@ -259,3 +259,97 @@ func TestReservationFingerprintIsStableAfterNormalization(t *testing.T) {
 		t.Fatalf("equivalent timestamps produced different fingerprints: %s != %s", firstHash, secondHash)
 	}
 }
+
+func TestUnitPropertyLinkInputsRequireOptimisticPreconditions(t *testing.T) {
+	input := LinkUnitPropertyInput{
+		PropertyID:                "ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF",
+		ExpectedUnitUpdatedAt:     "2027-01-02T09:00:00-03:00",
+		ExpectedPropertyUpdatedAt: "2027-01-02T12:00:01Z",
+	}
+	if err := input.Validate(); err != nil {
+		t.Fatalf("valid link input returned %v", err)
+	}
+	if input.PropertyID != "abcdefab-cdef-4abc-8def-abcdefabcdef" {
+		t.Fatalf("property id was not canonicalized: %q", input.PropertyID)
+	}
+	if input.ExpectedUnitUpdatedAt != "2027-01-02T12:00:00Z" {
+		t.Fatalf("unit timestamp was not normalized: %q", input.ExpectedUnitUpdatedAt)
+	}
+
+	missingPropertyVersion := input
+	missingPropertyVersion.ExpectedPropertyUpdatedAt = ""
+	if err := missingPropertyVersion.Validate(); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("missing property version error = %v, want ErrInvalidInput", err)
+	}
+
+	invalidProperty := input
+	invalidProperty.PropertyID = "cross-tenant"
+	if err := invalidProperty.Validate(); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("invalid property error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestUnitPropertyPromotionAndUnlinkRequireUnitVersion(t *testing.T) {
+	responsibleID := "ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF"
+	promote := PromoteUnitPropertyInput{
+		ExpectedUnitUpdatedAt: "2027-01-02T09:00:00-03:00",
+		ResponsibleUserID:     &responsibleID,
+	}
+	if err := promote.Validate(); err != nil {
+		t.Fatalf("valid promotion returned %v", err)
+	}
+	if promote.ExpectedUnitUpdatedAt != "2027-01-02T12:00:00Z" ||
+		promote.ResponsibleUserID == nil || *promote.ResponsibleUserID != strings.ToLower(responsibleID) {
+		t.Fatalf("promotion input was not canonicalized: %#v", promote)
+	}
+
+	invalidResponsible := "not-a-user"
+	promote = PromoteUnitPropertyInput{
+		ExpectedUnitUpdatedAt: "2027-01-02T12:00:00Z",
+		ResponsibleUserID:     &invalidResponsible,
+	}
+	if err := promote.Validate(); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("invalid responsible error = %v, want ErrInvalidInput", err)
+	}
+
+	unlink := UnlinkUnitPropertyInput{}
+	if err := unlink.Validate(); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("missing unlink version error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestUnitPropertyFingerprintIsStableAfterNormalization(t *testing.T) {
+	first := LinkUnitPropertyInput{
+		PropertyID:                "ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF",
+		ExpectedUnitUpdatedAt:     "2027-01-02T09:00:00-03:00",
+		ExpectedPropertyUpdatedAt: "2027-01-02T09:00:01-03:00",
+	}
+	second := LinkUnitPropertyInput{
+		PropertyID:                "abcdefab-cdef-4abc-8def-abcdefabcdef",
+		ExpectedUnitUpdatedAt:     "2027-01-02T12:00:00Z",
+		ExpectedPropertyUpdatedAt: "2027-01-02T12:00:01Z",
+	}
+	if err := first.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	firstHash := unitPropertyFingerprint(
+		unitPropertyOperationLink,
+		strings.ToUpper(testUUID),
+		strings.ToUpper(testUUID),
+		strings.ToUpper(testUUID),
+		first,
+	)
+	secondHash := unitPropertyFingerprint(
+		unitPropertyOperationLink,
+		testUUID,
+		testUUID,
+		testUUID,
+		second,
+	)
+	if firstHash != secondHash {
+		t.Fatalf("equivalent link requests produced different fingerprints: %s != %s", firstHash, secondHash)
+	}
+}

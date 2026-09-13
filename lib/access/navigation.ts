@@ -25,11 +25,6 @@ export type NavigationAccess = {
   hasPermission: (permission: string) => boolean;
 };
 
-const TEAM_LEADER_MANAGEMENT_PATHS = new Set([
-  "/crm/management",
-  "/crm/management?tab=teams",
-]);
-
 function canAccessItem(item: NavigationAccessItem, access: NavigationAccess) {
   if (item.feature && !FEATURES[item.feature]) return false;
   if (item.superAdminOnly && !access.isSuperAdmin) return false;
@@ -40,7 +35,7 @@ function canAccessItem(item: NavigationAccessItem, access: NavigationAccess) {
   if (item.permission && !access.hasPermission(item.permission)) return false;
 
   if (item.anyPermissions && !item.anyPermissions.some(access.hasPermission)) {
-    return access.isTeamLeader && TEAM_LEADER_MANAGEMENT_PATHS.has(item.path);
+    return false;
   }
 
   return true;
@@ -56,6 +51,11 @@ export function filterNavigationItems<T extends NavigationAccessItem>(
     const filteredChildren = item.children
       ? filterNavigationItems(item.children, access)
       : undefined;
+
+    // Navigation groups only exist while they expose at least one authorized
+    // destination. This prevents a permission granted for a disabled module
+    // from turning the group itself into an unrelated direct link.
+    if (item.children?.length && !filteredChildren?.length) return [];
 
     return [
       {
@@ -127,8 +127,10 @@ export function resolveMobileFabAction({
   if (isBillingBlocked) return null;
   if (pathname === "/properties")
     return hasPermission("property_manage") ? "property" : null;
-  if (pathname === "/agenda")
+  if (pathname === "/agenda") {
+    if (tab === "dashboard") return null;
     return hasPermission("schedule_manage") ? "schedule" : null;
+  }
 
   if (pathname === "/crm/management") {
     if ((!tab || tab === "teams") && hasPermission("team_manage"))

@@ -1,19 +1,21 @@
 package webhooks
 
 import (
-	"encoding/json"
+	"crypto/subtle"
 	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/publicingress"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 type Handler struct {
-	repo      Repository
-	publisher realtime.Publisher
+	repo                   Repository
+	publisher              realtime.Publisher
+	publicClientIPResolver publicingress.ClientIPResolver
 }
 
 func NewHandler(repo Repository, publishers ...realtime.Publisher) Handler {
@@ -24,8 +26,15 @@ func NewHandler(repo Repository, publishers ...realtime.Publisher) Handler {
 	return Handler{repo: repo, publisher: publisher}
 }
 
+func (handler Handler) WithPublicClientIPResolver(
+	resolver publicingress.ClientIPResolver,
+) Handler {
+	handler.publicClientIPResolver = resolver
+	return handler
+}
+
 func (handler Handler) List(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -38,13 +47,13 @@ func (handler Handler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) Create(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	defer r.Body.Close()
 	var request WebhookRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.Create(r.Context(), tenantContext, request)
@@ -61,13 +70,13 @@ func (handler Handler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) Update(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	defer r.Body.Close()
 	var request WebhookRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.Update(r.Context(), tenantContext, r.PathValue("id"), request)
@@ -84,7 +93,7 @@ func (handler Handler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) Delete(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -101,7 +110,7 @@ func (handler Handler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) RegenerateToken(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -119,17 +128,18 @@ func (handler Handler) RegenerateToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) ReceiveLead(w http.ResponseWriter, r *http.Request) {
-	defer r.Body.Close()
-
 	token := webhookToken(r)
-	var payload map[string]any
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20))
-	if err := decoder.Decode(&payload); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+	if err := handler.repo.AllowIncomingWebhook(
+		r.Context(),
+		handler.publicClientIPResolver.Resolve(r),
+		token,
+	); err != nil {
+		writeWebhookError(w, r, err)
 		return
 	}
-	if payload == nil {
-		payload = map[string]any{}
+	payload, ok := httpserver.DecodeJSONMap(w, r, 2<<20)
+	if !ok {
+		return
 	}
 
 	result, err := handler.repo.ReceiveLead(r.Context(), token, payload)
@@ -157,44 +167,31 @@ func webhookIDFromItem(item map[string]any) string {
 	return id
 }
 
-func organizationContext(w http.ResponseWriter, r *http.Request) (tenant.Context, bool) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.OrganizationID == "" {
-		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
-		return tenant.Context{}, false
-	}
-	return tenantContext, true
-}
-
 func webhookToken(r *http.Request) string {
-	for _, candidate := range []string{
-		bearerToken(r.Header.Get("Authorization")),
-		r.Header.Get("X-Webhook-Token"),
-		r.URL.Query().Get("token"),
-	} {
-		if candidate != "" {
-			return candidate
-		}
+	if r == nil {
+		return ""
 	}
-	return ""
+	authorization := strings.TrimSpace(r.Header.Get("Authorization"))
+	bearer := bearerToken(authorization)
+	headerToken := strings.TrimSpace(r.Header.Get("X-Webhook-Token"))
+	if authorization != "" && bearer == "" {
+		return ""
+	}
+	if bearer != "" && headerToken != "" && subtle.ConstantTimeCompare([]byte(bearer), []byte(headerToken)) != 1 {
+		return ""
+	}
+	if bearer != "" {
+		return bearer
+	}
+	return headerToken
 }
 
 func bearerToken(header string) string {
-	const prefix = "Bearer "
-	if !strings.HasPrefix(header, prefix) {
+	scheme, token, ok := strings.Cut(strings.TrimSpace(header), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
 		return ""
 	}
-	return strings.TrimSpace(strings.TrimPrefix(header, prefix))
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
-		return err
-	}
-	return nil
+	return strings.TrimSpace(token)
 }
 
 func writeWebhookError(w http.ResponseWriter, r *http.Request, err error) {
@@ -205,6 +202,11 @@ func writeWebhookError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusUnauthorized, "invalid_webhook_token", "Webhook token is invalid or inactive.")
 	case errors.Is(err, ErrWebhookNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "webhook_not_found", "Webhook was not found.")
+	case errors.Is(err, ErrRateLimited):
+		w.Header().Set("Retry-After", "60")
+		httpserver.WriteError(w, r, http.StatusTooManyRequests, "webhook_rate_limited", "Webhook request rate limit exceeded.")
+	case errors.Is(err, ErrIdempotencyConflict):
+		httpserver.WriteError(w, r, http.StatusConflict, "idempotency_conflict", "Webhook event id was already used with a different payload.")
 	case errors.Is(err, tenant.ErrOrganizationAccessDenied):
 		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
 	default:

@@ -50,6 +50,7 @@ select is(
         'property_keys',
         'property_key_movements'
       ])
+      and policyname <> 'vimob_active_membership_guard'
   ),
   18::bigint,
   'defense-in-depth RLS policies cover reads and permitted mutations'
@@ -732,7 +733,9 @@ values (
   'f6000000-0000-4000-8000-000000000001',
   true
 )
-on conflict (user_id) do update
+on conflict (organization_id, user_id)
+  where organization_id is not null
+do update
 set organization_role_id = excluded.organization_role_id,
     organization_id = excluded.organization_id,
     role_id = excluded.role_id,
@@ -875,15 +878,18 @@ select ok(
 
 reset role;
 
+update public.property_offers
+set status = 'active',
+    price = 900000,
+    price_period = 'total'
+where organization_id = 'f2000000-0000-4000-8000-000000000001'
+  and property_id = 'f4000000-0000-4000-8000-000000000001'
+  and offer_type = 'sale';
+
 insert into public.property_offers (
   organization_id, property_id, offer_type, status, price, price_period
 )
 values
-  (
-    'f2000000-0000-4000-8000-000000000001',
-    'f4000000-0000-4000-8000-000000000001',
-    'sale', 'active', 900000, 'total'
-  ),
   (
     'f2000000-0000-4000-8000-000000000001',
     'f4000000-0000-4000-8000-000000000001',
@@ -927,7 +933,7 @@ select throws_ok(
     ) values (
       'f2000000-0000-4000-8000-000000000001',
       'f4000000-0000-4000-8000-000000000003',
-      'sale', -1
+      'rent', -1
     )
   $$,
   '23514',
@@ -942,7 +948,7 @@ select throws_ok(
     ) values (
       'f2000000-0000-4000-8000-000000000001',
       'f4000000-0000-4000-8000-000000000003',
-      'sale', 'active', null, 'total'
+      'seasonal', 'active', null, 'daily'
     )
   $$,
   '23514',
@@ -957,7 +963,7 @@ select throws_ok(
     ) values (
       'f2000000-0000-4000-8000-000000000001',
       'f4000000-0000-4000-8000-000000000003',
-      'sale', 'active', 500000, null
+      'rent', 'active', 500000, null
     )
   $$,
   '23514',
@@ -1008,7 +1014,7 @@ select throws_ok(
     ) values (
       'f2000000-0000-4000-8000-000000000001',
       'f4000000-0000-4000-8000-000000000003',
-      'sale',
+      'seasonal',
       'f1000000-0000-4000-8000-000000000002'
     )
   $$,
@@ -1194,7 +1200,7 @@ select throws_ok(
       'photo', 'https://cdn.test/cross-tenant.jpg'
     )
   $$,
-  '23514',
+  '23503',
   null,
   'assets reject cross-tenant properties'
 );
@@ -1257,12 +1263,13 @@ select throws_ok(
 select lives_ok(
   $$
     insert into public.property_assets (
-      id, organization_id, property_id, asset_type, storage_path, is_primary
+      id, organization_id, property_id, asset_type, visibility, storage_path, is_primary
     ) values (
       'f9000000-0000-4000-8000-000000000001',
       'f2000000-0000-4000-8000-000000000001',
       'f4000000-0000-4000-8000-000000000003',
       'photo',
+      'public',
       'orgs/f2000000-0000-4000-8000-000000000001/properties/f4000000-0000-4000-8000-000000000003/f9000000-0000-4000-8000-000000000001/cover.jpg',
       true
     )
@@ -1273,11 +1280,11 @@ select lives_ok(
 select throws_ok(
   $$
     insert into public.property_assets (
-      organization_id, property_id, asset_type, external_url, is_primary
+      organization_id, property_id, asset_type, visibility, external_url, is_primary
     ) values (
       'f2000000-0000-4000-8000-000000000001',
       'f4000000-0000-4000-8000-000000000003',
-      'photo', 'https://cdn.test/second-cover.jpg', true
+      'photo', 'public', 'https://cdn.test/second-cover.jpg', true
     )
   $$,
   '23505',

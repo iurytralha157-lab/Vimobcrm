@@ -1,7 +1,6 @@
 package stageconfig
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -18,7 +17,7 @@ func NewHandler(repo Repository) Handler {
 }
 
 func (handler Handler) ListAutomations(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -31,12 +30,12 @@ func (handler Handler) ListAutomations(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) CreateAutomation(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request StageAutomationRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	input, err := request.Validate(true)
@@ -53,12 +52,12 @@ func (handler Handler) CreateAutomation(w http.ResponseWriter, r *http.Request) 
 }
 
 func (handler Handler) UpdateAutomation(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request StageAutomationRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	input, err := request.Validate(false)
@@ -75,7 +74,7 @@ func (handler Handler) UpdateAutomation(w http.ResponseWriter, r *http.Request) 
 }
 
 func (handler Handler) DeleteAutomation(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -87,12 +86,12 @@ func (handler Handler) DeleteAutomation(w http.ResponseWriter, r *http.Request) 
 }
 
 func (handler Handler) ToggleAutomation(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request StageAutomationStatusRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	automation, err := handler.repo.ToggleAutomation(r.Context(), tenantContext, r.PathValue("id"), request.IsActive)
@@ -104,7 +103,7 @@ func (handler Handler) ToggleAutomation(w http.ResponseWriter, r *http.Request) 
 }
 
 func (handler Handler) ListOperationalConfigs(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -122,12 +121,12 @@ func (handler Handler) ListOperationalConfigs(w http.ResponseWriter, r *http.Req
 }
 
 func (handler Handler) UpsertOperationalConfig(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request StageOperationalConfigRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	input, err := request.Validate()
@@ -144,7 +143,7 @@ func (handler Handler) UpsertOperationalConfig(w http.ResponseWriter, r *http.Re
 }
 
 func (handler Handler) ListPipelineSLASettings(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -157,12 +156,12 @@ func (handler Handler) ListPipelineSLASettings(w http.ResponseWriter, r *http.Re
 }
 
 func (handler Handler) UpsertPipelineSLASettings(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request map[string]any
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.UpsertPipelineSLASettings(r.Context(), tenantContext, request)
@@ -171,26 +170,6 @@ func (handler Handler) UpsertPipelineSLASettings(w http.ResponseWriter, r *http.
 		return
 	}
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[map[string]any]{Data: item})
-}
-
-func organizationContext(w http.ResponseWriter, r *http.Request) (tenant.Context, bool) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.OrganizationID == "" {
-		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
-		return tenant.Context{}, false
-	}
-	return tenantContext, true
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
-	defer r.Body.Close()
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
-		return false
-	}
-	return true
 }
 
 func writeStageConfigError(w http.ResponseWriter, r *http.Request, err error) {

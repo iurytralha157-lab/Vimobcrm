@@ -1,328 +1,128 @@
-# ⚡ QUICK REFERENCE - Vimob CRM Architecture
+# Referência rápida
 
-## 🎯 Decisão Rápida: Onde colocar meu código?
+## Onde colocar código
 
-```
-Pergunta: Novo componente UI?
-├─ Específico de um domínio (leads, properties, automation)?
-│  └─ → components/features/{domain}/
-├─ Usado por 2+ domínios?
-│  └─ → components/shared/
-└─ De design (botão, input, modal)?
-   └─ → components/ui/ (Radix/shadcn)
-
-Pergunta: Lógica com hooks/state?
-├─ Específica de domínio?
-│  └─ → hooks/{domain}/use-{feature}.ts
-├─ Global (user, theme)?
-│  └─ → stores/{feature}.store.ts (Zustand)
-└─ Compartilhada?
-   └─ → hooks/shared/use-{feature}.ts
-
-Pergunta: Chamada de API/banco de dados?
-├─ Supabase?
-│  └─ → lib/api/{domain}.ts
-├─ Externas (Google, WhatsApp)?
-│  └─ → integrations/{service}/
-└─ Validação de dados?
-   └─ → lib/validation/schemas.ts (Zod)
-
-Pergunta: Constante/config?
-├─ Variáveis de env?
-│  └─ → config/env.ts
-├─ Rotas, features flags?
-│  └─ → config/constants.ts
-└─ Proteção de rota?
-   └─ → middleware.ts
+```text
+Rota/layout/boundary?             app/
+UI específica de domínio?         components/features/{dominio}/
+UI usada por 2+ domínios?          components/shared/
+Primitiva shadcn/Radix existente?  components/ui/ (não editar)
+Hook/efeito/cache de domínio?       hooks/{dominio}/
+Chamada à API Go?                  lib/api/{dominio}.ts
+Contrato/validação?                lib/validation/{dominio}.ts
+Estado compartilhado na árvore?    contexto proprietário do domínio
+Regra/handler/repositório backend?  apps/api/internal/{dominio}/
 ```
 
----
+Não crie uma segunda camada só para seguir o desenho: primeiro procure o schema,
+cliente, hook e componente já existentes no domínio.
 
-## 📁 Estrutura por Domínio (Template)
-
-Adicionar novo domínio? Copy-paste e preencha:
-
-```
-components/features/{DOMAIN}/
-├── {Feature}Screen.tsx        ← Componente principal
-├── {Feature}List.tsx          ← Lista de items
-├── {Feature}Form.tsx          ← Formulário
-├── {Feature}Dialog.tsx        ← Modal
-├── index.ts                   ← Barrel export
-└── (opcional) sub-componentes/
-
-hooks/{DOMAIN}/
-├── use-{feature}.ts           ← Read data (useQuery)
-├── use-{feature}-mutations.ts ← Write data (useMutation)
-└── index.ts                   ← Barrel export
-
-lib/api/{domain}.ts            ← API functions
-lib/validation/{domain}.ts     ← Zod schemas (adicionar a schemas.ts)
-
-app/(protected)/{domain}/
-└── page.tsx                   ← Rota (import do componente principal)
-```
-
----
-
-## 🔗 Import Patterns
+## Fluxo frontend
 
 ```tsx
-// ✅ CORRETO
-import { LeadCard } from '@/components/features/leads'
-import { useLeads } from '@/hooks/leads'
-import { leadsAPI } from '@/lib/api'
-import { leadSchema } from '@/lib/validation'
-import { ROUTES } from '@/config/constants'
-import { useUIStore } from '@/stores'
-import { useAuth } from '@/components/providers'
-
-// ❌ ERRADO
-import { LeadCard } from '../../../../components/features/leads'
-import { LeadCard } from '../components/leads'
-import LeadCard from '../../components/leads/LeadCard'
-```
-
----
-
-## 🔐 Segurança (Critical)
-
-```tsx
-// ❌ NÃO FAZER
-'use client'
-import { createClient } from '@supabase/supabase-js'
-
-// ✅ FAZER (browser)
-'use client'
-import { createClient } from '@/lib/supabase/client'
-const supabase = createClient()
-
-// ✅ FAZER (server)
-'use server'
-import { createClient } from '@/lib/supabase/server'
-const supabase = await createClient()
-
-// ✅ FAZER (validar)
-import { leadSchema } from '@/lib/validation'
-const validated = leadSchema.parse(userInput)
-```
-
----
-
-## 🧩 Código Boilerplate
-
-### Novo Hook
-```tsx
-// hooks/{domain}/use-{feature}.ts
-'use client'
 import { useQuery } from '@tanstack/react-query'
-import { leadsAPI } from '@/lib/api'
+import { useActiveOrganization } from '@/hooks/use-active-organization'
+import { leadsAPI } from '@/lib/api/leads'
 
-export function useLeads(orgId: string) {
+export function useLeads() {
+  const activeOrganization = useActiveOrganization()
+  const organizationId =
+    activeOrganization.status === 'ready'
+      ? activeOrganization.organizationId
+      : null
+
   return useQuery({
-    queryKey: ['leads', orgId],
-    queryFn: () => leadsAPI.getLeads(orgId),
-    staleTime: 1000 * 60,
-    gcTime: 1000 * 60 * 5,
+    queryKey: ['leads', organizationId],
+    queryFn: () => leadsAPI.getLeads(organizationId!),
+    enabled: organizationId !== null,
   })
 }
 ```
 
-### Novo Componente
+Use o contrato real do cliente do domínio; o exemplo mostra somente as regras
+de tenant e cache. Nunca reaproveite um ID durante `resolving`.
+
+## Autenticação e estado
+
+- Auth, perfil, memberships, impersonação e organização ativa:
+  `useAuth()` de `@/contexts/AuthContext`.
+- Estado de servidor: React Query.
+- Estado local: `useState` ou `useReducer`.
+- Estado compartilhado de interface: contexto proprietário somente quando mais
+  de um ramo realmente o consome.
+
+Não crie store paralelo para autenticação.
+
+## Supabase
+
 ```tsx
-// components/features/{domain}/{Feature}.tsx
-'use client'
+// Browser: singleton canônico
+import { supabase } from '@/lib/supabase/client'
 
-import { use{Feature} } from '@/hooks/{domain}'
-import { Button } from '@/components/ui/button'
+// Server Component/Action: cliente por request
+import { createClient } from '@/lib/supabase/server'
 
-export function {Feature}Screen() {
-  const { data, isLoading, error } = use{Feature}()
+// Tipos públicos gerados, via fachada estável
+import type { Database } from '@/lib/supabase/types'
+```
 
-  if (error) return <div>Erro: {error.message}</div>
-  if (isLoading) return <div>Carregando...</div>
+Chamadas de negócio e acesso privilegiado pertencem à API Go. Não inicialize
+`@supabase/supabase-js` em componentes nem use service role no browser.
 
-  return (
-    <div className="space-y-4">
-      {/* content */}
-    </div>
-  )
+## Handler Go
+
+```go
+func (handler Handler) List(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
+	if !ok {
+		return
+	}
+
+	var request ListRequest
+	if err := httpserver.DecodeJSON(w, r, &request, httpserver.DefaultJSONBodyLimit); err != nil {
+		return
+	}
+
+	items, err := handler.repo.List(r.Context(), tenantContext, request)
+	if err != nil {
+		writeDomainError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]Item]{Data: items})
 }
 ```
 
-### Nova API Function
-```tsx
-// lib/api/{domain}.ts
-import { createClient } from '@/lib/supabase/client'
-import { {feature}Schema } from '@/lib/validation'
+Preserve limites de body específicos quando já existem. JSON opcional,
+payload bruto e JSON vindo do banco não são automaticamente equivalentes ao
+decoder HTTP estrito.
 
-const supabase = createClient()
+## Checklist de mudança
 
-export const {domain}API = {
-  async get{Feature}s(orgId: string) {
-    return supabase
-      .from('{table}')
-      .select('*')
-      .eq('organization_id', orgId)
-  },
+- O tenant está validado antes da leitura/escrita?
+- Entrada e resposta usam o contrato Zod/Go canônico?
+- A query key inclui organização e filtros relevantes?
+- Loading, vazio, erro e permissão continuam cobertos?
+- O utilitário “duplicado” tem realmente as mesmas políticas de vazio, trim,
+  limite e erro?
+- O arquivo removido não tem import direto, barrel, lazy/dynamic ou consumidor
+  de rota?
+- Foram executados testes focados e, antes do handoff, os gates completos?
 
-  async create{Feature}(orgId: string, input: unknown) {
-    const data = {feature}Schema.parse(input)
-    return supabase
-      .from('{table}')
-      .insert([{ ...data, organization_id: orgId }])
-      .select()
-      .single()
-  }
-}
+## Comandos
+
+```powershell
+rg "símbolo" app components hooks lib apps/api
+npm run validation:test
+npm run validation:auth-admin
+npm run typecheck
+npm run lint
+npm run audit:check
+npm run build
+npm run api:test
+node scripts/supabase/verify-migrations.mjs
+node scripts/supabase/verify-edge-functions.mjs
 ```
 
-### Nova Validation Schema
-```tsx
-// lib/validation/schemas.ts (adicionar)
-export const {feature}Schema = z.object({
-  name: z.string().min(1, 'Required'),
-  email: z.string().email('Invalid email'),
-  // ...
-})
-
-export type {Feature} = z.infer<typeof {feature}Schema>
-```
-
----
-
-## 🚦 State Management Decision Tree
-
-```
-Preciso de estado?
-├─ Local do componente?
-│  └─ → useState() [SÓ AQUI]
-├─ Múltiplos componentes?
-│  ├─ Mesma árvore?
-│  │  └─ → useContext (ou props)
-│  └─ Diferentes árvores?
-│     └─ → Zustand (stores/)
-├─ Dados de servidor?
-│  └─ → React Query (useQuery/useMutation)
-└─ Autenticação?
-   └─ → useAuth() + useAuthStore()
-```
-
----
-
-## 📊 Performance Checklist
-
-```
-✅ Antes de commitar:
-
-[ ] Imports são absolutos (@/)?
-[ ] Componentes estão no lugar certo?
-[ ] Dados são validados com Zod?
-[ ] State é gerenciado corretamente?
-[ ] Sem props drilling profundo (max 3 níveis)?
-[ ] Sem Supabase calls direto em componentes?
-[ ] Sem hardcoded values?
-[ ] Error handling implementado?
-[ ] Loading states implementados?
-[ ] TypeScript sem 'any'?
-```
-
----
-
-## 🐛 Debugging Tips
-
-```bash
-# Ver estrutura
-ls -R components/features/
-
-# Encontrar Supabase calls incorretos
-grep -r "supabase.from" components/ hooks/
-
-# Encontrar imports relativos
-grep -r "from '\.\.\/" app/ components/
-
-# Buscar hardcoded strings
-grep -r "'/protected" app/ components/
-
-# Ver todos os types
-grep -r "z.infer" lib/validation/
-```
-
----
-
-## 📚 Files at a Glance
-
-| File | Purpose | Edit? |
-|------|---------|-------|
-| `app/layout.tsx` | RootProvider setup | ✅ |
-| `app/(protected)/` | Feature routes | ✅ |
-| `components/features/` | Feature UI | ✅ |
-| `components/shared/` | Reusable UI | ✅ |
-| `components/ui/` | Radix/shadcn | ❌ |
-| `lib/api/` | API functions | ✅ |
-| `lib/validation/` | Zod schemas | ✅ |
-| `hooks/` | Custom hooks | ✅ |
-| `stores/` | Zustand stores | ✅ |
-| `config/` | Constants | ✅ |
-| `middleware.ts` | Route protection | ✅ |
-| `.env` | Environment vars | ✅ |
-
----
-
-## 🎯 Most Common Tasks
-
-### Adicionar novo campo em formulário
-1. Adicionar em schema Zod (`lib/validation/schemas.ts`)
-2. Adicionar em componente form (`components/features/{domain}/`)
-3. Adicionar em API function (`lib/api/{domain}.ts`)
-
-### Adicionar nova rota
-1. Criar componente em `components/features/{domain}/`
-2. Criar arquivo em `app/(protected)/{domain}/page.tsx`
-3. Importar componente
-4. Adicionar ao `ROUTES` em `config/constants.ts`
-
-### Adicionar integração externa
-1. Criar folder em `integrations/{service}/`
-2. Criar functions wrapper
-3. Chamar via API route (`app/api/...`)
-4. Integrar em hooks
-
----
-
-## ⚠️ Red Flags (Nunca fazer)
-
-```tsx
-// 🚨 SUPABASE NO COMPONENTE
-'use client'
-const [data, setData] = useState([])
-useEffect(() => {
-  supabase.from('table').select('*').then(...)
-}, [])
-
-// 🚨 PROPS DRILLING
-<Parent> → <Child> → <GrandChild> → <GreatGrandChild>
-passando 10+ props
-
-// 🚨 SEM VALIDAÇÃO
-const user = await api.createUser(formData)
-
-// 🚨 HARDCODED
-const adminUsers = ['andre@company.com', 'joao@company.com']
-
-// 🚨 ESTADO ALEATÓRIO
-const [isDarkMode, setIsDarkMode] = useState(false)
-// Deveria ser um Store Zustand
-
-// 🚨 IMPORTS RELATIVOS
-from '../../../components/features/leads'
-
-// 🚨 ANY TYPE
-function processData(data: any) {
-  return data.map(...)
-}
-```
-
----
-
-**Printable**: Yes | **Share with IAs**: Yes | **Update frequency**: After each phase
+Para executar tudo localmente, use `scripts/local/start-local.ps1`; ele impede
+que o ambiente de desenvolvimento aponte silenciosamente para o Supabase remoto
+esperado pelo deploy.

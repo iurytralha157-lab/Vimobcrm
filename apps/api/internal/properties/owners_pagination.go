@@ -41,10 +41,6 @@ func parseOwnerListFilter(values url.Values) (OwnerListFilter, error) {
 	rawLimit := strings.TrimSpace(values.Get("limit"))
 	rawCursor := strings.TrimSpace(values.Get("cursor"))
 	search := strings.TrimSpace(values.Get("search"))
-	paginated := rawLimit != "" || rawCursor != "" || search != ""
-	if !paginated {
-		return OwnerListFilter{}, nil
-	}
 
 	if len([]rune(search)) > ownerSearchMaxLength {
 		return OwnerListFilter{}, fmt.Errorf("%w: owner search is too long", ErrInvalidInput)

@@ -4,8 +4,8 @@ import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 
 export function useTeamPipelines(teamId?: string) {
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || null;
+  const { activeOrganization, organization, profile } = useAuth();
+  const organizationId = activeOrganization.organizationId || null;
 
   return useQuery({
     queryKey: ['team-pipelines', organizationId, teamId],
@@ -22,8 +22,8 @@ export function useTeamPipelines(teamId?: string) {
 }
 
 export function useAllTeamPipelines(options?: { enabled?: boolean }) {
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || null;
+  const { activeOrganization, organization, profile } = useAuth();
+  const organizationId = activeOrganization.organizationId || null;
 
   return useQuery({
     queryKey: ['all-team-pipelines', organizationId],
@@ -37,8 +37,8 @@ export function useAllTeamPipelines(options?: { enabled?: boolean }) {
 
 export function useAssignPipelineToTeam() {
   const queryClient = useQueryClient();
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || null;
+  const { activeOrganization, organization, profile } = useAuth();
+  const organizationId = activeOrganization.organizationId || null;
 
   return useMutation({
     mutationFn: async ({ teamId, pipelineId }: { teamId: string; pipelineId: string }) => {
@@ -62,8 +62,8 @@ export function useAssignPipelineToTeam() {
 
 export function useRemovePipelineFromTeam() {
   const queryClient = useQueryClient();
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || null;
+  const { activeOrganization, organization, profile } = useAuth();
+  const organizationId = activeOrganization.organizationId || null;
 
   return useMutation({
     mutationFn: async ({ teamId, pipelineId }: { teamId: string; pipelineId: string }) => {
@@ -80,8 +80,8 @@ export function useRemovePipelineFromTeam() {
 
 export function useSetTeamLeader() {
   const queryClient = useQueryClient();
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || null;
+  const { activeOrganization, organization, profile } = useAuth();
+  const organizationId = activeOrganization.organizationId || null;
 
   return useMutation({
     mutationFn: async ({ teamId, userId, isLeader }: { teamId: string; userId: string; isLeader: boolean }) => {

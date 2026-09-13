@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { adminAPI, type AdminJSON } from '@/lib/api/admin';
+import { stringifyErrorMessage as getErrorMessage } from '@/lib/api/vimob-error';
 
 export interface OnboardingRequestData {
   company_name: string;
@@ -68,10 +69,6 @@ interface ActiveSubscriptionPlan {
   price: number;
   billing_cycle: string | null;
   description: string | null;
-}
-
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
 }
 
 // Check if current user has a pending onboarding request

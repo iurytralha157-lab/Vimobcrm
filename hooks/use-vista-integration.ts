@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { integrationsAPI } from '@/lib/api';
+import { getErrorObjectMessage as getErrorMessage } from '@/lib/api/vimob-error';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 
@@ -24,18 +25,9 @@ type VistaSyncResult = {
   errors: string[];
 };
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (typeof error === 'object' && error && 'message' in error) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === 'string') return message;
-  }
-  return 'Erro desconhecido';
-}
-
 export function useVistaIntegration(options: { enabled?: boolean } = {}) {
-  const { profile } = useAuth();
-  const orgId = profile?.organization_id;
+  const { activeOrganization, profile } = useAuth();
+  const orgId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ['vista-integration', orgId],
@@ -45,9 +37,9 @@ export function useVistaIntegration(options: { enabled?: boolean } = {}) {
 }
 
 export function useSaveVistaIntegration() {
-  const { profile } = useAuth();
+  const { activeOrganization, profile } = useAuth();
   const queryClient = useQueryClient();
-  const orgId = profile?.organization_id;
+  const orgId = activeOrganization.organizationId;
 
   return useMutation({
     mutationFn: ({ api_url, api_key }: { api_url: string; api_key: string }) => {
@@ -63,27 +55,27 @@ export function useSaveVistaIntegration() {
 }
 
 export function useTestVistaConnection() {
-  const { profile } = useAuth();
+  const { activeOrganization, profile } = useAuth();
 
   return useMutation({
     mutationFn: () =>
       integrationsAPI.invokeFunction<VistaTestResult>('vista-sync', {
         action: 'test',
-        organization_id: profile?.organization_id,
-      }, profile?.organization_id),
+        organization_id: activeOrganization.organizationId,
+      }, activeOrganization.organizationId),
   });
 }
 
 export function useSyncVistaProperties() {
-  const { profile } = useAuth();
+  const { activeOrganization, profile } = useAuth();
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: () =>
       integrationsAPI.invokeFunction<VistaSyncResult>('vista-sync', {
         action: 'sync',
-        organization_id: profile?.organization_id,
-      }, profile?.organization_id).then((result) => ({
+        organization_id: activeOrganization.organizationId,
+      }, activeOrganization.organizationId).then((result) => ({
         ...result,
         errors: result.errors || [],
         skipped: result.skipped || 0,
@@ -98,13 +90,13 @@ export function useSyncVistaProperties() {
 }
 
 export function useDeleteVistaIntegration() {
-  const { profile } = useAuth();
+  const { activeOrganization, profile } = useAuth();
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: () => {
-      if (!profile?.organization_id) throw new Error('Organização não encontrada.');
-      return integrationsAPI.deleteVista(profile.organization_id);
+      if (!activeOrganization.organizationId) throw new Error('Organização não encontrada.');
+      return integrationsAPI.deleteVista(activeOrganization.organizationId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['vista-integration'] });

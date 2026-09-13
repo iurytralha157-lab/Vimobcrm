@@ -70,20 +70,28 @@ export default function CRMManagement() {
     );
   }
 
+  const usesInternalScroll =
+    activeTab === "teams" || activeTab === "distribution";
+
   return (
-    <AppLayout title="Gestão">
-      <div className="crm-management-surface animate-in">
+    <AppLayout title="Gestão" disableMainScroll={usesInternalScroll}>
+      <div
+        className={`crm-management-surface animate-in ${
+          usesInternalScroll ? "flex h-full min-h-0 flex-col" : ""
+        }`}
+      >
         <ManagementToolbarProvider target={toolbarTarget}>
           <Tabs
             value={activeTab}
             onValueChange={(tab) => router.push(`/crm/management?tab=${tab}`)}
-            className="min-w-0 space-y-3"
+            className={
+              usesInternalScroll
+                ? "flex h-full min-h-0 min-w-0 flex-1 flex-col gap-3"
+                : "min-w-0 space-y-3"
+            }
           >
-            <div className="flex min-w-0 flex-row items-center gap-2">
-              <div
-                className="app-responsive-tab-list min-w-0 flex-1"
-                data-collapse="compact"
-              >
+            <div className="flex min-w-0 shrink-0 flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+              <div className="app-responsive-tab-list min-w-0 flex-1">
                 <TabsList
                   aria-label="Seções de Gestão"
                   data-responsive-tab-scroll
@@ -150,13 +158,19 @@ export default function CRMManagement() {
             </div>
 
             {managementTabs.includes("teams") && (
-              <TabsContent value="teams" className="mt-0">
+              <TabsContent
+                value="teams"
+                className="mt-0 min-h-0 flex-1 overflow-hidden"
+              >
                 <TeamsTab />
               </TabsContent>
             )}
 
             {managementTabs.includes("distribution") && (
-              <TabsContent value="distribution" className="mt-0">
+              <TabsContent
+                value="distribution"
+                className="mt-0 min-h-0 flex-1 overflow-hidden"
+              >
                 <DistributionTab />
               </TabsContent>
             )}

@@ -4,6 +4,44 @@ Toda Edge Function implantada no projeto deve ter fonte versionada neste diretó
 
 `verify_jwt = false` só é aceitável para webhooks ou chamadas internas que validem, no próprio handler, uma assinatura ou chave dedicada. Uma função não pode usar `SUPABASE_SERVICE_ROLE_KEY` ou `SUPABASE_DB_URL` sem autenticar e autorizar o chamador antes de qualquer acesso privilegiado.
 
+## Manifesto de release
+
+`production-manifest.json` é a fonte canônica do conjunto implantável. Cada
+diretório com `index.ts` aparece exatamente uma vez e declara:
+
+- `status`: `ACTIVE` entra no roteador; `RETIRED` permanece apenas como
+  inventário e recebe `404`;
+- `lifecycle`: `LIVE`, `TOMBSTONE` fail-closed ou `RETIRED`;
+- `verify_jwt` e `auth_boundary`: fronteira do gateway ou autenticação tratada
+  pelo próprio handler;
+- `source_sha256`: hash determinístico da fonte implantável atual;
+- `captured_deployment_sha256`: hash histórico capturado do projeto gerenciado,
+  quando disponível. Ele não é usado como hash da fonte local.
+
+O hash compartilhado de `_shared` fica em `shared_source_sha256`. Testes não
+entram nos hashes de implantação. Antes de release, execute:
+
+```sh
+node scripts/supabase/verify-edge-functions.mjs
+```
+
+Ao alterar deliberadamente uma função, revise o diff e atualize seus hashes:
+
+```sh
+node scripts/supabase/verify-edge-functions.mjs --write
+```
+
+As seções sem comentário de `supabase/config.toml` são derivadas do manifesto.
+Para sincronizá-las sem apagar as explicações manuais das rotas sensíveis:
+
+```sh
+node scripts/supabase/verify-edge-functions.mjs --write-config
+```
+
+O gate falha para função sem manifesto, fonte divergente, configuração JWT
+implícita ou conflitante, tombstone com acesso privilegiado e função aposentada
+ainda configurada como executável.
+
 ## Envio legado de WhatsApp
 
 `message-sender` é uma worker privada para a tabela legada
@@ -171,6 +209,12 @@ público atual usa `GET /v1/public/site/data` na API Go, com projeção explíci
 uma futura importação deve nascer atrás da API autenticada, autorização de
 tenant, DTO validado e limite de lote. `instagram-oauth` também responde `410`:
 o único OAuth Meta implantável é o fluxo da API Go descrito acima.
+
+O cliente atual envia contatos por `POST /v1/public/site/contact` na API Go. O
+entrypoint Edge legado `public-site-contact` é um tombstone público e responde
+`410` sem ler o payload, criar cliente privilegiado, consultar dados ou escrever
+leads. Isso mantém idempotência, rate limit, atribuição canônica do imóvel e
+distribuição exclusivamente no fluxo Go.
 
 O snapshot histórico de funções remotas não é prova do estado atual. No
 rollout, despublique qualquer versão antiga desses slugs ou publique primeiro o

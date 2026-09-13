@@ -3,6 +3,44 @@ import { apiEnvelopeSchema, nonNegativeIntegerSchema, timestampSchema, uuidSchem
 
 export const userRoleSchema = z.enum(['super_admin', 'admin', 'manager', 'user'])
 
+export const MAX_ORGANIZATION_INVITATIONS_PER_BATCH = 10
+
+export const organizationInvitationRoleSchema = z.enum(['admin', 'manager', 'user'])
+
+export const organizationInvitationInputSchema = z.object({
+  email: z.string().trim().min(1, 'Informe o e-mail').email('Informe um e-mail válido').max(254),
+  role: organizationInvitationRoleSchema,
+}).strict()
+
+export const organizationInvitationRoleInputSchema = z.object({
+  role: organizationInvitationRoleSchema,
+}).strict()
+
+export const organizationInvitationBatchSchema = z
+  .array(organizationInvitationInputSchema)
+  .min(1, 'Adicione ao menos um convite')
+  .max(
+    MAX_ORGANIZATION_INVITATIONS_PER_BATCH,
+    `Envie no máximo ${MAX_ORGANIZATION_INVITATIONS_PER_BATCH} convites por vez`,
+  )
+  .superRefine((invitations, context) => {
+    const seenEmails = new Set<string>()
+
+    invitations.forEach((invitation, index) => {
+      const normalizedEmail = invitation.email.toLowerCase()
+      if (seenEmails.has(normalizedEmail)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index, 'email'],
+          message: 'Este e-mail está repetido na lista',
+        })
+        return
+      }
+
+      seenEmails.add(normalizedEmail)
+    })
+  })
+
 export const createUserInputSchema = z.object({
   name: z.string().trim().min(2).max(180),
   email: z.string().trim().email().max(254),

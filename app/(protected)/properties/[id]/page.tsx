@@ -1,6 +1,7 @@
 import PropertyWorkspaceScreen, {
   type PropertyWorkspaceTab,
 } from '@/components/features/properties/PropertyWorkspaceScreen'
+import { PermissionBoundary } from '@/components/shared/access/PermissionBoundary'
 
 const WORKSPACE_TABS = new Set<PropertyWorkspaceTab>([
   'overview',
@@ -24,5 +25,12 @@ export default async function PropertyWorkspacePage({ searchParams }: PropertyWo
     ? candidate as PropertyWorkspaceTab
     : 'overview'
 
-  return <PropertyWorkspaceScreen initialTab={initialTab} />
+  return (
+    <PermissionBoundary
+      title="Ficha do imóvel"
+      anyOf={["property_view", "property_manage"]}
+    >
+      <PropertyWorkspaceScreen key={initialTab} initialTab={initialTab} />
+    </PermissionBoundary>
+  )
 }

@@ -48,3 +48,10 @@ export async function readRequestTextWithLimit(request: Request, maxBytes: numbe
 
   return new TextDecoder('utf-8', { fatal: true }).decode(body)
 }
+
+export async function readRequestJSONWithLimit(
+  request: Request,
+  maxBytes: number,
+): Promise<unknown> {
+  return JSON.parse(await readRequestTextWithLimit(request, maxBytes)) as unknown
+}

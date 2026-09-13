@@ -1,12 +1,18 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { useAuth } from '@/contexts/AuthContext'
+import { useOptionalActiveOrganizationId as useOrganizationId } from '@/hooks/use-active-organization'
+import { stringifyErrorMessage as getErrorMessage } from '@/lib/api/vimob-error'
+import { isPropertyWorkspaceConflict } from '@/lib/property-concurrency'
 import {
   propertyLocationsAPI,
   type CreatePropertyCondominiumInput,
   type PropertyCity,
   type PropertyCondominium,
   type PropertyNeighborhood,
+  type UpdatePropertyCityInput,
+  type UpdatePropertyCondominiumInput,
+  type UpdatePropertyNeighborhoodInput,
 } from '@/lib/api/property-locations'
 
 export type { PropertyCity, PropertyNeighborhood, PropertyCondominium }
@@ -20,14 +26,23 @@ const locationQueryPolicy = {
   refetchOnWindowFocus: false,
 } as const
 
-function useOrganizationId() {
-  const { profile, organization } = useAuth()
-  return organization?.id || profile?.organization_id || undefined
-}
+const LOCATION_CONFLICT_MESSAGE =
+  'Este cadastro foi alterado por outra pessoa. Feche e reabra a edição para revisar a versão mais recente.'
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message
-  return String(error)
+async function handleLocationConflict(
+  queryClient: QueryClient,
+  error: unknown,
+) {
+  if (!isPropertyWorkspaceConflict(error)) return false
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: ['property-cities'] }),
+    queryClient.invalidateQueries({ queryKey: ['property-neighborhoods'] }),
+    queryClient.invalidateQueries({ queryKey: ['property-condominiums'] }),
+    queryClient.invalidateQueries({ queryKey: ['properties'] }),
+    queryClient.invalidateQueries({ queryKey: ['properties-infinite'] }),
+  ])
+  toast.error(LOCATION_CONFLICT_MESSAGE)
+  return true
 }
 
 // Cities hooks
@@ -70,17 +85,45 @@ export function useCreateCity() {
   })
 }
 
+export function useUpdateCity() {
+  const queryClient = useQueryClient()
+  const { user } = useAuth()
+  const organizationId = useOrganizationId()
+
+  return useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: UpdatePropertyCityInput }) => {
+      if (!user?.id) throw new Error('Usuário não autenticado')
+      if (!organizationId) throw new Error('Usuário não possui organização')
+
+      const { data: city } = await propertyLocationsAPI.updateCity(organizationId, id, data)
+      return city
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['property-cities'] })
+      queryClient.invalidateQueries({ queryKey: ['property-neighborhoods'] })
+      queryClient.invalidateQueries({ queryKey: ['property-condominiums'] })
+      queryClient.invalidateQueries({ queryKey: ['properties'] })
+      queryClient.invalidateQueries({ queryKey: ['properties-infinite'] })
+      toast.success('Cidade atualizada!')
+    },
+    onError: async (error) => {
+      if (await handleLocationConflict(queryClient, error)) return
+      toast.error('Erro ao atualizar cidade: ' + getErrorMessage(error))
+    },
+  })
+}
+
 export function useDeleteCity() {
   const queryClient = useQueryClient()
   const { user } = useAuth()
   const organizationId = useOrganizationId()
 
   return useMutation({
-    mutationFn: async (id: string) => {
+    mutationFn: async ({ id, expected_updated_at }: { id: string; expected_updated_at: string }) => {
       if (!user?.id) throw new Error('Usuário não autenticado')
       if (!organizationId) throw new Error('Usuário não possui organização')
 
-      await propertyLocationsAPI.deleteCity(organizationId, id)
+      await propertyLocationsAPI.deleteCity(organizationId, id, expected_updated_at)
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['property-cities'] })
@@ -88,7 +131,8 @@ export function useDeleteCity() {
       queryClient.invalidateQueries({ queryKey: ['property-condominiums'] })
       toast.success('Cidade excluída!')
     },
-    onError: (error) => {
+    onError: async (error) => {
+      if (await handleLocationConflict(queryClient, error)) return
       toast.error('Erro ao excluir cidade: ' + getErrorMessage(error))
     },
   })
@@ -134,24 +178,52 @@ export function useCreateNeighborhood() {
   })
 }
 
+export function useUpdateNeighborhood() {
+  const queryClient = useQueryClient()
+  const { user } = useAuth()
+  const organizationId = useOrganizationId()
+
+  return useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: UpdatePropertyNeighborhoodInput }) => {
+      if (!user?.id) throw new Error('Usuário não autenticado')
+      if (!organizationId) throw new Error('Usuário não possui organização')
+
+      const { data: neighborhood } = await propertyLocationsAPI.updateNeighborhood(organizationId, id, data)
+      return neighborhood
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['property-neighborhoods'] })
+      queryClient.invalidateQueries({ queryKey: ['property-condominiums'] })
+      queryClient.invalidateQueries({ queryKey: ['properties'] })
+      queryClient.invalidateQueries({ queryKey: ['properties-infinite'] })
+      toast.success('Bairro atualizado!')
+    },
+    onError: async (error) => {
+      if (await handleLocationConflict(queryClient, error)) return
+      toast.error('Erro ao atualizar bairro: ' + getErrorMessage(error))
+    },
+  })
+}
+
 export function useDeleteNeighborhood() {
   const queryClient = useQueryClient()
   const { user } = useAuth()
   const organizationId = useOrganizationId()
 
   return useMutation({
-    mutationFn: async (id: string) => {
+    mutationFn: async ({ id, expected_updated_at }: { id: string; expected_updated_at: string }) => {
       if (!user?.id) throw new Error('Usuário não autenticado')
       if (!organizationId) throw new Error('Usuário não possui organização')
 
-      await propertyLocationsAPI.deleteNeighborhood(organizationId, id)
+      await propertyLocationsAPI.deleteNeighborhood(organizationId, id, expected_updated_at)
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['property-neighborhoods'] })
       queryClient.invalidateQueries({ queryKey: ['property-condominiums'] })
       toast.success('Bairro excluído!')
     },
-    onError: (error) => {
+    onError: async (error) => {
+      if (await handleLocationConflict(queryClient, error)) return
       toast.error('Erro ao excluir bairro: ' + getErrorMessage(error))
     },
   })
@@ -197,23 +269,50 @@ export function useCreateCondominium() {
   })
 }
 
+export function useUpdateCondominium() {
+  const queryClient = useQueryClient()
+  const { user } = useAuth()
+  const organizationId = useOrganizationId()
+
+  return useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: UpdatePropertyCondominiumInput }) => {
+      if (!user?.id) throw new Error('Usuário não autenticado')
+      if (!organizationId) throw new Error('Usuário não possui organização')
+
+      const { data: condominium } = await propertyLocationsAPI.updateCondominium(organizationId, id, data)
+      return condominium
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['property-condominiums'] })
+      queryClient.invalidateQueries({ queryKey: ['properties'] })
+      queryClient.invalidateQueries({ queryKey: ['properties-infinite'] })
+      toast.success('Condomínio atualizado!')
+    },
+    onError: async (error) => {
+      if (await handleLocationConflict(queryClient, error)) return
+      toast.error('Erro ao atualizar condomínio: ' + getErrorMessage(error))
+    },
+  })
+}
+
 export function useDeleteCondominium() {
   const queryClient = useQueryClient()
   const { user } = useAuth()
   const organizationId = useOrganizationId()
 
   return useMutation({
-    mutationFn: async (id: string) => {
+    mutationFn: async ({ id, expected_updated_at }: { id: string; expected_updated_at: string }) => {
       if (!user?.id) throw new Error('Usuário não autenticado')
       if (!organizationId) throw new Error('Usuário não possui organização')
 
-      await propertyLocationsAPI.deleteCondominium(organizationId, id)
+      await propertyLocationsAPI.deleteCondominium(organizationId, id, expected_updated_at)
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['property-condominiums'] })
       toast.success('Condomínio excluído!')
     },
-    onError: (error) => {
+    onError: async (error) => {
+      if (await handleLocationConflict(queryClient, error)) return
       toast.error('Erro ao excluir condomínio: ' + getErrorMessage(error))
     },
   })

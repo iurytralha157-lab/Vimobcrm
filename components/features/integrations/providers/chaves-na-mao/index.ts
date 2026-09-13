@@ -1,0 +1,1 @@
+export { chavesNaMaoIntegrationProviderManifest } from "./manifest";

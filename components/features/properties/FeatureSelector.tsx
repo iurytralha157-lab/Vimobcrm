@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,6 +26,8 @@ export function FeatureSelector({
   const [showInput, setShowInput] = useState(false);
   const [newItem, setNewItem] = useState('');
   const [adding, setAdding] = useState(false);
+  const titleId = useId();
+  const inputId = useId();
 
   const toggleItem = (item: string) => {
     if (selected.includes(item)) {
@@ -63,9 +65,9 @@ export function FeatureSelector({
   };
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" role="group" aria-labelledby={titleId}>
       <div className="flex items-center justify-between">
-        <h4 className="text-sm font-medium text-foreground">{title}</h4>
+        <h4 id={titleId} className="text-sm font-medium text-foreground">{title}</h4>
         {allowAdd && !showInput && (
           <Button
             type="button"
@@ -83,6 +85,8 @@ export function FeatureSelector({
       {showInput && (
         <div className="flex items-center gap-2">
           <Input
+            id={inputId}
+            aria-label={`Nova opção em ${title}`}
             value={newItem}
             onChange={(e) => setNewItem(e.target.value)}
             placeholder="Nome da nova opção..."
@@ -97,6 +101,7 @@ export function FeatureSelector({
             className="h-8"
             onClick={handleAddNew}
             disabled={!newItem.trim() || adding}
+            aria-busy={adding}
           >
             {adding ? '...' : 'OK'}
           </Button>
@@ -105,19 +110,25 @@ export function FeatureSelector({
             variant="ghost"
             size="sm"
             className="h-8 w-8 p-0"
+            aria-label={`Cancelar nova opção em ${title}`}
             onClick={() => {
               setShowInput(false);
               setNewItem('');
             }}
           >
-            <X className="h-4 w-4" />
+            <X aria-hidden="true" className="h-4 w-4" />
           </Button>
         </div>
       )}
 
       {isLoading ? (
-        <div className="flex items-center justify-center py-4">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+        <div
+          className="flex items-center justify-center py-4"
+          role="status"
+          aria-live="polite"
+        >
+          <div aria-hidden="true" className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <span className="sr-only">Carregando opções de {title}</span>
         </div>
       ) : options.length === 0 ? (
         <p className="text-sm text-muted-foreground py-2">
@@ -132,6 +143,7 @@ export function FeatureSelector({
                 key={option}
                 type="button"
                 onClick={() => toggleItem(option)}
+                aria-pressed={isSelected}
                 className={cn(
                   "px-3 py-1.5 rounded-full text-sm font-medium transition-all",
                   "border-0 focus:outline-none focus:ring-2 focus:ring-primary/20",

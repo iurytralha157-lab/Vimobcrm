@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Json } from '@/integrations/supabase/types';
+import { Json } from '@/lib/supabase/types';
 import { settingsAPI } from '@/lib/api/settings';
 
 export interface SystemSettingsValue {

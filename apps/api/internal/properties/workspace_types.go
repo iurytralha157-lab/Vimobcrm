@@ -8,21 +8,26 @@ import (
 )
 
 var (
-	ErrPropertyWorkspaceConflict = errors.New("property workspace conflict")
-	ErrPropertyOwnerNotFound     = errors.New("property owner not found")
-	ErrPropertyOwnershipNotFound = errors.New("property ownership not found")
-	ErrPropertyAssetNotFound     = errors.New("property asset not found")
-	ErrPropertyAssetPublished    = errors.New("property asset is referenced by a published version")
+	ErrPropertyWorkspaceConflict      = errors.New("property workspace conflict")
+	ErrPropertyOwnerNotFound          = errors.New("property owner not found")
+	ErrPropertyOwnerInUse             = errors.New("property owner is in use")
+	ErrPropertyOwnerAssignmentInvalid = errors.New("property owner assignment is invalid")
+	ErrPropertyOwnerIdentityConflict  = errors.New("property owner identity is ambiguous")
+	ErrPropertyOwnershipConflict      = errors.New("property ownership conflicts with legacy owner")
+	ErrPropertyOwnershipNotFound      = errors.New("property ownership not found")
+	ErrPropertyAssetNotFound          = errors.New("property asset not found")
+	ErrPropertyAssetPublished         = errors.New("property asset is referenced by a published version")
 )
 
 type PropertyWorkspace struct {
-	Property           Property         `json:"property"`
-	Offers             []map[string]any `json:"offers"`
-	Ownerships         []map[string]any `json:"ownerships"`
-	Assets             []map[string]any `json:"assets"`
-	Keys               []map[string]any `json:"keys"`
-	RecentKeyMovements []map[string]any `json:"recent_key_movements"`
-	Summary            WorkspaceSummary `json:"summary"`
+	Property           Property                 `json:"property"`
+	DevelopmentLink    *PropertyDevelopmentLink `json:"development_link"`
+	Offers             []map[string]any         `json:"offers"`
+	Ownerships         []map[string]any         `json:"ownerships"`
+	Assets             []map[string]any         `json:"assets"`
+	Keys               []map[string]any         `json:"keys"`
+	RecentKeyMovements []map[string]any         `json:"recent_key_movements"`
+	Summary            WorkspaceSummary         `json:"summary"`
 }
 
 type PropertyWorkspaceResponse struct {
@@ -31,13 +36,61 @@ type PropertyWorkspaceResponse struct {
 }
 
 type WorkspaceMeta struct {
-	CanManage            bool `json:"can_manage"`
-	CanViewOwnerContacts bool `json:"can_view_owner_contacts"`
-	CanViewConfidential  bool `json:"can_view_confidential"`
+	CanManage                bool `json:"can_manage"`
+	CanViewOwnerContacts     bool `json:"can_view_owner_contacts"`
+	CanViewConfidential      bool `json:"can_view_confidential"`
+	HasAssetPhotos           bool `json:"has_asset_photos"`
+	DevelopmentLinkAvailable bool `json:"development_link_available"`
 	// Nil keeps the normalized response wire-compatible with older strict clients;
 	// the fallback sends an explicit false value together with its unavailable resources.
 	NormalizedResourcesAvailable *bool    `json:"normalized_resources_available,omitempty"`
 	UnavailableResources         []string `json:"unavailable_resources,omitempty"`
+}
+
+type PropertyDevelopmentLink struct {
+	Development PropertyDevelopmentLinkDevelopment `json:"development"`
+	Phase       PropertyDevelopmentLinkPhase       `json:"phase"`
+	Building    PropertyDevelopmentLinkBuilding    `json:"building"`
+	FloorPlan   *PropertyDevelopmentLinkFloorPlan  `json:"floor_plan"`
+	Unit        PropertyDevelopmentLinkUnit        `json:"unit"`
+}
+
+type PropertyDevelopmentLinkDevelopment struct {
+	ID               string `json:"id"`
+	Code             string `json:"code"`
+	Name             string `json:"name"`
+	Status           string `json:"status"`
+	CommercialStatus string `json:"commercial_status"`
+}
+
+type PropertyDevelopmentLinkPhase struct {
+	ID     string `json:"id"`
+	Code   string `json:"code"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+type PropertyDevelopmentLinkBuilding struct {
+	ID     string `json:"id"`
+	Code   string `json:"code"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+type PropertyDevelopmentLinkFloorPlan struct {
+	ID           string  `json:"id"`
+	Code         string  `json:"code"`
+	Name         string  `json:"name"`
+	Status       string  `json:"status"`
+	PropertyType *string `json:"property_type,omitempty"`
+}
+
+type PropertyDevelopmentLinkUnit struct {
+	ID         string `json:"id"`
+	Code       string `json:"code"`
+	UnitNumber string `json:"unit_number"`
+	Status     string `json:"status"`
+	UpdatedAt  string `json:"updated_at"`
 }
 
 type WorkspaceSummary struct {

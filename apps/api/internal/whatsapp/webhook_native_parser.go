@@ -31,6 +31,8 @@ type nativeEvolutionMessage struct {
 	MediaMimeType                      string
 	MediaStoragePath                   string
 	MediaSize                          int64
+	MediaStatus                        string
+	MediaError                         string
 	ReactionTargetID                   string
 	ReactionEmoji                      string
 	IsReaction                         bool
@@ -170,9 +172,11 @@ func normalizeNativeEvolutionMessageWithEnvelope(raw map[string]any, envelope ma
 
 	phoneCandidate := ""
 	if fromMe {
+		deviceSentMeta := nativeFirstMap(info, "DeviceSentMeta", "deviceSentMeta")
 		phoneCandidate = firstNonEmpty(
 			firstString(info, "RecipientPN", "recipientPN", "RecipientPn", "Recipient", "recipient", "RecipientAlt", "recipientAlt"),
 			firstString(raw, "recipient", "recipientJid", "to", "phone", "number"),
+			firstString(deviceSentMeta, "DestinationJID", "destinationJID"),
 			remoteCandidate,
 		)
 	} else {
@@ -216,7 +220,7 @@ func normalizeNativeEvolutionMessageWithEnvelope(raw map[string]any, envelope ma
 		firstString(messageNode, "Conversation"),
 		firstString(messageNode, "extendedTextMessage.text", "ExtendedTextMessage.Text"),
 		firstString(mediaBlock, "caption", "Caption"),
-		firstString(raw, "text", "body", "content", "caption"),
+		firstString(raw, "text", "body", "content", "caption", "buttonText", "button_text", "buttonId", "button_id"),
 	)
 	if mediaType == "" {
 		mediaType = "text"
@@ -295,9 +299,9 @@ func normalizeNativeEvolutionMessageWithEnvelope(raw map[string]any, envelope ma
 		firstString(raw, "mediaUrl", "media_url", "url"),
 	)
 	mediaBase64 := firstNonEmpty(
-		firstString(mediaBlock, "base64", "Base64", "media", "file", "thumbnailBase64", "jpegThumbnail"),
-		firstString(messageNode, "base64", "Base64", "media", "file", "thumbnailBase64", "jpegThumbnail"),
-		firstString(raw, "base64", "Base64", "media", "file", "thumbnailBase64", "jpegThumbnail"),
+		firstString(mediaBlock, "base64", "Base64", "media", "file"),
+		firstString(messageNode, "base64", "Base64", "media", "file"),
+		firstString(raw, "base64", "Base64", "media", "file"),
 	)
 	if strings.HasPrefix(mediaBase64, "http://") || strings.HasPrefix(mediaBase64, "https://") {
 		if mediaURL == "" {

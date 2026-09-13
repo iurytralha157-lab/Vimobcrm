@@ -1,0 +1,1 @@
+export { manyChatIntegrationProviderManifest } from "./manifest";

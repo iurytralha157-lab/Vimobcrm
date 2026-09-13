@@ -49,6 +49,12 @@ export const E2E_USERS = {
     memberRole: 'user',
     userRole: 'user',
   },
+  manager: {
+    email: 'gestor.e2e@vimob.test',
+    name: 'Gestor E2E',
+    memberRole: 'manager',
+    userRole: 'user',
+  },
   user: {
     email: 'usuario.e2e@vimob.test',
     name: 'Usuario E2E',
@@ -191,7 +197,9 @@ export function buildE2EProcessEnv(): Record<string, string> {
     WHATSAPP_OUTBOX_WORKER_ENABLED: 'false',
     WHATSAPP_WEBHOOK_WORKER_ENABLED: 'false',
     WHATSAPP_SESSION_SUPERVISOR_ENABLED: 'false',
+    APP_PUBLIC_URL: config.baseURL,
     NEXT_PUBLIC_VIMOB_API_URL: config.apiURL,
+    NEXT_PUBLIC_SITE_URL: config.baseURL,
     VIMOB_API_URL: config.apiURL,
     NEXT_DIST_DIR: '.next-e2e',
     NEXT_PUBLIC_SUPABASE_URL: config.supabaseURL,

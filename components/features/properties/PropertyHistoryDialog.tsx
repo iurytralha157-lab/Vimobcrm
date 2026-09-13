@@ -16,6 +16,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type Property, usePropertyHistory } from "@/hooks/use-properties";
 import { useUsers } from "@/hooks/use-users";
+import { getNullablePropertyMetadataString as metadataString } from "@/lib/property-display-utils";
+import { getInitials } from "@/lib/user-display";
 
 interface PropertyHistoryDialogProps {
   property: Property | null;
@@ -37,28 +39,11 @@ function formatHistoryDate(value?: string | null) {
   });
 }
 
-function metadataString(value: unknown) {
-  return typeof value === "string" ? value : null;
-}
-
 function metadataBoolean(value: unknown) {
   if (typeof value === "boolean") return value;
   if (typeof value === "string")
     return ["true", "1", "yes", "sim"].includes(value.toLowerCase());
   return false;
-}
-
-function getInitials(name?: string | null, email?: string | null) {
-  const source = (name || email || "").trim();
-  if (!source) return "U";
-
-  const parts = source.replace(/@.*/, "").split(/\s+/).filter(Boolean);
-
-  return parts
-    .slice(0, 2)
-    .map((part) => part[0])
-    .join("")
-    .toUpperCase();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -361,7 +346,11 @@ export function PropertyHistoryDialog({
                       )}
                       <AvatarFallback className="bg-primary/50 text-[10px] font-light text-white">
                         {displayActor ? (
-                          getInitials(displayActor.name, displayActor.email)
+                          getInitials(displayActor.name, {
+                            email: displayActor.email,
+                            fallback: "U",
+                            stripEmailDomain: true,
+                          })
                         ) : (
                           <Bot className="h-4 w-4" />
                         )}

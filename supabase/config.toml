@@ -35,9 +35,15 @@ enable_signup = false
 site_url = "http://127.0.0.1:3000"
 additional_redirect_urls = [
   "http://127.0.0.1:3000/**",
+  "http://127.0.0.1:3100/**",
   "http://localhost:3000/**",
+  "http://localhost:3100/**",
   "http://192.168.*.*:3000/**",
 ]
+
+[auth.email.template.recovery]
+subject = "Redefina sua senha no Vimob CRM"
+content_path = "./supabase/templates/recovery.html"
 
 [realtime]
 enabled = true
@@ -158,3 +164,145 @@ verify_jwt = true
 
 [functions.subscription-automation]
 verify_jwt = true
+
+# BEGIN: production-manifest verify_jwt (generated)
+# Do not edit this block manually. Update production-manifest.json and run:
+# node scripts/supabase/verify-edge-functions.mjs --write-config
+[functions.ai-agent-responder]
+verify_jwt = false
+
+[functions.auto-migrate-wp-images]
+verify_jwt = false
+
+[functions.automation-delay-processor]
+verify_jwt = false
+
+[functions.automation-executor]
+verify_jwt = false
+
+[functions.automation-inactivity]
+verify_jwt = false
+
+[functions.automation-runner]
+verify_jwt = false
+
+[functions.automation-trigger]
+verify_jwt = false
+
+[functions.calculate-first-response]
+verify_jwt = false
+
+[functions.cleanup-notifications]
+verify_jwt = true
+
+[functions.cleanup-orphan-members]
+verify_jwt = false
+
+[functions.evolution-proxy]
+verify_jwt = false
+
+[functions.financial-engine]
+verify_jwt = false
+
+[functions.firecrawl-scrape]
+verify_jwt = false
+
+[functions.generic-webhook]
+verify_jwt = false
+
+[functions.get-worker-config]
+verify_jwt = false
+
+[functions.global-whatsapp-status]
+verify_jwt = false
+
+[functions.google-calendar-auth]
+verify_jwt = true
+
+[functions.imoview-scheduled-sync]
+verify_jwt = false
+
+[functions.imoview-sync]
+verify_jwt = false
+
+[functions.import-wordpress-properties]
+verify_jwt = false
+
+[functions.lead-notification-dispatcher]
+verify_jwt = false
+
+[functions.notification-dispatcher]
+verify_jwt = true
+
+[functions.notification-evolution-failover]
+verify_jwt = true
+
+[functions.notification-scheduler]
+verify_jwt = false
+
+[functions.notification-service]
+verify_jwt = true
+
+[functions.pool-checker]
+verify_jwt = false
+
+[functions.public-api]
+verify_jwt = false
+
+[functions.public-site-contact]
+verify_jwt = false
+
+[functions.public-site-data]
+verify_jwt = false
+
+[functions.public-site-ssr]
+verify_jwt = false
+
+[functions.recurring-entries-generator]
+verify_jwt = false
+
+[functions.resolve-site-domain]
+verify_jwt = false
+
+[functions.seed-organization-data]
+verify_jwt = false
+
+[functions.send-notification]
+verify_jwt = false
+
+[functions.send-push-notification]
+verify_jwt = true
+
+[functions.session-health-check]
+verify_jwt = false
+
+[functions.sla-checker]
+verify_jwt = false
+
+[functions.smart-recurring-generator]
+verify_jwt = false
+
+[functions.sync-whatsapp-contacts]
+verify_jwt = true
+
+[functions.telephony-recording-proxy]
+verify_jwt = false
+
+[functions.threecplus-webhook]
+verify_jwt = false
+
+[functions.verify-domain-dns]
+verify_jwt = false
+
+[functions.vista-scheduled-sync]
+verify_jwt = false
+
+[functions.vista-sync]
+verify_jwt = false
+
+[functions.whatsapp-history-access]
+verify_jwt = true
+
+[functions.whatsapp-notifier]
+verify_jwt = true
+# END: production-manifest verify_jwt (generated)

@@ -1,9 +1,132 @@
 package properties
 
 import (
+	"errors"
+	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 )
+
+func TestValidateCreateRequiresCanonicalClassification(t *testing.T) {
+	base := propertyRequest{
+		"title":          "Apartamento teste",
+		"tipo_de_imovel": "Apartamento",
+	}
+	if _, err := base.ValidateCreate(); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("missing deal type error = %v, want ErrInvalidInput", err)
+	}
+
+	withDealType := propertyRequest{
+		"title":           "Apartamento teste",
+		"tipo_de_imovel":  "Apartamento",
+		"tipo_de_negocio": "Lan\u00e7amento",
+	}
+	validated, err := withDealType.ValidateCreate()
+	if err != nil {
+		t.Fatalf("ValidateCreate returned error: %v", err)
+	}
+	if validated["finalidade"] != "lancamento" {
+		t.Fatalf("canonical deal type = %#v, want lancamento", validated["finalidade"])
+	}
+
+	withoutPropertyType := propertyRequest{
+		"title":           "Apartamento teste",
+		"tipo_de_negocio": "Venda",
+	}
+	if _, err := withoutPropertyType.ValidateCreate(); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("missing property type error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestParseListFilterRejectsInvalidValuesInsteadOfIgnoringThem(t *testing.T) {
+	tests := []url.Values{
+		{"scope": {"todos"}},
+		{"status": {"desconhecido"}},
+		{"tipo_de_negocio": {"permuta"}},
+		{"quartos_min": {"1.5"}},
+		{"valor_min": {"-1"}},
+		{"aceita_permuta": {"talvez"}},
+		{"search": {strings.Repeat("a", 121)}},
+		{"valor_min": {"500"}, "valor_max": {"100"}},
+	}
+	for _, values := range tests {
+		if _, err := ParseListFilter(values); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("ParseListFilter(%v) error = %v, want ErrInvalidInput", values, err)
+		}
+	}
+}
+
+func TestSanitizePayloadRejectsUnknownFractionalAndOversizedValues(t *testing.T) {
+	for _, input := range []propertyRequest{
+		{"campo_inexistente": true},
+		{"quartos": 1.5},
+		{"descricao": strings.Repeat("a", 4_001)},
+	} {
+		if _, err := sanitizePayload(input); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("sanitizePayload(%#v) error = %v, want ErrInvalidInput", input, err)
+		}
+	}
+}
+
+func TestSanitizePayloadRejectsConflictingAliasesDeterministically(t *testing.T) {
+	for _, input := range []propertyRequest{
+		{"tipo": "Casa", "tipo_de_imovel": "Apartamento"},
+		{"origin_media": "Indicacao", "owner_media_source": "Portal"},
+		{"image_urls": []string{"https://example.test/a.jpg"}, "fotos": []string{"https://example.test/b.jpg"}},
+	} {
+		if _, err := sanitizePayload(input); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("sanitizePayload(%#v) error = %v, want ErrInvalidInput", input, err)
+		}
+	}
+
+	out, err := sanitizePayload(propertyRequest{
+		"tipo":               " Casa ",
+		"tipo_de_imovel":     "Casa",
+		"origin_media":       " Indicacao ",
+		"owner_media_source": "Indicacao",
+	})
+	if err != nil {
+		t.Fatalf("equivalent aliases returned error: %v", err)
+	}
+	if out["tipo"] != "Casa" || out["origin_media"] != "Indicacao" {
+		t.Fatalf("equivalent aliases were not canonicalized: %#v", out)
+	}
+}
+
+func TestSanitizePayloadLimitsBothOwnerMediaAliases(t *testing.T) {
+	for _, key := range []string{"origin_media", "owner_media_source"} {
+		if _, err := sanitizePayload(propertyRequest{key: strings.Repeat("a", 81)}); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("%s over limit error = %v, want ErrInvalidInput", key, err)
+		}
+	}
+}
+
+func TestSanitizePayloadEnforcesOneTwentyPhotoContractAcrossLegacyFields(t *testing.T) {
+	gallery := make([]string, propertyAssetMaxPhotos)
+	for index := range gallery {
+		gallery[index] = fmt.Sprintf("https://media.example.test/%d.jpg", index+1)
+	}
+
+	if _, err := sanitizePayload(propertyRequest{
+		"imagem_principal": gallery[0],
+		"image_urls":       gallery,
+	}); err != nil {
+		t.Fatalf("main image already present in a 20-photo gallery returned error: %v", err)
+	}
+
+	if _, err := sanitizePayload(propertyRequest{
+		"imagem_principal": "https://media.example.test/extra.jpg",
+		"image_urls":       gallery,
+	}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("21 distinct legacy photos error = %v, want ErrInvalidInput", err)
+	}
+
+	tooMany := append(append([]string{}, gallery...), "https://media.example.test/21.jpg")
+	if _, err := sanitizePayload(propertyRequest{"fotos": tooMany}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("21-photo legacy gallery error = %v, want ErrInvalidInput", err)
+	}
+}
 
 func TestSanitizePayloadWritesCanonicalPropertyColumns(t *testing.T) {
 	input := propertyRequest{
@@ -123,6 +246,34 @@ func TestNormalizePropertyOutputUsesCanonicalTypeWhenLegacyIsBlank(t *testing.T)
 
 	if got := out["tipo_de_imovel"]; got != "Ch\u00e1cara" {
 		t.Fatalf("tipo_de_imovel fallback = %#v, want Ch\u00e1cara", got)
+	}
+}
+
+func TestNormalizePropertyOutputPrefersCanonicalDealTypeOverStaleLegacyValue(t *testing.T) {
+	out := normalizePropertyOutput(Property{
+		"finalidade":      "locacao",
+		"tipo_de_negocio": "Venda",
+	})
+	if got := out["tipo_de_negocio"]; got != "Aluguel" {
+		t.Fatalf("tipo_de_negocio = %#v, want canonical Aluguel", got)
+	}
+	if got := out["finalidade"]; got != nil {
+		t.Fatalf("missing finalidade_uso leaked deal type into finalidade = %#v", got)
+	}
+}
+
+func TestNormalizePropertyOutputSeparatesDealTypeFromUsage(t *testing.T) {
+	out := normalizePropertyOutput(Property{
+		"finalidade":      "venda",
+		"finalidade_uso":  "Comercial",
+		"tipo_de_negocio": "Aluguel",
+	})
+
+	if got := out["tipo_de_negocio"]; got != "Venda" {
+		t.Fatalf("tipo_de_negocio = %#v, want canonical Venda", got)
+	}
+	if got := out["finalidade"]; got != "Comercial" {
+		t.Fatalf("finalidade = %#v, want finalidade_uso Comercial", got)
 	}
 }
 

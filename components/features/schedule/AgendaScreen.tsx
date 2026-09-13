@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   format,
@@ -13,6 +14,7 @@ import {
   endOfMonth,
   startOfYear,
   endOfYear,
+  isSameDay,
 } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -69,6 +71,27 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { DEFAULT_SCHEDULE_TIME_ZONE } from "@/lib/schedule-outcome";
+import {
+  getLocalScheduleCivilDateKey,
+  getScheduleCivilDayRange,
+  getScheduleCivilDayStart,
+  scheduleInstantToLocalDateProxy,
+} from "@/lib/schedule-time-zone";
+
+const AgendaDashboard = dynamic(
+  () =>
+    import("@/components/features/schedule/dashboard").then(
+      (module) => module.AgendaDashboard,
+    ),
+  {
+    loading: () => (
+      <div className="flex min-h-[320px] items-center justify-center">
+        <VimobLoader showLabel label="Carregando dashboard da agenda..." />
+      </div>
+    ),
+  },
+);
 
 // --- helpers ----------------------------------------------------------------
 
@@ -94,7 +117,22 @@ const isAgendaViewMode = (value: string | null): value is AgendaViewMode =>
 // --- Componente principal ----------------------------------------------------
 
 export default function Agenda() {
-  const { profile } = useAuth();
+  const searchParams = useSearchParams();
+
+  if (searchParams.get("tab") === "dashboard") {
+    return (
+      <AppLayout title="Dashboard da agenda">
+        <AgendaDashboard />
+      </AppLayout>
+    );
+  }
+
+  return <AgendaCalendar />;
+}
+
+function AgendaCalendar() {
+  const { profile, activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
   const router = useRouter();
   const searchParams = useSearchParams();
   const isMobile = useIsMobile();
@@ -104,10 +142,16 @@ export default function Agenda() {
   const focusedEventId = searchParams.get("event") || searchParams.get("task");
 
   const { data: scheduleCapabilities } = useScheduleCapabilities();
+  const scheduleTimeZone =
+    scheduleCapabilities?.timeZone || DEFAULT_SCHEDULE_TIME_ZONE;
 
   const { data: users = [], canFilterScheduleUsers } = useScheduleUsers();
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [pivotDate, setPivotDate] = useState(new Date());
+  const [agendaNow, setAgendaNow] = useState(() => Date.now());
+  const initialTimeZoneAlignedRef = useRef(false);
+  const forceTimeZoneAlignmentRef = useRef(false);
+  const previousOrganizationIdRef = useRef(organizationId);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedEventType, setSelectedEventType] = useState<EventType | null>(
     null,
@@ -121,42 +165,130 @@ export default function Agenda() {
     localStorage.setItem("agendaViewMode", viewMode);
   }, [viewMode]);
 
+  useEffect(() => {
+    const intervalId = window.setInterval(
+      () => setAgendaNow(Date.now()),
+      60_000,
+    );
+    return () => window.clearInterval(intervalId);
+  }, []);
+
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetEvent, setSheetEvent] = useState<ScheduleEvent | null>(null);
+  const [sheetDefaultTime, setSheetDefaultTime] = useState<string | undefined>(
+    undefined,
+  );
   const [googleCalendarOpen, setGoogleCalendarOpen] = useState(false);
   const handledGoogleOAuthRef = useRef(false);
   const updateEventMutation = useUpdateScheduleEvent();
   const effectiveViewMode: AgendaViewMode = isMobile ? "day" : viewMode;
 
+  useEffect(() => {
+    const previousOrganizationId = previousOrganizationIdRef.current;
+    previousOrganizationIdRef.current = organizationId;
+    if (
+      !previousOrganizationId ||
+      !organizationId ||
+      previousOrganizationId === organizationId
+    ) {
+      return;
+    }
+
+    initialTimeZoneAlignedRef.current = false;
+    forceTimeZoneAlignmentRef.current = true;
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      setSelectedUserId(null);
+      setSheetDefaultTime(undefined);
+      setSheetEvent(null);
+      setSheetOpen(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [organizationId]);
+
+  useEffect(() => {
+    if (!scheduleCapabilities?.timeZone || initialTimeZoneAlignedRef.current) {
+      return;
+    }
+    initialTimeZoneAlignedRef.current = true;
+    const forceAlignment = forceTimeZoneAlignmentRef.current;
+    const browserToday = new Date(agendaNow);
+    if (
+      !forceAlignment &&
+      (!isSameDay(selectedDate, browserToday) ||
+        !isSameDay(pivotDate, browserToday))
+    ) {
+      return;
+    }
+    const organizationToday = scheduleInstantToLocalDateProxy(
+      agendaNow,
+      scheduleTimeZone,
+    );
+    if (!organizationToday) return;
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      forceTimeZoneAlignmentRef.current = false;
+      setSelectedDate(organizationToday);
+      setPivotDate(organizationToday);
+    });
+    return () => {
+      active = false;
+    };
+  }, [
+    agendaNow,
+    organizationId,
+    pivotDate,
+    scheduleCapabilities?.timeZone,
+    scheduleTimeZone,
+    selectedDate,
+  ]);
+
   const dateRange = useMemo(() => {
+    let localStart: Date;
+    let localEnd: Date;
+
     switch (effectiveViewMode) {
       case "day":
-        return {
-          startDate: startOfDay(pivotDate),
-          endDate: endOfDay(pivotDate),
-        };
+        localStart = startOfDay(pivotDate);
+        localEnd = endOfDay(pivotDate);
+        break;
       case "week":
-        return {
-          startDate: startOfWeek(pivotDate, { weekStartsOn: 0 }),
-          endDate: endOfWeek(pivotDate, { weekStartsOn: 0 }),
-        };
+        localStart = startOfWeek(pivotDate, { weekStartsOn: 0 });
+        localEnd = endOfWeek(pivotDate, { weekStartsOn: 0 });
+        break;
       case "month":
-        return {
-          startDate: startOfWeek(startOfMonth(pivotDate), { weekStartsOn: 0 }),
-          endDate: endOfWeek(endOfMonth(pivotDate), { weekStartsOn: 0 }),
-        };
+        localStart = startOfWeek(startOfMonth(pivotDate), { weekStartsOn: 0 });
+        localEnd = endOfWeek(endOfMonth(pivotDate), { weekStartsOn: 0 });
+        break;
       case "year":
-        return {
-          startDate: startOfYear(pivotDate),
-          endDate: endOfYear(pivotDate),
-        };
+        localStart = startOfYear(pivotDate);
+        localEnd = endOfYear(pivotDate);
+        break;
       default:
-        return {
-          startDate: startOfDay(new Date()),
-          endDate: addDays(new Date(), 30),
-        };
+        localStart = startOfDay(pivotDate);
+        localEnd = endOfDay(addDays(pivotDate, 30));
+        break;
     }
-  }, [pivotDate, effectiveViewMode]);
+
+    const startDate =
+      getScheduleCivilDayStart(
+        getLocalScheduleCivilDateKey(localStart),
+        scheduleTimeZone,
+      ) || localStart;
+    const endRange = getScheduleCivilDayRange(
+      getLocalScheduleCivilDateKey(localEnd),
+      scheduleTimeZone,
+    );
+
+    return {
+      startDate,
+      endDate: endRange ? new Date(endRange.endTime) : localEnd,
+    };
+  }, [effectiveViewMode, pivotDate, scheduleTimeZone]);
 
   const {
     data: events = [],
@@ -182,22 +314,43 @@ export default function Agenda() {
   );
 
   const upcomingEvents = useMemo(() => {
-    const today = startOfDay(new Date());
-    const next = addDays(today, 7);
+    const todayKey = getLocalScheduleCivilDateKey(
+      scheduleInstantToLocalDateProxy(agendaNow, scheduleTimeZone) ||
+        new Date(),
+    );
+    const today = getScheduleCivilDayStart(todayKey, scheduleTimeZone);
+    const nextKey = getLocalScheduleCivilDateKey(
+      addDays(
+        scheduleInstantToLocalDateProxy(agendaNow, scheduleTimeZone) ||
+          new Date(),
+        7,
+      ),
+    );
+    const nextRange = getScheduleCivilDayRange(nextKey, scheduleTimeZone);
+    const next = nextRange ? new Date(nextRange.endTime) : null;
+    if (!today || !next) return [];
     return filteredEvents
       .filter((ev) => {
         const d = new Date(ev.start_time);
-        return d >= today && d <= next && ev.status !== "completed";
+        return (
+          d >= today &&
+          d <= next &&
+          !["completed", "no_show", "cancelled", "canceled"].includes(
+            ev.status || "",
+          )
+        );
       })
       .slice(0, 10);
-  }, [filteredEvents]);
+  }, [agendaNow, filteredEvents, scheduleTimeZone]);
 
   const openCreateSheet = useCallback(() => {
     setSheetEvent(null);
+    setSheetDefaultTime(undefined);
     setSheetOpen(true);
   }, []);
 
   const openEventSheet = (event: ScheduleEvent) => {
+    setSheetDefaultTime(undefined);
     setSheetEvent(event);
     setSheetOpen(true);
   };
@@ -209,7 +362,11 @@ export default function Agenda() {
       events.find((event) => event.id === focusedEventId) || focusedEvents[0];
     if (!focusedEvent) return;
 
-    const eventDate = new Date(focusedEvent.start_time);
+    const eventDate =
+      scheduleInstantToLocalDateProxy(
+        focusedEvent.start_time,
+        scheduleTimeZone,
+      ) || new Date(focusedEvent.start_time);
     let isActive = true;
 
     queueMicrotask(() => {
@@ -217,6 +374,7 @@ export default function Agenda() {
 
       setSelectedDate(eventDate);
       setPivotDate(eventDate);
+      setSheetDefaultTime(undefined);
       setSheetEvent(focusedEvent);
       setSheetOpen(true);
 
@@ -230,7 +388,14 @@ export default function Agenda() {
     return () => {
       isActive = false;
     };
-  }, [events, focusedEventId, focusedEvents, router, searchParamsString]);
+  }, [
+    events,
+    focusedEventId,
+    focusedEvents,
+    router,
+    scheduleTimeZone,
+    searchParamsString,
+  ]);
 
   useEffect(() => {
     const handleMobileCreate = () => openCreateSheet();
@@ -245,21 +410,31 @@ export default function Agenda() {
   useEffect(() => {
     const connected = searchParams.get("google_calendar_connected") === "1";
     const callbackError = searchParams.get("google_calendar_error");
-    if ((!connected && !callbackError) || handledGoogleOAuthRef.current) return;
+    const callbackWarning = searchParams.get("google_calendar_warning");
+    if (
+      (!connected && !callbackError && !callbackWarning) ||
+      handledGoogleOAuthRef.current
+    )
+      return;
 
     handledGoogleOAuthRef.current = true;
     setGoogleCalendarOpen(true);
-    if (connected) {
-      toast.success("Google Agenda conectada e sincronizada.");
-    } else if (callbackError) {
+    if (callbackError) {
       toast.error(
         `Não foi possível conectar o Google Agenda: ${callbackError.slice(0, 300)}`,
       );
+    } else if (callbackWarning) {
+      toast.warning(
+        `Google Agenda conectada, mas a sincronização precisa de atenção: ${callbackWarning.slice(0, 300)}`,
+      );
+    } else if (connected) {
+      toast.success("Google Agenda conectada e sincronizada.");
     }
 
     const cleanParams = new URLSearchParams(searchParamsString);
     cleanParams.delete("google_calendar_connected");
     cleanParams.delete("google_calendar_error");
+    cleanParams.delete("google_calendar_warning");
     const cleanSearch = cleanParams.toString();
     router.replace(`/agenda${cleanSearch ? `?${cleanSearch}` : ""}`);
   }, [router, searchParams, searchParamsString]);
@@ -341,7 +516,14 @@ export default function Agenda() {
             {!isMobile && (
               <button
                 className="h-8 rounded-[6px] border-0 bg-primary/50 px-3 text-[12px] font-light text-white shadow-none transition-colors hover:bg-primary"
-                onClick={() => setPivotDate(new Date())}
+                onClick={() =>
+                  setPivotDate(
+                    scheduleInstantToLocalDateProxy(
+                      Date.now(),
+                      scheduleTimeZone,
+                    ) || new Date(),
+                  )
+                }
               >
                 Hoje
               </button>
@@ -566,11 +748,14 @@ export default function Agenda() {
                   })
                 }
                 canManageEvents={canManageSchedule}
+                timeZone={scheduleCapabilities?.timeZone}
                 onQuickCreate={
                   canManageSchedule
-                    ? (date) => {
+                    ? (date, time) => {
                         setSelectedDate(date);
-                        openCreateSheet();
+                        setSheetEvent(null);
+                        setSheetDefaultTime(time);
+                        setSheetOpen(true);
                       }
                     : undefined
                 }
@@ -582,11 +767,11 @@ export default function Agenda() {
                   onEditEvent={openEventSheet}
                   showUser={true}
                   canManage={canManageSchedule}
+                  timeZone={scheduleCapabilities?.timeZone}
                 />
               </div>
             )}
           </div>
-
         </div>
       </div>
 
@@ -611,6 +796,7 @@ export default function Agenda() {
         event={sheetEvent}
         defaultUserId={selectedUserId || profile?.id}
         defaultDate={selectedDate}
+        defaultTime={sheetDefaultTime}
       />
     </AppLayout>
   );

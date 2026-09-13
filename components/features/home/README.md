@@ -7,15 +7,16 @@ existente e carrega o conteúdo em camadas para não depender do Dashboard:
 2. atenção, tarefas e agenda são consultadas em paralelo conforme módulos e
    permissões do usuário.
 
-Os cards editoriais permanecem desativados por `HOME_PAGE_SECTIONS.publications`.
-O superadministrador pode preparar rascunhos, mas a Home não consulta nem
-renderiza esse canal enquanto a chave estiver desligada.
+O carrossel editorial é alimentado pelas publicações ativas configuradas pelo
+superadministrador. Ele ocupa a largura inteira logo abaixo dos avisos críticos, avança
+automaticamente e pausa durante a interação, sem controles visuais sobre o slide. O conteúdo
+respeita período, público-alvo, permissões, módulos e destinos disponíveis ao usuário.
 
 ## Responsabilidades
 
 - `HomeScreen.tsx`: composição da página e controle de acesso dos atalhos;
 - `HomeAssistant.tsx`: pesquisa determinística na ajuda e nos leads visíveis;
-- `HomePublicationGrid.tsx`: cards editoriais configurados pela plataforma;
+- `HomePublicationCarousel.tsx`: carrossel de novidades configuradas pela plataforma;
 - `HomeFocusList.tsx`: prioridades reais do usuário;
 - `home-catalog.ts`: atalhos e destinos internos permitidos.
 
@@ -29,9 +30,9 @@ Dados e validação ficam fora dos componentes:
 
 ## Administração
 
-Superadministradores preparam os rascunhos em `/admin/home-content`. O editor
+Superadministradores gerenciam os slides em `/admin/home-content`. O editor
 permite título, texto, CTA interno, layout, cor, ordem, período, público e imagem,
-mas informa claramente que o canal está desativado.
+e os itens ativos são publicados na Página inicial.
 Imagens são enviadas pelo backend para `site-images/platform/home/`; o browser
 não recebe credenciais de Storage.
 

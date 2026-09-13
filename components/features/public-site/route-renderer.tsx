@@ -253,6 +253,9 @@ export async function generatePublicSiteMetadata({
   const canonicalURL = absolutizeURL(canonicalPath, metadataOrigin);
   const absoluteImage = image ? absolutizeURL(image, metadataOrigin) : undefined;
   const favicon = site.favicon_url || site.logo_url;
+  const googleSearchConsoleVerification = normalizeGoogleSearchConsoleVerification(
+    site.google_search_console_verification,
+  );
   const absoluteFavicon = site.favicon_url && site.custom_domain && site.domain_verified !== false
     ? absolutizeURL("/site-favicon", metadataOrigin)
     : favicon
@@ -268,6 +271,10 @@ export async function generatePublicSiteMetadata({
     keywords,
     creator: siteTitle,
     publisher: siteTitle,
+    verification:
+      route.kind === "home" && googleSearchConsoleVerification
+        ? { google: googleSearchConsoleVerification }
+        : undefined,
     alternates: {
       canonical: canonicalURL,
     },
@@ -305,6 +312,11 @@ export async function generatePublicSiteMetadata({
       images: absoluteImage ? [{ url: absoluteImage, alt: imageAlt }] : undefined,
     },
   };
+}
+
+function normalizeGoogleSearchConsoleVerification(value?: string | null) {
+  const normalized = value?.trim() || "";
+  return /^[A-Za-z0-9_-]{10,255}$/.test(normalized) ? normalized : undefined;
 }
 
 function buildSiteKeywords(site: PublicSiteConfig, location: string) {

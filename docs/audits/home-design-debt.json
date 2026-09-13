@@ -1,73 +1,73 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "7960680b35e34d7efbfad55c6c849a4a7e5403200177a54e18b9900524ab7549",
-  "surfaceInventoryDigestSha256": "1953a1cc8f0496d73067993af1b8461ef9493ec804442eb5656c7f41372267ca",
+  "sourceDigestSha256": "8a397f3da147d3bcb7d7c2a82362e45affc33be9c8bd6b8cdafc785170374edf",
+  "surfaceInventoryDigestSha256": "eac29f6e6ec5e26ce3edf8b50beefd08d079f55e24cec06c9dae2b4037c43bd4",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 362,
+    "filesScanned": 535,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
-    "filesWithFindings": 5,
-    "findings": 18,
-    "protectedReachableFilesWithFindings": 4,
-    "protectedReachableFindings": 17,
+    "filesWithFindings": 41,
+    "findings": 103,
+    "protectedReachableFilesWithFindings": 40,
+    "protectedReachableFindings": 102,
     "bySurfaceScope": {
-      "protected-only": 17,
-      "protected-and-public": 0,
+      "protected-only": 93,
+      "protected-and-public": 9,
       "public-only": 1,
       "infrastructure": 0
     },
     "byPriority": {
-      "P1": 1,
-      "P2": 2,
-      "P3": 15
+      "P1": 49,
+      "P2": 12,
+      "P3": 42
     },
     "byRule": {
       "heavy-shadow": {
-        "count": 0,
+        "count": 16,
         "guidance": "Usar shadow-none ou a sombra sutil dos pop-ups globais.",
         "label": "Sombra forte",
         "priority": "P1"
       },
       "medium-shadow": {
-        "count": 0,
+        "count": 6,
         "guidance": "Blocos Home não usam sombra; validar se a elevação é realmente necessária.",
         "label": "Sombra fora do padrão",
         "priority": "P2"
       },
       "oversized-radius": {
-        "count": 1,
+        "count": 5,
         "guidance": "Blocos usam 8px; controles 6px; microelementos 4px.",
         "label": "Raio acima de 8px",
         "priority": "P1"
       },
       "heavy-font": {
-        "count": 0,
+        "count": 3,
         "guidance": "Texto normal usa 300; títulos usam 400.",
         "label": "Tipografia pesada",
         "priority": "P1"
       },
       "hardcoded-color": {
-        "count": 0,
+        "count": 25,
         "guidance": "Usar tokens --app-* ou cores semânticas do domínio.",
         "label": "Cor hardcoded",
         "priority": "P1"
       },
       "hardcoded-surface": {
-        "count": 2,
+        "count": 3,
         "guidance": "Usar --app-surface-solid, --app-surface-soft ou --app-surface-hover.",
         "label": "Superfície branca/preta fixa",
         "priority": "P2"
       },
       "aggressive-motion": {
-        "count": 0,
+        "count": 3,
         "guidance": "Remover scale/translate decorativo de cards e ações operacionais.",
         "label": "Movimento agressivo",
         "priority": "P2"
       },
       "uppercase-tracking": {
-        "count": 15,
+        "count": 42,
         "guidance": "Preferir texto natural em 10–12px e peso 300.",
         "label": "Caixa alta/tracking",
         "priority": "P3"
@@ -82,11 +82,113 @@
   },
   "topFiles": [
     {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "count": 20,
+      "score": 77,
+      "rules": {
+        "oversized-radius": 3,
+        "hardcoded-color": 16,
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaDashboardPanels.tsx",
+      "count": 5,
+      "score": 20,
+      "rules": {
+        "hardcoded-color": 5
+      }
+    },
+    {
+      "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
+      "count": 4,
+      "score": 10,
+      "rules": {
+        "heavy-shadow": 2,
+        "uppercase-tracking": 2
+      }
+    },
+    {
       "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
       "count": 8,
       "score": 8,
       "rules": {
         "uppercase-tracking": 8
+      }
+    },
+    {
+      "file": "components/features/marketing/MarketingOverviewDashboard.tsx",
+      "count": 5,
+      "score": 8,
+      "rules": {
+        "uppercase-tracking": 4,
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/site/VisitorMap.tsx",
+      "count": 4,
+      "score": 8,
+      "rules": {
+        "medium-shadow": 4
+      }
+    },
+    {
+      "file": "components/features/chat/FloatingChat.tsx",
+      "count": 2,
+      "score": 8,
+      "rules": {
+        "heavy-shadow": 2
+      }
+    },
+    {
+      "file": "components/features/chat/FloatingChatButton.tsx",
+      "count": 2,
+      "score": 8,
+      "rules": {
+        "heavy-shadow": 2
+      }
+    },
+    {
+      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
+      "count": 5,
+      "score": 6,
+      "rules": {
+        "uppercase-tracking": 4,
+        "aggressive-motion": 1
+      }
+    },
+    {
+      "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueAutoTagsSection.tsx",
+      "count": 2,
+      "score": 6,
+      "rules": {
+        "hardcoded-color": 1,
+        "hardcoded-surface": 1
+      }
+    },
+    {
+      "file": "components/features/settings/IntegrationsTab.tsx",
+      "count": 2,
+      "score": 6,
+      "rules": {
+        "heavy-font": 2
+      }
+    },
+    {
+      "file": "components/features/contacts/ImportContactsDialog.tsx",
+      "count": 4,
+      "score": 4,
+      "rules": {
+        "uppercase-tracking": 4
+      }
+    },
+    {
+      "file": "components/features/integrations/MetaIntegrationSettings.tsx",
+      "count": 4,
+      "score": 4,
+      "rules": {
+        "uppercase-tracking": 4
       }
     },
     {
@@ -98,7 +200,7 @@
       }
     },
     {
-      "file": "components/features/round-robin/DistributionQueueEditor.tsx",
+      "file": "components/features/schedule/CalendarView.tsx",
       "count": 2,
       "score": 4,
       "rules": {
@@ -106,11 +208,109 @@
       }
     },
     {
-      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "count": 3,
+      "file": "components/features/contacts/ContactCard.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "hardcoded-color": 1
+      }
+    },
+    {
+      "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "hardcoded-color": 1
+      }
+    },
+    {
+      "file": "components/features/leads/LeadCard.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "hardcoded-color": 1
+      }
+    },
+    {
+      "file": "components/features/marketing/MarketingTrendChart.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/round-robin/DistributionQueueEditor.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaAdaptiveChart.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaDailyChart.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaWeeklyChart.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/settings/UserPermissionsScreen.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/teams/TeamEditorScreen.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
+      "count": 2,
       "score": 3,
       "rules": {
-        "uppercase-tracking": 3
+        "uppercase-tracking": 1,
+        "aggressive-motion": 1
+      }
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaUpcomingEventsPanel.tsx",
+      "count": 2,
+      "score": 3,
+      "rules": {
+        "uppercase-tracking": 1,
+        "aggressive-motion": 1
       }
     },
     {
@@ -120,15 +320,213 @@
       "rules": {
         "oversized-radius": 1
       }
+    },
+    {
+      "file": "components/features/marketing/MarketingTabViews.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/presence/OnlineUsersPanel.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "heavy-font": 1
+      }
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaDashboardFilters.tsx",
+      "count": 2,
+      "score": 2,
+      "rules": {
+        "uppercase-tracking": 2
+      }
+    },
+    {
+      "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
+      "count": 2,
+      "score": 2,
+      "rules": {
+        "uppercase-tracking": 2
+      }
+    },
+    {
+      "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
+      "count": 1,
+      "score": 2,
+      "rules": {
+        "medium-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/whatsapp/message-bubble/MessageReactions.tsx",
+      "count": 1,
+      "score": 2,
+      "rules": {
+        "medium-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/admin/AdminNotificationSettingsContent.tsx",
+      "count": 1,
+      "score": 1,
+      "rules": {
+        "uppercase-tracking": 1
+      }
+    },
+    {
+      "file": "components/features/marketing/MarketingMediaGallery.tsx",
+      "count": 1,
+      "score": 1,
+      "rules": {
+        "uppercase-tracking": 1
+      }
+    },
+    {
+      "file": "components/features/marketing/MarketingPaidTable.tsx",
+      "count": 1,
+      "score": 1,
+      "rules": {
+        "uppercase-tracking": 1
+      }
+    },
+    {
+      "file": "components/features/round-robin/DistributionQueueEditorScreen.tsx",
+      "count": 1,
+      "score": 1,
+      "rules": {
+        "uppercase-tracking": 1
+      }
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaResponsibleResultsPanel.tsx",
+      "count": 1,
+      "score": 1,
+      "rules": {
+        "uppercase-tracking": 1
+      }
+    },
+    {
+      "file": "components/features/teams/TeamOperationalOverview.tsx",
+      "count": 1,
+      "score": 1,
+      "rules": {
+        "uppercase-tracking": 1
+      }
     }
   ],
   "topProtectedFiles": [
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "count": 20,
+      "score": 77,
+      "rules": {
+        "oversized-radius": 3,
+        "hardcoded-color": 16,
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaDashboardPanels.tsx",
+      "count": 5,
+      "score": 20,
+      "rules": {
+        "hardcoded-color": 5
+      }
+    },
+    {
+      "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
+      "count": 4,
+      "score": 10,
+      "rules": {
+        "heavy-shadow": 2,
+        "uppercase-tracking": 2
+      }
+    },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
       "count": 8,
       "score": 8,
       "rules": {
         "uppercase-tracking": 8
+      }
+    },
+    {
+      "file": "components/features/marketing/MarketingOverviewDashboard.tsx",
+      "count": 5,
+      "score": 8,
+      "rules": {
+        "uppercase-tracking": 4,
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/site/VisitorMap.tsx",
+      "count": 4,
+      "score": 8,
+      "rules": {
+        "medium-shadow": 4
+      }
+    },
+    {
+      "file": "components/features/chat/FloatingChat.tsx",
+      "count": 2,
+      "score": 8,
+      "rules": {
+        "heavy-shadow": 2
+      }
+    },
+    {
+      "file": "components/features/chat/FloatingChatButton.tsx",
+      "count": 2,
+      "score": 8,
+      "rules": {
+        "heavy-shadow": 2
+      }
+    },
+    {
+      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
+      "count": 5,
+      "score": 6,
+      "rules": {
+        "uppercase-tracking": 4,
+        "aggressive-motion": 1
+      }
+    },
+    {
+      "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueAutoTagsSection.tsx",
+      "count": 2,
+      "score": 6,
+      "rules": {
+        "hardcoded-color": 1,
+        "hardcoded-surface": 1
+      }
+    },
+    {
+      "file": "components/features/settings/IntegrationsTab.tsx",
+      "count": 2,
+      "score": 6,
+      "rules": {
+        "heavy-font": 2
+      }
+    },
+    {
+      "file": "components/features/contacts/ImportContactsDialog.tsx",
+      "count": 4,
+      "score": 4,
+      "rules": {
+        "uppercase-tracking": 4
+      }
+    },
+    {
+      "file": "components/features/integrations/MetaIntegrationSettings.tsx",
+      "count": 4,
+      "score": 4,
+      "rules": {
+        "uppercase-tracking": 4
       }
     },
     {
@@ -140,7 +538,7 @@
       }
     },
     {
-      "file": "components/features/round-robin/DistributionQueueEditor.tsx",
+      "file": "components/features/schedule/CalendarView.tsx",
       "count": 2,
       "score": 4,
       "rules": {
@@ -148,15 +546,218 @@
       }
     },
     {
-      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "count": 3,
+      "file": "components/features/contacts/ContactCard.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "hardcoded-color": 1
+      }
+    },
+    {
+      "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "hardcoded-color": 1
+      }
+    },
+    {
+      "file": "components/features/leads/LeadCard.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "hardcoded-color": 1
+      }
+    },
+    {
+      "file": "components/features/marketing/MarketingTrendChart.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/round-robin/DistributionQueueEditor.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaAdaptiveChart.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaDailyChart.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaWeeklyChart.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/settings/UserPermissionsScreen.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/teams/TeamEditorScreen.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
+      "count": 2,
       "score": 3,
       "rules": {
-        "uppercase-tracking": 3
+        "uppercase-tracking": 1,
+        "aggressive-motion": 1
+      }
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaUpcomingEventsPanel.tsx",
+      "count": 2,
+      "score": 3,
+      "rules": {
+        "uppercase-tracking": 1,
+        "aggressive-motion": 1
+      }
+    },
+    {
+      "file": "components/features/marketing/MarketingTabViews.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "oversized-radius": 1
+      }
+    },
+    {
+      "file": "components/features/presence/OnlineUsersPanel.tsx",
+      "count": 1,
+      "score": 3,
+      "rules": {
+        "heavy-font": 1
+      }
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaDashboardFilters.tsx",
+      "count": 2,
+      "score": 2,
+      "rules": {
+        "uppercase-tracking": 2
+      }
+    },
+    {
+      "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
+      "count": 2,
+      "score": 2,
+      "rules": {
+        "uppercase-tracking": 2
+      }
+    },
+    {
+      "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
+      "count": 1,
+      "score": 2,
+      "rules": {
+        "medium-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/whatsapp/message-bubble/MessageReactions.tsx",
+      "count": 1,
+      "score": 2,
+      "rules": {
+        "medium-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/admin/AdminNotificationSettingsContent.tsx",
+      "count": 1,
+      "score": 1,
+      "rules": {
+        "uppercase-tracking": 1
+      }
+    },
+    {
+      "file": "components/features/marketing/MarketingMediaGallery.tsx",
+      "count": 1,
+      "score": 1,
+      "rules": {
+        "uppercase-tracking": 1
+      }
+    },
+    {
+      "file": "components/features/marketing/MarketingPaidTable.tsx",
+      "count": 1,
+      "score": 1,
+      "rules": {
+        "uppercase-tracking": 1
+      }
+    },
+    {
+      "file": "components/features/round-robin/DistributionQueueEditorScreen.tsx",
+      "count": 1,
+      "score": 1,
+      "rules": {
+        "uppercase-tracking": 1
+      }
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaResponsibleResultsPanel.tsx",
+      "count": 1,
+      "score": 1,
+      "rules": {
+        "uppercase-tracking": 1
+      }
+    },
+    {
+      "file": "components/features/teams/TeamOperationalOverview.tsx",
+      "count": 1,
+      "score": 1,
+      "rules": {
+        "uppercase-tracking": 1
       }
     }
   ],
   "findings": [
+    {
+      "file": "components/features/admin/AdminNotificationSettingsContent.tsx",
+      "line": 497,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
     {
       "file": "components/features/auth/AuthSplitLayout.tsx",
       "line": 46,
@@ -167,17 +768,422 @@
       "weight": 3
     },
     {
-      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
-      "line": 93,
+      "file": "components/features/chat/FloatingChat.tsx",
+      "line": 180,
+      "match": "shadow-[0_8px_24px_rgba",
+      "priority": "P1",
+      "rule": "heavy-shadow",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
+      "file": "components/features/chat/FloatingChat.tsx",
+      "line": 1490,
+      "match": "shadow-[0_4px_12px_rgba",
+      "priority": "P1",
+      "rule": "heavy-shadow",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
+      "file": "components/features/chat/FloatingChatButton.tsx",
+      "line": 130,
+      "match": "shadow-[0_8px_24px_rgba",
+      "priority": "P1",
+      "rule": "heavy-shadow",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
+      "file": "components/features/chat/FloatingChatButton.tsx",
+      "line": 130,
+      "match": "shadow-[0_10px_28px_rgba",
+      "priority": "P1",
+      "rule": "heavy-shadow",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
+      "file": "components/features/contacts/ContactCard.tsx",
+      "line": 210,
+      "match": "#ffffff",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/contacts/contacts-screen/ContactsList.tsx",
+      "line": 630,
+      "match": "#ffffff",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
+      "line": 84,
+      "match": "shadow-sm",
+      "priority": "P2",
+      "rule": "medium-shadow",
+      "surfaceScope": "protected-only",
+      "weight": 2
+    },
+    {
+      "file": "components/features/contacts/ImportContactsDialog.tsx",
+      "line": 947,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
       "surfaceScope": "protected-only",
       "weight": 1
+    },
+    {
+      "file": "components/features/contacts/ImportContactsDialog.tsx",
+      "line": 947,
+      "match": "tracking-wide",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/contacts/ImportContactsDialog.tsx",
+      "line": 1005,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/contacts/ImportContactsDialog.tsx",
+      "line": 1005,
+      "match": "tracking-wide",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/integrations/MetaIntegrationSettings.tsx",
+      "line": 1256,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/integrations/MetaIntegrationSettings.tsx",
+      "line": 1256,
+      "match": "tracking-wide",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/integrations/MetaIntegrationSettings.tsx",
+      "line": 1297,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/integrations/MetaIntegrationSettings.tsx",
+      "line": 1297,
+      "match": "tracking-wide",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/leads/LeadCard.tsx",
+      "line": 392,
+      "match": "#25D366",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingMediaGallery.tsx",
+      "line": 183,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/marketing/MarketingOverviewDashboard.tsx",
+      "line": 352,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/marketing/MarketingOverviewDashboard.tsx",
+      "line": 415,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/marketing/MarketingOverviewDashboard.tsx",
+      "line": 541,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/marketing/MarketingOverviewDashboard.tsx",
+      "line": 729,
+      "match": "shadow-[0_10px_30px_rgba",
+      "priority": "P1",
+      "rule": "heavy-shadow",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingOverviewDashboard.tsx",
+      "line": 1068,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/marketing/MarketingPaidTable.tsx",
+      "line": 637,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "line": 85,
+      "match": "rounded-[10px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "line": 85,
+      "match": "bg-[rgba(255,255,255,0.08)]",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "line": 85,
+      "match": "#f8fafc",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "line": 85,
+      "match": "bg-[rgba(255,255,255,0.13)]",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "line": 85,
+      "match": "#cbd5e1",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "line": 85,
+      "match": "#94a3b8",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "line": 94,
+      "match": "#94a3b8",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "line": 104,
+      "match": "shadow-xl",
+      "priority": "P1",
+      "rule": "heavy-shadow",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "line": 104,
+      "match": "rounded-[10px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "line": 104,
+      "match": "#172946",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "line": 104,
+      "match": "#f8fafc",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "line": 112,
+      "match": "#f8fafc",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "line": 112,
+      "match": "bg-[rgba(255,255,255,0.1)]",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "line": 112,
+      "match": "#f8fafc",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "line": 124,
+      "match": "#f8fafc",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "line": 124,
+      "match": "bg-[rgba(255,255,255,0.1)]",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "line": 124,
+      "match": "#f8fafc",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "line": 165,
+      "match": "rounded-[16px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "line": 165,
+      "match": "#07142f",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingScopeFilters.tsx",
+      "line": 165,
+      "match": "#07142f",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/marketing/MarketingTabViews.tsx",
+      "line": 323,
+      "match": "rounded-[10px]",
+      "priority": "P1",
+      "rule": "oversized-radius",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/marketing/MarketingTrendChart.tsx",
+      "line": 179,
+      "match": "shadow-[0_8px_24px_rgba",
+      "priority": "P1",
+      "rule": "heavy-shadow",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/presence/OnlineUsersPanel.tsx",
+      "line": 122,
+      "match": "font-semibold",
+      "priority": "P1",
+      "rule": "heavy-font",
+      "surfaceScope": "protected-and-public",
+      "weight": 3
     },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
-      "line": 369,
+      "line": 72,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -186,7 +1192,7 @@
     },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
-      "line": 433,
+      "line": 358,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -195,7 +1201,16 @@
     },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
-      "line": 439,
+      "line": 422,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
+      "line": 428,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -204,7 +1219,7 @@
     },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
-      "line": 75,
+      "line": 54,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -213,7 +1228,7 @@
     },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
-      "line": 98,
+      "line": 77,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -222,7 +1237,7 @@
     },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
-      "line": 140,
+      "line": 119,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -231,7 +1246,7 @@
     },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
-      "line": 146,
+      "line": 125,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -240,7 +1255,7 @@
     },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
-      "line": 271,
+      "line": 250,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -249,7 +1264,7 @@
     },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
-      "line": 318,
+      "line": 297,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -258,7 +1273,7 @@
     },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
-      "line": 433,
+      "line": 412,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -267,7 +1282,7 @@
     },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceSections.tsx",
-      "line": 434,
+      "line": 413,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -276,7 +1291,7 @@
     },
     {
       "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "line": 603,
+      "line": 708,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -285,7 +1300,16 @@
     },
     {
       "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "line": 800,
+      "line": 734,
+      "match": "group-hover:translate-x-0.5",
+      "priority": "P2",
+      "rule": "aggressive-motion",
+      "surfaceScope": "protected-only",
+      "weight": 2
+    },
+    {
+      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
+      "line": 789,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -294,7 +1318,7 @@
     },
     {
       "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
-      "line": 829,
+      "line": 1187,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -302,8 +1326,26 @@
       "weight": 1
     },
     {
-      "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-      "line": 1320,
+      "file": "components/features/properties/PropertyWorkspaceScreen.tsx",
+      "line": 1222,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueAutoTagsSection.tsx",
+      "line": 25,
+      "match": "#3B82F6",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueAutoTagsSection.tsx",
+      "line": 246,
       "match": "bg-black/10",
       "priority": "P2",
       "rule": "hardcoded-surface",
@@ -311,12 +1353,327 @@
       "weight": 2
     },
     {
+      "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
+      "line": 165,
+      "match": "shadow-lg",
+      "priority": "P1",
+      "rule": "heavy-shadow",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
+      "line": 296,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
+      "line": 296,
+      "match": "tracking-wide",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
+      "line": 522,
+      "match": "shadow-lg",
+      "priority": "P1",
+      "rule": "heavy-shadow",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
       "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-      "line": 1354,
-      "match": "bg-black/10",
+      "line": 1152,
+      "match": "shadow-[0_-10px_30px_rgba",
+      "priority": "P1",
+      "rule": "heavy-shadow",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/round-robin/DistributionQueueEditorScreen.tsx",
+      "line": 48,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/schedule/CalendarView.tsx",
+      "line": 382,
+      "match": "bg-white",
       "priority": "P2",
       "rule": "hardcoded-surface",
       "surfaceScope": "protected-only",
+      "weight": 2
+    },
+    {
+      "file": "components/features/schedule/CalendarView.tsx",
+      "line": 794,
+      "match": "bg-white/90",
+      "priority": "P2",
+      "rule": "hardcoded-surface",
+      "surfaceScope": "protected-only",
+      "weight": 2
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaAdaptiveChart.tsx",
+      "line": 165,
+      "match": "shadow-[0_8px_24px_rgba",
+      "priority": "P1",
+      "rule": "heavy-shadow",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaDailyChart.tsx",
+      "line": 83,
+      "match": "shadow-[0_8px_24px_rgba",
+      "priority": "P1",
+      "rule": "heavy-shadow",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaDashboardFilters.tsx",
+      "line": 249,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaDashboardFilters.tsx",
+      "line": 275,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaDashboardPanels.tsx",
+      "line": 19,
+      "match": "#fb6a4a",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaDashboardPanels.tsx",
+      "line": 20,
+      "match": "#f97316",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaDashboardPanels.tsx",
+      "line": 21,
+      "match": "#f59e0b",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaDashboardPanels.tsx",
+      "line": 22,
+      "match": "#0ea5e9",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaDashboardPanels.tsx",
+      "line": 23,
+      "match": "#8b5cf6",
+      "priority": "P1",
+      "rule": "hardcoded-color",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
+      "line": 428,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
+      "line": 508,
+      "match": "group-hover:translate-x-0.5",
+      "priority": "P2",
+      "rule": "aggressive-motion",
+      "surfaceScope": "protected-only",
+      "weight": 2
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaResponsibleResultsPanel.tsx",
+      "line": 163,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaUpcomingEventsPanel.tsx",
+      "line": 155,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaUpcomingEventsPanel.tsx",
+      "line": 223,
+      "match": "group-hover:translate-x-0.5",
+      "priority": "P2",
+      "rule": "aggressive-motion",
+      "surfaceScope": "protected-only",
+      "weight": 2
+    },
+    {
+      "file": "components/features/schedule/dashboard/AgendaWeeklyChart.tsx",
+      "line": 106,
+      "match": "shadow-[0_8px_24px_rgba",
+      "priority": "P1",
+      "rule": "heavy-shadow",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/settings/IntegrationsTab.tsx",
+      "line": 1344,
+      "match": "font-semibold",
+      "priority": "P1",
+      "rule": "heavy-font",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/settings/IntegrationsTab.tsx",
+      "line": 1426,
+      "match": "font-semibold",
+      "priority": "P1",
+      "rule": "heavy-font",
+      "surfaceScope": "protected-only",
+      "weight": 3
+    },
+    {
+      "file": "components/features/settings/UserPermissionsScreen.tsx",
+      "line": 169,
+      "match": "shadow-[0_-10px_30px_rgba",
+      "priority": "P1",
+      "rule": "heavy-shadow",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/site/VisitorMap.tsx",
+      "line": 323,
+      "match": "shadow-sm",
+      "priority": "P2",
+      "rule": "medium-shadow",
+      "surfaceScope": "protected-only",
+      "weight": 2
+    },
+    {
+      "file": "components/features/site/VisitorMap.tsx",
+      "line": 358,
+      "match": "shadow-sm",
+      "priority": "P2",
+      "rule": "medium-shadow",
+      "surfaceScope": "protected-only",
+      "weight": 2
+    },
+    {
+      "file": "components/features/site/VisitorMap.tsx",
+      "line": 364,
+      "match": "shadow-sm",
+      "priority": "P2",
+      "rule": "medium-shadow",
+      "surfaceScope": "protected-only",
+      "weight": 2
+    },
+    {
+      "file": "components/features/site/VisitorMap.tsx",
+      "line": 371,
+      "match": "shadow-sm",
+      "priority": "P2",
+      "rule": "medium-shadow",
+      "surfaceScope": "protected-only",
+      "weight": 2
+    },
+    {
+      "file": "components/features/teams/TeamEditorScreen.tsx",
+      "line": 1039,
+      "match": "shadow-[0_-10px_30px_rgba",
+      "priority": "P1",
+      "rule": "heavy-shadow",
+      "surfaceScope": "protected-only",
+      "weight": 4
+    },
+    {
+      "file": "components/features/teams/TeamOperationalOverview.tsx",
+      "line": 138,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
+      "line": 308,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-and-public",
+      "weight": 1
+    },
+    {
+      "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
+      "line": 349,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-and-public",
+      "weight": 1
+    },
+    {
+      "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
+      "line": 190,
+      "match": "shadow-[0_4px_12px_rgba",
+      "priority": "P1",
+      "rule": "heavy-shadow",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
+      "file": "components/features/whatsapp/message-bubble/MessageReactions.tsx",
+      "line": 82,
+      "match": "shadow-md",
+      "priority": "P2",
+      "rule": "medium-shadow",
+      "surfaceScope": "protected-and-public",
       "weight": 2
     }
   ]

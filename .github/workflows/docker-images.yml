@@ -4,11 +4,13 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
   contents: read
-  packages: write
 
 env:
   REGISTRY: ghcr.io
@@ -16,9 +18,84 @@ env:
   API_IMAGE: ${{ github.repository_owner }}/vimob-crm-api
 
 jobs:
+  release-gates:
+    name: Static release gates
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install web dependencies
+        run: npm ci
+
+      - name: Audit production and development dependencies
+        run: npm audit --audit-level=high
+
+      - name: Verify generated inventories
+        run: npm run audit:check
+
+      - name: Test validation contracts
+        run: npm run validation:test
+
+      - name: Test property media contracts
+        run: npm run test:property-media
+
+      - name: Test property UI contracts
+        run: npm run test:property-ui
+
+      - name: Test property Edge contracts
+        run: npm run test:property-edge
+
+      - name: Test canonical auth and admin contracts
+        run: npm run validation:auth-admin
+
+      - name: Type-check application sources
+        run: npm run typecheck
+
+      - name: Lint application sources
+        run: npm run lint
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: |
+            apps/api/go.sum
+            packages/auth/go.sum
+            packages/db/go.sum
+
+      - name: Verify Supabase migration integrity
+        run: node scripts/supabase/verify-migrations.mjs
+
+      - name: Verify Edge Function release manifest
+        run: node scripts/supabase/verify-edge-functions.mjs
+
+      - name: Verify retired Edge Function boundaries
+        run: >-
+          node --test
+          scripts/tests/media-worker-edge-retirement.test.mjs
+          scripts/tests/meta-edge-retirement.test.mjs
+          scripts/tests/message-worker-gateway-config.test.mjs
+
+      - name: Test API and shared Go packages
+        run: go test ./apps/api/... ./packages/auth/... ./packages/db/...
+
   build-and-push:
     name: Build and push images
+    needs: release-gates
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     env:
       WEB_NEXT_PUBLIC_SUPABASE_URL: ${{ vars.VIMOB_NEXT_PUBLIC_SUPABASE_URL || secrets.VIMOB_NEXT_PUBLIC_SUPABASE_URL }}
       WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY || secrets.VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY }}

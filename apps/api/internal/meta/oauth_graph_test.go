@@ -267,6 +267,40 @@ func TestOAuthGraphMapsTokenFailuresAndRejectsOversizedResponses(t *testing.T) {
 	}
 }
 
+func TestOAuthGraphUsesEarliestTokenAndDataAccessExpiry(t *testing.T) {
+	const (
+		appID     = "123456789"
+		appSecret = "test-app-secret-value"
+		userToken = "long-token-123456789012"
+	)
+	tokenExpiry := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	dataAccessExpiry := tokenExpiry.Add(-14 * 24 * time.Hour)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v25.0/debug_token" {
+			http.NotFound(w, r)
+			return
+		}
+		writeOAuthTestJSON(w, map[string]any{"data": map[string]any{
+			"is_valid":               true,
+			"app_id":                 appID,
+			"user_id":                "9001",
+			"expires_at":             tokenExpiry.Unix(),
+			"data_access_expires_at": dataAccessExpiry.Unix(),
+			"scopes":                 OAuthScopes(),
+		}})
+	}))
+	defer server.Close()
+
+	graph := newOAuthTestGraph(t, server.URL, appID, appSecret)
+	debug, err := graph.debugUserToken(context.Background(), userToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if debug.ExpiresAt == nil || !debug.ExpiresAt.Equal(dataAccessExpiry) {
+		t.Fatalf("effective expiry = %v, want %v", debug.ExpiresAt, dataAccessExpiry)
+	}
+}
+
 func newOAuthTestGraph(t *testing.T, providerURL string, appID string, appSecret string) *oauthGraphClient {
 	t.Helper()
 	graph, err := newOAuthGraphClient(OAuthConfig{

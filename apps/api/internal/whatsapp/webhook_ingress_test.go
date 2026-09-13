@@ -9,6 +9,119 @@ import (
 	"time"
 )
 
+func TestEvolutionWebhookSchemaCompatibilityRequiresLiveLaneContract(t *testing.T) {
+	query := strings.ToLower(strings.Join(strings.Fields(evolutionWebhookSchemaCompatibilityQuery), " "))
+	for _, required := range []string{
+		"to_regclass('public.whatsapp_webhook_inbox') is not null",
+		"attname = 'processing_lane'",
+		"attname = 'provider_occurred_at'",
+		"to_regclass('public.whatsapp_webhook_inbox_lane_session_due_head_idx')",
+		"to_regclass('public.whatsapp_webhook_inbox_session_processing_idx')",
+		"indisready and indisvalid",
+	} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("schema compatibility query is missing %q", required)
+		}
+	}
+}
+
+func TestAcceptEvolutionWebhookBatchUsesAtomicOriginalKeyFence(t *testing.T) {
+	source := readWhatsAppSourceFunction(t, "webhook_ingress.go", `func (repo Repository) AcceptEvolutionWebhook`)
+	normalized := strings.ToLower(strings.Join(strings.Fields(source), " "))
+	for _, required := range []string{
+		"tx, err := repo.db.pool().begin(ctx)",
+		"first := parts[0]",
+		"on conflict (event_key) do nothing",
+		"clock_timestamp()",
+		"if receipt.duplicate",
+		"jsonb_to_recordset($4::jsonb)",
+		"part.ordinal::double precision * interval '1 microsecond'",
+		"order by part.ordinal",
+		"if err := tx.commit(ctx)",
+	} {
+		if !strings.Contains(normalized, required) {
+			t.Fatalf("batch persistence is missing %q\n%s", required, source)
+		}
+	}
+	duplicateFence := strings.Index(normalized, "if receipt.duplicate")
+	derivedInsert := strings.Index(normalized, "jsonb_to_recordset($4::jsonb)")
+	if duplicateFence < 0 || derivedInsert < 0 || duplicateFence > derivedInsert {
+		t.Fatalf("the original event key must fence derived inserts during rolling deploys\n%s", source)
+	}
+}
+
+func TestReconnectMakesDurableOutboxRetriesImmediatelyEligible(t *testing.T) {
+	query := strings.ToLower(strings.Join(strings.Fields(releaseWhatsAppOutboxRetriesAfterReconnectQuery), " "))
+	for _, required := range []string{
+		"update public.whatsapp_outbox",
+		"set next_attempt_at = now()",
+		"where organization_id = $1::uuid",
+		"and session_id = $2::uuid",
+		"and status = 'retry'",
+		"and attempts < max_attempts",
+	} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("reconnect retry release is missing %q", required)
+		}
+	}
+}
+
+func TestReconnectReleasesOnlyCausallyOlderDefinitiveMediaQuarantine(t *testing.T) {
+	source := readWhatsAppSourceFunction(t, "webhook_ingress.go", `func (repo Repository) applyEvolutionWebhookSessionState`)
+	normalized := strings.ToLower(strings.Join(strings.Fields(source), " "))
+	for _, required := range []string{
+		`reconnected := state.status == "connected" && result.rowsaffected() > 0`,
+		"delete from private.whatsapp_media_session_quarantine",
+		"reason = 'media_provider_disconnected'",
+		"updated_at <= $2::timestamptz",
+		"state.occurredat.utc()",
+		"wakewhatsappmediaworker()",
+	} {
+		if !strings.Contains(normalized, required) {
+			t.Fatalf("causal media quarantine release is missing %q\n%s", required, source)
+		}
+	}
+	if strings.Contains(normalized, "reason = 'media_provider_outcome_unknown'") {
+		t.Fatal("generic reconnect can erase an outcome-unknown media cooldown")
+	}
+
+	processor := readWhatsAppSourceFunction(t, "webhook_native_processor.go", `func (repo Repository) processEvolutionWebhookNative`)
+	if strings.Contains(strings.ToLower(processor), "delete from private.whatsapp_media_session_quarantine") {
+		t.Fatal("backlogged native processing can bypass the webhook tuple/time fence")
+	}
+}
+
+func TestEvolutionWebhookSessionStateCannotUndoExplicitLogout(t *testing.T) {
+	source := readWhatsAppSourceFunction(t, "webhook_ingress.go", `func (repo Repository) applyEvolutionWebhookSessionState`)
+	normalized := strings.ToLower(strings.Join(strings.Fields(source), " "))
+	logoutGuard := "lower(coalesce(advanced_settings->>'auto_reconnect_enabled', 'true')) = 'false' and lower(coalesce(advanced_settings->>'auto_reconnect_blocked_reason', '')) = 'user_logged_out'"
+	if got := strings.Count(normalized, logoutGuard); got != 2 {
+		t.Fatalf("webhook session-state logout guard count = %d, want QR and connection guards\n%s", got, source)
+	}
+	if !strings.Contains(normalized, "$3 not in ('connected', 'qr_ready') or not (") {
+		t.Fatalf("connection webhook guard must preserve disconnected events while rejecting connected/qr_ready after logout\n%s", source)
+	}
+}
+
+func TestExplicitSessionCreationClearsLogoutMarkerBeforeConvergence(t *testing.T) {
+	clear := readWhatsAppSourceFunction(t, "session_operations.go", `func clearSessionLifecycleSettings`)
+	if !strings.Contains(clear, `"auto_reconnect_blocked_reason"`) {
+		t.Fatalf("lifecycle cleanup must remove the terminal logout marker\n%s", clear)
+	}
+
+	for _, signature := range []string{
+		`func (repo Repository) CreateSession`,
+		`func (repo Repository) RecreateSession`,
+	} {
+		source := readWhatsAppSourceFunction(t, "session_operations.go", signature)
+		enableAt := strings.LastIndex(source, `settings["auto_reconnect_enabled"] = true`)
+		clearAt := strings.LastIndex(source, "clearSessionLifecycleSettings(settings)")
+		if enableAt < 0 || clearAt < enableAt {
+			t.Fatalf("%s must explicitly enable reconnect and clear the logout marker after provider connect\n%s", signature, source)
+		}
+	}
+}
+
 func TestParseEvolutionWebhookEnvelopeUsesScopedSessionAndHeaderToken(t *testing.T) {
 	query := url.Values{
 		"session_id":  []string{"45c7cc1f-6dad-4cf4-8df3-561858de4725"},
@@ -93,7 +206,7 @@ func TestEvolutionWebhookRejectsEveryQueryCredential(t *testing.T) {
 }
 
 func TestParseEvolutionWebhookEnvelopeRemovesCredentialsBeforePersistence(t *testing.T) {
-	body := []byte(`{"event":"MESSAGE","instanceToken":"provider-secret","data":{"instance_token":"nested-secret","message":{"conversation":"hello"}},"webhook_token":"legacy-secret"}`)
+	body := []byte(`{"event":"MESSAGE","instanceToken":"provider-secret","data":{"instance_token":"nested-secret","message":{"conversation":"hello"}},"webhook_token":"legacy-secret","__vimob_ingress":{"routing_key":"attacker-controlled"}}`)
 	envelope, err := parseEvolutionWebhookEnvelope(
 		url.Values{
 			"session_id":  []string{"45c7cc1f-6dad-4cf4-8df3-561858de4725"},
@@ -112,7 +225,7 @@ func TestParseEvolutionWebhookEnvelopeRemovesCredentialsBeforePersistence(t *tes
 		t.Fatalf("EventKey = %q, want existing raw-payload deduplication key %q", envelope.EventKey, want)
 	}
 	stored := string(envelope.Payload)
-	for _, secret := range []string{"provider-secret", "nested-secret", "legacy-secret", "instanceToken", "instance_token", "webhook_token"} {
+	for _, secret := range []string{"provider-secret", "nested-secret", "legacy-secret", "instanceToken", "instance_token", "webhook_token", "attacker-controlled", evolutionWebhookRoutingMetaKey} {
 		if strings.Contains(stored, secret) {
 			t.Fatalf("sanitized inbox payload still contains %q: %s", secret, stored)
 		}
@@ -226,6 +339,21 @@ func TestEvolutionWebhookInlineSessionStateDoesNotDropEmptyQRCodeEvent(t *testin
 	}
 	if state.Handled || state.QRCode != "" || state.Status != "" {
 		t.Fatalf("empty QR event must remain durable, got %#v", state)
+	}
+}
+
+func TestEvolutionWebhookInlineSessionStateAcknowledgesQRTimeoutWithoutMutatingSession(t *testing.T) {
+	envelope := evolutionWebhookEnvelope{
+		EventType: "qrtimeout",
+		EventKey:  "qr-timeout-event",
+		Payload:   []byte(`{"event":"QR_TIMEOUT","data":{"attempts":1,"maxAttempts":5}}`),
+	}
+	state, err := evolutionWebhookInlineSessionState(envelope)
+	if err != nil {
+		t.Fatalf("evolutionWebhookInlineSessionState() returned error: %v", err)
+	}
+	if !state.Handled || state.QRCode != "" || state.Status != "" {
+		t.Fatalf("QR timeout must be acknowledged without a session mutation, got %#v", state)
 	}
 }
 

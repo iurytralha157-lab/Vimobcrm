@@ -84,38 +84,42 @@ func (repo Repository) sendInvitationEmail(ctx context.Context, input invitation
 
 	response, err := repo.httpClient.Do(request)
 	if err != nil {
-		repo.recordInvitationEmailOutcomeUnknownDetached(ctx, input, subject, err)
+		repo.recordInvitationEmailOutcomeUnknownDetached(ctx, input, subject, "", err)
 		return invitationEmailDelivery{}, err
 	}
 	defer response.Body.Close()
 
 	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
-		repo.recordInvitationEmailOutcomeUnknownDetached(ctx, input, subject, err)
+		repo.recordInvitationEmailOutcomeUnknownDetached(ctx, input, subject, "", err)
 		return invitationEmailDelivery{}, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		providerErr := fmt.Errorf("resend invitation failed: %s", strings.TrimSpace(string(raw)))
-		repo.recordInvitationEmailFailureDetached(ctx, input, subject, providerErr)
-		return invitationEmailDelivery{}, fmt.Errorf("%w: %v", errInvitationEmailDefinitelyNotAccepted, providerErr)
+		if isDefinitelyRejectedInvitationEmailResponse(response.StatusCode) {
+			repo.recordInvitationEmailFailureDetached(ctx, input, subject, providerErr)
+			return invitationEmailDelivery{}, fmt.Errorf("%w: %v", errInvitationEmailDefinitelyNotAccepted, providerErr)
+		}
+		repo.recordInvitationEmailOutcomeUnknownDetached(ctx, input, subject, "", providerErr)
+		return invitationEmailDelivery{}, providerErr
 	}
 	var providerResponse struct {
 		ID string `json:"id"`
 	}
 	if err := json.Unmarshal(raw, &providerResponse); err != nil {
-		repo.recordInvitationEmailOutcomeUnknownDetached(ctx, input, subject, err)
+		repo.recordInvitationEmailOutcomeUnknownDetached(ctx, input, subject, "", err)
 		return invitationEmailDelivery{}, fmt.Errorf("decode resend invitation response: %w", err)
 	}
 	providerResponse.ID = strings.TrimSpace(providerResponse.ID)
 	if providerResponse.ID == "" {
 		err := fmt.Errorf("resend invitation response did not include a message id")
-		repo.recordInvitationEmailOutcomeUnknownDetached(ctx, input, subject, err)
+		repo.recordInvitationEmailOutcomeUnknownDetached(ctx, input, subject, "", err)
 		return invitationEmailDelivery{}, err
 	}
 	recordContext, cancelRecord := context.WithTimeout(context.WithoutCancel(ctx), invitationEmailLogTimeout)
 	defer cancelRecord()
 	if err := repo.recordInvitationEmailAccepted(recordContext, input, subject, providerResponse.ID); err != nil {
-		repo.recordInvitationEmailOutcomeUnknownDetached(ctx, input, subject, err)
+		repo.recordInvitationEmailOutcomeUnknownDetached(ctx, input, subject, providerResponse.ID, err)
 		return invitationEmailDelivery{}, fmt.Errorf("persist accepted invitation email: %w", err)
 	}
 
@@ -123,6 +127,21 @@ func (repo Repository) sendInvitationEmail(ctx context.Context, input invitation
 		ProviderMessageID: providerResponse.ID,
 		Status:            "accepted",
 	}, nil
+}
+
+func isDefinitelyRejectedInvitationEmailResponse(statusCode int) bool {
+	if statusCode < 400 || statusCode >= 500 {
+		return false
+	}
+	switch statusCode {
+	case http.StatusRequestTimeout,
+		http.StatusConflict,
+		http.StatusTooEarly,
+		http.StatusTooManyRequests:
+		return false
+	default:
+		return true
+	}
 }
 
 func (repo Repository) recordInvitationEmailFailureDetached(
@@ -140,6 +159,7 @@ func (repo Repository) recordInvitationEmailOutcomeUnknownDetached(
 	ctx context.Context,
 	input invitationEmailInput,
 	subject string,
+	providerMessageID string,
 	deliveryErr error,
 ) {
 	recordContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), invitationEmailLogTimeout)
@@ -147,7 +167,39 @@ func (repo Repository) recordInvitationEmailOutcomeUnknownDetached(
 	if repo.db == nil {
 		return
 	}
-	_, err := repo.db.Pool().Exec(recordContext, `
+	tx, err := repo.db.Pool().Begin(recordContext)
+	if err != nil {
+		slog.Error(
+			"invitation email outcome and log update are both unknown",
+			"invitation_id", input.InvitationID,
+			"organization_id", input.OrganizationID,
+			"error", err,
+		)
+		return
+	}
+	defer tx.Rollback(recordContext)
+
+	providerMessageID = strings.TrimSpace(providerMessageID)
+	if providerMessageID != "" {
+		if _, err := tx.Exec(recordContext, `
+			select pg_catalog.pg_advisory_xact_lock(
+				pg_catalog.hashtextextended(
+					'resend:' || left(btrim($1), 255),
+					0
+				)
+			)
+		`, providerMessageID); err != nil {
+			slog.Error(
+				"invitation email provider id reconciliation lock failed",
+				"invitation_id", input.InvitationID,
+				"organization_id", input.OrganizationID,
+				"error", err,
+			)
+			return
+		}
+	}
+
+	tag, err := tx.Exec(recordContext, `
 		update public.email_logs
 		set status = case
 				when status_event_at is not null or status = 'delivered' then status
@@ -156,6 +208,10 @@ func (repo Repository) recordInvitationEmailOutcomeUnknownDetached(
 			error_message = case
 				when status_event_at is not null or status = 'delivered' then error_message
 				else left($2, 1000)
+			end,
+			provider_message_id = case
+				when nullif(btrim($5), '') is null then provider_message_id
+				else coalesce(provider_message_id, left(btrim($5), 255))
 			end,
 			updated_at = now(),
 			metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
@@ -166,10 +222,32 @@ func (repo Repository) recordInvitationEmailOutcomeUnknownDetached(
 			)
 		where provider = 'resend'
 		  and idempotency_key = $1
-	`, strings.TrimSpace(input.IdempotencyKey), strings.TrimSpace(deliveryErr.Error()), input.InvitationID, subject)
+		  and (
+			nullif(btrim($5), '') is null
+			or provider_message_id is null
+			or provider_message_id = left(btrim($5), 255)
+		  )
+	`, strings.TrimSpace(input.IdempotencyKey), strings.TrimSpace(deliveryErr.Error()), input.InvitationID, subject, providerMessageID)
 	if err != nil {
 		slog.Error(
 			"invitation email outcome and log update are both unknown",
+			"invitation_id", input.InvitationID,
+			"organization_id", input.OrganizationID,
+			"error", err,
+		)
+		return
+	}
+	if tag.RowsAffected() != 1 {
+		slog.Error(
+			"invitation email outcome log was not reconciled",
+			"invitation_id", input.InvitationID,
+			"organization_id", input.OrganizationID,
+		)
+		return
+	}
+	if err := tx.Commit(recordContext); err != nil {
+		slog.Error(
+			"invitation email outcome log commit is unknown",
 			"invitation_id", input.InvitationID,
 			"organization_id", input.OrganizationID,
 			"error", err,
@@ -199,7 +277,11 @@ func (repo Repository) prepareInvitationEmailDelivery(
 		)
 		values (
 			$1::uuid,
-			$2::uuid,
+			(
+				select app_user.id
+				from public.users app_user
+				where app_user.id = $2::uuid
+			),
 			$3,
 			$4,
 			'processing',

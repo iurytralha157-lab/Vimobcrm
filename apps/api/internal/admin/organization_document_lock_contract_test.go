@@ -25,4 +25,3 @@ func TestSignupAndSuperadminCreationShareCanonicalDocumentLock(t *testing.T) {
 		}
 	}
 }
-

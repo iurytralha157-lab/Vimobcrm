@@ -23,6 +23,7 @@ import {
   vistaIntegrationInputSchema,
 } from "./integrations";
 import {
+  apiPropertyStatsSchema,
   propertyCreateInputSchema,
   propertyListQuerySchema,
 } from "./properties";
@@ -45,7 +46,9 @@ import {
 } from "./settings";
 import {
   addRoundRobinMemberInputSchema,
+  apiRoundRobinHistoryListResponseSchema,
   apiRoundRobinMetaFormOptionListResponseSchema,
+  apiTeamDistributionStatsResponseSchema,
   availabilityInputSchema,
   bulkAvailabilityInputSchema,
   contactListQuerySchema,
@@ -78,54 +81,107 @@ import {
 } from "./final-domains";
 import {
   auditLogCreateInputSchema,
-  apiMeProfileResponseSchema,
   checkoutBillingDraftSessionSchema,
   checkoutBillingProfileSessionSchema,
   paymentCheckoutQuerySchema,
   apiPropertyOwnerPageResponseSchema,
+  propertyCatalogDeleteInputSchema,
+  propertyCityUpdateInputSchema,
   propertyCondominiumInputSchema,
+  propertyCondominiumUpdateInputSchema,
+  propertyNeighborhoodUpdateInputSchema,
+  propertyOwnerCatalogUpdateInputSchema,
   propertyOwnerInputSchema,
   propertyOwnerPageQuerySchema,
   reportErrorEventInputSchema,
   searchFilterColumnsSchema,
   siteReorderInputSchema,
-  userActivityPresenceSessionInputSchema,
-  userActivitySessionMutationInputSchema,
   webhookCreateInputSchema,
 } from "./auxiliary";
+import { apiMeProfileResponseSchema } from "./auth-context";
+import { userActivitySessionMutationInputSchema } from "./presence";
 
 const ID = "11111111-1111-4111-8111-111111111111";
 const dashboardAPISource = readFileSync("lib/api/dashboard.ts", "utf8");
-const dashboardHookSource = readFileSync("hooks/use-dashboard-stats.ts", "utf8");
+const dashboardHookSource = readFileSync(
+  "hooks/use-dashboard-stats.ts",
+  "utf8",
+);
 const dashboardOpenAPISource = readFileSync(
   "packages/contracts/openapi/v1.yaml",
   "utf8",
 );
+const analyticsRepositorySource = [
+  "apps/api/internal/analytics/repository.go",
+  "apps/api/internal/analytics/site_repository.go",
+  "apps/api/internal/analytics/marketing_repository.go",
+  "apps/api/internal/analytics/business_repository.go",
+  "apps/api/internal/analytics/query.go",
+  "apps/api/internal/analytics/validation.go",
+]
+  .map((path) => readFileSync(path, "utf8"))
+  .join("\n");
 
-test('opções de formulário Meta da distribuição aceitam somente o contrato mínimo', () => {
-  assert.equal(apiRoundRobinMetaFormOptionListResponseSchema.safeParse({
-    data: [{
-      configId: ID,
-      formId: '1748389402409199',
-      formName: 'Gambino Guarulhos',
-      pageId: '104245329422343',
-      pageName: 'Gambino Facilita Apartamentos',
-      roundRobinId: ID,
-      isActive: true,
-      integrationConnected: true,
-    }],
-  }).success, true)
+test("histórico de distribuição aceita somente entidades da fila", () => {
+  const event = {
+    id: ID,
+    action: "create",
+    entity_type: "distribution_queue",
+    entity_id: ID,
+    old_data: null,
+    new_data: { id: ID, name: "Fila comercial" },
+    diff: null,
+    created_at: "2026-09-08T12:30:00Z",
+    user: null,
+    subject_user: null,
+  };
 
-  assert.equal(apiRoundRobinMetaFormOptionListResponseSchema.safeParse({
-    data: [{
-      configId: ID,
-      formId: '1748389402409199',
-      isActive: true,
-      integrationConnected: true,
-      accessToken: 'não deve atravessar esta fronteira',
-    }],
-  }).success, false)
-})
+  assert.equal(
+    apiRoundRobinHistoryListResponseSchema.safeParse({ data: [event] }).success,
+    true,
+  );
+  assert.equal(
+    apiRoundRobinHistoryListResponseSchema.safeParse({
+      data: [{ ...event, entity_type: "team" }],
+    }).success,
+    false,
+  );
+});
+
+test("opções de formulário Meta da distribuição aceitam somente o contrato mínimo", () => {
+  assert.equal(
+    apiRoundRobinMetaFormOptionListResponseSchema.safeParse({
+      data: [
+        {
+          configId: ID,
+          formId: "1748389402409199",
+          formName: "Gambino Guarulhos",
+          pageId: "104245329422343",
+          pageName: "Gambino Facilita Apartamentos",
+          roundRobinId: ID,
+          isActive: true,
+          integrationConnected: true,
+        },
+      ],
+    }).success,
+    true,
+  );
+
+  assert.equal(
+    apiRoundRobinMetaFormOptionListResponseSchema.safeParse({
+      data: [
+        {
+          configId: ID,
+          formId: "1748389402409199",
+          isActive: true,
+          integrationConnected: true,
+          accessToken: "não deve atravessar esta fronteira",
+        },
+      ],
+    }).success,
+    false,
+  );
+});
 
 const validAutomationFlow = {
   nodes: [
@@ -158,12 +214,22 @@ test("imovel exige titulo e filtros usam UUID valido", () => {
       tipo_de_imovel: "Apartamento",
       quartos: 2,
     }).success,
+    false,
+  );
+  assert.equal(
+    propertyCreateInputSchema.safeParse({
+      title: "Apartamento Centro",
+      tipo_de_imovel: "Apartamento",
+      tipo_de_negocio: "Venda",
+      quartos: 2,
+    }).success,
     true,
   );
   assert.equal(
     propertyCreateInputSchema.safeParse({
       title: "Apartamento Centro",
       tipo_de_imovel: "Apartamento",
+      tipo_de_negocio: "Venda",
       preco: -1,
     }).success,
     false,
@@ -172,6 +238,7 @@ test("imovel exige titulo e filtros usam UUID valido", () => {
     propertyCreateInputSchema.safeParse({
       title: "Apartamento Centro",
       tipo_de_imovel: "Apartamento",
+      tipo_de_negocio: "Venda",
       quartos: 2.5,
     }).success,
     false,
@@ -180,6 +247,7 @@ test("imovel exige titulo e filtros usam UUID valido", () => {
     propertyCreateInputSchema.safeParse({
       title: "Apartamento Centro",
       tipo_de_imovel: "Apartamento",
+      tipo_de_negocio: "Venda",
       latitude: 91,
     }).success,
     false,
@@ -188,6 +256,79 @@ test("imovel exige titulo e filtros usam UUID valido", () => {
     propertyListQuerySchema.safeParse({ owner_id: "invalido" }).success,
     false,
   );
+  assert.equal(
+    propertyCreateInputSchema.safeParse({
+      title: "Apartamento Centro",
+      tipo_de_imovel: "Apartamento",
+      tipo_de_negocio: "Permuta",
+    }).success,
+    false,
+  );
+  assert.equal(
+    propertyCreateInputSchema.safeParse({
+      title: "Apartamento Centro",
+      tipo_de_imovel: "Apartamento",
+      tipo_de_negocio: "Venda",
+      published_on_site: true,
+    }).success,
+    false,
+  );
+  assert.equal(
+    propertyListQuerySchema.safeParse({ status: "desconhecido" }).success,
+    false,
+  );
+  assert.equal(
+    propertyListQuerySchema.safeParse({ quartos_min: 1.5 }).success,
+    false,
+  );
+  assert.equal(
+    propertyListQuerySchema.safeParse({ valor_min: 500, valor_max: 100 }).success,
+    false,
+  );
+  assert.equal(
+    propertyCreateInputSchema.safeParse({
+      title: "Apartamento Centro",
+      tipo: "Casa",
+      tipo_de_imovel: "Apartamento",
+      tipo_de_negocio: "Venda",
+    }).success,
+    false,
+  );
+  assert.equal(
+    propertyCreateInputSchema.safeParse({
+      title: "Apartamento Centro",
+      tipo: " Apartamento ",
+      tipo_de_imovel: "Apartamento",
+      tipo_de_negocio: "Venda",
+      origin_media: " Indicacao ",
+      owner_media_source: "Indicacao",
+    }).success,
+    true,
+  );
+  assert.equal(
+    propertyCreateInputSchema.safeParse({
+      title: "Apartamento Centro",
+      tipo_de_imovel: "Apartamento",
+      tipo_de_negocio: "Venda",
+      origin_media: "a".repeat(81),
+    }).success,
+    false,
+  );
+});
+
+test("kpis de imoveis exigem contador proprio de lancamentos", () => {
+  const base = {
+    total: 10,
+    sale: 4,
+    rental: 3,
+    available: 7,
+    reserved: 1,
+    sold: 1,
+    rented: 1,
+    private: 2,
+  };
+  assert.equal(apiPropertyStatsSchema.safeParse({ ...base, launches: 3 }).success, true);
+  assert.equal(apiPropertyStatsSchema.safeParse(base).success, false);
 });
 
 test("automacao pode nascer como rascunho ou publicar o fluxo atomicamente", () => {
@@ -904,6 +1045,30 @@ test("configuracoes rejeitam senha curta, percentual excessivo e papel invalido"
     false,
   );
   assert.equal(
+    changePasswordInputSchema.safeParse({ password: "somente-minusculas" })
+      .success,
+    false,
+  );
+  assert.equal(
+    changePasswordInputSchema.safeParse({ password: "SenhaForte1!" }).success,
+    true,
+  );
+  assert.equal(
+    changePasswordInputSchema.safeParse({ password: "Aa1!" + "x".repeat(68) })
+      .success,
+    true,
+  );
+  assert.equal(
+    changePasswordInputSchema.safeParse({ password: "Aa1!" + "x".repeat(69) })
+      .success,
+    false,
+  );
+  assert.equal(
+    changePasswordInputSchema.safeParse({ password: "Aa1!" + "á".repeat(35) })
+      .success,
+    false,
+  );
+  assert.equal(
     updateOrganizationInputSchema.safeParse({
       default_commission_percentage: 101,
     }).success,
@@ -1137,6 +1302,35 @@ test("fila normaliza e limita tags automáticas sem confundir com regra de entra
     createRoundRobinInputSchema.safeParse({
       name: "Fila acima do limite",
       settings: { auto_tag_ids: Array.from({ length: 51 }, () => ID) },
+    }).success,
+    false,
+  );
+});
+
+test("estatísticas de distribuição da equipe preservam contagens e cobertura", () => {
+  const valid = {
+    data: {
+      totalEvents: 12,
+      uniqueLeads: 8,
+      redistributionEvents: 4,
+      coverage: "partial",
+      completeSince: "2026-09-04T20:30:00Z",
+    },
+  };
+
+  assert.equal(
+    apiTeamDistributionStatsResponseSchema.safeParse(valid).success,
+    true,
+  );
+  assert.equal(
+    apiTeamDistributionStatsResponseSchema.safeParse({
+      data: { ...valid.data, totalEvents: -1 },
+    }).success,
+    false,
+  );
+  assert.equal(
+    apiTeamDistributionStatsResponseSchema.safeParse({
+      data: { ...valid.data, coverage: "unknown" },
     }).success,
     false,
   );
@@ -1620,12 +1814,8 @@ test("dashboard valida corretores e liga cache, tenant e cancelamento", () => {
     dashboardHookSource,
     /function useDashboardQueryScope\(\)[\s\S]*?isTenantContextForOrganization\([\s\S]*?createTenantQueryAccessSignature\(/,
   );
-  assert.ok(
-    [...dashboardHookSource.matchAll(/enabled: isReady/g)].length >= 8,
-  );
-  assert.ok(
-    [...dashboardHookSource.matchAll(/accessSignature/g)].length >= 17,
-  );
+  assert.ok([...dashboardHookSource.matchAll(/enabled: isReady/g)].length >= 8);
+  assert.ok([...dashboardHookSource.matchAll(/accessSignature/g)].length >= 17);
   assert.doesNotMatch(dashboardHookSource, /Math\.abs\(/);
   assert.match(
     dashboardHookSource,
@@ -1647,8 +1837,11 @@ test("dashboard valida corretores e liga cache, tenant e cancelamento", () => {
       .length >= 10,
   );
   assert.ok(
-    [...dashboardAPISource.matchAll(/const validated = validateDomainResponse\(/g)]
-      .length >= 9,
+    [
+      ...dashboardAPISource.matchAll(
+        /const validated = validateDomainResponse\(/g,
+      ),
+    ].length >= 9,
   );
   assert.ok(
     [...dashboardAPISource.matchAll(/return validated\.(?:data|leadIds)/g)]
@@ -1692,6 +1885,76 @@ test("OpenAPI declara todos os campos sempre serializados pelo Dashboard", () =>
     "paidCommissions",
   ]) {
     assert.match(requiredBlock, new RegExp(`^\\s*- ${field}\\s*$`, "m"));
+  }
+});
+
+test("OpenAPI fecha os contratos das quatro rotas analíticas reais", () => {
+  const analyticsSchemas = dashboardOpenAPISource.match(
+    /    AnalyticsCount:\r?\n[\s\S]*?(?=    DashboardStatsResponse:)/,
+  )?.[0];
+  assert.ok(analyticsSchemas, "schemas analíticos não foram encontrados");
+  assert.doesNotMatch(analyticsSchemas, /additionalProperties:\s+true/);
+
+  for (const [path, responseSchema] of [
+    ["/v1/analytics/campaign-insights", "MarketingCampaignInsightsResponse"],
+    ["/v1/analytics/lead", "LeadAnalyticsResponse"],
+    ["/v1/analytics/site-summary", "SiteAnalyticsSummaryResponse"],
+    ["/v1/analytics/site-detailed", "SiteAnalyticsDetailedResponse"],
+  ]) {
+    assert.match(dashboardOpenAPISource, new RegExp(`^  ${path}:$`, "m"));
+    assert.match(
+      dashboardOpenAPISource,
+      new RegExp(`\\$ref: "#/components/schemas/${responseSchema}"`),
+    );
+  }
+
+  for (const schema of [
+    "SiteAnalyticsSummary",
+    "SiteAnalyticsDetailed",
+    "LeadAnalytics",
+    "LeadAnalyticsJourney",
+    "MarketingCampaignInsights",
+    "MarketingCampaign",
+    "MarketingAdSet",
+    "MarketingAd",
+    "MarketingMediaAsset",
+    "MarketingMediaMetrics",
+    "MarketingSummary",
+    "MarketingConnection",
+    "MarketingDataQuality",
+  ]) {
+    assert.match(
+      analyticsSchemas,
+      new RegExp(
+        `^    ${schema}:\\r?\\n      type: object\\r?\\n      additionalProperties: false$`,
+        "m",
+      ),
+    );
+  }
+
+  for (const field of [
+    "lastCollectedAt",
+    "referralPct",
+    "topProperties",
+    "searchTerms",
+    "pagesPerSession",
+    "journeys",
+    "device_breakdown",
+    "locations",
+    "topCreatives",
+    "dailyData",
+    "media",
+    "social",
+    "summary",
+    "connection",
+    "dataQuality",
+    "hasSpendData",
+    "conversions_reported",
+    "creative_id",
+    "legacyRowsIgnored",
+  ]) {
+    assert.match(analyticsRepositorySource, new RegExp(`['"]${field}['"]`));
+    assert.match(analyticsSchemas, new RegExp(`^        ${field}:`, "m"));
   }
 });
 
@@ -2110,25 +2373,25 @@ test("assinatura bloqueia checkout e troca de plano sem capability pronta", () =
     "components/features/settings/SubscriptionTab.tsx",
     "utf8",
   );
-  const checkoutStart = source.indexOf("const handleOpenCheckout")
-  const planStart = source.indexOf("const handleSelectPlan")
-  const checkoutEnd = source.indexOf("const autoFillFromUser", checkoutStart)
-  const planEnd = source.indexOf("if (loading)", planStart)
+  const checkoutStart = source.indexOf("const handleOpenCheckout");
+  const planStart = source.indexOf("const handleSelectPlan");
+  const checkoutEnd = source.indexOf("const autoFillFromUser", checkoutStart);
+  const planEnd = source.indexOf("if (loading)", planStart);
 
-  assert.ok(checkoutStart >= 0 && checkoutEnd > checkoutStart)
-  assert.ok(planStart >= 0 && planEnd > planStart)
+  assert.ok(checkoutStart >= 0 && checkoutEnd > checkoutStart);
+  assert.ok(planStart >= 0 && planEnd > planStart);
   assert.match(
     source.slice(checkoutStart, checkoutEnd),
     /billingCheckoutReady\s*!==\s*true[\s\S]*return;/,
-  )
+  );
   assert.match(
     source.slice(planStart, planEnd),
     /billingCheckoutReady\s*!==\s*true[\s\S]*return;/,
-  )
+  );
   assert.match(
     source,
     /checkoutReady=\{data\?\.billingCheckoutReady === true\}/,
-  )
+  );
 });
 
 test("contrato de assinatura valida uma troca gerenciada agendada", () => {
@@ -2177,17 +2440,51 @@ test("sessao transporta e valida o estado financeiro da organizacao", () => {
       billingGraceUntil: "2026-08-02T18:00:00.000Z",
       permissions: [],
       enabledModules: [],
+      isTeamLeader: false,
       isSuperAdmin: false,
     },
     profile: {
       id: ID,
+      organization_id: ID,
       name: "Corretor",
       email: "corretor@vimob.test",
+      role: "user",
+      avatar_url: null,
       is_active: true,
+      language: "pt-BR",
+      theme_mode: "system",
+      whatsapp: null,
+      cpf: null,
     },
     organization: {
       id: ID,
       name: "Vimob",
+      logo_url: null,
+      theme_mode: "system",
+      accent_color: "#FF4529",
+      is_active: true,
+      subscription_status: "overdue",
+      segment: "imobiliario",
+      cnpj: null,
+      creci: null,
+      inscricao_estadual: null,
+      razao_social: null,
+      nome_fantasia: null,
+      cep: null,
+      endereco: null,
+      numero: null,
+      complemento: null,
+      bairro: null,
+      cidade: null,
+      uf: null,
+      telefone: null,
+      whatsapp: null,
+      email: null,
+      website: null,
+      default_commission_percentage: 5,
+      property_edit_policy: "responsible_or_admin",
+      property_owner_contact_visibility: "visible",
+      updated_at: "2026-09-08T12:00:00Z",
     },
   };
 
@@ -2227,6 +2524,50 @@ test("condominio valida coordenadas geograficas", () => {
   );
 });
 
+test("PATCH de catalogos exige versao e preserva null para limpar campos anulaveis", () => {
+  const expectedUpdatedAt = "2026-09-08T12:00:00Z";
+  assert.equal(propertyCondominiumUpdateInputSchema.safeParse({}).success, false);
+  assert.equal(
+    propertyCondominiumUpdateInputSchema.safeParse({
+      default_condominium_fee: null,
+      latitude: null,
+      longitude: null,
+      photo_url: null,
+      expected_updated_at: expectedUpdatedAt,
+    }).success,
+    true,
+  );
+  assert.equal(
+    propertyCondominiumUpdateInputSchema.safeParse({
+      name: "x".repeat(121),
+      expected_updated_at: expectedUpdatedAt,
+    }).success,
+    false,
+  );
+  assert.equal(
+    propertyCityUpdateInputSchema.safeParse({ name: "Rio" }).success,
+    false,
+  );
+  assert.equal(
+    propertyCityUpdateInputSchema.safeParse({
+      name: "Rio",
+      expected_updated_at: expectedUpdatedAt,
+    }).success,
+    true,
+  );
+  assert.equal(
+    propertyNeighborhoodUpdateInputSchema.safeParse({
+      name: "Centro",
+      expected_updated_at: expectedUpdatedAt,
+    }).success,
+    true,
+  );
+  assert.equal(
+    propertyCatalogDeleteInputSchema.safeParse({}).success,
+    false,
+  );
+});
+
 test("paginacao de proprietarios limita consulta e valida metadados", () => {
   assert.equal(
     propertyOwnerInputSchema.safeParse({ name: "Maria", email: "" }).success,
@@ -2236,6 +2577,17 @@ test("paginacao de proprietarios limita consulta e valida metadados", () => {
     propertyOwnerInputSchema.safeParse({ name: "Maria", email: "invalido" })
       .success,
     false,
+  );
+  assert.equal(
+    propertyOwnerCatalogUpdateInputSchema.safeParse({ name: "Maria" }).success,
+    false,
+  );
+  assert.equal(
+    propertyOwnerCatalogUpdateInputSchema.safeParse({
+      name: "Maria",
+      expected_updated_at: "2026-09-08T12:00:00Z",
+    }).success,
+    true,
   );
   assert.equal(
     propertyOwnerPageQuerySchema.safeParse({
@@ -2303,6 +2655,7 @@ test("webhook de saida exige URL valida", () => {
       name: "CRM externo",
       type: "outgoing",
       webhook_url: "https://crm.example.com/hook",
+      trigger_events: ["lead.created"],
     }).success,
     true,
   );
@@ -2321,7 +2674,7 @@ test("telemetria limita status HTTP e exige mensagem", () => {
   );
 });
 
-test("presenca separa dados da sessao das opcoes do realtime", () => {
+test("atividade rejeita opcoes legadas do realtime", () => {
   const input = {
     organizationId: ID,
     userId: ID,
@@ -2336,13 +2689,6 @@ test("presenca separa dados da sessao das opcoes do realtime", () => {
     userActivitySessionMutationInputSchema.safeParse(input).success,
     false,
   );
-  const parsed = userActivityPresenceSessionInputSchema.parse(input);
-  assert.deepEqual(Object.keys(parsed).sort(), [
-    "organizationId",
-    "sessionId",
-    "status",
-    "userId",
-  ]);
 });
 
 test("filtros de busca aceitam apenas nomes de coluna seguros", () => {

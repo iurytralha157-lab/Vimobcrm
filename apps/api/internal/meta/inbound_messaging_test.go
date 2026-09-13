@@ -178,6 +178,11 @@ func TestMessagingSQLContractsAreTenantSafeAndIdempotent(t *testing.T) {
 		"lower(btrim(conversations_access.module_name)) = 'whatsapp'",
 		"conversations_access.is_enabled = true",
 		"coalesce(integration.is_connected, false) = true",
+		"from unnest(coalesce(integration.granted_scopes, array[]::text[])) as granted_scope(value)",
+		"lower(btrim(granted_scope.value)) = 'pages_messaging'",
+		"$2 <> 'instagram'",
+		"from unnest(coalesce(integration.granted_scopes, array[]::text[])) as instagram_scope(value)",
+		"lower(btrim(instagram_scope.value)) = 'instagram_manage_messages'",
 		"integration.page_id = $1",
 		"integration.instagram_business_account_id = $1",
 		"integration.organization_id::text",
@@ -188,6 +193,9 @@ func TestMessagingSQLContractsAreTenantSafeAndIdempotent(t *testing.T) {
 	}
 	if strings.Contains(routing, "organization_id = $") {
 		t.Fatalf("routing must not accept an organization from the webhook: %q", routing)
+	}
+	if strings.Contains(routing, "subscribed_fields") {
+		t.Fatalf("global Page subscription state must never authorize a tenant messaging route: %q", routing)
 	}
 
 	conversation := strings.Join(strings.Fields(upsertMessagingConversationQuery), " ")

@@ -20,6 +20,7 @@ import {
   okResponseSchema,
   parseDomainInput,
   permissionKeySchema,
+  propertySettingsUpdateResponseSchema,
   pushTokenInputSchema,
   replaceRolePermissionsInputSchema,
   replaceUserPermissionsInputSchema,
@@ -29,11 +30,13 @@ import {
   subscriptionBillingInputSchema,
   subscriptionChargeInputSchema,
   updateOrganizationInputSchema,
+  updatePropertySettingsInputSchema,
   updateProfileInputSchema,
   uuidSchema,
   validateDomainResponse,
-} from '@/lib/validation';
-import { vimobAPIRequest, vimobPublicAPIRequest } from './vimob-client';
+} from "@/lib/validation";
+import type { UpdatePropertySettingsInput } from "@/lib/validation";
+import { vimobAPIRequest, vimobPublicAPIRequest } from "./vimob-client";
 
 type Envelope<T> = {
   data: T;
@@ -47,6 +50,7 @@ export type OrganizationApiKey = {
   is_active: boolean;
   last_used_at: string | null;
   created_by: string | null;
+  expires_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -95,6 +99,10 @@ export type UserPermissionItem = {
 
 export type UserPermissionProfile = {
   userId: string;
+  name: string;
+  email: string;
+  avatarUrl: string | null;
+  isActive: boolean;
   profile: string;
   locked: boolean;
   permissions: UserPermissionItem[];
@@ -109,7 +117,7 @@ export type UpdateProfileInput = {
   name?: string | null;
   whatsapp?: string | null;
   cpf?: string | null;
-  theme_mode?: 'light' | 'dark' | 'system' | null;
+  theme_mode?: "light" | "dark" | "system" | null;
   language?: string | null;
 };
 
@@ -132,8 +140,8 @@ export type UpdateOrganizationInput = {
   email?: string | null;
   website?: string | null;
   default_commission_percentage?: number | null;
-  property_edit_policy?: 'everyone' | 'responsible_or_admin' | null;
-  property_owner_contact_visibility?: 'visible' | 'hidden' | null;
+  property_edit_policy?: "everyone" | "responsible_or_admin" | null;
+  property_owner_contact_visibility?: "visible" | "hidden" | null;
 };
 
 export type AssetUpload = {
@@ -197,7 +205,7 @@ export type PaymentHistoryItem = {
   bank_slip_registration_cancelled: boolean;
   checkout_url: string | null;
   receipt_path: string | null;
-  sync_state: 'cached' | 'current' | 'provider_unavailable';
+  sync_state: "cached" | "current" | "provider_unavailable";
   created_at: string;
   updated_at: string;
 };
@@ -206,7 +214,7 @@ export type BillingPlanChange = {
   id: string;
   from_plan_id: string;
   target_plan_id: string;
-  status: 'provider_updating' | 'scheduled';
+  status: "provider_updating" | "scheduled";
   billing_period_months: 1 | 6 | 12;
   amount: number;
   effective_on: string | null;
@@ -240,246 +248,479 @@ export type UpdateSubscriptionBillingInput = {
 
 export type SettingsJSON = Record<string, unknown>;
 
-const legacySubscriptionPlanNames = new Set(['trial', 'basico', 'básico']);
+const legacySubscriptionPlanNames = new Set(["trial", "basico", "básico"]);
 
-function normalizeSubscriptionOverview(overview: SubscriptionOverview): SubscriptionOverview {
+function normalizeSubscriptionOverview(
+  overview: SubscriptionOverview,
+): SubscriptionOverview {
   return {
     ...overview,
     pendingPlan: overview.pendingPlan ?? null,
     planChange: overview.planChange ?? null,
     billingCheckoutReady: overview.billingCheckoutReady === true,
-    availablePlans: (overview.availablePlans || []).filter((plan) => (
-      plan.is_active !== false
-      && Number(plan.price) > 0
-      && !legacySubscriptionPlanNames.has(plan.name.trim().toLocaleLowerCase('pt-BR'))
-    )),
+    availablePlans: (overview.availablePlans || []).filter(
+      (plan) =>
+        plan.is_active !== false &&
+        Number(plan.price) > 0 &&
+        !legacySubscriptionPlanNames.has(
+          plan.name.trim().toLocaleLowerCase("pt-BR"),
+        ),
+    ),
   };
 }
 
 export const settingsAPI = {
   async getPushConfig() {
-    const response = await vimobPublicAPIRequest<Envelope<PublicPushConfig>>('/v1/public/push-config', {
-      timeoutMs: 4_000,
-      skipTelemetry: true,
-    });
-    validateDomainResponse(apiPublicPushConfigResponseSchema, response, 'settings.push-config.get');
+    const response = await vimobPublicAPIRequest<Envelope<PublicPushConfig>>(
+      "/v1/public/push-config",
+      {
+        timeoutMs: 4_000,
+        skipTelemetry: true,
+      },
+    );
+    validateDomainResponse(
+      apiPublicPushConfigResponseSchema,
+      response,
+      "settings.push-config.get",
+    );
     return response.data;
   },
 
   async getSystemSettings<T = SettingsJSON>() {
-    const response = await vimobPublicAPIRequest<Envelope<T | null>>('/v1/public/system-settings');
-    validateDomainResponse(apiUnknownEnvelopeSchema, response, 'settings.system.get');
+    const response = await vimobPublicAPIRequest<Envelope<T | null>>(
+      "/v1/public/system-settings",
+    );
+    validateDomainResponse(
+      apiUnknownEnvelopeSchema,
+      response,
+      "settings.system.get",
+    );
     return response.data;
   },
 
-  async updateProfile(input: UpdateProfileInput, organizationId?: string | null) {
-    const body = parseDomainInput(updateProfileInputSchema, input, 'settings.profile.update');
-    const response = await vimobAPIRequest<{ ok: boolean }>('/v1/settings/profile', {
-      method: 'PATCH',
-      organizationId,
-      body,
-    });
-    validateDomainResponse(okResponseSchema, response, 'settings.profile.update');
+  async updateProfile(
+    input: UpdateProfileInput,
+    organizationId?: string | null,
+  ) {
+    const body = parseDomainInput(
+      updateProfileInputSchema,
+      input,
+      "settings.profile.update",
+    );
+    const response = await vimobAPIRequest<{ ok: boolean }>(
+      "/v1/settings/profile",
+      {
+        method: "PATCH",
+        organizationId,
+        body,
+      },
+    );
+    validateDomainResponse(
+      okResponseSchema,
+      response,
+      "settings.profile.update",
+    );
     return response;
   },
 
   async uploadProfileAvatar(file: Blob, organizationId?: string | null) {
     const formData = new FormData();
-    formData.append('file', file, 'avatar.png');
+    formData.append("file", file, "avatar.png");
 
-    const response = await vimobAPIRequest<Envelope<AssetUpload>>('/v1/settings/profile/avatar', {
-      method: 'POST',
-      organizationId,
-      body: formData,
-    });
-    validateDomainResponse(apiAssetUploadResponseSchema, response, 'settings.profile.avatar');
+    const response = await vimobAPIRequest<Envelope<AssetUpload>>(
+      "/v1/settings/profile/avatar",
+      {
+        method: "POST",
+        organizationId,
+        body: formData,
+      },
+    );
+    validateDomainResponse(
+      apiAssetUploadResponseSchema,
+      response,
+      "settings.profile.avatar",
+    );
     return response.data;
   },
 
-  async updateOrganization(input: UpdateOrganizationInput, organizationId?: string | null) {
-    const body = parseDomainInput(updateOrganizationInputSchema, input, 'settings.organization.update');
-    const response = await vimobAPIRequest<{ ok: boolean }>('/v1/settings/organization', {
-      method: 'PATCH',
-      organizationId,
-      body,
-    });
-    validateDomainResponse(okResponseSchema, response, 'settings.organization.update');
+  async updateOrganization(
+    input: UpdateOrganizationInput,
+    organizationId?: string | null,
+  ) {
+    const body = parseDomainInput(
+      updateOrganizationInputSchema,
+      input,
+      "settings.organization.update",
+    );
+    const response = await vimobAPIRequest<{ ok: boolean }>(
+      "/v1/settings/organization",
+      {
+        method: "PATCH",
+        organizationId,
+        body,
+      },
+    );
+    validateDomainResponse(
+      okResponseSchema,
+      response,
+      "settings.organization.update",
+    );
     return response;
+  },
+
+  async updatePropertySettings(
+    input: UpdatePropertySettingsInput,
+    organizationId?: string | null,
+  ) {
+    const body = parseDomainInput(
+      updatePropertySettingsInputSchema,
+      input,
+      "settings.properties.update",
+    );
+    const response = await vimobAPIRequest<unknown>(
+      "/v1/settings/properties",
+      {
+        method: "PATCH",
+        organizationId,
+        body,
+      },
+    );
+    return validateDomainResponse(
+      propertySettingsUpdateResponseSchema,
+      response,
+      "settings.properties.update",
+    );
   },
 
   async uploadOrganizationLogo(file: Blob, organizationId?: string | null) {
     const formData = new FormData();
-    formData.append('file', file, 'logo.png');
+    formData.append("file", file, "logo.png");
 
-    const response = await vimobAPIRequest<Envelope<AssetUpload>>('/v1/settings/organization/logo', {
-      method: 'POST',
-      organizationId,
-      body: formData,
-    });
-    validateDomainResponse(apiAssetUploadResponseSchema, response, 'settings.organization.logo');
+    const response = await vimobAPIRequest<Envelope<AssetUpload>>(
+      "/v1/settings/organization/logo",
+      {
+        method: "POST",
+        organizationId,
+        body: formData,
+      },
+    );
+    validateDomainResponse(
+      apiAssetUploadResponseSchema,
+      response,
+      "settings.organization.logo",
+    );
     return response.data;
   },
 
-  async changePassword(input: { password: string; source?: string }, organizationId?: string | null) {
-    const body = parseDomainInput(changePasswordInputSchema, input, 'settings.password.change');
-    const response = await vimobAPIRequest<{ allowed: boolean; message: string; emailNotificationSent?: boolean }>('/v1/settings/password', {
-      method: 'POST',
+  async changePassword(
+    input: { password: string; source?: string },
+    organizationId?: string | null,
+  ) {
+    const body = parseDomainInput(
+      changePasswordInputSchema,
+      input,
+      "settings.password.change",
+    );
+    const response = await vimobAPIRequest<{
+      allowed: boolean;
+      message: string;
+      emailNotificationSent?: boolean;
+    }>("/v1/settings/password", {
+      method: "POST",
       organizationId,
       body,
     });
-    validateDomainResponse(apiChangePasswordResponseSchema, response, 'settings.password.change');
+    validateDomainResponse(
+      apiChangePasswordResponseSchema,
+      response,
+      "settings.password.change",
+    );
     return response;
   },
 
   async passwordStatus<T>() {
-    const response = await vimobAPIRequest<Envelope<T>>('/v1/settings/password/status');
-    validateDomainResponse(apiUnknownEnvelopeSchema, response, 'settings.password.status');
+    const response = await vimobAPIRequest<Envelope<T>>(
+      "/v1/settings/password/status",
+    );
+    validateDomainResponse(
+      apiUnknownEnvelopeSchema,
+      response,
+      "settings.password.status",
+    );
     return response.data;
   },
 
   async listApiKeys(organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<OrganizationApiKey[]>>('/v1/settings/api-keys', {
-      organizationId,
-    });
-    validateDomainResponse(apiOrganizationApiKeyListResponseSchema, response, 'settings.api-keys.list');
+    const response = await vimobAPIRequest<Envelope<OrganizationApiKey[]>>(
+      "/v1/settings/api-keys",
+      {
+        organizationId,
+      },
+    );
+    validateDomainResponse(
+      apiOrganizationApiKeyListResponseSchema,
+      response,
+      "settings.api-keys.list",
+    );
     return response.data;
   },
 
   async listModules(organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<OrganizationModule[]>>('/v1/settings/modules', {
-      organizationId,
-      timeoutMs: 4_000,
-      skipTelemetry: true,
-    });
-    validateDomainResponse(apiOrganizationModuleListResponseSchema, response, 'settings.modules.list');
+    const response = await vimobAPIRequest<Envelope<OrganizationModule[]>>(
+      "/v1/settings/modules",
+      {
+        organizationId,
+        timeoutMs: 4_000,
+        skipTelemetry: true,
+      },
+    );
+    validateDomainResponse(
+      apiOrganizationModuleListResponseSchema,
+      response,
+      "settings.modules.list",
+    );
     return response.data;
   },
 
   async getSetupGuideProgress(organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<SetupGuideProgress>>('/v1/settings/setup-guide-progress', {
-      organizationId,
-    });
-    validateDomainResponse(apiSetupGuideProgressResponseSchema, response, 'settings.setup-guide.get');
+    const response = await vimobAPIRequest<Envelope<SetupGuideProgress>>(
+      "/v1/settings/setup-guide-progress",
+      {
+        organizationId,
+      },
+    );
+    validateDomainResponse(
+      apiSetupGuideProgressResponseSchema,
+      response,
+      "settings.setup-guide.get",
+    );
     return response.data;
   },
 
-  async updateSetupGuideProgress(input: Partial<SetupGuideProgress>, organizationId?: string | null) {
-    const body = parseDomainInput(setupGuideProgressInputSchema, input, 'settings.setup-guide.update');
-    const response = await vimobAPIRequest<Envelope<SetupGuideProgress>>('/v1/settings/setup-guide-progress', {
-      method: 'PUT',
-      organizationId,
-      body,
-    });
-    validateDomainResponse(apiSetupGuideProgressResponseSchema, response, 'settings.setup-guide.update');
+  async updateSetupGuideProgress(
+    input: Partial<SetupGuideProgress>,
+    organizationId?: string | null,
+  ) {
+    const body = parseDomainInput(
+      setupGuideProgressInputSchema,
+      input,
+      "settings.setup-guide.update",
+    );
+    const response = await vimobAPIRequest<Envelope<SetupGuideProgress>>(
+      "/v1/settings/setup-guide-progress",
+      {
+        method: "PUT",
+        organizationId,
+        body,
+      },
+    );
+    validateDomainResponse(
+      apiSetupGuideProgressResponseSchema,
+      response,
+      "settings.setup-guide.update",
+    );
     return response.data;
   },
 
-  async savePushToken(input: {
-    endpoint: string;
-    p256dh?: string | null;
-    auth?: string | null;
-    userAgent?: string | null;
-    vapidPublicKey?: string | null;
-    syncOnly?: boolean;
-  }, organizationId?: string | null) {
-    const body = parseDomainInput(pushTokenInputSchema, input, 'settings.push-token.save');
-    const response = await vimobAPIRequest<{ ok: boolean; active?: boolean; requiresResubscribe?: boolean }>('/v1/settings/push-tokens', {
-      method: 'POST',
+  async savePushToken(
+    input: {
+      endpoint: string;
+      p256dh?: string | null;
+      auth?: string | null;
+      userAgent?: string | null;
+      vapidPublicKey?: string | null;
+      syncOnly?: boolean;
+    },
+    organizationId?: string | null,
+  ) {
+    const body = parseDomainInput(
+      pushTokenInputSchema,
+      input,
+      "settings.push-token.save",
+    );
+    const response = await vimobAPIRequest<{
+      ok: boolean;
+      active?: boolean;
+      requiresResubscribe?: boolean;
+    }>("/v1/settings/push-tokens", {
+      method: "POST",
       organizationId,
       body,
     });
-    validateDomainResponse(okResponseSchema, response, 'settings.push-token.save');
+    validateDomainResponse(
+      okResponseSchema,
+      response,
+      "settings.push-token.save",
+    );
     return response;
   },
 
   async listPushDevices(organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<PushDevice[]>>('/v1/settings/push-tokens', {
-      organizationId,
-    });
-    validateDomainResponse(apiRecordListEnvelopeSchema, response, 'settings.push-token.list');
+    const response = await vimobAPIRequest<Envelope<PushDevice[]>>(
+      "/v1/settings/push-tokens",
+      {
+        organizationId,
+      },
+    );
+    validateDomainResponse(
+      apiRecordListEnvelopeSchema,
+      response,
+      "settings.push-token.list",
+    );
     return response.data;
   },
 
-  async deactivatePushToken(endpoint?: string | null, organizationId?: string | null) {
-    const body = parseDomainInput(deactivatePushTokenInputSchema, { endpoint }, 'settings.push-token.deactivate');
-    const response = await vimobAPIRequest<{ ok: boolean }>('/v1/settings/push-tokens/deactivate', {
-      method: 'POST',
-      organizationId,
-      body,
-    });
-    validateDomainResponse(okResponseSchema, response, 'settings.push-token.deactivate');
+  async deactivatePushToken(
+    endpoint?: string | null,
+    organizationId?: string | null,
+  ) {
+    const body = parseDomainInput(
+      deactivatePushTokenInputSchema,
+      { endpoint },
+      "settings.push-token.deactivate",
+    );
+    const response = await vimobAPIRequest<{ ok: boolean }>(
+      "/v1/settings/push-tokens/deactivate",
+      {
+        method: "POST",
+        organizationId,
+        body,
+      },
+    );
+    validateDomainResponse(
+      okResponseSchema,
+      response,
+      "settings.push-token.deactivate",
+    );
     return response;
   },
 
   async createApiKey(input: { name?: string }, organizationId?: string | null) {
-    const body = parseDomainInput(createApiKeyInputSchema, input, 'settings.api-keys.create');
-    const response = await vimobAPIRequest<Envelope<CreateApiKeyResult>>('/v1/settings/api-keys', {
-      method: 'POST',
-      organizationId,
-      body,
-    });
-    validateDomainResponse(apiCreateApiKeyResponseSchema, response, 'settings.api-keys.create');
+    const body = parseDomainInput(
+      createApiKeyInputSchema,
+      input,
+      "settings.api-keys.create",
+    );
+    const response = await vimobAPIRequest<Envelope<CreateApiKeyResult>>(
+      "/v1/settings/api-keys",
+      {
+        method: "POST",
+        organizationId,
+        body,
+      },
+    );
+    validateDomainResponse(
+      apiCreateApiKeyResponseSchema,
+      response,
+      "settings.api-keys.create",
+    );
     return response.data;
   },
 
   async deleteApiKey(id: string, organizationId?: string | null) {
     await vimobAPIRequest<null>(`/v1/settings/api-keys/${id}`, {
-      method: 'DELETE',
+      method: "DELETE",
       organizationId,
     });
   },
 
   async getSubscription(organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<SubscriptionOverview>>('/v1/settings/subscription', {
-      organizationId,
-    });
-    validateDomainResponse(apiSubscriptionOverviewResponseSchema, response, 'settings.subscription.get');
+    const response = await vimobAPIRequest<Envelope<SubscriptionOverview>>(
+      "/v1/settings/subscription",
+      {
+        organizationId,
+      },
+    );
+    validateDomainResponse(
+      apiSubscriptionOverviewResponseSchema,
+      response,
+      "settings.subscription.get",
+    );
     return normalizeSubscriptionOverview(response.data);
   },
 
   async refreshSubscriptionPayment(id: string, organizationId?: string | null) {
-    const paymentId = parseDomainInput(uuidSchema, id, 'settings.subscription.payment.refresh.id');
+    const paymentId = parseDomainInput(
+      uuidSchema,
+      id,
+      "settings.subscription.payment.refresh.id",
+    );
     const response = await vimobAPIRequest<Envelope<PaymentHistoryItem>>(
       `/v1/settings/subscription/payments/${paymentId}/refresh`,
       {
-        method: 'POST',
+        method: "POST",
         organizationId,
       },
     );
     validateDomainResponse(
       apiPaymentHistoryItemResponseSchema,
       response,
-      'settings.subscription.payment.refresh',
+      "settings.subscription.payment.refresh",
     );
     return response.data;
   },
 
-  async updateSubscriptionBilling(input: UpdateSubscriptionBillingInput, organizationId?: string | null) {
-    const body = parseDomainInput(subscriptionBillingInputSchema, input, 'settings.subscription.billing');
-    const response = await vimobAPIRequest<Envelope<SubscriptionOverview>>('/v1/settings/subscription/billing', {
-      method: 'PATCH',
-      organizationId,
-      body,
-    });
-    validateDomainResponse(apiSubscriptionOverviewResponseSchema, response, 'settings.subscription.billing');
+  async updateSubscriptionBilling(
+    input: UpdateSubscriptionBillingInput,
+    organizationId?: string | null,
+  ) {
+    const body = parseDomainInput(
+      subscriptionBillingInputSchema,
+      input,
+      "settings.subscription.billing",
+    );
+    const response = await vimobAPIRequest<Envelope<SubscriptionOverview>>(
+      "/v1/settings/subscription/billing",
+      {
+        method: "PATCH",
+        organizationId,
+        body,
+      },
+    );
+    validateDomainResponse(
+      apiSubscriptionOverviewResponseSchema,
+      response,
+      "settings.subscription.billing",
+    );
     return normalizeSubscriptionOverview(response.data);
   },
 
-  async selectSubscriptionPlan(input: { plan_id: string }, organizationId?: string | null) {
-    const body = parseDomainInput(selectSubscriptionPlanInputSchema, input, 'settings.subscription.plan');
-    const response = await vimobAPIRequest<Envelope<SubscriptionOverview>>('/v1/settings/subscription/plan', {
-      method: 'PATCH',
-      organizationId,
-      body,
-    });
-    validateDomainResponse(apiSubscriptionOverviewResponseSchema, response, 'settings.subscription.plan');
+  async selectSubscriptionPlan(
+    input: { plan_id: string },
+    organizationId?: string | null,
+  ) {
+    const body = parseDomainInput(
+      selectSubscriptionPlanInputSchema,
+      input,
+      "settings.subscription.plan",
+    );
+    const response = await vimobAPIRequest<Envelope<SubscriptionOverview>>(
+      "/v1/settings/subscription/plan",
+      {
+        method: "PATCH",
+        organizationId,
+        body,
+      },
+    );
+    validateDomainResponse(
+      apiSubscriptionOverviewResponseSchema,
+      response,
+      "settings.subscription.plan",
+    );
     return normalizeSubscriptionOverview(response.data);
   },
 
-  async createSubscriptionCharge<T>(input: Record<string, unknown>, organizationId?: string | null) {
-    const body = parseDomainInput(subscriptionChargeInputSchema, input, 'settings.subscription.charge');
-    return vimobAPIRequest<T>('/v1/settings/subscription/charge', {
-      method: 'POST',
+  async createSubscriptionCharge<T>(
+    input: Record<string, unknown>,
+    organizationId?: string | null,
+  ) {
+    const body = parseDomainInput(
+      subscriptionChargeInputSchema,
+      input,
+      "settings.subscription.charge",
+    );
+    return vimobAPIRequest<T>("/v1/settings/subscription/charge", {
+      method: "POST",
       organizationId,
       body,
       timeoutMs: 105_000,
@@ -487,121 +728,251 @@ export const settingsAPI = {
   },
 
   async listRoles<T = SettingsJSON>(organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<T[]>>('/v1/settings/roles', {
-      organizationId,
-    });
-    validateDomainResponse(apiRecordListEnvelopeSchema, response, 'settings.roles.list');
+    const response = await vimobAPIRequest<Envelope<T[]>>(
+      "/v1/settings/roles",
+      {
+        organizationId,
+      },
+    );
+    validateDomainResponse(
+      apiRecordListEnvelopeSchema,
+      response,
+      "settings.roles.list",
+    );
     return response.data;
   },
 
-  async createRole<T = SettingsJSON>(input: SettingsJSON, organizationId?: string | null) {
-    const body = parseDomainInput(settingsRoleInputSchema, input, 'settings.roles.create');
-    const response = await vimobAPIRequest<Envelope<T>>('/v1/settings/roles', {
-      method: 'POST',
+  async createRole<T = SettingsJSON>(
+    input: SettingsJSON,
+    organizationId?: string | null,
+  ) {
+    const body = parseDomainInput(
+      settingsRoleInputSchema,
+      input,
+      "settings.roles.create",
+    );
+    const response = await vimobAPIRequest<Envelope<T>>("/v1/settings/roles", {
+      method: "POST",
       organizationId,
       body,
     });
-    validateDomainResponse(apiRecordEnvelopeSchema, response, 'settings.roles.create');
+    validateDomainResponse(
+      apiRecordEnvelopeSchema,
+      response,
+      "settings.roles.create",
+    );
     return response.data;
   },
 
-  async updateRole<T = SettingsJSON>(id: string, input: SettingsJSON, organizationId?: string | null) {
-    const body = parseDomainInput(settingsRoleInputSchema, input, 'settings.roles.update');
-    const response = await vimobAPIRequest<Envelope<T>>(`/v1/settings/roles/${id}`, {
-      method: 'PATCH',
-      organizationId,
-      body,
-    });
-    validateDomainResponse(apiRecordEnvelopeSchema, response, 'settings.roles.update');
+  async updateRole<T = SettingsJSON>(
+    id: string,
+    input: SettingsJSON,
+    organizationId?: string | null,
+  ) {
+    const body = parseDomainInput(
+      settingsRoleInputSchema,
+      input,
+      "settings.roles.update",
+    );
+    const response = await vimobAPIRequest<Envelope<T>>(
+      `/v1/settings/roles/${id}`,
+      {
+        method: "PATCH",
+        organizationId,
+        body,
+      },
+    );
+    validateDomainResponse(
+      apiRecordEnvelopeSchema,
+      response,
+      "settings.roles.update",
+    );
     return response.data;
   },
 
   async deleteRole(id: string, organizationId?: string | null) {
     await vimobAPIRequest<null>(`/v1/settings/roles/${id}`, {
-      method: 'DELETE',
+      method: "DELETE",
       organizationId,
     });
   },
 
   async listPermissions<T = SettingsJSON>() {
-    const response = await vimobAPIRequest<Envelope<T[]>>('/v1/settings/permissions');
-    validateDomainResponse(apiRecordListEnvelopeSchema, response, 'settings.permissions.list');
+    const response = await vimobAPIRequest<Envelope<T[]>>(
+      "/v1/settings/permissions",
+    );
+    validateDomainResponse(
+      apiRecordListEnvelopeSchema,
+      response,
+      "settings.permissions.list",
+    );
     return response.data;
   },
 
   async getUserPermissions(userId: string, organizationId?: string | null) {
-    const id = parseDomainInput(uuidSchema, userId, 'settings.user-permissions.user-id');
-    const response = await vimobAPIRequest<Envelope<UserPermissionProfile>>(`/v1/settings/users/${id}/permissions`, {
-      organizationId,
-    });
-    validateDomainResponse(apiUserPermissionProfileResponseSchema, response, 'settings.user-permissions.get');
+    const id = parseDomainInput(
+      uuidSchema,
+      userId,
+      "settings.user-permissions.user-id",
+    );
+    const response = await vimobAPIRequest<Envelope<UserPermissionProfile>>(
+      `/v1/settings/users/${id}/permissions`,
+      {
+        organizationId,
+      },
+    );
+    validateDomainResponse(
+      apiUserPermissionProfileResponseSchema,
+      response,
+      "settings.user-permissions.get",
+    );
     return response.data;
   },
 
-  async replaceUserPermissions(userId: string, permissions: Record<string, boolean>, organizationId?: string | null) {
-    const body = parseDomainInput(replaceUserPermissionsInputSchema, { permissions }, 'settings.user-permissions.replace');
-    const response = await vimobAPIRequest<Envelope<UserPermissionProfile>>(`/v1/settings/users/${userId}/permissions`, {
-      method: 'PUT',
-      organizationId,
-      body,
-    });
-    validateDomainResponse(apiUserPermissionProfileResponseSchema, response, 'settings.user-permissions.replace');
+  async replaceUserPermissions(
+    userId: string,
+    permissions: Record<string, boolean>,
+    organizationId?: string | null,
+  ) {
+    const body = parseDomainInput(
+      replaceUserPermissionsInputSchema,
+      { permissions },
+      "settings.user-permissions.replace",
+    );
+    const response = await vimobAPIRequest<Envelope<UserPermissionProfile>>(
+      `/v1/settings/users/${userId}/permissions`,
+      {
+        method: "PUT",
+        organizationId,
+        body,
+      },
+    );
+    validateDomainResponse(
+      apiUserPermissionProfileResponseSchema,
+      response,
+      "settings.user-permissions.replace",
+    );
     return response.data;
   },
 
   async resetUserPermissions(userId: string, organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<UserPermissionProfile>>(`/v1/settings/users/${userId}/permissions`, {
-      method: 'DELETE',
-      organizationId,
-    });
-    validateDomainResponse(apiUserPermissionProfileResponseSchema, response, 'settings.user-permissions.reset');
+    const response = await vimobAPIRequest<Envelope<UserPermissionProfile>>(
+      `/v1/settings/users/${userId}/permissions`,
+      {
+        method: "DELETE",
+        organizationId,
+      },
+    );
+    validateDomainResponse(
+      apiUserPermissionProfileResponseSchema,
+      response,
+      "settings.user-permissions.reset",
+    );
     return response.data;
   },
 
-  async listRolePermissions<T = SettingsJSON>(roleId: string, organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<T[]>>(`/v1/settings/roles/${roleId}/permissions`, {
-      organizationId,
-    });
-    validateDomainResponse(apiRecordListEnvelopeSchema, response, 'settings.role-permissions.list');
+  async listRolePermissions<T = SettingsJSON>(
+    roleId: string,
+    organizationId?: string | null,
+  ) {
+    const response = await vimobAPIRequest<Envelope<T[]>>(
+      `/v1/settings/roles/${roleId}/permissions`,
+      {
+        organizationId,
+      },
+    );
+    validateDomainResponse(
+      apiRecordListEnvelopeSchema,
+      response,
+      "settings.role-permissions.list",
+    );
     return response.data;
   },
 
-  async replaceRolePermissions(roleId: string, permissions: string[], organizationId?: string | null) {
-    const body = parseDomainInput(replaceRolePermissionsInputSchema, { permissions }, 'settings.role-permissions.replace');
-    const response = await vimobAPIRequest<{ ok: boolean }>(`/v1/settings/roles/${roleId}/permissions`, {
-      method: 'PUT',
-      organizationId,
-      body,
-    });
-    validateDomainResponse(okResponseSchema, response, 'settings.role-permissions.replace');
+  async replaceRolePermissions(
+    roleId: string,
+    permissions: string[],
+    organizationId?: string | null,
+  ) {
+    const body = parseDomainInput(
+      replaceRolePermissionsInputSchema,
+      { permissions },
+      "settings.role-permissions.replace",
+    );
+    const response = await vimobAPIRequest<{ ok: boolean }>(
+      `/v1/settings/roles/${roleId}/permissions`,
+      {
+        method: "PUT",
+        organizationId,
+        body,
+      },
+    );
+    validateDomainResponse(
+      okResponseSchema,
+      response,
+      "settings.role-permissions.replace",
+    );
     return response;
   },
 
   async listUserRoles<T = SettingsJSON>(organizationId?: string | null) {
-    const response = await vimobAPIRequest<Envelope<T[]>>('/v1/settings/user-roles', {
-      organizationId,
-    });
-    validateDomainResponse(apiRecordListEnvelopeSchema, response, 'settings.user-roles.list');
+    const response = await vimobAPIRequest<Envelope<T[]>>(
+      "/v1/settings/user-roles",
+      {
+        organizationId,
+      },
+    );
+    validateDomainResponse(
+      apiRecordListEnvelopeSchema,
+      response,
+      "settings.user-roles.list",
+    );
     return response.data;
   },
 
-  async assignUserRole(input: { userId: string; roleId: string | null }, organizationId?: string | null) {
-    const body = parseDomainInput(assignUserRoleInputSchema, input, 'settings.user-roles.assign');
-    const response = await vimobAPIRequest<{ ok: boolean }>('/v1/settings/user-roles', {
-      method: 'PUT',
-      organizationId,
-      body,
-    });
-    validateDomainResponse(okResponseSchema, response, 'settings.user-roles.assign');
+  async assignUserRole(
+    input: { userId: string; roleId: string | null },
+    organizationId?: string | null,
+  ) {
+    const body = parseDomainInput(
+      assignUserRoleInputSchema,
+      input,
+      "settings.user-roles.assign",
+    );
+    const response = await vimobAPIRequest<{ ok: boolean }>(
+      "/v1/settings/user-roles",
+      {
+        method: "PUT",
+        organizationId,
+        body,
+      },
+    );
+    validateDomainResponse(
+      okResponseSchema,
+      response,
+      "settings.user-roles.assign",
+    );
     return response;
   },
 
-  async hasPermission(permissionKey: string) {
-    const validatedPermissionKey = parseDomainInput(permissionKeySchema, permissionKey, 'settings.permissions.check');
-    const response = await vimobAPIRequest<Envelope<boolean>>('/v1/settings/has-permission', {
-      query: { permissionKey: validatedPermissionKey },
-    });
-    validateDomainResponse(apiBooleanResponseSchema, response, 'settings.permissions.check');
+  async hasPermission(permissionKey: string, organizationId?: string | null) {
+    const validatedPermissionKey = parseDomainInput(
+      permissionKeySchema,
+      permissionKey,
+      "settings.permissions.check",
+    );
+    const response = await vimobAPIRequest<Envelope<boolean>>(
+      "/v1/settings/has-permission",
+      {
+        organizationId,
+        query: { permissionKey: validatedPermissionKey },
+      },
+    );
+    validateDomainResponse(
+      apiBooleanResponseSchema,
+      response,
+      "settings.permissions.check",
+    );
     return response.data;
   },
 };

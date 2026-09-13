@@ -10,12 +10,13 @@ import (
 	"strings"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 const maxAutomationMediaUploadBytes = 10 << 20
 
 func (handler Handler) ListMedia(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -35,7 +36,7 @@ func (handler Handler) ListMedia(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) UploadMedia(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -102,7 +103,7 @@ func (handler Handler) UploadMedia(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) DeleteMedia(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}

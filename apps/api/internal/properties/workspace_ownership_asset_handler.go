@@ -14,8 +14,7 @@ func (handler Handler) CreateOwnership(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input CreatePropertyOwnershipInput
-	if err := decodePropertyWorkspaceJSON(w, r, &input); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+	if err := httpserver.DecodeJSON(w, r, &input, propertyWorkspaceBodyLimit); err != nil {
 		return
 	}
 	item, err := handler.repo.CreatePropertyOwnership(r.Context(), tenantContext, r.PathValue("id"), input)
@@ -33,8 +32,7 @@ func (handler Handler) UpdateOwnership(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input UpdatePropertyOwnershipInput
-	if err := decodePropertyWorkspaceJSON(w, r, &input); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+	if err := httpserver.DecodeJSON(w, r, &input, propertyWorkspaceBodyLimit); err != nil {
 		return
 	}
 	item, err := handler.repo.UpdatePropertyOwnership(
@@ -54,8 +52,7 @@ func (handler Handler) EndOwnership(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input EndPropertyOwnershipInput
-	if err := decodePropertyWorkspaceJSON(w, r, &input); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+	if err := httpserver.DecodeJSON(w, r, &input, propertyWorkspaceBodyLimit); err != nil {
 		return
 	}
 	item, err := handler.repo.EndPropertyOwnership(
@@ -75,8 +72,7 @@ func (handler Handler) CreateAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input CreatePropertyAssetInput
-	if err := decodePropertyWorkspaceJSON(w, r, &input); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+	if err := httpserver.DecodeJSON(w, r, &input, propertyWorkspaceBodyLimit); err != nil {
 		return
 	}
 	item, err := handler.repo.CreatePropertyAsset(r.Context(), tenantContext, r.PathValue("id"), input)
@@ -94,8 +90,7 @@ func (handler Handler) CreateAssetUploadIntent(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var input CreatePropertyAssetUploadIntentInput
-	if err := decodePropertyWorkspaceJSON(w, r, &input); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+	if err := httpserver.DecodeJSON(w, r, &input, propertyWorkspaceBodyLimit); err != nil {
 		return
 	}
 	item, err := handler.repo.CreatePropertyAssetUploadIntent(r.Context(), tenantContext, r.PathValue("id"), input)
@@ -106,6 +101,26 @@ func (handler Handler) CreateAssetUploadIntent(w http.ResponseWriter, r *http.Re
 	httpserver.WriteJSON(w, http.StatusCreated, map[string]PropertyAssetUploadIntent{"data": item})
 }
 
+func (handler Handler) DiscardAssetUpload(w http.ResponseWriter, r *http.Request) {
+	setPropertyWorkspacePrivateHeaders(w)
+	tenantContext, ok := propertyWorkspaceTenant(w, r)
+	if !ok {
+		return
+	}
+	var input DiscardPropertyAssetUploadInput
+	if err := httpserver.DecodeJSON(w, r, &input, propertyWorkspaceBodyLimit); err != nil {
+		return
+	}
+	item, err := handler.repo.DiscardPropertyAssetUpload(
+		r.Context(), tenantContext, r.PathValue("id"), input,
+	)
+	if err != nil {
+		writePropertyError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, map[string]map[string]string{"data": item})
+}
+
 func (handler Handler) UpdateAsset(w http.ResponseWriter, r *http.Request) {
 	setPropertyWorkspacePrivateHeaders(w)
 	tenantContext, ok := propertyWorkspaceTenant(w, r)
@@ -113,8 +128,7 @@ func (handler Handler) UpdateAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input UpdatePropertyAssetInput
-	if err := decodePropertyWorkspaceJSON(w, r, &input); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+	if err := httpserver.DecodeJSON(w, r, &input, propertyWorkspaceBodyLimit); err != nil {
 		return
 	}
 	item, err := handler.repo.UpdatePropertyAsset(
@@ -134,8 +148,7 @@ func (handler Handler) DeleteAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input DeletePropertyAssetInput
-	if err := decodePropertyWorkspaceJSON(w, r, &input); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+	if err := httpserver.DecodeJSON(w, r, &input, propertyWorkspaceBodyLimit); err != nil {
 		return
 	}
 	item, err := handler.repo.DeletePropertyAsset(
@@ -155,8 +168,7 @@ func (handler Handler) ReorderAssets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input ReorderPropertyAssetsInput
-	if err := decodePropertyWorkspaceJSON(w, r, &input); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+	if err := httpserver.DecodeJSON(w, r, &input, propertyWorkspaceBodyLimit); err != nil {
 		return
 	}
 	items, err := handler.repo.ReorderPropertyAssets(r.Context(), tenantContext, r.PathValue("id"), input)
@@ -174,8 +186,7 @@ func (handler Handler) SetPrimaryAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input SetPrimaryPropertyAssetInput
-	if err := decodePropertyWorkspaceJSON(w, r, &input); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+	if err := httpserver.DecodeJSON(w, r, &input, propertyWorkspaceBodyLimit); err != nil {
 		return
 	}
 	items, err := handler.repo.SetPrimaryPropertyAsset(

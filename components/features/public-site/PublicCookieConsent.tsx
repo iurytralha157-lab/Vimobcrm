@@ -3,21 +3,32 @@
 import { useCallback, useSyncExternalStore } from "react";
 import Link from "next/link";
 
+import {
+  acceptPublicCookieConsent,
+  hasPublicCookieConsent,
+  subscribePublicCookieConsent,
+} from "@/lib/site/public-consent";
+
 type PublicCookieConsentProps = Readonly<{
+  organizationId: string;
   primaryColor: string;
   privacyHref: string;
   siteTitle: string;
 }>;
 
-export const PUBLIC_COOKIE_CONSENT_KEY = "vimob_public_cookie_consent_v1";
-export const PUBLIC_COOKIE_CONSENT_EVENT = "vimob:cookie-consent-changed";
-
-export function PublicCookieConsent({ primaryColor, privacyHref, siteTitle }: PublicCookieConsentProps) {
-  const visible = useSyncExternalStore(subscribeConsent, getConsentSnapshot, getServerConsentSnapshot);
+export function PublicCookieConsent({ organizationId, primaryColor, privacyHref, siteTitle }: PublicCookieConsentProps) {
+  const getConsentSnapshot = useCallback(
+    () => !hasPublicCookieConsent(organizationId),
+    [organizationId],
+  );
+  const visible = useSyncExternalStore(
+    subscribePublicCookieConsent,
+    getConsentSnapshot,
+    getServerConsentSnapshot,
+  );
   const acceptCookies = useCallback(() => {
-    window.localStorage.setItem(PUBLIC_COOKIE_CONSENT_KEY, "accepted");
-    window.dispatchEvent(new Event(PUBLIC_COOKIE_CONSENT_EVENT));
-  }, []);
+    acceptPublicCookieConsent(organizationId);
+  }, [organizationId]);
 
   if (!visible) return null;
 
@@ -46,19 +57,6 @@ export function PublicCookieConsent({ primaryColor, privacyHref, siteTitle }: Pu
       </div>
     </div>
   );
-}
-
-function subscribeConsent(onStoreChange: () => void) {
-  window.addEventListener(PUBLIC_COOKIE_CONSENT_EVENT, onStoreChange);
-  window.addEventListener("storage", onStoreChange);
-  return () => {
-    window.removeEventListener(PUBLIC_COOKIE_CONSENT_EVENT, onStoreChange);
-    window.removeEventListener("storage", onStoreChange);
-  };
-}
-
-function getConsentSnapshot() {
-  return window.localStorage.getItem(PUBLIC_COOKIE_CONSENT_KEY) !== "accepted";
 }
 
 function getServerConsentSnapshot() {

@@ -3,18 +3,9 @@
  */
 import {
   getPublicErrorMessage,
+  getOptionalErrorObjectMessage,
   isTechnicalServiceError,
 } from '@/lib/api/vimob-error';
-
-const getErrorMessage = (error: unknown) => {
-  if (error instanceof Error) return error.message;
-  if (typeof error === 'string') return error;
-  if (error && typeof error === 'object' && 'message' in error) {
-    const message = (error as { message?: unknown }).message;
-    return typeof message === 'string' ? message : '';
-  }
-  return '';
-};
 
 const getErrorCode = (error: unknown) => {
   if (error && typeof error === 'object' && 'code' in error) {
@@ -28,7 +19,9 @@ export function getFriendlyErrorMessage(error: unknown): string {
   if (!error) return 'Ocorreu um erro inesperado. Tente novamente.';
   if (isTechnicalServiceError(error)) return getPublicErrorMessage(error);
 
-  const message = getErrorMessage(error);
+  const message = typeof error === 'string'
+    ? error
+    : getOptionalErrorObjectMessage(error);
   const lowerMessage = message.toLowerCase();
   const code = getErrorCode(error);
 

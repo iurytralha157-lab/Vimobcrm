@@ -75,8 +75,8 @@ interface UseDREParams {
 }
 
 export function useDRE({ startDate, endDate, regime, compareWithPrevious = false }: UseDREParams) {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ['dre', organizationId, startDate.toISOString(), endDate.toISOString(), regime, compareWithPrevious],
@@ -199,8 +199,8 @@ export function useDRE({ startDate, endDate, regime, compareWithPrevious = false
 }
 
 export function useDREGroups() {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ['dre-groups', organizationId],
@@ -210,8 +210,8 @@ export function useDREGroups() {
 }
 
 export function useDREMappings() {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ['dre-mappings', organizationId],
@@ -221,8 +221,8 @@ export function useDREMappings() {
 }
 
 export function useInitializeDREGroups() {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   const initializeGroups = async () => {
     if (!organizationId) {

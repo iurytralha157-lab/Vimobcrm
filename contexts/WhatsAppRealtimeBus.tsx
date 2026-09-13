@@ -1,20 +1,24 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  scheduleWhatsAppRealtimeRefresh,
   useWhatsAppInboxRealtime,
   type WhatsAppMessage,
 } from "@/hooks/use-whatsapp-conversations";
 import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
-import {
-  whatsappQueryKeys,
-} from "@/lib/whatsapp-query-cache";
 
 type LocalWhatsAppMessage = WhatsAppMessage & {
   created_at?: string | null;
   lead_id?: string | null;
+  organization_id?: string | null;
 };
 
 type LocalWhatsAppEvent = CustomEvent<LocalWhatsAppMessage>;
+type LocalWhatsAppConversationEvent = CustomEvent<{
+  conversation_id?: string | null;
+  lead_id?: string | null;
+  organization_id?: string | null;
+}>;
 
 const MESSAGE_EVENTS = [
   "vimob:whatsapp-message-insert",
@@ -30,49 +34,32 @@ const MESSAGE_EVENTS = [
 export function WhatsAppRealtimeBus() {
   const queryClient = useQueryClient();
   const scope = useWhatsAppQueryScope();
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useWhatsAppInboxRealtime(true);
 
   useEffect(() => {
     if (!scope.organizationId || !scope.userId) return;
 
-    const debouncedInvalidateConversations = () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        queryClient.invalidateQueries({
-          queryKey: whatsappQueryKeys.conversationsScope(scope),
-          refetchType: "active",
-        });
-        debounceRef.current = null;
-      }, 500);
-    };
-
     const handleMessageChange = (event: Event) => {
       const msg = (event as LocalWhatsAppEvent).detail;
       if (!msg?.conversation_id) return;
+      if (msg.organization_id && msg.organization_id !== scope.organizationId) return;
 
-      queryClient.invalidateQueries({
-        queryKey: whatsappQueryKeys.messagesForConversation(scope, msg.conversation_id),
-        refetchType: "active",
+      scheduleWhatsAppRealtimeRefresh(queryClient, scope, {
+        refreshConversations: true,
+        refreshMessages: true,
+        refreshLeadMessages: Boolean(msg.lead_id),
+        conversationIds: [msg.conversation_id],
+        leadIds: msg.lead_id ? [msg.lead_id] : undefined,
       });
-      queryClient.invalidateQueries({
-        queryKey: whatsappQueryKeys.paginatedMessagesForConversation(scope, msg.conversation_id),
-        refetchType: "active",
-      });
-
-      if (msg.lead_id) {
-        queryClient.invalidateQueries({
-          queryKey: whatsappQueryKeys.leadMessagesScope(scope, msg.lead_id),
-          refetchType: "active",
-        });
-      }
-
-      debouncedInvalidateConversations();
     };
 
-    const handleConversationChange = () => {
-      debouncedInvalidateConversations();
+    const handleConversationChange = (event: Event) => {
+      const detail = (event as LocalWhatsAppConversationEvent).detail;
+      if (detail?.organization_id && detail.organization_id !== scope.organizationId) return;
+      scheduleWhatsAppRealtimeRefresh(queryClient, scope, {
+        refreshConversations: true,
+      });
     };
 
     MESSAGE_EVENTS.forEach((eventName) => {
@@ -81,7 +68,6 @@ export function WhatsAppRealtimeBus() {
     window.addEventListener("vimob:whatsapp-conversation-change", handleConversationChange);
 
     return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
       MESSAGE_EVENTS.forEach((eventName) => {
         window.removeEventListener(eventName, handleMessageChange);
       });

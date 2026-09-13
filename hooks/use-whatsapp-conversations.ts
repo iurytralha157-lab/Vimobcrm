@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { useInfiniteQuery, useQuery, useMutation, useQueryClient, type Query } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient, type Query, type QueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
@@ -8,12 +8,17 @@ import { whatsappAPI, type SendWhatsAppMessageResult } from "@/lib/api/whatsapp"
 import { reportErrorEvent } from "@/lib/api/telemetry";
 import { canSubscribeToWhatsAppRealtime } from "@/lib/access/whatsapp-realtime";
 import { createClientId } from "@/lib/client-id";
+import { canReactToWhatsAppMessage } from "@/lib/whatsapp-reactions";
 import { createClient } from "@/lib/supabase/client";
 import { getPrivateBroadcastRegistry } from "@/lib/supabase/private-broadcast";
 import type {
   PrivateBroadcastDiagnostic,
   PrivateBroadcastStatus,
 } from "@/lib/realtime/private-broadcast-registry";
+import {
+  WhatsAppRealtimeRefreshCoordinator,
+  type WhatsAppRealtimeRefreshRequest,
+} from "@/lib/realtime/whatsapp-refresh-coordinator";
 import {
   getWhatsAppSendFailureStatus,
   matchesLeadMessagesQueryKey,
@@ -22,6 +27,7 @@ import {
   matchesWhatsAppMessagesQueryKey,
   isWhatsAppInboxWakePayload,
   mergeWhatsAppMessagesWithLocalState,
+  WHATSAPP_MESSAGES_RECONCILE_EVENT,
   whatsappInboxTopic,
   whatsappQueryKeys,
   type WhatsAppQueryScope,
@@ -30,12 +36,18 @@ import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
 
 const WHATSAPP_SEND_COOLDOWN_MS = 1000;
 const WHATSAPP_SEND_RECONCILE_DELAYS_MS = [4_000, 15_000] as const;
+const WHATSAPP_UNCERTAIN_SEND_RECONCILE_DELAYS_MS = [0, 4_000, 15_000, 60_000] as const;
 const WHATSAPP_CONVERSATIONS_REFETCH_MS = 90_000;
 const WHATSAPP_ACTIVE_MESSAGES_REFETCH_MS = 30_000;
 const WHATSAPP_ACTIVE_MESSAGES_STALE_MS = 10_000;
 const lastWhatsAppSendByUser = new Map<string, number>();
 const realtimeDiagnosticReportedAt = new Map<string, number>();
+const scheduledMessageReconciliations = new Map<string, ReturnType<typeof setTimeout>>();
 const WHATSAPP_REALTIME_DIAGNOSTIC_THROTTLE_MS = 60_000;
+const whatsappRealtimeRefreshCoordinators = new WeakMap<
+  QueryClient,
+  WhatsAppRealtimeRefreshCoordinator<WhatsAppQueryScope>
+>();
 
 export interface WhatsAppConversation {
   id: string;
@@ -131,6 +143,11 @@ export interface ConversationFilters {
   search?: string;
 }
 
+type WhatsAppConversationsQueryOptions = {
+  enabled?: boolean;
+  refetchOnWindowFocus?: boolean;
+};
+
 type WhatsAppMessagePage = {
   messages: WhatsAppMessage[];
 };
@@ -179,6 +196,41 @@ const upsertCachedWhatsAppMessage = (
   return next.sort((left, right) => left.sent_at.localeCompare(right.sent_at));
 };
 
+const RETRYABLE_LOCAL_MESSAGE_STATUSES = new Set([
+  "queued",
+  "pending",
+  "sending",
+  "confirming",
+  "failed",
+  "error",
+]);
+
+const upsertOptimisticWhatsAppMessage = (
+  messages: WhatsAppMessage[],
+  optimisticMessage: WhatsAppMessage,
+) => {
+  const optimisticAliases = new Set(messageIdentityAliases(optimisticMessage));
+  const existingIndex = messages.findIndex((message) =>
+    messageIdentityAliases(message).some((alias) => optimisticAliases.has(alias)),
+  );
+
+  if (existingIndex < 0) return [...messages, optimisticMessage];
+  if (!RETRYABLE_LOCAL_MESSAGE_STATUSES.has(messages[existingIndex].status)) return messages;
+
+  const next = [...messages];
+  next[existingIndex] = {
+    ...next[existingIndex],
+    status: "pending",
+    sent_at: optimisticMessage.sent_at,
+    media_error: null,
+    metadata: {
+      ...(next[existingIndex].metadata ?? {}),
+      local_delivery_state: "retrying_same_client_id",
+    },
+  };
+  return next;
+};
+
 const matchesWhatsAppMessagesQuery = (
   query: Query,
   scope: WhatsAppQueryScope,
@@ -186,11 +238,179 @@ const matchesWhatsAppMessagesQuery = (
   leadId?: string | null,
 ) => matchesWhatsAppMessagesQueryKey(query.queryKey, scope, conversationId, leadId);
 
+function dispatchWhatsAppMessagesReconcile(conversationIds?: readonly string[]) {
+  if (typeof window === "undefined") return false;
+  window.dispatchEvent(new CustomEvent(WHATSAPP_MESSAGES_RECONCILE_EVENT, {
+    detail: conversationIds?.length ? { conversationIds: [...new Set(conversationIds)] } : undefined,
+  }));
+  return true;
+}
+
+const getWhatsAppRealtimeScopeKey = (scope: WhatsAppQueryScope) => JSON.stringify([
+  scope.organizationId ?? "none",
+  scope.userId ?? "none",
+  scope.accessScope,
+]);
+
+function getWhatsAppRealtimeRefreshCoordinator(queryClient: QueryClient) {
+  let coordinator = whatsappRealtimeRefreshCoordinators.get(queryClient);
+  if (coordinator) return coordinator;
+
+  coordinator = new WhatsAppRealtimeRefreshCoordinator((batch) => {
+    const { scope } = batch;
+
+    if (batch.refreshConversations) {
+      void queryClient.invalidateQueries({
+        queryKey: whatsappQueryKeys.conversationsScope(scope),
+        refetchType: "active",
+      });
+    }
+
+    if (batch.refreshMessages) {
+      if (batch.allMessages) {
+        void queryClient.invalidateQueries({
+          queryKey: whatsappQueryKeys.messagesScope(scope),
+          refetchType: "active",
+        });
+      } else if (batch.conversationIds.length || batch.leadIds.length) {
+        void queryClient.invalidateQueries({
+          predicate: (query) => batch.conversationIds.some((conversationId) =>
+            matchesWhatsAppMessagesQuery(query, scope, conversationId),
+          ) || batch.leadIds.some((leadId) =>
+            matchesWhatsAppMessagesQuery(query, scope, null, leadId),
+          ),
+          refetchType: "active",
+        });
+      }
+
+      const refreshEveryPaginatedConversation = batch.allMessages
+        || batch.conversationIds.length === 0;
+      if (!dispatchWhatsAppMessagesReconcile(
+        refreshEveryPaginatedConversation ? undefined : batch.conversationIds,
+      )) {
+        void queryClient.invalidateQueries({
+          ...(refreshEveryPaginatedConversation
+            ? { queryKey: whatsappQueryKeys.paginatedMessagesScope(scope) }
+            : {
+                predicate: (query: Query) => batch.conversationIds.some((conversationId) =>
+                  matchesPaginatedWhatsAppMessagesQueryKey(query.queryKey, scope, conversationId),
+                ),
+              }),
+          refetchType: "active",
+        });
+      }
+    }
+
+    if (batch.refreshLeadMessages) {
+      if (batch.allLeadMessages) {
+        void queryClient.invalidateQueries({
+          queryKey: whatsappQueryKeys.leadMessagesScope(scope),
+          refetchType: "active",
+        });
+      } else if (batch.leadIds.length) {
+        void queryClient.invalidateQueries({
+          predicate: (query) => batch.leadIds.some((leadId) =>
+            matchesLeadMessagesQueryKey(query.queryKey, scope, leadId),
+          ),
+          refetchType: "active",
+        });
+      }
+    }
+  });
+  whatsappRealtimeRefreshCoordinators.set(queryClient, coordinator);
+  return coordinator;
+}
+
+export function scheduleWhatsAppRealtimeRefresh(
+  queryClient: QueryClient,
+  scope: WhatsAppQueryScope,
+  request: Omit<WhatsAppRealtimeRefreshRequest<WhatsAppQueryScope>, "scopeKey" | "scope">,
+) {
+  getWhatsAppRealtimeRefreshCoordinator(queryClient).schedule({
+    ...request,
+    scope,
+    scopeKey: getWhatsAppRealtimeScopeKey(scope),
+  });
+}
+
+function reconcileWhatsAppMessageQueries(
+  queryClient: QueryClient,
+  scope: WhatsAppQueryScope,
+  conversationIds: readonly string[],
+  leadId?: string | null,
+) {
+  const uniqueConversationIds = [...new Set(conversationIds.filter(Boolean))];
+  void queryClient.invalidateQueries({
+    predicate: (query) => uniqueConversationIds.some((conversationId) =>
+      matchesWhatsAppMessagesQuery(query, scope, conversationId, leadId),
+    ) || Boolean(leadId && matchesWhatsAppMessagesQuery(query, scope, null, leadId)),
+    refetchType: "active",
+  });
+
+  if (leadId) {
+    void queryClient.invalidateQueries({
+      queryKey: whatsappQueryKeys.leadMessagesScope(scope, leadId),
+      refetchType: "active",
+    });
+  }
+
+  if (!dispatchWhatsAppMessagesReconcile(uniqueConversationIds)) {
+    void queryClient.invalidateQueries({
+      predicate: (query) => matchesWhatsAppMessageRefreshQueryKey(
+        query.queryKey,
+        scope,
+        uniqueConversationIds,
+        leadId,
+      ),
+      refetchType: "active",
+    });
+  }
+}
+
+function scheduleWhatsAppMessageReconciliation(
+  queryClient: QueryClient,
+  scope: WhatsAppQueryScope,
+  conversationIds: readonly string[],
+  leadId: string | null,
+  delays: readonly number[],
+) {
+  const uniqueConversationIds = [...new Set(conversationIds.filter(Boolean))].sort();
+  const targetKey = [
+    scope.organizationId ?? "none",
+    scope.userId ?? "none",
+    scope.accessScope,
+    uniqueConversationIds.join(","),
+    leadId ?? "none",
+  ].join(":");
+
+  delays.forEach((delay) => {
+    const run = () => reconcileWhatsAppMessageQueries(
+      queryClient,
+      scope,
+      uniqueConversationIds,
+      leadId,
+    );
+    if (delay <= 0) {
+      run();
+      return;
+    }
+
+    const timerKey = `${targetKey}:${delay}`;
+    if (scheduledMessageReconciliations.has(timerKey)) return;
+    const timer = setTimeout(() => {
+      scheduledMessageReconciliations.delete(timerKey);
+      run();
+    }, delay);
+    scheduledMessageReconciliations.set(timerKey, timer);
+  });
+}
+
 export function useWhatsAppConversations(
   sessionId?: string,
   filters?: ConversationFilters,
   accessibleSessionIds?: string[],
   limit: number = 80,
+  options?: WhatsAppConversationsQueryOptions,
 ) {
   const scope = useWhatsAppQueryScope();
   const accessibleSessionKey = accessibleSessionIds
@@ -226,14 +446,14 @@ export function useWhatsAppConversations(
     },
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
-    enabled: !!scope.organizationId && !!scope.userId,
+    enabled: !!scope.organizationId && !!scope.userId && (options?.enabled ?? true),
     refetchInterval: (currentQuery) => {
       const data = currentQuery.state.data as { pages?: unknown[] } | undefined;
       return (data?.pages?.length ?? 0) <= 1 ? WHATSAPP_CONVERSATIONS_REFETCH_MS : false;
     },
     refetchIntervalInBackground: false,
     refetchOnReconnect: true,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: options?.refetchOnWindowFocus ?? false,
     staleTime: 30_000,
     gcTime: 1000 * 60 * 10,
     retry: false,
@@ -255,6 +475,52 @@ export function useWhatsAppConversations(
     loadMoreConversations: query.fetchNextPage,
     isLoadingMoreConversations: query.isFetchingNextPage,
   };
+}
+
+export function useWhatsAppUnreadCount(
+  sessionId?: string,
+  filters?: ConversationFilters,
+  accessibleSessionIds?: string[],
+  options?: WhatsAppConversationsQueryOptions,
+) {
+  const scope = useWhatsAppQueryScope();
+  const accessibleSessionKey = accessibleSessionIds
+    ? [...accessibleSessionIds].sort().join(",")
+    : "all";
+
+  return useQuery({
+    queryKey: whatsappQueryKeys.unreadCount(scope, {
+      sessionId,
+      hideGroups: filters?.hideGroups ?? false,
+      showArchived: filters?.showArchived ?? false,
+      onlyLeads: filters?.onlyLeads ?? false,
+      withoutLead: filters?.withoutLead ?? false,
+      pendingReply: filters?.pendingReply ?? false,
+      search: filters?.search?.trim() ?? "",
+      accessibleSessionKey,
+    }),
+    queryFn: async () => {
+      if (!scope.organizationId) return 0;
+      if (!sessionId && accessibleSessionIds !== undefined && accessibleSessionIds.length === 0) {
+        return 0;
+      }
+
+      return whatsappAPI.getUnreadCount({
+        organizationId: scope.organizationId,
+        sessionId,
+        filters,
+        accessibleSessionIds,
+      });
+    },
+    enabled: !!scope.organizationId && !!scope.userId && (options?.enabled ?? true),
+    refetchInterval: WHATSAPP_CONVERSATIONS_REFETCH_MS,
+    refetchIntervalInBackground: false,
+    refetchOnReconnect: true,
+    refetchOnWindowFocus: options?.refetchOnWindowFocus ?? true,
+    staleTime: 30_000,
+    gcTime: 1000 * 60 * 10,
+    retry: false,
+  });
 }
 
 export function useWhatsAppConversation(conversationId: string | null) {
@@ -368,6 +634,7 @@ export function useSendWhatsAppMessage() {
       mimetype,
       filename,
       sendSessionId,
+      clientMessageId,
       _optimisticId,
     }: {
       conversation: WhatsAppConversation;
@@ -379,6 +646,7 @@ export function useSendWhatsAppMessage() {
       filename?: string;
       sendSessionId?: string;
       previewMediaUrl?: string;
+      clientMessageId?: string;
       _optimisticId?: string;
     }): Promise<SendWhatsAppMessageResult> => {
       if (!conversation.session_id) {
@@ -405,7 +673,7 @@ export function useSendWhatsAppMessage() {
           mimetype,
           filename,
           sendSessionId,
-          clientMessageId: _optimisticId,
+          clientMessageId: clientMessageId || _optimisticId,
         },
         scope.organizationId,
       );
@@ -417,7 +685,8 @@ export function useSendWhatsAppMessage() {
 
       const conversationId = variables.conversation.id;
       const leadId = getConversationLeadId(variables.conversation);
-      const optimisticId = createClientId('message');
+      const optimisticId = variables.clientMessageId || variables._optimisticId || createClientId('message');
+      variables.clientMessageId = optimisticId;
       variables._optimisticId = optimisticId;
 
       const messagesPredicate = (q: Query) =>
@@ -467,8 +736,9 @@ export function useSendWhatsAppMessage() {
             matchesWhatsAppMessagesQuery(q, scope, conversationId, leadId),
         },
         (old) => {
-          if (old?.some((message) => message.id === optimisticId)) return old;
-          return old ? [...old, optimisticMessage] : [optimisticMessage];
+          return old
+            ? upsertOptimisticWhatsAppMessage(old, optimisticMessage)
+            : [optimisticMessage];
         },
       );
 
@@ -480,13 +750,12 @@ export function useSendWhatsAppMessage() {
         (old) => {
           const firstPage = old?.pages?.[0];
           if (!old?.pages || !firstPage) return old;
-          if (firstPage.messages.some((message) => message.id === optimisticId)) return old;
           return {
             ...old,
             pages: [
               {
                 ...firstPage,
-                messages: [...firstPage.messages, optimisticMessage],
+                messages: upsertOptimisticWhatsAppMessage(firstPage.messages, optimisticMessage),
               },
               ...old.pages.slice(1),
             ],
@@ -502,13 +771,12 @@ export function useSendWhatsAppMessage() {
           (old) => {
             const firstPage = old?.pages?.[0];
             if (!old?.pages || !firstPage) return old;
-            if (firstPage.messages.some((message) => message.id === optimisticId)) return old;
             return {
               ...old,
               pages: [
                 {
                   ...firstPage,
-                  messages: [...firstPage.messages, optimisticMessage],
+                  messages: upsertOptimisticWhatsAppMessage(firstPage.messages, optimisticMessage),
                 },
                 ...old.pages.slice(1),
               ],
@@ -598,39 +866,33 @@ export function useSendWhatsAppMessage() {
       }
 
       queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
-      const refreshMessages = () => {
-        void queryClient.invalidateQueries({
-          predicate: (q) => matchesWhatsAppMessageRefreshQueryKey(
-            q.queryKey,
-            scope,
-            [...messageKeys],
-            leadId,
-          ),
-          refetchType: "active",
-        });
-        if (leadId) {
-          void queryClient.invalidateQueries({
-            queryKey: whatsappQueryKeys.leadMessagesScope(scope, leadId),
-          });
-        }
-      };
-      if (typeof window === "undefined") {
-        refreshMessages();
-      } else {
-        WHATSAPP_SEND_RECONCILE_DELAYS_MS.forEach((delay) => {
-          window.setTimeout(refreshMessages, delay);
-        });
-      }
+      scheduleWhatsAppMessageReconciliation(
+        queryClient,
+        scope,
+        [...messageKeys],
+        leadId,
+        WHATSAPP_SEND_RECONCILE_DELAYS_MS,
+      );
     },
     onError: (error: Error, variables, context) => {
       const errorMessage = error.message || "";
       const leadId = getConversationLeadId(variables.conversation);
-      const failureStatus = getWhatsAppSendFailureStatus(errorMessage);
+      const failureStatus = getWhatsAppSendFailureStatus(error);
 
       if (context?.optimisticId) {
         const updateFailedMessage = (msg: WhatsAppMessage) =>
           msg.id === context.optimisticId
-            ? { ...msg, status: failureStatus, media_error: errorMessage }
+            ? {
+                ...msg,
+                status: failureStatus,
+                media_error: errorMessage,
+                metadata: {
+                  ...(msg.metadata ?? {}),
+                  local_delivery_state: failureStatus === "confirming"
+                    ? "awaiting_reconciliation"
+                    : "failed",
+                },
+              }
             : msg;
 
         queryClient.setQueriesData<WhatsAppMessage[]>(
@@ -677,17 +939,29 @@ export function useSendWhatsAppMessage() {
         }
       }
 
-      const isRateLimited = errorMessage.includes("RATE_LIMIT_LOCAL") ||
-                            errorMessage.includes("rate_limit_exceeded") ||
-                            errorMessage.includes("Muitas requisi");
-      const isDisconnected = errorMessage.includes("WHATSAPP_DISCONNECTED") ||
-                             errorMessage.includes("desconectada") ||
-                             errorMessage.includes("QR Code") ||
-                             errorMessage.includes("not connected");
-      const isNumberNotExists = errorMessage.includes("nao possui WhatsApp") ||
-                                errorMessage.includes("nao esta registrado") ||
-                                errorMessage.includes("not exist") ||
-                                errorMessage.includes("invalid number");
+      if (failureStatus === "confirming") {
+        queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
+        scheduleWhatsAppMessageReconciliation(
+          queryClient,
+          scope,
+          [variables.conversation.id],
+          leadId,
+          WHATSAPP_UNCERTAIN_SEND_RECONCILE_DELAYS_MS,
+        );
+      }
+
+      const normalizedErrorMessage = errorMessage.toLowerCase();
+      const isRateLimited = normalizedErrorMessage.includes("rate_limit_local") ||
+                            normalizedErrorMessage.includes("rate_limit_exceeded") ||
+                            normalizedErrorMessage.includes("muitas requisi");
+      const isDisconnected = normalizedErrorMessage.includes("whatsapp_disconnected") ||
+                             normalizedErrorMessage.includes("desconectad") ||
+                             normalizedErrorMessage.includes("qr code") ||
+                             normalizedErrorMessage.includes("not connected");
+      const isNumberNotExists = normalizedErrorMessage.includes("nao possui whatsapp") ||
+                                normalizedErrorMessage.includes("nao esta registrado") ||
+                                normalizedErrorMessage.includes("not exist") ||
+                                normalizedErrorMessage.includes("invalid number");
 
       let title = "Erro ao enviar mensagem";
       let description = errorMessage;
@@ -800,6 +1074,9 @@ export function useReactToWhatsAppMessage() {
       if (!variables.conversation.session_id || !variables.targetMessage.session_id) {
         throw new Error("WHATSAPP_SESSION_UNAVAILABLE");
       }
+      if (!canReactToWhatsAppMessage(variables.targetMessage)) {
+        throw new Error("WHATSAPP_MESSAGE_NOT_READY_FOR_REACTION");
+      }
 
       return whatsappAPI.reactToMessage(
         variables.conversation.id,
@@ -814,6 +1091,9 @@ export function useReactToWhatsAppMessage() {
     onMutate: async (variables) => {
       if (!variables.conversation.session_id || !variables.targetMessage.session_id) {
         throw new Error("WHATSAPP_SESSION_UNAVAILABLE");
+      }
+      if (!canReactToWhatsAppMessage(variables.targetMessage)) {
+        throw new Error("WHATSAPP_MESSAGE_NOT_READY_FOR_REACTION");
       }
 
       const conversationId = variables.conversation.id;
@@ -889,7 +1169,7 @@ export function useReactToWhatsAppMessage() {
     onError: (error: Error, variables, context) => {
       if (!context?.clientReactionId) return;
       const errorMessage = error.message || '';
-      const status = getWhatsAppSendFailureStatus(errorMessage);
+      const status = getWhatsAppSendFailureStatus(error);
       const isDefinitive = status === 'failed'
         || /not found|invalid|nao encontrad|não encontrad/i.test(errorMessage);
       updateReactionCaches(
@@ -1102,18 +1382,22 @@ export function useWhatsAppInboxRealtime(enabled: boolean = true) {
     if (!canSubscribe || !scope.organizationId || !scope.userId) return;
     const organizationId = scope.organizationId;
 
-    queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
+    scheduleWhatsAppRealtimeRefresh(queryClient, scope, {
+      refreshConversations: true,
+    });
     const supabase = createClient();
     const registry = getPrivateBroadcastRegistry(supabase, reportWhatsAppRealtimeDiagnostic);
     const reconcileTimers: ReturnType<typeof setTimeout>[] = [];
-    let inboxDebounceTimer: ReturnType<typeof setTimeout> | undefined;
     let cancelled = false;
 
-    const reconcileConversations = () => {
+    const reconcileInbox = () => {
       if (cancelled) return;
-      queryClient.invalidateQueries({
-        queryKey: whatsappQueryKeys.conversationsScope(scope),
-        refetchType: "active",
+      scheduleWhatsAppRealtimeRefresh(queryClient, scope, {
+        refreshConversations: true,
+        refreshMessages: true,
+        refreshLeadMessages: true,
+        allMessages: true,
+        allLeadMessages: true,
       });
     };
 
@@ -1124,22 +1408,17 @@ export function useWhatsAppInboxRealtime(enabled: boolean = true) {
       event: "whatsapp.inbox.changed",
       onPayload: (payload) => {
         if (!isWhatsAppInboxWakePayload(payload)) return;
-        if (inboxDebounceTimer) return;
-        inboxDebounceTimer = setTimeout(() => {
-          inboxDebounceTimer = undefined;
-          reconcileConversations();
-        }, 150);
+        reconcileInbox();
       },
       onStatus: (status: PrivateBroadcastStatus) => {
         if (status !== "SUBSCRIBED") return;
-        reconcileConversations();
-        reconcileTimers.push(setTimeout(reconcileConversations, 1_000));
+        reconcileInbox();
+        reconcileTimers.push(setTimeout(reconcileInbox, 1_000));
       },
     });
 
     return () => {
       cancelled = true;
-      if (inboxDebounceTimer) clearTimeout(inboxDebounceTimer);
       reconcileTimers.forEach((timer) => clearTimeout(timer));
       lease.release();
     };
@@ -1149,11 +1428,13 @@ export function useWhatsAppInboxRealtime(enabled: boolean = true) {
 export function useWhatsAppLeadRealtime(
   enabled: boolean = true,
   leadIds: string[] = [],
+  options: { reconcileOnSubscribe?: boolean } = {},
 ) {
   const queryClient = useQueryClient();
   const scope = useWhatsAppQueryScope();
   const canSubscribe = useCanSubscribeWhatsAppRealtime(enabled);
   const leadKey = [...new Set(leadIds.filter(Boolean))].sort().join("|");
+  const reconcileOnSubscribe = options.reconcileOnSubscribe ?? true;
 
   useEffect(() => {
     if (!canSubscribe || !scope.organizationId || !scope.userId || !leadKey) return;
@@ -1169,17 +1450,13 @@ export function useWhatsAppLeadRealtime(
       onPayload: (payload) => {
         const event = (payload || {}) as Record<string, unknown>;
         const conversationId = typeof event.conversationId === "string" ? event.conversationId : null;
-        queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
-        queryClient.invalidateQueries({
-          predicate: (query) => matchesWhatsAppMessagesQuery(query, scope, conversationId, leadId),
+        scheduleWhatsAppRealtimeRefresh(queryClient, scope, {
+          refreshConversations: true,
+          refreshMessages: true,
+          refreshLeadMessages: true,
+          conversationIds: conversationId ? [conversationId] : undefined,
+          leadIds: [leadId],
         });
-        queryClient.invalidateQueries({
-          queryKey: conversationId
-            ? whatsappQueryKeys.paginatedMessagesForConversation(scope, conversationId)
-            : whatsappQueryKeys.paginatedMessagesScope(scope),
-          refetchType: "active",
-        });
-        queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.leadMessagesScope(scope, leadId) });
         if (typeof window !== "undefined") {
           window.dispatchEvent(new CustomEvent("vimob:whatsapp-message-changed", {
             detail: { ...event, leadId, conversationId },
@@ -1187,20 +1464,17 @@ export function useWhatsAppLeadRealtime(
         }
       },
       onStatus: (status: PrivateBroadcastStatus) => {
-        if (status !== "SUBSCRIBED") return;
+        if (status !== "SUBSCRIBED" || !reconcileOnSubscribe) return;
         // Broadcast is a low-latency hint. Reconcile once immediately and once
         // after a cold subscription to close the commit-before-join window.
         const reconcile = () => {
           if (cancelled) return;
-          queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
-          queryClient.invalidateQueries({
-            predicate: (query) => matchesWhatsAppMessagesQuery(query, scope, null, leadId),
+          scheduleWhatsAppRealtimeRefresh(queryClient, scope, {
+            refreshConversations: true,
+            refreshMessages: true,
+            refreshLeadMessages: true,
+            leadIds: [leadId],
           });
-          queryClient.invalidateQueries({
-            queryKey: whatsappQueryKeys.paginatedMessagesScope(scope),
-            refetchType: "active",
-          });
-          queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.leadMessagesScope(scope, leadId) });
         };
         reconcile();
         reconcileTimers.push(setTimeout(reconcile, 1_000));
@@ -1212,5 +1486,5 @@ export function useWhatsAppLeadRealtime(
       reconcileTimers.forEach((timer) => clearTimeout(timer));
       leases.forEach((lease) => lease.release());
     };
-  }, [canSubscribe, leadKey, scope, queryClient]);
+  }, [canSubscribe, leadKey, queryClient, reconcileOnSubscribe, scope]);
 }

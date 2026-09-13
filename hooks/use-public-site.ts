@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { publicSiteAPI } from "@/lib/api/public-site";
-import { createClientId } from "@/lib/client-id";
+import { getOrCreatePublicSiteSessionId } from "@/lib/public-site-attribution";
+import type { PublicSiteContactInput } from "@/lib/validation";
 
 export interface PublicSiteConfig {
   id: string;
@@ -33,6 +34,7 @@ export interface PublicSiteConfig {
   seo_description: string | null;
   seo_keywords: string | null;
   google_analytics_id: string | null;
+  google_search_console_verification?: string | null;
   // Hero fields
   hero_image_url: string | null;
   hero_title: string | null;
@@ -93,18 +95,6 @@ export interface PublicProperty {
   destaque: boolean;
   status: string;
   mobiliado?: boolean | null;
-}
-
-function getVisitorSessionId() {
-  if (typeof window === 'undefined') return null;
-
-  let sessionId = window.localStorage.getItem('vimob_session_id');
-  if (!sessionId) {
-    sessionId = createClientId('session');
-    window.localStorage.setItem('vimob_session_id', sessionId);
-  }
-
-  return sessionId;
 }
 
 export function usePublicSiteConfig(organizationId: string | null) {
@@ -319,32 +309,10 @@ export function usePublicHomeData(organizationId: string | null) {
   });
 }
 
-export async function submitContactForm<T = unknown>(data: {
-  organization_id: string;
-  name: string;
-  email?: string;
-  phone: string;
-  message: string;
-  best_time?: string;
-  privacy_accepted: boolean;
-  privacy_url?: string;
-  property_id?: string;
-  property_code?: string;
-  session_id?: string | null;
-  submission_id: string;
-  website?: string;
-  landing_page?: string;
-  referrer?: string | null;
-  utm_source?: string | null;
-  utm_medium?: string | null;
-  utm_campaign?: string | null;
-  utm_term?: string | null;
-  utm_content?: string | null;
-  gclid?: string | null;
-  fbclid?: string | null;
-}) {
-  return publicSiteAPI.submitContact<T>({
+export async function submitContactForm(data: PublicSiteContactInput) {
+  return publicSiteAPI.submitContact({
     ...data,
-    session_id: data.session_id ?? getVisitorSessionId(),
+    session_id:
+      data.session_id ?? getOrCreatePublicSiteSessionId(data.organization_id),
   });
 }

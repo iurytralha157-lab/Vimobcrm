@@ -1,21 +1,35 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.112.4";
+import { authorizePrivateWorkerRequest } from "../_shared/private-worker-auth.ts";
+import { buildNotificationTargetUrl } from "../_shared/notification-target.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-interface DispatchParams {
-  event_key: string;
-  organization_id: string;
-  user_id?: string;
-  recipient?: string;
-  variables: Record<string, any>;
-  dedupe_key?: string;
-  lead_id?: string;
-  is_test?: boolean;
-}
+type JsonRecord = Record<string, unknown>;
 
+type NotificationTemplate = {
+  id: string;
+  name: string;
+  slug: string;
+  event_key: string | null;
+  category: string | null;
+  channel: string;
+  channels: string[] | null;
+  title: string | null;
+  message: string;
+  dedupe_window_seconds: number | null;
+  organization_id: string | null;
+  updated_at: string | null;
+};
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const EVENT_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/;
+const EXTERNAL_CHANNELS = new Set(["whatsapp", "push", "email"]);
 const LEAD_PHONE_KEYS = new Set([
   "phone",
   "telefone",
@@ -32,30 +46,51 @@ const LEAD_PHONE_KEYS = new Set([
   "clientphone",
 ]);
 
-function isLeadScopedNotification(eventKey: string, leadId?: string) {
+function json(body: JsonRecord, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function boundedText(value: unknown, maxLength: number) {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function textValue(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function isLeadScopedNotification(eventKey: string, leadId: string) {
   return Boolean(leadId) || eventKey.toLowerCase().includes("lead");
 }
 
-function sanitizeLeadVariables(variables: Record<string, any>, eventKey: string, leadId?: string) {
+function sanitizeLeadVariables(
+  variables: JsonRecord,
+  eventKey: string,
+  leadId: string,
+) {
   if (!isLeadScopedNotification(eventKey, leadId)) return { ...variables };
 
-  return Object.entries(variables || {}).reduce((acc, [key, value]) => {
+  return Object.entries(variables).reduce<JsonRecord>((safe, [key, value]) => {
     const normalizedKey = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
-    if (LEAD_PHONE_KEYS.has(normalizedKey)) {
-      acc[key] = "";
-      return acc;
-    }
-    acc[key] = value;
-    return acc;
-  }, {} as Record<string, any>);
+    safe[key] = LEAD_PHONE_KEYS.has(normalizedKey) ? "" : value;
+    return safe;
+  }, {});
 }
 
-function scrubLeadPhoneText(value: string, eventKey: string, leadId?: string) {
+function scrubLeadPhoneText(value: string, eventKey: string, leadId: string) {
   if (!isLeadScopedNotification(eventKey, leadId) || !value) return value;
 
   return value
     .split("\n")
-    .filter((line) => !/^\s*(telefone|celular|whats(?:app)?|phone)\s*:/i.test(line))
+    .filter((line) =>
+      !/^\s*(telefone|celular|whats(?:app)?|phone)\s*:/i.test(line)
+    )
     .join("\n")
     .replace(/\b(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?9?\d{4}[-\s]?\d{4}\b/g, "")
     .replace(/[ \t]{2,}/g, " ")
@@ -63,255 +98,416 @@ function scrubLeadPhoneText(value: string, eventKey: string, leadId?: string) {
     .trim();
 }
 
+function addVariableAliases(variables: JsonRecord) {
+  const enriched = { ...variables };
+  const alias = (left: string, right: string) => {
+    if (enriched[left] && !enriched[right]) enriched[right] = enriched[left];
+    if (enriched[right] && !enriched[left]) enriched[left] = enriched[right];
+  };
+  alias("nome", "user_name");
+  alias("lead_name", "nome_lead");
+  alias("horario", "time");
+  alias("titulo", "title");
+  return enriched;
+}
+
+function renderTemplate(
+  template: string,
+  variables: JsonRecord,
+  removeOrganizationLabel: boolean,
+) {
+  let rendered = template;
+  for (const [key, value] of Object.entries(variables)) {
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const placeholder = new RegExp(`\\{\\s*${escapedKey}\\s*\\}`, "gi");
+    const text = value === null || value === undefined ? "" : String(value);
+
+    if (key === "organization_name" && removeOrganizationLabel && !text) {
+      rendered = rendered
+        .replace(
+          new RegExp(`(🏢 )?Organização:?\\s*\\{${escapedKey}\\}`, "gi"),
+          "",
+        )
+        .replace(new RegExp(`\\n?🏢\\s*\\{${escapedKey}\\}`, "gi"), "");
+    }
+    rendered = rendered.replace(placeholder, text);
+  }
+  return rendered.replace(/\n\n+/g, "\n\n").trim();
+}
+
+function normalizeTemplateChannels(template: NotificationTemplate) {
+  const configured =
+    Array.isArray(template.channels) && template.channels.length > 0
+      ? template.channels
+      : [template.channel];
+  return [
+    ...new Set(
+      configured
+        .map((channel) => boundedText(channel, 40).toLowerCase())
+        .filter((channel) =>
+          channel === "system" || EXTERNAL_CHANNELS.has(channel)
+        ),
+    ),
+  ];
+}
+
+function buildDispatchMetadata(channels: string[]) {
+  const dispatch: JsonRecord = {};
+  for (const channel of channels) {
+    if (!EXTERNAL_CHANNELS.has(channel)) continue;
+    dispatch[channel] = {
+      required: true,
+      status: "pending",
+      attempts: 0,
+    };
+  }
+  return dispatch;
+}
+
+function testDedupeKey(baseKey: string) {
+  const suffix = `:test:${crypto.randomUUID()}`;
+  return `${baseKey.slice(0, 180 - suffix.length)}${suffix}`;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+  if (req.method !== "POST") {
+    return json({ success: false, error: "method_not_allowed" }, 405);
+  }
+  if (!authorizePrivateWorkerRequest(req)) {
+    return json({ success: false, error: "unauthorized" }, 401);
   }
 
   try {
-    const params: DispatchParams = await req.json();
-    const { event_key, organization_id, user_id, recipient, variables, dedupe_key, lead_id, is_test } = params;
-    const safeVariables = sanitizeLeadVariables(variables || {}, event_key, lead_id);
-
-    const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-
-    console.log(`[NotificationDispatcher] Processing event: ${event_key} for org: ${organization_id}`);
-
-    // 1. Fetch template by event_key or slug
-    const { data: template, error: templateError } = await supabase
-      .from('notification_templates')
-      .select('*')
-      .or(`event_key.eq.${event_key},slug.eq.${event_key}`)
-      .eq('is_active', true)
-      .maybeSingle();
-
-    if (templateError || !template) {
-      // Se não encontrou template ativo, logar e retornar erro silencioso para não quebrar fluxos
-      console.warn(`[NotificationDispatcher] Template for event ${event_key} not found or inactive.`);
-      return new Response(JSON.stringify({ 
-        success: false, 
-        error: 'Template not found or inactive',
-        details: { event_key, organization_id } 
-      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    const rawBody: unknown = await req.json();
+    if (!isRecord(rawBody)) {
+      return json({ success: false, error: "invalid_payload" }, 400);
     }
 
-    // 2. Check Deduplication
-    const finalDedupeKey = dedupe_key || `${event_key}:${lead_id || user_id || recipient}`;
-    const windowSeconds = template.dedupe_window_seconds || 60;
+    const eventKey = textValue(rawBody.event_key);
+    const organizationId = textValue(rawBody.organization_id);
+    const userId = textValue(rawBody.user_id);
+    const leadId = textValue(rawBody.lead_id);
+    const requestedRecipient = textValue(rawBody.recipient);
+    const requestedDedupeKey = textValue(rawBody.dedupe_key);
+    const isTest = rawBody.is_test === true;
 
-    if (!is_test) {
-      const { data: existingLog } = await supabase
-        .from('notification_logs')
-        .select('id')
-        .eq('dedupe_key', finalDedupeKey)
-        .gt('created_at', new Date(Date.now() - windowSeconds * 1000).toISOString())
+    if (!EVENT_KEY_RE.test(eventKey)) {
+      return json({ success: false, error: "event_key_invalid" }, 400);
+    }
+    if (!UUID_RE.test(organizationId) || !UUID_RE.test(userId)) {
+      return json(
+        { success: false, error: "notification_context_invalid" },
+        400,
+      );
+    }
+    if (leadId && !UUID_RE.test(leadId)) {
+      return json({ success: false, error: "lead_id_invalid" }, 400);
+    }
+    if (requestedRecipient.length > 180) {
+      return json({ success: false, error: "recipient_invalid" }, 400);
+    }
+    if (requestedDedupeKey.length > 180) {
+      return json({ success: false, error: "dedupe_key_invalid" }, 400);
+    }
+    if (rawBody.variables !== undefined && !isRecord(rawBody.variables)) {
+      return json({ success: false, error: "variables_invalid" }, 400);
+    }
+    if (
+      rawBody.recipient !== undefined && rawBody.recipient !== null &&
+      typeof rawBody.recipient !== "string"
+    ) {
+      return json({ success: false, error: "recipient_invalid" }, 400);
+    }
+    if (
+      rawBody.dedupe_key !== undefined && rawBody.dedupe_key !== null &&
+      typeof rawBody.dedupe_key !== "string"
+    ) {
+      return json({ success: false, error: "dedupe_key_invalid" }, 400);
+    }
+
+    const rawVariables = isRecord(rawBody.variables) ? rawBody.variables : {};
+    if (JSON.stringify(rawVariables).length > 32_000) {
+      return json({ success: false, error: "variables_too_large" }, 413);
+    }
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+    if (!supabaseUrl || !serviceRoleKey) {
+      return json(
+        { success: false, error: "notification_queue_unavailable" },
+        503,
+      );
+    }
+    const supabase = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+
+    const [organizationResult, userResult, membershipResult, leadResult] =
+      await Promise.all([
+        supabase
+          .from("organizations")
+          .select("id, name")
+          .eq("id", organizationId)
+          .maybeSingle(),
+        supabase
+          .from("users")
+          .select("id")
+          .eq("id", userId)
+          .eq("is_active", true)
+          .maybeSingle(),
+        supabase
+          .from("organization_members")
+          .select("user_id")
+          .eq("organization_id", organizationId)
+          .eq("user_id", userId)
+          .eq("is_active", true)
+          .maybeSingle(),
+        leadId
+          ? supabase
+            .from("leads")
+            .select("id")
+            .eq("id", leadId)
+            .eq("organization_id", organizationId)
+            .maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
+      ]);
+
+    const contextError = organizationResult.error || userResult.error ||
+      membershipResult.error || leadResult.error;
+    if (contextError) {
+      console.error(
+        "notification_dispatch_context_lookup_failed",
+        contextError.code,
+      );
+      return json(
+        { success: false, error: "notification_context_unavailable" },
+        503,
+      );
+    }
+    if (
+      !organizationResult.data || !userResult.data || !membershipResult.data ||
+      (leadId && !leadResult.data)
+    ) {
+      return json(
+        { success: false, error: "notification_context_invalid" },
+        400,
+      );
+    }
+
+    const templateSelect =
+      "id, name, slug, event_key, category, channel, channels, title, message, dedupe_window_seconds, organization_id, updated_at";
+    const loadTemplate = (scope: "organization" | "global") => {
+      let query = supabase
+        .from("notification_templates")
+        .select(templateSelect)
+        .eq("is_active", true)
+        .or(`event_key.eq.${eventKey},slug.eq.${eventKey}`);
+      query = scope === "organization"
+        ? query.eq("organization_id", organizationId)
+        : query.is("organization_id", null);
+      return query
+        .order("updated_at", { ascending: false, nullsFirst: false })
         .limit(1)
         .maybeSingle();
-
-      if (existingLog) {
-        console.log(`[NotificationDispatcher] Deduplicated event ${event_key} for key ${finalDedupeKey}`);
-        return new Response(JSON.stringify({ success: true, deduplicated: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
+    };
+    const [organizationTemplate, globalTemplate] = await Promise.all([
+      loadTemplate("organization"),
+      loadTemplate("global"),
+    ]);
+    const templateError = organizationTemplate.error || globalTemplate.error;
+    if (templateError) {
+      console.error(
+        "notification_dispatch_template_lookup_failed",
+        templateError.code,
+      );
+      return json({
+        success: false,
+        error: "notification_template_unavailable",
+      }, 503);
     }
-
-    // 3. Format message and title
-    let formattedMessage = template.message;
-    let formattedTitle = template.title || '';
-
-    // Enrich variables with common aliases to be more robust
-    const enrichedVariables = { ...safeVariables };
-    if (enrichedVariables.nome && !enrichedVariables.user_name) enrichedVariables.user_name = enrichedVariables.nome;
-    if (enrichedVariables.user_name && !enrichedVariables.nome) enrichedVariables.nome = enrichedVariables.user_name;
-    if (enrichedVariables.lead_name && !enrichedVariables.nome_lead) enrichedVariables.nome_lead = enrichedVariables.lead_name;
-    if (enrichedVariables.nome_lead && !enrichedVariables.lead_name) enrichedVariables.lead_name = enrichedVariables.nome_lead;
-    if (enrichedVariables.horario && !enrichedVariables.time) enrichedVariables.time = enrichedVariables.horario;
-    if (enrichedVariables.time && !enrichedVariables.horario) enrichedVariables.horario = enrichedVariables.time;
-    if (enrichedVariables.titulo && !enrichedVariables.title) enrichedVariables.title = enrichedVariables.titulo;
-    if (enrichedVariables.title && !enrichedVariables.titulo) enrichedVariables.titulo = enrichedVariables.title;
-
-    // Fetch user organizations count to decide if we show organization name
-    let showOrganizationName = false;
-    if (user_id) {
-      const { count } = await supabase
-        .from('organization_members')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user_id);
-      showOrganizationName = (count || 0) > 1;
+    const templateData = organizationTemplate.data || globalTemplate.data;
+    if (!templateData) {
+      return json(
+        { success: false, error: "notification_template_not_found" },
+        404,
+      );
     }
+    const template = templateData as NotificationTemplate;
 
-    // Auto-fetch organization name if needed and user has multiple orgs
-    if (showOrganizationName && (formattedMessage.includes('{organization_name}') || formattedTitle.includes('{organization_name}')) && !enrichedVariables.organization_name) {
-      const { data: org } = await supabase.from('organizations').select('name').eq('id', organization_id).maybeSingle();
-      if (org) enrichedVariables.organization_name = org.name;
-    } else if (!showOrganizationName) {
-      // Remove placeholder if user has only one org
-      enrichedVariables.organization_name = '';
-    }
-
-    if (enrichedVariables) {
-      Object.entries(enrichedVariables).forEach(([key, value]) => {
-        // Replace {variable_name} with the value, case-insensitive
-        const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const regex = new RegExp(`\\{\\s*${escapedKey}\\s*\\}`, 'gi');
-        
-        const stringValue = value !== null && value !== undefined ? String(value) : '';
-        
-        // If organization_name is empty, also try to clean up prefixes like "Organização: " or "🏢 "
-        if (key === 'organization_name' && !stringValue) {
-          formattedMessage = formattedMessage.replace(new RegExp(`(🏢 )?Organização:?\\s*\\{${escapedKey}\\}`, 'gi'), '');
-          formattedMessage = formattedMessage.replace(new RegExp(`\\n?🏢\\s*\\{${escapedKey}\\}`, 'gi'), '');
-        }
-
-        formattedMessage = formattedMessage.replace(regex, stringValue);
-        if (formattedTitle) {
-          formattedTitle = formattedTitle.replace(regex, stringValue);
-        }
-      });
-    }
-
-    // Cleanup extra newlines that might be left after removing org
-    formattedMessage = scrubLeadPhoneText(
-      formattedMessage.replace(/\n\n+/g, '\n\n').trim(),
-      event_key,
-      lead_id,
+    const safeVariables = sanitizeLeadVariables(
+      rawVariables,
+      eventKey,
+      leadId,
     );
-    formattedTitle = scrubLeadPhoneText(formattedTitle, event_key, lead_id);
-
-    // 4. Dispatch for each channel
-    const channels = Array.isArray(template.channels) && template.channels.length > 0
-      ? template.channels
-      : [template.channel].filter(Boolean);
-    const hasSystemChannel = channels.includes('system');
-    const dispatchChannels = channels
-      .filter((channel: string, index: number, self: string[]) => self.indexOf(channel) === index)
-      .filter((channel: string) => !(channel === 'push' && hasSystemChannel));
-
-    if (hasSystemChannel && channels.includes('push')) {
-      console.log(`[NotificationDispatcher] Skipping explicit push for ${event_key}; system notification trigger will send it.`);
+    const enrichedVariables = addVariableAliases(safeVariables);
+    const { count: membershipCount, error: membershipCountError } =
+      await supabase
+        .from("organization_members")
+        .select("user_id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("is_active", true);
+    if (membershipCountError) {
+      console.error(
+        "notification_dispatch_membership_count_failed",
+        membershipCountError.code,
+      );
+      return json(
+        { success: false, error: "notification_context_unavailable" },
+        503,
+      );
     }
 
-    const dispatchResults = await Promise.all(dispatchChannels.map(async (channel: string) => {
-      let result: any = { success: false };
-      const startTime = performance.now();
+    const showOrganizationName = (membershipCount || 0) > 1;
+    if (showOrganizationName && !enrichedVariables.organization_name) {
+      enrichedVariables.organization_name = organizationResult.data.name || "";
+    } else if (!showOrganizationName) {
+      enrichedVariables.organization_name = "";
+    }
 
-      try {
-        if (channel === 'system' && user_id) {
-          const { error } = await supabase.from('notifications').insert({
-            user_id: user_id,
-            organization_id: organization_id,
-            title: formattedTitle || template.name,
-            content: formattedMessage,
-            type: template.category || 'info',
-            lead_id: lead_id || null,
-            is_read: false,
-          });
-          result = { success: !error, error };
-        } else if (channel === 'whatsapp') {
-          const resp = await fetch(`${SUPABASE_URL}/functions/v1/whatsapp-notifier`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-            },
-            body: JSON.stringify({
-              organization_id: organization_id,
-              user_id: user_id,
-              phone: recipient,
-              message: formattedMessage,
-              lead_id: lead_id || null,
-            }),
-          });
-          const data = await resp.json();
-          result = { success: resp.ok && data.success !== false, data, error: data.error };
-        } else if (channel === 'email') {
-          const resp = await fetch(`${SUPABASE_URL}/functions/v1/send-email`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-            },
-            body: JSON.stringify({
-              to: recipient,
-              template_key: template.slug,
-              variables: safeVariables,
-              organization_id: organization_id
-            }),
-          });
-          const data = await resp.json();
-          result = { success: resp.ok, data, error: data.error };
-        } else if (channel === 'push' && user_id) {
-          const notificationData = {
-            event_key,
-            type: template.category || 'info',
-            lead_id: lead_id || null,
-            organization_id,
-            url: lead_id ? `/crm/conversas?lead=${lead_id}` : "/notifications",
-          };
+    let formattedMessage = renderTemplate(
+      boundedText(template.message, 20_000),
+      enrichedVariables,
+      !showOrganizationName,
+    );
+    let formattedTitle = renderTemplate(
+      boundedText(template.title, 2_000),
+      enrichedVariables,
+      !showOrganizationName,
+    );
+    formattedMessage = scrubLeadPhoneText(formattedMessage, eventKey, leadId);
+    formattedTitle = scrubLeadPhoneText(formattedTitle, eventKey, leadId);
 
-          const resp = await fetch(`${SUPABASE_URL}/functions/v1/send-push-notification`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-            },
-            body: JSON.stringify({
-              user_id: user_id,
-              title: formattedTitle || template.name,
-              body: formattedMessage,
-              data: notificationData,
-              priority: "high",
-            }),
-          });
-          const data = await resp.json();
-          result = { success: resp.ok && data.success !== false, data, error: data.error };
-        }
+    const title = boundedText(formattedTitle || template.name || eventKey, 180);
+    const content = boundedText(formattedMessage, 1_000);
+    if (!title) {
+      return json({ success: false, error: "notification_title_invalid" }, 422);
+    }
 
-        const endTime = performance.now();
-        const executionTime = `${(endTime - startTime).toFixed(2)}ms`;
+    const channels = normalizeTemplateChannels(template);
+    const dispatch = buildDispatchMetadata(channels);
+    if (channels.includes("whatsapp") && content) {
+      enrichedVariables.__rendered_whatsapp_message = content;
+    }
 
-        // Log each channel send
-        await supabase.from('notification_logs').insert({
-          template_id: template.id,
-          organization_id: organization_id,
-          user_id: user_id,
-          recipient: recipient || user_id || 'system',
-          channel: channel,
-          payload: { 
-            variables: safeVariables, 
-            formattedTitle, 
-            formattedMessage, 
-            dedupe_key: finalDedupeKey, 
-            executionTime,
-            template_name: template.name,
-            lead_id: lead_id,
-            is_test: is_test
-          },
-          response: result,
-          status: result.success ? 'sent' : 'failed',
-          error: result.error ? String(result.error) : null,
-          dedupe_key: finalDedupeKey,
-          is_test: is_test || false
-        });
+    const baseDedupeKey = requestedDedupeKey ||
+      `${eventKey}:${leadId || userId}:${userId}`;
+    const finalDedupeKey = isTest
+      ? testDedupeKey(baseDedupeKey)
+      : baseDedupeKey;
+    const recipientKey = `user:${userId}`;
 
-      } catch (err) {
-        console.error(`[NotificationDispatcher] Error sending to channel ${channel}:`, err);
-        result = { success: false, error: err.message };
+    const findExisting = async () => {
+      const { data, error } = await supabase
+        .from("notifications")
+        .select("id")
+        .eq("organization_id", organizationId)
+        .eq("user_id", userId)
+        .eq("metadata->>dedupe_key", finalDedupeKey)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return { data, error };
+    };
+
+    if (!isTest) {
+      const existing = await findExisting();
+      if (existing.error) {
+        console.error(
+          "notification_dispatch_dedupe_lookup_failed",
+          existing.error.code,
+        );
+        return json(
+          { success: false, error: "notification_queue_unavailable" },
+          503,
+        );
       }
+      if (existing.data?.id) {
+        return json({
+          success: true,
+          queued: true,
+          notification_id: existing.data.id,
+          deduplicated: true,
+        });
+      }
+    }
 
-      return { channel, result };
-    }));
+    const metadata: JsonRecord = {
+      event_key: eventKey,
+      variables: enrichedVariables,
+      dedupe_key: finalDedupeKey,
+      requested_recipient: requestedRecipient || null,
+      recipient_key: recipientKey,
+      is_test: isTest,
+      source: "legacy_edge_notification_dispatcher",
+      template: {
+        id: template.id,
+        slug: template.slug,
+        event_key: template.event_key,
+        name: template.name,
+        category: template.category,
+        channel: template.channel,
+        channels,
+        dedupe_window_seconds: template.dedupe_window_seconds,
+        organization_id: template.organization_id,
+        updated_at: template.updated_at,
+      },
+    };
+    if (Object.keys(dispatch).length > 0) metadata.dispatch = dispatch;
 
-    const allFailed = dispatchResults.length > 0 && dispatchResults.every(r => !r.result.success);
-    return new Response(JSON.stringify({ 
-      success: !allFailed, 
-      results: dispatchResults,
-      error: allFailed ? 'All channels failed to send' : null 
-    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    const { data: inserted, error: insertError } = await supabase
+      .from("notifications")
+      .insert({
+        organization_id: organizationId,
+        user_id: userId,
+        lead_id: leadId || null,
+        type: boundedText(template.category, 40) || "info",
+        title,
+        content: content || null,
+        channel: "in_app",
+        target_url: buildNotificationTargetUrl(
+          eventKey,
+          enrichedVariables,
+          leadId,
+        ),
+        is_read: false,
+        metadata,
+      })
+      .select("id")
+      .single();
 
-  } catch (error) {
-    console.error("Notification Dispatcher Error:", error);
-    return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (insertError) {
+      if (insertError.code === "23505") {
+        const existing = await findExisting();
+        if (!existing.error && existing.data?.id) {
+          return json({
+            success: true,
+            queued: true,
+            notification_id: existing.data.id,
+            deduplicated: true,
+          });
+        }
+      }
+      console.error("notification_dispatch_enqueue_failed", insertError.code);
+      return json(
+        { success: false, error: "notification_enqueue_failed" },
+        500,
+      );
+    }
+
+    return json({
+      success: true,
+      queued: true,
+      notification_id: inserted.id,
+      deduplicated: false,
+    }, 202);
+  } catch (error: unknown) {
+    console.error(
+      "notification_dispatch_unexpected_error",
+      error instanceof Error ? error.name : "unknown",
+    );
+    return json({ success: false, error: "internal_error" }, 500);
   }
 });

@@ -32,6 +32,7 @@ func TestShouldDispatchLeadWhatsAppNotification(t *testing.T) {
 		"lead_redistributed_away",
 		"whatsapp_disconnected",
 		"schedule_reminder",
+		"appointment_reminder",
 		"billing_due_today",
 		"billing_payment_confirmed",
 		"billing_payment_receipt",
@@ -46,6 +47,88 @@ func TestShouldDispatchLeadWhatsAppNotification(t *testing.T) {
 
 	if shouldDispatchLeadWhatsAppNotification("gamification_update") {
 		t.Fatal("gamification update must not trigger WhatsApp dispatch")
+	}
+	if shouldDispatchLeadWhatsAppNotification("appointment_outcome_pending") {
+		t.Fatal("outcome prompts must stay in-app/push only")
+	}
+}
+
+func TestPublicNotificationDispatchIsEnqueueOnly(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile("support_notifications.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	start := strings.Index(source, "func (repo Repository) DispatchNotification(")
+	end := strings.Index(source, "func (repo Repository) enqueueDispatchNotification(")
+	if start < 0 || end <= start {
+		t.Fatal("could not isolate public notification dispatch")
+	}
+	dispatch := source[start:end]
+	if !strings.Contains(dispatch, "repo.enqueueDispatchNotification(") {
+		t.Fatal("public dispatch must durably enqueue the notification")
+	}
+	if !strings.Contains(dispatch, "Queued:       true") {
+		t.Fatal("public dispatch response must explicitly report queued=true")
+	}
+	if strings.Contains(dispatch, "dispatchNotificationDeliveries(") ||
+		strings.Contains(dispatch, "dispatchPendingNotification(") ||
+		strings.Contains(dispatch, "dispatchWhatsAppNotification(") {
+		t.Fatal("public dispatch must not call delivery providers inline")
+	}
+}
+
+func TestDealWonNotificationEnqueueSharesLeadUpdateTransaction(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	updateStart := strings.Index(source, "func (repo Repository) Update(")
+	updateEnd := strings.Index(source, "func (repo Repository) dispatchDealStatusSideEffects(")
+	if updateStart < 0 || updateEnd <= updateStart {
+		t.Fatal("could not isolate lead update transaction")
+	}
+	update := source[updateStart:updateEnd]
+	enqueue := strings.Index(update, "repo.enqueueDealWonNotifications(ctx, tx,")
+	commit := strings.Index(update, "tx.Commit(ctx)")
+	if enqueue < 0 || commit < 0 || enqueue > commit {
+		t.Fatal("deal_won notification must be enqueued with the lead transaction before commit")
+	}
+
+	enqueueStart := strings.Index(source, "func (repo Repository) enqueueDealWonNotifications(")
+	enqueueEnd := strings.Index(source, "func (repo Repository) listDealWonNotificationRecipients(")
+	if enqueueStart < 0 || enqueueEnd <= enqueueStart {
+		t.Fatal("could not isolate deal_won notification enqueue")
+	}
+	enqueueScope := source[enqueueStart:enqueueEnd]
+	if !strings.Contains(enqueueScope, "queryer notificationRowsQueryer") ||
+		!strings.Contains(enqueueScope, "repo.enqueueDispatchNotificationWithQueryer(ctx, queryer,") {
+		t.Fatal("deal_won notification inserts must use the transaction queryer")
+	}
+}
+
+func TestDealWonNotificationDedupeTracksTransitionEpisode(t *testing.T) {
+	t.Parallel()
+
+	current := leadSnapshot{
+		ID: "11111111-1111-4111-8111-111111111111",
+		Data: map[string]any{
+			"updated_at": "2026-09-05T12:00:00Z",
+		},
+	}
+	recipientID := "22222222-2222-4222-8222-222222222222"
+	first := dealWonNotificationDedupeKey(current, recipientID)
+	if repeated := dealWonNotificationDedupeKey(current, recipientID); repeated != first {
+		t.Fatalf("same deal transition produced unstable dedupe key %q != %q", repeated, first)
+	}
+	current.Data["updated_at"] = "2026-09-05T13:00:00Z"
+	if reopened := dealWonNotificationDedupeKey(current, recipientID); reopened == first {
+		t.Fatal("a reopened lead must receive a new deal_won transition key")
 	}
 }
 
@@ -621,7 +704,7 @@ func TestRenderNotificationTemplateTextKeepsDoubleBraceFormat(t *testing.T) {
 func TestBuildWhatsAppNotificationTextScheduleReminderIncludesLinkedDetails(t *testing.T) {
 	t.Parallel()
 
-	text := buildWhatsAppNotificationText("schedule_reminder", "Lembrete de agenda", "", map[string]any{
+	text := buildWhatsAppNotificationText("appointment_reminder", "Lembrete de agenda", "", map[string]any{
 		"schedule_title":      "Visita com Maria",
 		"schedule_event_type": "visit",
 		"start_time":          "2026-07-17T18:30:00+00:00",

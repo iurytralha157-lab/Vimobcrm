@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 
 import {
-  PUBLIC_COOKIE_CONSENT_EVENT,
-  PUBLIC_COOKIE_CONSENT_KEY,
-} from "./PublicCookieConsent";
+  hasPublicCookieConsent,
+  subscribePublicCookieConsent,
+} from "@/lib/site/public-consent";
 
 type PublicTrackingScriptsProps = Readonly<{
   bodyScripts?: string | null;
@@ -14,6 +14,7 @@ type PublicTrackingScriptsProps = Readonly<{
   gtmId?: string | null;
   headScripts?: string | null;
   metaPixelId?: string | null;
+  organizationId: string;
 }>;
 
 export function PublicTrackingScripts({
@@ -23,9 +24,14 @@ export function PublicTrackingScripts({
   gtmId,
   headScripts,
   metaPixelId,
+  organizationId,
 }: PublicTrackingScriptsProps) {
+  const getConsentSnapshot = useCallback(
+    () => hasPublicCookieConsent(organizationId),
+    [organizationId],
+  );
   const consentAccepted = useSyncExternalStore(
-    subscribeToConsent,
+    subscribePublicCookieConsent,
     getConsentSnapshot,
     getServerConsentSnapshot,
   );
@@ -48,10 +54,6 @@ export function PublicTrackingScripts({
         ...injectMarkup(
           document.head,
           `<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);})(window,document,'script','dataLayer','${normalizedGtmId}');</script>`,
-        ),
-        ...injectMarkup(
-          document.body,
-          `<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=${normalizedGtmId}" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>`,
         ),
       );
     }
@@ -95,19 +97,6 @@ export function PublicTrackingScripts({
   ]);
 
   return null;
-}
-
-function subscribeToConsent(onStoreChange: () => void) {
-  window.addEventListener(PUBLIC_COOKIE_CONSENT_EVENT, onStoreChange);
-  window.addEventListener("storage", onStoreChange);
-  return () => {
-    window.removeEventListener(PUBLIC_COOKIE_CONSENT_EVENT, onStoreChange);
-    window.removeEventListener("storage", onStoreChange);
-  };
-}
-
-function getConsentSnapshot() {
-  return window.localStorage.getItem(PUBLIC_COOKIE_CONSENT_KEY) === "accepted";
 }
 
 function getServerConsentSnapshot() {

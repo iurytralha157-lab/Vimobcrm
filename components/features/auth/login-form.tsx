@@ -2,14 +2,21 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { DEFAULT_AUTHENTICATED_ROUTE } from "@/config/constants";
 import {
   getPostLoginPathFromSearchParams,
   getSafePostLoginPath,
 } from "@/lib/auth/post-login-redirect";
-import { shouldWaitForPostLoginRouting } from "@/lib/auth/frontend-auth-reliability";
+import {
+  EMAIL_CONFIRMATION_RESEND_WAIT_MS,
+  LOGIN_OPERATION_WAIT_MS,
+  PASSWORD_RECOVERY_REQUEST_WAIT_MS,
+  POST_LOGIN_ROUTING_WAIT_MS,
+  runAuthOperationWithTimeout,
+  shouldWaitForPostLoginRouting,
+} from "@/lib/auth/frontend-auth-reliability";
 import { authAPI } from "@/lib/api/auth";
 
 type FormMode = "login" | "recover";
@@ -149,6 +156,12 @@ export function LoginForm() {
   const [confirmationResendError, setConfirmationResendError] = useState<string | null>(null);
   const [pendingPostLoginPath, setPendingPostLoginPath] = useState<string | null>(null);
   const [routeAfterEmailConfirmation, setRouteAfterEmailConfirmation] = useState(false);
+  const loginTitleRef = useRef<HTMLHeadingElement>(null);
+  const recoveryTitleRef = useRef<HTMLHeadingElement>(null);
+  const previousFormModeRef = useRef<FormMode>(formMode);
+  const loginSubmissionInFlightRef = useRef(false);
+  const recoverySubmissionInFlightRef = useRef(false);
+  const pendingLoginSawAuthenticatedUserRef = useRef(false);
 
   const isRecoveringPassword = formMode === "recover";
   const textClass = "text-[var(--app-text-primary)]";
@@ -218,6 +231,14 @@ export function LoginForm() {
   }, []);
 
   useEffect(() => {
+    if (previousFormModeRef.current === formMode) return;
+
+    previousFormModeRef.current = formMode;
+    const title = formMode === "recover" ? recoveryTitleRef.current : loginTitleRef.current;
+    title?.focus();
+  }, [formMode]);
+
+  useEffect(() => {
     if (!routeAfterEmailConfirmation || loading || !authInitialized || user) return;
     const messageTimer = window.setTimeout(() => {
       setRecoveryMessage("Confirmação processada. Entre para continuar.");
@@ -276,6 +297,61 @@ export function LoginForm() {
     userOrganizations,
   ]);
 
+  useEffect(() => {
+    if (!pendingPostLoginPath) {
+      pendingLoginSawAuthenticatedUserRef.current = false;
+      return;
+    }
+
+    if (user) {
+      pendingLoginSawAuthenticatedUserRef.current = true;
+      return;
+    }
+
+    if (
+      !pendingLoginSawAuthenticatedUserRef.current ||
+      shouldWaitForPostLoginRouting({
+        authInitialized,
+        authLoading: loading,
+        isInitializingOrganization: isInitializingOrg,
+        organizationsLoaded,
+      })
+    ) {
+      return;
+    }
+
+    pendingLoginSawAuthenticatedUserRef.current = false;
+    loginSubmissionInFlightRef.current = false;
+    setPendingPostLoginPath(null);
+    setIsSubmittingLogin(false);
+    setLoginError(
+      "Não foi possível concluir o acesso. Verifique se sua conta está ativa e tente novamente.",
+    );
+  }, [
+    authInitialized,
+    isInitializingOrg,
+    loading,
+    organizationsLoaded,
+    pendingPostLoginPath,
+    user,
+  ]);
+
+  useEffect(() => {
+    if (!pendingPostLoginPath) return;
+
+    const timeout = window.setTimeout(() => {
+      pendingLoginSawAuthenticatedUserRef.current = false;
+      loginSubmissionInFlightRef.current = false;
+      setPendingPostLoginPath(null);
+      setIsSubmittingLogin(false);
+      setLoginError(
+        "O acesso demorou mais que o esperado. Tente novamente em instantes.",
+      );
+    }, POST_LOGIN_ROUTING_WAIT_MS);
+
+    return () => window.clearTimeout(timeout);
+  }, [pendingPostLoginPath]);
+
   function showRecoveryForm() {
     setLoginError(null);
     setRecoveryError(null);
@@ -306,11 +382,26 @@ export function LoginForm() {
       return;
     }
 
+    if (loginSubmissionInFlightRef.current) return;
+    loginSubmissionInFlightRef.current = true;
     setIsSubmittingLogin(true);
     let shouldKeepRouting = false;
 
     try {
-      const { error } = await signIn(email, password);
+      const signInResult = await runAuthOperationWithTimeout(
+        () => signIn(email, password),
+        LOGIN_OPERATION_WAIT_MS,
+      );
+
+      if (signInResult.status === "timed_out") {
+        setLoginError("O login demorou mais que o esperado. Verifique sua conexão e tente novamente.");
+        return;
+      }
+      if (signInResult.status === "failed") {
+        throw signInResult.error;
+      }
+
+      const { error } = signInResult.value;
 
       if (error) {
         const code = "code" in error ? String(error.code) : "";
@@ -343,12 +434,14 @@ export function LoginForm() {
       }
 
       shouldKeepRouting = true;
+      pendingLoginSawAuthenticatedUserRef.current = false;
       const nextPath = getCurrentRedirectPath();
       setPendingPostLoginPath(nextPath);
     } catch {
       setLoginError("Não foi possível entrar agora. Tente novamente em instantes.");
     } finally {
       if (!shouldKeepRouting) {
+        loginSubmissionInFlightRef.current = false;
         setIsSubmittingLogin(false);
       }
     }
@@ -366,7 +459,22 @@ export function LoginForm() {
 
     setIsResendingConfirmation(true);
     try {
-      const result = await authAPI.resendSignupEmailConfirmation(normalizedEmail);
+      const resendResult = await runAuthOperationWithTimeout(
+        () => authAPI.resendSignupEmailConfirmation(normalizedEmail),
+        EMAIL_CONFIRMATION_RESEND_WAIT_MS,
+      );
+
+      if (resendResult.status === "timed_out") {
+        setConfirmationResendError(
+          "O reenvio demorou mais que o esperado. Verifique sua conexão e tente novamente.",
+        );
+        return;
+      }
+      if (resendResult.status === "failed") {
+        throw resendResult.error;
+      }
+
+      const result = resendResult.value;
 
       if (result.status < 200 || result.status >= 300 || !result.ok) {
         setConfirmationResendError(result.message);
@@ -384,21 +492,37 @@ export function LoginForm() {
   async function handleRecoverySubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    const formData = new FormData(event.currentTarget);
-    const email = String(formData.get("email") ?? "").trim();
+    const normalizedEmail = email.trim();
 
     setRecoveryError(null);
     setRecoveryMessage(null);
 
-    if (!email) {
+    if (!normalizedEmail) {
       setRecoveryError("Informe seu e-mail para receber o link.");
       return;
     }
 
+    if (recoverySubmissionInFlightRef.current) return;
+    recoverySubmissionInFlightRef.current = true;
     setIsSubmittingRecovery(true);
 
     try {
-      const { error } = await resetPassword(email);
+      const recoveryResult = await runAuthOperationWithTimeout(
+        () => resetPassword(normalizedEmail),
+        PASSWORD_RECOVERY_REQUEST_WAIT_MS,
+      );
+
+      if (recoveryResult.status === "timed_out") {
+        setRecoveryError(
+          "O envio demorou mais que o esperado. Verifique sua conexão e tente novamente.",
+        );
+        return;
+      }
+      if (recoveryResult.status === "failed") {
+        throw recoveryResult.error;
+      }
+
+      const { error } = recoveryResult.value;
 
       if (error) {
         setRecoveryError("Não foi possível enviar o link. Confira o e-mail e tente novamente.");
@@ -409,22 +533,52 @@ export function LoginForm() {
     } catch {
       setRecoveryError("Não foi possível enviar o link agora. Tente novamente em instantes.");
     } finally {
+      recoverySubmissionInFlightRef.current = false;
       setIsSubmittingRecovery(false);
     }
   }
 
   return (
     <div className="w-full max-w-[400px]">
-      {!isRecoveringPassword ? (
+      {isRecoveringPassword ? (
         <header className="mb-8 text-left lg:mb-10">
-          <h1 className={`text-[20px] font-normal ${textClass}`}>
+          <button
+            type="button"
+            onClick={showLoginForm}
+            className={`-ml-2 inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-[6px] px-2 text-sm font-light outline-none transition-colors hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 ${textClass}`}
+          >
+            <ArrowLeftIcon />
+            Voltar para o login
+          </button>
+          <h1
+            id="password-recovery-title"
+            ref={recoveryTitleRef}
+            tabIndex={-1}
+            className={`mt-4 text-[20px] font-normal focus:outline-none ${textClass}`}
+          >
+            Recuperar senha
+          </h1>
+          <p
+            id="password-recovery-description"
+            className={`mt-1.5 text-[12px] font-light leading-[18px] ${paragraphTextClass}`}
+          >
+            Digite seu e-mail e enviaremos um link para redefinir sua senha.
+          </p>
+        </header>
+      ) : (
+        <header className="mb-8 text-left lg:mb-10">
+          <h1
+            ref={loginTitleRef}
+            tabIndex={-1}
+            className={`text-[20px] font-normal focus:outline-none ${textClass}`}
+          >
             Entrar no Vimob crm
           </h1>
           <p className={`mt-1.5 text-[12px] font-light ${mutedTextClass}`}>
             Acesse seu sistema de gestão imobiliária
           </p>
         </header>
-      ) : null}
+      )}
 
       {isRecoveringPassword ? (
         <form
@@ -433,21 +587,9 @@ export function LoginForm() {
           onSubmit={handleRecoverySubmit}
           className="space-y-6"
           aria-busy={isSubmittingRecovery}
+          aria-labelledby="password-recovery-title"
+          aria-describedby="password-recovery-description"
         >
-          <button
-            type="button"
-            onClick={showLoginForm}
-            className={`flex cursor-pointer items-center gap-3 text-sm font-light outline-none transition-colors hover:text-primary focus-visible:text-primary ${textClass}`}
-            aria-label="Voltar para o login"
-          >
-            <ArrowLeftIcon />
-            Recuperar senha
-          </button>
-
-          <p className={`text-[12px] font-light leading-[18px] ${paragraphTextClass}`}>
-            Digite seu e-mail e enviaremos um link para redefinir sua senha.
-          </p>
-
           <div className="space-y-2">
             <label
               htmlFor="recovery-email"
@@ -471,8 +613,18 @@ export function LoginForm() {
                 enterKeyHint="send"
                 required
                 placeholder="seu@email.com"
+                value={email}
+                onChange={(event) => {
+                  setEmail(event.target.value);
+                  setRecoveryError(null);
+                  setRecoveryMessage(null);
+                }}
                 aria-invalid={Boolean(recoveryError)}
-                aria-describedby={recoveryError ? "recovery-error" : undefined}
+                aria-describedby={[
+                  "password-recovery-description",
+                  recoveryError ? "recovery-error" : null,
+                  recoveryMessage ? "recovery-success" : null,
+                ].filter(Boolean).join(" ")}
                 className={`${inputClass} pl-11`}
               />
             </div>
@@ -497,7 +649,11 @@ export function LoginForm() {
           ) : null}
 
           {recoveryMessage ? (
-            <p className={`text-center text-sm font-light leading-5 ${successTextClass}`} aria-live="polite">
+            <p
+              id="recovery-success"
+              className={`text-center text-sm font-light leading-5 ${successTextClass}`}
+              role="status"
+            >
               {recoveryMessage}
             </p>
           ) : null}
@@ -600,7 +756,7 @@ export function LoginForm() {
               disabled={isSubmittingLogin}
               className="auth-primary-action h-12 w-full cursor-pointer rounded-[6px] text-[12px] font-light shadow-none outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-55"
             >
-              {isSubmittingLogin ? "Entrando..." : "Entrar"}
+              {isSubmittingLogin ? "Acessando..." : "Acessar o CRM"}
             </button>
 
             {loginError ? (
@@ -647,7 +803,7 @@ export function LoginForm() {
             <button
               type="button"
               onClick={showRecoveryForm}
-              className="-my-2 inline-flex min-h-11 cursor-pointer items-center py-2 text-primary outline-none transition-opacity hover:opacity-80"
+              className="-my-2 inline-flex min-h-11 cursor-pointer items-center rounded-[6px] py-2 text-primary outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2"
             >
               Esqueceu sua senha?
             </button>
@@ -656,7 +812,7 @@ export function LoginForm() {
             </span>
             <Link
               href="/cadastro"
-              className="-my-2 inline-flex min-h-11 cursor-pointer items-center py-2 text-primary outline-none transition-opacity hover:opacity-80"
+              className="-my-2 inline-flex min-h-11 cursor-pointer items-center rounded-[6px] py-2 text-primary outline-none transition-opacity hover:opacity-80 focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2"
             >
               Cadastre-se
             </Link>

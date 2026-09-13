@@ -1,4 +1,5 @@
-import { format, isToday, isTomorrow, isPast } from "date-fns";
+import { useEffect, useState } from "react";
+import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
   Phone,
@@ -13,6 +14,7 @@ import {
   Clock,
   User,
   Plus,
+  CalendarClock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -30,6 +32,21 @@ import {
   useDeleteScheduleEvent,
   EventType,
 } from "@/hooks/use-schedule-events";
+import {
+  DEFAULT_SCHEDULE_TIME_ZONE,
+  getScheduleLifecycleLabel,
+  getScheduleLifecycleState,
+  getScheduleOutcomeLabel,
+  getSimpleScheduleCompletionOutcome,
+  isAttendanceScheduleType,
+  shouldPreserveAttendanceHistory,
+} from "@/lib/schedule-outcome";
+import {
+  formatScheduleZonedTime,
+  getNextScheduleCivilDate,
+  getScheduleCivilDateKey,
+  scheduleCivilDateKeyToLocalDate,
+} from "@/lib/schedule-time-zone";
 
 const eventTypeIcons: Record<EventType, React.ElementType> = {
   call: Phone,
@@ -65,6 +82,7 @@ interface EventsListProps {
   showLead?: boolean;
   onAddEvent?: () => void;
   canManage?: boolean;
+  timeZone?: string;
 }
 
 export function EventsList({
@@ -74,22 +92,37 @@ export function EventsList({
   showUser = true,
   showLead = true,
   canManage = false,
+  timeZone = DEFAULT_SCHEDULE_TIME_ZONE,
 }: EventsListProps) {
   const completeEvent = useCompleteScheduleEvent();
   const deleteEvent = useDeleteScheduleEvent();
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
+  useEffect(() => {
+    const intervalId = window.setInterval(
+      () => setCurrentTime(Date.now()),
+      60_000,
+    );
+    return () => window.clearInterval(intervalId);
+  }, []);
 
-  const getDateLabel = (dateStr: string) => {
-    const date = new Date(dateStr);
-    if (isToday(date)) return "Hoje";
-    if (isTomorrow(date)) return "Amanhã";
-    return format(date, "EEEE, dd 'de' MMMM", { locale: ptBR });
+  const getDateLabel = (dateKey: string) => {
+    const todayKey = getScheduleCivilDateKey(currentTime, timeZone);
+    if (dateKey === todayKey) return "Hoje";
+    if (todayKey && dateKey === getNextScheduleCivilDate(todayKey)) {
+      return "Amanhã";
+    }
+    const date = scheduleCivilDateKeyToLocalDate(dateKey);
+    return date
+      ? format(date, "EEEE, dd 'de' MMMM", { locale: ptBR })
+      : "Data indisponível";
   };
 
   const groupEventsByDate = (events: ScheduleEvent[]) => {
     const groups: Record<string, ScheduleEvent[]> = {};
 
     events.forEach((event) => {
-      const dateKey = format(new Date(event.start_time), "yyyy-MM-dd");
+      const dateKey =
+        getScheduleCivilDateKey(event.start_time, timeZone) || "invalid";
       if (!groups[dateKey]) {
         groups[dateKey] = [];
       }
@@ -134,31 +167,79 @@ export function EventsList({
       {groupedEvents.map(([dateKey, dayEvents]) => (
         <div key={dateKey}>
           <h3 className="mb-3 ml-1 text-[12px] font-light capitalize text-[var(--app-text-tertiary)]">
-            {getDateLabel(dayEvents[0].start_time)}
+            {getDateLabel(dateKey)}
           </h3>
           <div className="space-y-3">
             {dayEvents.map((event) => {
-              const Icon = eventTypeIcons[event.event_type as EventType];
+              const eventType = event.event_type as EventType;
+              const Icon = eventTypeIcons[eventType] || CalendarIcon;
               const isCompleted = event.status === "completed";
-              const isOverdue =
-                !isCompleted && isPast(new Date(event.start_time));
+              const isFinalized = [
+                "completed",
+                "no_show",
+                "cancelled",
+                "canceled",
+              ].includes(event.status || "");
+              const preservesAttendanceHistory =
+                shouldPreserveAttendanceHistory(event.event_type, event.status);
+              const lifecycle = getScheduleLifecycleState({
+                status: event.status,
+                outcome: event.outcome,
+                startTime: event.start_time,
+                endTime: event.end_time,
+                isAllDay: event.is_all_day ?? false,
+                timeZone,
+                now: currentTime,
+              });
+              const isOverdue = lifecycle === "overdue";
+              const lifecycleClass =
+                lifecycle === "completed"
+                  ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                  : lifecycle === "no_show"
+                    ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                    : lifecycle === "rescheduled"
+                      ? "bg-blue-500/10 text-blue-700 dark:text-blue-300"
+                      : lifecycle === "cancelled" || lifecycle === "overdue"
+                        ? "bg-red-500/10 text-red-700 dark:text-red-300"
+                        : "bg-primary/10 text-primary";
 
               return (
                 <div
                   key={event.id}
                   className={cn(
                     "group flex items-start gap-3 rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4 shadow-none transition-colors hover:bg-[var(--app-surface-hover)]",
-                    isCompleted && "opacity-60 grayscale",
+                    isCompleted && "opacity-70",
+                    isFinalized && !isCompleted && "opacity-80",
                     isOverdue && "bg-destructive/[0.04]",
                   )}
                 >
                   <Checkbox
                     checked={isCompleted}
-                    disabled={!canManage || Boolean(event.is_masked)}
+                    disabled={
+                      !canManage ||
+                      Boolean(event.is_masked) ||
+                      (isFinalized &&
+                        (!isCompleted ||
+                          isAttendanceScheduleType(event.event_type)))
+                    }
                     onCheckedChange={(checked) => {
+                      if (checked) {
+                        if (isAttendanceScheduleType(event.event_type)) {
+                          onEditEvent?.(event);
+                        } else {
+                          completeEvent.mutate({
+                            id: event.id,
+                            status: "completed",
+                            outcome: getSimpleScheduleCompletionOutcome(
+                              event.event_type,
+                            ),
+                          });
+                        }
+                        return;
+                      }
                       completeEvent.mutate({
                         id: event.id,
-                        status: checked ? "completed" : "scheduled",
+                        status: "scheduled",
                       });
                     }}
                     className="mt-1 h-5 w-5 rounded-[4px]"
@@ -188,11 +269,27 @@ export function EventsList({
                         <div className="mt-1 flex flex-wrap items-center gap-3 text-[12px] font-light text-[var(--app-text-tertiary)]">
                           <span className="flex items-center gap-1.5">
                             <Clock className="h-3.5 w-3.5" />
-                            {format(new Date(event.start_time), "HH:mm")}
+                            {event.is_all_day
+                              ? "Dia inteiro"
+                              : formatScheduleZonedTime(
+                                  event.start_time,
+                                  timeZone,
+                                )}
                           </span>
                           <span className="flex items-center gap-1.5">
                             <div className="h-1.5 w-1.5 rounded-full bg-primary/40" />
-                            {eventTypeLabels[event.event_type as EventType]}
+                            {eventTypeLabels[eventType] || "Compromisso"}
+                          </span>
+                          <span
+                            className={cn(
+                              "inline-flex items-center gap-1 rounded-[4px] px-1.5 py-0.5 text-[10px]",
+                              lifecycleClass,
+                            )}
+                          >
+                            {lifecycle === "rescheduled" && (
+                              <CalendarClock className="h-3 w-3" />
+                            )}
+                            {getScheduleLifecycleLabel(lifecycle)}
                           </span>
                         </div>
                       </div>
@@ -217,17 +314,21 @@ export function EventsList({
                               className="gap-2 rounded-[6px] py-2 text-[12px] font-light"
                             >
                               <Edit2 className="h-3.5 w-3.5 text-[var(--app-text-tertiary)]" />
-                              Editar
+                              {preservesAttendanceHistory
+                                ? "Ver detalhes"
+                                : "Editar"}
                             </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() =>
-                                deleteEvent.mutate({ id: event.id })
-                              }
-                              className="gap-2 rounded-[6px] py-2 text-[12px] font-light text-destructive focus:text-destructive"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                              Excluir
-                            </DropdownMenuItem>
+                            {!preservesAttendanceHistory && (
+                              <DropdownMenuItem
+                                onClick={() =>
+                                  deleteEvent.mutate({ id: event.id })
+                                }
+                                className="gap-2 rounded-[6px] py-2 text-[12px] font-light text-destructive focus:text-destructive"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                Excluir
+                              </DropdownMenuItem>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       )}
@@ -256,7 +357,7 @@ export function EventsList({
                               </AvatarFallback>
                             </Avatar>
                             <span className="truncate max-w-[120px]">
-                              Agendado por: {event.user.name}
+                              Responsável: {event.user.name}
                             </span>
                           </div>
                         )}
@@ -273,14 +374,32 @@ export function EventsList({
                         )}
                       </div>
 
-                      {isCompleted && event.completed_by_user && (
-                        <div className="flex w-fit items-center gap-2 rounded-[6px] border-0 bg-emerald-500/10 px-2 py-1 text-[10px] font-light text-emerald-700 dark:text-emerald-300">
+                      {isCompleted &&
+                        (event.performed_by_user ||
+                          event.completed_by_user) && (
+                          <div className="flex w-fit items-center gap-2 rounded-[6px] border-0 bg-emerald-500/10 px-2 py-1 text-[10px] font-light text-emerald-700 dark:text-emerald-300">
+                            <CheckSquare className="h-3 w-3" />
+                            <span>
+                              {isAttendanceScheduleType(event.event_type)
+                                ? "Realizado"
+                                : "Concluído"}{" "}
+                              por:{" "}
+                              {
+                                (
+                                  event.performed_by_user ||
+                                  event.completed_by_user
+                                )?.name
+                              }{" "}
+                              {event.completed_at &&
+                                `em ${format(new Date(event.completed_at), "dd/MM HH:mm")}`}
+                            </span>
+                          </div>
+                        )}
+
+                      {event.outcome && lifecycle !== "rescheduled" && (
+                        <div className="flex w-fit items-center gap-2 rounded-[6px] border-0 bg-primary/10 px-2 py-1 text-[10px] font-light text-primary">
                           <CheckSquare className="h-3 w-3" />
-                          <span>
-                            Concluído por: {event.completed_by_user.name}{" "}
-                            {event.completed_at &&
-                              `em ${format(new Date(event.completed_at), "dd/MM HH:mm")}`}
-                          </span>
+                          <span>{getScheduleOutcomeLabel(event.outcome)}</span>
                         </div>
                       )}
                     </div>

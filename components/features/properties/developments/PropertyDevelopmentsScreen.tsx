@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 
 import { AppLayout } from '@/components/shared/layout/AppLayout'
+import { PropertySectionTabs } from '@/components/features/properties/PropertySectionTabs'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -26,6 +27,7 @@ import { Progress } from '@/components/ui/progress'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useCreatePropertyDevelopment, usePropertyDevelopments } from '@/hooks/properties'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
+import { getErrorMessageOrFallback as getErrorMessage } from '@/lib/api/vimob-error'
 import type {
   PropertyDevelopmentCommercialStatus,
   PropertyDevelopmentStatus,
@@ -43,10 +45,6 @@ import {
   formatDevelopmentDate,
   isSafeDevelopmentImageUrl,
 } from './development-ui'
-
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : 'Não foi possível concluir a operação.'
-}
 
 const PAGE_SIZE = 24
 
@@ -109,7 +107,8 @@ export function PropertyDevelopmentsScreen() {
 
   return (
     <AppLayout title="Lançamentos e empreendimentos">
-      <div className="mx-auto max-w-[1500px] space-y-6 py-2">
+      <div className="properties-screen animate-in mx-auto max-w-[1500px] space-y-4 py-2">
+        <PropertySectionTabs activeSection="developments" />
         <header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
           <div>
             <div className="mb-2 flex items-center gap-2 text-[12px] font-light text-primary">
@@ -163,7 +162,7 @@ export function PropertyDevelopmentsScreen() {
         ) : developmentsQuery.isError && visibleDevelopments.length === 0 ? (
           <DevelopmentEmptyState
             title="Não foi possível carregar os empreendimentos"
-            description={getErrorMessage(developmentsQuery.error)}
+            description={getErrorMessage(developmentsQuery.error, 'Não foi possível concluir a operação.')}
             action={<Button variant="outline" disabled={developmentsQuery.isFetching} onClick={() => void developmentsQuery.refetch()}>Tentar novamente</Button>}
           />
         ) : visibleDevelopments.length === 0 ? (
@@ -185,9 +184,8 @@ export function PropertyDevelopmentsScreen() {
                 ? Math.round((development.inventory.available / development.inventory.total) * 100)
                 : 0
               const location = [development.neighborhood, development.city, development.state].filter(Boolean).join(', ')
-              return (
-                <Link href={`/properties/developments/${development.id}`} key={development.id} className="group rounded-[8px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
-                  <Card className="app-card h-full overflow-hidden rounded-[8px] border-0 shadow-none transition-colors group-hover:bg-[var(--app-surface-hover)]">
+              const card = (
+                <Card className="app-card h-full overflow-hidden rounded-[8px] border-0 shadow-none transition-colors group-hover:bg-[var(--app-surface-hover)]">
                     <div className="relative aspect-[16/8] overflow-hidden bg-muted">
                       {isSafeDevelopmentImageUrl(development.main_image_url) ? (
                         <Image src={development.main_image_url} alt="" fill sizes="(max-width: 768px) 100vw, (max-width: 1280px) 50vw, 33vw" className="object-cover" unoptimized />
@@ -224,7 +222,14 @@ export function PropertyDevelopmentsScreen() {
                         <span className="flex items-center gap-1"><CircleDollarSign className="h-3.5 w-3.5" />{availability}% livre</span>
                       </div>
                     </CardContent>
-                  </Card>
+                </Card>
+              )
+              if (!canManage) {
+                return <div key={development.id} className="rounded-[8px]">{card}</div>
+              }
+              return (
+                <Link href={`/properties/developments/${development.id}`} key={development.id} className="group rounded-[8px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+                  {card}
                 </Link>
               )
             })}

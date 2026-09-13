@@ -4,7 +4,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 const hookSource = readFileSync("hooks/use-setup-guide.ts", "utf8");
-const tourSource = readFileSync("components/features/setup-guide/SetupGuideTour.tsx", "utf8");
+const tourModelSource = readFileSync(
+  "components/features/setup-guide/tour/model.ts",
+  "utf8",
+);
 
 function uniqueSorted(values: Iterable<string>) {
   return [...new Set(values)].sort();
@@ -22,14 +25,14 @@ function readSourceTree(root: string): string {
 }
 
 test("cada etapa visível do guia possui um plano de tour na mesma rota", () => {
-  const hookSteps = [...hookSource.matchAll(/\n\s{8}id: '([a-z_]+)',[\s\S]*?\n\s{8}route: '([^']+)'/g)]
+  const hookSteps = [...hookSource.matchAll(/\r?\n\s{8}id: '([a-z_]+)',[\s\S]*?\r?\n\s{8}route: '([^']+)'/g)]
     .map((match) => ({ id: match[1], route: match[2] }));
-  const plansBlock = tourSource.match(
-    /const TOUR_PLANS:[\s\S]*?= \{([\s\S]*?)\n\};\n\nfunction normalizeStepId/,
+  const plansBlock = tourModelSource.match(
+    /export const TOUR_PLANS:[\s\S]*?= \{([\s\S]*?)\r?\n\};\r?\n\r?\nexport function normalizeStepId/,
   )?.[1];
 
   assert.ok(plansBlock, "O bloco de planos do tour deve continuar identificável");
-  const plans = [...plansBlock.matchAll(/^  ([a-z_]+): \{\n    route: "([^"]+)",\n    path: "([^"]+)",/gm)]
+  const plans = [...plansBlock.matchAll(/^  ([a-z_]+): \{\r?\n    route: "([^"]+)",\r?\n    path: "([^"]+)",/gm)]
     .map((match) => ({ id: match[1], route: match[2], path: match[3] }));
 
   assert.equal(hookSteps.length, 19);
@@ -48,7 +51,7 @@ test("cada etapa visível do guia possui um plano de tour na mesma rota", () => 
 });
 
 test("o tour não dispara automaticamente controles de persistência ou exclusão", () => {
-  const actionBlocks = [...tourSource.matchAll(/action: \{([\s\S]*?)\n\s{8}\},/g)]
+  const actionBlocks = [...tourModelSource.matchAll(/action: \{([\s\S]*?)\r?\n\s{8}\},/g)]
     .map((match) => match[1]);
   const automaticClickSelectors = actionBlocks
     .filter((block) => /type: "click"/.test(block))
@@ -61,13 +64,13 @@ test("o tour não dispara automaticamente controles de persistência ou exclusã
 });
 
 test("o plano de usuários não referencia mais o seletor removido de função personalizada", () => {
-  assert.doesNotMatch(tourSource, /team-user-custom-role/);
+  assert.doesNotMatch(tourModelSource, /team-user-custom-role/);
 });
 
 test("cada alvo do tour continua montado no código ativo", () => {
   const applicationSource = `${readSourceTree("app")}\n${readSourceTree("components")}`;
   const targetIds = uniqueSorted(
-    [...tourSource.matchAll(/data-tour=\\?"([^"\\]+)\\?"/g)]
+    [...tourModelSource.matchAll(/data-tour=\\?"([^"\\]+)\\?"/g)]
       .map((match) => match[1])
       .filter((id) => !id.startsWith("setup-guide-")),
   );

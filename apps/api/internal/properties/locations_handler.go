@@ -1,24 +1,27 @@
 package properties
 
 import (
-	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
+const propertyLocationBodyLimit = 1 << 20
+
 type cityRequest struct {
 	Name string `json:"name"`
 	UF   string `json:"uf"`
 }
 
+type cityUpdateRequest = CityUpdateInput
+
 type neighborhoodRequest struct {
 	Name   string `json:"name"`
 	CityID string `json:"city_id"`
 }
+
+type neighborhoodUpdateRequest = NeighborhoodUpdateInput
 
 type condominiumRequest struct {
 	Name                  string   `json:"name"`
@@ -36,6 +39,8 @@ type condominiumRequest struct {
 	Latitude              *float64 `json:"latitude"`
 	Longitude             *float64 `json:"longitude"`
 }
+
+type condominiumUpdateRequest = CondominiumUpdateInput
 
 func (handler Handler) ListCities(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := tenant.FromContext(r.Context())
@@ -61,8 +66,7 @@ func (handler Handler) CreateCity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var request cityRequest
-	if err := decodeLocationJSON(w, r, &request); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+	if err := httpserver.DecodeJSON(w, r, &request, propertyLocationBodyLimit); err != nil {
 		return
 	}
 
@@ -82,12 +86,38 @@ func (handler Handler) DeleteCity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := handler.repo.DeleteCity(r.Context(), tenantContext, r.PathValue("id")); err != nil {
+	var request catalogVersionRequest
+	if err := httpserver.DecodeJSON(w, r, &request, propertyLocationBodyLimit); err != nil {
+		return
+	}
+	if err := handler.repo.DeleteCity(r.Context(), tenantContext, r.PathValue("id"), request.ExpectedUpdatedAt); err != nil {
 		writePropertyError(w, r, err)
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (handler Handler) UpdateCity(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.FromContext(r.Context())
+	if !ok || tenantContext.OrganizationID == "" {
+		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+		return
+	}
+	var request cityUpdateRequest
+	if err := httpserver.DecodeJSON(w, r, &request, propertyLocationBodyLimit); err != nil {
+		return
+	}
+	item, err := handler.repo.UpdateCity(r.Context(), tenantContext, r.PathValue("id"), CityUpdateInput{
+		Name:              request.Name,
+		UF:                request.UF,
+		ExpectedUpdatedAt: request.ExpectedUpdatedAt,
+	})
+	if err != nil {
+		writePropertyError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, map[string]Location{"data": item})
 }
 
 func (handler Handler) ListNeighborhoods(w http.ResponseWriter, r *http.Request) {
@@ -114,8 +144,7 @@ func (handler Handler) CreateNeighborhood(w http.ResponseWriter, r *http.Request
 	}
 
 	var request neighborhoodRequest
-	if err := decodeLocationJSON(w, r, &request); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+	if err := httpserver.DecodeJSON(w, r, &request, propertyLocationBodyLimit); err != nil {
 		return
 	}
 
@@ -135,12 +164,38 @@ func (handler Handler) DeleteNeighborhood(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := handler.repo.DeleteNeighborhood(r.Context(), tenantContext, r.PathValue("id")); err != nil {
+	var request catalogVersionRequest
+	if err := httpserver.DecodeJSON(w, r, &request, propertyLocationBodyLimit); err != nil {
+		return
+	}
+	if err := handler.repo.DeleteNeighborhood(r.Context(), tenantContext, r.PathValue("id"), request.ExpectedUpdatedAt); err != nil {
 		writePropertyError(w, r, err)
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (handler Handler) UpdateNeighborhood(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.FromContext(r.Context())
+	if !ok || tenantContext.OrganizationID == "" {
+		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+		return
+	}
+	var request neighborhoodUpdateRequest
+	if err := httpserver.DecodeJSON(w, r, &request, propertyLocationBodyLimit); err != nil {
+		return
+	}
+	item, err := handler.repo.UpdateNeighborhood(r.Context(), tenantContext, r.PathValue("id"), NeighborhoodUpdateInput{
+		Name:              request.Name,
+		CityID:            request.CityID,
+		ExpectedUpdatedAt: request.ExpectedUpdatedAt,
+	})
+	if err != nil {
+		writePropertyError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, map[string]Location{"data": item})
 }
 
 func (handler Handler) ListCondominiums(w http.ResponseWriter, r *http.Request) {
@@ -167,8 +222,7 @@ func (handler Handler) CreateCondominium(w http.ResponseWriter, r *http.Request)
 	}
 
 	var request condominiumRequest
-	if err := decodeLocationJSON(w, r, &request); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+	if err := httpserver.DecodeJSON(w, r, &request, propertyLocationBodyLimit); err != nil {
 		return
 	}
 
@@ -203,7 +257,11 @@ func (handler Handler) DeleteCondominium(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := handler.repo.DeleteCondominium(r.Context(), tenantContext, r.PathValue("id")); err != nil {
+	var request catalogVersionRequest
+	if err := httpserver.DecodeJSON(w, r, &request, propertyLocationBodyLimit); err != nil {
+		return
+	}
+	if err := handler.repo.DeleteCondominium(r.Context(), tenantContext, r.PathValue("id"), request.ExpectedUpdatedAt); err != nil {
 		writePropertyError(w, r, err)
 		return
 	}
@@ -211,18 +269,36 @@ func (handler Handler) DeleteCondominium(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func decodeLocationJSON(w http.ResponseWriter, r *http.Request, destination any) error {
-	defer r.Body.Close()
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		return err
+func (handler Handler) UpdateCondominium(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.FromContext(r.Context())
+	if !ok || tenantContext.OrganizationID == "" {
+		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+		return
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return errors.New("request body must contain one JSON value")
-		}
-		return err
+	var request condominiumUpdateRequest
+	if err := httpserver.DecodeJSON(w, r, &request, propertyLocationBodyLimit); err != nil {
+		return
 	}
-	return nil
+	item, err := handler.repo.UpdateCondominium(r.Context(), tenantContext, r.PathValue("id"), CondominiumUpdateInput{
+		Name:                  request.Name,
+		CityID:                request.CityID,
+		NeighborhoodID:        request.NeighborhoodID,
+		Address:               request.Address,
+		PhotoURL:              request.PhotoURL,
+		CEP:                   request.CEP,
+		Number:                request.Number,
+		Complement:            request.Complement,
+		DefaultCondominiumFee: request.DefaultCondominiumFee,
+		HasConcierge:          request.HasConcierge,
+		ConciergeType:         request.ConciergeType,
+		Notes:                 request.Notes,
+		Latitude:              request.Latitude,
+		Longitude:             request.Longitude,
+		ExpectedUpdatedAt:     request.ExpectedUpdatedAt,
+	})
+	if err != nil {
+		writePropertyError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, map[string]Location{"data": item})
 }

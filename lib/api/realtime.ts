@@ -1,4 +1,4 @@
-import { supabase } from '@/integrations/supabase/client'
+import { supabase } from '@/lib/supabase/client'
 import { buildAPIURL } from './vimob-client'
 import { organizationIdSchema, parseDomainInput, realtimeEventSchema } from '@/lib/validation'
 import { nextRealtimeCursor, realtimeReconnectDelay } from '@/lib/realtime-cursor'

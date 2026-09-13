@@ -1,17 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '@/contexts/AuthContext'
 import { siteAPI, type OrganizationSite, type SiteAssetType } from '@/lib/api/site'
+import { stringifyErrorMessage as getErrorMessage } from '@/lib/api/vimob-error'
 import { toast } from 'sonner'
 
 export type { OrganizationSite }
 
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error)
-}
-
 export function useOrganizationSite() {
-  const { organization, profile } = useAuth()
-  const organizationId = organization?.id || profile?.organization_id
+  const { activeOrganization, organization, profile } = useAuth()
+  const organizationId = activeOrganization.organizationId
 
   return useQuery({
     queryKey: ['organization-site', organizationId],
@@ -25,8 +22,8 @@ export function useOrganizationSite() {
 
 export function useCreateOrganizationSite() {
   const queryClient = useQueryClient()
-  const { organization, profile } = useAuth()
-  const organizationId = organization?.id || profile?.organization_id
+  const { activeOrganization, organization, profile } = useAuth()
+  const organizationId = activeOrganization.organizationId
 
   return useMutation({
     mutationFn: async (data: Partial<OrganizationSite>) => {
@@ -48,8 +45,8 @@ export function useCreateOrganizationSite() {
 
 export function useUpdateOrganizationSite() {
   const queryClient = useQueryClient()
-  const { organization, profile } = useAuth()
-  const organizationId = organization?.id || profile?.organization_id
+  const { activeOrganization, organization, profile } = useAuth()
+  const organizationId = activeOrganization.organizationId
 
   return useMutation({
     mutationFn: async (data: Partial<OrganizationSite>) => {
@@ -69,8 +66,8 @@ export function useUpdateOrganizationSite() {
 
 export function useUploadSiteAsset() {
   const queryClient = useQueryClient()
-  const { organization, profile } = useAuth()
-  const organizationId = organization?.id || profile?.organization_id
+  const { activeOrganization, organization, profile } = useAuth()
+  const organizationId = activeOrganization.organizationId
 
   return useMutation({
     mutationFn: async ({ file, type }: { file: File; type: SiteAssetType }) => {

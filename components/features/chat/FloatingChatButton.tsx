@@ -1,52 +1,51 @@
 import { useFloatingChat } from "@/contexts/FloatingChatContext";
 import { Button } from "@/components/ui/button";
-import { MessageCircle } from "lucide-react";
-import { useWhatsAppConversations } from "@/hooks/use-whatsapp-conversations";
-import { useAccessibleSessions } from "@/hooks/use-accessible-sessions";
+import { useWhatsAppUnreadCount } from "@/hooks/use-whatsapp-conversations";
+import { useOrganizationModules } from "@/hooks/use-organization-modules";
+import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { usePathname } from 'next/navigation';
 import { useState, useRef, useCallback, useEffect } from "react";
-
-const FLOATING_CHAT_INITIAL_LOAD_DELAY_MS = 2000;
+import { MessageCircle } from "lucide-react";
 
 export function FloatingChatButton() {
   const { state, toggleChat } = useFloatingChat();
   const pathname = usePathname();
   const isOnConversationsPage = pathname === "/crm/conversas";
   const floatingChatReadyKey = isOnConversationsPage ? null : pathname || "app";
-  const [readyPathKey, setReadyPathKey] = useState<string | null>(null);
-  const shouldLoadFloatingChatData = !!floatingChatReadyKey && readyPathKey === floatingChatReadyKey;
-  const { data: sessions, isLoading: loadingSessions } = useAccessibleSessions({
-    enabled: shouldLoadFloatingChatData,
-  });
-  const accessibleSessionIds = sessions?.map((s) => s.id) || [];
-  const conversationSessionIds = shouldLoadFloatingChatData && !loadingSessions ? accessibleSessionIds : [];
-  const { data: conversations } = useWhatsAppConversations(
+  const shouldLoadFloatingChatData = Boolean(floatingChatReadyKey);
+  const { isLoading: modulesLoading, hasModule } = useOrganizationModules();
+  const { isLoading: permissionsLoading, hasPermission } = useUserPermissions();
+  const canViewWhatsApp = hasModule("whatsapp")
+    && (hasPermission("whatsapp_view") || hasPermission("whatsapp_operate"));
+  const shouldQueryFloatingChatData = shouldLoadFloatingChatData
+    && !modulesLoading
+    && !permissionsLoading
+    && canViewWhatsApp;
+  const conversationSessionIds: string[] | undefined = shouldQueryFloatingChatData ? undefined : [];
+  const { data: unreadCount = 0 } = useWhatsAppUnreadCount(
     undefined,
-    { hideGroups: true },
+    undefined,
     conversationSessionIds,
+    { enabled: shouldQueryFloatingChatData },
   );
 
   const [side, setSide] = useState<'right' | 'left'>('right');
   const [offsetX, setOffsetX] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
+  const wasChatOpenRef = useRef(state.isOpen);
   const dragState = useRef({ startX: 0, startY: 0, moved: false, pointerId: -1 });
 
   useEffect(() => {
-    if (!floatingChatReadyKey) return undefined;
+    const wasChatOpen = wasChatOpenRef.current;
+    wasChatOpenRef.current = state.isOpen;
+    if (!wasChatOpen || state.isOpen || state.isPresenceOpen) return undefined;
 
-    const timeout = setTimeout(() => setReadyPathKey(floatingChatReadyKey), FLOATING_CHAT_INITIAL_LOAD_DELAY_MS);
-    return () => clearTimeout(timeout);
-  }, [floatingChatReadyKey]);
-
-  const hasConnectedSession = sessions?.some((s) => s.status === "connected");
-
-  const leadUnreadCount = conversations?.reduce((acc, c) => {
-    if (c.lead_id) {
-      return acc + (c.unread_count || 0);
-    }
-    return acc;
-  }, 0) || 0;
+    const focusFrame = window.requestAnimationFrame(() => {
+      btnRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, [state.isOpen, state.isPresenceOpen]);
 
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -86,19 +85,37 @@ export function FloatingChatButton() {
     toggleChat();
   }, [toggleChat]);
 
-  if (state.isOpen || !shouldLoadFloatingChatData || !hasConnectedSession || isOnConversationsPage) return null;
+  if (
+    !shouldLoadFloatingChatData
+    || modulesLoading
+    || permissionsLoading
+    || !canViewWhatsApp
+    || isOnConversationsPage
+  ) return null;
+
+  const surfaceHidden = state.isOpen || state.isPresenceOpen;
+  const launcherLabel = unreadCount > 0
+    ? `Abrir chat do WhatsApp, ${unreadCount} ${unreadCount === 1 ? 'mensagem não lida' : 'mensagens não lidas'}`
+    : 'Abrir chat do WhatsApp';
 
   return (
     <div
-      className={`fixed bottom-20 md:bottom-4 z-50 ${side === 'right' ? 'right-4' : 'left-4'}`}
+      aria-hidden={surfaceHidden}
+      inert={surfaceHidden}
+      className={`fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] z-50 md:bottom-6 ${side === 'right' ? 'right-6' : 'left-6'} ${surfaceHidden ? 'pointer-events-none opacity-0' : 'opacity-100'}`}
       style={{
         touchAction: 'none',
         transform: isDragging ? `translateX(${offsetX}px)` : undefined,
-        transition: isDragging ? 'none' : 'transform 0.3s ease',
+        transition: isDragging ? 'none' : 'transform 0.3s ease, opacity 0.15s ease',
       }}
     >
       <Button
         ref={btnRef}
+        type="button"
+        aria-label={launcherLabel}
+        aria-controls="floating-whatsapp-chat"
+        aria-expanded={state.isOpen && !state.isPresenceOpen}
+        tabIndex={surfaceHidden ? -1 : undefined}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -110,12 +127,12 @@ export function FloatingChatButton() {
         }}
         onClick={handleClick}
         size="icon"
-        className={`h-12 w-12 select-none rounded-[8px] bg-primary/50 text-primary-foreground shadow-none transition-colors hover:bg-primary hover:shadow-none ${isDragging ? 'cursor-grabbing opacity-80' : 'cursor-grab'}`}
+        className={`relative h-14 w-14 select-none rounded-full bg-primary text-primary-foreground shadow-[0_8px_24px_rgba(0,0,0,0.12)] transition-[background-color,box-shadow,transform] duration-150 hover:bg-primary/90 hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] active:scale-[0.98] ${isDragging ? 'cursor-grabbing opacity-80' : 'cursor-grab'}`}
       >
-        <MessageCircle className="h-8 w-8 stroke-[2.5px]" />
-        {leadUnreadCount > 0 && (
-          <span className="absolute -right-1 -top-1 flex h-6 min-w-6 items-center justify-center rounded-[6px] border-0 bg-destructive px-1.5 text-[11px] font-light text-destructive-foreground shadow-none">
-            {leadUnreadCount > 99 ? "99+" : leadUnreadCount}
+        <MessageCircle aria-hidden="true" className="h-7 w-7" />
+        {unreadCount > 0 && (
+          <span className="absolute -right-1.5 -top-1.5 flex h-[26px] min-w-[26px] items-center justify-center rounded-[7px] border-0 bg-destructive px-1.5 text-[12px] font-light text-destructive-foreground shadow-none">
+            {unreadCount > 99 ? "99+" : unreadCount}
           </span>
         )}
       </Button>

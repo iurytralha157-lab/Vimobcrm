@@ -1,17 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { useAuth } from '@/contexts/AuthContext';
+import { useActiveOrganizationId } from '@/hooks/use-active-organization';
 import { roundRobinsAPI } from '@/lib/api/round-robins';
-
-function useActiveOrganizationId() {
-  const { organization, profile } = useAuth();
-  return organization?.id || profile?.organization_id || null;
-}
-
-function requireOrganizationId(organizationId: string | null) {
-  if (!organizationId) throw new Error('Organização não selecionada.');
-  return organizationId;
-}
+import { requireActiveOrganizationId as requireOrganizationId } from '@/lib/auth/active-organization';
 
 function roundRobinsQueryKey(organizationId: string | null) {
   return ['round-robins', organizationId] as const;

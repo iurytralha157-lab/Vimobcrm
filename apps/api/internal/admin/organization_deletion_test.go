@@ -169,24 +169,6 @@ func TestDeleteAsaasResourceUsesAuthenticatedDelete(t *testing.T) {
 	}
 }
 
-func TestOrganizationCleanupRPCAuthUsesBearerOnlyForJWTKeys(t *testing.T) {
-	t.Parallel()
-
-	jwtRequest := httptest.NewRequest(http.MethodPost, "https://example.test", nil)
-	setSupabaseServiceAPIAuth(jwtRequest, "header.payload.signature")
-	if jwtRequest.Header.Get("apikey") != "header.payload.signature" ||
-		jwtRequest.Header.Get("Authorization") != "Bearer header.payload.signature" {
-		t.Fatalf("unexpected JWT service-role headers: %#v", jwtRequest.Header)
-	}
-
-	opaqueRequest := httptest.NewRequest(http.MethodPost, "https://example.test", nil)
-	setSupabaseServiceAPIAuth(opaqueRequest, "sb_secret_cleanup")
-	if opaqueRequest.Header.Get("apikey") != "sb_secret_cleanup" ||
-		opaqueRequest.Header.Get("Authorization") != "" {
-		t.Fatalf("opaque secret leaked into bearer auth: %#v", opaqueRequest.Header)
-	}
-}
-
 func TestDeleteStorageObjectBatchUsesCompatibleSupabaseServiceAuth(t *testing.T) {
 	testCases := []struct {
 		name           string

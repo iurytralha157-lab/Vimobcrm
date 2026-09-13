@@ -587,7 +587,7 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	`, claimedOutbox[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	outboxLeaseOwned, err := repo.renewWhatsAppOutboxLease(ctx, claimedOutbox[0].ID)
+	outboxLeaseOwned, err := repo.renewWhatsAppOutboxLease(ctx, claimedOutbox[0])
 	if err != nil || !outboxLeaseOwned {
 		t.Fatalf("renewWhatsAppOutboxLease() = %v, %v; want owned lease", outboxLeaseOwned, err)
 	}
@@ -1395,6 +1395,58 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	}
 	if _, err := repo.AcceptEvolutionWebhook(ctx, wrongBodyEnvelope); !errors.Is(err, errWebhookUnauthorized) {
 		t.Fatalf("wrong body instanceToken error = %v, want unauthorized", err)
+	}
+	historyEnvelope, err := parseEvolutionWebhookEnvelope(
+		webhookRoute,
+		http.Header{"X-Webhook-Token": []string{"webhook-secret"}},
+		[]byte(`{"event":"HistorySync","instanceToken":"provider-secret","data":{}}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	historyReceipt, err := repo.AcceptEvolutionWebhook(ctx, historyEnvelope)
+	if err != nil {
+		t.Fatalf("history-sync AcceptEvolutionWebhook() returned error: %v", err)
+	}
+	if !historyReceipt.Inline || historyReceipt.Status != "processed" {
+		t.Fatalf("history-sync receipt = %#v, want inline processed acknowledgement", historyReceipt)
+	}
+	var storedHistoryControls int
+	if err := postgres.Pool().QueryRow(ctx, `
+		select count(*)
+		from public.whatsapp_webhook_inbox
+		where event_key = $1
+	`, historyReceipt.ID).Scan(&storedHistoryControls); err != nil {
+		t.Fatal(err)
+	}
+	if storedHistoryControls != 0 {
+		t.Fatalf("stored history-sync controls = %d, want 0", storedHistoryControls)
+	}
+	groupEnvelope, err := parseEvolutionWebhookEnvelope(
+		webhookRoute,
+		http.Header{"X-Webhook-Token": []string{"webhook-secret"}},
+		[]byte(`{"event":"messages.upsert","instanceToken":"provider-secret","data":{"Info":{"ID":"provider-group-1","Chat":"120363000000000000@g.us","IsGroup":true},"Message":{"conversation":"mensagem de grupo"}}}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupReceipt, err := repo.AcceptEvolutionWebhook(ctx, groupEnvelope)
+	if err != nil {
+		t.Fatalf("group-only AcceptEvolutionWebhook() returned error: %v", err)
+	}
+	if !groupReceipt.Inline || groupReceipt.Status != "processed" {
+		t.Fatalf("group-only receipt = %#v, want inline processed acknowledgement", groupReceipt)
+	}
+	var storedGroupEvents int
+	if err := postgres.Pool().QueryRow(ctx, `
+		select count(*)
+		from public.whatsapp_webhook_inbox
+		where event_key = $1
+	`, groupReceipt.ID).Scan(&storedGroupEvents); err != nil {
+		t.Fatal(err)
+	}
+	if storedGroupEvents != 0 {
+		t.Fatalf("stored group-only events = %d, want 0", storedGroupEvents)
 	}
 	envelope, err := parseEvolutionWebhookEnvelope(
 		webhookRoute,

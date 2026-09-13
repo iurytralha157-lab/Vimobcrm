@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  canViewOrganizationPresence,
   getTenantEnabledModules,
   getTenantPermissions,
   hasDefaultModule,
@@ -35,4 +36,64 @@ test('mantem permissoes explicitas e concede wildcard apenas a administradores',
   assert.deepEqual(getTenantPermissions({ ...context, memberRole: 'owner' }), ['*'])
   assert.deepEqual(getTenantPermissions({ ...context, memberRole: 'admin' }), ['*'])
   assert.deepEqual(getTenantPermissions({ ...context, isSuperAdmin: true }), ['*'])
+})
+
+test('libera presenca somente para identidade elegivel no tenant ativo e com permissao', () => {
+  const withPresenceGrant = {
+    ...context,
+    permissions: ['users_presence_view'],
+  }
+
+  assert.equal(
+    canViewOrganizationPresence('organization-a', withPresenceGrant, true),
+    false,
+  )
+  assert.equal(
+    canViewOrganizationPresence(
+      'organization-a',
+      { ...withPresenceGrant, isTeamLeader: true },
+      true,
+    ),
+    true,
+  )
+  assert.equal(
+    canViewOrganizationPresence(
+      'organization-a',
+      { ...withPresenceGrant, memberRole: 'admin' },
+      true,
+    ),
+    true,
+  )
+  assert.equal(
+    canViewOrganizationPresence(
+      'organization-a',
+      { ...withPresenceGrant, memberRole: 'owner' },
+      true,
+    ),
+    true,
+  )
+  assert.equal(
+    canViewOrganizationPresence(
+      'organization-a',
+      { ...withPresenceGrant, isSuperAdmin: true },
+      true,
+    ),
+    true,
+  )
+  assert.equal(
+    canViewOrganizationPresence(
+      'organization-b',
+      { ...withPresenceGrant, isTeamLeader: true },
+      true,
+    ),
+    false,
+  )
+  assert.equal(
+    canViewOrganizationPresence(
+      'organization-a',
+      { ...withPresenceGrant, isTeamLeader: true },
+      false,
+    ),
+    false,
+  )
 })

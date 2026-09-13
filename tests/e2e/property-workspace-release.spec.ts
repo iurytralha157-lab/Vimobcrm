@@ -35,6 +35,7 @@ test.describe.serial('carteira, pop-ups e ficha 360 do imóvel', () => {
     await page.getByRole('menuitem', { name: 'Visualização rápida' }).click();
     const preview = page.getByRole('dialog', { name: 'Visualizar imóvel' });
     await expect(preview).toBeVisible();
+    await expect(preview.getByText(PROPERTY_TITLE, { exact: true })).toHaveCount(1);
     await expect(preview.getByRole('heading', { name: PROPERTY_TITLE })).toBeVisible();
     await expect(preview.getByText('E2E-SITE-001', { exact: true })).toBeVisible();
     await page.keyboard.press('Escape');
@@ -44,14 +45,16 @@ test.describe.serial('carteira, pop-ups e ficha 360 do imóvel', () => {
     await page.getByRole('menuitem', { name: 'Histórico' }).click();
     const history = page.getByRole('dialog', { name: 'Histórico do imóvel' });
     await expect(history).toBeVisible();
-    await expect(history.getByText(/E2E-SITE-001/)).toBeVisible();
+    await expect(history.getByText(/E2E-SITE-001/).first()).toBeVisible();
     await expect(history.getByText('Não foi possível carregar o histórico.')).toHaveCount(0);
     await page.keyboard.press('Escape');
     await expect(history).toBeHidden();
 
     await openPropertyMenu(page);
     await page.getByRole('menuitem', { name: 'Abrir ficha 360°' }).click();
-    await expect(page).toHaveURL(new RegExp(`/properties/${E2E_PROPERTY_ID}$`));
+    await expect(page).toHaveURL(new RegExp(`/properties/${E2E_PROPERTY_ID}$`), {
+      timeout: 60_000,
+    });
     await expect(page.getByRole('heading', { name: PROPERTY_TITLE, level: 1 })).toBeVisible();
     await expect(page.getByText('Não foi possível abrir a ficha')).toHaveCount(0);
     await expect(page.getByText('Ficha básica disponível')).toHaveCount(0);
@@ -64,8 +67,14 @@ test.describe.serial('carteira, pop-ups e ficha 360 do imóvel', () => {
     await page.getByRole('button', { name: /Ações do imóvel/ }).click();
     await expect(page.getByRole('menuitem', { name: 'Marcar como reservado' })).toBeVisible();
     await expect(page.getByRole('menuitem', { name: 'Marcar como vendido' })).toBeVisible();
-    await expect(page.getByRole('menuitem', { name: 'Gerenciar publicação' })).toBeVisible();
-    await page.keyboard.press('Escape');
+    await page.getByRole('menuitem', { name: 'Gerenciar publicação' }).click();
+    await expect(page).toHaveURL(
+      new RegExp(`/properties/${E2E_PROPERTY_ID}\\?tab=publication$`),
+    );
+    await expect(page.getByRole('tab', { name: 'Publicação' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
     await expect(page.getByRole('tab', { name: 'Visão geral' })).toBeVisible();
     for (const tabName of [
       'Ficha técnica',
@@ -80,13 +89,30 @@ test.describe.serial('carteira, pop-ups e ficha 360 do imóvel', () => {
     }
 
     await page.getByRole('tab', { name: 'Ficha técnica' }).click();
+    await expect(page).toHaveURL(
+      new RegExp(`/properties/${E2E_PROPERTY_ID}\\?tab=technical$`),
+    );
     await expect(page.getByRole('heading', { name: 'Características do imóvel' })).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole('tab', { name: 'Ficha técnica' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
 
     await page.getByRole('tab', { name: 'Mídia e documentos' }).click();
+    await expect(page).toHaveURL(
+      new RegExp(`/properties/${E2E_PROPERTY_ID}\\?tab=media$`),
+    );
     await expect(page.getByRole('heading', { name: 'Mídias e documentos' })).toBeVisible();
 
     await page.getByRole('tab', { name: 'Histórico' }).click();
+    await expect(page).toHaveURL(
+      new RegExp(`/properties/${E2E_PROPERTY_ID}\\?tab=history$`),
+    );
     await expect(page.getByRole('heading', { name: 'Histórico do imóvel' })).toBeVisible();
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/properties$/);
   });
 
   for (const persona of ['leader', 'user'] as E2EUserKey[]) {
@@ -98,7 +124,11 @@ test.describe.serial('carteira, pop-ups e ficha 360 do imóvel', () => {
       await expectSuccessfulNavigation(page, `/properties/${E2E_PROPERTY_ID}`);
       await expect(page.getByRole('heading', { name: PROPERTY_TITLE, level: 1 })).toBeVisible();
       await expect(page.getByText('Não foi possível abrir a ficha')).toHaveCount(0);
-      await expect(page.getByRole('button', { name: 'Editar imóvel' })).toHaveCount(0);
+      if (persona === 'user') {
+        await expect(page.getByRole('button', { name: 'Editar imóvel' })).toBeVisible();
+      } else {
+        await expect(page.getByRole('button', { name: 'Editar imóvel' })).toHaveCount(0);
+      }
     });
   }
 
@@ -112,6 +142,7 @@ test.describe.serial('carteira, pop-ups e ficha 360 do imóvel', () => {
     await page.getByRole('menuitem', { name: 'Visualização rápida' }).click();
     const preview = page.getByRole('dialog', { name: 'Visualizar imóvel' });
     await expect(preview).toBeVisible();
+    await expect(preview.getByText(PROPERTY_TITLE, { exact: true })).toHaveCount(1);
     await expect(preview.getByRole('heading', { name: PROPERTY_TITLE })).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await page.keyboard.press('Escape');

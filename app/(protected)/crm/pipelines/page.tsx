@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import PipelinesScreen from "@/components/features/pipelines/Pipelines-screen";
+import PipelinesScreen from "@/components/features/pipelines/PipelinesScreen";
 import { PermissionBoundary } from "@/components/shared/access/PermissionBoundary";
 
 export default function CrmPipelinesPage() {

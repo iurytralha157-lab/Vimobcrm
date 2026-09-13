@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { toast } from "@/hooks/use-toast";
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { Json } from "@/integrations/supabase/types";
+import type { Json } from "@/lib/supabase/types";
 import { whatsappAPI, type AIAutoReplySessionInput, type WhatsAppSessionQuota } from "@/lib/api/whatsapp";
 import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
 import {
@@ -552,9 +552,11 @@ export function useLogoutSession() {
           organizationId: session.organization_id,
           userId: session.owner_user_id,
           variables: {
+            session_id: session.id,
             session_name: session.display_name || session.instance_name,
             display_name: session.display_name || session.instance_name,
           },
+          dedupeKey: `whatsapp_disconnected:${session.id}:${session.owner_user_id}:${session.updated_at}`,
         });
       } catch (err) {
         console.warn("Disconnection notification failed:", err);

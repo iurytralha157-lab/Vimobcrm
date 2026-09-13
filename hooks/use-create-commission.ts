@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { financialAPI } from '@/lib/api/financial';
+import { formatBRLCurrencyWithDefaultDecimals } from '@/lib/utils/formatting';
 
 interface CreateCommissionParams {
   leadId: string;
@@ -94,7 +95,7 @@ export function useCreateReceivableOnWon() {
         : 'sem data definida';
 
       toast.success(
-        `Conta a receber de R$ ${data.amount.toLocaleString('pt-BR', { minimumFractionDigits: 0 })} criada!`,
+        `Conta a receber de ${formatBRLCurrencyWithDefaultDecimals(data.amount)} criada!`,
         { description: `Vencimento: ${dueDateLabel}` },
       );
     },

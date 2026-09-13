@@ -1,6 +1,7 @@
-import type { Json, Tables } from '@/integrations/supabase/types'
+import type { Json, Tables } from '@/lib/supabase/types'
 import {
   addRoundRobinMemberInputSchema,
+  apiRoundRobinHistoryListResponseSchema,
   apiRoundRobinListResponseSchema,
   apiRoundRobinMemberListResponseSchema,
   apiRoundRobinMemberResponseSchema,
@@ -195,6 +196,29 @@ export type LegacyRoundRobinMember = Omit<RoundRobinMemberRow, 'organization_id'
   is_active?: boolean | null
 }
 
+export type RoundRobinHistoryUser = {
+  id: string
+  name?: string | null
+  email?: string | null
+  avatar_url?: string | null
+}
+
+export type RoundRobinHistoryEvent = {
+  id: string
+  action: string
+  entity_type:
+    | 'distribution_queue'
+    | 'distribution_queue_rule'
+    | 'distribution_queue_member'
+  entity_id: string
+  old_data?: Record<string, unknown> | null
+  new_data?: Record<string, unknown> | null
+  diff?: Record<string, unknown> | null
+  created_at: string
+  user?: RoundRobinHistoryUser | null
+  subject_user?: RoundRobinHistoryUser | null
+}
+
 export const roundRobinsAPI = {
   async getMetaFormOptions(organizationId?: string) {
     const response = await vimobAPIRequest<APIListResponse<APIRoundRobinMetaFormOption>>(
@@ -248,6 +272,32 @@ export const roundRobinsAPI = {
     validateDomainResponse(apiRoundRobinListResponseSchema, response, 'round-robin.list')
 
     return response.data.map(toLegacyRoundRobin)
+  },
+
+  async getRoundRobin(roundRobinId: string, organizationId?: string) {
+    const response = await vimobAPIRequest<APIItemResponse<APIRoundRobin>>(
+      `/v1/round-robins/${roundRobinId}`,
+      { organizationId },
+    )
+    validateDomainResponse(
+      apiRoundRobinResponseSchema,
+      response,
+      'round-robin.get',
+    )
+    return toLegacyRoundRobin(response.data)
+  },
+
+  async getHistory(roundRobinId: string, organizationId?: string) {
+    const response = await vimobAPIRequest<APIListResponse<RoundRobinHistoryEvent>>(
+      `/v1/round-robins/${roundRobinId}/history`,
+      { organizationId },
+    )
+    validateDomainResponse(
+      apiRoundRobinHistoryListResponseSchema,
+      response,
+      'round-robin.history',
+    )
+    return response.data
   },
 
   async createRoundRobin(input: RoundRobinAPIInput, organizationId?: string) {

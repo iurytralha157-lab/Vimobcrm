@@ -33,6 +33,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
+import { formatPropertyDate } from '@/lib/property-display-utils'
 import type { PropertyChannelPublication } from '@/lib/validation'
 
 import { PropertyPublicationHistory } from './PropertyPublicationHistory'
@@ -100,16 +101,6 @@ function versionLabel(publication: PropertyChannelPublication) {
       : `${publication.current_version} ainda não publicada`
   }
   return 'Nenhuma versão criada'
-}
-
-function formatDate(value?: string | null) {
-  if (!value) return 'Ainda não processado'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat('pt-BR', {
-    dateStyle: 'short',
-    timeStyle: 'short',
-  }).format(date)
 }
 
 function statusVariant(state: PropertyChannelPublication['observed_state']) {
@@ -295,13 +286,13 @@ export function PropertyPublicationChannelCard({
           </div>
           <div>
             <span className="block font-medium text-foreground">Última solicitação</span>
-            {formatDate(publication.last_requested_at)}
+            {formatPropertyDate(publication.last_requested_at, true, 'Ainda não processado')}
           </div>
           <div>
             <span className="block font-medium text-foreground">
               {isGrupoOLXChannel ? 'Último processamento no Vimob' : 'Último sucesso'}
             </span>
-            {formatDate(publication.last_succeeded_at)}
+            {formatPropertyDate(publication.last_succeeded_at, true, 'Ainda não processado')}
           </div>
         </div>
 

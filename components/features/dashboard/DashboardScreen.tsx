@@ -60,7 +60,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 // Hooks e Contextos
 import { useSharedFilters } from "@/hooks/use-shared-filters";
-import { useFilterOptionsPipelineId } from "@/hooks/use-filter-options-pipeline-id";
 import {
   type EnhancedDashboardStats,
   useEnhancedDashboardStats,
@@ -70,7 +69,12 @@ import {
 } from "@/hooks/use-dashboard-stats";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { SharedFilters } from "@/components/shared/SharedFilters";
-import { datePresetOptions, sourceLabels } from "@/hooks/use-dashboard-filters";
+import {
+  datePresetOptions,
+  getDateRangeFromPreset,
+  sourceLabels,
+  type DatePreset,
+} from "@/hooks/use-dashboard-filters";
 import {
   getDashboardExtraCounts,
   type DashboardAPIFilters,
@@ -136,16 +140,22 @@ export default function Dashboard() {
   const [lostDialogOpen, setLostDialogOpen] = useState(false);
   const [wonDialogOpen, setWonDialogOpen] = useState(false);
   const [shouldLoadFilterOptions, setShouldLoadFilterOptions] = useState(false);
+  const [dashboardDatePreset, setDashboardDatePreset] =
+    useState<DatePreset | null>(null);
+  const [dashboardCustomDateRange, setDashboardCustomDateRange] = useState<{
+    from: Date;
+    to: Date;
+  } | null>(null);
+  const dashboardDateRange = useMemo(() => {
+    if (!dashboardDatePreset) return null;
+    if (dashboardDatePreset === "custom") return dashboardCustomDateRange;
+    return getDateRangeFromPreset(dashboardDatePreset);
+  }, [dashboardCustomDateRange, dashboardDatePreset]);
   const dashboardQueryScope = useDashboardQueryScope();
   const activeOrganizationId = dashboardQueryScope.organizationId;
-  const filterOptionsPipelineId = useFilterOptionsPipelineId();
 
   const {
     filters,
-    datePreset,
-    setDatePreset,
-    customDateRange,
-    setCustomDateRange,
     teamId,
     setTeamId,
     userId,
@@ -175,18 +185,20 @@ export default function Dashboard() {
     isLoadingCampaigns,
     isLoadingAdSets,
     isLoadingAds,
+    isFiltersHydrated,
   } = useSharedFilters({
     loadDynamicOptions: shouldLoadFilterOptions,
-    pipelineId: filterOptionsPipelineId,
+    dateMode: dashboardDateRange ? "origin" : undefined,
+    dateRangeOverride: dashboardDateRange,
   });
 
   // Mapeamento de strings de data para chaves de cache estáveis
-  const dateFromStr = filters.dateRange.from.toISOString();
-  const dateToStr = filters.dateRange.to.toISOString();
+  const dateFromStr = dashboardDateRange?.from.toISOString();
+  const dateToStr = dashboardDateRange?.to.toISOString();
 
   const dashboardFilters = useMemo<DashboardAPIFilters>(
     () => ({
-      dateRange: filters.dateRange,
+      dateRange: dashboardDateRange,
       teamId: filters.teamId,
       userId: filters.userId,
       source: filters.source,
@@ -197,7 +209,7 @@ export default function Dashboard() {
       dealStatus: filters.dealStatus,
       searchQuery: filters.searchQuery,
     }),
-    [filters],
+    [dashboardDateRange, filters],
   );
 
   // Data hooks - Imobiliário
@@ -206,11 +218,26 @@ export default function Dashboard() {
     isLoading: statsLoading,
     isError: statsError,
     refetch: refetchStats,
-  } = useEnhancedDashboardStats(dashboardFilters);
+  } = useEnhancedDashboardStats(dashboardFilters, {
+    enabled: isFiltersHydrated,
+  });
+  const shouldLoadDealDetails =
+    isFiltersHydrated && (lostDialogOpen || wonDialogOpen);
+  const {
+    data: detailedStats,
+    isLoading: dealDetailsLoading,
+    isError: dealDetailsError,
+    refetch: refetchDealDetails,
+  } = useEnhancedDashboardStats(dashboardFilters, {
+    enabled: shouldLoadDealDetails,
+    includeDetails: true,
+  });
   const { data: evolutionData = [], isLoading: evolutionLoading } =
-    useDealsEvolutionData(dashboardFilters);
+    useDealsEvolutionData(dashboardFilters, { enabled: isFiltersHydrated });
   const { data: sourcesData = [], isLoading: sourcesLoading } =
-    useLeadSourcesData(dashboardFilters);
+    useLeadSourcesData(dashboardFilters, undefined, {
+      enabled: isFiltersHydrated,
+    });
   const hasOrganization = Boolean(activeOrganizationId);
 
   const {
@@ -242,34 +269,45 @@ export default function Dashboard() {
         filters: dashboardFilters,
         signal,
       }),
-    enabled: dashboardQueryScope.isReady,
+    enabled: dashboardQueryScope.isReady && isFiltersHydrated,
     staleTime: DASHBOARD_EXTRA_COUNTS_STALE_TIME_MS,
   });
 
   const propertyCount = extraCounts?.propertyCount ?? 0;
   const siteVisits = extraCounts?.siteVisits ?? 0;
   const scheduledVisitsCount = extraCounts?.scheduledVisits ?? 0;
-  const kpisLoading = !hasOrganization || statsLoading || extraCountsLoading;
+  const kpisLoading =
+    !hasOrganization || !isFiltersHydrated || statsLoading || extraCountsLoading;
   const kpisError = statsError || extraCountsError;
-  const evolutionDataLoading = !hasOrganization || evolutionLoading;
-  const sourcesDataLoading = !hasOrganization || sourcesLoading;
+  const evolutionDataLoading =
+    !hasOrganization || !isFiltersHydrated || evolutionLoading;
+  const sourcesDataLoading =
+    !hasOrganization || !isFiltersHydrated || sourcesLoading;
 
   useEffect(() => {
-    if (hasOrganization && !statsLoading && !evolutionLoading) {
+    if (
+      hasOrganization &&
+      isFiltersHydrated &&
+      !statsLoading &&
+      !evolutionLoading
+    ) {
       performanceTracker.addMetric(
         "Dashboard Full Load",
         performance.now(),
         "ms",
       );
     }
-  }, [hasOrganization, statsLoading, evolutionLoading]);
+  }, [hasOrganization, isFiltersHydrated, statsLoading, evolutionLoading]);
 
   const funnelComponent = (
-    <SalesFunnelWithPipeline filters={dashboardFilters} />
+    <SalesFunnelWithPipeline
+      filters={dashboardFilters}
+      enabled={isFiltersHydrated}
+    />
   );
   const periodLabel =
-    datePresetOptions.find((o) => o.value === datePreset)?.label ||
-    "Período selecionado";
+    datePresetOptions.find((o) => o.value === dashboardDatePreset)?.label ||
+    "Todo o período";
 
   const retryKpis = () => {
     void refetchStats();
@@ -288,8 +326,10 @@ export default function Dashboard() {
     wonAverageConversionDays: null,
     wonConversionBuckets: [],
     wonDeals: [],
+    wonDealsTruncated: false,
     lostReasonBuckets: [],
     lostDeals: [],
+    lostDealsTruncated: false,
     avgResponseTime: "--",
     totalSalesValue: 0,
     pendingCommissions: 0,
@@ -304,6 +344,9 @@ export default function Dashboard() {
     overduePayables: 0,
     paidCommissions: 0,
   };
+  const dialogData = detailedStats || kpiData;
+  const showDealDetailsLoading =
+    shouldLoadDealDetails && !dealDetailsError && !detailedStats;
 
   return (
     <AppLayout title="Dashboard" disableMainScroll={true} borderless>
@@ -318,10 +361,15 @@ export default function Dashboard() {
           data-tour="dashboard-filters"
         >
           <SharedFilters
-            datePreset={datePreset}
-            onDatePresetChange={setDatePreset}
-            customDateRange={customDateRange}
-            onCustomDateRangeChange={setCustomDateRange}
+            datePreset={dashboardDatePreset}
+            onDatePresetChange={setDashboardDatePreset}
+            onClearDatePreset={() => {
+              setDashboardDatePreset(null);
+              setDashboardCustomDateRange(null);
+            }}
+            defaultDatePreset={null}
+            customDateRange={dashboardCustomDateRange}
+            onCustomDateRangeChange={setDashboardCustomDateRange}
             teamId={teamId}
             onTeamChange={setTeamId}
             userId={userId}
@@ -340,7 +388,11 @@ export default function Dashboard() {
             onDealStatusChange={setDealStatus}
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
-            onClear={clearFilters}
+            onClear={() => {
+              clearFilters();
+              setDashboardDatePreset(null);
+              setDashboardCustomDateRange(null);
+            }}
             hasActiveFilters={hasActiveFilters}
             hideSearch
             dynamicSources={dynamicSources}
@@ -478,7 +530,10 @@ export default function Dashboard() {
       <LostDealsDialog
         open={lostDialogOpen}
         onOpenChange={setLostDialogOpen}
-        data={kpiData}
+        data={dialogData}
+        detailsLoading={showDealDetailsLoading || dealDetailsLoading}
+        detailsError={dealDetailsError}
+        onRetryDetails={() => void refetchDealDetails()}
         periodLabel={periodLabel}
         onViewLead={(leadId) => {
           setLostDialogOpen(false);
@@ -489,7 +544,10 @@ export default function Dashboard() {
       <WonDealsDialog
         open={wonDialogOpen}
         onOpenChange={setWonDialogOpen}
-        data={kpiData}
+        data={dialogData}
+        detailsLoading={showDealDetailsLoading || dealDetailsLoading}
+        detailsError={dealDetailsError}
+        onRetryDetails={() => void refetchDealDetails()}
         periodLabel={periodLabel}
         onViewLead={(leadId) => {
           setWonDialogOpen(false);
@@ -1026,16 +1084,58 @@ function buildWonSourceBuckets(
     }));
 }
 
+function DashboardDealDetailsState({
+  hasError,
+  onRetry,
+}: {
+  hasError: boolean;
+  onRetry: () => void;
+}) {
+  if (hasError) {
+    return (
+      <div className="rounded-[8px] bg-[var(--app-surface-solid)] p-4 text-center text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
+        <p>Não foi possível carregar os registros detalhados.</p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-2 rounded-[6px] bg-primary/15 px-3 py-1.5 text-[11px] font-normal text-primary transition-colors hover:bg-primary/25"
+        >
+          Tentar novamente
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="space-y-2 rounded-[8px] bg-[var(--app-surface-solid)] p-3"
+    >
+      <span className="sr-only">Carregando registros detalhados</span>
+      <Skeleton className="h-10 w-full rounded-[6px]" />
+      <Skeleton className="h-10 w-full rounded-[6px]" />
+      <Skeleton className="h-10 w-4/5 rounded-[6px]" />
+    </div>
+  );
+}
+
 function LostDealsDialog({
   open,
   onOpenChange,
   data,
+  detailsLoading,
+  detailsError,
+  onRetryDetails,
   periodLabel,
   onViewLead,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   data: EnhancedDashboardStats;
+  detailsLoading: boolean;
+  detailsError: boolean;
+  onRetryDetails: () => void;
   periodLabel: string;
   onViewLead: (leadId: string) => void;
 }) {
@@ -1046,6 +1146,8 @@ function LostDealsDialog({
       (a, b) => b.count - a.count || a.label.localeCompare(b.label, "pt-BR"),
     );
   const totalLost = data.lostLeads || lostDeals.length;
+  const lostDetailsTruncated =
+    data.lostDealsTruncated || lostDeals.length < totalLost;
   const topReason = reasonBuckets[0];
   const otherBucket = reasonBuckets.find((bucket) => bucket.key === "outros");
 
@@ -1219,13 +1321,22 @@ function LostDealsDialog({
 
             <div className="overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-3 shadow-none sm:p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
-                <h3 className="text-[14px] font-light">Perdidos do período</h3>
+                <h3 className="text-[14px] font-light">
+                  {lostDetailsTruncated ? "Perdidos mais recentes" : "Perdidos do período"}
+                </h3>
                 <span className="shrink-0 text-[12px] font-light text-[var(--app-text-tertiary)]">
-                  {lostDeals.length} registros
+                  {lostDetailsTruncated
+                    ? `${lostDeals.length} de ${totalLost} registros`
+                    : `${lostDeals.length} registros`}
                 </span>
               </div>
 
-              {lostDeals.length === 0 ? (
+              {detailsLoading || detailsError ? (
+                <DashboardDealDetailsState
+                  hasError={detailsError}
+                  onRetry={onRetryDetails}
+                />
+              ) : lostDeals.length === 0 ? (
                 <div className="rounded-[8px] bg-[var(--app-surface-solid)] p-4 text-center text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
                   Nenhum lead perdido nesse período.
                 </div>
@@ -1313,21 +1424,32 @@ function WonDealsDialog({
   open,
   onOpenChange,
   data,
+  detailsLoading,
+  detailsError,
+  onRetryDetails,
   periodLabel,
   onViewLead,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   data: EnhancedDashboardStats;
+  detailsLoading: boolean;
+  detailsError: boolean;
+  onRetryDetails: () => void;
   periodLabel: string;
   onViewLead: (leadId: string) => void;
 }) {
   const wonDeals = data.wonDeals || [];
   const totalWon = data.closedLeads || 0;
+  const wonDetailsTruncated =
+    data.wonDealsTruncated || wonDeals.length < totalWon;
   const totalVgv = data.totalSalesValue || 0;
   const averageTicket = totalWon > 0 ? totalVgv / totalWon : 0;
   const averageDays = data.wonAverageConversionDays;
-  const sourceBuckets = buildWonSourceBuckets(wonDeals, totalWon);
+  const sourceBuckets = buildWonSourceBuckets(
+    wonDeals,
+    wonDetailsTruncated ? wonDeals.length : totalWon,
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1398,10 +1520,12 @@ function WonDealsDialog({
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <h3 className="text-[14px] font-normal">
-                    Origem e tempo dos ganhos
+                    Origem exibida e tempo dos ganhos
                   </h3>
                   <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
-                    Pizza por origem e tempo até o ganho no período filtrado.
+                    {wonDetailsTruncated
+                      ? "A origem considera os registros recentes exibidos; o tempo de conversão considera o total."
+                      : "Pizza por origem e tempo até o ganho no período filtrado."}
                   </p>
                 </div>
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
@@ -1409,7 +1533,12 @@ function WonDealsDialog({
                 </span>
               </div>
 
-              {sourceBuckets.length === 0 ? (
+              {detailsLoading || detailsError ? (
+                <DashboardDealDetailsState
+                  hasError={detailsError}
+                  onRetry={onRetryDetails}
+                />
+              ) : sourceBuckets.length === 0 ? (
                 <div className="rounded-[8px] bg-[var(--app-surface-solid)] p-4 text-center text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
                   Nenhum ganho fechado nesse período.
                 </div>
@@ -1451,10 +1580,10 @@ function WonDealsDialog({
                     </ResponsiveContainer>
                     <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
                       <span className="text-[10px] font-light text-[var(--app-text-tertiary)]">
-                        Ganhos
+                        {wonDetailsTruncated ? "Exibidos" : "Ganhos"}
                       </span>
                       <span className="text-[30px] font-normal leading-tight text-[var(--app-text-primary)]">
-                        {totalWon}
+                        {wonDetailsTruncated ? wonDeals.length : totalWon}
                       </span>
                     </div>
                   </div>
@@ -1530,13 +1659,22 @@ function WonDealsDialog({
 
             <div className="overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-soft)] p-3 shadow-none sm:p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
-                <h3 className="text-[14px] font-light">Ganhos do período</h3>
+                <h3 className="text-[14px] font-light">
+                  {wonDetailsTruncated ? "Ganhos mais recentes" : "Ganhos do período"}
+                </h3>
                 <span className="shrink-0 text-[12px] font-light text-[var(--app-text-tertiary)]">
-                  {wonDeals.length} registros
+                  {wonDetailsTruncated
+                    ? `${wonDeals.length} de ${totalWon} registros`
+                    : `${wonDeals.length} registros`}
                 </span>
               </div>
 
-              {wonDeals.length === 0 ? (
+              {detailsLoading || detailsError ? (
+                <DashboardDealDetailsState
+                  hasError={detailsError}
+                  onRetry={onRetryDetails}
+                />
+              ) : wonDeals.length === 0 ? (
                 <div className="rounded-[8px] bg-[var(--app-surface-solid)] p-4 text-center text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
                   Nenhum ganho fechado nesse período.
                 </div>

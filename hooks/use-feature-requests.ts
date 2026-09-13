@@ -56,16 +56,16 @@ export function useAllFeatureRequests() {
 
 export function useCreateFeatureRequest() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile, organization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
     mutationFn: async (input: CreateFeatureRequestInput) => {
-      if (!profile?.id || !organization?.id) {
+      if (!profile?.id || !activeOrganization.organizationId) {
         throw new Error('Usuário não autenticado');
       }
 
-      return adminAPI.createFeatureRequest<FeatureRequest>(input as unknown as Record<string, unknown>, organization.id);
+      return adminAPI.createFeatureRequest<FeatureRequest>(input as unknown as Record<string, unknown>, activeOrganization.organizationId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['my-feature-requests'] });

@@ -41,8 +41,28 @@ func TestDesiredWebhookSubscribedFieldsFailClosed(t *testing.T) {
 			target: webhookSubscriptionTarget{
 				MessagingModulesEnabled: true,
 				MessagingAuthorized:     true,
+				PageMessagingRequired:   true,
 			},
 			wantFields: []string{"leadgen", "messages", "messaging_postbacks"},
+		},
+		{
+			name: "shared page preserves messaging required by another tenant route",
+			target: webhookSubscriptionTarget{
+				MessagingModulesEnabled: false,
+				MessagingAuthorized:     false,
+				PageMessagingRequired:   true,
+			},
+			wantFields: []string{"leadgen", "messages", "messaging_postbacks"},
+		},
+		{
+			name: "shared page preserves messaging while reporting local authorization",
+			target: webhookSubscriptionTarget{
+				MessagingModulesEnabled: true,
+				MessagingAuthorized:     false,
+				PageMessagingRequired:   true,
+			},
+			wantFields:            []string{"leadgen", "messages", "messaging_postbacks"},
+			wantAuthorizationFlag: true,
 		},
 	}
 
@@ -174,6 +194,9 @@ func TestWebhookSubscriptionRepositorySecurityContract(t *testing.T) {
 		"whatsapp_module.is_enabled = true",
 		"lower(btrim(granted_scope.value)) = 'pages_messaging'",
 		"lower(btrim(instagram_scope.value)) = 'instagram_manage_messages'",
+		"bool_or(messaging_modules_enabled and messaging_authorized)",
+		"as page_messaging_required",
+		"join page_eligibility using (page_id)",
 		"subscribed_fields = $4::jsonb",
 		"subscription_reconciled_at = now()",
 		"webhook_subscribed_at = now()",
@@ -187,6 +210,9 @@ func TestWebhookSubscriptionRepositorySecurityContract(t *testing.T) {
 		"updated_at < now() - $3::interval",
 		"and organization_id = $2::uuid",
 		"and page_id = $3",
+		"acquireMetaPageSubscriptionLock(ctx, repo.db, target.PageID)",
+		"refreshWebhookSubscriptionTarget(ctx, target)",
+		"target = freshTarget",
 	}
 	for _, fragment := range required {
 		if !strings.Contains(text, fragment) {

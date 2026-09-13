@@ -1,6 +1,6 @@
 import {
   apiPropertyAssetUploadIntentResponseSchema,
-  apiPropertyOwnerOptionListResponseSchema,
+  apiPropertyAssetUploadDiscardResponseSchema,
   apiPropertyWorkspaceAssetDeleteResponseSchema,
   apiPropertyWorkspaceAssetListResponseSchema,
   apiPropertyWorkspaceAssetResponseSchema,
@@ -14,6 +14,7 @@ import {
   propertyAssetDeleteInputSchema,
   propertyAssetOrderInputSchema,
   propertyAssetPrimaryInputSchema,
+  propertyAssetUploadDiscardInputSchema,
   propertyAssetUpdateInputSchema,
   propertyAssetUploadIntentInputSchema,
   propertyKeyCreateInputSchema,
@@ -29,6 +30,7 @@ import {
   type PropertyAssetPrimaryInput,
   type PropertyAssetUpdateInput,
   type PropertyAssetUploadIntentInput,
+  type PropertyAssetUploadDiscardInput,
   type PropertyKeyCreateInput,
   type PropertyKeyMovementInput,
   type PropertyOfferType,
@@ -38,7 +40,7 @@ import {
   type PropertyOwnershipUpdateInput,
   type PropertyWorkspacePayload,
 } from '@/lib/validation'
-import { supabase } from '@/integrations/supabase/client'
+import { supabase } from '@/lib/supabase/client'
 
 import { vimobAPIRequest } from './vimob-client'
 
@@ -123,16 +125,6 @@ export const propertyWorkspaceAPI = {
       apiPropertyWorkspaceKeyMovementResponseSchema,
       response,
       'property-workspace.key.move',
-    )
-    return parsed.data
-  },
-
-  async listOwnerOptions(organizationId: string) {
-    const response = await vimobAPIRequest<unknown>('/v1/property-owners', { organizationId })
-    const parsed = validateDomainResponse(
-      apiPropertyOwnerOptionListResponseSchema,
-      response,
-      'property-workspace.owners.options',
     )
     return parsed.data
   },
@@ -266,10 +258,35 @@ export const propertyWorkspaceAPI = {
       })
 
     if (error) {
+      await this.discardAssetUpload(organizationId, propertyId, {
+        storage_path: intent.storage_path,
+      }).catch(() => undefined)
       throw new Error(`Falha ao enviar arquivo: ${error.message}`)
     }
 
     return intent
+  },
+
+  async discardAssetUpload(
+    organizationId: string,
+    propertyId: string,
+    input: PropertyAssetUploadDiscardInput,
+  ) {
+    const body = parseDomainInput(
+      propertyAssetUploadDiscardInputSchema,
+      input,
+      'property-workspace.asset.upload-discard',
+    )
+    const response = await vimobAPIRequest<unknown>(
+      `/v1/properties/${propertyId}/assets/upload-intents`,
+      { method: 'DELETE', organizationId, body },
+    )
+    const parsed = validateDomainResponse(
+      apiPropertyAssetUploadDiscardResponseSchema,
+      response,
+      'property-workspace.asset.upload-discard',
+    )
+    return parsed.data
   },
 
   async updateAsset(

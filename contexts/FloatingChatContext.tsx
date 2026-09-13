@@ -5,7 +5,7 @@ import { normalizePhoneToE164 } from "@/lib/phone-utils";
 
 interface FloatingChatState {
   isOpen: boolean;
-  isMinimized: boolean;
+  isPresenceOpen: boolean;
   activeConversation: WhatsAppConversation | null;
   pendingPhone: string | null; // Telefone para iniciar nova conversa
   pendingLeadName: string | null; // Nome do lead para nova conversa
@@ -18,8 +18,7 @@ interface FloatingChatContextType {
   openChat: () => void;
   closeChat: () => void;
   toggleChat: () => void;
-  minimizeChat: () => void;
-  maximizeChat: () => void;
+  setPresenceOpen: (open: boolean) => void;
   openConversation: (conversation: WhatsAppConversation) => void;
   openNewChat: (phone: string, leadName?: string, leadId?: string) => void;
   openNewChatWithMessage: (phone: string, message: string, leadId?: string, leadName?: string) => void;
@@ -31,7 +30,7 @@ const FloatingChatContext = createContext<FloatingChatContextType | undefined>(u
 
 const initialFloatingChatState = (): FloatingChatState => ({
   isOpen: false,
-  isMinimized: false,
+  isPresenceOpen: false,
   activeConversation: null,
   pendingPhone: null,
   pendingLeadName: null,
@@ -40,8 +39,8 @@ const initialFloatingChatState = (): FloatingChatState => ({
 });
 
 export function FloatingChatProvider({ children }: { children: ReactNode }) {
-  const { user, profile, organization } = useAuth();
-  const activeTenantKey = `${user?.id || profile?.id || "anonymous"}:${organization?.id || profile?.organization_id || "none"}`;
+  const { activeOrganization, user, profile } = useAuth();
+  const activeTenantKey = `${user?.id || profile?.id || "anonymous"}:${activeOrganization.organizationId || "none"}`;
   const [state, setState] = useState<FloatingChatState>(initialFloatingChatState);
   const [stateTenantKey, setStateTenantKey] = useState(activeTenantKey);
   const visibleState = stateTenantKey === activeTenantKey
@@ -61,14 +60,18 @@ export function FloatingChatProvider({ children }: { children: ReactNode }) {
   }, [activeTenantKey]);
 
   const openChat = useCallback(() => {
-    setState((prev) => ({ ...prev, isOpen: true, isMinimized: false }));
+    setState((prev) => ({
+      ...prev,
+      isOpen: true,
+      isPresenceOpen: false,
+    }));
   }, []);
 
   const closeChat = useCallback(() => {
     setState((prev) => ({
       ...prev,
       isOpen: false,
-      isMinimized: false,
+      isPresenceOpen: false,
       activeConversation: null,
       pendingPhone: null,
       pendingLeadName: null,
@@ -81,23 +84,22 @@ export function FloatingChatProvider({ children }: { children: ReactNode }) {
     setState((prev) => ({
       ...prev,
       isOpen: !prev.isOpen,
-      isMinimized: false
+      isPresenceOpen: false,
     }));
   }, []);
 
-  const minimizeChat = useCallback(() => {
-    setState((prev) => ({ ...prev, isMinimized: true }));
-  }, []);
-
-  const maximizeChat = useCallback(() => {
-    setState((prev) => ({ ...prev, isMinimized: false }));
+  const setPresenceOpen = useCallback((open: boolean) => {
+    setState((prev) => ({
+      ...prev,
+      isPresenceOpen: open,
+    }));
   }, []);
 
   const openConversation = useCallback((conversation: WhatsAppConversation) => {
     setState((prev) => ({
       ...prev,
       isOpen: true,
-      isMinimized: false,
+      isPresenceOpen: false,
       activeConversation: conversation,
       pendingPhone: null,
       pendingLeadName: null,
@@ -110,7 +112,7 @@ export function FloatingChatProvider({ children }: { children: ReactNode }) {
     setState((prev) => ({
       ...prev,
       isOpen: true,
-      isMinimized: false,
+      isPresenceOpen: false,
       activeConversation: null,
       pendingPhone,
       pendingLeadName: leadName || null,
@@ -124,7 +126,7 @@ export function FloatingChatProvider({ children }: { children: ReactNode }) {
     setState((prev) => ({
       ...prev,
       isOpen: true,
-      isMinimized: false,
+      isPresenceOpen: false,
       activeConversation: null,
       pendingPhone,
       pendingLeadName: leadName || null,
@@ -158,8 +160,7 @@ export function FloatingChatProvider({ children }: { children: ReactNode }) {
         openChat,
         closeChat,
         toggleChat,
-        minimizeChat,
-        maximizeChat,
+        setPresenceOpen,
         openConversation,
         openNewChat,
         openNewChatWithMessage,

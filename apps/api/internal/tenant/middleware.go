@@ -158,6 +158,22 @@ func RequirePermission(permission string, next http.Handler) http.Handler {
 	})
 }
 
+func RequireAnyPermission(permissionKeys []string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tenantContext, ok := FromContext(r.Context())
+		if ok {
+			for _, permission := range permissionKeys {
+				if tenantContext.HasPermission(permission) {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+		}
+
+		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to perform this action.")
+	})
+}
+
 func writeTenantError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrUserProfileNotFound):

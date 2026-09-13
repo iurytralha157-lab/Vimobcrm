@@ -12,20 +12,91 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
-const whatsappMediaSignedURLTTLSeconds = 24 * 60 * 60
+// Signed Storage URLs are bearer credentials. Keep their lifetime short and
+// let authorized clients renew through the tenant-scoped lazy endpoint.
+const whatsappMediaSignedURLTTLSeconds = 15 * 60
 const whatsappMediaSignedURLCacheSkew = time.Minute
+const whatsappMediaSignedURLCacheMaxEntries = 4096
 
 type cachedWhatsAppMediaSignedURL struct {
 	url       string
 	expiresAt time.Time
 }
 
-var whatsappMediaSignedURLCache sync.Map
+type boundedWhatsAppMediaSignedURLCache struct {
+	mu         sync.Mutex
+	maxEntries int
+	entries    map[string]cachedWhatsAppMediaSignedURL
+}
+
+func newBoundedWhatsAppMediaSignedURLCache(maxEntries int) *boundedWhatsAppMediaSignedURLCache {
+	if maxEntries < 1 {
+		maxEntries = whatsappMediaSignedURLCacheMaxEntries
+	}
+	return &boundedWhatsAppMediaSignedURLCache{
+		maxEntries: maxEntries,
+		entries:    make(map[string]cachedWhatsAppMediaSignedURL, maxEntries),
+	}
+}
+
+func (cache *boundedWhatsAppMediaSignedURLCache) Load(key string) (cachedWhatsAppMediaSignedURL, bool) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	entry, ok := cache.entries[key]
+	if !ok {
+		return cachedWhatsAppMediaSignedURL{}, false
+	}
+	if !entry.expiresAt.After(time.Now()) {
+		delete(cache.entries, key)
+		return cachedWhatsAppMediaSignedURL{}, false
+	}
+	return entry, true
+}
+
+func (cache *boundedWhatsAppMediaSignedURLCache) Store(key string, entry cachedWhatsAppMediaSignedURL) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if _, exists := cache.entries[key]; !exists && len(cache.entries) >= cache.maxEntries {
+		now := time.Now()
+		oldestKey := ""
+		var oldestExpiry time.Time
+		for candidateKey, candidate := range cache.entries {
+			if !candidate.expiresAt.After(now) {
+				delete(cache.entries, candidateKey)
+				continue
+			}
+			if oldestKey == "" || candidate.expiresAt.Before(oldestExpiry) {
+				oldestKey = candidateKey
+				oldestExpiry = candidate.expiresAt
+			}
+		}
+		if len(cache.entries) >= cache.maxEntries && oldestKey != "" {
+			delete(cache.entries, oldestKey)
+		}
+	}
+	cache.entries[key] = entry
+}
+
+func (cache *boundedWhatsAppMediaSignedURLCache) Delete(key string) {
+	cache.mu.Lock()
+	delete(cache.entries, key)
+	cache.mu.Unlock()
+}
+
+func (cache *boundedWhatsAppMediaSignedURLCache) Len() int {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	return len(cache.entries)
+}
+
+var whatsappMediaSignedURLCache = newBoundedWhatsAppMediaSignedURLCache(whatsappMediaSignedURLCacheMaxEntries)
 
 type GamificationRecorder interface {
 	RecordAction(ctx context.Context, tenantContext tenant.Context, actionType string, quantity int, referenceID string) error
@@ -35,19 +106,28 @@ type Repository struct {
 	db                   *dbpkg.Postgres
 	storage              storageClient
 	functions            functionsClient
+	webhookSchemaGate    *evolutionWebhookSchemaGate
 	gamificationRecorder GamificationRecorder
+	leadPublisher        realtime.Publisher
 }
 
 type scanner interface {
 	Scan(dest ...any) error
 }
 
-func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder, storageConfig StorageConfig) Repository {
+func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder, storageConfig StorageConfig, publishers ...realtime.Publisher) Repository {
+	publisher := realtime.Publisher(realtime.NoopPublisher{})
+	if len(publishers) > 0 && publishers[0] != nil {
+		publisher = publishers[0]
+	}
+
 	return Repository{
 		db:                   db,
 		storage:              newStorageClient(storageConfig),
 		functions:            newFunctionsClient(storageConfig, db),
+		webhookSchemaGate:    &evolutionWebhookSchemaGate{},
 		gamificationRecorder: gamificationRecorder,
+		leadPublisher:        publisher,
 	}
 }
 
@@ -171,83 +251,12 @@ func (repo Repository) listConversationsPage(ctx context.Context, tenantContext 
 		filter.Limit = 120
 	}
 
-	if filter.AccessibleProvided && len(filter.SessionIDs) == 0 {
+	args, where, empty, err := conversationFilterSQL(tenantContext, filter)
+	if err != nil {
+		return nil, nil, err
+	}
+	if empty {
 		return []Conversation{}, nil, nil
-	}
-
-	args := baseConversationArgs(tenantContext)
-	where := []string{
-		"wc.organization_id = $1::uuid",
-		"wc.deleted_at is null",
-		conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext)),
-	}
-
-	addFilter := func(clause string, value any) {
-		args = append(args, value)
-		where = append(where, fmt.Sprintf(clause, len(args)))
-	}
-
-	if strings.TrimSpace(filter.SessionID) != "" {
-		sessionID, ok := normalizeUUID(filter.SessionID)
-		if !ok {
-			return nil, nil, fmt.Errorf("%w: sessionId is invalid", ErrInvalidInput)
-		}
-		addFilter("wc.session_id = $%d::uuid", sessionID)
-	}
-	if len(filter.SessionIDs) > 0 {
-		placeholders := make([]string, 0, len(filter.SessionIDs))
-		seenSessionIDs := make(map[string]bool, len(filter.SessionIDs))
-		for _, sessionID := range filter.SessionIDs {
-			normalized, ok := normalizeUUID(sessionID)
-			if !ok {
-				if strings.TrimSpace(sessionID) == "" {
-					continue
-				}
-				return nil, nil, fmt.Errorf("%w: sessionIds contains invalid uuid", ErrInvalidInput)
-			}
-			if seenSessionIDs[normalized] {
-				continue
-			}
-			seenSessionIDs[normalized] = true
-			args = append(args, normalized)
-			placeholders = append(placeholders, fmt.Sprintf("$%d::uuid", len(args)))
-		}
-		if len(placeholders) == 0 {
-			return []Conversation{}, nil, nil
-		}
-		where = append(where, "wc.session_id in ("+strings.Join(placeholders, ", ")+")")
-	}
-	if filter.HideGroups {
-		where = append(where, "wc.is_group = false")
-	}
-	if filter.OnlyLeads {
-		where = append(where, "wc.lead_id is not null")
-	}
-	if filter.WithoutLead {
-		where = append(where, "wc.lead_id is null")
-	}
-	if filter.PendingReply {
-		where = append(where, "coalesce(wc.unread_count, 0) > 0")
-	}
-	search := strings.TrimSpace(filter.Search)
-	if search == "" && filter.ShowArchived {
-		where = append(where, "wc.archived_at is not null")
-	} else if search == "" {
-		where = append(where, "wc.archived_at is null")
-	}
-	if search != "" {
-		args = append(args, searchtext.Pattern(search))
-		textArg := len(args)
-		searchClauses := []string{searchtext.AnySQL(
-			[]string{"wc.contact_name", "l.name", "wc.last_message"},
-			fmt.Sprintf("$%d", textArg),
-		)}
-		if digits := onlyDigits(search); digits != "" {
-			args = append(args, "%"+digits+"%")
-			phoneArg := len(args)
-			searchClauses = append(searchClauses, fmt.Sprintf("regexp_replace(coalesce(wc.contact_phone, ''), '\\D', '', 'g') like $%d", phoneArg))
-		}
-		where = append(where, "("+strings.Join(searchClauses, " or ")+")")
 	}
 	if filter.CursorSet {
 		args = append(args, filter.CursorCreatedAt, filter.CursorID)
@@ -317,6 +326,125 @@ func (repo Repository) listConversationsPage(ctx context.Context, tenantContext 
 	}
 
 	return conversations, nextCursor, nil
+}
+
+// CountUnreadMessages returns the canonical total used by the inbox badge.
+// It deliberately shares the list predicate, but does not apply pagination or
+// enrich each conversation with pipeline, stage, assignee, or tag data.
+func (repo Repository) CountUnreadMessages(ctx context.Context, tenantContext tenant.Context, filter ConversationListFilter) (int64, error) {
+	args, where, empty, err := conversationFilterSQL(tenantContext, filter)
+	if err != nil {
+		return 0, err
+	}
+	if empty {
+		return 0, nil
+	}
+
+	if !filter.PendingReply {
+		where = append(where, "coalesce(wc.unread_count, 0) > 0")
+	}
+	var count int64
+	err = repo.db.Pool().QueryRow(ctx, `
+		select coalesce(sum(greatest(wc.unread_count, 0)), 0)::bigint
+		from public.whatsapp_conversations wc
+		left join public.whatsapp_sessions ws on ws.id = wc.session_id
+		left join public.leads l on l.id = wc.lead_id
+		where `+strings.Join(where, " and "), args...).Scan(&count)
+	return count, err
+}
+
+// conversationFilterSQL is the single source of truth for list and unread
+// count visibility. The explicit empty session scope is fail-closed so a
+// client that has not resolved an allowed session never falls back to "all".
+func conversationFilterSQL(tenantContext tenant.Context, filter ConversationListFilter) ([]any, []string, bool, error) {
+	if filter.AccessibleProvided && len(filter.SessionIDs) == 0 {
+		return nil, nil, true, nil
+	}
+
+	args := baseConversationArgs(tenantContext)
+	where := []string{
+		"wc.organization_id = $1::uuid",
+		"wc.deleted_at is null",
+		conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext)),
+	}
+
+	addFilter := func(clause string, value any) {
+		args = append(args, value)
+		where = append(where, fmt.Sprintf(clause, len(args)))
+	}
+
+	if strings.TrimSpace(filter.SessionID) != "" {
+		sessionID, ok := normalizeUUID(filter.SessionID)
+		if !ok {
+			return nil, nil, false, fmt.Errorf("%w: sessionId is invalid", ErrInvalidInput)
+		}
+		addFilter("wc.session_id = $%d::uuid", sessionID)
+	}
+	if len(filter.SessionIDs) > 0 {
+		placeholders := make([]string, 0, len(filter.SessionIDs))
+		seenSessionIDs := make(map[string]bool, len(filter.SessionIDs))
+		for _, sessionID := range filter.SessionIDs {
+			normalized, ok := normalizeUUID(sessionID)
+			if !ok {
+				if strings.TrimSpace(sessionID) == "" {
+					continue
+				}
+				return nil, nil, false, fmt.Errorf("%w: sessionIds contains invalid uuid", ErrInvalidInput)
+			}
+			if seenSessionIDs[normalized] {
+				continue
+			}
+			seenSessionIDs[normalized] = true
+			args = append(args, normalized)
+			placeholders = append(placeholders, fmt.Sprintf("$%d::uuid", len(args)))
+		}
+		if len(placeholders) == 0 {
+			return nil, nil, true, nil
+		}
+		where = append(where, "wc.session_id in ("+strings.Join(placeholders, ", ")+")")
+	}
+	if filter.HideGroups {
+		where = append(where, "wc.is_group = false")
+	}
+	if filter.OnlyLeads {
+		where = append(where, "wc.lead_id is not null")
+	}
+	if filter.WithoutLead {
+		where = append(where, "wc.lead_id is null")
+	}
+	if filter.PendingReply {
+		where = append(where, "coalesce(wc.unread_count, 0) > 0")
+	}
+	search := strings.TrimSpace(filter.Search)
+	if search == "" && filter.ShowArchived {
+		where = append(where, "wc.archived_at is not null")
+	} else if search == "" {
+		where = append(where, "wc.archived_at is null")
+	}
+	if search != "" {
+		args = append(args, searchtext.Pattern(search))
+		textArg := len(args)
+		searchClauses := []string{searchtext.AnySQL(
+			[]string{"wc.contact_name", "l.name", "wc.last_message"},
+			fmt.Sprintf("$%d", textArg),
+		)}
+		if digits := onlyDigits(search); digits != "" {
+			args = append(args, "%"+digits+"%")
+			phoneArg := len(args)
+			searchClauses = append(searchClauses, fmt.Sprintf(`(
+				regexp_replace(coalesce(wc.contact_phone, ''), '\D', '', 'g') like $%d
+				or case
+					when wc.contact_phone is null
+						and lower(wc.remote_jid) ~ '^[1-9][0-9]{7,14}(:[0-9]+)?@(s[.]whatsapp[.]net|c[.]us)$'
+					then split_part(split_part(wc.remote_jid, '@', 1), ':', 1) like $%d
+					else false
+				end
+			)`, phoneArg, phoneArg))
+		}
+		where = append(where, "("+strings.Join(searchClauses, " or ")+")")
+	}
+
+	return args, where, false, nil
 }
 
 func encodeConversationCursor(conversation Conversation) string {
@@ -442,8 +570,10 @@ func (repo Repository) ListMessages(ctx context.Context, tenantContext tenant.Co
 	for index := len(descMessages) - 1; index >= 0; index-- {
 		messages = append(messages, descMessages[index])
 	}
-	if err := repo.hydrateMessageMediaURLs(ctx, tenantContext.OrganizationID, messages); err != nil {
-		return MessagePage{}, err
+	if filter.IncludeMediaURLs {
+		if err := repo.hydrateMessageMediaURLs(ctx, tenantContext.OrganizationID, messages); err != nil {
+			return MessagePage{}, err
+		}
 	}
 
 	return MessagePage{Messages: messages, NextCursor: nextCursor}, nil
@@ -605,6 +735,105 @@ func (repo Repository) LinkConversationToLead(ctx context.Context, tenantContext
 	return tx.Commit(ctx)
 }
 
+func (repo Repository) GetMessageMediaURL(ctx context.Context, tenantContext tenant.Context, messageID string) (MessageMediaURL, error) {
+	messageID, ok := normalizeUUID(messageID)
+	if !ok {
+		return MessageMediaURL{}, ErrMessageNotFound
+	}
+
+	args := append(baseConversationArgs(tenantContext), messageID)
+	var storagePath, messageType, mediaStatus string
+	err := repo.db.Pool().QueryRow(ctx, `
+		select
+			coalesce(wm.media_storage_path, ''),
+			coalesce(wm.message_type, ''),
+			coalesce(wm.media_status, '')
+		from public.whatsapp_messages wm
+		join public.whatsapp_conversations wc
+		  on wc.id = wm.conversation_id
+		 and wc.organization_id = wm.organization_id
+		left join public.whatsapp_sessions ws
+		  on ws.id = wm.session_id
+		 and ws.organization_id = wm.organization_id
+		left join public.leads l
+		  on l.id = coalesce(wm.lead_id, wc.lead_id)
+		 and l.organization_id = wm.organization_id
+		where wm.organization_id = $1::uuid
+		  and wc.organization_id = $1::uuid
+		  and wm.id = $5::uuid
+		  and `+messageMediaVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
+		limit 1
+	`, args...).Scan(
+		&storagePath,
+		&messageType,
+		&mediaStatus,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return MessageMediaURL{}, ErrMessageNotFound
+	}
+	if err != nil {
+		return MessageMediaURL{}, err
+	}
+	if strings.EqualFold(strings.TrimSpace(messageType), "text") ||
+		strings.EqualFold(strings.TrimSpace(messageType), "reaction") ||
+		!strings.EqualFold(strings.TrimSpace(mediaStatus), "ready") ||
+		strings.TrimSpace(storagePath) == "" {
+		return MessageMediaURL{}, ErrMessageNotFound
+	}
+
+	signedURL, expiresIn, err := repo.signedWhatsAppMessageMediaURLWithTTL(ctx, tenantContext.OrganizationID, storagePath)
+	if err != nil {
+		return MessageMediaURL{}, err
+	}
+	if signedURL == "" {
+		return MessageMediaURL{}, ErrMessageNotFound
+	}
+	return MessageMediaURL{
+		MessageID: messageID,
+		URL:       signedURL,
+		ExpiresIn: expiresIn,
+	}, nil
+}
+
+func (repo Repository) signedWhatsAppMessageMediaURL(ctx context.Context, organizationID string, objectPath string) (string, error) {
+	signedURL, _, err := repo.signedWhatsAppMessageMediaURLWithTTL(ctx, organizationID, objectPath)
+	return signedURL, err
+}
+
+func (repo Repository) signedWhatsAppMessageMediaURLWithTTL(ctx context.Context, organizationID string, objectPath string) (string, int, error) {
+	objectPath = strings.TrimSpace(objectPath)
+	if objectPath == "" || !whatsappMediaPathBelongsToOrganization(objectPath, organizationID) {
+		return "", 0, ErrMessageNotFound
+	}
+
+	if entry, ok := whatsappMediaSignedURLCache.Load(objectPath); ok {
+		if entry.url != "" {
+			remaining := int(time.Until(entry.expiresAt) / time.Second)
+			if remaining < 1 {
+				remaining = 1
+			}
+			return entry.url, remaining, nil
+		}
+	}
+
+	signedURL, err := repo.storage.signedURL(ctx, whatsappMediaBucket, objectPath, whatsappMediaSignedURLTTLSeconds)
+	if err != nil {
+		return "", 0, err
+	}
+	if signedURL == "" {
+		return "", 0, nil
+	}
+	cacheTTL := time.Duration(whatsappMediaSignedURLTTLSeconds)*time.Second - whatsappMediaSignedURLCacheSkew
+	if cacheTTL <= 0 {
+		cacheTTL = time.Duration(whatsappMediaSignedURLTTLSeconds) * time.Second
+	}
+	whatsappMediaSignedURLCache.Store(objectPath, cachedWhatsAppMediaSignedURL{
+		url:       signedURL,
+		expiresAt: time.Now().Add(cacheTTL),
+	})
+	return signedURL, int(cacheTTL / time.Second), nil
+}
+
 func (repo Repository) hydrateMessageMediaURLs(ctx context.Context, organizationID string, messages []Message) error {
 	type pendingMediaURL struct {
 		index int
@@ -612,8 +841,6 @@ func (repo Repository) hydrateMessageMediaURLs(ctx context.Context, organization
 	}
 
 	pending := make([]pendingMediaURL, 0)
-	now := time.Now()
-
 	for index := range messages {
 		if messages[index].MediaStoragePath == nil || *messages[index].MediaStoragePath == "" {
 			continue
@@ -629,16 +856,6 @@ func (repo Repository) hydrateMessageMediaURLs(ctx context.Context, organization
 			messages[index].MediaURL = nil
 			continue
 		}
-		if cached, ok := whatsappMediaSignedURLCache.Load(objectPath); ok {
-			entry, ok := cached.(cachedWhatsAppMediaSignedURL)
-			if ok && entry.url != "" && entry.expiresAt.After(now) {
-				url := entry.url
-				messages[index].MediaURL = &url
-				continue
-			}
-			whatsappMediaSignedURLCache.Delete(objectPath)
-		}
-
 		pending = append(pending, pendingMediaURL{index: index, path: objectPath})
 	}
 
@@ -648,11 +865,6 @@ func (repo Repository) hydrateMessageMediaURLs(ctx context.Context, organization
 
 	var wg sync.WaitGroup
 	limit := make(chan struct{}, 6)
-	cacheTTL := time.Duration(whatsappMediaSignedURLTTLSeconds)*time.Second - whatsappMediaSignedURLCacheSkew
-	if cacheTTL <= 0 {
-		cacheTTL = time.Duration(whatsappMediaSignedURLTTLSeconds) * time.Second
-	}
-
 	for _, item := range pending {
 		item := item
 		wg.Add(1)
@@ -665,15 +877,11 @@ func (repo Repository) hydrateMessageMediaURLs(ctx context.Context, organization
 				return
 			}
 
-			signedURL, err := repo.storage.signedURL(ctx, "whatsapp-media", item.path, whatsappMediaSignedURLTTLSeconds)
+			signedURL, err := repo.signedWhatsAppMessageMediaURL(ctx, organizationID, item.path)
 			if err != nil || signedURL == "" {
 				return
 			}
 			messages[item.index].MediaURL = &signedURL
-			whatsappMediaSignedURLCache.Store(item.path, cachedWhatsAppMediaSignedURL{
-				url:       signedURL,
-				expiresAt: time.Now().Add(cacheTTL),
-			})
 		}()
 	}
 
@@ -1298,6 +1506,30 @@ func leadHistoryVisibilitySQL(canViewOwn bool) string {
 	)`
 }
 
+// Media authorization is evaluated in the same statement that selects the
+// object path. An attributed message follows its immutable message-level lead,
+// even if the conversation is later relinked. Only legacy messages without a
+// lead fall back to the conversation's current lead. Truly unlinked media stays
+// operationally scoped to the owner of the message's active historical session.
+func messageMediaVisibilitySQL(canViewOwn bool) string {
+	return `(
+		(
+			coalesce(wm.lead_id, wc.lead_id) is not null
+			and ` + leadHistoryVisibilitySQL(canViewOwn) + `
+		)
+		or (
+			wm.lead_id is null
+			and wc.lead_id is null
+			and wc.deleted_at is null
+			and ws.id is not null
+			and ws.provider = 'evolution_go'
+			and coalesce(ws.is_active, true) = true
+			and coalesce(ws.status, '') <> 'deleted'
+			and ws.owner_user_id = $2::uuid
+		)
+	)`
+}
+
 // A conversation timeline follows the conversation's current lead, while
 // preserving old rows that predate message-level lead attribution.
 func conversationMessageLeadMatchSQL() string {
@@ -1389,11 +1621,7 @@ func textValue(value pgtype.Text) string {
 }
 
 func textPtr(value pgtype.Text) *string {
-	if !value.Valid {
-		return nil
-	}
-
-	return &value.String
+	return pgvalue.TextPointer(value)
 }
 
 func timePtr(value pgtype.Timestamptz) *time.Time {

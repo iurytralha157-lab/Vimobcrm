@@ -40,13 +40,13 @@ export function MobileBottomNav() {
   const pathname = usePathname() || '';
   const searchParams = useSearchParams();
   const currentHash = useLocationHash();
-  const { profile, isSuperAdmin, organization, tenantContext, userOrganizations } = useAuth();
+  const { activeOrganization, profile, isSuperAdmin, organization, tenantContext, userOrganizations } = useAuth();
   const { t } = useLanguage();
   const { hasModule, isLoading: modulesLoading } = useOrganizationModules();
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
   const isBillingBlocked = !isSuperAdmin && isBillingAccessBlocked(organization);
   const canAccessFinancialModule = canUseFinancialModule(organization);
-  const activeOrganizationId = organization?.id || profile?.organization_id;
+  const activeOrganizationId = activeOrganization.organizationId;
   const activeMembership = userOrganizations.find((org) => org.organization_id === activeOrganizationId);
   const fallbackMemberRole = tenantContext && tenantContext.organizationId === activeOrganizationId
     ? tenantContext.memberRole

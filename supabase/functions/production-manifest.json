@@ -1,574 +1,830 @@
 {
+  "schema_version": 2,
   "source_project_ref": "iemalzlfnbouobyjwlwi",
   "captured_at": "2026-08-09T12:39:15.763Z",
-  "purpose": "Preserve production Edge Function deployment metadata for self-hosted migration.",
+  "purpose": "Canonical Edge Function deployment inventory. ACTIVE entries are routable; RETIRED entries are inventory-only.",
+  "source_hash_algorithm": "sha256-tree-utf8-lf-v1",
+  "shared_source_sha256": "1e9d98adf46dd6843ac6160db3da527c1f6707b4ca27ff775f21311b9a2359aa",
   "functions": [
     {
       "slug": "ai-agent-responder",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 590,
       "verify_jwt": false,
-      "sha256": "1ab1210ad5212f4e9accdefb87a2262d4e419d25afed0e31263e86aa84eacd41"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "1ab1210ad5212f4e9accdefb87a2262d4e419d25afed0e31263e86aa84eacd41",
+      "source_sha256": "6ac6a04b5f5b5292d4c9521703bf7f5b1cd8977f699f3ce911e94b92b5f070b5"
     },
     {
       "slug": "approve-onboarding-request",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 124,
       "verify_jwt": true,
-      "sha256": "530703985ffd2fb74b32ff91a03ae01f845f8bb06814a590987aaa3b2c086942"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "530703985ffd2fb74b32ff91a03ae01f845f8bb06814a590987aaa3b2c086942",
+      "source_sha256": "c6d92345932347da2788899606a5f4f0e06f8bdb69e6464460e759f140c474df"
     },
     {
       "slug": "asaas-cancel-payment",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 7,
       "verify_jwt": false,
-      "sha256": "f384454a1383542a7577fed93f7840242248162ae30d3be9668de0c9a5099533"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "f384454a1383542a7577fed93f7840242248162ae30d3be9668de0c9a5099533",
+      "source_sha256": "95d0cc1408eb16f57e7da44777729da2ad7b07e3876f9c3ad6e559a9e4098a32"
+    },
+    {
+      "slug": "asaas-card-recurrence-worker",
+      "status": "ACTIVE",
+      "lifecycle": "LIVE",
+      "version": null,
+      "verify_jwt": false,
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": null,
+      "source_sha256": "fdc81c9aa0da60e8a212ec7dde5921e18c43b91707648a99fecbf4cc79a15437"
     },
     {
       "slug": "asaas-checkout-info",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 482,
       "verify_jwt": false,
-      "sha256": "2bee94a5191c95359b5582c13a4788dcb86e2d2c4b170e3b80215718046521be"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "2bee94a5191c95359b5582c13a4788dcb86e2d2c4b170e3b80215718046521be",
+      "source_sha256": "a0c3ddea60b0c403fcdc5eeab5d1514dfd3c120c67cc943d79419e3521820007"
     },
     {
       "slug": "asaas-create-charge",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 484,
       "verify_jwt": false,
-      "sha256": "76f06138f26f922fa4bcc0c7761e43ccf891c96632b9471012cf57e12581b720"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "76f06138f26f922fa4bcc0c7761e43ccf891c96632b9471012cf57e12581b720",
+      "source_sha256": "275674812ef24e40ed19d3ed99ab1168ed6a8080f2503e778152e83a928ff4d3"
     },
     {
       "slug": "asaas-create-payment-link",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 477,
       "verify_jwt": true,
-      "sha256": "d0f866550e904cad1fe9c1bb0e25ec623e8b4fd52c8bab1e1d968b1c16841f5f"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "d0f866550e904cad1fe9c1bb0e25ec623e8b4fd52c8bab1e1d968b1c16841f5f",
+      "source_sha256": "c6d92345932347da2788899606a5f4f0e06f8bdb69e6464460e759f140c474df"
     },
     {
       "slug": "asaas-payment-status",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 481,
       "verify_jwt": false,
-      "sha256": "7c98bb10cfb44c94b5de106991af02b503559c9a1e135a9f6efd8975443e3034"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "7c98bb10cfb44c94b5de106991af02b503559c9a1e135a9f6efd8975443e3034",
+      "source_sha256": "a08dd2f7c6ee50dce4a9d66f80ddae799f46a163d0fdc08a74c27fc3b80fa584"
     },
     {
       "slug": "asaas-webhook",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 484,
       "verify_jwt": false,
-      "sha256": "ee09f2f0e50a038b17925fe4a046fba3919c3ac414d79bf0b17742429c392ee3"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "ee09f2f0e50a038b17925fe4a046fba3919c3ac414d79bf0b17742429c392ee3",
+      "source_sha256": "8a08c62576d91a7ff3c8ed2fe6d0fd30dba86bafff22c2b18eb1892986ffdd72"
     },
     {
       "slug": "auto-migrate-wp-images",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 559,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": null,
+      "source_sha256": "0585af30101f61fe22f2f238455a16d3e45008289ea2e42eb229d23261e01027"
     },
     {
       "slug": "automation-delay-processor",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 611,
       "verify_jwt": false,
-      "sha256": "d86b8ce025607fb95dac974e0920ef3adabf08a80e5a83419caf6a3016d15c99"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "d86b8ce025607fb95dac974e0920ef3adabf08a80e5a83419caf6a3016d15c99",
+      "source_sha256": "13f8994fd470f92c38accadf09fc5306ff10b05325854006dfb801c9001dfde1"
     },
     {
       "slug": "automation-executor",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 687,
       "verify_jwt": false,
-      "sha256": "cd74c1e540076a1aac8cae0438774bfe6a210d7c33a0e24113ac55b0fea66078"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "cd74c1e540076a1aac8cae0438774bfe6a210d7c33a0e24113ac55b0fea66078",
+      "source_sha256": "30fbd0b06ab087c29b88d61526dc7b63891230ef9510e96783901c13ba81a8fb"
     },
     {
       "slug": "automation-inactivity",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 8,
       "verify_jwt": false,
-      "sha256": "c8868521210e30fb0795b0379cd450888b52b3874d36ac4a7f483f61393c73fb"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "c8868521210e30fb0795b0379cd450888b52b3874d36ac4a7f483f61393c73fb",
+      "source_sha256": "92910fffc903699c70412f53c43491119a02caac830df89de413efccc01c8413"
     },
     {
       "slug": "automation-runner",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 22,
       "verify_jwt": false,
-      "sha256": "8f3b37302881dedb97c8cb88c55385d12343a876d873cea6b0cb6a34601299b6"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "8f3b37302881dedb97c8cb88c55385d12343a876d873cea6b0cb6a34601299b6",
+      "source_sha256": "d5019d6ff9ed1867b8488fc3fc9240d3b1e4afdd1289cdcd086f70b0de9b71aa"
     },
     {
       "slug": "automation-trigger",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 676,
       "verify_jwt": false,
-      "sha256": "3c5c11c34f7ff2d2b63653870dde43567c0b9aa45f99b5036db0da169a569d34"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "3c5c11c34f7ff2d2b63653870dde43567c0b9aa45f99b5036db0da169a569d34",
+      "source_sha256": "8bae14983796343063bcc8b6ebdc8313d4af333866a766b4f95c1979133c8c1b"
     },
     {
       "slug": "calculate-first-response",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 663,
       "verify_jwt": false,
-      "sha256": "947ea76cd45cc2586310a111ccec02981a5be73e14bb3b370c0a719bc8a1d466"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "947ea76cd45cc2586310a111ccec02981a5be73e14bb3b370c0a719bc8a1d466",
+      "source_sha256": "681c57dff958e152669878209cf72eea29dd62dd3cfa0a4ee0296ebe8b7aca24"
     },
     {
       "slug": "change-password",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 16,
       "verify_jwt": true,
-      "sha256": "a62239fc30fcbe2ffbcedb0d5d170413b98ce4038d539c7f13bb0d405ec6663d"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "a62239fc30fcbe2ffbcedb0d5d170413b98ce4038d539c7f13bb0d405ec6663d",
+      "source_sha256": "c6d92345932347da2788899606a5f4f0e06f8bdb69e6464460e759f140c474df"
     },
     {
       "slug": "cleanup-notifications",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 344,
       "verify_jwt": true,
-      "sha256": "8aff8fdf094860e981fca5298976b605268ce973c70ddeacc984bd3dcecbb920"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "8aff8fdf094860e981fca5298976b605268ce973c70ddeacc984bd3dcecbb920",
+      "source_sha256": "71759db80d603c852e061e18be49bebc90e1ca6eb1393a226ac172f97ed4f564"
     },
     {
       "slug": "cleanup-orphan-members",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 602,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": null,
+      "source_sha256": "aeb3e156a4824c2df01bea15451c0a3829382b50cc354f83bd5d3bf8e5dd0fef"
     },
     {
       "slug": "create-organization-admin",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 672,
       "verify_jwt": true,
-      "sha256": "d7a83f6ffd6b0ee7e8ca799d2d8f816896d725055d971b3c66d4221413d7c72f"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "d7a83f6ffd6b0ee7e8ca799d2d8f816896d725055d971b3c66d4221413d7c72f",
+      "source_sha256": "c6d92345932347da2788899606a5f4f0e06f8bdb69e6464460e759f140c474df"
     },
     {
       "slug": "create-super-admin",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 659,
       "verify_jwt": true,
-      "sha256": "e99124b0bee543410e438b9d22625196951883644855d2bc6ae26f0b01e22d69"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "e99124b0bee543410e438b9d22625196951883644855d2bc6ae26f0b01e22d69",
+      "source_sha256": "c6d92345932347da2788899606a5f4f0e06f8bdb69e6464460e759f140c474df"
     },
     {
       "slug": "create-user",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 667,
       "verify_jwt": true,
-      "sha256": "5f0479692db19133f10e8b47d825b0f300d0fa3a5650c01092af13ab366af974"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "5f0479692db19133f10e8b47d825b0f300d0fa3a5650c01092af13ab366af974",
+      "source_sha256": "c6d92345932347da2788899606a5f4f0e06f8bdb69e6464460e759f140c474df"
     },
     {
       "slug": "delete-organization",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 660,
       "verify_jwt": true,
-      "sha256": "0fa5f23c26a87bfcc81349492be68eb41985d4408ad3efc8ea7b9e666974e4f4"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "0fa5f23c26a87bfcc81349492be68eb41985d4408ad3efc8ea7b9e666974e4f4",
+      "source_sha256": "c6d92345932347da2788899606a5f4f0e06f8bdb69e6464460e759f140c474df"
     },
     {
       "slug": "delete-user",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 652,
       "verify_jwt": true,
-      "sha256": "23a40ea915163ec81c716cbb3ab5b8790e8a280973695641ff45bdd10bd7475e"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "23a40ea915163ec81c716cbb3ab5b8790e8a280973695641ff45bdd10bd7475e",
+      "source_sha256": "c6d92345932347da2788899606a5f4f0e06f8bdb69e6464460e759f140c474df"
     },
     {
       "slug": "evolution-go-proxy",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 150,
-      "verify_jwt": true,
-      "sha256": "4c3089aa3000f0db994226862540638cf57b4ce5e945826915484e4bec998a53"
+      "verify_jwt": false,
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "4c3089aa3000f0db994226862540638cf57b4ce5e945826915484e4bec998a53",
+      "source_sha256": "70ac7ff1c5126f60e7ab8ba58ab11d8de1c33ed2a6bf0493812a4333c175166b"
     },
     {
       "slug": "evolution-go-webhook",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 186,
       "verify_jwt": false,
-      "sha256": "6aed1133e54b46c80cd6cc084d459dfce5cf580bab7825674701149586af05fa"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "6aed1133e54b46c80cd6cc084d459dfce5cf580bab7825674701149586af05fa",
+      "source_sha256": "ba1a461bf65504fabb4de47fc908ec3c39d700abee9bb529e56c5c736e107466"
     },
     {
       "slug": "evolution-proxy",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 670,
       "verify_jwt": false,
-      "sha256": "1828b71cb273c012c31954db8e098bf44ffaa1b370a49bf1101c650682b7b6b9"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "1828b71cb273c012c31954db8e098bf44ffaa1b370a49bf1101c650682b7b6b9",
+      "source_sha256": "547cdd06f45a3d93938bdbb92c347ece1769688be012199b02cd6e02452a3d6b"
     },
     {
       "slug": "evolution-webhook",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 694,
       "verify_jwt": false,
-      "sha256": "82e151f2056a55f0cdb0130fb84c1ded3ba1dbb2a7e59897cecd0dcfe8b26e3c"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "82e151f2056a55f0cdb0130fb84c1ded3ba1dbb2a7e59897cecd0dcfe8b26e3c",
+      "source_sha256": "b348fa9deb751286e64fc610f53bcafa7bdd2072c9d2dfac136065444cd83006"
     },
     {
       "slug": "financial-engine",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 206,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": null,
+      "source_sha256": "a2689bd9f32ce0db96a7da3318ce0b70e82e14c51b11919b4b3ed1b5c7db73eb"
     },
     {
       "slug": "firecrawl-scrape",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 632,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": null,
+      "source_sha256": "18df7886b14b37d1ea06ebbc3b79df0291f6e24f0c934dcae2e77e78bc5c965c"
     },
     {
       "slug": "generic-webhook",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 680,
       "verify_jwt": false,
-      "sha256": "3a8c3ad734f3845a397ced4d712ef3c45807b96da884d2e2a8ea968901e92d64"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "3a8c3ad734f3845a397ced4d712ef3c45807b96da884d2e2a8ea968901e92d64",
+      "source_sha256": "e992a05eacb1432382033c246572087f0a39d6b535ac83574d78b3742307e89b"
     },
     {
       "slug": "get-worker-config",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 570,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": null,
+      "source_sha256": "a56171e3351fe5793f96599075688cb184a20a88f9fd1bb90f7ef1e3839e15d6"
     },
     {
       "slug": "global-whatsapp-status",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 343,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": null,
+      "source_sha256": "e305e0809374fa873728d5d584e96eb563d929e726727417b83e11adb8b1e038"
     },
     {
       "slug": "google-calendar-auth",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 657,
-      "verify_jwt": false,
-      "sha256": null
+      "verify_jwt": true,
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": null,
+      "source_sha256": "3bb77d007062b05c362b5694c7ca7a771630525d7c0c24cead3df132e35cb29b"
     },
     {
       "slug": "google-calendar-oauth",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 9,
       "verify_jwt": false,
-      "sha256": "ec69b85a6b484dfd828ba862a5b57825c7985425470143744a6282f7c5f22f91"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "ec69b85a6b484dfd828ba862a5b57825c7985425470143744a6282f7c5f22f91",
+      "source_sha256": "854b735c2cec9a8bbc150881cbe4f8aa8f084db3a33343f49fe61fd7f2b5a28a"
     },
     {
       "slug": "google-calendar-sync",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 664,
       "verify_jwt": false,
-      "sha256": "85b4225ce1cad31dd7d6d60507f676145e253a4ed4060e6d4f7c13d9b392212f"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "85b4225ce1cad31dd7d6d60507f676145e253a4ed4060e6d4f7c13d9b392212f",
+      "source_sha256": "e94dc3ee685758852a8ae6a664eaf3ab5d1f04515b06c9fed5d5c4a2ad4cca61"
     },
     {
       "slug": "google-calendar-webhook",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 9,
       "verify_jwt": false,
-      "sha256": "4b33914033b8911d6da1b80d1da4bb44bca464798b3c24a5fbd2fd7909672de0"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "4b33914033b8911d6da1b80d1da4bb44bca464798b3c24a5fbd2fd7909672de0",
+      "source_sha256": "dace1dee5a4cb464ad6da15548c7adeaff0d195ae3fac210b558f1ba2eab8813"
     },
     {
       "slug": "imoview-scheduled-sync",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 490,
       "verify_jwt": false,
-      "sha256": "fe1f25d88aa7b50ccc0291e8ac860085bf4ed77e2d73b2d0ac585f8fae0a4c4d"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "fe1f25d88aa7b50ccc0291e8ac860085bf4ed77e2d73b2d0ac585f8fae0a4c4d",
+      "source_sha256": "27ea947347b90083fd066018709e0bde94ff3764dd222f9352fcdabda8eaad82"
     },
     {
       "slug": "imoview-sync",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 562,
       "verify_jwt": false,
-      "sha256": "43aea42a04cf016933d049df00ce38e760697d3d554e520b7ebbce1dc99148b1"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "43aea42a04cf016933d049df00ce38e760697d3d554e520b7ebbce1dc99148b1",
+      "source_sha256": "87484d25ddab915720a842d2a103fcad5495e84e3f0047949169333b950160f2"
     },
     {
       "slug": "import-wordpress-properties",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 564,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": null,
+      "source_sha256": "d22eafe9976b43b07e2d1972b9fb34401c63466802aedb53a4c96fc9c653e51f"
     },
     {
       "slug": "instagram-oauth",
-      "status": "ACTIVE",
+      "status": "RETIRED",
+      "lifecycle": "RETIRED",
       "version": 312,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "NOT_ROUTABLE",
+      "captured_deployment_sha256": null,
+      "source_sha256": "177d670afb11e1d3b1c1cf41cbdb87a30611c39f53ec4f237edef15826366128"
     },
     {
       "slug": "lead-notification-dispatcher",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 11,
       "verify_jwt": false,
-      "sha256": "f0f58b87b198a278c8457f8c028e4c05557a148c871e622a03bcbecbf4ef01fb"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "f0f58b87b198a278c8457f8c028e4c05557a148c871e622a03bcbecbf4ef01fb",
+      "source_sha256": "097ae3f9a8e4adfd99a55eda21c0f06a12af334941a1944b3197edfa179e22b8"
     },
     {
       "slug": "manage-user",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 659,
       "verify_jwt": true,
-      "sha256": "fd6c96b69df53e52289db0242e356807afa6bb15e6b9615c9b1e0b8b888736af"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "fd6c96b69df53e52289db0242e356807afa6bb15e6b9615c9b1e0b8b888736af",
+      "source_sha256": "c6d92345932347da2788899606a5f4f0e06f8bdb69e6464460e759f140c474df"
     },
     {
       "slug": "media-worker",
-      "status": "ACTIVE",
+      "status": "RETIRED",
+      "lifecycle": "RETIRED",
       "version": 671,
       "verify_jwt": false,
-      "sha256": "5182ec5e45423a0d844581781a406b9ef04df7a81f4b6f63d99b37251b786260"
+      "auth_boundary": "NOT_ROUTABLE",
+      "captured_deployment_sha256": "5182ec5e45423a0d844581781a406b9ef04df7a81f4b6f63d99b37251b786260",
+      "source_sha256": "5507db0d164d9046ab77bd2e5217e7bb5f273588760a2e1fde057e9bb7b66890"
     },
     {
       "slug": "message-sender",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 663,
       "verify_jwt": false,
-      "sha256": "0a890d0ba966bcd0cb1f49df69ad36d84b87d2bfd8430e72f3e45d3ab8c339fa"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "0a890d0ba966bcd0cb1f49df69ad36d84b87d2bfd8430e72f3e45d3ab8c339fa",
+      "source_sha256": "c7adc8e93e98409e36b73a7afb8fd2087d08d79a762fee749b598180211832ad"
     },
     {
       "slug": "meta-campaign-insights",
-      "status": "ACTIVE",
+      "status": "RETIRED",
+      "lifecycle": "RETIRED",
       "version": 537,
       "verify_jwt": false,
-      "sha256": "9887ae98e004279c0effc42820170d2541f46d23aa5425c61d0d0cb5e49c7c74"
+      "auth_boundary": "NOT_ROUTABLE",
+      "captured_deployment_sha256": "9887ae98e004279c0effc42820170d2541f46d23aa5425c61d0d0cb5e49c7c74",
+      "source_sha256": "6fc9a2db7f7f147cd6354c101534ff2049185f18d75f357224e391724d124072"
     },
     {
       "slug": "meta-messenger-proxy",
-      "status": "ACTIVE",
+      "status": "RETIRED",
+      "lifecycle": "RETIRED",
       "version": 321,
       "verify_jwt": true,
-      "sha256": "a880f48e4204758f5bd5959943fbefeb4e868953dfdcc8f8afc6da2a3a1f58f8"
+      "auth_boundary": "NOT_ROUTABLE",
+      "captured_deployment_sha256": "a880f48e4204758f5bd5959943fbefeb4e868953dfdcc8f8afc6da2a3a1f58f8",
+      "source_sha256": "7008a833279cb5eb16b5705f575cda4849c581ef8cfbe4c2420f7358386ff52c"
     },
     {
       "slug": "meta-oauth",
-      "status": "ACTIVE",
+      "status": "RETIRED",
+      "lifecycle": "RETIRED",
       "version": 682,
       "verify_jwt": false,
-      "sha256": "675c062fab1648a3bd324d32d30610f206ed36e4a64e4ef31af99c0cf506f361"
+      "auth_boundary": "NOT_ROUTABLE",
+      "captured_deployment_sha256": "675c062fab1648a3bd324d32d30610f206ed36e4a64e4ef31af99c0cf506f361",
+      "source_sha256": "eaf8cdf62daec6cc1c5097f593e207b31f8567256e1ab37e981815a7b687625f"
     },
     {
       "slug": "meta-token-healthcheck",
-      "status": "ACTIVE",
+      "status": "RETIRED",
+      "lifecycle": "RETIRED",
       "version": 126,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "NOT_ROUTABLE",
+      "captured_deployment_sha256": null,
+      "source_sha256": "1fe71f9ea3b8545e3ef905e80b71d82d8f9af21ccbdc9591a59b82eb572f8c1f"
     },
     {
       "slug": "meta-webhook",
-      "status": "ACTIVE",
+      "status": "RETIRED",
+      "lifecycle": "RETIRED",
       "version": 684,
       "verify_jwt": false,
-      "sha256": "705b3ba8636801e38593a761c32dd2e68e65a8878bfaa345180d9afb3989d34f"
+      "auth_boundary": "NOT_ROUTABLE",
+      "captured_deployment_sha256": "705b3ba8636801e38593a761c32dd2e68e65a8878bfaa345180d9afb3989d34f",
+      "source_sha256": "67c4a8dbe3877548168817b89ed8d4d7cf8db7ed2d8a964d32fe45d404b965f9"
     },
     {
       "slug": "meta-webhook-replay",
-      "status": "ACTIVE",
+      "status": "RETIRED",
+      "lifecycle": "RETIRED",
       "version": 126,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "NOT_ROUTABLE",
+      "captured_deployment_sha256": null,
+      "source_sha256": "12ac725924c59ff9516bab06e95027aeacb40ab7ac78ad94e981ab2fc2c1716f"
     },
     {
       "slug": "notification-dispatcher",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 325,
       "verify_jwt": true,
-      "sha256": "1aaf8786a4fb10a03f5ee16bc4230df02d5cf5f7b7dfe03c9ffe32f9ea9af82c"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "1aaf8786a4fb10a03f5ee16bc4230df02d5cf5f7b7dfe03c9ffe32f9ea9af82c",
+      "source_sha256": "68baf2b4979b7226bcdafa5a2d752128bfd9e4af5c95125264e70cf2b1cf04fa"
     },
     {
       "slug": "notification-evolution-failover",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 6,
       "verify_jwt": true,
-      "sha256": "85b4f054922c2e4341d8ec6458e6be1e6cebd131845235b43636798ac0a9eaf2"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "85b4f054922c2e4341d8ec6458e6be1e6cebd131845235b43636798ac0a9eaf2",
+      "source_sha256": "23373da8ce98deb75e882721d326599c625aae41b5c6611139b04633e8494a75"
     },
     {
       "slug": "notification-scheduler",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 352,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": null,
+      "source_sha256": "1bed294d630e10082f2847121d680673306f3b5a79bea0e9c58c103c809e0498"
     },
     {
       "slug": "notification-service",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 184,
       "verify_jwt": true,
-      "sha256": null
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": null,
+      "source_sha256": "e42849e14bc50da3dead7bbbb5054dc7be6b09243e0e645e315f7445cb6c193e"
     },
     {
       "slug": "notify-onboarding-received",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 344,
       "verify_jwt": true,
-      "sha256": "3122d7cfd615a485c4a4b35ab2dc970f5b6c307ae3e4a7e26a876b1a69ba9200"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "3122d7cfd615a485c4a4b35ab2dc970f5b6c307ae3e4a7e26a876b1a69ba9200",
+      "source_sha256": "c6d92345932347da2788899606a5f4f0e06f8bdb69e6464460e759f140c474df"
     },
     {
       "slug": "pool-checker",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 653,
       "verify_jwt": false,
-      "sha256": "77cf0683bbb6ec43304a75fc33086d46341fedc69cd124b1b5bf5cc92159f4d6"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "77cf0683bbb6ec43304a75fc33086d46341fedc69cd124b1b5bf5cc92159f4d6",
+      "source_sha256": "800e8aa7791b49b52fb4a1e44888ceb4ca05baa98ddf3dd7dd25b9701e290d16"
     },
     {
       "slug": "public-api",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 476,
       "verify_jwt": false,
-      "sha256": "5981af2b31120a0127fb35869d16f4ed92b08699f2dceca3d17967f03ebc27cb"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "5981af2b31120a0127fb35869d16f4ed92b08699f2dceca3d17967f03ebc27cb",
+      "source_sha256": "4f4d5d67b846bbad9bb0be6dc1b6a70fc19221bcc071e3f9d100c354d2c9c586"
     },
     {
       "slug": "public-signup",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 530,
       "verify_jwt": true,
-      "sha256": "c32bb1e4b0270c094a57b95ac6e4094f2f19bd5763ea24f4aed37f8ed894f0f3"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "c32bb1e4b0270c094a57b95ac6e4094f2f19bd5763ea24f4aed37f8ed894f0f3",
+      "source_sha256": "c6d92345932347da2788899606a5f4f0e06f8bdb69e6464460e759f140c474df"
     },
     {
       "slug": "public-site-contact",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 648,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": null,
+      "source_sha256": "6cd1a554fe2c534461c64058438d31681648d9c11eced3281aa37dc257304a9a"
     },
     {
       "slug": "public-site-data",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 654,
       "verify_jwt": false,
-      "sha256": "b7650f0d30d27694bad1aaea2b1827deeabe34ab07e5bb9750063fd702d35c91"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "b7650f0d30d27694bad1aaea2b1827deeabe34ab07e5bb9750063fd702d35c91",
+      "source_sha256": "54ba26c663379c38ef827a4590cab773fed5004810b8747974beb00b5cae6151"
     },
     {
       "slug": "public-site-ssr",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 503,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": null,
+      "source_sha256": "dc16e241cb6eaf7e1b84c95c8aeee4d01a1afaa03c6cb5f5aee08791635b853c"
     },
     {
       "slug": "recurring-entries-generator",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 649,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": null,
+      "source_sha256": "58d6c56a3f3fbcd036b8dbe573b94f28179f534501b09344b43aac300aa23e7f"
     },
     {
       "slug": "resolve-site-domain",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 647,
       "verify_jwt": false,
-      "sha256": "678f743a5d0406eaf236959632c630ea093ab213833cd55da977466b7e19b520"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "678f743a5d0406eaf236959632c630ea093ab213833cd55da977466b7e19b520",
+      "source_sha256": "7f310985ea74c0bd8080bc2d9d9ca88f5a764b6cee94deaeda389b3230a750ac"
     },
     {
       "slug": "seed-organization-data",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 642,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": null,
+      "source_sha256": "60a43f30f13f08109b5466bd1ea2fdecc4d1d8f41a645fc67f645742400eee22"
     },
     {
       "slug": "send-email",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 165,
       "verify_jwt": true,
-      "sha256": "c7b9549a567775550cb0020e2a055f8feef96748e0734c16927e44e436497802"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "c7b9549a567775550cb0020e2a055f8feef96748e0734c16927e44e436497802",
+      "source_sha256": "566b1a1e120a938b378cb1fa7574fb3ee7dec61b671864bb34ee1f33c032a7aa"
     },
     {
       "slug": "send-notification",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 349,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": null,
+      "source_sha256": "73985bcfaa712466676f9d99650168d3f8b1d6ffc89ef1c3d10bcac16e888f16"
     },
     {
       "slug": "send-push-notification",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 350,
       "verify_jwt": true,
-      "sha256": "012f2984944e2b2723b7b6bfb112f325e98c836a1cee2d8b5614f1ab11924947"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "012f2984944e2b2723b7b6bfb112f325e98c836a1cee2d8b5614f1ab11924947",
+      "source_sha256": "48ab975ec0e61db80706d22c31436f8d2531f5d99bff9577305f69254a26d924"
     },
     {
       "slug": "session-health-check",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 660,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": null,
+      "source_sha256": "783f713171592fc9ab94931b326330d14ffd6ebb265e5a48d6051b60cf237472"
     },
     {
       "slug": "sla-checker",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 658,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": null,
+      "source_sha256": "dbd63060a77b451c3a0691fbfbfe4fba253163fc27e72c563de5a2d1e5203398"
     },
     {
       "slug": "smart-recurring-generator",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 582,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": null,
+      "source_sha256": "79dd0283cb48e5d0676462bf96b9ebe4f1881f2783fd036e7e26d744d8ffff51"
     },
     {
       "slug": "submit-onboarding",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 499,
       "verify_jwt": true,
-      "sha256": "0accf144c4e53425ee69f7b251fc75f57531135017e0d3e65bbacec01da3a723"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "0accf144c4e53425ee69f7b251fc75f57531135017e0d3e65bbacec01da3a723",
+      "source_sha256": "c6d92345932347da2788899606a5f4f0e06f8bdb69e6464460e759f140c474df"
     },
     {
       "slug": "subscription-automation",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 306,
       "verify_jwt": true,
-      "sha256": "1fd99478dc91b1ad31908926ebec7748099414cc4c43a44f2af13a334ede8b70"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "1fd99478dc91b1ad31908926ebec7748099414cc4c43a44f2af13a334ede8b70",
+      "source_sha256": "c6d92345932347da2788899606a5f4f0e06f8bdb69e6464460e759f140c474df"
     },
     {
       "slug": "sync-whatsapp-contacts",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 134,
       "verify_jwt": true,
-      "sha256": "19b41a83f60d6a2534b6aa113d871965222804cb05bf606646df6ad568b6e0df"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "19b41a83f60d6a2534b6aa113d871965222804cb05bf606646df6ad568b6e0df",
+      "source_sha256": "32d0a7cc1f37799627e8c2d0f162b15a0679ad26e60d3cc266f77ecb909a4ff9"
     },
     {
       "slug": "telephony-recording-proxy",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 657,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": null,
+      "source_sha256": "b259fcfe61e75ca544f2599ef368189df78b010a6d8c20445ed83a5656352433"
     },
     {
       "slug": "threecplus-webhook",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 657,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": null,
+      "source_sha256": "9cabcd8d9e11606f6c9c067908886941ff6b1e2978ad7253eec1ac46e2b3b4ac"
     },
     {
       "slug": "update-organization-user",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 19,
       "verify_jwt": true,
-      "sha256": "f98e56979f5f8fff6c49e9a4f0abdc9f04f0fb42ee8cc5a53d5081e82fffc6f2"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "f98e56979f5f8fff6c49e9a4f0abdc9f04f0fb42ee8cc5a53d5081e82fffc6f2",
+      "source_sha256": "c6d92345932347da2788899606a5f4f0e06f8bdb69e6464460e759f140c474df"
     },
     {
       "slug": "verify-domain-dns",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 638,
       "verify_jwt": false,
-      "sha256": null
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": null,
+      "source_sha256": "ebfc3fe59f2c16a69b2192d4c41384774d27ef70a025428743e6f3f64e0bd9cd"
     },
     {
       "slug": "vista-scheduled-sync",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 491,
       "verify_jwt": false,
-      "sha256": "c0fa5176e825e95eda04d338d18cdb24fddc7e6cfa02a8cb1b88263339b915ee"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "c0fa5176e825e95eda04d338d18cdb24fddc7e6cfa02a8cb1b88263339b915ee",
+      "source_sha256": "748a22044ca3a61c02889352bf57fef89de7db837bff924fd01d043ce7f9f3be"
     },
     {
       "slug": "vista-sync",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 588,
       "verify_jwt": false,
-      "sha256": "8725993627bd2a99d5de72452d98138d9e647e74f6d2fbc5054ea92f02497d4e"
+      "auth_boundary": "HANDLER_MANAGED",
+      "captured_deployment_sha256": "8725993627bd2a99d5de72452d98138d9e647e74f6d2fbc5054ea92f02497d4e",
+      "source_sha256": "4b1c23d0ecdf719edb3add05acda20a5d1ea2f8557bb242147f9640f21dd1795"
     },
     {
       "slug": "whatsapp-history-access",
       "status": "ACTIVE",
+      "lifecycle": "TOMBSTONE",
       "version": 526,
       "verify_jwt": true,
-      "sha256": "a71963543669d80338cd1820df4716b2ea18f5c2fb0d9e78058d22d032b3805d"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "a71963543669d80338cd1820df4716b2ea18f5c2fb0d9e78058d22d032b3805d",
+      "source_sha256": "9b66507f4d4880ae51e769fea67bed8afa57aac48bee135b4187e52b0a33f960"
     },
     {
       "slug": "whatsapp-notifier",
       "status": "ACTIVE",
+      "lifecycle": "LIVE",
       "version": 363,
       "verify_jwt": true,
-      "sha256": "02d9b246a1a8819d1dd8f6501131d5d28b9fe8ad425e359765e22396e84f0741"
+      "auth_boundary": "GATEWAY_JWT",
+      "captured_deployment_sha256": "02d9b246a1a8819d1dd8f6501131d5d28b9fe8ad425e359765e22396e84f0741",
+      "source_sha256": "2de6f20f85fc8c10a728186c3383b6634a551502c951f8248e8371a1f451cbc5"
     }
   ]
 }

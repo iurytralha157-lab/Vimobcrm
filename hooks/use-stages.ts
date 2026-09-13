@@ -1,6 +1,8 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useRef } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useAuth } from '@/contexts/AuthContext';
+import { useOptionalActiveOrganizationId as useOrganizationId } from '@/hooks/use-active-organization';
 import { pipelinesAPI } from '@/lib/api/pipelines';
 import type { PropertySummary } from '@/lib/api/property-support';
 import type { UserSummary } from '@/lib/api/user-summaries';
@@ -11,16 +13,27 @@ import {
   getPipelineStageLeads,
   type PipelineBoardFilters,
 } from '@/lib/api/pipeline-board';
-import { VimobAPIError } from '@/lib/api/vimob-client';
 import {
   stageWithLeadsQueryKey,
   type PipelineQueryKeyFilters,
 } from '@/lib/pipeline-query-key';
 import {
+  getPipelineBoardQueryKeyId,
   getPendingPipelineMoves,
   reconcilePipelineBoardSnapshot,
 } from '@/lib/pipeline-board-cache';
-import type { Tables } from '@/integrations/supabase/types';
+import type { Tables } from '@/lib/supabase/types';
+import { reusePreviousDataWhenKeyPartsMatch } from '@/lib/query-placeholder-safety';
+import { resolvePipelineDateModeForRange } from '@/lib/pipeline-date-mode';
+import { shouldRetryPipelineQuery } from '@/lib/pipeline-reliability';
+import {
+  buildPipelineStageRestorePlans,
+  createPipelinePaginationStorageKey,
+  getPipelineStageLoadedCountsFromBoard,
+  mergePipelineStageLoadedCounts,
+  parsePipelineStageLoadedCounts,
+  type PipelineStageLoadedCounts,
+} from '@/lib/pipeline-pagination-state';
 
 export type Stage = Tables<'stages'> & {
   lead_count?: number;
@@ -46,6 +59,7 @@ type LeadMetaRow = {
 export type PipelineLead = Partial<Tables<'leads'>> & {
   id: string;
   stage_id: string | null;
+  board_sort_at?: string | null;
   assigned_user_id?: string | null;
   interest_property_id?: string | null;
   assignee?: UserSummary | null;
@@ -76,6 +90,13 @@ const PIPELINE_REFERENCE_STALE_TIME_MS = 1000 * 60 * 10;
 const PIPELINE_BOARD_STALE_TIME_MS = 1000 * 60 * 10;
 const PIPELINE_CACHE_TIME_MS = 1000 * 60 * 60;
 
+type PipelineBackgroundRestoreState = {
+  queryKeyId: string;
+  generation: number;
+  desiredLoadedCounts: PipelineStageLoadedCounts;
+  attemptedStageIds: Set<string>;
+};
+
 export async function buildPipelineLeadQueryFilters(): Promise<{
   filteredLeadIds: string[] | null;
   isEmpty: boolean;
@@ -91,11 +112,11 @@ export async function buildPipelineLeadQueryFilters(): Promise<{
 export function useStages(pipelineId?: string) {
   const organizationId = useOrganizationId();
 
-  return useQuery({
+  return useQuery<Stage[]>({
     queryKey: ['stages', organizationId, pipelineId],
     enabled: Boolean(organizationId && pipelineId),
-    queryFn: async () => {
-      const stages = await pipelinesAPI.getStages(pipelineId, organizationId);
+    queryFn: async ({ signal }) => {
+      const stages = await pipelinesAPI.getStages(pipelineId, organizationId, signal);
 
       return stages.map((stage) => ({
         ...stage,
@@ -104,6 +125,8 @@ export function useStages(pipelineId?: string) {
     },
     staleTime: PIPELINE_REFERENCE_STALE_TIME_MS,
     gcTime: PIPELINE_CACHE_TIME_MS,
+    retry: shouldRetryPipelineQuery,
+    retryDelay: (attemptIndex) => Math.min(800 * 2 ** attemptIndex, 8000),
   });
 }
 
@@ -116,19 +139,51 @@ export function useStagesWithLeads(
   },
 ) {
   const organizationId = useOrganizationId();
-  const queryKey = stageWithLeadsQueryKey({
-    organizationId,
-    pipelineId,
-    filterUserId,
-    filters,
-  });
+  const { profile, user } = useAuth();
+  const queryClient = useQueryClient();
+  const queryKey = useMemo(
+    () => stageWithLeadsQueryKey({
+      organizationId,
+      pipelineId,
+      filterUserId,
+      filters,
+    }),
+    [filterUserId, filters, organizationId, pipelineId],
+  );
+  const queryKeyId = getPipelineBoardQueryKeyId(queryKey);
+  const paginationStorageKey = profile?.id || user?.id
+    ? createPipelinePaginationStorageKey(profile?.id || user?.id || '', queryKey)
+    : null;
+  const isBoardEnabled = Boolean(
+    organizationId && pipelineId && (options?.enabled ?? true),
+  );
+  const backgroundRestoreStateRef = useRef<PipelineBackgroundRestoreState | null>(null);
+  const restoreLifecycleRef = useRef(true);
+  const restoreAllowedRef = useRef(isBoardEnabled);
 
-  return useQuery({
+  useEffect(() => {
+    restoreLifecycleRef.current = true;
+    return () => {
+      restoreLifecycleRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    restoreAllowedRef.current = isBoardEnabled;
+  }, [isBoardEnabled]);
+
+  const boardQuery = useQuery<StageWithLeads[]>({
     queryKey,
     staleTime: PIPELINE_BOARD_STALE_TIME_MS,
     gcTime: PIPELINE_CACHE_TIME_MS,
-    placeholderData: keepPreviousData,
-    enabled: Boolean(organizationId && pipelineId && (options?.enabled ?? true)),
+    placeholderData: (previousData, previousQuery) =>
+      reusePreviousDataWhenKeyPartsMatch(
+        previousData,
+        previousQuery?.queryKey,
+        queryKey,
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+      ),
+    enabled: isBoardEnabled,
     refetchOnMount: true,
     structuralSharing: (oldData, newData) =>
       reconcilePipelineBoardSnapshot(
@@ -137,6 +192,22 @@ export function useStagesWithLeads(
         getPendingPipelineMoves<PipelineLead>(queryKey),
       ),
     queryFn: async ({ signal }) => {
+      const cachedBoard = queryClient.getQueryData<StageWithLeads[]>(queryKey);
+      const desiredLoadedCounts = mergePipelineStageLoadedCounts(
+        readPipelineStageLoadedCounts(paginationStorageKey),
+        getPipelineStageLoadedCountsFromBoard(cachedBoard),
+      );
+      const previousRestoreState = backgroundRestoreStateRef.current;
+      backgroundRestoreStateRef.current = {
+        queryKeyId,
+        generation:
+          previousRestoreState?.queryKeyId === queryKeyId
+            ? previousRestoreState.generation + 1
+            : 1,
+        desiredLoadedCounts,
+        attemptedStageIds: new Set(),
+      };
+
       return (await getPipelineBoard({
         organizationId,
         pipelineId,
@@ -146,36 +217,158 @@ export function useStagesWithLeads(
         signal,
       })) as StageWithLeads[];
     },
-    retry: (failureCount, error) => {
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        return false;
-      }
-
-      if (error instanceof VimobAPIError && ['api_timeout', 'api_unavailable'].includes(error.code)) {
-        return failureCount < 1;
-      }
-
-      return failureCount < 1;
-    },
+    retry: shouldRetryPipelineQuery,
     retryDelay: (attemptIndex) => Math.min(800 * 2 ** attemptIndex, 8000),
   });
+
+  useEffect(() => {
+    if (!boardQuery.data || !organizationId || !pipelineId || !isBoardEnabled) return;
+
+    const restoreState = backgroundRestoreStateRef.current;
+    if (!restoreState || restoreState.queryKeyId !== queryKeyId) return;
+
+    const restorePlans = buildPipelineStageRestorePlans(
+      boardQuery.data,
+      restoreState.desiredLoadedCounts,
+    ).filter((plan) => !restoreState.attemptedStageIds.has(plan.stageId));
+    if (restorePlans.length === 0) return;
+
+    restorePlans.forEach((plan) => {
+      restoreState.attemptedStageIds.add(plan.stageId);
+    });
+
+    void (async () => {
+      // Restore one column at a time. The first 12 cards are already visible,
+      // and a saved deep board cannot fan out into many simultaneous requests.
+      for (const plan of restorePlans) {
+        if (
+          !restoreLifecycleRef.current ||
+          !restoreAllowedRef.current ||
+          backgroundRestoreStateRef.current !== restoreState
+        ) {
+          return;
+        }
+
+        let response: { stageId: string; leads: PipelineLead[] };
+        try {
+          response = (await getPipelineStageLeads({
+            organizationId,
+            pipelineId,
+            stageId: plan.stageId,
+            offset: plan.offset,
+            cursorBefore: plan.cursorBefore,
+            cursorBeforeId: plan.cursorBeforeId,
+            filterUserId,
+            filters: filters as PipelineBoardFilters,
+            limit: plan.limit,
+          })) as { stageId: string; leads: PipelineLead[] };
+        } catch {
+          // The initial page remains usable. A manual refresh starts a new,
+          // bounded restore generation instead of retrying in a tight loop.
+          continue;
+        }
+
+        if (
+          !restoreLifecycleRef.current ||
+          !restoreAllowedRef.current ||
+          backgroundRestoreStateRef.current !== restoreState
+        ) {
+          return;
+        }
+
+        let loadedCount: number | undefined;
+        queryClient.setQueryData<StageWithLeads[]>(queryKey, (current) => {
+          if (!current) return current;
+
+          const existingIds = new Set(
+            current.flatMap((stage) => stage.leads.map((lead) => lead.id)),
+          );
+
+          return current.map((stage) => {
+            if (stage.id !== response.stageId) return stage;
+
+            const uniqueLeads = response.leads.filter(
+              (lead) => !existingIds.has(lead.id),
+            );
+            const leads = [...stage.leads, ...uniqueLeads];
+            loadedCount = leads.length;
+
+            return {
+              ...stage,
+              leads,
+              has_more: stage.total_lead_count > leads.length,
+            };
+          });
+        });
+
+        if (loadedCount) {
+          persistPipelineStageLoadedCount(
+            paginationStorageKey,
+            response.stageId,
+            loadedCount,
+          );
+        }
+      }
+    })();
+  }, [
+    boardQuery.data,
+    boardQuery.dataUpdatedAt,
+    filterUserId,
+    filters,
+    isBoardEnabled,
+    organizationId,
+    paginationStorageKey,
+    pipelineId,
+    queryClient,
+    queryKey,
+    queryKeyId,
+  ]);
+
+  return boardQuery;
 }
 
-export function useLeadMetaFilters(dateRange?: { from: Date; to: Date } | null) {
+export function useLeadMetaFilters(
+  dateRange?: { from: Date; to: Date } | null,
+  dateMode?: PipelineQueryFilters['dateMode'],
+) {
   const organizationId = useOrganizationId();
+  const resolvedDateMode = resolvePipelineDateModeForRange(dateRange, dateMode);
 
   return useQuery({
-    queryKey: ['lead-meta-filters', organizationId, dateRange?.from?.toISOString(), dateRange?.to?.toISOString()],
+    queryKey: [
+      'lead-meta-filters',
+      organizationId,
+      dateRange?.from?.toISOString(),
+      dateRange?.to?.toISOString(),
+      resolvedDateMode,
+    ],
     enabled: Boolean(organizationId),
-    queryFn: async () => {
-      if (!organizationId) return { campaigns: [], adsets: [], ads: [] };
-      return getLeadMetaFiltersFromAPI({ organizationId, dateRange });
+    queryFn: async ({ signal }) => {
+      if (!organizationId) return { sources: [], campaigns: [], adsets: [], ads: [] };
+      return getLeadMetaFiltersFromAPI({
+        organizationId,
+        dateRange,
+        dateMode: resolvedDateMode,
+        signal,
+      });
     },
     staleTime: PIPELINE_REFERENCE_STALE_TIME_MS,
     gcTime: PIPELINE_CACHE_TIME_MS,
-    retry: 1,
+    retry: shouldRetryPipelineQuery,
     retryDelay: 800,
-    placeholderData: keepPreviousData,
+    placeholderData: (previousData, previousQuery) =>
+      reusePreviousDataWhenKeyPartsMatch(
+        previousData,
+        previousQuery?.queryKey,
+        [
+          'lead-meta-filters',
+          organizationId,
+          dateRange?.from?.toISOString(),
+          dateRange?.to?.toISOString(),
+          resolvedDateMode,
+        ],
+        [1, 2, 3, 4],
+      ),
   });
 }
 
@@ -187,6 +380,7 @@ export function useFilteredStageCounts({
   filterDealStatus,
   searchQuery,
   dateRange,
+  dateMode,
   filterCampaign,
   filterAdSet,
   filterAd,
@@ -196,6 +390,7 @@ export function useFilteredStageCounts({
   const organizationId = useOrganizationId();
   const filters = {
     dateRange,
+    dateMode,
     filterTag,
     filterDealStatus,
     searchQuery,
@@ -218,6 +413,7 @@ export function useFilteredStageCounts({
       searchQuery,
       dateRange?.from.toISOString(),
       dateRange?.to.toISOString(),
+      dateMode,
       filterCampaign,
       filterAdSet,
       filterAd,
@@ -227,22 +423,20 @@ export function useFilteredStageCounts({
     enabled: Boolean(organizationId && pipelineId && stageIds.length > 0),
     staleTime: PIPELINE_BOARD_STALE_TIME_MS,
     gcTime: PIPELINE_CACHE_TIME_MS,
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (!pipelineId || stageIds.length === 0) return {} as Record<string, number>;
 
-      try {
-        return await getPipelineStageCounts({
-          organizationId,
-          pipelineId,
-          stageIds,
-          filterUserId: filterUser,
-          filters: filters as PipelineBoardFilters,
-        });
-      } catch (err) {
-        console.error('[Pipeline filters] useFilteredStageCounts error:', err);
-        return Object.fromEntries(stageIds.map((stageId) => [stageId, 0]));
-      }
+      return getPipelineStageCounts({
+        organizationId,
+        pipelineId,
+        stageIds,
+        filterUserId: filterUser,
+        filters: filters as PipelineBoardFilters,
+        signal,
+      });
     },
+    retry: shouldRetryPipelineQuery,
+    retryDelay: (attemptIndex) => Math.min(800 * 2 ** attemptIndex, 8000),
   });
 }
 
@@ -252,9 +446,11 @@ export function usePipelines() {
   return useQuery({
     queryKey: ['pipelines', organizationId],
     enabled: Boolean(organizationId),
-    queryFn: () => pipelinesAPI.getPipelines(organizationId),
+    queryFn: ({ signal }) => pipelinesAPI.getPipelines(organizationId, signal),
     staleTime: PIPELINE_REFERENCE_STALE_TIME_MS,
     gcTime: PIPELINE_CACHE_TIME_MS,
+    retry: shouldRetryPipelineQuery,
+    retryDelay: (attemptIndex) => Math.min(800 * 2 ** attemptIndex, 8000),
   });
 }
 
@@ -351,18 +547,23 @@ export function useReorderStages() {
 export function useLoadMoreLeads() {
   const queryClient = useQueryClient();
   const organizationId = useOrganizationId();
+  const { profile, user } = useAuth();
 
   return useMutation({
     mutationFn: async ({
       pipelineId,
       stageId,
       offset,
+      cursorBefore,
+      cursorBeforeId,
       filterUserId,
       filters,
     }: {
       pipelineId: string;
       stageId: string;
       offset: number;
+      cursorBefore?: string;
+      cursorBeforeId?: string;
       filterUserId?: string;
       filters?: PipelineQueryFilters;
     }) => {
@@ -371,14 +572,18 @@ export function useLoadMoreLeads() {
         pipelineId,
         stageId,
         offset,
+        cursorBefore,
+        cursorBeforeId,
         filterUserId,
         filters: filters as PipelineBoardFilters,
         limit: LEADS_PER_STAGE,
       })) as { stageId: string; leads: PipelineLead[] };
     },
     onSuccess: ({ stageId, leads }, { pipelineId, filterUserId, filters }) => {
+      const queryKey = stageWithLeadsQueryKey({ organizationId, pipelineId, filterUserId, filters });
+      let loadedCount: number | undefined;
       queryClient.setQueryData(
-        stageWithLeadsQueryKey({ organizationId, pipelineId, filterUserId, filters }),
+        queryKey,
         (old: StageWithLeads[] | undefined) => {
           if (!old) return old;
 
@@ -390,26 +595,68 @@ export function useLoadMoreLeads() {
             if (stage.id !== stageId) return stage;
 
             const newLeads = leads.filter((lead) => !existingIds.has(lead.id));
+            loadedCount = (stage.leads?.length || 0) + newLeads.length;
 
             return {
               ...stage,
               leads: [...(stage.leads || []), ...newLeads],
-              has_more: stage.total_lead_count > (stage.leads?.length || 0) + newLeads.length,
+              has_more: stage.total_lead_count > loadedCount,
             };
           });
         },
       );
+      const viewerId = profile?.id || user?.id;
+      if (viewerId && loadedCount) {
+        persistPipelineStageLoadedCount(
+          createPipelinePaginationStorageKey(viewerId, queryKey),
+          stageId,
+          loadedCount,
+        );
+      }
     },
+    retry: shouldRetryPipelineQuery,
+    retryDelay: (attemptIndex) => Math.min(800 * 2 ** attemptIndex, 8000),
   });
 }
 
-function useOrganizationId() {
-  const { organization, profile } = useAuth();
-  return organization?.id || profile?.organization_id || undefined;
+function readPipelineStageLoadedCounts(storageKey: string | null): PipelineStageLoadedCounts {
+  if (!storageKey || typeof window === 'undefined') return {};
+  try {
+    return parsePipelineStageLoadedCounts(window.sessionStorage.getItem(storageKey));
+  } catch {
+    return {};
+  }
+}
+
+function persistPipelineStageLoadedCount(
+  storageKey: string | null,
+  stageId: string,
+  loadedCount: number,
+) {
+  if (!storageKey || typeof window === 'undefined') return;
+
+  try {
+    const nextCounts = mergePipelineStageLoadedCounts(
+      readPipelineStageLoadedCounts(storageKey),
+      { [stageId]: loadedCount },
+    );
+    window.sessionStorage.setItem(storageKey, JSON.stringify(nextCounts));
+  } catch {
+    // Pagination still works when sessionStorage is unavailable.
+  }
 }
 
 function invalidatePipelineQueries(queryClient: ReturnType<typeof useQueryClient>) {
-  queryClient.invalidateQueries({ queryKey: ['pipelines'] });
-  queryClient.invalidateQueries({ queryKey: ['stages'] });
-  queryClient.invalidateQueries({ queryKey: ['stages-with-leads'] });
+  queryClient.invalidateQueries(
+    { queryKey: ['pipelines'] },
+    { cancelRefetch: false },
+  );
+  queryClient.invalidateQueries(
+    { queryKey: ['stages'] },
+    { cancelRefetch: false },
+  );
+  queryClient.invalidateQueries(
+    { queryKey: ['stages-with-leads'] },
+    { cancelRefetch: false },
+  );
 }

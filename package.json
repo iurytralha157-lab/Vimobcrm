@@ -2,6 +2,7 @@
   "name": "vimob-crm",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "npm@11.13.0",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -15,12 +16,18 @@
     "api:fmt": "gofmt -w apps/api packages/auth packages/db",
     "api:test": "go test ./apps/api/... ./packages/auth/... ./packages/db/...",
     "test:signup-idempotency": "tsc -p tsconfig.validation-tests.json && node --test .validation-tests/lib/validation/onboarding.test.js .validation-tests/lib/validation/legal-documents.test.js .validation-tests/lib/onboarding/signup-attempt.test.js",
-    "test:billing-ui-state": "tsc -p tsconfig.validation-tests.json && node --test .validation-tests/lib/billing/checkout-ui-state.test.js",
-    "postvalidation:test": "node --test .validation-tests/supabase/functions/_shared/financial-recurring-hardening.test.js .validation-tests/supabase/functions/_shared/whatsapp-ctwa.test.js .validation-tests/lib/help/admin-help-article-filters.test.js",
+    "test:billing-ui-state": "tsc -p tsconfig.validation-tests.json && node --test .validation-tests/lib/billing/checkout-ui-state.test.js .validation-tests/lib/billing/subscription-presentation.test.js",
+    "postvalidation:test": "node --test .validation-tests/supabase/functions/_shared/financial-recurring-hardening.test.js .validation-tests/supabase/functions/_shared/whatsapp-ctwa.test.js .validation-tests/lib/help/admin-help-article-filters.test.js .validation-tests/lib/site/analytics-polling.test.js .validation-tests/lib/site/engagement-duration.test.js .validation-tests/lib/site/public-consent.test.js .validation-tests/lib/site/public-session.test.js .validation-tests/lib/site/public-tracking.test.js .validation-tests/lib/site/public-tracking-ui.test.js .validation-tests/lib/public-site-attribution.test.js .validation-tests/lib/validation/marketing.test.js .validation-tests/lib/local-read-only.test.js .validation-tests/lib/api/vimob-server-url.test.js .validation-tests/lib/property-display-utils.test.js .validation-tests/lib/safe-http-url.test.js .validation-tests/lib/security/limited-request-body.test.js .validation-tests/lib/utils/formatting.test.js .validation-tests/lib/utils/json.test.js packages/contracts/openapi/public-site-contract.test.mjs",
     "whatsapp:realtime:test": "node scripts/tests/whatsapp-realtime-smoke.mjs",
     "load:api": "node scripts/load/api-read-smoke.mjs",
     "load:lifecycle": "node --experimental-strip-types scripts/load/lead-lifecycle.ts",
-    "validation:test": "tsc -p tsconfig.validation-tests.json && node --test .validation-tests/lib/validation/numeric-filter.test.js .validation-tests/lib/validation/onboarding.test.js .validation-tests/lib/validation/integrations.test.js .validation-tests/lib/validation/leads.test.js .validation-tests/lib/validation/pipelines.test.js .validation-tests/lib/validation/users.test.js .validation-tests/lib/validation/whatsapp.test.js .validation-tests/lib/validation/domains.test.js .validation-tests/lib/validation/error-events-view.test.js .validation-tests/lib/validation/property-workspace.test.js .validation-tests/lib/validation/property-publications.test.js .validation-tests/lib/validation/property-developments.test.js .validation-tests/lib/validation/attention.test.js .validation-tests/lib/validation/cadences.test.js .validation-tests/lib/validation/home.test.js .validation-tests/lib/validation/site-analytics.test.js .validation-tests/lib/validation/help.test.js .validation-tests/lib/settings-tabs.test.js .validation-tests/lib/access/api-boundary.test.js .validation-tests/lib/access/management.test.js .validation-tests/lib/access/properties.test.js .validation-tests/lib/access/navigation.test.js .validation-tests/lib/access/tenant-navigation.test.js .validation-tests/lib/access/tenant-query-cache.test.js .validation-tests/lib/access/user-management-contract.test.js .validation-tests/lib/access/whatsapp-realtime.test.js .validation-tests/lib/whatsapp-query-cache.test.js .validation-tests/lib/search-text.test.js .validation-tests/lib/user-display.test.js .validation-tests/lib/billing-access.test.js .validation-tests/lib/billing/payment-receipt.test.js .validation-tests/lib/billing/checkout-ui-state.test.js .validation-tests/lib/email/resend-webhook-event.test.js .validation-tests/lib/auth/password-recovery.test.js .validation-tests/lib/auth/invitation.test.js .validation-tests/lib/auth/post-login-redirect.test.js .validation-tests/lib/auth/login-hero-media.test.js .validation-tests/lib/pipeline-query-key.test.js .validation-tests/lib/pipeline-board-cache.test.js .validation-tests/lib/pipeline-stage-snapshot.test.js .validation-tests/lib/api/vimob-error.test.js .validation-tests/lib/help/help-fallback-policy.test.js .validation-tests/lib/help/help-content-boundary.test.js .validation-tests/lib/public-error-copy-contract.test.js .validation-tests/lib/realtime-cursor.test.js .validation-tests/lib/realtime/private-broadcast-registry.test.js .validation-tests/lib/cache-utils.test.js .validation-tests/lib/supabase/service-auth.test.js .validation-tests/lib/schedule-event-segments.test.js .validation-tests/supabase/functions/_shared/google-calendar-event.test.js .validation-tests/supabase/functions/_shared/asaas-billing-intent.test.js .validation-tests/supabase/functions/_shared/billing-payment-receipt.test.js .validation-tests/supabase/functions/_shared/retired-user-mutation.test.js .validation-tests/supabase/functions/_shared/whatsapp-message-status.test.js .validation-tests/lib/automations/engine.test.js"
+    "test:presence": "tsc -p tsconfig.validation-tests.json && node --test .validation-tests/lib/validation/presence.test.js .validation-tests/lib/presence/user-activity-state.test.js && node --test lib/api/user-activity.test.mjs",
+    "typecheck": "tsc -p tsconfig.typecheck.json",
+    "test:property-media": "tsc -p tsconfig.property-media-tests.json && node --test .property-media-tests/lib/property-media.test.js .property-media-tests/lib/property-media-draft.test.js .property-media-tests/lib/property-media-asset-input.test.js .property-media-tests/lib/api/property-media.test.js .property-media-tests/lib/validation/property-media-capacity.test.js",
+    "test:property-ui": "node --experimental-strip-types --import ./scripts/tests/typescript-alias-hooks.mjs --test components/features/properties/developments/development-workspace/model.test.ts components/features/properties/property-form/property-form-a11y.test.mts components/features/properties/property-form/property-form-field-access.test.mts components/features/properties/property-form/property-form-hydration.test.mts components/features/properties/property-form/property-form-mapping.test.mts components/features/properties/property-form/property-form-model.test.mts components/features/properties/property-form/property-form-navigation-guard.test.mts components/features/properties/property-form/property-owner-privacy.test.mts components/features/properties/property-locations/model.test.ts components/features/properties/property-locations/property-form-selection.test.mts components/features/properties/property-locations/property-location-editing.test.mts components/features/properties/property-owner-pagination.test.mts lib/property-concurrency.test.ts lib/property-settings-concurrency.test.ts lib/validation/properties-concurrency.test.ts lib/validation/property-settings.test.ts",
+    "test:property-edge": "node --experimental-strip-types --test supabase/functions/_shared/rate-limit.test.ts supabase/functions/_shared/property-import-location.node.test.mts supabase/functions/property-edge-consumers.node.test.mts supabase/functions/property-provider-media-archive.node.test.mts",
+    "validation:auth-admin": "tsc -p tsconfig.validation-tests.json && node --test .validation-tests/lib/validation/admin.test.js .validation-tests/lib/validation/auth-context.test.js",
+    "validation:test": "tsc -p tsconfig.validation-tests.json && node --test .validation-tests/lib/validation/numeric-filter.test.js .validation-tests/lib/validation/onboarding.test.js .validation-tests/lib/validation/integrations.test.js .validation-tests/lib/validation/leads.test.js .validation-tests/lib/validation/pipelines.test.js .validation-tests/lib/validation/users.test.js .validation-tests/lib/validation/whatsapp.test.js .validation-tests/lib/validation/domains.test.js .validation-tests/lib/validation/error-events-view.test.js .validation-tests/lib/validation/property-workspace.test.js .validation-tests/lib/validation/property-publications.test.js .validation-tests/lib/validation/property-developments.test.js .validation-tests/lib/validation/attention.test.js .validation-tests/lib/validation/cadences.test.js .validation-tests/lib/validation/home.test.js .validation-tests/lib/validation/site-analytics.test.js .validation-tests/lib/validation/public-site.test.js .validation-tests/lib/site/analytics-freshness.test.js .validation-tests/lib/analytics/marketing-dashboard-error.test.js .validation-tests/lib/validation/help.test.js .validation-tests/lib/settings-tabs.test.js .validation-tests/lib/access/api-boundary.test.js .validation-tests/lib/access/management.test.js .validation-tests/lib/access/properties.test.js .validation-tests/lib/access/navigation.test.js .validation-tests/lib/access/tenant-navigation.test.js .validation-tests/lib/access/tenant-query-cache.test.js .validation-tests/lib/access/user-management-contract.test.js .validation-tests/lib/access/whatsapp-realtime.test.js .validation-tests/lib/whatsapp-query-cache.test.js .validation-tests/lib/whatsapp-message-input.test.js .validation-tests/lib/search-text.test.js .validation-tests/lib/user-display.test.js .validation-tests/lib/billing-access.test.js .validation-tests/lib/billing/payment-receipt.test.js .validation-tests/lib/billing/checkout-ui-state.test.js .validation-tests/lib/billing/subscription-presentation.test.js .validation-tests/lib/email/resend-webhook-event.test.js .validation-tests/lib/auth/password-recovery.test.js .validation-tests/lib/auth/invitation.test.js .validation-tests/lib/auth/post-login-redirect.test.js .validation-tests/lib/auth/login-hero-media.test.js .validation-tests/lib/pipeline-query-key.test.js .validation-tests/lib/pipeline-board-query.test.js .validation-tests/lib/pipeline-pagination-state.test.js .validation-tests/lib/query-placeholder-safety.test.js .validation-tests/lib/pipeline-stage-outcome.test.js .validation-tests/lib/pipeline-board-cache.test.js .validation-tests/lib/pipeline-stage-snapshot.test.js .validation-tests/lib/api/vimob-error.test.js .validation-tests/lib/help/help-fallback-policy.test.js .validation-tests/lib/help/help-content-boundary.test.js .validation-tests/lib/public-error-copy-contract.test.js .validation-tests/lib/realtime-cursor.test.js .validation-tests/lib/realtime/private-broadcast-registry.test.js .validation-tests/lib/cache-utils.test.js .validation-tests/lib/supabase/service-auth.test.js .validation-tests/lib/schedule-event-segments.test.js .validation-tests/lib/schedule-time-zone.test.js .validation-tests/supabase/functions/_shared/google-calendar-event.test.js .validation-tests/supabase/functions/_shared/asaas-billing-intent.test.js .validation-tests/supabase/functions/_shared/billing-payment-receipt.test.js .validation-tests/supabase/functions/_shared/retired-user-mutation.test.js .validation-tests/supabase/functions/_shared/whatsapp-message-status.test.js .validation-tests/lib/automations/engine.test.js && node --experimental-strip-types --test components/features/properties/property-locations/property-location-editing.test.mts"
   },
   "dependencies": {
     "@capacitor/core": "^8.4.0",
@@ -73,7 +80,7 @@
     "leaflet": "^1.9.4",
     "lottie-web": "^5.13.0",
     "lucide-react": "^1.18.0",
-    "next": "16.2.9",
+    "next": "16.3.4",
     "next-themes": "^0.4.6",
     "react": "19.2.4",
     "react-day-picker": "^10.0.1",
@@ -87,24 +94,25 @@
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.6.0",
     "vaul": "^1.1.2",
-    "zod": "^3.25.76",
-    "zustand": "^5.0.14"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
+    "@tanstack/query-core": "5.101.0",
     "@types/node": "^20",
     "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.2.9",
+    "eslint-config-next": "16.3.4",
+    "js-yaml": "^4.3.2",
     "pg": "^8.22.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   },
   "overrides": {
-    "postcss": "8.5.15",
+    "postcss": "8.5.23",
     "uuid": "11.1.1"
   }
 }

@@ -1,10 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   useSiteAnalytics,
   useSiteAnalyticsDetailed,
 } from "@/hooks/use-site-analytics";
-import { siteAnalyticsRangeQuery } from "@/hooks/use-lead-analytics";
+import {
+  siteAnalyticsRangeQuery,
+  useLeadAnalytics,
+} from "@/hooks/use-lead-analytics";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -51,7 +54,7 @@ import {
   Cell,
 } from "recharts";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { LeadJourneyDashboard } from "./LeadJourneyDashboard";
+import { LeadJourneyDashboard } from "@/components/features/site/LeadJourneyDashboard";
 import { DateFilterPopover } from "@/components/ui/date-filter-popover";
 import {
   DatePreset,
@@ -61,24 +64,50 @@ import { Button } from "@/components/ui/button";
 import { useSiteDashboardUrl } from "@/hooks/site";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { VimobAPIError } from "@/lib/api/vimob-error";
-import { DomainValidationError, siteAnalyticsQuerySchema } from "@/lib/validation";
+import {
+  describeSiteAnalyticsFreshness,
+  getSiteAnalyticsFreshness,
+} from "@/lib/site/analytics-freshness";
+import {
+  DomainValidationError,
+  siteAnalyticsQuerySchema,
+} from "@/lib/validation";
 import { getSitePublicPageUrl } from "@/lib/site/site-publication";
+import { SiteVisitorOriginsCard } from "@/components/features/site/analytics/SiteVisitorOriginsCard";
 
 const DAY_IN_MS = 24 * 60 * 60 * 1_000;
 
 function getSiteAnalyticsErrorDescription(error: unknown) {
   if (
     (error instanceof DomainValidationError && error.direction === "input") ||
-    (error instanceof VimobAPIError && error.code === "invalid_analytics_filters")
+    (error instanceof VimobAPIError &&
+      error.code === "invalid_analytics_filters")
   ) {
     return "O período selecionado não é válido. Escolha datas entre o mesmo dia e 366 dias.";
   }
-  if (error instanceof DomainValidationError && error.direction === "response") {
+  if (
+    error instanceof DomainValidationError &&
+    error.direction === "response"
+  ) {
     return "A API respondeu em um formato incompatível. Nenhuma métrica foi estimada.";
   }
   return error instanceof Error
     ? error.message
     : "Não foi possível carregar os dados do site agora.";
+}
+
+function formatLastCollectedAt(value: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function getTrendIcon(current: number, previous: number) {
@@ -96,7 +125,8 @@ function getTrendColor(current: number, previous: number) {
 }
 
 export function SiteAnalyticsTab() {
-  const [datePreset, setDatePreset] = useState<DatePreset>("last7days");
+  const [datePreset, setDatePreset] = useState<DatePreset>("last30days");
+  const [, refreshRelativeDates] = useState(0);
   const siteBaseUrl = useSiteDashboardUrl();
   const isMobile = useIsMobile();
   const [customDateRange, setCustomDateRange] = useState<{
@@ -104,17 +134,40 @@ export function SiteAnalyticsTab() {
     to: Date;
   } | null>(null);
 
-  const { dateFrom, dateTo } = useMemo(() => {
+  useEffect(() => {
+    if (datePreset === "custom") return;
+
+    let timeout: number;
+    const scheduleNextDay = () => {
+      const now = new Date();
+      const nextDay = new Date(now);
+      nextDay.setHours(24, 0, 1, 0);
+      timeout = window.setTimeout(
+        () => {
+          refreshRelativeDates((version) => version + 1);
+          scheduleNextDay();
+        },
+        Math.max(1_000, nextDay.getTime() - now.getTime()),
+      );
+    };
+
+    scheduleNextDay();
+
+    return () => window.clearTimeout(timeout);
+  }, [datePreset]);
+
+  const { dateFrom, dateTo } = (() => {
     if (datePreset === "custom" && customDateRange) {
       return { dateFrom: customDateRange.from, dateTo: customDateRange.to };
     }
 
     const range = getDateRangeFromPreset(datePreset);
     return { dateFrom: range.from, dateTo: range.to };
-  }, [datePreset, customDateRange]);
+  })();
 
   const summaryQuery = useSiteAnalytics(dateFrom, dateTo);
   const detailedQuery = useSiteAnalyticsDetailed(dateFrom, dateTo);
+  const journeyQuery = useLeadAnalytics(dateFrom, dateTo);
   const { data, isPending } = summaryQuery;
   const { data: detailed, isPending: isDetailedPending } = detailedQuery;
 
@@ -155,7 +208,7 @@ export function SiteAnalyticsTab() {
       color: "var(--chart-1)",
     },
     {
-      name: "Busca",
+      name: "Busca orgânica",
       value: Number(data?.searchPct || 0),
       color: "var(--chart-2)",
     },
@@ -194,6 +247,12 @@ export function SiteAnalyticsTab() {
       color: "var(--chart-3)",
       icon: Tablet,
     },
+    {
+      name: "Outros / não identificados",
+      value: Number(data?.otherDevicePct || 0),
+      color: "var(--chart-4)",
+      icon: PieChartIcon,
+    },
   ].filter((item) => item.value > 0);
 
   const hasCompleteData = Boolean(data && detailed);
@@ -215,14 +274,17 @@ export function SiteAnalyticsTab() {
   }
 
   const stats = data || {
+    lastCollectedAt: null,
     totalViews: 0,
     totalPages: 0,
     uniquePages: 0,
     uniqueSessions: 0,
+    measuredSessions: 0,
     avgDuration: 0,
     desktopPct: 0,
     mobilePct: 0,
     tabletPct: 0,
+    otherDevicePct: 0,
     directPct: 0,
     searchPct: 0,
     socialPct: 0,
@@ -248,15 +310,28 @@ export function SiteAnalyticsTab() {
     (detailed?.liveVisitors ?? 0) > 0 ||
     (detailed?.dailyViews.length ?? 0) > 0;
   const handleDatePresetChange = (preset: DatePreset | null) => {
-    setDatePreset(preset || "last7days");
+    setDatePreset(preset || "last30days");
   };
   const blockingError = summaryQuery.error || detailedQuery.error;
   const hasBlockingError = !hasCompleteData && Boolean(blockingError);
-  const hasStaleError = hasCompleteData && (summaryQuery.isError || detailedQuery.isError);
-  const isRefetching = summaryQuery.isFetching || detailedQuery.isFetching;
+  const hasStaleError =
+    hasCompleteData && (summaryQuery.isError || detailedQuery.isError);
+  const isRefetching =
+    summaryQuery.isFetching ||
+    detailedQuery.isFetching ||
+    journeyQuery.isFetching;
+  const freshness = getSiteAnalyticsFreshness(stats.lastCollectedAt);
+  const freshnessDescription = describeSiteAnalyticsFreshness(freshness);
+  const lastCollectedAtLabel = formatLastCollectedAt(stats.lastCollectedAt);
+  const hasDurationMeasurement = stats.measuredSessions > 0;
+  const durationCoverage =
+    stats.uniqueSessions > 0
+      ? Math.round((stats.measuredSessions * 100) / stats.uniqueSessions)
+      : 0;
   const handleRetry = () => {
     void summaryQuery.refetch();
     void detailedQuery.refetch();
+    void journeyQuery.refetch();
   };
 
   return (
@@ -312,7 +387,7 @@ export function SiteAnalyticsTab() {
           onDatePresetChange={handleDatePresetChange}
           customDateRange={customDateRange}
           onCustomDateRangeChange={setCustomDateRange}
-          defaultPreset="last7days"
+          defaultPreset="last30days"
           align="end"
           triggerDataTour="site-dashboard-date-filter"
           triggerClassName="h-8 w-auto shrink-0 justify-center rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2.5 text-[10px] font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] focus-visible:ring-1 focus-visible:ring-primary/25 focus-visible:ring-offset-0 sm:text-[12px]"
@@ -320,11 +395,47 @@ export function SiteAnalyticsTab() {
         />
       </div>
 
+      {hasCompleteData ? (
+        <div
+          role="status"
+          className={`flex flex-col gap-1 rounded-[8px] px-3.5 py-2.5 text-[11px] sm:flex-row sm:items-center sm:justify-between ${
+            freshness.status === "fresh"
+              ? "bg-emerald-500/[0.08]"
+              : freshness.status === "unavailable"
+                ? "bg-[var(--app-surface-soft)]"
+                : "bg-amber-500/[0.08]"
+          }`}
+        >
+          <span className="flex min-w-0 items-center gap-2 text-[var(--app-text-secondary)]">
+            <Activity
+              className={`h-3.5 w-3.5 shrink-0 ${
+                freshness.status === "fresh"
+                  ? "text-emerald-500"
+                  : freshness.status === "unavailable"
+                    ? "text-[var(--app-text-tertiary)]"
+                    : "text-amber-500"
+              }`}
+              aria-hidden="true"
+            />
+            {lastCollectedAtLabel
+              ? `Último evento recebido em ${lastCollectedAtLabel}`
+              : "Este site ainda não enviou eventos para o dashboard"}
+          </span>
+          <span className="font-normal text-[var(--app-text-primary)]">
+            {freshnessDescription}
+          </span>
+        </div>
+      ) : null}
+
       {hasStaleError && (
-        <div role="status" className="flex flex-col gap-3 rounded-[8px] bg-amber-500/[0.08] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div
+          role="status"
+          className="flex flex-col gap-3 rounded-[8px] bg-amber-500/[0.08] px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+        >
           <div className="flex items-center gap-2 text-sm text-[var(--app-text-secondary)]">
             <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
-            Os últimos dados válidos continuam visíveis, mas a atualização falhou.
+            Os últimos dados válidos continuam visíveis, mas a atualização
+            falhou.
           </div>
           <Button
             variant="ghost"
@@ -333,7 +444,9 @@ export function SiteAnalyticsTab() {
             onClick={handleRetry}
             disabled={isRefetching}
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${isRefetching ? "animate-spin" : ""}`} />
+            <RefreshCw
+              className={`h-3.5 w-3.5 ${isRefetching ? "animate-spin" : ""}`}
+            />
             {isRefetching ? "Atualizando" : "Tentar novamente"}
           </Button>
         </div>
@@ -342,7 +455,10 @@ export function SiteAnalyticsTab() {
       <TabsContent value="overview" className="mt-0 min-w-0 space-y-4">
         {hasBlockingError && (
           <Card className="app-card bg-[var(--app-surface-solid)]">
-            <CardContent role="alert" className="flex min-h-[240px] flex-col items-center justify-center p-6 text-center">
+            <CardContent
+              role="alert"
+              className="flex min-h-[240px] flex-col items-center justify-center p-6 text-center"
+            >
               <span className="flex h-10 w-10 items-center justify-center rounded-[8px] bg-red-500/[0.08] text-red-500">
                 <AlertCircle className="h-4 w-4" aria-hidden="true" />
               </span>
@@ -373,12 +489,14 @@ export function SiteAnalyticsTab() {
             <CardContent className="p-6 text-center">
               <BarChart3 className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
               <p className="mb-1 text-sm font-normal text-[var(--app-text-primary)]">
-                Nenhum dado registrado ainda
+                {stats.lastCollectedAt
+                  ? "Sem dados no período selecionado"
+                  : "Nenhuma coleta registrada"}
               </p>
               <p className="text-xs font-light leading-5 text-[var(--app-text-tertiary)]">
-                Os dados aparecerão automaticamente quando visitantes acessarem
-                seu site público. Certifique-se de que o site está ativo e
-                publicado.
+                {stats.lastCollectedAt
+                  ? "Existem eventos no histórico deste site. Amplie ou altere o período para consultar a atividade já coletada."
+                  : "O dashboard ainda não recebeu eventos reais. Verifique se o site publicado está com a coleta do Vimob configurada."}
               </p>
             </CardContent>
           </Card>
@@ -386,317 +504,348 @@ export function SiteAnalyticsTab() {
 
         {!hasBlockingError && hasData && (
           <>
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-          <MetricCard
-            label="Sessões"
-            value={stats.uniqueSessions}
-            previous={stats.prevSessions ?? stats.prevViews}
-            icon={Users}
-          />
-          <MetricCard
-            label="Páginas vistas"
-            value={stats.totalPages}
-            previous={stats.prevPages}
-            icon={Eye}
-          />
-          <MetricCard
-            label="Conversão"
-            value={detailed?.conversionRate ?? 0}
-            previous={stats.prevConversionRate ?? 0}
-            suffix="%"
-            icon={TrendingUp}
-          />
-          <MetricCard
-            label="Leads do site"
-            value={detailed?.siteLeads ?? 0}
-            previous={stats.prevConversions}
-            icon={MousePointerClick}
-          />
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
-          <Card className="app-card overflow-hidden xl:col-span-8">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between gap-3">
-                <CardTitle className="flex items-center gap-2 text-sm font-normal text-[var(--app-text-primary)]">
-                  <TrendingUp className="h-4 w-4 text-primary" />
-                  Evolução de visitas
-                </CardTitle>
-                <span className="text-xs text-[var(--app-text-tertiary)]">
-                  {stats.totalPages} visualizações
-                </span>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="h-72 min-h-[288px] min-w-[1px]">
-                <ResponsiveContainer
-                  width="100%"
-                  height="100%"
-                  minWidth={1}
-                  minHeight={1}
-                  initialDimension={{ width: 800, height: 256 }}
-                >
-                  <AreaChart
-                    data={chartData}
-                    margin={{ top: 8, right: 12, left: -18, bottom: 0 }}
-                    accessibilityLayer
-                  >
-                    <defs>
-                      <linearGradient
-                        id="siteVisitsGradient"
-                        x1="0"
-                        y1="0"
-                        x2="0"
-                        y2="1"
-                      >
-                        <stop
-                          offset="5%"
-                          stopColor="var(--chart-1)"
-                          stopOpacity={0.24}
-                        />
-                        <stop
-                          offset="95%"
-                          stopColor="var(--chart-1)"
-                          stopOpacity={0}
-                        />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid
-                      vertical={false}
-                      strokeDasharray="3 3"
-                      stroke="var(--app-border)"
-                    />
-                    <XAxis
-                      dataKey="date"
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
-                    />
-                    <YAxis
-                      axisLine={false}
-                      tickLine={false}
-                      allowDecimals={false}
-                      tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
-                    />
-                    <Tooltip
-                      cursor={{
-                        stroke: "var(--muted-foreground)",
-                        strokeWidth: 1,
-                        strokeDasharray: "4 4",
-                      }}
-                      content={<SiteVisitsTooltip />}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="views"
-                      name="Visitas"
-                      stroke="var(--chart-1)"
-                      strokeWidth={2.5}
-                      fill="url(#siteVisitsGradient)"
-                      fillOpacity={1}
-                      dot={false}
-                      activeDot={{
-                        r: 4,
-                        fill: "var(--chart-1)",
-                        stroke: "var(--app-surface-solid)",
-                        strokeWidth: 2,
-                      }}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="app-card xl:col-span-4">
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-sm font-normal text-[var(--app-text-primary)]">
-                <Activity className="h-4 w-4 text-primary" />
-                Qualidade da visita
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-1 px-4 pb-4">
-              <QualityRow
-                icon={Clock3}
-                label="Tempo médio"
-                value={formatDuration(stats.avgDuration)}
+            <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+              <MetricCard
+                label="Sessões"
+                value={stats.uniqueSessions}
+                previous={stats.prevSessions ?? stats.prevViews}
+                icon={Users}
               />
-              <QualityRow
-                icon={PanelsTopLeft}
-                label="Páginas por sessão"
-                value={(detailed?.pagesPerSession ?? 0).toLocaleString("pt-BR")}
+              <MetricCard
+                label="Páginas vistas"
+                value={stats.totalPages}
+                previous={stats.prevPages}
+                icon={Eye}
               />
-              <QualityRow
+              <MetricCard
+                label="Conversão por sessão"
+                value={detailed?.conversionRate ?? 0}
+                previous={stats.prevConversionRate ?? 0}
+                suffix="%"
                 icon={TrendingUp}
-                label="Taxa de rejeição"
-                value={`${detailed?.bounceRate ?? 0}%`}
               />
-              <QualityRow
-                icon={Activity}
-                label="Ativos agora"
-                value={detailed?.liveVisitors ?? 0}
-                accent
+              <MetricCard
+                label="Leads cadastrados pelo site"
+                value={detailed?.siteLeads ?? 0}
+                icon={MousePointerClick}
               />
-            </CardContent>
-          </Card>
-        </div>
+            </div>
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <DistributionDonut
-            title="Aquisição de tráfego"
-            description="Distribuição das sessões por canal de entrada."
-            icon={Megaphone}
-            items={sourceData.filter((item) => item.value > 0)}
-            total={stats.uniqueSessions}
-            totalLabel="Sessões"
-          />
-          <DistributionDonut
-            title="Dispositivos"
-            description="Como os visitantes acessaram o site."
-            icon={PieChartIcon}
-            items={deviceData}
-            total={stats.uniqueSessions}
-            totalLabel="Acessos"
-          />
-        </div>
+            <SiteVisitorOriginsCard
+              locations={journeyQuery.data?.locations ?? []}
+              isPending={!journeyQuery.data && journeyQuery.isPending}
+              isError={!journeyQuery.data && journeyQuery.isError}
+              hasStaleError={Boolean(journeyQuery.data && journeyQuery.isError)}
+              isFetching={journeyQuery.isFetching}
+              onRetry={() => void journeyQuery.refetch()}
+            />
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          {(detailed?.topProperties?.length ?? 0) > 0 && (
-            <Card className="app-card">
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-sm font-normal text-[var(--app-text-primary)]">
-                  <Star className="h-4 w-4 text-primary" />
-                  Imóveis Mais Vistos
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="overflow-x-auto p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-12">#</TableHead>
-                      <TableHead>Código</TableHead>
-                      <TableHead>Título</TableHead>
-                      <TableHead className="text-right">Views</TableHead>
-                      <TableHead className="text-right">Favoritos</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {detailed!.topProperties.map((prop, i) => (
-                      <TableRow key={prop.property_id}>
-                        <TableCell className="font-light text-muted-foreground">
-                          {i + 1}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {prop.code}
-                        </TableCell>
-                        <TableCell className="max-w-[200px] truncate">
-                          {prop.title}
-                        </TableCell>
-                        <TableCell className="text-right font-normal">
-                          {prop.views}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {prop.favorites}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-          )}
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+              <Card className="app-card overflow-hidden xl:col-span-8">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <CardTitle className="flex items-center gap-2 text-sm font-normal text-[var(--app-text-primary)]">
+                      <TrendingUp className="h-4 w-4 text-primary" />
+                      Evolução de páginas vistas
+                    </CardTitle>
+                    <span className="text-xs text-[var(--app-text-tertiary)]">
+                      {stats.totalPages} visualizações
+                    </span>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-72 min-h-[288px] min-w-[1px]">
+                    <ResponsiveContainer
+                      width="100%"
+                      height="100%"
+                      minWidth={1}
+                      minHeight={1}
+                      initialDimension={{ width: 800, height: 256 }}
+                    >
+                      <AreaChart
+                        data={chartData}
+                        margin={{ top: 8, right: 12, left: -18, bottom: 0 }}
+                        accessibilityLayer
+                      >
+                        <defs>
+                          <linearGradient
+                            id="siteVisitsGradient"
+                            x1="0"
+                            y1="0"
+                            x2="0"
+                            y2="1"
+                          >
+                            <stop
+                              offset="5%"
+                              stopColor="var(--chart-1)"
+                              stopOpacity={0.24}
+                            />
+                            <stop
+                              offset="95%"
+                              stopColor="var(--chart-1)"
+                              stopOpacity={0}
+                            />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid
+                          vertical={false}
+                          strokeDasharray="3 3"
+                          stroke="var(--app-border)"
+                        />
+                        <XAxis
+                          dataKey="date"
+                          axisLine={false}
+                          tickLine={false}
+                          tick={{
+                            fontSize: 11,
+                            fill: "var(--muted-foreground)",
+                          }}
+                        />
+                        <YAxis
+                          axisLine={false}
+                          tickLine={false}
+                          allowDecimals={false}
+                          tick={{
+                            fontSize: 11,
+                            fill: "var(--muted-foreground)",
+                          }}
+                        />
+                        <Tooltip
+                          cursor={{
+                            stroke: "var(--muted-foreground)",
+                            strokeWidth: 1,
+                            strokeDasharray: "4 4",
+                          }}
+                          content={<SiteVisitsTooltip />}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="views"
+                          name="Páginas vistas"
+                          stroke="var(--chart-1)"
+                          strokeWidth={2.5}
+                          fill="url(#siteVisitsGradient)"
+                          fillOpacity={1}
+                          dot={false}
+                          activeDot={{
+                            r: 4,
+                            fill: "var(--chart-1)",
+                            stroke: "var(--app-surface-solid)",
+                            strokeWidth: 2,
+                          }}
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </CardContent>
+              </Card>
 
-          {(detailed?.topPages?.length ?? 0) > 0 && (
-            <Card
-              className={`app-card ${(detailed?.topProperties?.length ?? 0) === 0 ? "lg:col-span-2" : ""}`}
-            >
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-sm font-normal text-[var(--app-text-primary)]">
-                  <FileText className="h-4 w-4 text-primary" />
-                  Páginas Mais Acessadas
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-1 px-3 pb-3">
-                {detailed!.topPages.map((page, i) => (
-                  <RankingRow
-                    key={page.page_path}
-                    rank={i + 1}
-                    label={page.page_path}
-                    value={page.views}
-                    valueLabel="views"
-                    href={
-                      getSitePublicPageUrl(siteBaseUrl, page.page_path) ||
-                      undefined
+              <Card className="app-card xl:col-span-4">
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-sm font-normal text-[var(--app-text-primary)]">
+                    <Activity className="h-4 w-4 text-primary" />
+                    Qualidade da visita
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-1 px-4 pb-4">
+                  <QualityRow
+                    icon={Clock3}
+                    label="Tempo médio"
+                    value={
+                      hasDurationMeasurement
+                        ? formatDuration(stats.avgDuration)
+                        : "Sem medição"
                     }
                   />
-                ))}
-              </CardContent>
-            </Card>
-          )}
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          {(detailed?.campaigns?.length ?? 0) > 0 && (
-            <Card
-              className={`app-card ${(detailed?.searchTerms?.length ?? 0) === 0 ? "lg:col-span-2" : ""}`}
-            >
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-normal text-[var(--app-text-primary)]">
-                  Origem e campanhas
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-1 px-3 pb-3">
-                {detailed!.campaigns.map((item, index) => (
-                  <CampaignRow
-                    key={`${item.source}:${item.campaign}`}
-                    rank={index + 1}
-                    source={item.source}
-                    campaign={item.campaign}
-                    sessions={item.sessions}
-                    conversions={item.conversions}
+                  <QualityRow
+                    icon={Activity}
+                    label="Cobertura de duração"
+                    value={`${durationCoverage}%`}
                   />
-                ))}
-              </CardContent>
-            </Card>
-          )}
-          {(detailed?.searchTerms?.length ?? 0) > 0 && (
-            <Card className="app-card">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-normal text-[var(--app-text-primary)]">
-                  Buscas mais realizadas
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="overflow-x-auto p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Busca</TableHead>
-                      <TableHead className="text-right">Total</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {detailed!.searchTerms.map((item) => (
-                      <TableRow key={item.term}>
-                        <TableCell className="max-w-[280px] truncate">
-                          {item.term}
-                        </TableCell>
-                        <TableCell className="text-right font-normal">
-                          {item.searches}
-                        </TableCell>
-                      </TableRow>
+                  <QualityRow
+                    icon={PanelsTopLeft}
+                    label="Páginas por sessão"
+                    value={(detailed?.pagesPerSession ?? 0).toLocaleString(
+                      "pt-BR",
+                    )}
+                  />
+                  <QualityRow
+                    icon={TrendingUp}
+                    label="Taxa de rejeição"
+                    value={`${detailed?.bounceRate ?? 0}%`}
+                  />
+                  <QualityRow
+                    icon={Activity}
+                    label="Ativos agora"
+                    value={detailed?.liveVisitors ?? 0}
+                    accent
+                  />
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <DistributionDonut
+                title="Aquisição de tráfego"
+                description="Distribuição das sessões por canal de entrada."
+                icon={Megaphone}
+                items={sourceData.filter((item) => item.value > 0)}
+                total={stats.uniqueSessions}
+                totalLabel="Sessões"
+              />
+              <DistributionDonut
+                title="Dispositivos"
+                description="Como os visitantes acessaram o site."
+                icon={PieChartIcon}
+                items={deviceData}
+                total={stats.uniqueSessions}
+                totalLabel="Acessos"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              {(detailed?.topProperties?.length ?? 0) > 0 && (
+                <Card className="app-card">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-sm font-normal text-[var(--app-text-primary)]">
+                      <Star className="h-4 w-4 text-primary" />
+                      Imóveis Mais Vistos
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="overflow-x-auto p-0">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-12">#</TableHead>
+                          <TableHead>Código</TableHead>
+                          <TableHead>Título</TableHead>
+                          <TableHead className="text-right">Views</TableHead>
+                          <TableHead className="text-right">
+                            Favoritos
+                          </TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {detailed!.topProperties.map((prop, i) => (
+                          <TableRow key={prop.property_id}>
+                            <TableCell className="font-light text-muted-foreground">
+                              {i + 1}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {prop.code}
+                            </TableCell>
+                            <TableCell className="max-w-[200px] truncate">
+                              {prop.title}
+                            </TableCell>
+                            <TableCell className="text-right font-normal">
+                              {prop.views}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {prop.favorites}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              )}
+
+              {(detailed?.topPages?.length ?? 0) > 0 && (
+                <Card
+                  className={`app-card ${(detailed?.topProperties?.length ?? 0) === 0 ? "lg:col-span-2" : ""}`}
+                >
+                  <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-sm font-normal text-[var(--app-text-primary)]">
+                      <FileText className="h-4 w-4 text-primary" />
+                      Páginas Mais Acessadas
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-1 px-3 pb-3">
+                    {detailed!.topPages.map((page, i) => (
+                      <RankingRow
+                        key={page.page_path}
+                        rank={i + 1}
+                        label={page.page_path}
+                        value={page.views}
+                        valueLabel="views"
+                        href={
+                          getSitePublicPageUrl(siteBaseUrl, page.page_path) ||
+                          undefined
+                        }
+                      />
                     ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-          )}
-        </div>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              {(detailed?.campaigns?.length ?? 0) > 0 && (
+                <Card
+                  className={`app-card ${(detailed?.searchTerms?.length ?? 0) === 0 ? "lg:col-span-2" : ""}`}
+                >
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-normal text-[var(--app-text-primary)]">
+                      Origem e campanhas
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-1 px-3 pb-3">
+                    {detailed!.campaigns.map((item, index) => (
+                      <CampaignRow
+                        key={`${item.source_type || "unknown"}:${item.source}:${item.campaign}`}
+                        rank={index + 1}
+                        source={item.source}
+                        campaign={item.campaign}
+                        sourceType={item.source_type}
+                        sessions={item.sessions}
+                        conversions={item.conversions}
+                      />
+                    ))}
+                  </CardContent>
+                </Card>
+              )}
+              {(detailed?.searchTerms?.length ?? 0) > 0 && (
+                <Card className="app-card">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-normal text-[var(--app-text-primary)]">
+                      Buscas mais realizadas
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="overflow-x-auto p-0">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Busca</TableHead>
+                          <TableHead className="text-right">Total</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {detailed!.searchTerms.map((item) => (
+                          <TableRow key={item.term}>
+                            <TableCell className="max-w-[280px] truncate">
+                              {item.term}
+                            </TableCell>
+                            <TableCell className="text-right font-normal">
+                              {item.searches}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
           </>
         )}
       </TabsContent>
 
       <TabsContent value="journeys" className="mt-0 min-w-0 space-y-4">
-        <LeadJourneyDashboard dateFrom={dateFrom} dateTo={dateTo} />
+        <LeadJourneyDashboard
+          key={`${dateFrom.toISOString()}:${dateTo.toISOString()}`}
+          analyticsQuery={journeyQuery}
+        />
       </TabsContent>
     </Tabs>
   );
@@ -724,7 +873,7 @@ function SiteVisitsTooltip({
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2">
           <span className="h-2 w-2 rounded-full bg-primary" />
-          <span className="text-xs text-muted-foreground">Visitas</span>
+          <span className="text-xs text-muted-foreground">Páginas vistas</span>
         </div>
         <span className="text-xs font-normal tabular-nums text-foreground">
           {value}
@@ -743,7 +892,7 @@ function MetricCard({
 }: {
   label: string;
   value: number;
-  previous: number;
+  previous?: number;
   suffix?: string;
   icon: typeof Users;
 }) {
@@ -756,18 +905,29 @@ function MetricCard({
               {label}
             </p>
             <div className="mt-2 flex items-center gap-2">
-              <span className="text-2xl font-normal leading-none text-[var(--app-text-primary)]">
+              <span
+                data-testid="metric-value"
+                className="text-2xl font-normal leading-none text-[var(--app-text-primary)]"
+              >
                 {value}
                 {suffix}
               </span>
-              {getTrendIcon(value, previous)}
+              {typeof previous === "number"
+                ? getTrendIcon(value, previous)
+                : null}
             </div>
-            <p
-              className={`mt-2 text-xs font-light ${getTrendColor(value, previous)}`}
-            >
-              Anterior: {previous}
-              {suffix}
-            </p>
+            {typeof previous === "number" ? (
+              <p
+                className={`mt-2 text-xs font-light ${getTrendColor(value, previous)}`}
+              >
+                Anterior: {previous}
+                {suffix}
+              </p>
+            ) : (
+              <p className="mt-2 text-xs font-light text-[var(--app-text-tertiary)]">
+                Cadastros únicos no período
+              </p>
+            )}
           </div>
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] bg-primary/10">
             <Icon className="h-4 w-4 text-primary" />
@@ -996,12 +1156,14 @@ function CampaignRow({
   rank,
   source,
   campaign,
+  sourceType,
   sessions,
   conversions,
 }: {
   rank: number;
   source: string;
   campaign: string;
+  sourceType?: "direct" | "search" | "social" | "campaign" | "referral";
   sessions: number;
   conversions: number;
 }) {
@@ -1016,6 +1178,7 @@ function CampaignRow({
         </p>
         <p className="mt-0.5 truncate text-[10px] text-[var(--app-text-tertiary)]">
           {source || "Origem não informada"}
+          {sourceType ? ` · ${getAcquisitionSourceTypeLabel(sourceType)}` : ""}
         </p>
       </div>
       <div className="flex shrink-0 gap-3 text-right">
@@ -1027,11 +1190,30 @@ function CampaignRow({
         </div>
         <div>
           <p className="text-sm font-normal text-primary">{conversions}</p>
-          <p className="text-[9px] text-[var(--app-text-tertiary)]">leads</p>
+          <p className="text-[9px] text-[var(--app-text-tertiary)]">
+            conversões
+          </p>
         </div>
       </div>
     </div>
   );
+}
+
+function getAcquisitionSourceTypeLabel(
+  sourceType: "direct" | "search" | "social" | "campaign" | "referral",
+) {
+  switch (sourceType) {
+    case "search":
+      return "Busca orgânica";
+    case "social":
+      return "Social";
+    case "campaign":
+      return "Campanha";
+    case "referral":
+      return "Referência";
+    default:
+      return "Direto";
+  }
 }
 
 function PercentTooltip({

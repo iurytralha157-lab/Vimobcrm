@@ -7,7 +7,7 @@ import (
 )
 
 func TestInvitationRoutesProtectTokensAndAllowIdentityBootstrap(t *testing.T) {
-	source, err := os.ReadFile("app.go")
+	source, err := os.ReadFile("routes.go")
 	if err != nil {
 		t.Fatalf("read app routes: %v", err)
 	}

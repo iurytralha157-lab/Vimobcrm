@@ -15,8 +15,8 @@ const attachmentQueryKey = (organizationId: string | null, leadId: string) =>
   ['lead-attachments', organizationId || 'none', leadId] as const;
 
 export function useLeadAttachments(leadId: string | null) {
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || null;
+  const { activeOrganization, organization, profile } = useAuth();
+  const organizationId = activeOrganization.organizationId || null;
 
   return useQuery({
     queryKey: attachmentQueryKey(organizationId, leadId || 'none'),
@@ -30,8 +30,8 @@ export function useLeadAttachments(leadId: string | null) {
 
 export function useCreateLeadAttachment() {
   const queryClient = useQueryClient();
-  const { user, organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || null;
+  const { activeOrganization, user, organization, profile } = useAuth();
+  const organizationId = activeOrganization.organizationId || null;
 
   return useMutation({
     mutationFn: async (attachment: {
@@ -77,8 +77,8 @@ export function useCreateLeadAttachment() {
 
 export function useUploadLeadAttachment() {
   const queryClient = useQueryClient();
-  const { user, organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || null;
+  const { activeOrganization, user, organization, profile } = useAuth();
+  const organizationId = activeOrganization.organizationId || null;
 
   return useMutation({
     mutationFn: async ({ leadId, file }: { leadId: string; file: File }) => {

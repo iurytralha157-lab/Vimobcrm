@@ -1,11 +1,11 @@
 package whatsapp
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -93,6 +93,7 @@ const nativeLegacyNonManagedConversationRecoveryQuery = `
 
 var errNativeWebhookMessageLikeUnsupported = errors.New("native WhatsApp processor rejected an unsupported message-like event")
 var errNativeEvolutionLeadPhoneAmbiguous = errors.New("native WhatsApp lead phone matches multiple leads")
+var errNativeEvolutionAliasLeadAmbiguous = errors.New("native WhatsApp identity aliases match multiple leads")
 
 func normalizeEvolutionWebhookProcessorMode(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
@@ -108,6 +109,24 @@ func normalizeEvolutionWebhookProcessorMode(value string) string {
 }
 
 func (repo Repository) dispatchEvolutionWebhook(ctx context.Context, item pendingEvolutionWebhook) error {
+	// History-sync control envelopes are not CRM messages. A provider version
+	// can still emit one during reconnect even when the session subscription is
+	// live-only; acknowledge it here so it cannot consume retries or reach Edge.
+	if evolutionWebhookIsHistorySyncControl(item) {
+		return nil
+	}
+	// Drain group-only rows that predate the ingress filter without creating
+	// conversations or calling Edge. Mixed historical rows are filtered before
+	// either processor sees them, preserving only their direct messages.
+	filteredItem, groupOnly, err := prepareEvolutionWebhookWithoutGroupMessages(item)
+	if err != nil {
+		return err
+	}
+	if groupOnly {
+		return nil
+	}
+	item = filteredItem
+
 	mode := evolutionWebhookProcessorModeForSession(
 		repo.functions.webhookProcessorMode,
 		repo.functions.webhookRolloutSessionIDs,
@@ -136,6 +155,165 @@ func (repo Repository) dispatchEvolutionWebhook(ctx context.Context, item pendin
 		return repo.forwardEvolutionWebhook(ctx, item)
 	}
 	return errors.New("native WhatsApp processor does not support this event")
+}
+
+func evolutionWebhookIsHistorySyncControl(item pendingEvolutionWebhook) bool {
+	payload, err := decodeNativeEvolutionPayload(item.Payload)
+	if err != nil {
+		return false
+	}
+	if compactEvolutionWebhookControlName(nativeEvolutionEventName(payload, item.EventType)) == "historysync" {
+		return true
+	}
+	messages := extractNativeEvolutionMessages(payload)
+	if len(messages) == 0 {
+		return false
+	}
+	for _, message := range messages {
+		if !nativeEvolutionMessageIsHistorySyncControl(message) {
+			return false
+		}
+	}
+	return true
+}
+
+func prepareEvolutionWebhookWithoutGroupMessages(item pendingEvolutionWebhook) (pendingEvolutionWebhook, bool, error) {
+	payload, err := decodeNativeEvolutionPayload(item.Payload)
+	if err != nil {
+		// Preserve the existing invalid-payload path; its processor will return
+		// the canonical decode error and keep the durable retry semantics.
+		return item, false, nil
+	}
+	messages := withoutNativeEvolutionHistorySyncControls(extractNativeEvolutionMessages(payload))
+	if len(messages) == 0 {
+		return item, false, nil
+	}
+	groupCount := 0
+	for _, message := range messages {
+		if message.IsGroup {
+			groupCount++
+		}
+	}
+	if groupCount == 0 {
+		return item, false, nil
+	}
+	if groupCount == len(messages) {
+		return item, true, nil
+	}
+	if !filterNativeEvolutionGroupMessageLists(payload) {
+		return item, false, fmt.Errorf("mixed Evolution webhook contains a group message that cannot be filtered safely")
+	}
+	filteredPayload, err := json.Marshal(payload)
+	if err != nil {
+		return item, false, fmt.Errorf("filter mixed Evolution group webhook: %w", err)
+	}
+	filteredDecoded, err := decodeNativeEvolutionPayload(filteredPayload)
+	if err != nil {
+		return item, false, fmt.Errorf("verify mixed Evolution group webhook: %w", err)
+	}
+	remaining := withoutNativeEvolutionHistorySyncControls(extractNativeEvolutionMessages(filteredDecoded))
+	if len(remaining) == 0 {
+		return item, false, fmt.Errorf("mixed Evolution webhook lost its direct message while filtering groups")
+	}
+	for _, message := range remaining {
+		if message.IsGroup {
+			return item, false, fmt.Errorf("mixed Evolution webhook retained a group message after filtering")
+		}
+	}
+	item.Payload = filteredPayload
+	return item, false, nil
+}
+
+func filterNativeEvolutionGroupMessageLists(payload map[string]any) bool {
+	containers := []map[string]any{payload}
+	if data := mapFromAny(nativeFirstValue(payload, "data", "Data")); len(data) > 0 {
+		containers = append(containers, data)
+	}
+	changed := false
+	for _, container := range containers {
+		for _, key := range []string{"messages", "Messages"} {
+			values, ok := container[key].([]any)
+			if !ok {
+				continue
+			}
+			filtered := make([]any, 0, len(values))
+			for _, value := range values {
+				raw, ok := value.(map[string]any)
+				if !ok {
+					filtered = append(filtered, value)
+					continue
+				}
+				message, ok := normalizeNativeEvolutionMessage(raw)
+				if ok && message.IsGroup {
+					changed = true
+					continue
+				}
+				filtered = append(filtered, value)
+			}
+			container[key] = filtered
+		}
+	}
+	return changed
+}
+
+func nativeEvolutionMessageIsHistorySyncControl(message nativeEvolutionMessage) bool {
+	messageNode := nativeFirstMap(message.Raw, "message", "Message")
+	if len(messageNode) == 0 {
+		messageNode = message.Raw
+	}
+	protocol := nativeFirstMap(messageNode, "protocolMessage", "ProtocolMessage")
+	protocolType := compactEvolutionWebhookControlName(firstString(
+		protocol,
+		"type", "Type", "protocolType", "protocol_type",
+	))
+	return protocolType == "historysync" || protocolType == "historysyncnotification" || protocolType == "5"
+}
+
+func withoutNativeEvolutionHistorySyncControls(messages []nativeEvolutionMessage) []nativeEvolutionMessage {
+	filtered := make([]nativeEvolutionMessage, 0, len(messages))
+	for _, message := range messages {
+		if nativeEvolutionMessageIsHistorySyncControl(message) {
+			continue
+		}
+		filtered = append(filtered, message)
+	}
+	return filtered
+}
+
+func withoutNativeEvolutionGroupMessages(messages []nativeEvolutionMessage) []nativeEvolutionMessage {
+	filtered := make([]nativeEvolutionMessage, 0, len(messages))
+	for _, message := range messages {
+		if message.IsGroup {
+			continue
+		}
+		filtered = append(filtered, message)
+	}
+	return filtered
+}
+
+func nativeEvolutionMessageProcessingOrder(messages []nativeEvolutionMessage) []nativeEvolutionMessage {
+	if len(messages) < 2 {
+		return messages
+	}
+
+	ordered := make([]nativeEvolutionMessage, 0, len(messages))
+	for _, message := range messages {
+		if message.IsReaction || message.IsDeletion {
+			continue
+		}
+		ordered = append(ordered, message)
+	}
+	for _, message := range messages {
+		if !message.IsReaction && !message.IsDeletion {
+			continue
+		}
+		ordered = append(ordered, message)
+	}
+	return ordered
+}
+
+func compactEvolutionWebhookControlName(value string) string {
+	return strings.NewReplacer(".", "", "_", "", "-", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(value)))
 }
 
 func nativeFallbackRequiresNativeHandling(item pendingEvolutionWebhook) bool {
@@ -219,6 +397,11 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 
 	messages := extractNativeEvolutionMessages(payload)
 	if len(messages) > 0 {
+		messages = withoutNativeEvolutionHistorySyncControls(messages)
+		messages = withoutNativeEvolutionGroupMessages(messages)
+		if len(messages) == 0 {
+			return true, nil
+		}
 		for _, message := range messages {
 			// Unsupported protocol shapes remain in the durable inbox and can
 			// never fall back to Edge. Campaign referrals supported by the native
@@ -233,27 +416,13 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 				return false, nil
 			}
 		}
-		// Persist the conversation and an idempotent message placeholder before
-		// any network I/O. Media recovery may be retried or eventually dead-lettered,
-		// but the inbound message must remain visible in the canonical history.
+		// Persist the conversation, canonical message and media job without any
+		// provider I/O. The separately leased media worker applies type/size policy
+		// through a bounded pool with per-session serialization.
 		if err := repo.processNativeEvolutionMessages(ctx, item, messages); err != nil {
 			return true, err
 		}
-		hasMedia := nativeEvolutionMessagesContainMedia(messages)
-		if !hasMedia {
-			return true, nil
-		}
-		mediaReady, err := repo.prepareNativeEvolutionMedia(ctx, item, messages)
-		if err != nil {
-			return true, err
-		}
-		if !mediaReady {
-			return false, nil
-		}
-		// Replay the same provider message ids after durable Storage succeeds.
-		// insertNativeEvolutionMessage updates the placeholders in place and does
-		// not increment unread counters for an already persisted message.
-		return true, repo.processNativeEvolutionMessages(ctx, item, messages)
+		return true, nil
 	}
 
 	qrCode := ""
@@ -331,6 +500,13 @@ func (repo Repository) processEvolutionWebhookNative(ctx context.Context, item p
 	if err := tx.Commit(ctx); err != nil {
 		return true, err
 	}
+	if connectionRecognized && connectionStatus == "connected" {
+		// Offline outbox/media rows are deliberately skipped by their hot claims.
+		// Wake both workers immediately when the signed provider event makes the
+		// session eligible again instead of waiting for a polling interval.
+		wakeWhatsAppOutboxWorker()
+		wakeWhatsAppMediaWorker()
+	}
 	return true, nil
 }
 
@@ -343,71 +519,12 @@ func nativeEvolutionMessagesContainMedia(messages []nativeEvolutionMessage) bool
 	return false
 }
 
-func (repo Repository) prepareNativeEvolutionMedia(ctx context.Context, item pendingEvolutionWebhook, messages []nativeEvolutionMessage) (bool, error) {
-	hasMedia := nativeEvolutionMessagesContainMedia(messages)
-	if hasMedia {
-		var scoped bool
-		if err := repo.db.Pool().QueryRow(ctx, `
-			select exists (
-			  select 1 from public.whatsapp_sessions
-			  where organization_id = $1::uuid and id = $2::uuid
-			    and provider = 'evolution_go'
-			    and coalesce(is_active, true) = true
-			    and lower(btrim(coalesce(status, ''))) not in ('deleted', 'disabled')
-			)
-		`, item.OrganizationID, item.SessionID).Scan(&scoped); err != nil {
-			return true, err
-		}
-		if !scoped {
-			return true, ErrSessionNotFound
-		}
-	}
-	for index := range messages {
-		message := &messages[index]
-		if !nativeIsMediaType(message.MessageType) {
-			continue
-		}
-		// Do not acknowledge a media event until its bytes are durably stored.
-		if repo.storage.projectURL == "" || repo.storage.apiKey == "" {
-			return true, fmt.Errorf("%w: WhatsApp media Storage is not configured", ErrProviderFailed)
-		}
-
-		var recovered recoveredWhatsAppMedia
-		var err error
-		if message.MediaBase64 != "" {
-			recovered.bytes, err = decodeFlexibleBase64Media(message.MediaBase64)
-			if err == nil {
-				recovered.contentType = firstNonEmpty(message.MediaMimeType, detectWhatsAppMediaMimeType(recovered.bytes), fallbackWhatsAppMediaMimeType(message.MessageType))
-				recovered.source = "webhook_base64"
-			}
-		} else if message.MediaURL != "" {
-			recovered, err = repo.downloadWhatsAppMediaURL(ctx, message.MediaURL)
-		} else {
-			recovered, err = repo.downloadNativeEvolutionMedia(ctx, item, *message)
-		}
-		if err != nil {
-			return true, err
-		}
-
-		contentType := firstNonEmpty(recovered.contentType, message.MediaMimeType, fallbackWhatsAppMediaMimeType(message.MessageType))
-		objectPath := fmt.Sprintf(
-			"orgs/%s/sessions/%s/incoming/%s.%s",
-			item.OrganizationID,
-			item.SessionID,
-			sanitizeWhatsAppMediaObjectPart(message.ProviderMessageID),
-			mediaExtension(contentType),
-		)
-		if err := repo.storage.upload(ctx, whatsappMediaBucket, objectPath, contentType, bytes.NewReader(recovered.bytes), true); err != nil {
-			return true, err
-		}
-		message.MediaStoragePath = objectPath
-		message.MediaMimeType = contentType
-		message.MediaSize = int64(len(recovered.bytes))
-	}
-	return true, nil
-}
-
-func (repo Repository) downloadNativeEvolutionMedia(ctx context.Context, item pendingEvolutionWebhook, message nativeEvolutionMessage) (recoveredWhatsAppMedia, error) {
+func (repo Repository) downloadNativeEvolutionMedia(
+	ctx context.Context,
+	item pendingEvolutionWebhook,
+	message nativeEvolutionMessage,
+	maxDecodedBytes int64,
+) (recoveredWhatsAppMedia, error) {
 	providerMessage, err := nativeEvolutionProviderMessage(message)
 	if err != nil {
 		return recoveredWhatsAppMedia{}, err
@@ -422,19 +539,37 @@ func (repo Repository) downloadNativeEvolutionMedia(ctx context.Context, item pe
 		"body":            body,
 	}
 
-	response, err := repo.functions.invokeEvolutionDirect(ctx, "message.downloadMedia", payload)
+	responseLimit := evolutionMediaResponseMaxBytes(maxDecodedBytes)
+	response, err := repo.functions.invokeEvolutionDirectWithResponseLimit(
+		ctx,
+		"message.downloadMedia",
+		payload,
+		responseLimit,
+	)
 	if err != nil {
 		return recoveredWhatsAppMedia{}, err
 	}
 	status := nativeEvolutionResponseStatus(response)
 	if !nativeEvolutionResponseOK(response) && (status == 404 || status == 405) {
-		response, err = repo.functions.invokeEvolutionDirect(ctx, "message.downloadImage", payload)
+		response, err = repo.functions.invokeEvolutionDirectWithResponseLimit(
+			ctx,
+			"message.downloadImage",
+			payload,
+			responseLimit,
+		)
 		if err != nil {
 			return recoveredWhatsAppMedia{}, err
 		}
 	}
 	if !nativeEvolutionResponseOK(response) {
-		return recoveredWhatsAppMedia{}, fmt.Errorf("%w: Evolution Go media recovery failed with status %d", ErrProviderFailed, nativeEvolutionResponseStatus(response))
+		if message := providerErrorMessage(response, ""); isAuthoritativeEvolutionStatusDisconnect(message) {
+			return recoveredWhatsAppMedia{}, fmt.Errorf(
+				"%w: %s",
+				errWhatsAppMediaProviderDisconnected,
+				message,
+			)
+		}
+		return recoveredWhatsAppMedia{}, nativeEvolutionMediaRejection(nativeEvolutionResponseStatus(response))
 	}
 
 	encoded := firstString(response,
@@ -463,6 +598,17 @@ func (repo Repository) downloadNativeEvolutionMedia(ctx context.Context, item pe
 		contentType: firstNonEmpty(contentType, message.MediaMimeType, detectWhatsAppMediaMimeType(decoded), fallbackWhatsAppMediaMimeType(message.MessageType)),
 		source:      "evolution_go_download",
 	}, nil
+}
+
+func nativeEvolutionMediaRejection(status int64) error {
+	if status == http.StatusRequestEntityTooLarge {
+		return fmt.Errorf(
+			"%w: %w: Evolution Go rejected media above the configured size",
+			ErrProviderFailed,
+			errWhatsAppMediaTooLarge,
+		)
+	}
+	return fmt.Errorf("%w: Evolution Go media recovery failed with status %d", ErrProviderFailed, status)
 }
 
 func nativeEvolutionProviderMessage(message nativeEvolutionMessage) (map[string]any, error) {
@@ -585,7 +731,9 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 	}
 
 	autoReplyInputs := []autoReplyInput{}
-	for _, message := range messages {
+	leadIDsToPublish := map[string]struct{}{}
+	mediaQueued := false
+	for _, message := range nativeEvolutionMessageProcessingOrder(messages) {
 		if message.FromMe {
 			// Some provider status endpoints expose the profile name in the field
 			// historically treated as a phone. A signed outbound webhook is a
@@ -614,6 +762,16 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 				return err
 			}
 			continue
+		}
+		if nativeIsMediaType(message.MessageType) && message.MediaStoragePath == "" {
+			policy := automaticWhatsAppMediaPolicy(message.MessageType, message.MediaMimeType, message.MediaSize)
+			if policy.automatic {
+				message.MediaStatus = "pending"
+				message.MediaError = ""
+			} else {
+				message.MediaStatus = "failed"
+				message.MediaError = policy.errorCode
+			}
 		}
 
 		if _, err := tx.Exec(ctx, `
@@ -663,16 +821,31 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 					autoReplyInputs = append(autoReplyInputs, recoveredInput)
 				}
 			}
+			if leadID := strings.TrimSpace(rule.ManagedProviderEventLeadID); leadID != "" {
+				leadIDsToPublish[leadID] = struct{}{}
+			}
 			continue
 		}
 		conversation, err := ensureNativeEvolutionConversation(ctx, tx, session, message, rule)
 		if err != nil {
 			return err
 		}
+		if message.FromMe {
+			// The outbox finalizer always locks outbox before messages. Preserve that
+			// order before insertNativeEvolutionMessage can lock a duplicate row.
+			if err := lockNativeOutboundOutbox(ctx, tx, session, message.ProviderMessageID); err != nil {
+				return err
+			}
+		}
 		inserted, effectiveConversationID, messageRowID, err := insertNativeEvolutionMessage(ctx, tx, session, conversation, message)
 		if err != nil {
 			return err
 		}
+		queued, err := enqueueNativeEvolutionMediaJob(ctx, tx, session, effectiveConversationID, message, messageRowID)
+		if err != nil {
+			return err
+		}
+		mediaQueued = mediaQueued || queued
 		if message.FromMe {
 			if err := reconcileNativeOutboundOutbox(ctx, tx, session, message, messageRowID); err != nil {
 				return err
@@ -689,6 +862,9 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 				if err := applyNativeInboundBusinessEffects(ctx, tx, session, conversation, message, messageRowID, rule); err != nil {
 					return err
 				}
+				if strings.TrimSpace(conversation.LeadID) != "" {
+					leadIDsToPublish[conversation.LeadID] = struct{}{}
+				}
 			}
 			if applyInboundEffects && conversation.LeadID != "" && boolFromObject(session.AdvancedSettings, "ai_auto_reply_enabled") && strings.TrimSpace(message.Content) != "" {
 				autoReplyInputs = append(autoReplyInputs, autoReplyInput{
@@ -703,6 +879,10 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
+	}
+	repo.publishNativeLeadChanges(session.OrganizationID, leadIDsToPublish)
+	if mediaQueued {
+		wakeWhatsAppMediaWorker()
 	}
 	for _, input := range autoReplyInputs {
 		if _, err := repo.enqueueAutoReplyJob(ctx, input); err != nil {
@@ -1173,6 +1353,98 @@ func reconcileNativeOutboundOutbox(
 	return nil
 }
 
+func lockNativeOutboundOutbox(
+	ctx context.Context,
+	tx pgx.Tx,
+	session nativeEvolutionSession,
+	providerMessageID string,
+) error {
+	providerMessageID = strings.TrimSpace(providerMessageID)
+	if providerMessageID == "" {
+		return nil
+	}
+	rows, err := tx.Query(ctx, `
+		select id::text
+		from public.whatsapp_outbox
+		where organization_id = $1::uuid
+		  and session_id = $2::uuid
+		  and (provider_message_id = $3 or client_message_id = $3)
+		order by id
+		for update
+	`, session.OrganizationID, session.ID, providerMessageID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ignoredID string
+		if err := rows.Scan(&ignoredID); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func lockNativeStatusTransportRows(
+	ctx context.Context,
+	tx pgx.Tx,
+	session nativeEvolutionSession,
+	messageIDs []string,
+) error {
+	messageIDs = uniqueStrings(messageIDs...)
+	if len(messageIDs) == 0 {
+		return nil
+	}
+
+	outboxRows, err := tx.Query(ctx, `
+		select id::text
+		from public.whatsapp_outbox
+		where organization_id = $1::uuid and session_id = $2::uuid
+		  and (provider_message_id = any($3::text[]) or client_message_id = any($3::text[]))
+		order by id
+		for update
+	`, session.OrganizationID, session.ID, messageIDs)
+	if err != nil {
+		return err
+	}
+	for outboxRows.Next() {
+		var ignoredID string
+		if err := outboxRows.Scan(&ignoredID); err != nil {
+			outboxRows.Close()
+			return err
+		}
+	}
+	if err := outboxRows.Err(); err != nil {
+		outboxRows.Close()
+		return err
+	}
+	outboxRows.Close()
+
+	messageRows, err := tx.Query(ctx, `
+		select id::text
+		from public.whatsapp_messages
+		where organization_id = $1::uuid and session_id = $2::uuid
+		  and (
+		    message_id = any($3::text[])
+		    or provider_message_id = any($3::text[])
+		    or client_message_id = any($3::text[])
+		  )
+		order by id
+		for update
+	`, session.OrganizationID, session.ID, messageIDs)
+	if err != nil {
+		return err
+	}
+	defer messageRows.Close()
+	for messageRows.Next() {
+		var ignoredID string
+		if err := messageRows.Scan(&ignoredID); err != nil {
+			return err
+		}
+	}
+	return messageRows.Err()
+}
+
 func loadNativeEvolutionSession(ctx context.Context, tx pgx.Tx, item pendingEvolutionWebhook) (nativeEvolutionSession, error) {
 	var session nativeEvolutionSession
 	var advancedSettings string
@@ -1263,15 +1535,21 @@ func ensureNativeEvolutionConversation(ctx context.Context, tx pgx.Tx, session n
 				return nativeEvolutionConversation{}, err
 			}
 		} else {
-			lead, err = findSingleNativeEvolutionLead(ctx, tx, session.OrganizationID, message)
-			if errors.Is(err, errNativeEvolutionLeadPhoneAmbiguous) && !message.IsCTWAAd {
-				// Preserve ordinary chat delivery without guessing which historical
-				// duplicate owns the phone. CTWA creation still fails closed below.
-				lead = nativeEvolutionLead{}
-				err = nil
-			}
+			lead, err = findSingleNativeEvolutionAliasLead(ctx, tx, session, aliases)
 			if err != nil {
 				return nativeEvolutionConversation{}, err
+			}
+			if lead.ID == "" {
+				lead, err = findSingleNativeEvolutionLead(ctx, tx, session.OrganizationID, message)
+				if errors.Is(err, errNativeEvolutionLeadPhoneAmbiguous) && !message.IsCTWAAd {
+					// Preserve ordinary chat delivery without guessing which historical
+					// duplicate owns the phone. CTWA creation still fails closed below.
+					lead = nativeEvolutionLead{}
+					err = nil
+				}
+				if err != nil {
+					return nativeEvolutionConversation{}, err
+				}
 			}
 			if lead.ID == "" && !message.FromMe && message.IsCTWAAd {
 				lead, err = createAuthorizedNativeLead(ctx, tx, session, message, rule)
@@ -1298,7 +1576,7 @@ func ensureNativeEvolutionConversation(ctx context.Context, tx pgx.Tx, session n
 				$1::uuid, $2::uuid, nullif($3, '')::uuid, nullif($4, '')::uuid, $5,
 				nullif($6, ''), nullif($7, ''), $8, 0, '{"source":"evolution_go_native"}'::jsonb
 			)
-			on conflict (organization_id, session_id, remote_jid)
+			on conflict (session_id, remote_jid)
 			do update set
 				deleted_at = null,
 				lead_id = coalesce(whatsapp_conversations.lead_id, excluded.lead_id),
@@ -1651,6 +1929,13 @@ func mergeNativeEvolutionConversation(
 	}
 
 	if _, err := tx.Exec(ctx, `
+		update public.whatsapp_outbox
+		set conversation_id = $4::uuid, recipient_jid = $5, updated_at = now()
+		where organization_id = $1::uuid and session_id = $2::uuid and conversation_id = $3::uuid
+	`, session.OrganizationID, session.ID, source.ID, target.ID, target.RemoteJID); err != nil {
+		return nativeEvolutionConversation{}, err
+	}
+	if _, err := tx.Exec(ctx, `
 		update public.whatsapp_messages
 		set conversation_id = $4::uuid,
 		    remote_jid = case when remote_jid is null or remote_jid = $3 then $5 else remote_jid end,
@@ -1658,13 +1943,6 @@ func mergeNativeEvolutionConversation(
 		    updated_at = now()
 		where organization_id = $1::uuid and session_id = $2::uuid and conversation_id = $7::uuid
 	`, session.OrganizationID, session.ID, source.RemoteJID, target.ID, target.RemoteJID, desiredLeadID, source.ID); err != nil {
-		return nativeEvolutionConversation{}, err
-	}
-	if _, err := tx.Exec(ctx, `
-		update public.whatsapp_outbox
-		set conversation_id = $4::uuid, recipient_jid = $5, updated_at = now()
-		where organization_id = $1::uuid and session_id = $2::uuid and conversation_id = $3::uuid
-	`, session.OrganizationID, session.ID, source.ID, target.ID, target.RemoteJID); err != nil {
 		return nativeEvolutionConversation{}, err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -1774,6 +2052,59 @@ func mergeNativeEvolutionConversation(
 	}
 	target.LeadID = desiredLeadID
 	return target, nil
+}
+
+func findSingleNativeEvolutionAliasLead(
+	ctx context.Context,
+	tx pgx.Tx,
+	session nativeEvolutionSession,
+	aliases []string,
+) (nativeEvolutionLead, error) {
+	aliases = uniqueStrings(aliases...)
+	if len(aliases) == 0 {
+		return nativeEvolutionLead{}, nil
+	}
+	rows, err := tx.Query(ctx, `
+		select distinct alias.lead_id::text
+		from public.whatsapp_contact_identity_aliases alias
+		where alias.organization_id = $1::uuid
+		  and alias.session_id = $2::uuid
+		  and alias.alias_jid = any($3::text[])
+		  and alias.lead_id is not null
+		order by alias.lead_id::text
+		limit 2
+	`, session.OrganizationID, session.ID, aliases)
+	if err != nil {
+		return nativeEvolutionLead{}, err
+	}
+	defer rows.Close()
+	leadIDs := []string{}
+	for rows.Next() {
+		var leadID string
+		if err := rows.Scan(&leadID); err != nil {
+			return nativeEvolutionLead{}, err
+		}
+		leadIDs = append(leadIDs, leadID)
+	}
+	if err := rows.Err(); err != nil {
+		return nativeEvolutionLead{}, err
+	}
+	leadID, err := nativeSingleEvolutionAliasLeadID(leadIDs)
+	if err != nil || leadID == "" {
+		return nativeEvolutionLead{}, err
+	}
+	return findScopedNativeEvolutionLeadByID(ctx, tx, session.OrganizationID, leadID)
+}
+
+func nativeSingleEvolutionAliasLeadID(leadIDs []string) (string, error) {
+	switch normalized := uniqueStrings(leadIDs...); len(normalized) {
+	case 0:
+		return "", nil
+	case 1:
+		return normalized[0], nil
+	default:
+		return "", errNativeEvolutionAliasLeadAmbiguous
+	}
 }
 
 func findSingleNativeEvolutionLead(ctx context.Context, tx pgx.Tx, organizationID string, message nativeEvolutionMessage) (nativeEvolutionLead, error) {
@@ -2049,19 +2380,21 @@ func insertNativeEvolutionMessage(ctx context.Context, tx pgx.Tx, session native
 			    media_storage_path = coalesce(media_storage_path, nullif($9, '')),
 			    media_status = case
 			      when coalesce(media_storage_path, nullif($9, '')) is not null then 'ready'
-			      else media_status
+			      when media_status in ('ready', 'pending') then media_status
+			      else coalesce(nullif($12, ''), media_status)
 			    end,
 			    media_error = case
 			      when coalesce(media_storage_path, nullif($9, '')) is not null then null
-			      else media_error
+			      when media_status in ('ready', 'pending') then media_error
+			      else coalesce(nullif($13, ''), media_error)
 			    end,
 			    media_size = coalesce(media_size, nullif($11, 0)),
 			    sent_at = coalesce(sent_at, $10),
 			    received_at = case when from_me then received_at else coalesce(received_at, now()) end,
-			    metadata = coalesce(metadata, '{}'::jsonb) || $12::jsonb,
+			    metadata = coalesce(metadata, '{}'::jsonb) || $14::jsonb,
 			    updated_at = now()
 			where organization_id = $1::uuid and session_id = $2::uuid and id = $3::uuid
-		`, session.OrganizationID, session.ID, existingID, message.ProviderMessageID, status, message.Content, message.MediaURL, message.MediaMimeType, message.MediaStoragePath, message.SentAt, message.MediaSize, messageMetadata)
+		`, session.OrganizationID, session.ID, existingID, message.ProviderMessageID, status, message.Content, message.MediaURL, message.MediaMimeType, message.MediaStoragePath, message.SentAt, message.MediaSize, message.MediaStatus, message.MediaError, messageMetadata)
 		return false, existingConversationID, existingID, err
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -2074,14 +2407,14 @@ func insertNativeEvolutionMessage(ctx context.Context, tx pgx.Tx, session native
 		status = "sent"
 		direction = "outbound"
 	}
-	mediaStatus := ""
-	mediaError := ""
+	mediaStatus := message.MediaStatus
+	mediaError := message.MediaError
 	if nativeIsMediaType(message.MessageType) {
 		if message.MediaStoragePath != "" {
 			mediaStatus = "ready"
-		} else {
+			mediaError = ""
+		} else if mediaStatus == "" {
 			mediaStatus = "pending"
-			mediaError = "media_retained_in_webhook_inbox"
 		}
 	}
 	var insertedID string
@@ -2309,10 +2642,55 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 	if err != nil {
 		return err
 	}
+	receiptMessageIDs := make([]string, 0)
+	for _, receipt := range statuses {
+		receiptMessageIDs = append(receiptMessageIDs, receipt.MessageIDs...)
+	}
+	// Lock the complete batch once in canonical row order. Per-receipt locking
+	// can deadlock when equivalent provider batches arrive in reverse order.
+	if err := lockNativeStatusTransportRows(ctx, tx, session, receiptMessageIDs); err != nil {
+		return err
+	}
 	failedOutboxIDs := make([]string, 0)
 	failedOutboxSeen := map[string]struct{}{}
 	for _, receipt := range statuses {
 		matched := map[string]bool{}
+		type outboxTarget struct {
+			id       string
+			current  string
+			provider string
+			client   string
+		}
+		outboxTargets := []outboxTarget{}
+		// Repeat the canonical outbox -> message acquisition order inside each
+		// READ COMMITTED receipt. Rows inserted after the batch pre-lock are then
+		// still acquired in the same order as outbox completion/finalization.
+		outboxRows, err := tx.Query(ctx, `
+			select id::text, coalesce(provider_message_id, ''), client_message_id, status
+			from public.whatsapp_outbox
+			where organization_id = $1::uuid and session_id = $2::uuid
+			  and (provider_message_id = any($3::text[]) or client_message_id = any($3::text[]))
+			order by id
+			for update
+		`, session.OrganizationID, session.ID, receipt.MessageIDs)
+		if err != nil {
+			return err
+		}
+		for outboxRows.Next() {
+			var target outboxTarget
+			if err := outboxRows.Scan(&target.id, &target.provider, &target.client, &target.current); err != nil {
+				outboxRows.Close()
+				return err
+			}
+			outboxTargets = append(outboxTargets, target)
+			markNativeMatchedIDs(matched, receipt.MessageIDs, target.provider, target.client)
+		}
+		if err := outboxRows.Err(); err != nil {
+			outboxRows.Close()
+			return err
+		}
+		outboxRows.Close()
+
 		type messageTarget struct {
 			id       string
 			current  string
@@ -2331,6 +2709,7 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 			    or provider_message_id = any($3::text[])
 			    or client_message_id = any($3::text[])
 			  )
+			order by id
 			for update
 		`, session.OrganizationID, session.ID, receipt.MessageIDs)
 		if err != nil {
@@ -2364,37 +2743,6 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 			}
 		}
 
-		type outboxTarget struct {
-			id       string
-			current  string
-			provider string
-			client   string
-		}
-		outboxTargets := []outboxTarget{}
-		outboxRows, err := tx.Query(ctx, `
-			select id::text, coalesce(provider_message_id, ''), client_message_id, status
-			from public.whatsapp_outbox
-			where organization_id = $1::uuid and session_id = $2::uuid
-			  and (provider_message_id = any($3::text[]) or client_message_id = any($3::text[]))
-			for update
-		`, session.OrganizationID, session.ID, receipt.MessageIDs)
-		if err != nil {
-			return err
-		}
-		for outboxRows.Next() {
-			var target outboxTarget
-			if err := outboxRows.Scan(&target.id, &target.provider, &target.client, &target.current); err != nil {
-				outboxRows.Close()
-				return err
-			}
-			outboxTargets = append(outboxTargets, target)
-			markNativeMatchedIDs(matched, receipt.MessageIDs, target.provider, target.client)
-		}
-		if err := outboxRows.Err(); err != nil {
-			outboxRows.Close()
-			return err
-		}
-		outboxRows.Close()
 		for _, target := range outboxTargets {
 			status := nativeMonotonicOutboxStatus(target.current, receipt.Status)
 			if _, err := tx.Exec(ctx, `

@@ -29,6 +29,9 @@ func NewRepository(db *dbpkg.Postgres) Repository {
 }
 
 func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, filter ListFilter) (ListResponse, error) {
+	if !canManage(tenantContext) {
+		return ListResponse{}, tenant.ErrOrganizationAccessDenied
+	}
 	if strings.TrimSpace(tenantContext.OrganizationID) == "" {
 		return ListResponse{}, tenant.ErrOrganizationAccessDenied
 	}
@@ -208,6 +211,9 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 }
 
 func (repo Repository) GetWorkspace(ctx context.Context, tenantContext tenant.Context, developmentID string) (WorkspaceResponse, error) {
+	if !canManage(tenantContext) {
+		return WorkspaceResponse{}, tenant.ErrOrganizationAccessDenied
+	}
 	if strings.TrimSpace(tenantContext.OrganizationID) == "" || !uuidPattern.MatchString(strings.TrimSpace(developmentID)) {
 		return WorkspaceResponse{}, ErrNotFound
 	}
@@ -241,6 +247,9 @@ func (repo Repository) GetWorkspace(ctx context.Context, tenantContext tenant.Co
 }
 
 func (repo Repository) ListUnits(ctx context.Context, tenantContext tenant.Context, developmentID string, filter UnitListFilter) (UnitListResponse, error) {
+	if !canManage(tenantContext) {
+		return UnitListResponse{}, tenant.ErrOrganizationAccessDenied
+	}
 	if strings.TrimSpace(tenantContext.OrganizationID) == "" || !uuidPattern.MatchString(strings.TrimSpace(developmentID)) {
 		return UnitListResponse{}, ErrNotFound
 	}
@@ -1346,6 +1355,11 @@ func redactWorkspaceCommercialFields(workspace *Workspace) {
 
 	for index := range workspace.RecentUnitEvents {
 		event := &workspace.RecentUnitEvents[index]
+		// Replay fingerprints and idempotency-key hashes are operational audit
+		// internals. Managers can inspect them, but read-only inventory viewers do
+		// not need these values to understand a link change.
+		delete(event.Metadata, "idempotency_key_hash")
+		delete(event.Metadata, "request_fingerprint")
 		if event.EventType == "reservation_cancelled" {
 			delete(event.Metadata, "reason")
 		}

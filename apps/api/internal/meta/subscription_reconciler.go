@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -37,6 +39,7 @@ type webhookSubscriptionTarget struct {
 	PageToken               string
 	MessagingModulesEnabled bool
 	MessagingAuthorized     bool
+	PageMessagingRequired   bool
 }
 
 const loadWebhookSubscriptionTargetsQuery = `
@@ -88,14 +91,23 @@ const loadWebhookSubscriptionTargetsQuery = `
 		  and coalesce(integration.token_status, 'active') = 'active'
 		  and nullif(btrim(integration.page_id), '') is not null
 		  and nullif(page_secret.decrypted_secret, '') is not null
+	), page_eligibility as (
+		select
+		  page_id,
+		  bool_or(messaging_modules_enabled and messaging_authorized)
+		    as page_messaging_required
+		from eligibility
+		group by page_id
 	), candidates as (
 		select eligibility.*,
+		  page_eligibility.page_messaging_required,
 		  case
-		    when messaging_modules_enabled and messaging_authorized
+		    when page_eligibility.page_messaging_required
 		      then '["leadgen", "messages", "messaging_postbacks"]'::jsonb
 		    else '["leadgen"]'::jsonb
 		  end as desired_fields
 		from eligibility
+		join page_eligibility using (page_id)
 	)
 	select
 	  integration_id,
@@ -103,7 +115,8 @@ const loadWebhookSubscriptionTargetsQuery = `
 	  page_id,
 	  page_token,
 	  messaging_modules_enabled,
-	  messaging_authorized
+	  messaging_authorized,
+	  page_messaging_required
 	from candidates
 	where (
 	  subscribed_fields is distinct from desired_fields
@@ -149,6 +162,22 @@ func (repo Repository) ReconcileWebhookSubscriptions(ctx context.Context) error 
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		releasePageSubscription, lockErr := acquireMetaPageSubscriptionLock(ctx, repo.db, target.PageID)
+		if lockErr != nil {
+			hadFailure = true
+			continue
+		}
+		freshTarget, stateErr := repo.refreshWebhookSubscriptionTarget(ctx, target)
+		if errors.Is(stateErr, pgx.ErrNoRows) {
+			releasePageSubscription()
+			continue
+		}
+		if stateErr != nil {
+			releasePageSubscription()
+			hadFailure = true
+			continue
+		}
+		target = freshTarget
 
 		fields, authorizationRequired := desiredWebhookSubscribedFields(target)
 		if err := repo.subscribeWebhookFields(ctx, target.PageID, target.PageToken, fields); err != nil {
@@ -156,17 +185,102 @@ func (repo Repository) ReconcileWebhookSubscriptions(ctx context.Context) error 
 			if updateErr := repo.markWebhookSubscriptionReconcileFailed(ctx, target); updateErr != nil {
 				hadFailure = true
 			}
+			releasePageSubscription()
 			continue
 		}
 		if err := repo.finishWebhookSubscriptionReconcile(ctx, target, fields, authorizationRequired); err != nil {
 			hadFailure = true
 		}
+		releasePageSubscription()
 	}
 
 	if hadFailure {
 		return errMetaWebhookSubscriptionReconcile
 	}
 	return nil
+}
+
+// refreshWebhookSubscriptionTarget runs after the cross-process Page lock is
+// acquired. A target loaded before a connect/disconnect waited on that lock may
+// now be stale, so credentials and the Page-wide desired fields are resolved
+// again from the current connected rows before any provider mutation.
+func (repo Repository) refreshWebhookSubscriptionTarget(ctx context.Context, target webhookSubscriptionTarget) (webhookSubscriptionTarget, error) {
+	fresh := webhookSubscriptionTarget{}
+	err := repo.db.Pool().QueryRow(ctx, `
+		with eligibility as (
+			select
+			  integration.id::text as integration_id,
+			  integration.organization_id::text as organization_id,
+			  btrim(integration.page_id) as page_id,
+			  (
+			    exists (
+			      select 1
+			      from public.organization_modules as campaigns_module
+			      where campaigns_module.organization_id = integration.organization_id
+			        and lower(btrim(campaigns_module.module_name)) = 'campaigns'
+			        and campaigns_module.is_enabled = true
+			    )
+			    and exists (
+			      select 1
+			      from public.organization_modules as whatsapp_module
+			      where whatsapp_module.organization_id = integration.organization_id
+			        and lower(btrim(whatsapp_module.module_name)) = 'whatsapp'
+			        and whatsapp_module.is_enabled = true
+			    )
+			  ) as messaging_modules_enabled,
+			  (
+			    exists (
+			      select 1
+			      from unnest(coalesce(integration.granted_scopes, array[]::text[])) as granted_scope(value)
+			      where lower(btrim(granted_scope.value)) = 'pages_messaging'
+			    )
+			    and (
+			      nullif(btrim(integration.instagram_business_account_id), '') is null
+			      or exists (
+			        select 1
+			        from unnest(coalesce(integration.granted_scopes, array[]::text[])) as instagram_scope(value)
+			        where lower(btrim(instagram_scope.value)) = 'instagram_manage_messages'
+			      )
+			    )
+			  ) as messaging_authorized
+			from public.meta_integrations as integration
+			where btrim(integration.page_id) = btrim($3)
+			  and coalesce(integration.is_connected, false) = true
+			  and coalesce(integration.token_status, 'active') = 'active'
+		), page_state as (
+			select bool_or(messaging_modules_enabled and messaging_authorized)
+			  as page_messaging_required
+			from eligibility
+		)
+		select
+		  target.integration_id,
+		  target.organization_id,
+		  target.page_id,
+		  page_secret.decrypted_secret,
+		  target.messaging_modules_enabled,
+		  target.messaging_authorized,
+		  coalesce(page_state.page_messaging_required, false)
+		from eligibility as target
+		cross join page_state
+		join public.meta_integrations as integration
+		  on integration.id = target.integration_id::uuid
+		 and integration.organization_id = target.organization_id::uuid
+		join vault.decrypted_secrets as page_secret
+		  on page_secret.id = integration.access_token_secret_ref
+		where target.integration_id = $1
+		  and target.organization_id = $2
+		  and nullif(page_secret.decrypted_secret, '') is not null
+		limit 1
+	`, target.IntegrationID, target.OrganizationID, target.PageID).Scan(
+		&fresh.IntegrationID,
+		&fresh.OrganizationID,
+		&fresh.PageID,
+		&fresh.PageToken,
+		&fresh.MessagingModulesEnabled,
+		&fresh.MessagingAuthorized,
+		&fresh.PageMessagingRequired,
+	)
+	return fresh, err
 }
 
 func (repo Repository) loadWebhookSubscriptionTargets(ctx context.Context) ([]webhookSubscriptionTarget, error) {
@@ -194,6 +308,7 @@ func (repo Repository) loadWebhookSubscriptionTargets(ctx context.Context) ([]we
 			&target.PageToken,
 			&target.MessagingModulesEnabled,
 			&target.MessagingAuthorized,
+			&target.PageMessagingRequired,
 		); err != nil {
 			return nil, err
 		}
@@ -206,13 +321,11 @@ func (repo Repository) loadWebhookSubscriptionTargets(ctx context.Context) ([]we
 }
 
 func desiredWebhookSubscribedFields(target webhookSubscriptionTarget) ([]string, bool) {
-	if !target.MessagingModulesEnabled {
-		return append([]string(nil), metaLeadgenSubscribedFields...), false
+	authorizationRequired := target.MessagingModulesEnabled && !target.MessagingAuthorized
+	if !target.PageMessagingRequired {
+		return append([]string(nil), metaLeadgenSubscribedFields...), authorizationRequired
 	}
-	if !target.MessagingAuthorized {
-		return append([]string(nil), metaLeadgenSubscribedFields...), true
-	}
-	return append([]string(nil), metaMessagingSubscribedFields...), false
+	return append([]string(nil), metaMessagingSubscribedFields...), authorizationRequired
 }
 
 func (repo Repository) subscribeWebhookFields(ctx context.Context, pageID string, pageToken string, fields []string) error {

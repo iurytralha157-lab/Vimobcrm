@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { useAuth } from '@/contexts/AuthContext';
+import { useOptionalActiveOrganizationId as useActiveOrganizationId } from '@/hooks/use-active-organization';
+import { getErrorObjectMessage as getErrorMessage } from '@/lib/api/vimob-error';
 import {
   messageTemplatesAPI,
   type CreateTemplateInput,
@@ -18,15 +19,6 @@ export interface TemplateVariables {
   horario?: string;
   empreendimento?: string;
   [key: string]: string | undefined;
-}
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (typeof error === 'object' && error && 'message' in error) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === 'string') return message;
-  }
-  return 'Erro desconhecido';
 }
 
 export function replaceTemplateVariables(content: string, variables: TemplateVariables): string {
@@ -52,11 +44,6 @@ export function extractTemplateVariables(content: string): string[] {
   }
 
   return Array.from(variables);
-}
-
-function useActiveOrganizationId() {
-  const { profile, organization } = useAuth();
-  return organization?.id || profile?.organization_id || undefined;
 }
 
 export function useMessageTemplates() {

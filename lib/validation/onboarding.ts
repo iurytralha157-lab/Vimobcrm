@@ -4,6 +4,7 @@ import {
   CURRENT_TERMS_VERSION,
 } from '../../config/legal-documents'
 import { isValidBrazilianTaxId, normalizeBrazilianTaxId } from './brazilian-tax-id'
+import { strongPasswordSchema } from './password'
 
 export { CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION }
 
@@ -19,6 +20,28 @@ const onboardingStepDocumentSchema = z.string()
   .regex(/^[\d./\-\s]+$/, 'Informe somente os dígitos e a máscara do CPF ou CNPJ')
   .transform(normalizeBrazilianTaxId)
   .refine(isValidBrazilianTaxId, 'Informe um CPF ou CNPJ válido')
+
+const optionalOnboardingAdminCpfSchema = z.string()
+  .trim()
+  .max(18, 'Informe um CPF válido')
+  .optional()
+  .superRefine((value, context) => {
+    if (value && !/^[\d.\-\s]+$/.test(value)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Informe somente os dígitos e a máscara do CPF',
+      })
+    }
+  })
+  .transform((value) => value ? normalizeBrazilianTaxId(value) : undefined)
+  .superRefine((value, context) => {
+    if (value && (value.length !== 11 || !isValidBrazilianTaxId(value))) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Informe um CPF válido',
+      })
+    }
+  })
 
 const onboardingStepEmailSchema = z.string()
   .trim()
@@ -54,6 +77,19 @@ function validateOnboardingStepPhone(
   }
 }
 
+function validateOnboardingAdminCpf(
+  input: { documentNumber: string; adminCpf?: string },
+  context: z.RefinementCtx,
+) {
+  if (input.documentNumber.length === 14 && !input.adminCpf) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['adminCpf'],
+      message: 'Informe o CPF do gestor responsável',
+    })
+  }
+}
+
 export const onboardingOrganizationStepSchema = z.object({
   companyName: z.string().trim().min(2, 'Informe o nome da imobiliária').max(160),
   documentNumber: onboardingStepDocumentSchema,
@@ -65,19 +101,19 @@ export const onboardingOrganizationStepSchema = z.object({
 })
 
 export const onboardingAccessStepSchema = z.object({
+  documentNumber: onboardingStepDocumentSchema,
   adminName: z.string().trim().min(2, 'Informe o nome completo do gestor').max(140),
+  adminCpf: optionalOnboardingAdminCpfSchema,
   phoneCountryCode: onboardingStepPhoneCountryCodeSchema,
   phone: z.string().trim().min(1, 'Informe o WhatsApp').max(32),
   email: onboardingStepEmailSchema,
-  password: z.string()
-    .min(8, 'Use pelo menos 8 caracteres')
-    .max(128, 'Use no máximo 128 caracteres')
-    .regex(/[A-Z]/, 'Inclua pelo menos uma letra maiúscula')
-    .regex(/[^A-Za-z0-9]/, 'Inclua pelo menos um caractere especial'),
+  password: strongPasswordSchema,
   legalAccepted: z.boolean().refine((value) => value, {
     message: 'Aceite os Termos de Uso e a Política de Privacidade',
   }),
-}).superRefine(validateOnboardingStepPhone)
+})
+  .superRefine(validateOnboardingStepPhone)
+  .superRefine(validateOnboardingAdminCpf)
 
 export const onboardingStepValidationRequestSchema = z.discriminatedUnion('step', [
   z.object({
@@ -116,10 +152,11 @@ export const onboardingSignupSchema = z.object({
     .refine(isValidBrazilianTaxId, 'Informe um CPF ou CNPJ valido'),
   brokersCount: z.coerce.number().int().min(1).max(500).default(1),
   adminName: z.string().trim().min(2).max(140),
+  adminCpf: optionalOnboardingAdminCpfSchema,
   phoneCountryCode: z.enum(['+55', '+1', '+351', '+54', '+56', '+598', '+595']).default('+55'),
   phone: z.string().trim().min(1).max(32),
   email: z.string().trim().email().max(180).transform((value) => value.toLowerCase()),
-  password: z.string().min(8).max(128),
+  password: strongPasswordSchema,
   signupPath: z.enum(['trial', 'paid']).default('trial'),
   planSlug: optionalTrimmedString,
   termsAccepted: z.literal(true),
@@ -145,6 +182,8 @@ export const onboardingSignupSchema = z.object({
       message: 'Informe um WhatsApp valido para o pais selecionado',
     })
   }
+
+  validateOnboardingAdminCpf(input, context)
 })
 
 const safeInternalRedirectSchema = z.string()

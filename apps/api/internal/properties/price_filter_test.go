@@ -34,6 +34,7 @@ func TestAddPropertyPriceRangeFilterUsesSelectedDealType(t *testing.T) {
 		{name: "sale", dealType: "venda", want: "(p.preco >= $1::numeric and p.preco <= $2::numeric)"},
 		{name: "rental", dealType: "locacao", want: "(p.valor_locacao >= $1::numeric and p.valor_locacao <= $2::numeric)"},
 		{name: "seasonal", dealType: "temporada", want: "(p.valor_locacao >= $1::numeric and p.valor_locacao <= $2::numeric)"},
+		{name: "rental catalog", dealType: "rental_catalog", want: "(p.valor_locacao >= $1::numeric and p.valor_locacao <= $2::numeric)"},
 	}
 
 	for _, tt := range tests {

@@ -120,6 +120,19 @@ func TestValidateWebhookRolloutSessionIDs(t *testing.T) {
 	}
 }
 
+func TestCanonicalizeSessionIDAllowlistUsesPostgresUUIDText(t *testing.T) {
+	values := canonicalizeSessionIDAllowlist([]string{
+		" 13EEA7E8-A74F-4BFB-BB36-024E3D26CCC9 ",
+		"not-a-session",
+	})
+	if len(values) != 2 || values[0] != "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9" || values[1] != "not-a-session" {
+		t.Fatalf("canonical session allowlist = %#v", values)
+	}
+	if err := validateWebhookRolloutSessionIDs(values); err == nil {
+		t.Fatal("canonicalization silently removed an invalid explicit session")
+	}
+}
+
 func TestConfigValidateRejectsInvalidWebhookRolloutSessionID(t *testing.T) {
 	cfg := validConfigForWebhookRolloutTest()
 	cfg.EvolutionGo.WebhookRolloutSessionIDs = []string{"not-a-session"}
@@ -146,6 +159,113 @@ func TestConfigValidateRejectsUnsafeWebhookWorkerConcurrency(t *testing.T) {
 	cfg.WhatsApp.WebhookWorkerConcurrency = 4
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("safe webhook worker concurrency rejected: %v", err)
+	}
+}
+
+func TestConfigValidateRejectsUnsafeOutboxWorkerConcurrency(t *testing.T) {
+	for _, concurrency := range []int{0, 17} {
+		cfg := validConfigForWebhookRolloutTest()
+		cfg.WhatsApp.OutboxWorkerEnabled = true
+		cfg.WhatsApp.OutboxWorkerConcurrency = concurrency
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "WHATSAPP_OUTBOX_WORKER_CONCURRENCY must be between 1 and 16") {
+			t.Fatalf("concurrency %d validation error = %v", concurrency, err)
+		}
+	}
+
+	cfg := validConfigForWebhookRolloutTest()
+	cfg.WhatsApp.OutboxWorkerEnabled = true
+	cfg.WhatsApp.OutboxWorkerConcurrency = 4
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("safe outbox worker concurrency rejected: %v", err)
+	}
+}
+
+func TestConfigValidateRejectsUnsafeMediaWorkerTiming(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		interval time.Duration
+		lease    time.Duration
+		want     string
+	}{
+		{name: "too short interval", interval: 100 * time.Millisecond, lease: 5 * time.Minute, want: "WHATSAPP_MEDIA_WORKER_INTERVAL"},
+		{name: "too long interval", interval: 2 * time.Minute, lease: 5 * time.Minute, want: "WHATSAPP_MEDIA_WORKER_INTERVAL"},
+		{name: "too short lease", interval: 2 * time.Second, lease: 10 * time.Second, want: "WHATSAPP_MEDIA_WORKER_LEASE"},
+		{name: "too long lease", interval: 2 * time.Second, lease: time.Hour, want: "WHATSAPP_MEDIA_WORKER_LEASE"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validConfigForWebhookRolloutTest()
+			cfg.WhatsApp.MediaWorkerEnabled = true
+			cfg.WhatsApp.MediaWorkerInterval = test.interval
+			cfg.WhatsApp.MediaWorkerLease = test.lease
+
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("expected %s validation error, got %v", test.want, err)
+			}
+		})
+	}
+
+	cfg := validConfigForWebhookRolloutTest()
+	cfg.WhatsApp.MediaWorkerEnabled = true
+	cfg.WhatsApp.MediaWorkerInterval = 2 * time.Second
+	cfg.WhatsApp.MediaWorkerLease = 5 * time.Minute
+	cfg.WhatsApp.MediaWorkerConcurrency = 4
+	cfg.EvolutionGo.WebhookProcessorMode = "native"
+	cfg.EvolutionGo.WebhookRolloutSessionIDs = []string{"*"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("safe media worker timing rejected: %v", err)
+	}
+}
+
+func TestConfigValidateRequiresScopedNativeMediaWorkerOwnership(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		mode      string
+		allowlist []string
+		wantErr   bool
+	}{
+		{name: "edge global", mode: "edge", allowlist: []string{"*"}, wantErr: true},
+		{name: "native empty", mode: "native", wantErr: true},
+		{name: "native canary", mode: "native", allowlist: []string{"13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"}},
+		{name: "fallback canary", mode: "native_fallback", allowlist: []string{"13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"}},
+		{name: "native global", mode: "native", allowlist: []string{"*"}},
+		{name: "fallback global", mode: "native_fallback", allowlist: []string{"*"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validConfigForWebhookRolloutTest()
+			cfg.WhatsApp.MediaWorkerEnabled = true
+			cfg.WhatsApp.MediaWorkerInterval = 2 * time.Second
+			cfg.WhatsApp.MediaWorkerLease = 5 * time.Minute
+			cfg.WhatsApp.MediaWorkerConcurrency = 4
+			cfg.EvolutionGo.WebhookProcessorMode = test.mode
+			cfg.EvolutionGo.WebhookRolloutSessionIDs = test.allowlist
+
+			err := cfg.Validate()
+			if test.wantErr && (err == nil || !strings.Contains(err.Error(), "WHATSAPP_MEDIA_WORKER_ENABLED requires")) {
+				t.Fatalf("expected ownership validation error, got %v", err)
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("scoped native ownership rejected: %v", err)
+			}
+		})
+	}
+}
+
+func TestConfigValidateRejectsUnsafeMediaWorkerConcurrency(t *testing.T) {
+	for _, concurrency := range []int{0, 17} {
+		cfg := validConfigForWebhookRolloutTest()
+		cfg.WhatsApp.MediaWorkerEnabled = true
+		cfg.WhatsApp.MediaWorkerInterval = 2 * time.Second
+		cfg.WhatsApp.MediaWorkerLease = 5 * time.Minute
+		cfg.WhatsApp.MediaWorkerConcurrency = concurrency
+		cfg.EvolutionGo.WebhookProcessorMode = "native_fallback"
+		cfg.EvolutionGo.WebhookRolloutSessionIDs = []string{"13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"}
+
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "WHATSAPP_MEDIA_WORKER_CONCURRENCY") {
+			t.Fatalf("concurrency %d error = %v, want validation failure", concurrency, err)
+		}
 	}
 }
 
@@ -487,8 +607,74 @@ func validConfigForWebhookRolloutTest() Config {
 		Portals: PortalConfig{GrupoOLXWebhookSecret: "crm-wide-grupo-olx-secret"},
 		EvolutionGo: EvolutionGoConfig{
 			BackendWebhookURL:    "https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go",
+			ImageDigest:          "sha256:" + strings.Repeat("a", 64),
 			WebhookProcessorMode: "edge",
 		},
+	}
+}
+
+func TestEvolutionGoImageDigestValidation(t *testing.T) {
+	valid := "sha256:" + strings.Repeat("a1", 32)
+	if !validSHA256ImageDigest(valid) {
+		t.Fatalf("expected immutable digest %q to be valid", valid)
+	}
+	for _, invalid := range []string{
+		"",
+		"0.7.2",
+		strings.Repeat("a", 64),
+		"sha256:" + strings.Repeat("a", 63),
+		"sha256:" + strings.Repeat("G", 64),
+	} {
+		if validSHA256ImageDigest(invalid) {
+			t.Fatalf("expected digest %q to be rejected", invalid)
+		}
+	}
+
+	cfg := validConfigForWebhookRolloutTest()
+	cfg.EvolutionGo.ImageDigest = "0.7.2"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "EVOLUTION_GO_IMAGE_DIGEST") {
+		t.Fatalf("expected config validation to reject a mutable provider tag, got %v", err)
+	}
+}
+
+func TestEvolutionGoRecoveryRequiresImmutableImageDigest(t *testing.T) {
+	const canarySessionID = "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"
+
+	withoutRecovery := validConfigForWebhookRolloutTest()
+	withoutRecovery.EvolutionGo.ImageDigest = ""
+	if err := withoutRecovery.Validate(); err != nil {
+		t.Fatalf("empty recovery allowlist may omit provider digest: %v", err)
+	}
+
+	withRecovery := validConfigForWebhookRolloutTest()
+	withRecovery.WhatsApp.SessionSupervisorRecoveryIDs = []string{canarySessionID}
+	withRecovery.EvolutionGo.ImageDigest = ""
+	if err := withRecovery.Validate(); err == nil || !strings.Contains(err.Error(), "EVOLUTION_GO_IMAGE_DIGEST") {
+		t.Fatalf("recovery canary without immutable provider digest must be rejected, got %v", err)
+	}
+
+	withRecovery.EvolutionGo.ImageDigest = "sha256:" + strings.Repeat("a", 64)
+	if err := withRecovery.Validate(); err != nil {
+		t.Fatalf("recovery canary with immutable provider digest rejected: %v", err)
+	}
+}
+
+func TestWhatsAppSessionSupervisorBatchFailsClosedOutsideRuntimeBounds(t *testing.T) {
+	cfg := validConfigForWebhookRolloutTest()
+	cfg.WhatsApp.SessionSupervisorEnabled = true
+
+	for _, invalid := range []int{0, 101, 200} {
+		cfg.WhatsApp.SessionSupervisorBatch = invalid
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "WHATSAPP_SESSION_SUPERVISOR_BATCH") {
+			t.Fatalf("supervisor batch %d must be rejected, got %v", invalid, err)
+		}
+	}
+
+	for _, valid := range []int{1, 10, 50, 100} {
+		cfg.WhatsApp.SessionSupervisorBatch = valid
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("supervisor batch %d rejected: %v", valid, err)
+		}
 	}
 }
 

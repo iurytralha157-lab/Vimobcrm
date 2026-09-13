@@ -62,11 +62,14 @@ func (repo Repository) CreatePropertyOwnership(ctx context.Context, tenantContex
 			where owner.organization_id = $1::uuid and owner.id = $2::uuid
 			for update of owner
 		`, tenantContext.OrganizationID, ownerID).Scan(&active)
-		if errors.Is(err, pgx.ErrNoRows) || !active {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrPropertyOwnerNotFound
 		}
 		if err != nil {
 			return nil, err
+		}
+		if !active {
+			return nil, ErrPropertyOwnerAssignmentInvalid
 		}
 	}
 
@@ -474,6 +477,7 @@ func syncLegacyPropertyOwnerProjection(ctx context.Context, tx pgx.Tx, organizat
 			owner_cellphone = projection.cellphone,
 			owner_email = projection.email,
 			owner_media_source = projection.media_source,
+			origin_media = projection.media_source,
 			owner_notify_email = projection.notify_email,
 			updated_at = now()
 		from projection
@@ -481,11 +485,11 @@ func syncLegacyPropertyOwnerProjection(ctx context.Context, tx pgx.Tx, organizat
 		  and property.id = $2::uuid
 		  and (property.owner_id, property.owner_name, property.owner_phone_residential,
 			property.owner_phone_commercial, property.owner_cellphone, property.owner_email,
-			property.owner_media_source, property.owner_notify_email)
+			property.owner_media_source, property.origin_media, property.owner_notify_email)
 		  is distinct from
 		  (projection.id, projection.name, projection.phone_residential,
 			projection.phone_commercial, projection.cellphone, projection.email,
-			projection.media_source, projection.notify_email)
+			projection.media_source, projection.media_source, projection.notify_email)
 	`, organizationID, propertyID)
 	return err
 }
@@ -499,6 +503,7 @@ func syncLegacyOwnerDetails(ctx context.Context, tx pgx.Tx, organizationID strin
 			owner_cellphone = owner.cellphone,
 			owner_email = owner.email,
 			owner_media_source = owner.media_source,
+			origin_media = owner.media_source,
 			owner_notify_email = owner.notify_email,
 			updated_at = now()
 		from public.property_owners as owner
@@ -557,6 +562,38 @@ func (repo Repository) CreatePropertyAsset(ctx context.Context, tenantContext te
 	if err := lockWorkspaceProperty(ctx, tx, tenantContext.OrganizationID, propertyID); err != nil {
 		return nil, err
 	}
+	if input.AssetType == "photo" {
+		_, hasPrimary, err := ensurePropertyPhotoAssetCapacity(
+			ctx,
+			tx,
+			tenantContext.OrganizationID,
+			propertyID,
+			"",
+		)
+		if err != nil {
+			return nil, err
+		}
+		// The property row lock serializes every canonical media mutation. This
+		// makes the first public photo promotion atomic and keeps the API, rather
+		// than each client, authoritative for the primary-photo invariant.
+		if !hasPrimary && input.Visibility == "public" {
+			input.IsPrimary = true
+		}
+	}
+	if input.StoragePath != nil {
+		if err := consumePropertyAssetUploadIntent(
+			ctx,
+			tx,
+			tenantContext.OrganizationID,
+			propertyID,
+			*input.StoragePath,
+			input.AssetType,
+			workspacePointerText(input.MIMEType),
+			input.FileSizeBytes,
+		); err != nil {
+			return nil, err
+		}
+	}
 	if input.IsPrimary {
 		if err := clearOtherPrimaryPhotos(ctx, tx, tenantContext.OrganizationID, propertyID, ""); err != nil {
 			return nil, err
@@ -587,6 +624,17 @@ func (repo Repository) CreatePropertyAsset(ctx context.Context, tenantContext te
 		nullableWorkspaceString(input.ExpiresAt), string(metadataJSON), tenantContext.UserID, assetID))
 	if err != nil {
 		return nil, normalizeWorkspaceDatabaseError(err)
+	}
+	if input.StoragePath != nil {
+		if err := completePropertyAssetUploadIntent(
+			ctx,
+			tx,
+			tenantContext.OrganizationID,
+			propertyID,
+			*input.StoragePath,
+		); err != nil {
+			return nil, err
+		}
 	}
 	if input.IsPrimary {
 		if err := syncLegacyPropertyPrimaryPhoto(ctx, tx, tenantContext.OrganizationID, propertyID, "", true); err != nil {
@@ -659,12 +707,38 @@ func (repo Repository) UpdatePropertyAsset(ctx context.Context, tenantContext te
 	if err != nil {
 		return nil, err
 	}
+	if workspaceString(current, "asset_type") != "photo" && target.AssetType == "photo" {
+		if _, _, err := ensurePropertyPhotoAssetCapacity(
+			ctx,
+			tx,
+			tenantContext.OrganizationID,
+			propertyID,
+			assetID,
+		); err != nil {
+			return nil, err
+		}
+	}
+	oldStoragePath := workspaceString(current, "storage_path")
 	if target.StoragePath != nil {
 		if verifiedTarget.StoragePath == nil || *verifiedTarget.StoragePath != *target.StoragePath {
 			return nil, ErrPropertyWorkspaceConflict
 		}
 		target.MIMEType = verifiedTarget.MIMEType
 		target.FileSizeBytes = verifiedTarget.FileSizeBytes
+		if oldStoragePath != *target.StoragePath {
+			if err := consumePropertyAssetUploadIntent(
+				ctx,
+				tx,
+				tenantContext.OrganizationID,
+				propertyID,
+				*target.StoragePath,
+				target.AssetType,
+				workspacePointerText(target.MIMEType),
+				target.FileSizeBytes,
+			); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if publishedAssetRepresentationChanged(current, target) {
 		referenced, err := propertyAssetReferencedByPublishedVersion(
@@ -678,6 +752,18 @@ func (repo Repository) UpdatePropertyAsset(ctx context.Context, tenantContext te
 		}
 	}
 	oldExternalURL := workspaceString(current, "external_url")
+	if workspaceString(current, "asset_type") == "photo" && oldExternalURL != "" &&
+		(target.AssetType != "photo" || target.Visibility != "public" || oldExternalURL != workspacePointerText(target.ExternalURL)) {
+		if err := scrubLegacyPropertyPhotoLocator(
+			ctx,
+			tx,
+			tenantContext.OrganizationID,
+			propertyID,
+			oldExternalURL,
+		); err != nil {
+			return nil, err
+		}
+	}
 	command, err := tx.Exec(ctx, `
 		update public.property_assets as asset
 		set asset_type = $4,
@@ -696,6 +782,7 @@ func (repo Repository) UpdatePropertyAsset(ctx context.Context, tenantContext te
 		where asset.organization_id = $1::uuid
 		  and asset.property_id = $2::uuid
 		  and asset.id = $3::uuid
+		  and `+activePropertyAssetSQL("asset")+`
 		  and asset.updated_at = $16::timestamptz
 	`, tenantContext.OrganizationID, propertyID, assetID, target.AssetType, target.Visibility,
 		nullableWorkspaceString(target.StoragePath), nullableWorkspaceString(target.ExternalURL),
@@ -709,6 +796,17 @@ func (repo Repository) UpdatePropertyAsset(ctx context.Context, tenantContext te
 	if command.RowsAffected() != 1 {
 		return nil, ErrPropertyWorkspaceConflict
 	}
+	if target.StoragePath != nil && oldStoragePath != *target.StoragePath {
+		if err := completePropertyAssetUploadIntent(
+			ctx,
+			tx,
+			tenantContext.OrganizationID,
+			propertyID,
+			*target.StoragePath,
+		); err != nil {
+			return nil, err
+		}
+	}
 	if workspaceString(current, "asset_type") == "photo" || target.AssetType == "photo" {
 		if err := syncLegacyPropertyPrimaryPhoto(ctx, tx, tenantContext.OrganizationID, propertyID, oldExternalURL, workspaceBool(current, "is_primary")); err != nil {
 			return nil, err
@@ -720,6 +818,11 @@ func (repo Repository) UpdatePropertyAsset(ctx context.Context, tenantContext te
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
+	}
+	if oldStoragePath != "" && oldStoragePath != workspacePointerText(target.StoragePath) {
+		cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		repo.cleanupQueuedPropertyAssetStoragePath(cleanupContext, oldStoragePath)
+		cancel()
 	}
 	return item, nil
 }
@@ -746,42 +849,35 @@ func (repo Repository) ReorderPropertyAssets(ctx context.Context, tenantContext 
 
 	ordered := append([]PropertyAssetOrderItem(nil), input.Items...)
 	sort.Slice(ordered, func(left, right int) bool { return ordered[left].ID < ordered[right].ID })
-	ids := make([]string, len(ordered))
-	for index := range ordered {
-		ids[index] = ordered[index].ID
-	}
 	rows, err := tx.Query(ctx, `
-		select asset.id::text, asset.updated_at::text
+		select asset.id::text, asset.asset_type, asset.updated_at::text
 		from public.property_assets as asset
 		where asset.organization_id = $1::uuid
 		  and asset.property_id = $2::uuid
-		  and asset.id = any($3::uuid[])
+		  and `+activePropertyAssetSQL("asset")+`
 		order by asset.id
 		for update of asset
-	`, tenantContext.OrganizationID, propertyID, ids)
+	`, tenantContext.OrganizationID, propertyID)
 	if err != nil {
 		return nil, err
 	}
-	versions := map[string]string{}
+	versions := map[string]propertyAssetOrderVersion{}
+	typeCounts := map[string]int{}
 	for rows.Next() {
-		var id, updatedAt string
-		if err := rows.Scan(&id, &updatedAt); err != nil {
+		var id, assetType, updatedAt string
+		if err := rows.Scan(&id, &assetType, &updatedAt); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		versions[id] = updatedAt
+		versions[id] = propertyAssetOrderVersion{AssetType: assetType, UpdatedAt: updatedAt}
+		typeCounts[assetType]++
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if len(versions) != len(ordered) {
-		return nil, ErrPropertyAssetNotFound
-	}
-	for _, item := range ordered {
-		if !workspaceTimestampsEqual(versions[item.ID], item.ExpectedUpdatedAt) {
-			return nil, ErrPropertyWorkspaceConflict
-		}
+	if err := validateCompletePropertyAssetOrder(ordered, versions, typeCounts); err != nil {
+		return nil, err
 	}
 	for _, item := range ordered {
 		command, err := tx.Exec(ctx, `
@@ -790,6 +886,7 @@ func (repo Repository) ReorderPropertyAssets(ctx context.Context, tenantContext 
 			where asset.organization_id = $1::uuid
 			  and asset.property_id = $2::uuid
 			  and asset.id = $3::uuid
+			  and `+activePropertyAssetSQL("asset")+`
 			  and asset.updated_at = $5::timestamptz
 		`, tenantContext.OrganizationID, propertyID, item.ID, item.SortOrder, item.ExpectedUpdatedAt)
 		if err != nil {
@@ -837,9 +934,10 @@ func (repo Repository) SetPrimaryPropertyAsset(ctx context.Context, tenantContex
 		return nil, err
 	}
 	rows, err := tx.Query(ctx, `
-		select asset.id::text, asset.asset_type, asset.is_primary, asset.updated_at::text
+		select asset.id::text, asset.asset_type, asset.visibility, asset.is_primary, asset.updated_at::text
 		from public.property_assets as asset
 		where asset.organization_id = $1::uuid and asset.property_id = $2::uuid
+		  and `+activePropertyAssetSQL("asset")+`
 		order by asset.id
 		for update of asset
 	`, tenantContext.OrganizationID, propertyID)
@@ -849,9 +947,9 @@ func (repo Repository) SetPrimaryPropertyAsset(ctx context.Context, tenantContex
 	targetFound, targetPrimary := false, false
 	targetVersion := ""
 	for rows.Next() {
-		var id, assetType, updatedAt string
+		var id, assetType, visibility, updatedAt string
 		var isPrimary bool
-		if err := rows.Scan(&id, &assetType, &isPrimary, &updatedAt); err != nil {
+		if err := rows.Scan(&id, &assetType, &visibility, &isPrimary, &updatedAt); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -860,6 +958,10 @@ func (repo Repository) SetPrimaryPropertyAsset(ctx context.Context, tenantContex
 			if assetType != "photo" {
 				rows.Close()
 				return nil, fmt.Errorf("%w: only photos can be primary", ErrInvalidInput)
+			}
+			if visibility != "public" {
+				rows.Close()
+				return nil, fmt.Errorf("%w: primary photos must be public", ErrInvalidInput)
 			}
 		}
 	}
@@ -883,6 +985,7 @@ func (repo Repository) SetPrimaryPropertyAsset(ctx context.Context, tenantContex
 			where asset.organization_id = $1::uuid
 			  and asset.property_id = $2::uuid
 			  and asset.id = $3::uuid
+			  and `+activePropertyAssetSQL("asset")+`
 			  and asset.updated_at = $4::timestamptz
 		`, tenantContext.OrganizationID, propertyID, assetID, input.ExpectedUpdatedAt)
 		if err != nil {
@@ -946,11 +1049,23 @@ func (repo Repository) DeletePropertyAsset(ctx context.Context, tenantContext te
 	}
 	storagePath := workspaceString(current, "storage_path")
 	externalURL := workspaceString(current, "external_url")
+	if workspaceString(current, "asset_type") == "photo" && externalURL != "" {
+		if err := scrubLegacyPropertyPhotoLocator(
+			ctx,
+			tx,
+			tenantContext.OrganizationID,
+			propertyID,
+			externalURL,
+		); err != nil {
+			return nil, err
+		}
+	}
 	command, err := tx.Exec(ctx, `
 		delete from public.property_assets as asset
 		where asset.organization_id = $1::uuid
 		  and asset.property_id = $2::uuid
 		  and asset.id = $3::uuid
+		  and `+activePropertyAssetSQL("asset")+`
 		  and asset.updated_at = $4::timestamptz
 	`, tenantContext.OrganizationID, propertyID, assetID, input.ExpectedUpdatedAt)
 	if err != nil {
@@ -969,7 +1084,7 @@ func (repo Repository) DeletePropertyAsset(ctx context.Context, tenantContext te
 	}
 	if storagePath != "" && isCanonicalPropertyStoragePath(storagePath, tenantContext.OrganizationID, propertyID) {
 		cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		_ = repo.storage.remove(cleanupContext, propertyPrivateBucket, []string{storagePath})
+		repo.cleanupQueuedPropertyAssetStoragePath(cleanupContext, storagePath)
 		cancel()
 	}
 	return map[string]string{"id": assetID}, nil
@@ -1055,31 +1170,121 @@ func (repo Repository) CreatePropertyAssetUploadIntent(ctx context.Context, tena
 	if err := input.Validate(); err != nil {
 		return PropertyAssetUploadIntent{}, err
 	}
-	var exists bool
-	if err := repo.db.Pool().QueryRow(ctx, `
-		select exists (
-			select 1 from public.properties
-			where organization_id = $1::uuid and id = $2::uuid
-		)
-	`, tenantContext.OrganizationID, propertyID).Scan(&exists); err != nil {
-		return PropertyAssetUploadIntent{}, err
-	}
-	if !exists {
-		return PropertyAssetUploadIntent{}, ErrPropertyNotFound
-	}
+	_ = repo.cleanupExpiredPropertyAssetUploads(ctx, tenantContext.OrganizationID, propertyAssetCleanupBatchSize)
+	_ = repo.cleanupQueuedPropertyAssetStorage(ctx, tenantContext.OrganizationID, propertyAssetCleanupBatchSize)
+
 	assetID, err := randomPropertyAssetUUID()
 	if err != nil {
 		return PropertyAssetUploadIntent{}, err
 	}
 	storagePath := fmt.Sprintf("orgs/%s/properties/%s/%s/%s", tenantContext.OrganizationID, propertyID, assetID, input.FileName)
+	expiresAt := time.Now().UTC().Add(propertyAssetUploadTokenTTL)
+
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return PropertyAssetUploadIntent{}, err
+	}
+	defer tx.Rollback(ctx)
+	if err := lockWorkspaceProperty(ctx, tx, tenantContext.OrganizationID, propertyID); err != nil {
+		return PropertyAssetUploadIntent{}, err
+	}
+	var pendingCount int
+	if err := tx.QueryRow(ctx, `
+		select count(*)::integer
+		from public.property_asset_upload_intents
+		where organization_id = $1::uuid
+		  and property_id = $2::uuid
+		  and expires_at + ($3::bigint * interval '1 second') > now()
+		  and consumed_at is null
+	`, tenantContext.OrganizationID, propertyID, int64(propertyAssetUploadExpiryMargin/time.Second)).Scan(&pendingCount); err != nil {
+		return PropertyAssetUploadIntent{}, err
+	}
+	if pendingCount >= propertyAssetMaxPendingUploads {
+		return PropertyAssetUploadIntent{}, fmt.Errorf("%w: too many pending property asset uploads", ErrInvalidInput)
+	}
+	if _, err := tx.Exec(ctx, `
+		insert into public.property_asset_upload_intents (
+			organization_id, property_id, storage_path, asset_type, file_name,
+			mime_type, file_size_bytes, expires_at, created_by
+		)
+		values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::bigint, $8::timestamptz, nullif($9, '')::uuid)
+	`, tenantContext.OrganizationID, propertyID, storagePath, input.AssetType, input.FileName,
+		input.MIMEType, input.FileSizeBytes, expiresAt, tenantContext.UserID); err != nil {
+		return PropertyAssetUploadIntent{}, normalizeWorkspaceDatabaseError(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return PropertyAssetUploadIntent{}, err
+	}
+
 	signedURL, token, err := repo.storage.createSignedUploadURL(ctx, propertyPrivateBucket, storagePath)
 	if err != nil {
+		_, _ = repo.db.Pool().Exec(context.WithoutCancel(ctx), `
+			delete from public.property_asset_upload_intents
+			where organization_id = $1::uuid and property_id = $2::uuid and storage_path = $3
+		`, tenantContext.OrganizationID, propertyID, storagePath)
 		return PropertyAssetUploadIntent{}, err
 	}
 	return PropertyAssetUploadIntent{
 		Bucket: propertyPrivateBucket, StoragePath: storagePath, Token: token,
-		SignedURL: signedURL, ExpiresAt: time.Now().UTC().Add(propertyAssetUploadTokenTTL).Format(time.RFC3339),
+		SignedURL: signedURL, ExpiresAt: expiresAt.Format(time.RFC3339),
 	}, nil
+}
+
+func (repo Repository) DiscardPropertyAssetUpload(ctx context.Context, tenantContext tenant.Context, propertyID string, input DiscardPropertyAssetUploadInput) (map[string]string, error) {
+	if !canManageProperties(tenantContext) {
+		return nil, tenant.ErrOrganizationAccessDenied
+	}
+	propertyID, ok := normalizeUUID(propertyID)
+	if !ok {
+		return nil, ErrPropertyNotFound
+	}
+	if err := input.Validate(tenantContext.OrganizationID, propertyID); err != nil {
+		return nil, err
+	}
+
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	if err := lockWorkspaceProperty(ctx, tx, tenantContext.OrganizationID, propertyID); err != nil {
+		return nil, err
+	}
+	var attached bool
+	if err := tx.QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.property_assets
+			where organization_id = $1::uuid
+			  and property_id = $2::uuid
+			  and storage_path = $3
+		)
+	`, tenantContext.OrganizationID, propertyID, input.StoragePath).Scan(&attached); err != nil {
+		return nil, err
+	}
+	if attached {
+		return nil, fmt.Errorf("%w: uploaded object is already attached to an asset", ErrInvalidInput)
+	}
+	command, err := tx.Exec(ctx, `
+		update public.property_asset_upload_intents
+		set discard_requested_at = coalesce(discard_requested_at, now()),
+		    cleanup_claimed_until = null,
+		    last_cleanup_error = null
+		where organization_id = $1::uuid
+		  and property_id = $2::uuid
+		  and storage_path = $3
+		  and consumed_at is null
+	`, tenantContext.OrganizationID, propertyID, input.StoragePath)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	if command.RowsAffected() == 0 {
+		return map[string]string{"storage_path": input.StoragePath}, nil
+	}
+	return map[string]string{"storage_path": input.StoragePath}, nil
 }
 
 func (repo Repository) verifyStoredPropertyAsset(ctx context.Context, input *CreatePropertyAssetInput) error {
@@ -1091,7 +1296,10 @@ func (repo Repository) verifyStoredPropertyAsset(ctx context.Context, input *Cre
 		if errors.Is(err, ErrStorageNotConfigured) {
 			return err
 		}
-		return fmt.Errorf("%w: stored asset could not be verified", ErrInvalidInput)
+		if isInvalidStoredObjectError(err) {
+			return fmt.Errorf("%w: stored asset could not be verified", ErrInvalidInput)
+		}
+		return fmt.Errorf("%w: stored asset info could not be verified: %v", ErrStorageOperation, err)
 	}
 	if info.Size <= 0 || info.Size > propertyAssetMaxFileBytes {
 		return fmt.Errorf("%w: stored asset size is invalid", ErrInvalidInput)
@@ -1104,7 +1312,10 @@ func (repo Repository) verifyStoredPropertyAsset(ctx context.Context, input *Cre
 		if errors.Is(err, ErrStorageNotConfigured) {
 			return err
 		}
-		return fmt.Errorf("%w: stored asset bytes could not be verified", ErrInvalidInput)
+		if isInvalidStoredObjectError(err) {
+			return fmt.Errorf("%w: stored asset bytes could not be verified", ErrInvalidInput)
+		}
+		return fmt.Errorf("%w: stored asset bytes could not be verified: %v", ErrStorageOperation, err)
 	}
 	detectedMIMEType := strings.ToLower(strings.TrimSpace(strings.SplitN(http.DetectContentType(prefix), ";", 2)[0]))
 	if detectedMIMEType != info.MIMEType {
@@ -1143,7 +1354,8 @@ func mergePropertyAssetInput(current map[string]any, input UpdatePropertyAssetIn
 		FileSizeBytes: workspaceMapInt64Pointer(current, "file_size_bytes"),
 		SortOrder:     workspaceInt(current, "sort_order"), IsPrimary: workspaceBool(current, "is_primary"),
 		DocumentCategory: workspaceMapStringPointer(current, "document_category"),
-		ExpiresAt:        workspaceMapStringPointer(current, "expires_at"), Metadata: input.Metadata,
+		ExpiresAt:        workspaceMapStringPointer(current, "expires_at"),
+		Metadata:         mergePropertyAssetMetadata(current["metadata"], input.Metadata),
 	}
 	applyString := func(field workspaceOptionalString, destination **string) {
 		if field.Set {
@@ -1179,7 +1391,8 @@ func (repo Repository) getWorkspaceAsset(ctx context.Context, queryer interface 
 		from public.property_assets as asset
 		where asset.organization_id = $1::uuid
 		  and asset.property_id = $2::uuid
-		  and asset.id = $3::uuid`+lockClause,
+		  and asset.id = $3::uuid
+		  and `+activePropertyAssetSQL("asset")+lockClause,
 		organizationID, propertyID, assetID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrPropertyAssetNotFound
@@ -1194,6 +1407,7 @@ func listWorkspaceAssets(ctx context.Context, queryer interface {
 		select `+workspaceAssetProjection("asset", "true")+`::text
 		from public.property_assets as asset
 		where asset.organization_id = $1::uuid and asset.property_id = $2::uuid
+		  and `+activePropertyAssetSQL("asset")+`
 		order by asset.asset_type, asset.is_primary desc, asset.sort_order, asset.id
 	`, organizationID, propertyID)
 	if err != nil {
@@ -1223,13 +1437,108 @@ func clearOtherPrimaryPhotos(ctx context.Context, tx pgx.Tx, organizationID stri
 		  and asset.property_id = $2::uuid
 		  and asset.asset_type = 'photo'
 		  and asset.is_primary
+		  and `+activePropertyAssetSQL("asset")+`
 		  and (nullif($3, '') is null or asset.id <> nullif($3, '')::uuid)
 	`, organizationID, propertyID, excludeID)
 	return normalizeWorkspaceDatabaseError(err)
 }
 
+func ensurePropertyPhotoAssetCapacity(
+	ctx context.Context,
+	tx pgx.Tx,
+	organizationID string,
+	propertyID string,
+	excludeID string,
+) (int, bool, error) {
+	var count int
+	var hasPrimary bool
+	if err := tx.QueryRow(ctx, `
+		select count(*)::integer, coalesce(bool_or(asset.is_primary), false)
+		from public.property_assets as asset
+		where asset.organization_id = $1::uuid
+		  and asset.property_id = $2::uuid
+		  and asset.asset_type = 'photo'
+		  and `+activePropertyAssetSQL("asset")+`
+		  and (nullif($3, '') is null or asset.id <> nullif($3, '')::uuid)
+	`, organizationID, propertyID, excludeID).Scan(&count, &hasPrimary); err != nil {
+		return 0, false, err
+	}
+	if count >= propertyAssetMaxPhotos {
+		return 0, false, fmt.Errorf(
+			"%w: each property can have at most %d photos",
+			ErrInvalidInput,
+			propertyAssetMaxPhotos,
+		)
+	}
+	return count, hasPrimary, nil
+}
+
+type propertyAssetOrderVersion struct {
+	AssetType string
+	UpdatedAt string
+}
+
+func validateCompletePropertyAssetOrder(
+	items []PropertyAssetOrderItem,
+	versions map[string]propertyAssetOrderVersion,
+	typeCounts map[string]int,
+) error {
+	assetType := ""
+	for _, item := range items {
+		version, ok := versions[item.ID]
+		if !ok {
+			return ErrPropertyAssetNotFound
+		}
+		if assetType == "" {
+			assetType = version.AssetType
+		} else if version.AssetType != assetType {
+			return fmt.Errorf("%w: asset order must contain exactly one asset type", ErrInvalidInput)
+		}
+		if !workspaceTimestampsEqual(version.UpdatedAt, item.ExpectedUpdatedAt) {
+			return ErrPropertyWorkspaceConflict
+		}
+	}
+	// A reorder is a replacement of one type's complete ordering, not a patch.
+	// Reject stale/partial collections so an omitted concurrent asset cannot
+	// retain a colliding position or be silently moved by an old client.
+	if assetType == "" || typeCounts[assetType] != len(items) {
+		return ErrPropertyWorkspaceConflict
+	}
+	return nil
+}
+
 func syncLegacyPropertyPrimaryPhoto(ctx context.Context, tx pgx.Tx, organizationID string, propertyID string, removedExternalURL string, force bool) error {
 	_, err := tx.Exec(ctx, `
+		with replacement_primary as (
+			select asset.id
+			from public.property_assets as asset
+			where asset.organization_id = $1::uuid
+			  and asset.property_id = $2::uuid
+			  and asset.asset_type = 'photo'
+			  and asset.visibility = 'public'
+			  and `+activePropertyAssetSQL("asset")+`
+			  and not exists (
+				select 1
+				from public.property_assets as current_primary
+				where current_primary.organization_id = $1::uuid
+				  and current_primary.property_id = $2::uuid
+				  and current_primary.asset_type = 'photo'
+				  and current_primary.is_primary
+				  and `+activePropertyAssetSQL("current_primary")+`
+			  )
+			order by asset.sort_order, asset.created_at, asset.id
+			limit 1
+		)
+		update public.property_assets as asset
+		set is_primary = true, updated_at = now()
+		where asset.id = (select id from replacement_primary)
+		  and `+activePropertyAssetSQL("asset")+`
+	`, organizationID, propertyID)
+	if err != nil {
+		return normalizeWorkspaceDatabaseError(err)
+	}
+
+	_, err = tx.Exec(ctx, `
 		with replacement as (
 			select asset.external_url
 			from public.property_assets as asset
@@ -1238,6 +1547,7 @@ func syncLegacyPropertyPrimaryPhoto(ctx context.Context, tx pgx.Tx, organization
 			  and asset.asset_type = 'photo'
 			  and asset.visibility = 'public'
 			  and asset.external_url is not null
+			  and `+activePropertyAssetSQL("asset")+`
 			order by asset.is_primary desc, asset.sort_order, asset.id
 			limit 1
 		)
@@ -1249,6 +1559,125 @@ func syncLegacyPropertyPrimaryPhoto(ctx context.Context, tx pgx.Tx, organization
 		  and property.imagem_principal is distinct from (select external_url from replacement)
 	`, organizationID, propertyID, removedExternalURL, force)
 	return err
+}
+
+func activePropertyAssetSQL(alias string) string {
+	return "lower(btrim(coalesce(" + alias + ".metadata->>'integration_retired', 'false'))) not in ('true', 't', '1', 'yes', 'on')"
+}
+
+func mergePropertyAssetMetadata(current any, requested map[string]any) map[string]any {
+	merged := make(map[string]any, len(requested)+len(reservedPropertyAssetMetadataKeys))
+	for key, value := range requested {
+		merged[key] = value
+	}
+	currentMetadata, _ := current.(map[string]any)
+	for key := range reservedPropertyAssetMetadataKeys {
+		if value, exists := currentMetadata[key]; exists {
+			merged[key] = value
+		}
+	}
+	return merged
+}
+
+// scrubLegacyPropertyPhotoLocator removes an external photo from every legacy
+// compatibility surface before the canonical asset is changed or deleted.
+// Keeping the asset row alive during this UPDATE is intentional: the legacy
+// mirror trigger can observe the old locator, but its conflict handler cannot
+// recreate a second row. Once this statement finishes, later property updates
+// no longer have a stale locator capable of resurrecting the canonical asset.
+func scrubLegacyPropertyPhotoLocator(ctx context.Context, tx pgx.Tx, organizationID string, propertyID string, externalURL string) error {
+	externalURL = strings.TrimSpace(externalURL)
+	if externalURL == "" {
+		return nil
+	}
+
+	_, err := tx.Exec(ctx, `
+		update public.properties as property
+		set imagem_principal = case
+				when nullif(btrim(property.imagem_principal), '') = $3 then null
+				else property.imagem_principal
+			end,
+			image_urls = case
+				when property.image_urls is null then null
+				else array(
+					select legacy_image.url
+					from unnest(property.image_urls) with ordinality as legacy_image(url, position)
+					where nullif(btrim(legacy_image.url), '') is distinct from $3
+					order by legacy_image.position
+				)
+			end,
+			fotos = case
+				when jsonb_typeof(property.fotos) = 'array' then coalesce((
+					select jsonb_agg(legacy_photo.node order by legacy_photo.position)
+					from jsonb_array_elements(property.fotos)
+						with ordinality as legacy_photo(node, position)
+					where not coalesce((
+						(jsonb_typeof(legacy_photo.node) = 'string'
+							and nullif(btrim(legacy_photo.node #>> '{}'), '') = $3)
+						or (jsonb_typeof(legacy_photo.node) = 'object' and (
+							nullif(btrim(legacy_photo.node->>'url'), '') = $3
+							or nullif(btrim(legacy_photo.node->>'src'), '') = $3
+							or nullif(btrim(legacy_photo.node->>'publicUrl'), '') = $3
+						))
+					), false)
+				), '[]'::jsonb)
+				else property.fotos
+			end,
+			metadata = case
+				when jsonb_typeof(property.metadata) = 'object'
+				 and jsonb_typeof(property.metadata->'hidden_site_image_urls') = 'array'
+				then jsonb_set(
+					property.metadata,
+					'{hidden_site_image_urls}',
+					coalesce((
+						select jsonb_agg(hidden_image.node order by hidden_image.position)
+						from jsonb_array_elements(property.metadata->'hidden_site_image_urls')
+							with ordinality as hidden_image(node, position)
+						where not (
+							jsonb_typeof(hidden_image.node) = 'string'
+							and nullif(btrim(hidden_image.node #>> '{}'), '') = $3
+						)
+					), '[]'::jsonb),
+					false
+				)
+				else property.metadata
+			end,
+			updated_at = now()
+		where property.organization_id = $1::uuid
+		  and property.id = $2::uuid
+		  and (
+			nullif(btrim(property.imagem_principal), '') = $3
+			or exists (
+				select 1
+				from unnest(coalesce(property.image_urls, '{}'::text[])) as legacy_image(url)
+				where nullif(btrim(legacy_image.url), '') = $3
+			)
+			or exists (
+				select 1
+				from jsonb_array_elements(
+					case when jsonb_typeof(property.fotos) = 'array'
+						then property.fotos else '[]'::jsonb end
+				) as legacy_photo(node)
+				where coalesce(((jsonb_typeof(legacy_photo.node) = 'string'
+						and nullif(btrim(legacy_photo.node #>> '{}'), '') = $3)
+				   or (jsonb_typeof(legacy_photo.node) = 'object' and (
+						nullif(btrim(legacy_photo.node->>'url'), '') = $3
+						or nullif(btrim(legacy_photo.node->>'src'), '') = $3
+						or nullif(btrim(legacy_photo.node->>'publicUrl'), '') = $3
+				   ))), false)
+			)
+			or exists (
+				select 1
+				from jsonb_array_elements(
+					case when jsonb_typeof(property.metadata->'hidden_site_image_urls') = 'array'
+						then property.metadata->'hidden_site_image_urls' else '[]'::jsonb end
+				) as hidden_image(node)
+				where jsonb_typeof(hidden_image.node) = 'string'
+				  and nullif(btrim(hidden_image.node #>> '{}'), '') = $3
+			)
+		  )
+	`, organizationID, propertyID, externalURL)
+	return normalizeWorkspaceDatabaseError(err)
 }
 
 func (repo Repository) enrichWorkspaceAssetAccessURLs(ctx context.Context, organizationID string, propertyID string, assets []map[string]any) {

@@ -173,8 +173,8 @@ function normalizePhone(value?: string | null) {
 }
 
 export function AIAssistantTab() {
-  const { organization, profile, isSuperAdmin } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, organization, profile, isSuperAdmin } = useAuth();
+  const organizationId = activeOrganization.organizationId;
   const { toast } = useToast();
   const { hasModule } = useOrganizationModules();
   const { data: sessions = [], isLoading: sessionsLoading, isError: sessionsFailed, refetch: refetchSessions } = useWhatsAppSessions();

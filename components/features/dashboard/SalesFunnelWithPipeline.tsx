@@ -28,6 +28,7 @@ const funnelGradients = [
 
 interface SalesFunnelWithPipelineProps {
   filters?: DashboardAPIFilters;
+  enabled?: boolean;
 }
 
 function FunnelSkeleton() {
@@ -47,9 +48,12 @@ function FunnelSkeleton() {
   );
 }
 
-export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProps) {
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id ?? profile?.organization_id ?? null;
+export function SalesFunnelWithPipeline({
+  filters,
+  enabled = true,
+}: SalesFunnelWithPipelineProps) {
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId ?? null;
   const { data: pipelines = [] } = usePipelines();
   const [manualPipelineSelection, setManualPipelineSelection] = useState<{
     organizationId: string | null;
@@ -64,9 +68,13 @@ export function SalesFunnelWithPipeline({ filters }: SalesFunnelWithPipelineProp
     [manualPipelineId, pipelines]
   );
 
-  const { data: funnelData = [], isLoading: funnelLoading } = useFunnelData(filters, manualPipelineId);
+  const { data: funnelData = [], isLoading: funnelLoading } = useFunnelData(
+    filters,
+    manualPipelineId,
+    { enabled },
+  );
 
-  const isLoading = !organizationId || funnelLoading;
+  const isLoading = !organizationId || !enabled || funnelLoading;
   const maxStages = Math.max(funnelData.length, 1);
 
   return (

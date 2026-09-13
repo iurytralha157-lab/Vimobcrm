@@ -18,9 +18,8 @@ import { isBillingAccessBlocked } from "@/lib/billing-access";
 import { HomeAssistant } from "./HomeAssistant";
 import { HomeFocusList } from "./HomeFocusList";
 import { HomeNoticeRail } from "./HomeNoticeRail";
-import { HomePublicationGrid } from "./HomePublicationGrid";
+import { HomePublicationCarousel } from "./HomePublicationCarousel";
 import {
-  FALLBACK_HOME_PUBLICATIONS,
   HOME_BILLING_ACTION,
   HOME_PAGE_SECTIONS,
   HOME_QUICK_ACTIONS,
@@ -116,13 +115,16 @@ export default function HomeScreen() {
   };
 
   const configuredPublications = publicationsQuery.data || [];
-  const sourcePublications = publicationsQuery.isError
-    ? FALLBACK_HOME_PUBLICATIONS
-    : configuredPublications;
-  const publications: HomePublicationCard[] = sourcePublications
+  const publications: HomePublicationCard[] = configuredPublications
     .slice()
     .sort((left, right) => left.displayOrder - right.displayOrder)
     .filter((publication) => canAccessHref(publication.ctaHref));
+  const showPublicationCarousel =
+    HOME_PAGE_SECTIONS.publications &&
+    (!accessReady ||
+      publicationsQuery.isLoading ||
+      publicationsQuery.isError ||
+      publications.length > 0);
 
   return (
     <AppLayout
@@ -130,23 +132,24 @@ export default function HomeScreen() {
       borderless
       belowHeader={<HomeNoticeRail notices={noticesQuery.data || []} />}
     >
-      <div className="mx-auto w-full max-w-[980px] pb-8 sm:pt-2">
+      {showPublicationCarousel ? (
+        <div className="-mx-5 -mt-2 md:-mx-6 md:-mt-3">
+          <HomePublicationCarousel
+            publications={publications}
+            isLoading={!accessReady || publicationsQuery.isLoading}
+            hasError={publicationsQuery.isError}
+            onRetry={() => void publicationsQuery.refetch()}
+          />
+        </div>
+      ) : null}
+
+      <div className="mx-auto w-full max-w-[980px] pb-8">
         <HomeAssistant
           firstName={getFirstName(profile?.name)}
           quickActions={quickActions}
         />
 
         <div className="space-y-5 sm:space-y-7">
-          {HOME_PAGE_SECTIONS.publications &&
-            (!accessReady ||
-              publicationsQuery.isLoading ||
-              publications.length > 0) && (
-              <HomePublicationGrid
-                publications={publications}
-                isLoading={!accessReady || publicationsQuery.isLoading}
-              />
-            )}
-
           {HOME_PAGE_SECTIONS.focus ? (
             <HomeFocusList
               items={overview.focusItems}

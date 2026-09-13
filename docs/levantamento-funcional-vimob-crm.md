@@ -1,5 +1,11 @@
 # Levantamento funcional do Vimob CRM
 
+> Documento de contexto funcional. As contagens mudam com frequência; para o
+> estado verificável atual de rotas, formulários, overlays e CTAs use
+> `docs/audits/crm-surface-inventory.md`. Para HTTP use
+> `docs/catalogo-contratos-backend.md`, e para Edge Functions use o manifesto e
+> `scripts/supabase/verify-edge-functions.mjs`.
+
 Data do levantamento: 29/07/2026
 
 Este documento inventaria o produto pelo que o usuário enxerga e pelo que o backend executa. A contagem não usa número de componentes React como sinônimo de funcionalidade.
@@ -19,9 +25,9 @@ Este documento inventaria o produto pelo que o usuário enxerga e pelo que o bac
 | Tags HTML `<form>` | **23** | Formulários técnicos encontrados em 17 arquivos |
 | Tags `<form>` hoje alcançáveis | **21** | Duas implementações existem, mas não estão ligadas à UI |
 | Interações de entrada/edição/configuração catalogadas | **93** | Visão de produto: inclui dialogs, sheets, construtores e ações confirmáveis sem `<form>` |
-| Contratos HTTP no backend Go | **472** | Rotas registradas no servidor principal |
-| Supabase Edge Functions | **22** | Funções serverless adicionais |
-| Entradas executáveis Go + Edge | **494** | Não significa 494 funções visíveis; há endpoints auxiliares e sobreposição |
+| Contratos HTTP no backend Go | **541** | Catálogo gerado a partir de `routes.go` |
+| Slugs de Supabase Edge Functions | **82** | 53 live, 21 tombstone e 8 retired no manifesto |
+| Contratos Go + funções Edge live | **594** | Não significa 594 funções visíveis; há endpoints auxiliares e sobreposição |
 | Pacotes de domínio no backend Go | **40** | Domínios técnicos isolados |
 | Workers iniciados com o backend | **10** | Processamento assíncrono e supervisores |
 | Integrações mostradas em Configurações | **9** | WhatsApp, IA, Meta, OLX, Google, Vista, Imoview, webhooks e API |
@@ -110,7 +116,7 @@ Hoje existem exatamente três rotas de dashboard:
 - `/admin/email-templates` — modelos de e-mail.
 - `/admin/email-logs` — logs de e-mail.
 - `/admin/help` — conteúdo de ajuda.
-- `/admin/home-content` — rascunhos configuráveis da Home; o canal de cards está desativado.
+- `/admin/home-content` — slides configuráveis do carrossel da Página inicial.
 - `/admin/audit` — auditoria.
 - `/admin/error-logs` — erros capturados.
 - `/admin/database` — visão administrativa do banco.
@@ -181,14 +187,15 @@ Portanto, **68 é a quantidade correta de URLs que renderizam página**, mas nã
 
 ### 3.1 Contagem técnica
 
-Foram encontradas 23 tags HTML `<form>` em 17 arquivos TSX. Duas implementações não possuem consumidor ativo:
+O inventário anterior encontrou implementações de `<form>` sem consumidor
+ativo. Depois da confirmação do grafo de imports, `PropertyFormDialog.tsx` foi
+removido porque as rotas de criação/edição usam `PropertyFormScreen`.
+Permanece para decisão de produto:
 
 - `components/features/financial/SmartEntryForm.tsx`
-- `components/features/properties/PropertyFormDialog.tsx`
 
-Assim, existem **21 formulários HTML alcançáveis** no produto atual.
-
-Essa métrica, sozinha, subestima o sistema. Muitos fluxos usam botão + dialog/sheet + mutation e não uma tag `<form>`. O inventário funcional abaixo conta 93 interações em que o usuário informa, edita, configura ou confirma dados.
+Use o inventário gerado para os denominadores atuais. A métrica de `<form>`,
+sozinha, subestima o sistema: muitos fluxos usam botão + dialog/sheet + mutation.
 
 ### 3.2 Inventário funcional de entradas e edições — 93 interações
 
@@ -329,20 +336,20 @@ O cadastro de lead a partir de uma conversa reutiliza o formulário de lead e, p
 
 ### 4.1 Servidor Go
 
-O servidor registra **472 contratos HTTP** em `apps/api/internal/app/app.go`.
+O servidor registra **541 contratos HTTP** em `apps/api/internal/app/routes.go`.
 
 O catálogo individual, com método, rota, operação, handler, proteção e linha de origem, está disponível em:
 
-- [Catálogo navegável dos 472 contratos](./catalogo-contratos-backend.md)
-- [Catálogo dos 472 contratos em CSV](./catalogo-contratos-backend.csv)
+- [Catálogo navegável dos 541 contratos](./catalogo-contratos-backend.md)
+- [Catálogo dos 541 contratos em CSV](./catalogo-contratos-backend.csv)
 
 | Método | Quantidade |
 | --- | ---: |
-| GET | 198 |
-| POST | 160 |
-| DELETE | 50 |
-| PATCH | 48 |
-| PUT | 16 |
+| GET | 220 |
+| POST | 195 |
+| DELETE | 51 |
+| PATCH | 52 |
+| PUT | 23 |
 
 Os maiores agrupamentos por prefixo são:
 
@@ -577,7 +584,8 @@ Estes pontos merecem revisão de produto porque aumentam o valor percebido sem n
    `MetaFormManager.tsx` não está ligado; a integração usa diretamente outro diálogo de configuração.
 
 7. **Formulários alternativos/legados**  
-   `SmartEntryForm.tsx` e `PropertyFormDialog.tsx` possuem `<form>`, mas não têm consumidor ativo.
+   `SmartEntryForm.tsx` possui `<form>`, mas não tem consumidor ativo. O antigo
+   `PropertyFormDialog.tsx` já foi removido após confirmação do substituto ativo.
 
 8. **Ações do detalhe de contrato**  
    Os botões “Editar contrato” e “Gerar aditivo” devem ser verificados ponta a ponta; visualmente existem, mas não foi confirmada uma ação ativa conectada.
@@ -596,7 +604,7 @@ Uma auditoria de produto pode ser feita em quatro passagens:
    Testar um lead entrando por cada canal, seguindo distribuição, primeira resposta, cadência, automação, agenda, venda/perda e dashboard.
 
 3. **Cobertura frontend × backend**  
-   Comparar as 472 rotas Go e 22 Edge Functions com as telas realmente expostas. A Central de Atenção é o exemplo mais claro de capacidade pronta com baixa exposição.
+   Comparar as 541 rotas Go e as 53 Edge Functions live com as telas realmente expostas. A Central de Atenção é o exemplo mais claro de capacidade pronta com baixa exposição.
 
 4. **Qualidade ponta a ponta**  
    Para cada uma das 93 interações catalogadas, validar permissão, estado de carregamento, erro, sucesso, atualização da tela e persistência por organização.
@@ -604,7 +612,7 @@ Uma auditoria de produto pode ser feita em quatro passagens:
 ## 10. Fontes técnicas principais
 
 - Rotas visuais: `app/**/page.tsx`
-- Registro de contratos HTTP: `apps/api/internal/app/app.go`
+- Registro de contratos HTTP: `apps/api/internal/app/routes.go`
 - Domínios do backend: `apps/api/internal/*`
 - Funções serverless: `supabase/functions/*`
 - Clientes de API do frontend: `lib/api/*`

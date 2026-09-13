@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -79,9 +80,23 @@ func (repo Repository) CreateAutomation(ctx context.Context, tenantContext tenan
 	if err != nil {
 		return StageAutomation{}, err
 	}
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return StageAutomation{}, err
+	}
+	defer tx.Rollback(ctx)
+	if err := repo.lockAutomationStage(ctx, tx, tenantContext.OrganizationID, stageID); err != nil {
+		return StageAutomation{}, err
+	}
+	if err := repo.validateAutomationReferences(ctx, tx, tenantContext.OrganizationID, input); err != nil {
+		return StageAutomation{}, err
+	}
+	if err := repo.validateAutomationStatusConflict(ctx, tx, tenantContext.OrganizationID, stageID, "", input, hasConfigSchema); err != nil {
+		return StageAutomation{}, err
+	}
 	if !hasConfigSchema {
 		automationType, actionConfig, triggerDays, targetStageID, whatsappTemplate, alertMessage := legacyStageAutomationValues(input.Config)
-		automation, err := scanStageAutomation(repo.db.Pool().QueryRow(ctx, `
+		automation, err := scanStageAutomation(tx.QueryRow(ctx, `
 			insert into public.stage_automations (
 				organization_id,
 				stage_id,
@@ -115,10 +130,16 @@ func (repo Repository) CreateAutomation(ctx context.Context, tenantContext tenan
 		if errors.Is(err, pgx.ErrNoRows) {
 			return StageAutomation{}, ErrNotFound
 		}
-		return automation, err
+		if err != nil {
+			return StageAutomation{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return StageAutomation{}, err
+		}
+		return automation, nil
 	}
 
-	automation, err := scanStageAutomation(repo.db.Pool().QueryRow(ctx, `
+	automation, err := scanStageAutomation(tx.QueryRow(ctx, `
 		insert into public.stage_automations (
 			organization_id,
 			stage_id,
@@ -140,7 +161,13 @@ func (repo Repository) CreateAutomation(ctx context.Context, tenantContext tenan
 	if errors.Is(err, pgx.ErrNoRows) {
 		return StageAutomation{}, ErrNotFound
 	}
-	return automation, err
+	if err != nil {
+		return StageAutomation{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return StageAutomation{}, err
+	}
+	return automation, nil
 }
 
 func (repo Repository) UpdateAutomation(ctx context.Context, tenantContext tenant.Context, automationID string, input stageAutomationInput) (StageAutomation, error) {
@@ -156,9 +183,36 @@ func (repo Repository) UpdateAutomation(ctx context.Context, tenantContext tenan
 	if err != nil {
 		return StageAutomation{}, err
 	}
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return StageAutomation{}, err
+	}
+	defer tx.Rollback(ctx)
+	var stageID string
+	var currentIsActive bool
+	if err := tx.QueryRow(ctx, `
+		select stage_id::text, coalesce(is_active, true)
+		from public.stage_automations
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+	`, tenantContext.OrganizationID, automationID).Scan(&stageID, &currentIsActive); errors.Is(err, pgx.ErrNoRows) {
+		return StageAutomation{}, ErrNotFound
+	} else if err != nil {
+		return StageAutomation{}, err
+	}
+	if err := repo.lockAutomationStage(ctx, tx, tenantContext.OrganizationID, stageID); err != nil {
+		return StageAutomation{}, err
+	}
+	input.IsActive = currentIsActive
+	if err := repo.validateAutomationReferences(ctx, tx, tenantContext.OrganizationID, input); err != nil {
+		return StageAutomation{}, err
+	}
+	if err := repo.validateAutomationStatusConflict(ctx, tx, tenantContext.OrganizationID, stageID, automationID, input, hasConfigSchema); err != nil {
+		return StageAutomation{}, err
+	}
 	if !hasConfigSchema {
 		automationType, actionConfig, triggerDays, targetStageID, whatsappTemplate, alertMessage := legacyStageAutomationValues(input.Config)
-		automation, err := scanStageAutomation(repo.db.Pool().QueryRow(ctx, `
+		automation, err := scanStageAutomation(tx.QueryRow(ctx, `
 			update public.stage_automations
 			set trigger_type = $3,
 			    action_type = $4,
@@ -176,10 +230,16 @@ func (repo Repository) UpdateAutomation(ctx context.Context, tenantContext tenan
 		if errors.Is(err, pgx.ErrNoRows) {
 			return StageAutomation{}, ErrNotFound
 		}
-		return automation, err
+		if err != nil {
+			return StageAutomation{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return StageAutomation{}, err
+		}
+		return automation, nil
 	}
 
-	automation, err := scanStageAutomation(repo.db.Pool().QueryRow(ctx, `
+	automation, err := scanStageAutomation(tx.QueryRow(ctx, `
 		update public.stage_automations
 		set trigger_type = $3,
 		    config = $4::jsonb,
@@ -191,7 +251,13 @@ func (repo Repository) UpdateAutomation(ctx context.Context, tenantContext tenan
 	if errors.Is(err, pgx.ErrNoRows) {
 		return StageAutomation{}, ErrNotFound
 	}
-	return automation, err
+	if err != nil {
+		return StageAutomation{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return StageAutomation{}, err
+	}
+	return automation, nil
 }
 
 func (repo Repository) DeleteAutomation(ctx context.Context, tenantContext tenant.Context, automationID string) error {
@@ -202,7 +268,26 @@ func (repo Repository) DeleteAutomation(ctx context.Context, tenantContext tenan
 	if !ok {
 		return ErrInvalidInput
 	}
-	tag, err := repo.db.Pool().Exec(ctx, `
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var stageID string
+	if err := tx.QueryRow(ctx, `
+		select stage_id::text
+		from public.stage_automations
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+	`, tenantContext.OrganizationID, automationID).Scan(&stageID); errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	if err := repo.lockAutomationStage(ctx, tx, tenantContext.OrganizationID, stageID); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `
 		delete from public.stage_automations
 		where organization_id = $1::uuid
 		  and id = $2::uuid
@@ -213,7 +298,7 @@ func (repo Repository) DeleteAutomation(ctx context.Context, tenantContext tenan
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (repo Repository) ToggleAutomation(ctx context.Context, tenantContext tenant.Context, automationID string, isActive bool) (StageAutomation, error) {
@@ -228,7 +313,52 @@ func (repo Repository) ToggleAutomation(ctx context.Context, tenantContext tenan
 	if err != nil {
 		return StageAutomation{}, err
 	}
-	automation, err := scanStageAutomation(repo.db.Pool().QueryRow(ctx, `
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return StageAutomation{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var stageID string
+	if err := tx.QueryRow(ctx, `
+		select stage_id::text
+		from public.stage_automations
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+	`, tenantContext.OrganizationID, automationID).Scan(&stageID); errors.Is(err, pgx.ErrNoRows) {
+		return StageAutomation{}, ErrNotFound
+	} else if err != nil {
+		return StageAutomation{}, err
+	}
+	if err := repo.lockAutomationStage(ctx, tx, tenantContext.OrganizationID, stageID); err != nil {
+		return StageAutomation{}, err
+	}
+	if isActive {
+		current, err := scanStageAutomation(tx.QueryRow(ctx, `
+			select `+stageAutomationSelectFields(hasConfigSchema)+`
+			from public.stage_automations
+			where organization_id = $1::uuid
+			  and id = $2::uuid
+		`, tenantContext.OrganizationID, automationID))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return StageAutomation{}, ErrNotFound
+		}
+		if err != nil {
+			return StageAutomation{}, err
+		}
+		config, ok := current.Config.(map[string]any)
+		if !ok {
+			return StageAutomation{}, fmt.Errorf("%w: automation config is invalid", ErrInvalidInput)
+		}
+		activationInput := stageAutomationInput{Config: config, IsActive: true}
+		if err := repo.validateAutomationReferences(ctx, tx, tenantContext.OrganizationID, activationInput); err != nil {
+			return StageAutomation{}, err
+		}
+		if err := repo.validateAutomationStatusConflict(ctx, tx, tenantContext.OrganizationID, stageID, automationID, activationInput, hasConfigSchema); err != nil {
+			return StageAutomation{}, err
+		}
+	}
+	automation, err := scanStageAutomation(tx.QueryRow(ctx, `
 		update public.stage_automations
 		set is_active = $3,
 		    updated_at = now()
@@ -239,7 +369,13 @@ func (repo Repository) ToggleAutomation(ctx context.Context, tenantContext tenan
 	if errors.Is(err, pgx.ErrNoRows) {
 		return StageAutomation{}, ErrNotFound
 	}
-	return automation, err
+	if err != nil {
+		return StageAutomation{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return StageAutomation{}, err
+	}
+	return automation, nil
 }
 
 func (repo Repository) ListOperationalConfigs(ctx context.Context, tenantContext tenant.Context, pipelineID string, stageID string) ([]StageOperationalConfig, error) {
@@ -804,6 +940,98 @@ func legacyStageAutomationValues(config map[string]any) (string, string, any, an
 		legacyStringConfigOrNil(config, "alert_message")
 }
 
+func (repo Repository) lockAutomationStage(ctx context.Context, tx pgx.Tx, organizationID string, stageID string) error {
+	var lockedID string
+	if err := tx.QueryRow(ctx, `
+		select id::text
+		from public.stages
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		  and coalesce(is_active, true) = true
+		for update
+	`, organizationID, stageID).Scan(&lockedID); errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (repo Repository) validateAutomationReferences(ctx context.Context, tx pgx.Tx, organizationID string, input stageAutomationInput) error {
+	automationType := legacyStringConfig(input.Config, "automation_type")
+	actionConfig, _ := input.Config["action_config"].(map[string]any)
+	if automationType == "change_assignee_on_enter" {
+		targetUserID, _ := actionConfig["target_user_id"].(string)
+		var lockedUserID string
+		if err := tx.QueryRow(ctx, `
+			select member.user_id::text
+			from public.organization_members member
+			join public.users app_user on app_user.id = member.user_id
+			where member.organization_id = $1::uuid
+			  and member.user_id = $2::uuid
+			  and coalesce(member.is_active, false) = true
+			  and coalesce(app_user.is_active, false) = true
+			for key share of member, app_user
+		`, organizationID, targetUserID).Scan(&lockedUserID); errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("%w: target_user_id must be an active organization member", ErrInvalidInput)
+		} else if err != nil {
+			return err
+		}
+	}
+	if targetStageID := legacyStringConfig(input.Config, "target_stage_id"); targetStageID != "" {
+		var lockedStageID string
+		if err := tx.QueryRow(ctx, `
+			select id::text
+			from public.stages
+			where organization_id = $1::uuid
+			  and id = $2::uuid
+			  and coalesce(is_active, true) = true
+			for key share
+		`, organizationID, targetStageID).Scan(&lockedStageID); errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("%w: target_stage_id must belong to the organization", ErrInvalidInput)
+		} else if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (repo Repository) validateAutomationStatusConflict(ctx context.Context, tx pgx.Tx, organizationID string, stageID string, excludeID string, input stageAutomationInput, hasConfigSchema bool) error {
+	if !input.IsActive || legacyStringConfig(input.Config, "automation_type") != "change_deal_status_on_enter" {
+		return nil
+	}
+	actionConfig, _ := input.Config["action_config"].(map[string]any)
+	status, _ := actionConfig["deal_status"].(string)
+	statusExpression := "lower(btrim(coalesce(action_config->>'deal_status', '')))"
+	typeExpression := "coalesce(automation_type, action_type, '')"
+	if hasConfigSchema {
+		statusExpression = "lower(btrim(coalesce(config#>>'{action_config,deal_status}', '')))"
+		typeExpression = "coalesce(config->>'automation_type', config->>'action_type', '')"
+	}
+	var excludeArg any
+	if excludeID != "" {
+		excludeArg = excludeID
+	}
+	var conflicting int
+	if err := tx.QueryRow(ctx, `
+		select count(*)
+		from public.stage_automations
+		where organization_id = $1::uuid
+		  and stage_id = $2::uuid
+		  and ($3::uuid is null or id <> $3::uuid)
+		  and coalesce(is_active, true) = true
+		  and `+typeExpression+` = 'change_deal_status_on_enter'
+		  and `+statusExpression+` in ('open', 'won', 'lost')
+		  and `+statusExpression+` <> $4
+	`, organizationID, stageID, excludeArg, status).Scan(&conflicting); err != nil {
+		return err
+	}
+	if conflicting > 0 {
+		return fmt.Errorf("%w: stage has a conflicting active deal status automation", ErrInvalidInput)
+	}
+	return nil
+}
+
 func legacyStringConfig(config map[string]any, key string) string {
 	value := config[key]
 	switch typed := value.(type) {
@@ -930,21 +1158,11 @@ func operationalConfigPayload(request StageOperationalConfigRequest, includeDefa
 }
 
 func normalizeUUID(value string) (string, bool) {
-	var uuid pgtype.UUID
-	if err := uuid.Scan(strings.TrimSpace(value)); err != nil {
-		return "", false
-	}
-	if !uuid.Valid {
-		return "", false
-	}
-	return uuid.String(), true
+	return pgvalue.NormalizeUUID(value)
 }
 
 func textPointer(value pgtype.Text) *string {
-	if !value.Valid {
-		return nil
-	}
-	return &value.String
+	return pgvalue.TextPointer(value)
 }
 
 func jsonValue(value pgtype.Text) any {

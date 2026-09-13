@@ -3,9 +3,11 @@ package realtime
 import "time"
 
 const (
-	EventConnected = "realtime.connected"
-	EventPing      = "realtime.ping"
-	EventReset     = "realtime.reset"
+	EventConnected                = "realtime.connected"
+	EventPing                     = "realtime.ping"
+	EventReset                    = "realtime.reset"
+	EventAccessMembershipChanged  = "access.membership.changed"
+	EventOrganizationUsersChanged = "organization.users.changed"
 )
 
 type Event struct {

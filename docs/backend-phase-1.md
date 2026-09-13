@@ -60,7 +60,7 @@ GET /v1/properties/{id}
 POST /v1/properties
 PATCH /v1/properties/{id}
 DELETE /v1/properties/{id}
-POST /v1/property-images
+POST /v1/property-images (legado, responde 410 Gone)
 GET /v1/property-captors/{id}
 GET /v1/property-site-info
 GET /v1/property-summaries
@@ -162,7 +162,7 @@ Preferir validacao por JWKS/asymmetric keys. `SUPABASE_JWT_SECRET` existe apenas
 - Board do funil passa por `GET /v1/pipeline-board`, `GET /v1/pipeline-stage-leads`, `GET /v1/pipeline-stage-counts`, `GET /v1/lead-enrichments` e `GET /v1/lead-meta-filters`, concentrando filtros, visibilidade, tags, tarefas e meta ads no backend.
 - CRUD de imoveis passa pela Vimob API em `apps/api/internal/properties`, com filtro paginado, validacao de campos gravaveis, escopo por organizacao, permissao de criacao/edicao/delete, geracao transacional de `code`, registro de activity de captacao e limpeza server-side de imoveis demo da organizacao ao criar um imovel real.
 - Frontend usa `lib/api/properties.ts` e `hooks/use-properties.ts` para listagem, busca, cadastro, edicao e exclusao de imoveis.
-- Upload de imagens de imoveis passa por `POST /v1/property-images`; o frontend usa `lib/api/property-images.ts` e o backend envia para o bucket `properties` do Supabase Storage com credencial server-side.
+- Upload de imagens de imoveis usa intents privadas e o CRUD canonico de `property_assets` por `lib/api/property-media.ts`; reservas consumidas/descarte preservam path e objeto ate o vencimento do token mais cinco minutos contra replay; `POST /v1/property-images` foi mantido apenas como tombstone autenticado (`410 Gone`).
 - Dados auxiliares de preview/picker/funil/analytics de imoveis (`property-captors`, `property-site-info` e `property-summaries`) passam pela Vimob API via `lib/api/property-support.ts`.
 - Resumos de usuarios usados no funil passam por `GET /v1/user-summaries`, filtrados pela organizacao ativa.
 - Catalogos auxiliares de imoveis (`property_types`, `property_feature_catalog`, `property_proximity_catalog`) passam pela Vimob API via `lib/api/property-catalog.ts`, `use-property-types`, `use-property-features` e `use-property-proximities`.

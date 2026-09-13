@@ -1,7 +1,6 @@
 package automations
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -20,7 +19,7 @@ func NewHandler(repo Repository) Handler {
 }
 
 func (handler Handler) List(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -35,14 +34,14 @@ func (handler Handler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) Create(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 
 	defer r.Body.Close()
 	var request CreateRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 
@@ -62,7 +61,7 @@ func (handler Handler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) Show(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -77,14 +76,14 @@ func (handler Handler) Show(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) Update(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 
 	defer r.Body.Close()
 	var request UpdateRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 
@@ -104,7 +103,7 @@ func (handler Handler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) Delete(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -118,7 +117,7 @@ func (handler Handler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) Duplicate(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -133,14 +132,14 @@ func (handler Handler) Duplicate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) SaveFlow(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 
 	defer r.Body.Close()
 	var request SaveFlowRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 
@@ -160,7 +159,7 @@ func (handler Handler) SaveFlow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) ListTemplates(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -175,14 +174,14 @@ func (handler Handler) ListTemplates(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) CreateTemplate(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 
 	defer r.Body.Close()
 	var request CreateTemplateRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 
@@ -202,7 +201,7 @@ func (handler Handler) CreateTemplate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) DeleteTemplate(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -216,25 +215,18 @@ func (handler Handler) DeleteTemplate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) ListExecutions(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 
-	limit := 50
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		value, err := strconv.Atoi(raw)
-		if err != nil || value < 1 || value > 200 {
-			writeAutomationError(w, r, ErrInvalidInput)
-			return
-		}
-		limit = value
+	filter, err := parseExecutionListFilter(r)
+	if err != nil {
+		writeAutomationError(w, r, err)
+		return
 	}
 
-	items, err := handler.repo.ListExecutions(r.Context(), tenantContext, ExecutionFilter{
-		AutomationID: strings.TrimSpace(r.URL.Query().Get("automationId")),
-		Limit:        limit,
-	})
+	items, err := handler.repo.ListExecutions(r.Context(), tenantContext, filter)
 	if err != nil {
 		writeAutomationError(w, r, err)
 		return
@@ -243,8 +235,34 @@ func (handler Handler) ListExecutions(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]AutomationExecution]{Data: items})
 }
 
+func parseExecutionListFilter(r *http.Request) (ExecutionFilter, error) {
+	limit := 50
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 200 {
+			return ExecutionFilter{}, ErrInvalidInput
+		}
+		limit = value
+	}
+	activeOnly := false
+	if raw := strings.TrimSpace(r.URL.Query().Get("activeOnly")); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			return ExecutionFilter{}, ErrInvalidInput
+		}
+		activeOnly = value
+	}
+
+	return ExecutionFilter{
+		AutomationID: strings.TrimSpace(r.URL.Query().Get("automationId")),
+		LeadID:       strings.TrimSpace(r.URL.Query().Get("leadId")),
+		ActiveOnly:   activeOnly,
+		Limit:        limit,
+	}, nil
+}
+
 func (handler Handler) ListExecutionSummaries(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -257,7 +275,7 @@ func (handler Handler) ListExecutionSummaries(w http.ResponseWriter, r *http.Req
 }
 
 func (handler Handler) CancelExecution(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -271,7 +289,7 @@ func (handler Handler) CancelExecution(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) CancelAutomationExecutions(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -284,7 +302,7 @@ func (handler Handler) CancelAutomationExecutions(w http.ResponseWriter, r *http
 }
 
 func (handler Handler) CancelLeadExecutions(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -297,7 +315,7 @@ func (handler Handler) CancelLeadExecutions(w http.ResponseWriter, r *http.Reque
 }
 
 func (handler Handler) ListExecutionSteps(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -332,7 +350,7 @@ func (handler Handler) ListExecutionSteps(w http.ResponseWriter, r *http.Request
 }
 
 func (handler Handler) ListRuntimeIssues(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -363,7 +381,7 @@ func (handler Handler) ListRuntimeIssues(w http.ResponseWriter, r *http.Request)
 }
 
 func (handler Handler) RetryRuntimeIssue(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -380,14 +398,14 @@ func (handler Handler) RetryRuntimeIssue(w http.ResponseWriter, r *http.Request)
 }
 
 func (handler Handler) Start(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 
 	defer r.Body.Close()
 	var request StartRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 
@@ -404,27 +422,6 @@ func (handler Handler) Start(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpserver.WriteJSON(w, http.StatusCreated, Envelope[StartResult]{Data: result})
-}
-
-func organizationContext(w http.ResponseWriter, r *http.Request) (tenant.Context, bool) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.OrganizationID == "" {
-		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
-		return tenant.Context{}, false
-	}
-
-	return tenantContext, true
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
-		return err
-	}
-
-	return nil
 }
 
 func writeAutomationError(w http.ResponseWriter, r *http.Request, err error) {

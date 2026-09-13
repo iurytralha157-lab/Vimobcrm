@@ -6,6 +6,14 @@ import {
   getRequestIp,
   getRequestRateLimitIdentity,
 } from '../security/server-rate-limit'
+import {
+  comparePlansByDisplayOrder,
+  mapPublicPlan,
+} from '../../components/features/onboarding/form/plan-rules'
+import {
+  collectStepFieldErrors,
+  translateSignupMessage,
+} from '../../components/features/onboarding/form/validation-rules'
 import { isValidBrazilianTaxId, normalizeBrazilianTaxId } from './brazilian-tax-id'
 import {
   CURRENT_PRIVACY_VERSION,
@@ -28,10 +36,11 @@ const validSignup = {
   documentNumber: '04.252.011/0001-10',
   brokersCount: 25,
   adminName: 'Andre Silva',
+  adminCpf: '529.982.247-25',
   phoneCountryCode: '+55' as const,
   phone: '(11) 99999-9999',
   email: 'ANDRE@EXAMPLE.COM',
-  password: '12345678',
+  password: 'Senha@2026',
   signupPath: 'paid' as const,
   planSlug: 'pro',
   termsAccepted: true as const,
@@ -63,6 +72,14 @@ test('cadastro publico exige documento valido e entrega dados canonicos ao backe
   assert.equal(parsed.documentNumber, '04252011000110')
   assert.equal(parsed.email, 'andre@example.com')
   assert.equal(parsed.companyName, 'Vimob Imoveis')
+  assert.equal(parsed.adminCpf, '52998224725')
+
+  assert.equal(onboardingSignupSchema.safeParse({ ...validSignup, adminCpf: '' }).success, false)
+  assert.equal(onboardingSignupSchema.safeParse({
+    ...validSignup,
+    documentNumber: '529.982.247-25',
+    adminCpf: undefined,
+  }).success, true)
 
   for (const documentNumber of ['', '123.456.789-01', '11.111.111/1111-11', '04abc252011000110']) {
     assert.equal(onboardingSignupSchema.safeParse({ ...validSignup, documentNumber }).success, false)
@@ -86,7 +103,9 @@ test('etapa da organizacao valida e normaliza antes de consultar disponibilidade
 
 test('etapa de acesso informa email, senha e WhatsApp invalidos antes do plano', () => {
   const validAccess = {
+    documentNumber: '04.252.011/0001-10',
     adminName: 'Andre Silva',
+    adminCpf: '529.982.247-25',
     phoneCountryCode: '+55' as const,
     phone: '(11) 99999-9999',
     email: ' ANDRE@EXAMPLE.COM ',
@@ -96,8 +115,15 @@ test('etapa de acesso informa email, senha e WhatsApp invalidos antes do plano',
   const parsed = onboardingAccessStepSchema.parse(validAccess)
 
   assert.equal(parsed.email, 'andre@example.com')
+  assert.equal(parsed.adminCpf, '52998224725')
   assert.equal(onboardingAccessStepSchema.safeParse({ ...validAccess, email: 'invalido' }).success, false)
   assert.equal(onboardingAccessStepSchema.safeParse({ ...validAccess, password: 'senhafraca' }).success, false)
+  assert.equal(onboardingAccessStepSchema.safeParse({ ...validAccess, adminCpf: '' }).success, false)
+  assert.equal(onboardingAccessStepSchema.safeParse({
+    ...validAccess,
+    documentNumber: '529.982.247-25',
+    adminCpf: undefined,
+  }).success, true)
   assert.equal(onboardingAccessStepSchema.safeParse({ ...validAccess, phone: '(11) 9999-9999' }).success, false)
   assert.equal(onboardingAccessStepSchema.safeParse({ ...validAccess, legalAccepted: false }).success, false)
 })
@@ -131,8 +157,16 @@ test('cadastro publico limita nomes, senha e quantidade de corretores', () => {
     { companyName: 'A'.repeat(161) },
     { adminName: 'A' },
     { adminName: 'A'.repeat(141) },
-    { password: '1'.repeat(7) },
-    { password: '1'.repeat(129) },
+    { adminCpf: '' },
+    { adminCpf: '529.982.247-24' },
+    { password: 'Aa1!xyz' },
+    { password: 'Aa1!' + 'x'.repeat(69) },
+    { password: 'Aa1!' + 'á'.repeat(35) },
+    { password: 'senhaforte1!' },
+    { password: 'SENHAFORTE1!' },
+    { password: 'SenhaForte!' },
+    { password: 'SenhaForte1' },
+    { password: 'Senha Forte1' },
     { brokersCount: 0 },
     { brokersCount: 501 },
     { brokersCount: 1.5 },
@@ -141,6 +175,11 @@ test('cadastro publico limita nomes, senha e quantidade de corretores', () => {
   for (const override of invalidOverrides) {
     assert.equal(onboardingSignupSchema.safeParse({ ...validSignup, ...override }).success, false)
   }
+
+  assert.equal(
+    onboardingSignupSchema.safeParse({ ...validSignup, password: 'Aa1!' + 'x'.repeat(68) }).success,
+    true,
+  )
 })
 
 test('cadastro publico aceita somente as versoes legais exibidas', () => {
@@ -289,6 +328,73 @@ test('proxy de pre-validacao limita, normaliza e nunca encaminha senha', () => {
   assert.doesNotMatch(route, /password/)
 })
 
+test('modelo puro do formulario normaliza e ordena os planos publicos', () => {
+  const trial = mapPublicPlan({
+    id: 'plan-pro',
+    slug: ' pro ',
+    name: ' Vimob Pro ',
+    price: 199,
+    reference_price: 249,
+    discount_percentage: 20,
+    display_order: 2,
+    billing_cycle: 'monthly',
+    description: ' Plano profissional ',
+    trial_enabled: true,
+    trial_days: 7,
+    max_users: 25,
+    max_whatsapp_sessions: 5,
+    modules: ['crm', '', 'whatsapp'],
+    display_features: [' CRM ', 'WhatsApp', 'CRM', ''],
+  })
+
+  assert.ok(trial)
+  assert.equal(trial.slug, 'pro')
+  assert.equal(trial.name, 'Pro')
+  assert.match(trial.price, /^R\$\s*199\/mes$/)
+  assert.equal(trial.signupPath, 'trial')
+  assert.equal(trial.description, 'Plano profissional')
+  assert.deepEqual(trial.modules, ['crm', 'whatsapp'])
+  assert.deepEqual(trial.features, ['CRM', 'WhatsApp'])
+  assert.equal(mapPublicPlan({ slug: '', name: 'Plano inválido' }), null)
+  assert.equal(mapPublicPlan({ slug: 'sem-nome', name: ' ' }), null)
+
+  const first = { ...trial, slug: 'first', displayOrder: 1 }
+  const unpositioned = { ...trial, slug: 'last', displayOrder: null }
+  assert.deepEqual(
+    [unpositioned, trial, first]
+      .sort(comparePlansByDisplayOrder)
+      .map((plan) => plan.slug),
+    ['first', 'pro', 'last'],
+  )
+})
+
+test('adaptador puro do formulario preserva prioridade, campos e mensagens publicas', () => {
+  assert.deepEqual(
+    collectStepFieldErrors([
+      { path: ['email'], message: 'Primeiro erro' },
+      { path: ['email'], message: 'Erro posterior' },
+      { path: ['legalAccepted'], message: 'Aceite os termos' },
+      { path: ['campoInterno'], message: 'Não deve vazar' },
+    ]),
+    {
+      email: 'Primeiro erro',
+      legal: 'Aceite os termos',
+    },
+  )
+  assert.equal(
+    translateSignupMessage(undefined, 'signup_attempt_conflict'),
+    'A tentativa anterior estava vinculada a outro e-mail. Reiniciamos com segurança; tente novamente.',
+  )
+  assert.equal(
+    translateSignupMessage('User already exists'),
+    'Este e-mail ja esta cadastrado. Faca login ou use outro e-mail.',
+  )
+  assert.equal(
+    translateSignupMessage(),
+    'Não foi possível concluir o cadastro.',
+  )
+})
+
 test('proxy e formulario preservam idempotencia e obedecem o redirect do backend', () => {
   const proxy = readFileSync('app/api/onboarding/signup/route.ts', 'utf8')
   assert.match(proxy, /AbortSignal\.timeout\(SIGNUP_BACKEND_TIMEOUT_MS\)/)
@@ -305,6 +411,7 @@ test('proxy e formulario preservam idempotencia e obedecem o redirect do backend
   const submit = form.slice(submitStart, renderStart)
 
   assert.match(submit, /getOrCreatePublicSignupAttemptId\(window\.sessionStorage\)/)
+  assert.match(form, /rotatePublicSignupAttemptId\(window\.sessionStorage/)
   assert.match(submit, /persistPublicSignupCompletion\(/)
   assert.match(submit, /if \(result\.requiresPayment\)/)
   assert.match(submit, /router\.replace\(result\.redirectTo\)/)
@@ -312,11 +419,28 @@ test('proxy e formulario preservam idempotencia e obedecem o redirect do backend
   assert.doesNotMatch(submit, /selectedPlan\?\.signupPath/)
 
   assert.doesNotMatch(submit, /signIn\(/, 'public signup must not log in before proving email ownership')
+
+  const planStep = readFileSync('components/features/onboarding/form/PlanStep.tsx', 'utf8')
+  assert.match(planStep, /plansLoadState === "error" \|\| plansLoadState === "empty"/)
+  assert.match(form, /<OrganizationStep/)
+  assert.match(form, /<AccessStep/)
+  assert.match(form, /<PlanStep/)
+  assert.match(form, /<CompletionStep/)
+  assert.match(form, /adminCpf: isOrganizationCnpj/)
+  assert.match(form, /retryableAttemptEmail === parsedStep\.data\.email/)
+  assert.match(form, /const retryableEmail = formData\.email\.trim\(\)\.toLowerCase\(\)/)
+  assert.match(form, /setRetryableAttemptEmail\(retryableEmail\)/)
+  assert.match(form, /persistPublicSignupRetry\(/)
+  assert.match(form, /readPublicSignupRetry\(window\.sessionStorage\)/)
+  assert.match(form, /mesma senha usada no primeiro envio/)
 })
 
 test('formularios publicos nao degradam para GET nem registram o e-mail de recuperacao', () => {
   const form = readFileSync('components/features/onboarding/onboarding-form.tsx', 'utf8')
-  assert.match(form, /<form method="post" noValidate onSubmit=\{handleSubmit\}/)
+  assert.match(
+    form,
+    /<form\s+method="post"\s+noValidate\s+onSubmit=\{handleSubmit\}/,
+  )
 
   const authAPI = readFileSync('lib/api/auth.ts', 'utf8')
   const resetStart = authAPI.indexOf('async resetPassword')
@@ -340,10 +464,11 @@ test('proxies publicos limitam o corpo antes do parse e nunca permitem cache sen
 
   for (const path of routes) {
     const route = readFileSync(path, 'utf8')
-    assert.match(route, /readRequestTextWithLimit\(request, [A-Z_]+MAX_BODY_BYTES\)/, path)
+    assert.match(route, /readRequestJSONWithLimit\(request, [A-Z_]+MAX_BODY_BYTES\)/, path)
     assert.match(route, /RequestBodyTooLargeError/, path)
     assert.match(route, /'Cache-Control', 'no-store'/, path)
     assert.doesNotMatch(route, /await request\.json\(\)/, path)
+    assert.doesNotMatch(route, /JSON\.parse\(/, path)
   }
 
   const checkoutPlan = readFileSync('app/api/onboarding/checkout-plan/route.ts', 'utf8')

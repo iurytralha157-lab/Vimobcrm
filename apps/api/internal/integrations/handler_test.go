@@ -155,6 +155,22 @@ func TestAllowedFunctionAllowsGoogleCalendar(t *testing.T) {
 		if !allowedFunction(name) {
 			t.Fatalf("allowedFunction(%q) = false, want true", name)
 		}
+		if !allowedGoogleCalendarFunction(name) {
+			t.Fatalf("allowedGoogleCalendarFunction(%q) = false, want true", name)
+		}
+	}
+}
+
+func TestAllowedGoogleCalendarFunctionRejectsOtherProxyFunctions(t *testing.T) {
+	for _, name := range []string{
+		"vista-sync",
+		"imoview-sync",
+		"asaas-create-charge",
+		"cleanup-orphan-members",
+	} {
+		if allowedGoogleCalendarFunction(name) {
+			t.Fatalf("allowedGoogleCalendarFunction(%q) = true, want false", name)
+		}
 	}
 }
 

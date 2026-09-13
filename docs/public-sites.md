@@ -41,7 +41,7 @@ Isso permite cache no servidor, contrato publico controlado e uma tela de fallba
 
 ## Publicacao com Cloudflare
 
-O modelo recomendado para dominios de clientes e usar um Cloudflare Worker como proxy/cache na frente do app novo.
+O modelo recomendado para dominios de clientes e usar um Cloudflare Worker como proxy na frente do app novo.
 
 Fluxo:
 
@@ -54,13 +54,16 @@ Regras do Worker:
 - Enviar todas as requisicoes para `https://app.vimobcrm.com.br`.
 - Preservar o dominio do cliente com `X-Forwarded-Host`.
 - Responder `/.well-known/vimob-domain-verification` com o token exclusivo gerado para o site.
-- Cachear apenas HTML de `GET`/`HEAD`.
-- Servir HTML em cache se a origem falhar.
+- Encaminhar HTML de `GET`/`HEAD` com `Cache-Control: no-store`, pois o documento
+  transporta a configuracao corrente de consentimento e integracoes.
 - Nao cachear formularios, tracking, contatos ou qualquer chamada `POST`.
 
 Para testar, use sempre o dominio real configurado na rota do Cloudflare. O endereco `.workers.dev` nao representa o dominio do cliente e pode nao carregar o site correto.
 
 O codigo base do Worker fica em `deploy/cloudflare-public-site-worker.js` e tambem aparece pronto para copiar dentro da configuracao de site do CRM.
+Workers ja publicados nao recebem essa alteracao automaticamente: republique o
+codigo gerado em cada dominio durante o rollout e confirme o header
+`Cache-Control: no-store` no HTML real.
 
 ## Verificacao do dominio
 
@@ -79,6 +82,14 @@ credencial do Cloudflare.
 
 ## Resiliencia
 
-As chamadas server-side do site usam revalidacao de 60 segundos. Quando uma consulta publica falha, o servidor tenta usar o ultimo resultado valido em memoria por ate 24 horas. Se nao existir cache valido, a tela nao exibe erro tecnico para o visitante: ela mostra estado vazio ou site temporariamente indisponivel.
+As chamadas server-side de dados do site usam revalidacao de 60 segundos. A
+resolucao da configuracao usa `revalidate: 0`, para que inclusao ou remocao de
+GA, GTM e Search Console apareca na proxima navegacao. Quando uma consulta
+publica falha, o servidor tenta usar o ultimo conteudo valido em memoria por ate
+24 horas, mas remove do fallback qualquer tracker, pixel, script customizado e
+token de verificacao. Se nao existir cache valido, a tela nao exibe erro tecnico
+para o visitante: ela mostra estado vazio ou site temporariamente indisponivel.
 
-Para alta disponibilidade, o Cloudflare Worker segura HTML e assets quando houver pico de acesso ou instabilidade curta no backend.
+Assets e consultas de catalogo continuam usando os caches proprios da aplicacao;
+o HTML configuravel nao usa cache de borda para evitar reativar uma integracao
+removida.

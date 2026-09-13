@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { tagsAPI } from '@/lib/api/tags';
+import { shouldRetryPipelineQuery } from '@/lib/pipeline-reliability';
 
 export interface Tag {
   id: string;
@@ -15,20 +16,21 @@ export interface Tag {
 }
 
 export function useTags(options?: { enabled?: boolean }) {
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || null;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId || null;
 
   return useQuery({
     queryKey: ['tags', organizationId],
     enabled: Boolean(organizationId) && (options?.enabled ?? true),
-    queryFn: () => tagsAPI.list(organizationId),
+    queryFn: ({ signal }) => tagsAPI.list(organizationId, { signal }),
+    retry: shouldRetryPipelineQuery,
   });
 }
 
 export function useCreateTag() {
   const queryClient = useQueryClient();
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || null;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId || null;
 
   return useMutation({
     mutationFn: (tag: { name: string; color: string; description?: string }) => tagsAPI.create(tag, organizationId),
@@ -44,8 +46,8 @@ export function useCreateTag() {
 
 export function useUpdateTag() {
   const queryClient = useQueryClient();
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || null;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId || null;
 
   return useMutation({
     mutationFn: ({ id, ...updates }: { id: string; name: string; color: string; description?: string }) =>
@@ -62,8 +64,8 @@ export function useUpdateTag() {
 
 export function useDeleteTag() {
   const queryClient = useQueryClient();
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || null;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId || null;
 
   return useMutation({
     mutationFn: (id: string) => tagsAPI.delete(id, organizationId),

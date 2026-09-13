@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -58,6 +59,54 @@ func TestWhatsAppMediaPathMustBelongToOrganization(t *testing.T) {
 	}
 }
 
+func TestStorageObjectExistsUsesBoundedAuthenticatedRead(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		if r.Header.Get("Range") != "bytes=0-0" {
+			t.Errorf("Range = %q, want bytes=0-0", r.Header.Get("Range"))
+		}
+		if r.Header.Get("apikey") != "service-role-test-key" || r.Header.Get("Authorization") != "" {
+			t.Error("Storage reconciliation omitted service authentication")
+		}
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/exists.png"):
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write([]byte("x"))
+		case strings.HasSuffix(r.URL.Path, "/missing.png"):
+			http.NotFound(w, r)
+		case strings.HasSuffix(r.URL.Path, "/legacy-missing.png"):
+			http.Error(w, `{"message":"Object not found"}`, http.StatusBadRequest)
+		case strings.HasSuffix(r.URL.Path, "/invalid.png"):
+			http.Error(w, `{"message":"Invalid object path"}`, http.StatusBadRequest)
+		default:
+			http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		}
+	}))
+	defer server.Close()
+
+	client := storageClient{projectURL: server.URL, apiKey: "service-role-test-key", httpClient: server.Client()}
+	exists, err := client.objectExists(context.Background(), whatsappMediaBucket, "orgs/org/assets/v2/exists.png")
+	if err != nil || !exists {
+		t.Fatalf("existing object = (%v, %v), want (true, nil)", exists, err)
+	}
+	exists, err = client.objectExists(context.Background(), whatsappMediaBucket, "orgs/org/assets/v2/missing.png")
+	if err != nil || exists {
+		t.Fatalf("missing object = (%v, %v), want (false, nil)", exists, err)
+	}
+	exists, err = client.objectExists(context.Background(), whatsappMediaBucket, "orgs/org/assets/v2/legacy-missing.png")
+	if err != nil || exists {
+		t.Fatalf("legacy missing object = (%v, %v), want (false, nil)", exists, err)
+	}
+	if _, err := client.objectExists(context.Background(), whatsappMediaBucket, "orgs/org/assets/v2/invalid.png"); err == nil {
+		t.Fatal("generic Storage 400 was treated as a missing object")
+	}
+	if _, err := client.objectExists(context.Background(), whatsappMediaBucket, "orgs/org/assets/v2/error.png"); err == nil {
+		t.Fatal("unexpected Storage response was treated as a missing object")
+	}
+}
+
 func TestAllowedWhatsAppMediaURLRejectsSSRFAndScopesCredentials(t *testing.T) {
 	tests := []struct {
 		raw          string
@@ -108,7 +157,7 @@ func TestAllowedWhatsAppMediaURLAllowsExactConfiguredHTTPProviderOrigin(t *testi
 	}
 }
 
-func TestDownloadWhatsAppMediaStripsProviderCredentialsOnRedirect(t *testing.T) {
+func TestDownloadWhatsAppMediaNeverSendsProviderCredentialsToWebhookURL(t *testing.T) {
 	const apiKey = "provider-secret"
 	var projectCredentialLeaks atomic.Int32
 	project := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -120,18 +169,20 @@ func TestDownloadWhatsAppMediaStripsProviderCredentialsOnRedirect(t *testing.T) 
 	}))
 	defer project.Close()
 
-	var providerAuthorizedRequests atomic.Int32
+	var providerCredentialLeaks atomic.Int32
 	var blockedRedirectTarget string
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/blocked" {
 			http.Redirect(w, r, blockedRedirectTarget, http.StatusFound)
 			return
 		}
-		if r.Header.Get("apikey") != apiKey || r.Header.Get("Authorization") != "Bearer "+apiKey {
+		if r.Header.Get("apikey") != "" || r.Header.Get("Authorization") != "" {
+			providerCredentialLeaks.Add(1)
+		}
+		if r.URL.Path == "/private" {
 			http.Error(w, "credentials required", http.StatusUnauthorized)
 			return
 		}
-		providerAuthorizedRequests.Add(1)
 		http.Redirect(w, r, project.URL+"/media", http.StatusFound)
 	}))
 	defer provider.Close()
@@ -155,12 +206,19 @@ func TestDownloadWhatsAppMediaStripsProviderCredentialsOnRedirect(t *testing.T) 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	media, err := repo.downloadWhatsAppMediaURL(ctx, provider.URL+"/media")
-	if err != nil {
-		t.Fatalf("download through provider redirect: %v", err)
+	if _, err := repo.downloadWhatsAppMediaURL(ctx, provider.URL+"/private"); err == nil {
+		t.Fatal("webhook-controlled provider URL unexpectedly received privileged access")
 	}
-	if string(media.bytes) != "safe-media" || providerAuthorizedRequests.Load() != 1 {
-		t.Fatalf("download = %q, authorized provider requests = %d", media.bytes, providerAuthorizedRequests.Load())
+	if providerCredentialLeaks.Load() != 0 {
+		t.Fatalf("provider API key leaked on %d webhook-controlled request(s)", providerCredentialLeaks.Load())
+	}
+
+	media, err := repo.downloadWhatsAppMediaURL(ctx, provider.URL+"/public")
+	if err != nil {
+		t.Fatalf("public download through provider redirect: %v", err)
+	}
+	if string(media.bytes) != "safe-media" {
+		t.Fatalf("download = %q, want safe-media", media.bytes)
 	}
 	if projectCredentialLeaks.Load() != 0 {
 		t.Fatalf("provider credentials leaked on %d redirected request(s)", projectCredentialLeaks.Load())
@@ -214,6 +272,80 @@ func TestHydrateMessageMediaURLsSignsOnlySameOrganizationPaths(t *testing.T) {
 	}
 	if messages[2].MediaURL != nil {
 		t.Fatalf("foreign organization media retained/signed URL: %#v", messages[2])
+	}
+}
+
+func TestSignedWhatsAppMessageMediaURLUsesTenantScopedCache(t *testing.T) {
+	const organizationID = "20000000-0000-0000-0000-000000000011"
+	objectPath := "orgs/" + organizationID + "/sessions/session-1/incoming/lazy.png"
+	whatsappMediaSignedURLCache.Delete(objectPath)
+	t.Cleanup(func() { whatsappMediaSignedURLCache.Delete(objectPath) })
+
+	var signingRequests atomic.Int32
+	storage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		signingRequests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"signedURL":"/object/sign/whatsapp-media/safe?token=lazy"}`))
+	}))
+	defer storage.Close()
+
+	repo := Repository{storage: storageClient{
+		projectURL: storage.URL,
+		apiKey:     "service-role-test-key",
+		httpClient: storage.Client(),
+	}}
+	first, firstTTL, err := repo.signedWhatsAppMessageMediaURLWithTTL(context.Background(), organizationID, objectPath)
+	if err != nil || first == "" {
+		t.Fatalf("first lazy media signing = %q, %v", first, err)
+	}
+	if firstTTL != whatsappMediaSignedURLTTLSeconds-int(whatsappMediaSignedURLCacheSkew/time.Second) {
+		t.Fatalf("first lazy media safe TTL = %d, want %d", firstTTL, whatsappMediaSignedURLTTLSeconds-int(whatsappMediaSignedURLCacheSkew/time.Second))
+	}
+	if whatsappMediaSignedURLTTLSeconds > 15*60 {
+		t.Fatalf("lazy media bearer URL TTL = %ds, exceeds 15 minute security bound", whatsappMediaSignedURLTTLSeconds)
+	}
+	second, secondTTL, err := repo.signedWhatsAppMessageMediaURLWithTTL(context.Background(), organizationID, objectPath)
+	if err != nil || second != first {
+		t.Fatalf("cached lazy media signing = %q, %v; want %q", second, err, first)
+	}
+	if secondTTL < 1 || secondTTL > firstTTL {
+		t.Fatalf("cached lazy media safe TTL = %d, want 1..%d", secondTTL, firstTTL)
+	}
+	if signingRequests.Load() != 1 {
+		t.Fatalf("Storage signing requests = %d, want one cached request", signingRequests.Load())
+	}
+
+	foreignOrganization := "20000000-0000-0000-0000-000000000012"
+	if _, _, err := repo.signedWhatsAppMessageMediaURLWithTTL(context.Background(), foreignOrganization, objectPath); !errors.Is(err, ErrMessageNotFound) {
+		t.Fatalf("foreign tenant signing error = %v, want ErrMessageNotFound", err)
+	}
+}
+
+func TestWhatsAppMediaSignedURLCacheIsBoundedAndSweepsExpiredEntries(t *testing.T) {
+	cache := newBoundedWhatsAppMediaSignedURLCache(2)
+	now := time.Now()
+	cache.Store("expired", cachedWhatsAppMediaSignedURL{url: "expired", expiresAt: now.Add(-time.Minute)})
+	cache.Store("first", cachedWhatsAppMediaSignedURL{url: "first", expiresAt: now.Add(time.Minute)})
+	cache.Store("second", cachedWhatsAppMediaSignedURL{url: "second", expiresAt: now.Add(2 * time.Minute)})
+	if cache.Len() != 2 {
+		t.Fatalf("cache entries after expired sweep = %d, want 2", cache.Len())
+	}
+	if _, ok := cache.Load("expired"); ok {
+		t.Fatal("expired signed URL survived opportunistic sweep")
+	}
+
+	cache.Store("third", cachedWhatsAppMediaSignedURL{url: "third", expiresAt: now.Add(3 * time.Minute)})
+	if cache.Len() != 2 {
+		t.Fatalf("cache entries after capacity eviction = %d, want 2", cache.Len())
+	}
+	if _, ok := cache.Load("first"); ok {
+		t.Fatal("earliest-expiring signed URL was not evicted at capacity")
+	}
+	if _, ok := cache.Load("second"); !ok {
+		t.Fatal("newer signed URL was evicted instead of the earliest expiry")
+	}
+	if _, ok := cache.Load("third"); !ok {
+		t.Fatal("newly stored signed URL is missing")
 	}
 }
 

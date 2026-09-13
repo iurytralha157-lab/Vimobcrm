@@ -8,7 +8,7 @@ import (
 )
 
 func TestAuthenticatedRouteBillingGateContract(t *testing.T) {
-	source, err := os.ReadFile("app.go")
+	source, err := os.ReadFile("routes.go")
 	if err != nil {
 		t.Fatalf("read app.go: %v", err)
 	}

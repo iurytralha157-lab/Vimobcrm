@@ -626,27 +626,11 @@ func TestDevelopmentInventoryLifecycleAgainstDatabase(t *testing.T) {
 		UserID:         "ffffffff-ffff-4fff-8fff-ffffffffffff",
 		Permissions:    []string{permissions.PropertyView, permissions.LeadViewOwn},
 	}
-	viewerUnits, err := repository.ListUnits(ctx, viewerContext, developmentID, UnitListFilter{Limit: 200})
-	if err != nil {
-		t.Fatalf("viewer ListUnits() returned error: %v", err)
+	if _, err := repository.ListUnits(ctx, viewerContext, developmentID, UnitListFilter{Limit: 200}); !errors.Is(err, tenant.ErrOrganizationAccessDenied) {
+		t.Fatalf("viewer ListUnits() error = %v, want organization access denied", err)
 	}
-	for _, viewerUnit := range viewerUnits.Data {
-		if viewerUnit.MinimumPrice != nil || viewerUnit.DraftListPrice != nil ||
-			viewerUnit.DraftMinimumPrice != nil || viewerUnit.DraftPriceTableID != nil {
-			t.Fatalf("viewer unit leaked commercial internals: %#v", viewerUnit)
-		}
-	}
-	viewerWorkspace, err := repository.GetWorkspace(ctx, viewerContext, developmentID)
-	if err != nil {
-		t.Fatalf("viewer GetWorkspace() returned error: %v", err)
-	}
-	if len(viewerWorkspace.Data.PriceTables) != 1 || viewerWorkspace.Data.PriceTables[0].Status != "active" {
-		t.Fatalf("viewer price tables = %#v, want only active", viewerWorkspace.Data.PriceTables)
-	}
-	for _, event := range viewerWorkspace.Data.RecentUnitEvents {
-		if event.EventType == "price_changed" && (event.BeforeData != nil || event.AfterData != nil || len(event.Metadata) != 0) {
-			t.Fatalf("viewer price event leaked commercial payload: %#v", event)
-		}
+	if _, err := repository.GetWorkspace(ctx, viewerContext, developmentID); !errors.Is(err, tenant.ErrOrganizationAccessDenied) {
+		t.Fatalf("viewer GetWorkspace() error = %v, want organization access denied", err)
 	}
 	_, err = repository.UpdateUnitPrice(ctx, tenantContext, developmentID, pricedUnit.ID, UpdateUnitPriceInput{
 		ListPrice:                   920000,
@@ -754,17 +738,10 @@ func TestDevelopmentInventoryLifecycleAgainstDatabase(t *testing.T) {
 	}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("foreign lead extension error = %v, want ErrNotFound", err)
 	}
-	foreignLeadReservations, err := repository.ListReservations(ctx, viewerContext, developmentID, ReservationListFilter{
+	if _, err := repository.ListReservations(ctx, viewerContext, developmentID, ReservationListFilter{
 		Status: "active", UnitID: pricedUnit.ID, Limit: 50,
-	})
-	if err != nil {
-		t.Fatalf("foreign viewer ListReservations() returned error: %v", err)
-	}
-	if len(foreignLeadReservations.Data) != 1 || foreignLeadReservations.Data[0].LeadID != nil || foreignLeadReservations.Data[0].LeadName != nil {
-		t.Fatalf("foreign viewer reservation leaked lead identity: %#v", foreignLeadReservations)
-	}
-	if foreignLeadReservations.Data[0].CanOperate == nil || *foreignLeadReservations.Data[0].CanOperate {
-		t.Fatalf("foreign viewer received an unsafe operation capability: %#v", foreignLeadReservations)
+	}); !errors.Is(err, tenant.ErrOrganizationAccessDenied) {
+		t.Fatalf("foreign viewer ListReservations() error = %v, want organization access denied", err)
 	}
 	foreignManagerReservations, err := repository.ListReservations(ctx, forgedManagerContext, developmentID, ReservationListFilter{
 		Status: "active", UnitID: pricedUnit.ID, Limit: 50,
@@ -773,14 +750,16 @@ func TestDevelopmentInventoryLifecycleAgainstDatabase(t *testing.T) {
 		t.Fatalf("foreign manager ListReservations() returned error: %v", err)
 	}
 	if len(foreignManagerReservations.Data) != 1 ||
+		foreignManagerReservations.Data[0].LeadID != nil ||
+		foreignManagerReservations.Data[0].LeadName != nil ||
 		foreignManagerReservations.Data[0].CanOperate == nil ||
 		*foreignManagerReservations.Data[0].CanOperate {
-		t.Fatalf("foreign manager received an unsafe operation capability: %#v", foreignManagerReservations)
+		t.Fatalf("foreign manager received unsafe lead data or operation capability: %#v", foreignManagerReservations)
 	}
 	if _, err := repository.ListReservations(ctx, viewerContext, developmentID, ReservationListFilter{
 		LeadID: leadID, Limit: 50,
-	}); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("foreign lead filter error = %v, want ErrNotFound", err)
+	}); !errors.Is(err, tenant.ErrOrganizationAccessDenied) {
+		t.Fatalf("foreign viewer lead filter error = %v, want organization access denied", err)
 	}
 
 	extended, err := repository.ExtendReservation(ctx, tenantContext, developmentID, firstReservation.Reservation.ID, ExtendReservationInput{
@@ -820,27 +799,13 @@ func TestDevelopmentInventoryLifecycleAgainstDatabase(t *testing.T) {
 	if cancelled.Status != "cancelled" || cancelled.CancellationReason == nil || *cancelled.CancellationReason != "cliente desistiu" {
 		t.Fatalf("cancelled reservation = %#v", cancelled)
 	}
-	foreignCancelledReservations, err := repository.ListReservations(ctx, viewerContext, developmentID, ReservationListFilter{
+	if _, err := repository.ListReservations(ctx, viewerContext, developmentID, ReservationListFilter{
 		Status: "cancelled", UnitID: pricedUnit.ID, Limit: 50,
-	})
-	if err != nil {
-		t.Fatalf("foreign viewer cancelled reservations returned error: %v", err)
+	}); !errors.Is(err, tenant.ErrOrganizationAccessDenied) {
+		t.Fatalf("foreign viewer cancelled reservations error = %v, want organization access denied", err)
 	}
-	if len(foreignCancelledReservations.Data) != 1 ||
-		foreignCancelledReservations.Data[0].LeadID != nil ||
-		foreignCancelledReservations.Data[0].CancellationReason != nil {
-		t.Fatalf("foreign viewer cancelled reservation leaked lead context: %#v", foreignCancelledReservations)
-	}
-	viewerWorkspaceAfterCancellation, err := repository.GetWorkspace(ctx, viewerContext, developmentID)
-	if err != nil {
-		t.Fatalf("viewer workspace after cancellation returned error: %v", err)
-	}
-	for _, event := range viewerWorkspaceAfterCancellation.Data.RecentUnitEvents {
-		if event.EventType == "reservation_cancelled" {
-			if _, exists := event.Metadata["reason"]; exists {
-				t.Fatalf("viewer cancellation event leaked free-form reason: %#v", event)
-			}
-		}
+	if _, err := repository.GetWorkspace(ctx, viewerContext, developmentID); !errors.Is(err, tenant.ErrOrganizationAccessDenied) {
+		t.Fatalf("viewer workspace after cancellation error = %v, want organization access denied", err)
 	}
 
 	releasedUnit := loadUnit(pricedUnit.ID)

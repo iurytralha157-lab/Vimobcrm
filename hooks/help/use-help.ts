@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery } from '@tanstack/react-query'
 
-import { useAuth } from '@/contexts/AuthContext'
+import { useOptionalActiveOrganizationId as useOrganizationId } from '@/hooks/use-active-organization'
 import { helpAPI } from '@/lib/api/help'
 
 const HELP_CATALOG_STALE_TIME_MS = 5 * 60_000
@@ -18,11 +18,6 @@ export const helpQueryKeys = {
     slug: string,
     organizationId?: string,
   ) => ['help', 'article', scope, organizationId || 'none', slug] as const,
-}
-
-function useOrganizationId() {
-  const { organization, profile } = useAuth()
-  return organization?.id ?? profile?.organization_id ?? undefined
 }
 
 export function useHelpCatalog() {

@@ -107,7 +107,7 @@ func (client storageClient) objectExists(ctx context.Context, bucket string, obj
 		"%s/storage/v1/object/info/%s/%s",
 		client.projectURL,
 		url.PathEscape(bucket),
-		escapeStorageObjectPath(objectPath),
+		supabasehttp.EscapeObjectPath(objectPath),
 	)
 	request, err := http.NewRequestWithContext(ctx, http.MethodHead, endpoint, nil)
 	if err != nil {

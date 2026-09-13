@@ -40,6 +40,8 @@ import { getNavigationIcon } from "./navigation-icons";
 
 const DEFAULT_BRAND_LOGO_DARK = "/images/logo-white.png";
 const DEFAULT_BRAND_LOGO_LIGHT = "/images/logo-black.png";
+const DEFAULT_BRAND_LOGO_DARK_DIMENSIONS = { width: 1228, height: 429 } as const;
+const DEFAULT_BRAND_LOGO_LIGHT_DIMENSIONS = { width: 1245, height: 420 } as const;
 const DEFAULT_BRAND_ICON = "/icons/favicon-laranja.png";
 const SIDEBAR_BACKGROUND = "var(--app-sidebar)";
 const SIDEBAR_ICON_STROKE = 1.32;
@@ -56,6 +58,7 @@ export const AppSidebar = React.memo(function AppSidebar() {
   const searchParams = useSearchParams();
   const currentHash = useLocationHash();
   const {
+    activeOrganization,
     profile,
     isSuperAdmin,
     organization,
@@ -87,12 +90,18 @@ export const AppSidebar = React.memo(function AppSidebar() {
     (resolvedTheme === "dark"
       ? DEFAULT_BRAND_LOGO_DARK
       : DEFAULT_BRAND_LOGO_LIGHT);
+  const defaultLogoDimensions =
+    displayLogoUrl === DEFAULT_BRAND_LOGO_DARK
+      ? DEFAULT_BRAND_LOGO_DARK_DIMENSIONS
+      : displayLogoUrl === DEFAULT_BRAND_LOGO_LIGHT
+        ? DEFAULT_BRAND_LOGO_LIGHT_DIMENSIONS
+        : null;
   const faviconUrl = useMemo(() => DEFAULT_BRAND_ICON, []);
   const logoWidth = Math.min(systemSettings?.logo_width || 120, 108);
   const logoHeight = Math.min(systemSettings?.logo_height || 32, 28);
   const isBillingBlocked =
     !isSuperAdmin && isBillingAccessBlocked(organization);
-  const activeOrganizationId = organization?.id || profile?.organization_id;
+  const activeOrganizationId = activeOrganization.organizationId;
   const activeOrganizationMembership = userOrganizations.find(
     (org) => org.organization_id === activeOrganizationId,
   );
@@ -429,8 +438,8 @@ export const AppSidebar = React.memo(function AppSidebar() {
                 <NextImage
                   src={displayLogoUrl}
                   alt="Logo"
-                  width={logoWidth}
-                  height={logoHeight}
+                  width={defaultLogoDimensions?.width ?? logoWidth}
+                  height={defaultLogoDimensions?.height ?? logoHeight}
                   style={{
                     width: "auto",
                     height: "auto",

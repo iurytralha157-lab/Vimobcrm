@@ -1,0 +1,1 @@
+export { apiIntegrationProviderManifest } from "./manifest";

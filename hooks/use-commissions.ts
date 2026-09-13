@@ -41,8 +41,8 @@ export interface Commission {
 }
 
 export function useCommissionRules(options?: { enabled?: boolean }) {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ["commission-rules", organizationId],
@@ -54,12 +54,12 @@ export function useCommissionRules(options?: { enabled?: boolean }) {
 
 export function useCreateCommissionRule() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile, organization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
     mutationFn: (data: Partial<CommissionRule>) => {
-      const organizationId = organization?.id || profile?.organization_id;
+      const organizationId = activeOrganization.organizationId;
       if (!organizationId) throw new Error("Organização não encontrada");
       return financialAPI.createCommissionRule<CommissionRule>(
         data,
@@ -82,12 +82,12 @@ export function useCreateCommissionRule() {
 
 export function useUpdateCommissionRule() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile, organization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
     mutationFn: ({ id, ...data }: Partial<CommissionRule> & { id: string }) => {
-      const organizationId = organization?.id || profile?.organization_id;
+      const organizationId = activeOrganization.organizationId;
       if (!organizationId) throw new Error("Organização não encontrada");
       return financialAPI.updateCommissionRule<CommissionRule>(
         id,
@@ -111,12 +111,12 @@ export function useUpdateCommissionRule() {
 
 export function useDeleteCommissionRule() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile, organization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
     mutationFn: (id: string) => {
-      const organizationId = organization?.id || profile?.organization_id;
+      const organizationId = activeOrganization.organizationId;
       if (!organizationId) throw new Error("Organização não encontrada");
       return financialAPI.deleteCommissionRule(id, organizationId);
     },
@@ -138,8 +138,8 @@ export function useCommissions(
   filters?: { status?: string; userId?: string; limit?: number; offset?: number },
   options?: { enabled?: boolean },
 ) {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ["commissions", organizationId, filters],
@@ -151,12 +151,12 @@ export function useCommissions(
 
 export function useApproveCommission() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile, organization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
     mutationFn: (id: string) => {
-      const organizationId = organization?.id || profile?.organization_id;
+      const organizationId = activeOrganization.organizationId;
       if (!organizationId) throw new Error("Organização não encontrada");
       return financialAPI.commissionAction<Commission>(
         id,
@@ -182,7 +182,7 @@ export function useApproveCommission() {
 
 export function usePayCommission() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile, organization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
@@ -193,7 +193,7 @@ export function usePayCommission() {
       id: string;
       payment_proof?: string;
     }) => {
-      const organizationId = organization?.id || profile?.organization_id;
+      const organizationId = activeOrganization.organizationId;
       if (!organizationId) throw new Error("Organização não encontrada");
       return financialAPI.commissionAction<Commission>(
         id,
@@ -219,12 +219,12 @@ export function usePayCommission() {
 
 export function useCancelCommission() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile, organization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
     mutationFn: ({ id, notes }: { id: string; notes?: string }) => {
-      const organizationId = organization?.id || profile?.organization_id;
+      const organizationId = activeOrganization.organizationId;
       if (!organizationId) throw new Error("Organização não encontrada");
       return financialAPI.commissionAction<Commission>(
         id,
@@ -249,8 +249,8 @@ export function useCancelCommission() {
 }
 
 export function useCommissionsByBroker() {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ["commissions-by-broker", organizationId],

@@ -78,18 +78,6 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 		actualContent = ""
 	}
 
-	mediaSource := storedMediaURL
-	mediaSourceIsBase64 := false
-	if storedMediaPath != "" {
-		if signedURL, signErr := repo.storage.signedURL(ctx, whatsappMediaBucket, storedMediaPath, 15*60); signErr == nil && signedURL != "" {
-			mediaSource = signedURL
-		}
-	}
-	if mediaSource == "" && input.Base64 != "" {
-		mediaSource = input.Base64
-		mediaSourceIsBase64 = true
-	}
-
 	mentions := mentionsFromText(input.Text)
 	action := "send.text"
 	body := map[string]any{
@@ -98,7 +86,7 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 		"text":     input.Text,
 		"mentions": mentions,
 	}
-	if mediaSource != "" {
+	if isMediaMessage {
 		action = "send.media"
 		if input.MediaType == "audio" {
 			action = "send.audio"
@@ -107,7 +95,6 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 			"id":           providerRequestID,
 			"number":       destination,
 			"type":         input.MediaType,
-			"media":        mediaSource,
 			"mediatype":    input.MediaType,
 			"mediaType":    input.MediaType,
 			"mimetype":     input.Mimetype,
@@ -117,12 +104,9 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 			"mentions":     mentions,
 			"mentionedJid": mentions,
 		}
-		if mediaSourceIsBase64 {
-			return SendMessageResponse{}, fmt.Errorf("%w: midia precisa estar persistida antes de entrar na fila", ErrProviderFailed)
-		} else {
-			body["url"] = mediaSource
-			body["mediaUrl"] = mediaSource
-		}
+		// The durable worker signs mediaStoragePath immediately before provider
+		// delivery. Do not spend a Storage round-trip or persist a bearer URL in
+		// the request transaction.
 	}
 	if storedMediaPath != "" {
 		body["mediaStoragePath"] = storedMediaPath
@@ -286,6 +270,7 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 		if err := tx.Commit(ctx); err != nil {
 			return SendMessageResponse{}, err
 		}
+		wakeWhatsAppOutboxWorker()
 		message, err := repo.getOutboundMessageByClientID(ctx, session.OrganizationID, session.ID, clientMessageID)
 		if err != nil {
 			return SendMessageResponse{}, err
@@ -346,6 +331,7 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 	if err := tx.Commit(ctx); err != nil {
 		return SendMessageResponse{}, err
 	}
+	wakeWhatsAppOutboxWorker()
 
 	message, err := repo.getOutboundMessageByClientID(ctx, session.OrganizationID, session.ID, clientMessageID)
 	if err != nil {

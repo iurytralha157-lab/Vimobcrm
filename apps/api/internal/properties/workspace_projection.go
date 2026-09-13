@@ -147,7 +147,7 @@ func workspaceKeyMovementProjection(alias string) string {
 
 var workspacePropertyBaseFields = []string{
 	"id", "organization_id", "code", "title", "status",
-	"tipo", "tipo_de_imovel", "tipo_de_negocio", "finalidade",
+	"tipo", "tipo_de_imovel", "tipo_de_negocio", "finalidade", "finalidade_uso",
 	"descricao", "descricao_site",
 	"endereco", "numero", "complemento", "bairro", "cidade", "uf", "cep",
 	"preco", "valor_locacao", "condominio", "iptu", "seguro_incendio", "taxa_de_servico",
@@ -162,7 +162,7 @@ var workspacePropertyBaseFields = []string{
 	"published_on_site", "anunciar", "public_address_visibility", "address_visibility",
 	"destaque", "is_featured", "super_destaque", "placa_no_local",
 	"aceita_permuta", "aceita_financiamento", "exclusividade",
-	"created_at", "updated_at",
+	"created_at", "updated_at", "can_edit", "managed_terms",
 }
 
 var workspacePropertyInternalFields = []string{
@@ -175,6 +175,7 @@ var workspacePropertyInternalFields = []string{
 	"autorizado_comercializacao", "referencia_alternativa", "external_id",
 	"external_provider", "imoview_codigo", "vista_codigo", "created_by",
 	"aprovacao_ambiental", "projeto_aprovado", "status_descritivo",
+	"faixa_valor_imovel", "renda_familiar", "is_demo",
 }
 
 func projectWorkspaceProperty(source Property, canManage bool, canViewContacts bool) Property {

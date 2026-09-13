@@ -1,11 +1,12 @@
 package ai
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/leadscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -40,7 +41,7 @@ func (handler Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var input AgentInput
-	if err := decodeJSON(w, r, &input); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &input, 2<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.CreateAgent(r.Context(), tenantContext, input)
@@ -59,7 +60,7 @@ func (handler Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var input AgentInput
-	if err := decodeJSON(w, r, &input); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &input, 2<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.UpdateAgent(r.Context(), tenantContext, r.PathValue("id"), input)
@@ -105,7 +106,7 @@ func (handler Handler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var input SettingsInput
-	if err := decodeJSON(w, r, &input); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &input, 2<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.UpdateSettings(r.Context(), tenantContext, input)
@@ -124,7 +125,7 @@ func (handler Handler) AdminUpdateSettings(w http.ResponseWriter, r *http.Reques
 	}
 	defer r.Body.Close()
 	var input SettingsInput
-	if err := decodeJSON(w, r, &input); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &input, 2<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.AdminUpdateSettings(r.Context(), tenantContext, r.PathValue("id"), input)
@@ -157,7 +158,7 @@ func (handler Handler) CreateOrganizationAgent(w http.ResponseWriter, r *http.Re
 	}
 	defer r.Body.Close()
 	var input AgentInput
-	if err := decodeJSON(w, r, &input); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &input, 2<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.CreateOrganizationAgent(r.Context(), tenantContext, input)
@@ -176,7 +177,7 @@ func (handler Handler) UpdateOrganizationAgent(w http.ResponseWriter, r *http.Re
 	}
 	defer r.Body.Close()
 	var input AgentInput
-	if err := decodeJSON(w, r, &input); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &input, 2<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.UpdateOrganizationAgent(r.Context(), tenantContext, r.PathValue("id"), input)
@@ -222,7 +223,7 @@ func (handler Handler) CreateRoutingRule(w http.ResponseWriter, r *http.Request)
 	}
 	defer r.Body.Close()
 	var input RoutingRuleInput
-	if err := decodeJSON(w, r, &input); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &input, 2<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.CreateRoutingRule(r.Context(), tenantContext, input)
@@ -241,7 +242,7 @@ func (handler Handler) UpdateRoutingRule(w http.ResponseWriter, r *http.Request)
 	}
 	defer r.Body.Close()
 	var input RoutingRuleInput
-	if err := decodeJSON(w, r, &input); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &input, 2<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.UpdateRoutingRule(r.Context(), tenantContext, r.PathValue("id"), input)
@@ -273,7 +274,11 @@ func (handler Handler) Run(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var request RunRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 2<<20); err != nil {
+		return
+	}
+	if strings.TrimSpace(request.LeadID) != "" && !leadscope.CanRead(tenantContext) {
+		writeAIError(w, r, ErrPermission)
 		return
 	}
 	item, err := handler.service.Run(r.Context(), tenantContext, request)
@@ -310,16 +315,6 @@ func (handler Handler) ListEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[[]Event]{Data: items})
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
-		return err
-	}
-	return nil
 }
 
 func writeAIError(w http.ResponseWriter, r *http.Request, err error) {

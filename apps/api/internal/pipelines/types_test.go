@@ -52,6 +52,16 @@ func TestUpdateStageRequestRejectsQualifiedTerminalOrInactiveStage(t *testing.T)
 	}
 }
 
+func TestUpdateStageRequestRejectsWonAndLostTogether(t *testing.T) {
+	var request UpdateStageRequest
+	if err := json.Unmarshal([]byte(`{"isWon":true,"isLost":true}`), &request); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if _, err := request.Validate(); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("Validate() error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestUpdateStageRequestAllowsQualifiedWhenTerminalFlagsAreCleared(t *testing.T) {
 	var request UpdateStageRequest
 	if err := json.Unmarshal([]byte(

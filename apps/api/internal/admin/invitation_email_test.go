@@ -174,7 +174,7 @@ func TestInvitationMutationResponsesNeverExposeCredentialMaterial(t *testing.T) 
 	if err != nil {
 		t.Fatalf("read admin repository source: %v", err)
 	}
-	text := string(source)
+	text := strings.ReplaceAll(string(source), "\r\n", "\n")
 	for _, functionName := range []string{"CreateInvitation", "ResendInvitation"} {
 		start := strings.Index(text, "func (repo Repository) "+functionName+"(")
 		end := strings.Index(text[start+1:], "\nfunc (")

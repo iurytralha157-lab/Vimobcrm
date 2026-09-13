@@ -4,6 +4,7 @@ import { toast } from "sonner";
 
 import { useAuth } from "@/contexts/AuthContext";
 import { adminAPI } from "@/lib/api/admin";
+import { getErrorObjectMessage as getErrorMessage } from "@/lib/api/vimob-error";
 
 export type AnnouncementTargetType =
   "all" | "brokers" | "specific" | "organizations" | "admins";
@@ -44,15 +45,6 @@ interface PublishAnnouncementParams {
 const BROKER_ROLES = new Set(["corretor", "broker", "agent", "user"]);
 const ANNOUNCEMENTS_INITIAL_LOAD_DELAY_MS = 2000;
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "object" && error && "message" in error) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === "string") return message;
-  }
-  return "Erro desconhecido";
-}
-
 function isWithinSchedule(announcement: Announcement, now = new Date()) {
   const startsAt = announcement.starts_at
     ? new Date(announcement.starts_at)
@@ -92,7 +84,7 @@ function isAnnouncementTargeted(
 }
 
 export function useActiveAnnouncements() {
-  const { profile, organization, userOrganizations, isSuperAdmin } = useAuth();
+  const { activeOrganization, profile, organization, userOrganizations, isSuperAdmin } = useAuth();
   const [readyProfileId, setReadyProfileId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -111,13 +103,13 @@ export function useActiveAnnouncements() {
       "active-announcements",
       profile?.id,
       isSuperAdmin,
-      organization?.id,
+      activeOrganization.organizationId,
       userOrganizations,
     ],
     queryFn: async () => {
       const data = await adminAPI.listActiveAnnouncements<Announcement>();
       const currentUserId = profile?.id;
-      const currentOrgId = organization?.id || profile?.organization_id;
+      const currentOrgId = activeOrganization.organizationId;
       const currentRole = userOrganizations.find(
         (org) => org.organization_id === currentOrgId,
       )?.member_role;
@@ -135,7 +127,7 @@ export function useActiveAnnouncements() {
           ),
         );
     },
-    enabled: ready && !!profile?.id,
+    enabled: ready && !!profile?.id && activeOrganization.status === 'ready',
     staleTime: 1000 * 60,
     gcTime: 1000 * 60 * 10,
     placeholderData: (previous) => previous ?? [],

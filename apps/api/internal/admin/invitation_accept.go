@@ -13,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/passwordpolicy"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 )
 
 const invitationAuthCleanupTimeout = 10 * time.Second
@@ -30,6 +32,8 @@ type invitationRecord struct {
 	Role             string
 	OrganizationID   string
 	OrganizationName string
+	TokenHash        string
+	UsedAt           pgtype.Timestamptz
 }
 
 type invitationLegalConsent struct {
@@ -46,19 +50,22 @@ type invitationActivationEvidence struct {
 	InvitationUsed      bool
 	MembershipExists    bool
 	PublicProfileExists bool
+	LegalConsentExists  bool
 }
 
 func (evidence invitationActivationEvidence) committed() bool {
 	return evidence.AuthUserExists &&
 		evidence.InvitationUsed &&
 		evidence.MembershipExists &&
-		evidence.PublicProfileExists
+		evidence.PublicProfileExists &&
+		evidence.LegalConsentExists
 }
 
 func (evidence invitationActivationEvidence) hasNoActivationFootprint() bool {
 	return !evidence.InvitationUsed &&
 		!evidence.MembershipExists &&
-		!evidence.PublicProfileExists
+		!evidence.PublicProfileExists &&
+		!evidence.LegalConsentExists
 }
 
 type invitationConsentExecutor interface {
@@ -73,6 +80,9 @@ func (repo Repository) AcceptInvitationPublic(ctx context.Context, token string,
 
 	existingUserID, err := repo.userIDByEmail(ctx, invitation.Email)
 	if err == nil && existingUserID != "" {
+		if invitation.UsedAt.Valid {
+			return repo.committedInvitationAcceptance(ctx, invitation, existingUserID, true)
+		}
 		return AcceptInvitationResult{
 			Success:          false,
 			RequiresLogin:    true,
@@ -86,14 +96,14 @@ func (repo Repository) AcceptInvitationPublic(ctx context.Context, token string,
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return AcceptInvitationResult{}, err
 	}
+	if invitation.UsedAt.Valid {
+		return AcceptInvitationResult{}, ErrNotFound
+	}
 
 	name := strings.TrimSpace(request.Name)
 	password := request.Password
-	passwordLength := utf8.RuneCountInString(password)
 	if !isValidInvitationName(name) ||
-		!utf8.ValidString(password) ||
-		passwordLength < onboardingPasswordMinLength ||
-		passwordLength > onboardingPasswordMaxLength ||
+		!passwordpolicy.IsStrong(password) ||
 		!isValidInvitationWhatsApp(request.Whatsapp) ||
 		!request.TermsAccepted ||
 		!request.PrivacyAccepted {
@@ -152,6 +162,8 @@ func (repo Repository) AcceptInvitationPublic(ctx context.Context, token string,
 		OrganizationID:   invitation.OrganizationID,
 		OrganizationName: invitation.OrganizationName,
 		Message:          "Convite aceito com sucesso.",
+		TargetUserID:     authUserID,
+		AcceptedNow:      true,
 	}, nil
 }
 
@@ -182,8 +194,14 @@ func (repo Repository) AcceptInvitationAuthenticated(
 	if !strings.EqualFold(email, invitation.Email) {
 		return AcceptInvitationResult{}, ErrInvalidInput
 	}
+	if invitation.UsedAt.Valid {
+		return repo.committedInvitationAcceptance(ctx, invitation, userID, true)
+	}
 
 	if err := repo.activateInvitationForUser(ctx, invitation, userID, name, whatsapp, &consent); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return repo.committedInvitationAcceptance(ctx, invitation, userID, true)
+		}
 		return AcceptInvitationResult{}, err
 	}
 
@@ -195,12 +213,40 @@ func (repo Repository) AcceptInvitationAuthenticated(
 		OrganizationID:   invitation.OrganizationID,
 		OrganizationName: invitation.OrganizationName,
 		Message:          "Voce entrou na organizacao.",
+		TargetUserID:     userID,
+		AcceptedNow:      true,
+	}, nil
+}
+
+func (repo Repository) committedInvitationAcceptance(
+	ctx context.Context,
+	invitation invitationRecord,
+	userID string,
+	existingAccount bool,
+) (AcceptInvitationResult, error) {
+	evidence, err := repo.reconcileInvitationActivation(ctx, invitation, userID)
+	if err != nil {
+		return AcceptInvitationResult{}, err
+	}
+	if !evidence.committed() {
+		return AcceptInvitationResult{}, ErrNotFound
+	}
+
+	return AcceptInvitationResult{
+		Success:          true,
+		RequiresLogin:    false,
+		ExistingAccount:  existingAccount,
+		Email:            invitation.Email,
+		OrganizationID:   invitation.OrganizationID,
+		OrganizationName: invitation.OrganizationName,
+		Message:          "Convite ja havia sido aceito.",
+		TargetUserID:     userID,
 	}, nil
 }
 
 func (repo Repository) invitationByTokenForAccept(ctx context.Context, token string) (invitationRecord, error) {
-	token = strings.TrimSpace(token)
-	if token == "" {
+	token, ok := normalizeInvitationToken(token)
+	if !ok {
 		return invitationRecord{}, ErrInvalidInput
 	}
 	tokenHash := invitationTokenHash(token)
@@ -213,14 +259,21 @@ func (repo Repository) invitationByTokenForAccept(ctx context.Context, token str
 			i.email,
 			coalesce(nullif(i.role, ''), 'user'),
 			i.organization_id::text,
-			o.name
+			o.name,
+			i.used_at
 		from public.invitations i
 		join public.organizations o on o.id = i.organization_id
 		where i.token_hash = $1
-		  and i.used_at is null
 		  and i.expires_at > now()
 		limit 1
-	`, tokenHash).Scan(&item.ID, &email, &item.Role, &item.OrganizationID, &item.OrganizationName)
+	`, tokenHash).Scan(
+		&item.ID,
+		&email,
+		&item.Role,
+		&item.OrganizationID,
+		&item.OrganizationName,
+		&item.UsedAt,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return invitationRecord{}, ErrNotFound
 	}
@@ -231,6 +284,7 @@ func (repo Repository) invitationByTokenForAccept(ctx context.Context, token str
 		return invitationRecord{}, ErrInvalidInput
 	}
 	item.Email = strings.TrimSpace(email.String)
+	item.TokenHash = tokenHash
 	return item, nil
 }
 
@@ -287,7 +341,12 @@ func (repo Repository) activateInvitationForUser(
 	}
 	defer tx.Rollback(ctx)
 
-	memberRole := memberRoleFromInvitation(invitation.Role)
+	persistedRole, err := claimInvitationForActivation(ctx, tx, invitation)
+	if err != nil {
+		return err
+	}
+	invitation.Role = persistedRole
+	memberRole := memberRoleFromInvitation(persistedRole)
 
 	if _, err := tx.Exec(ctx, `
 		insert into public.users (
@@ -322,7 +381,12 @@ func (repo Repository) activateInvitationForUser(
 		values ($1::uuid, $2::uuid, $3, true)
 		on conflict (organization_id, user_id)
 		do update set
-			role = excluded.role,
+			role = case
+				when public.organization_members.is_active = true
+				 and public.organization_members.deleted_at is null
+				then public.organization_members.role
+				else excluded.role
+			end,
 			is_active = true,
 			deleted_at = null,
 			updated_at = now()
@@ -342,19 +406,6 @@ func (repo Repository) activateInvitationForUser(
 		}
 	}
 
-	tag, err := tx.Exec(ctx, `
-		update public.invitations
-		set used_at = now()
-		where id = $1::uuid
-		  and used_at is null
-	`, invitation.ID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-
 	if err := tx.Commit(ctx); err != nil {
 		return errors.Join(
 			errInvitationActivationCommitUnknown,
@@ -362,6 +413,30 @@ func (repo Repository) activateInvitationForUser(
 		)
 	}
 	return nil
+}
+
+func claimInvitationForActivation(
+	ctx context.Context,
+	tx pgx.Tx,
+	invitation invitationRecord,
+) (string, error) {
+	var persistedRole string
+	err := tx.QueryRow(ctx, `
+		update public.invitations
+		set used_at = now()
+		where id = $1::uuid
+		  and token_hash = $2
+		  and used_at is null
+		  and expires_at > now()
+		returning coalesce(nullif(role, ''), 'user')
+	`, invitation.ID, invitation.TokenHash).Scan(&persistedRole)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	return persistedRole, nil
 }
 
 func invitationLegalConsentFromRequest(request AcceptInvitationRequest) (invitationLegalConsent, error) {
@@ -507,12 +582,13 @@ func runInvitationActivationForNewAuthUser(
 		return errors.Join(
 			activationErr,
 			fmt.Errorf(
-				"invitation activation outcome is ambiguous for auth user %s (auth=%t invitation=%t membership=%t profile=%t)",
+				"invitation activation outcome is ambiguous for auth user %s (auth=%t invitation=%t membership=%t profile=%t consent=%t)",
 				userID,
 				evidence.AuthUserExists,
 				evidence.InvitationUsed,
 				evidence.MembershipExists,
 				evidence.PublicProfileExists,
+				evidence.LegalConsentExists,
 			),
 		)
 	}
@@ -561,12 +637,21 @@ func (repo Repository) reconcileInvitationActivation(
 				select 1
 				from public.users app_user
 				where app_user.id = $1::uuid
+			),
+			exists (
+				select 1
+				from public.legal_consents consent
+				where consent.user_id = $1::uuid
+				  and consent.organization_id = $3::uuid
+				  and consent.source = 'invitation'
+				  and consent.metadata ->> 'invitation_id' = $2
 			)
 	`, userID, invitation.ID, invitation.OrganizationID).Scan(
 		&evidence.AuthUserExists,
 		&evidence.InvitationUsed,
 		&evidence.MembershipExists,
 		&evidence.PublicProfileExists,
+		&evidence.LegalConsentExists,
 	)
 	return evidence, err
 }
@@ -607,12 +692,5 @@ func memberRoleFromInvitation(role string) string {
 }
 
 func textPointer(value pgtype.Text) *string {
-	if !value.Valid {
-		return nil
-	}
-	cleaned := strings.TrimSpace(value.String)
-	if cleaned == "" {
-		return nil
-	}
-	return &cleaned
+	return pgvalue.TextPointerTrimmed(value)
 }

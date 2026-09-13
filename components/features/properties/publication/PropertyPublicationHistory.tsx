@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
+import { formatPropertyDate } from '@/lib/property-display-utils'
 import type { PropertyPublicationJob } from '@/lib/validation'
 
 type PropertyPublicationHistoryProps = {
@@ -27,16 +28,6 @@ const STATUS_LABELS: Record<PropertyPublicationJob['status'], string> = {
   succeeded: 'Concluído',
   superseded: 'Substituído',
   dead: 'Falhou',
-}
-
-function formatDate(value?: string | null) {
-  if (!value) return 'Data não informada'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat('pt-BR', {
-    dateStyle: 'short',
-    timeStyle: 'short',
-  }).format(date)
 }
 
 function JobIcon({ status }: { status: PropertyPublicationJob['status'] }) {
@@ -71,14 +62,14 @@ export function PropertyPublicationHistory({ jobs }: PropertyPublicationHistoryP
               </Badge>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              {formatDate(job.created_at)} · {job.attempts === 0
+              {formatPropertyDate(job.created_at, true, 'Data não informada')} · {job.attempts === 0
                 ? 'aguardando processamento'
                 : `tentativa ${Math.min(job.attempts, job.max_attempts)} de ${job.max_attempts}`}
               {job.version ? ` · versão ${job.version}` : ''}
             </p>
             {job.next_attempt_at && job.status === 'retry' && (
               <p className="mt-1 text-xs text-amber-700">
-                Próxima tentativa: {formatDate(job.next_attempt_at)}
+                Próxima tentativa: {formatPropertyDate(job.next_attempt_at, true, 'Data não informada')}
               </p>
             )}
             {job.last_error?.message && (

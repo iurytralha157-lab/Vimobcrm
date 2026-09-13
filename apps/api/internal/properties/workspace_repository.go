@@ -20,11 +20,16 @@ func (repo Repository) GetWorkspace(ctx context.Context, tenantContext tenant.Co
 		return PropertyWorkspaceResponse{}, ErrPropertyNotFound
 	}
 
-	canViewContacts, err := repo.canViewPropertyOwnerContacts(ctx, tenantContext)
+	editPolicy, ownerContactVisibility, err := repo.propertyWorkspacePolicies(ctx, tenantContext)
 	if err != nil {
 		return PropertyWorkspaceResponse{}, err
 	}
 	canManage := canManageProperties(tenantContext)
+	canViewContacts := propertyUpdateAuthorizationFor(
+		tenantContext,
+		editPolicy,
+		ownerContactVisibility,
+	).CanViewOwnerContacts
 
 	workspaceArguments, visibilityClause := workspaceReadVisibility(
 		tenantContext,
@@ -34,6 +39,7 @@ func (repo Repository) GetWorkspace(ctx context.Context, tenantContext tenant.Co
 	)
 
 	var propertyJSON, offersJSON, ownershipsJSON, assetsJSON, keysJSON, movementsJSON string
+	var hasAssetPhotos bool
 	workspaceQuery := `
 		select
 			to_jsonb(visible_property)::text,
@@ -61,6 +67,7 @@ func (repo Repository) GetWorkspace(ctx context.Context, tenantContext tenant.Co
 				where asset.organization_id = visible_property.organization_id
 				  and asset.property_id = visible_property.id
 				  and ($4::boolean or asset.visibility <> 'confidential')
+				  and ` + activePropertyAssetSQL("asset") + `
 			), '[]'::jsonb)::text,
 			coalesce((
 				select jsonb_agg(` + workspaceKeyProjection("property_key") + ` order by property_key.status, property_key.label, property_key.id)
@@ -83,7 +90,14 @@ func (repo Repository) GetWorkspace(ctx context.Context, tenantContext tenant.Co
 					order by movement.occurred_at desc, movement.id desc
 					limit 50
 				) recent_movement
-			), '[]'::jsonb)::text
+			), '[]'::jsonb)::text,
+			exists (
+				select 1
+				from public.property_assets as any_photo
+				where any_photo.organization_id = visible_property.organization_id
+				  and any_photo.property_id = visible_property.id
+				  and any_photo.asset_type = 'photo'
+			)
 		from public.properties visible_property
 		where ` + visibilityClause + `
 		limit 1
@@ -95,19 +109,26 @@ func (repo Repository) GetWorkspace(ctx context.Context, tenantContext tenant.Co
 		&assetsJSON,
 		&keysJSON,
 		&movementsJSON,
+		&hasAssetPhotos,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PropertyWorkspaceResponse{}, ErrPropertyNotFound
 	}
 	if err != nil {
 		if _, unavailable := unavailableNormalizedWorkspaceResource(err); unavailable {
-			return repo.getLegacyWorkspace(
+			legacy, legacyErr := repo.getLegacyWorkspace(
 				ctx,
 				tenantContext,
 				propertyID,
 				canViewContacts,
 				canManage,
+				editPolicy,
+				ownerContactVisibility,
 			)
+			if legacyErr != nil {
+				return PropertyWorkspaceResponse{}, legacyErr
+			}
+			return repo.attachPropertyDevelopmentLink(ctx, tenantContext.OrganizationID, propertyID, legacy)
 		}
 		return PropertyWorkspaceResponse{}, err
 	}
@@ -117,6 +138,14 @@ func (repo Repository) GetWorkspace(ctx context.Context, tenantContext tenant.Co
 		return PropertyWorkspaceResponse{}, err
 	}
 	property := normalizePropertyOutput(Property(propertyObject))
+	authorization := propertyUpdateAuthorizationFromProperty(
+		tenantContext,
+		property,
+		editPolicy,
+		ownerContactVisibility,
+	)
+	property["can_edit"] = authorization.CanEdit
+	attachPropertyManagedTerms(property)
 	if !canViewContacts {
 		redactPropertyOwnerContacts(property)
 	}
@@ -151,16 +180,40 @@ func (repo Repository) GetWorkspace(ctx context.Context, tenantContext tenant.Co
 		Keys:               keys,
 		RecentKeyMovements: movements,
 	}
-	workspace.Summary = buildWorkspaceSummary(workspace)
+	workspace.Summary = buildWorkspaceSummaryWithAssetFence(workspace, hasAssetPhotos)
 
-	return PropertyWorkspaceResponse{
+	response := PropertyWorkspaceResponse{
 		Data: workspace,
 		Meta: WorkspaceMeta{
 			CanManage:            canManage,
 			CanViewOwnerContacts: canViewContacts,
 			CanViewConfidential:  canManage,
+			HasAssetPhotos:       hasAssetPhotos,
 		},
-	}, nil
+	}
+	return repo.attachPropertyDevelopmentLink(ctx, tenantContext.OrganizationID, propertyID, response)
+}
+
+func (repo Repository) propertyWorkspacePolicies(
+	ctx context.Context,
+	tenantContext tenant.Context,
+) (string, string, error) {
+	if canManageProperties(tenantContext) {
+		return propertyEditPolicyResponsibleOrAdmin, "hidden", nil
+	}
+
+	var editPolicy, ownerContactVisibility string
+	err := repo.db.Pool().QueryRow(ctx, `
+		select
+			coalesce(property_edit_policy, 'responsible_or_admin'),
+			coalesce(property_owner_contact_visibility, 'hidden')
+		from public.organizations
+		where id = $1::uuid
+	`, tenantContext.OrganizationID).Scan(&editPolicy, &ownerContactVisibility)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return propertyEditPolicyResponsibleOrAdmin, "hidden", nil
+	}
+	return editPolicy, ownerContactVisibility, err
 }
 
 var normalizedWorkspaceResourcesByTable = map[string]string{
@@ -236,6 +289,8 @@ func (repo Repository) getLegacyWorkspace(
 	propertyID string,
 	canViewContacts bool,
 	canManage bool,
+	editPolicy string,
+	ownerContactVisibility string,
 ) (PropertyWorkspaceResponse, error) {
 	workspaceArguments, visibilityClause := legacyWorkspaceReadVisibility(tenantContext, propertyID)
 
@@ -253,15 +308,27 @@ func (repo Repository) getLegacyWorkspace(
 		return PropertyWorkspaceResponse{}, err
 	}
 
-	return buildLegacyWorkspaceResponse(propertyJSON, canViewContacts, canManage)
+	propertyObject, err := decodeWorkspaceObject(propertyJSON)
+	if err != nil {
+		return PropertyWorkspaceResponse{}, err
+	}
+	authorization := propertyUpdateAuthorizationFromProperty(
+		tenantContext,
+		Property(propertyObject),
+		editPolicy,
+		ownerContactVisibility,
+	)
+	return buildLegacyWorkspaceResponse(propertyJSON, canViewContacts, canManage, authorization.CanEdit)
 }
 
-func buildLegacyWorkspaceResponse(propertyJSON string, canViewContacts bool, canManage bool) (PropertyWorkspaceResponse, error) {
+func buildLegacyWorkspaceResponse(propertyJSON string, canViewContacts bool, canManage bool, canEdit bool) (PropertyWorkspaceResponse, error) {
 	propertyObject, err := decodeWorkspaceObject(propertyJSON)
 	if err != nil {
 		return PropertyWorkspaceResponse{}, err
 	}
 	property := normalizePropertyOutput(Property(propertyObject))
+	property["can_edit"] = canEdit
+	attachPropertyManagedTerms(property)
 	if !canViewContacts {
 		redactPropertyOwnerContacts(property)
 	}
@@ -770,12 +837,28 @@ func normalizeWorkspaceDatabaseError(err error) error {
 		return fmt.Errorf("%w: another primary owner covers part of the selected period; adjust the primary owner or dates", ErrInvalidInput)
 	}
 	switch databaseError.ConstraintName {
+	case "property_cities_organization_id_name_uf_key",
+		"property_neighborhoods_organization_id_city_id_name_key",
+		"property_condominiums_active_locality_name_uidx":
+		return ErrPropertyLocationIdentityConflict
+	case "property_owners_org_identity_unique":
+		return ErrPropertyOwnerIdentityConflict
+	case "property_owner_active_reference":
+		return ErrPropertyOwnerInUse
+	case "property_owner_assignment_invalid":
+		return ErrPropertyOwnerAssignmentInvalid
+	case "property_owner_projection_conflict":
+		return ErrPropertyOwnershipConflict
+	case "property_location_in_use":
+		return ErrPropertyLocationInUse
 	case "property_ownerships_owner_period_excl":
 		return fmt.Errorf("%w: this owner already has an ownership period that overlaps the selected dates; adjust the period", ErrInvalidInput)
 	case "property_ownerships_primary_period_excl":
 		return fmt.Errorf("%w: another primary owner covers part of the selected period; adjust the primary owner or dates", ErrInvalidInput)
 	}
 	switch databaseError.Code {
+	case "40001", "55P03":
+		return ErrPropertyWorkspaceConflict
 	case "23505":
 		return ErrPropertyWorkspaceConflict
 	case "23502", "23503", "23514", "23P01", "22P02", "22007", "22008":
@@ -786,6 +869,10 @@ func normalizeWorkspaceDatabaseError(err error) error {
 }
 
 func buildWorkspaceSummary(workspace PropertyWorkspace) WorkspaceSummary {
+	return buildWorkspaceSummaryWithAssetFence(workspace, false)
+}
+
+func buildWorkspaceSummaryWithAssetFence(workspace PropertyWorkspace, hasAssetPhotos bool) WorkspaceSummary {
 	activeOffer := false
 	for _, offer := range workspace.Offers {
 		if workspaceString(offer, "status") == "active" && workspacePositiveNumber(offer["price"]) {
@@ -794,7 +881,7 @@ func buildWorkspaceSummary(workspace PropertyWorkspace) WorkspaceSummary {
 		}
 	}
 
-	publicPhoto := workspaceHasLegacyPhoto(workspace.Property)
+	publicPhoto := !hasAssetPhotos && workspaceHasLegacyPhoto(workspace.Property)
 	photoCount := 0
 	documentCount := 0
 	for _, asset := range workspace.Assets {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/mail"
 	"strings"
 	"time"
 
@@ -15,18 +16,22 @@ import (
 type Owner map[string]any
 
 type OwnerInput struct {
-	Name             string
-	PhoneResidential string
-	PhoneCommercial  string
-	Cellphone        string
-	Email            string
-	MediaSource      string
-	NotifyEmail      bool
-	Notes            string
+	Name              string
+	PhoneResidential  string
+	PhoneCommercial   string
+	Cellphone         string
+	Email             string
+	MediaSource       string
+	NotifyEmail       bool
+	Notes             string
+	ExpectedUpdatedAt string
 }
 
 func (repo Repository) ListOwners(ctx context.Context, tenantContext tenant.Context) ([]Owner, error) {
-	page, err := repo.ListOwnersPage(ctx, tenantContext, OwnerListFilter{})
+	page, err := repo.ListOwnersPage(ctx, tenantContext, OwnerListFilter{
+		Limit:     ownerPageDefaultLimit,
+		Paginated: true,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +42,11 @@ func (repo Repository) ListOwnersPage(ctx context.Context, tenantContext tenant.
 	if tenantContext.UserID == "" {
 		return OwnerPage{Items: []Owner{}}, nil
 	}
-	if filter.Paginated && (filter.Limit < 1 || filter.Limit > ownerPageMaxLimit) {
+	if filter.Limit == 0 {
+		filter.Limit = ownerPageDefaultLimit
+	}
+	filter.Paginated = true
+	if filter.Limit < 1 || filter.Limit > ownerPageMaxLimit {
 		return OwnerPage{}, fmt.Errorf("%w: owner page limit must be between 1 and %d", ErrInvalidInput, ownerPageMaxLimit)
 	}
 
@@ -73,12 +82,8 @@ func (repo Repository) ListOwnersPage(ctx context.Context, tenantContext tenant.
 	if filter.Cursor != nil {
 		cursor = *filter.Cursor
 	}
-	queryLimit := 1
-	limitClause := ""
-	if filter.Paginated {
-		queryLimit = filter.Limit + 1
-		limitClause = "limit $12"
-	}
+	queryLimit := filter.Limit + 1
+	limitClause := "limit $12"
 	args = append(
 		args,
 		canViewContacts,
@@ -88,8 +93,8 @@ func (repo Repository) ListOwnersPage(ctx context.Context, tenantContext tenant.
 		cursor.NameKey,
 		cursor.CreatedAt,
 		cursor.ID,
-		queryLimit,
 	)
+	args = append(args, queryLimit)
 
 	rows, err := repo.db.Pool().Query(ctx, fmt.Sprintf(`
 		with filtered_owners as (
@@ -100,17 +105,7 @@ func (repo Repository) ListOwnersPage(ctx context.Context, tenantContext tenant.
 			from public.property_owners po
 			where po.organization_id = $1::uuid
 			  and coalesce(po.is_active, true) = true
-			  and (
-				$7::text = ''
-				or strpos(lower(po.name), lower($7::text)) > 0
-				or (
-					$5::boolean
-					and strpos(
-						lower(concat_ws(' ', po.phone_residential, po.phone_commercial, po.cellphone, po.email, po.media_source)),
-						lower($7::text)
-					) > 0
-				)
-			  )
+			  and %s
 			  %s
 		), page_owners as materialized (
 			select *
@@ -173,7 +168,7 @@ func (repo Repository) ListOwnersPage(ctx context.Context, tenantContext tenant.
 			) property_rows
 		) property_preview on true
 		order by po.owner_sort_name, po.created_at desc, po.id desc
-	`, ownerScope, limitClause, ownerPropertyAssociationSQL("p", "po"), propertyScope,
+	`, propertyOwnerSearchClause("po", "$7", "$5"), ownerScope, limitClause, ownerPropertyAssociationSQL("p", "po"), propertyScope,
 		ownerPropertyAssociationSQL("p", "po"), propertyScope), args...)
 	if err != nil {
 		return OwnerPage{}, err
@@ -206,7 +201,7 @@ func (repo Repository) ListOwnersPage(ctx context.Context, tenantContext tenant.
 	}
 
 	var nextCursor *string
-	if filter.Paginated && len(items) > filter.Limit {
+	if len(items) > filter.Limit {
 		encoded, err := encodeOwnerCursor(cursors[filter.Limit-1])
 		if err != nil {
 			return OwnerPage{}, err
@@ -214,11 +209,24 @@ func (repo Repository) ListOwnersPage(ctx context.Context, tenantContext tenant.
 		nextCursor = &encoded
 		items = items[:filter.Limit]
 	}
-	if !filter.Paginated {
-		totalCount = len(items)
-	}
-
 	return OwnerPage{Items: items, NextCursor: nextCursor, TotalCount: totalCount}, nil
+}
+
+func propertyOwnerSearchClause(alias string, searchPlaceholder string, canViewContactsPlaceholder string) string {
+	return `(
+		` + searchPlaceholder + `::text = ''
+		or lower(coalesce(` + alias + `.name, '')) like '%' || lower(` + searchPlaceholder + `::text) || '%'
+		or (
+			` + canViewContactsPlaceholder + `::boolean
+			and lower(
+				coalesce(` + alias + `.phone_residential, '') || ' ' ||
+				coalesce(` + alias + `.phone_commercial, '') || ' ' ||
+				coalesce(` + alias + `.cellphone, '') || ' ' ||
+				coalesce(` + alias + `.email, '') || ' ' ||
+				coalesce(` + alias + `.media_source, '')
+			) like '%' || lower(` + searchPlaceholder + `::text) || '%'
+		)
+	)`
 }
 
 func (repo Repository) CreateOwner(ctx context.Context, tenantContext tenant.Context, input OwnerInput) (Owner, error) {
@@ -226,71 +234,24 @@ func (repo Repository) CreateOwner(ctx context.Context, tenantContext tenant.Con
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
 
-	input.Name = trimMax(input.Name, 160)
-	input.PhoneResidential = trimMax(input.PhoneResidential, 40)
-	input.PhoneCommercial = trimMax(input.PhoneCommercial, 40)
-	input.Cellphone = trimMax(input.Cellphone, 40)
-	input.Email = strings.ToLower(trimMax(input.Email, 160))
-	input.MediaSource = trimMax(input.MediaSource, 80)
-	input.Notes = trimMax(input.Notes, 1200)
-	if input.Name == "" {
-		return nil, fmt.Errorf("%w: owner name is required", ErrInvalidInput)
+	if err := validateOwnerInput(&input); err != nil {
+		return nil, err
 	}
-
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
 
-	lockKey := "owner:" + strings.ToLower(input.Name) + ":" + input.Cellphone + ":" + input.Email
-	if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtext($1), hashtext($2))`, tenantContext.OrganizationID, lockKey); err != nil {
+	ownerID, err := resolveOrCreateInlinePropertyOwner(ctx, tx, tenantContext, input)
+	if err != nil {
 		return nil, err
 	}
-
 	owner, err := scanOwner(tx.QueryRow(ctx, `
 		select `+workspaceOwnerProjection("po", "true", "true")+`::text
 		from public.property_owners po
-		where po.organization_id = $1::uuid
-		  and lower(po.name) = lower($2)
-		  and coalesce(po.cellphone, '') = coalesce(nullif($3, ''), '')
-		  and coalesce(po.email, '') = coalesce(nullif($4, ''), '')
-		limit 1
-	`, tenantContext.OrganizationID, input.Name, input.Cellphone, input.Email))
-	if err == nil {
-		return owner, tx.Commit(ctx)
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return nil, err
-	}
-
-	owner, err = scanOwner(tx.QueryRow(ctx, `
-		insert into public.property_owners (
-			organization_id,
-			name,
-			phone_residential,
-			phone_commercial,
-			cellphone,
-			email,
-			media_source,
-			notify_email,
-			notes,
-			created_by
-		)
-		values (
-			$1::uuid,
-			$2,
-			nullif($3, ''),
-			nullif($4, ''),
-			nullif($5, ''),
-			nullif($6, ''),
-			nullif($7, ''),
-			$8,
-			nullif($9, ''),
-			nullif($10, '')::uuid
-		)
-		returning `+workspaceOwnerProjection("property_owners", "true", "true")+`::text
-	`, tenantContext.OrganizationID, input.Name, input.PhoneResidential, input.PhoneCommercial, input.Cellphone, input.Email, input.MediaSource, input.NotifyEmail, input.Notes, tenantContext.UserID))
+		where po.organization_id = $1::uuid and po.id = $2::uuid
+	`, tenantContext.OrganizationID, ownerID))
 	if err != nil {
 		return nil, err
 	}
@@ -304,15 +265,11 @@ func (repo Repository) UpdateOwner(ctx context.Context, tenantContext tenant.Con
 		return nil, ErrPropertyNotFound
 	}
 
-	input.Name = trimMax(input.Name, 160)
-	input.PhoneResidential = trimMax(input.PhoneResidential, 40)
-	input.PhoneCommercial = trimMax(input.PhoneCommercial, 40)
-	input.Cellphone = trimMax(input.Cellphone, 40)
-	input.Email = strings.ToLower(trimMax(input.Email, 160))
-	input.MediaSource = trimMax(input.MediaSource, 80)
-	input.Notes = trimMax(input.Notes, 1200)
-	if input.Name == "" {
-		return nil, fmt.Errorf("%w: owner name is required", ErrInvalidInput)
+	if err := validateOwnerInput(&input); err != nil {
+		return nil, err
+	}
+	if err := validateRequiredWorkspaceTimestamp(input.ExpectedUpdatedAt, "expected_updated_at"); err != nil {
+		return nil, err
 	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
@@ -330,6 +287,39 @@ func (repo Repository) UpdateOwner(ctx context.Context, tenantContext tenant.Con
 	}
 	if !allowed {
 		return nil, tenant.ErrOrganizationAccessDenied
+	}
+	var currentUpdatedAt time.Time
+	var currentName string
+	if err := tx.QueryRow(ctx, `
+		select updated_at, name
+		from public.property_owners
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		  and coalesce(is_active, true)
+		for update
+	`, tenantContext.OrganizationID, ownerID).Scan(&currentUpdatedAt, &currentName); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrPropertyNotFound
+		}
+		return nil, err
+	}
+	if err := validateCatalogMutationVersion(currentUpdatedAt, input.ExpectedUpdatedAt); err != nil {
+		return nil, err
+	}
+	if !strings.EqualFold(strings.TrimSpace(currentName), strings.TrimSpace(input.Name)) {
+		var legacyNameInUse bool
+		if err := tx.QueryRow(
+			ctx,
+			ownerLegacyNameInUseSQL(),
+			tenantContext.OrganizationID,
+			currentName,
+			input.Name,
+		).Scan(&legacyNameInUse); err != nil {
+			return nil, err
+		}
+		if legacyNameInUse {
+			return nil, ErrPropertyOwnerInUse
+		}
 	}
 
 	var owner Owner
@@ -354,7 +344,7 @@ func (repo Repository) UpdateOwner(ctx context.Context, tenantContext tenant.Con
 		return nil, ErrPropertyNotFound
 	}
 	if err != nil {
-		return nil, err
+		return nil, normalizeWorkspaceDatabaseError(err)
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -366,15 +356,129 @@ func (repo Repository) UpdateOwner(ctx context.Context, tenantContext tenant.Con
 			owner_cellphone = nullif($6, ''),
 			owner_email = nullif($7, ''),
 			owner_media_source = nullif($8, ''),
+			origin_media = nullif($8, ''),
 			owner_notify_email = $9,
 			updated_at = now()
 		where organization_id = $1::uuid
 		  and owner_id = $2::uuid
 	`, tenantContext.OrganizationID, ownerID, input.Name, input.PhoneResidential, input.PhoneCommercial, input.Cellphone, input.Email, input.MediaSource, input.NotifyEmail); err != nil {
-		return nil, err
+		return nil, normalizeWorkspaceDatabaseError(err)
 	}
 
 	return owner, tx.Commit(ctx)
+}
+
+// DeactivateOwner keeps historical ownership data intact. A referenced owner
+// must first be detached or have the active ownership period ended.
+func (repo Repository) DeactivateOwner(ctx context.Context, tenantContext tenant.Context, ownerID string, expectedUpdatedAt string) error {
+	if !canManageProperties(tenantContext) {
+		return tenant.ErrOrganizationAccessDenied
+	}
+	if err := validateRequiredWorkspaceTimestamp(expectedUpdatedAt, "expected_updated_at"); err != nil {
+		return err
+	}
+	ownerID, ok := normalizeUUID(ownerID)
+	if !ok {
+		return ErrPropertyOwnerNotFound
+	}
+
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := lockWorkspaceOwner(ctx, tx, tenantContext.OrganizationID, ownerID); err != nil {
+		return err
+	}
+
+	var currentUpdatedAt time.Time
+	if err := tx.QueryRow(ctx, `
+		select updated_at
+		from public.property_owners
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		  and coalesce(is_active, true)
+		for update
+	`, tenantContext.OrganizationID, ownerID).Scan(&currentUpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrPropertyOwnerNotFound
+		}
+		return err
+	}
+	if err := validateCatalogMutationVersion(currentUpdatedAt, expectedUpdatedAt); err != nil {
+		return err
+	}
+
+	var inUse bool
+	if err := tx.QueryRow(ctx, ownerDeactivationInUseSQL(), tenantContext.OrganizationID, ownerID).Scan(&inUse); err != nil {
+		return err
+	}
+	if inUse {
+		return ErrPropertyOwnerInUse
+	}
+
+	if _, err := tx.Exec(ctx, `
+		update public.property_owners
+		set is_active = false, updated_at = now()
+		where organization_id = $1::uuid and id = $2::uuid
+	`, tenantContext.OrganizationID, ownerID); err != nil {
+		return normalizeWorkspaceDatabaseError(err)
+	}
+	return tx.Commit(ctx)
+}
+
+func validateOwnerInput(input *OwnerInput) error {
+	fields := []struct {
+		name     string
+		value    *string
+		limit    int
+		required bool
+	}{
+		{name: "name", value: &input.Name, limit: 160, required: true},
+		{name: "phone_residential", value: &input.PhoneResidential, limit: 40},
+		{name: "phone_commercial", value: &input.PhoneCommercial, limit: 40},
+		{name: "cellphone", value: &input.Cellphone, limit: 40},
+		{name: "email", value: &input.Email, limit: 160},
+		{name: "media_source", value: &input.MediaSource, limit: 80},
+		{name: "notes", value: &input.Notes, limit: 1200},
+	}
+	for _, field := range fields {
+		value, err := validateBoundedOwnerText(*field.value, field.name, field.limit, field.required)
+		if err != nil {
+			return err
+		}
+		*field.value = value
+	}
+	if input.Email != "" {
+		email, err := validateOwnerEmail(input.Email)
+		if err != nil {
+			return err
+		}
+		input.Email = email
+	}
+	if input.NotifyEmail && input.Email == "" {
+		return fmt.Errorf("%w: owner email is required when notify_email is enabled", ErrInvalidInput)
+	}
+	return nil
+}
+
+func validateOwnerEmail(value string) (string, error) {
+	address, err := mail.ParseAddress(value)
+	if err != nil || !strings.EqualFold(address.Address, value) {
+		return "", fmt.Errorf("%w: owner email is invalid", ErrInvalidInput)
+	}
+	return strings.ToLower(address.Address), nil
+}
+
+func validateBoundedOwnerText(value string, field string, limit int, required bool) (string, error) {
+	value = strings.TrimSpace(value)
+	if required && value == "" {
+		return "", fmt.Errorf("%w: owner %s is required", ErrInvalidInput, field)
+	}
+	if len([]rune(value)) > limit {
+		return "", fmt.Errorf("%w: owner %s must have at most %d characters", ErrInvalidInput, field, limit)
+	}
+	return value, nil
 }
 
 func ownerPropertyAssociationSQL(propertyAlias string, ownerAlias string) string {
@@ -395,6 +499,48 @@ func ownerPropertyAssociationSQL(propertyAlias string, ownerAlias string) string
 			and lower(trim(` + propertyAlias + `.owner_name)) = lower(trim(` + ownerAlias + `.name))
 		)
 	)`
+}
+
+func ownerDeactivationInUseSQL() string {
+	return `
+		select (
+			exists (
+				select 1
+				from public.properties property
+				join public.property_owners owner
+				  on owner.organization_id = property.organization_id
+				 and owner.id = $2::uuid
+				where property.organization_id = $1::uuid
+				  and ` + ownerPropertyAssociationSQL("property", "owner") + `
+				limit 1
+			)
+			or exists (
+				select 1
+				from public.property_ownerships scheduled_ownership
+				where scheduled_ownership.organization_id = $1::uuid
+				  and scheduled_ownership.owner_id = $2::uuid
+				  and (scheduled_ownership.valid_to is null or current_date < scheduled_ownership.valid_to)
+				limit 1
+			)
+		)
+	`
+}
+
+func ownerLegacyNameInUseSQL() string {
+	return `
+		select exists (
+			select 1
+			from public.properties property
+			where property.organization_id = $1::uuid
+			  and property.owner_id is null
+			  and nullif(trim(property.owner_name), '') is not null
+			  and (
+				lower(trim(property.owner_name)) = lower(trim($2))
+				or lower(trim(property.owner_name)) = lower(trim($3))
+			  )
+			limit 1
+		)
+	`
 }
 
 func (repo Repository) canEditOwner(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context, ownerID string) (bool, error) {

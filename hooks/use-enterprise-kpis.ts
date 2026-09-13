@@ -12,17 +12,17 @@ export type KPIData = {
 };
 
 export function useEnterpriseKPIs(dateRange?: { from: Date; to: Date }) {
-  const { organization } = useAuth();
+  const { activeOrganization, organization } = useAuth();
 
   return useQuery({
-    queryKey: ["enterprise-kpis", organization?.id, dateRange?.from?.toISOString(), dateRange?.to?.toISOString()],
+    queryKey: ["enterprise-kpis", activeOrganization.organizationId, dateRange?.from?.toISOString(), dateRange?.to?.toISOString()],
     queryFn: async () => {
-      if (!organization?.id) return null;
+      if (!activeOrganization.organizationId) return null;
       return analyticsAPI.enterpriseKPIs<KPIData>({
         dateFrom: dateRange?.from?.toISOString(),
         dateTo: dateRange?.to?.toISOString(),
       });
     },
-    enabled: !!organization?.id,
+    enabled: !!activeOrganization.organizationId,
   });
 }

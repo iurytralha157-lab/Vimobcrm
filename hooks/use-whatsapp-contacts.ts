@@ -3,37 +3,37 @@ import { whatsappAPI } from "@/lib/api/whatsapp";
 import { useAuth } from "@/contexts/AuthContext";
 
 export function useCheckWhatsAppNumber() {
-  const { profile } = useAuth();
+  const { activeOrganization, profile } = useAuth();
 
   return useMutation({
     mutationFn: async (args: { sessionId: string; numbers: string[] }) =>
-      whatsappAPI.checkNumbers(args.sessionId, args.numbers, profile?.organization_id),
+      whatsappAPI.checkNumbers(args.sessionId, args.numbers, activeOrganization.organizationId),
   });
 }
 
 export function useFetchAvatar() {
-  const { profile } = useAuth();
+  const { activeOrganization, profile } = useAuth();
 
   return useMutation({
     mutationFn: async (args: { sessionId: string; jid: string }) =>
-      whatsappAPI.fetchAvatar(args.sessionId, args.jid, profile?.organization_id),
+      whatsappAPI.fetchAvatar(args.sessionId, args.jid, activeOrganization.organizationId),
   });
 }
 
 export function useSyncContactsAvatars() {
-  const { profile } = useAuth();
+  const { activeOrganization, profile } = useAuth();
 
   return useMutation({
     mutationFn: async (sessionId: string) =>
-      whatsappAPI.syncContactsAvatars(sessionId, profile?.organization_id),
+      whatsappAPI.syncContactsAvatars(sessionId, activeOrganization.organizationId),
   });
 }
 
 export function useHistorySync() {
-  const { profile } = useAuth();
+  const { activeOrganization, profile } = useAuth();
 
   return useMutation({
     mutationFn: async (args: { sessionId: string; jid?: string }) =>
-      whatsappAPI.historySync(args.sessionId, args.jid, profile?.organization_id),
+      whatsappAPI.historySync(args.sessionId, args.jid, activeOrganization.organizationId),
   });
 }

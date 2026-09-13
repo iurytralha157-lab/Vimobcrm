@@ -45,7 +45,7 @@ func TestNotificationCursorRejectsMalformedValues(t *testing.T) {
 }
 
 func TestNotificationPaginationUsesStableTenantScopedKeyset(t *testing.T) {
-	source, err := os.ReadFile("support_resources.go")
+	source, err := os.ReadFile("support_notifications.go")
 	if err != nil {
 		t.Fatal(err)
 	}

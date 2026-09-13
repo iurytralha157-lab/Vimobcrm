@@ -40,7 +40,7 @@ export function useLeadMessages(
   const query = useInfiniteQuery({
     queryKey,
     initialPageParam: null as string | null,
-    queryFn: async ({ pageParam }): Promise<LeadMessagePage> => {
+    queryFn: async ({ pageParam, signal }): Promise<LeadMessagePage> => {
       if (!leadId || !scope.organizationId) {
         return { messages: [], nextCursor: null };
       }
@@ -50,6 +50,7 @@ export function useLeadMessages(
         organizationId: scope.organizationId,
         limit: pageSize,
         cursor: pageParam,
+        signal,
       });
       const serverMessages = history.messages as LeadMessage[];
 

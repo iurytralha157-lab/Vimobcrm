@@ -125,9 +125,10 @@ select results_eq(
         'property_channel_publication_versions',
         'property_channel_publication_jobs'
       ])
+      and policyname <> 'vimob_active_membership_guard'
   $$,
   array[0::bigint],
-  'publication tables expose no direct browser policies'
+  'publication tables expose no domain policy that grants direct browser access'
 );
 
 select ok(

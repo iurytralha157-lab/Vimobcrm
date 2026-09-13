@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { useAuth } from '@/contexts/AuthContext'
+import { useOptionalActiveOrganizationId as useOrganizationId } from '@/hooks/use-active-organization'
 import { propertyCatalogAPI, type PropertyCatalogItem } from '@/lib/api/property-catalog'
 
 export interface PropertyFeature {
@@ -29,11 +30,6 @@ const DEFAULT_FEATURES = [
   'Quintal',
   'Ed\u00edcula',
 ]
-
-function useOrganizationId() {
-  const { profile, organization } = useAuth()
-  return organization?.id || profile?.organization_id || undefined
-}
 
 function toPropertyFeature(item: PropertyCatalogItem): PropertyFeature {
   return {

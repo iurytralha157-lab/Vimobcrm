@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(51);
+select plan(78);
 
 select has_table(
   'private',
@@ -542,10 +542,11 @@ values
     0
   );
 
-select is(
+select cmp_ok(
   private.backfill_unambiguous_pipeline_default_round_robins(),
+  '>=',
   1,
-  'legacy fallback backfill updates only the pipeline with one active queue'
+  'legacy fallback backfill updates the unambiguous fixture even when organization bootstrap adds another eligible pipeline'
 );
 
 select is(
@@ -1447,6 +1448,1092 @@ select ok(
       and outcome <> 'processing'
   ),
   'an unmarked lead insert enters the canonical idempotency boundary'
+);
+
+select has_function(
+  'public',
+  'register_lead_reentry_from_backend',
+  array[
+    'uuid',
+    'uuid',
+    'text',
+    'text',
+    'text',
+    'text',
+    'uuid',
+    'numeric',
+    'jsonb',
+    'timestamp with time zone'
+  ],
+  'backend reentry registration exposes an immutable event identity'
+);
+
+select ok(
+  (
+    select
+      procedure.prosecdef
+      and exists (
+        select 1
+        from unnest(coalesce(procedure.proconfig, array[]::text[])) as setting
+        where setting = 'search_path=""'
+      )
+    from pg_catalog.pg_proc as procedure
+    where procedure.oid =
+      'public.register_lead_reentry_from_backend(uuid,uuid,text,text,text,text,uuid,numeric,jsonb,timestamptz)'::regprocedure
+  )
+  and has_function_privilege(
+    'service_role',
+    'public.register_lead_reentry_from_backend(uuid,uuid,text,text,text,text,uuid,numeric,jsonb,timestamptz)',
+    'execute'
+  )
+  and not has_function_privilege(
+    'anon',
+    'public.register_lead_reentry_from_backend(uuid,uuid,text,text,text,text,uuid,numeric,jsonb,timestamptz)',
+    'execute'
+  )
+  and not has_function_privilege(
+    'authenticated',
+    'public.register_lead_reentry_from_backend(uuid,uuid,text,text,text,text,uuid,numeric,jsonb,timestamptz)',
+    'execute'
+  ),
+  'backend reentry registration is service-role-only with an empty search path'
+);
+
+insert into public.leads (
+  id,
+  organization_id,
+  pipeline_id,
+  stage_id,
+  name,
+  source,
+  metadata
+)
+values (
+  'd9000000-0000-4000-8000-000000000032',
+  'd1000000-0000-4000-8000-000000000001',
+  'd3000000-0000-4000-8000-000000000001',
+  'd4000000-0000-4000-8000-000000000001',
+  'Edge reentry identity lead',
+  'webhook',
+  '{"distribution_deferred":true}'::jsonb
+);
+
+create temporary table edge_reentry_results (
+  label text primary key,
+  result jsonb not null
+) on commit drop;
+
+insert into edge_reentry_results (label, result)
+values (
+  'first',
+  public.register_lead_reentry_from_backend(
+    'd1000000-0000-4000-8000-000000000001',
+    'd9000000-0000-4000-8000-000000000032',
+    'generic_webhook',
+    'provider-event-32',
+    'webhook',
+    'webhook_reentry',
+    null,
+    null,
+    '{"fixture":true}'::jsonb,
+    '2026-09-08 05:00:00+00'
+  )
+);
+
+insert into edge_reentry_results (label, result)
+values (
+  'retry',
+  public.register_lead_reentry_from_backend(
+    'd1000000-0000-4000-8000-000000000001',
+    'd9000000-0000-4000-8000-000000000032',
+    'generic_webhook',
+    'provider-event-32',
+    'webhook',
+    'webhook_reentry',
+    null,
+    null,
+    '{"fixture":true}'::jsonb,
+    '2026-09-08 05:01:00+00'
+  )
+);
+
+insert into edge_reentry_results (label, result)
+select
+  'without-key-one',
+  public.register_lead_reentry_from_backend(
+    'd1000000-0000-4000-8000-000000000001',
+    'd9000000-0000-4000-8000-000000000032',
+    'generic_webhook',
+    null,
+    'webhook',
+    'webhook_reentry',
+    null,
+    null,
+    '{"same_payload":true}'::jsonb,
+    '2026-09-08 05:02:00+00'
+  );
+
+insert into edge_reentry_results (label, result)
+select
+  'without-key-two',
+  public.register_lead_reentry_from_backend(
+    'd1000000-0000-4000-8000-000000000001',
+    'd9000000-0000-4000-8000-000000000032',
+    'generic_webhook',
+    null,
+    'webhook',
+    'webhook_reentry',
+    null,
+    null,
+    '{"same_payload":true}'::jsonb,
+    '2026-09-08 05:02:00+00'
+  );
+
+select ok(
+  (select (result->>'inserted')::boolean from edge_reentry_results where label = 'first')
+  and exists (
+    select 1
+    from public.lead_entry_events as event
+    where event.id = (
+      select (result->>'event_id')::uuid
+      from edge_reentry_results
+      where label = 'first'
+    )
+      and event.entry_type = 'reentry'
+      and event.metadata->>'entry_subtype' = 'webhook_reentry'
+  ),
+  'first provider event creates one canonical reentry event'
+);
+
+select ok(
+  (
+    select retry.result->>'event_id' = first_attempt.result->>'event_id'
+      and (retry.result->>'replayed')::boolean
+      and not (retry.result->>'inserted')::boolean
+    from edge_reentry_results as retry
+    cross join edge_reentry_results as first_attempt
+    where retry.label = 'retry'
+      and first_attempt.label = 'first'
+  ),
+  'same provider event replays the immutable event identity'
+);
+
+select ok(
+  (
+    select count(*) = 1
+    from public.lead_entry_events
+    where organization_id = 'd1000000-0000-4000-8000-000000000001'
+      and provider = 'generic_webhook'
+      and provider_event_id = 'provider-event-32'
+      and is_countable = true
+  )
+  and (
+    select reentry_count = 3
+    from public.leads
+    where id = 'd9000000-0000-4000-8000-000000000032'
+  ),
+  'provider retry is counted once while distinct unkeyed events are counted'
+);
+
+select isnt(
+  (
+    select result->>'event_id'
+    from edge_reentry_results
+    where label = 'without-key-one'
+  ),
+  (
+    select result->>'event_id'
+    from edge_reentry_results
+    where label = 'without-key-two'
+  ),
+  'identical legitimate events without an external key do not collide forever'
+);
+
+select is(
+  (
+    select count(*)
+    from public.lead_entry_events
+    where organization_id = 'd1000000-0000-4000-8000-000000000001'
+      and lead_id = 'd9000000-0000-4000-8000-000000000032'
+      and provider = 'generic_webhook'
+      and entry_type = 'reentry'
+      and is_countable = true
+  ),
+  3::bigint,
+  'one keyed event and two unkeyed business events remain auditable'
+);
+
+select has_function(
+  'public',
+  'redistribute_lead_from_pool_backend',
+  array[
+    'uuid',
+    'uuid',
+    'text',
+    'uuid',
+    'uuid',
+    'timestamp with time zone',
+    'integer',
+    'timestamp with time zone'
+  ],
+  'pool redistribution has one backend aggregate mutation'
+);
+
+select ok(
+  (
+    select
+      procedure.prosecdef
+      and exists (
+        select 1
+        from unnest(coalesce(procedure.proconfig, array[]::text[])) as setting
+        where setting = 'search_path=""'
+      )
+    from pg_catalog.pg_proc as procedure
+    where procedure.oid =
+      'public.redistribute_lead_from_pool_backend(uuid,uuid,text,uuid,uuid,timestamptz,integer,timestamptz)'::regprocedure
+  )
+  and has_function_privilege(
+    'service_role',
+    'public.redistribute_lead_from_pool_backend(uuid,uuid,text,uuid,uuid,timestamptz,integer,timestamptz)',
+    'execute'
+  )
+  and not has_function_privilege(
+    'anon',
+    'public.redistribute_lead_from_pool_backend(uuid,uuid,text,uuid,uuid,timestamptz,integer,timestamptz)',
+    'execute'
+  )
+  and not has_function_privilege(
+    'authenticated',
+    'public.redistribute_lead_from_pool_backend(uuid,uuid,text,uuid,uuid,timestamptz,integer,timestamptz)',
+    'execute'
+  ),
+  'pool aggregate mutation is service-role-only with an empty search path'
+);
+
+update public.pipelines
+set pool_enabled = true,
+    pool_enabled_at = '2026-09-08 05:00:00+00',
+    pool_timeout_minutes = 10,
+    pool_max_redistributions = 3
+where id = 'd3000000-0000-4000-8000-000000000001';
+
+update public.round_robins
+set settings = coalesce(settings, '{}'::jsonb)
+  || '{"ignore_availability":true}'::jsonb
+where id = 'd7000000-0000-4000-8000-000000000001';
+
+insert into public.leads (
+  id,
+  organization_id,
+  pipeline_id,
+  stage_id,
+  name,
+  source,
+  metadata,
+  assigned_user_id,
+  assigned_at,
+  stage_entered_at,
+  deal_status,
+  redistribution_count
+)
+values
+  (
+    'd9000000-0000-4000-8000-000000000040',
+    'd1000000-0000-4000-8000-000000000001',
+    'd3000000-0000-4000-8000-000000000001',
+    'd4000000-0000-4000-8000-000000000001',
+    'Atomic pool lead',
+    'site',
+    '{"distribution_deferred":true}'::jsonb,
+    'd2000000-0000-4000-8000-000000000003',
+    '2026-09-08 05:10:00+00',
+    '2026-09-08 05:10:00+00',
+    'open',
+    0
+  ),
+  (
+    'd9000000-0000-4000-8000-000000000041',
+    'd1000000-0000-4000-8000-000000000001',
+    'd3000000-0000-4000-8000-000000000001',
+    'd4000000-0000-4000-8000-000000000001',
+    'Rollback pool lead',
+    'site',
+    '{"distribution_deferred":true}'::jsonb,
+    'd2000000-0000-4000-8000-000000000003',
+    '2026-09-08 05:10:00+00',
+    '2026-09-08 05:10:00+00',
+    'open',
+    0
+  );
+
+-- The lead assignment trigger owns assigned_at whenever an owner is first set.
+-- Pin the fixture snapshot after insert so the RPC receives the exact CAS value.
+update public.leads
+set assigned_at = '2026-09-08 05:10:00+00',
+    stage_entered_at = '2026-09-08 05:10:00+00'
+where id in (
+  'd9000000-0000-4000-8000-000000000040',
+  'd9000000-0000-4000-8000-000000000041'
+);
+
+insert into public.assignments_log (
+  organization_id,
+  lead_id,
+  assigned_user_id,
+  round_robin_id,
+  old_user_id,
+  new_user_id,
+  reason,
+  assigned_at
+)
+values
+  (
+    'd1000000-0000-4000-8000-000000000001',
+    'd9000000-0000-4000-8000-000000000040',
+    'd2000000-0000-4000-8000-000000000003',
+    'd7000000-0000-4000-8000-000000000001',
+    null,
+    'd2000000-0000-4000-8000-000000000003',
+    'canonical_round_robin',
+    '2026-09-08 05:10:00+00'
+  ),
+  (
+    'd1000000-0000-4000-8000-000000000001',
+    'd9000000-0000-4000-8000-000000000041',
+    'd2000000-0000-4000-8000-000000000003',
+    'd7000000-0000-4000-8000-000000000001',
+    null,
+    'd2000000-0000-4000-8000-000000000003',
+    'canonical_round_robin',
+    '2026-09-08 05:10:00+00'
+  );
+
+create temporary table edge_pool_results (
+  label text primary key,
+  result jsonb not null
+) on commit drop;
+
+insert into edge_pool_results (label, result)
+values (
+  'first',
+  public.redistribute_lead_from_pool_backend(
+    'd1000000-0000-4000-8000-000000000001',
+    'd9000000-0000-4000-8000-000000000040',
+    'pool:test:atomic-40',
+    'd7000000-0000-4000-8000-000000000001',
+    'd2000000-0000-4000-8000-000000000003',
+    '2026-09-08 05:10:00+00',
+    0,
+    '2026-09-08 05:30:00+00'
+  )
+);
+
+select ok(
+  (
+    select (result->>'success')::boolean
+      and (result->>'pool_finalized')::boolean
+      and (result->>'assigned_user_id')::uuid <>
+        'd2000000-0000-4000-8000-000000000003'::uuid
+    from edge_pool_results
+    where label = 'first'
+  ),
+  'pool aggregate returns only after canonical assignment is finalized'
+);
+
+select ok(
+  (
+    select
+      assigned_user_id = (
+        select (result->>'assigned_user_id')::uuid
+        from edge_pool_results
+        where label = 'first'
+      )
+      and pipeline_id = 'd3000000-0000-4000-8000-000000000002'
+      and redistribution_count = 1
+      and last_redistributed_at = '2026-09-08 05:30:00+00'
+    from public.leads
+    where id = 'd9000000-0000-4000-8000-000000000040'
+  ),
+  'pool aggregate commits owner, destination and redistribution counter together'
+);
+
+select ok(
+  (
+    select count(*) = 1
+    from public.lead_pool_history
+    where id = (
+      select (result->>'distribution_event_id')::uuid
+      from edge_pool_results
+      where label = 'first'
+    )
+      and lead_id = 'd9000000-0000-4000-8000-000000000040'
+      and from_user_id = 'd2000000-0000-4000-8000-000000000003'
+  )
+  and (
+    select count(*) = 1
+    from public.notifications
+    where id = (
+      select (result->>'distribution_event_id')::uuid
+      from edge_pool_results
+      where label = 'first'
+    )
+      and lead_id = 'd9000000-0000-4000-8000-000000000040'
+      and metadata->>'event_key' = 'lead_redistributed'
+  )
+  and (
+    select (result->>'pool_finalized')::boolean
+    from private.lead_distribution_events
+    where id = (
+      select (result->>'distribution_event_id')::uuid
+      from edge_pool_results
+      where label = 'first'
+    )
+  ),
+  'history, former-owner notification and ledger finalization share the event identity'
+);
+
+insert into edge_pool_results (label, result)
+values (
+  'retry',
+  public.redistribute_lead_from_pool_backend(
+    'd1000000-0000-4000-8000-000000000001',
+    'd9000000-0000-4000-8000-000000000040',
+    'pool:test:atomic-40',
+    'd7000000-0000-4000-8000-000000000001',
+    'd2000000-0000-4000-8000-000000000003',
+    '2026-09-08 05:10:00+00',
+    0,
+    '2026-09-08 05:31:00+00'
+  )
+);
+
+select ok(
+  (
+    select (retry.result->>'replayed')::boolean
+      and retry.result->>'distribution_event_id' =
+        first_attempt.result->>'distribution_event_id'
+    from edge_pool_results as retry
+    cross join edge_pool_results as first_attempt
+    where retry.label = 'retry'
+      and first_attempt.label = 'first'
+  ),
+  'same pool idempotency key replays the finalized event'
+);
+
+select ok(
+  (
+    select redistribution_count = 1
+    from public.leads
+    where id = 'd9000000-0000-4000-8000-000000000040'
+  )
+  and (
+    select count(*) = 1
+    from public.lead_pool_history
+    where lead_id = 'd9000000-0000-4000-8000-000000000040'
+  )
+  and (
+    select count(*) = 1
+    from public.notifications
+    where lead_id = 'd9000000-0000-4000-8000-000000000040'
+      and metadata->>'event_key' = 'lead_redistributed'
+  )
+  and (
+    select (result->>'pool_counter_applied')::boolean
+    from private.lead_distribution_events
+    where id = (
+      select (result->>'distribution_event_id')::uuid
+      from edge_pool_results
+      where label = 'first'
+    )
+  ),
+  'pool replay preserves the finalized result and does not duplicate side effects'
+);
+
+delete from public.lead_pool_history
+where id = (
+  select (result->>'distribution_event_id')::uuid
+  from edge_pool_results
+  where label = 'first'
+);
+
+delete from public.notifications
+where id = (
+  select (result->>'distribution_event_id')::uuid
+  from edge_pool_results
+  where label = 'first'
+);
+
+update private.lead_distribution_events as event
+set result = event.result
+  - 'pool_finalized'
+  - 'pool_counter_applied'
+  - 'replayed'
+where event.id = (
+  select (result->>'distribution_event_id')::uuid
+  from edge_pool_results
+  where label = 'first'
+);
+
+update public.leads as lead
+set assigned_user_id = case
+      when lead.assigned_user_id = 'd2000000-0000-4000-8000-000000000001'::uuid
+        then 'd2000000-0000-4000-8000-000000000002'::uuid
+      else 'd2000000-0000-4000-8000-000000000001'::uuid
+    end,
+    redistribution_count = 0,
+    last_redistributed_at = null
+where lead.id = 'd9000000-0000-4000-8000-000000000040'
+  and lead.organization_id = 'd1000000-0000-4000-8000-000000000001';
+
+-- The assignment trigger clears the old warning when ownership changes. Record
+-- later work after that transition so recovery must preserve the newer state.
+update public.leads as lead
+set redistribution_warning_sent_at = '2026-09-08 05:31:30+00'
+where lead.id = 'd9000000-0000-4000-8000-000000000040'
+  and lead.organization_id = 'd1000000-0000-4000-8000-000000000001';
+
+insert into edge_pool_results (label, result)
+values (
+  'legacy-owner-diverged-recovery',
+  public.redistribute_lead_from_pool_backend(
+    'd1000000-0000-4000-8000-000000000001',
+    'd9000000-0000-4000-8000-000000000040',
+    'pool:test:atomic-40',
+    'd7000000-0000-4000-8000-000000000001',
+    'd2000000-0000-4000-8000-000000000003',
+    '2026-09-08 05:10:00+00',
+    0,
+    '2026-09-08 05:32:00+00'
+  )
+);
+
+select ok(
+  (
+    select (result->>'success')::boolean
+      and (result->>'replayed')::boolean
+      and (result->>'pool_finalized')::boolean
+      and (result->>'pool_counter_applied')::boolean
+    from edge_pool_results
+    where label = 'legacy-owner-diverged-recovery'
+  )
+  and (
+    select lead.assigned_user_id <>
+        (recovery.result->>'assigned_user_id')::uuid
+      and lead.redistribution_count = 1
+      and lead.last_redistributed_at = '2026-09-08 05:30:00+00'
+      and lead.redistribution_warning_sent_at = '2026-09-08 05:31:30+00'
+    from public.leads as lead
+    cross join edge_pool_results as recovery
+    where lead.id = 'd9000000-0000-4000-8000-000000000040'
+      and recovery.label = 'legacy-owner-diverged-recovery'
+  )
+  and (
+    select count(*) = 1
+    from public.lead_pool_history
+    where id = (
+      select (result->>'distribution_event_id')::uuid
+      from edge_pool_results
+      where label = 'legacy-owner-diverged-recovery'
+    )
+  )
+  and (
+    select count(*) = 1
+    from public.notifications
+    where id = (
+      select (result->>'distribution_event_id')::uuid
+      from edge_pool_results
+      where label = 'legacy-owner-diverged-recovery'
+    )
+  ),
+  'legacy pool recovery reconciles its counter and effects without overwriting a later owner'
+);
+
+insert into edge_pool_results (label, result)
+values (
+  'stale',
+  public.redistribute_lead_from_pool_backend(
+    'd1000000-0000-4000-8000-000000000001',
+    'd9000000-0000-4000-8000-000000000040',
+    'pool:test:stale-40',
+    'd7000000-0000-4000-8000-000000000001',
+    'd2000000-0000-4000-8000-000000000003',
+    '2026-09-08 05:10:00+00',
+    0,
+    '2026-09-08 05:32:00+00'
+  )
+);
+
+select ok(
+  (
+    select result->>'reason' = 'stale_pool_candidate'
+      and (result->>'skipped')::boolean
+    from edge_pool_results
+    where label = 'stale'
+  )
+  and not exists (
+    select 1
+    from private.lead_distribution_events
+    where organization_id = 'd1000000-0000-4000-8000-000000000001'
+      and idempotency_key = 'pool:test:stale-40'
+  ),
+  'stale pool snapshots are rejected before a distribution event is created'
+);
+
+create or replace function pg_temp.reject_edge_pool_history()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.lead_id = 'd9000000-0000-4000-8000-000000000041'::uuid then
+    raise exception using
+      errcode = 'P0001',
+      message = 'forced_pool_history_failure';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger reject_edge_pool_history
+before insert on public.lead_pool_history
+for each row execute function pg_temp.reject_edge_pool_history();
+
+select throws_ok(
+  $$
+    select public.redistribute_lead_from_pool_backend(
+      'd1000000-0000-4000-8000-000000000001',
+      'd9000000-0000-4000-8000-000000000041',
+      'pool:test:rollback-41',
+      'd7000000-0000-4000-8000-000000000001',
+      'd2000000-0000-4000-8000-000000000003',
+      '2026-09-08 05:10:00+00',
+      0,
+      '2026-09-08 05:30:00+00'
+    )
+  $$,
+  'P0001',
+  'forced_pool_history_failure',
+  'a downstream history failure aborts the pool aggregate'
+);
+
+select ok(
+  (
+    select assigned_user_id = 'd2000000-0000-4000-8000-000000000003'
+      and pipeline_id = 'd3000000-0000-4000-8000-000000000001'
+      and redistribution_count = 0
+      and last_redistributed_at is null
+    from public.leads
+    where id = 'd9000000-0000-4000-8000-000000000041'
+  )
+  and not exists (
+    select 1
+    from private.lead_distribution_events
+    where organization_id = 'd1000000-0000-4000-8000-000000000001'
+      and idempotency_key = 'pool:test:rollback-41'
+  )
+  and (
+    select count(*) = 1
+    from public.assignments_log
+    where lead_id = 'd9000000-0000-4000-8000-000000000041'
+  )
+  and not exists (
+    select 1
+    from public.lead_pool_history
+    where lead_id = 'd9000000-0000-4000-8000-000000000041'
+  )
+  and not exists (
+    select 1
+    from public.notifications
+    where lead_id = 'd9000000-0000-4000-8000-000000000041'
+  ),
+  'failed pool finalization rolls back assignment, ledger and all side effects'
+);
+
+drop trigger reject_edge_pool_history on public.lead_pool_history;
+
+select ok(
+  (
+    select
+      procedure.prosecdef
+      and procedure.provolatile = 'v'
+      and exists (
+        select 1
+        from unnest(coalesce(procedure.proconfig, array[]::text[])) as setting
+        where setting = 'search_path=""'
+      )
+    from pg_catalog.pg_proc as procedure
+    where procedure.oid =
+      'public.send_pool_redistribution_warning_from_backend(uuid,uuid,uuid,uuid,timestamptz,timestamptz,integer,timestamptz)'::regprocedure
+  )
+  and has_function_privilege(
+    'service_role',
+    'public.send_pool_redistribution_warning_from_backend(uuid,uuid,uuid,uuid,timestamptz,timestamptz,integer,timestamptz)',
+    'execute'
+  )
+  and not has_function_privilege(
+    'anon',
+    'public.send_pool_redistribution_warning_from_backend(uuid,uuid,uuid,uuid,timestamptz,timestamptz,integer,timestamptz)',
+    'execute'
+  )
+  and not has_function_privilege(
+    'authenticated',
+    'public.send_pool_redistribution_warning_from_backend(uuid,uuid,uuid,uuid,timestamptz,timestamptz,integer,timestamptz)',
+    'execute'
+  ),
+  'pool warning aggregate is volatile, security-definer and service-role-only'
+);
+
+update public.pipelines
+set pool_enabled = true,
+    pool_timeout_minutes = 10,
+    pool_warning_minutes = 2,
+    pool_max_redistributions = 3,
+    pool_enabled_at = '2026-09-08 10:00:00+00'
+where id = 'd3000000-0000-4000-8000-000000000001';
+
+insert into public.leads (
+  id,
+  organization_id,
+  pipeline_id,
+  stage_id,
+  assigned_user_id,
+  assigned_at,
+  stage_entered_at,
+  name,
+  source,
+  deal_status,
+  redistribution_count,
+  metadata
+)
+values
+  (
+    'd9000000-0000-4000-8000-000000000051',
+    'd1000000-0000-4000-8000-000000000001',
+    'd3000000-0000-4000-8000-000000000001',
+    'd4000000-0000-4000-8000-000000000001',
+    'd2000000-0000-4000-8000-000000000001',
+    '2026-09-08 11:00:00+00',
+    '2026-09-08 11:00:00+00',
+    'Atomic pool warning',
+    'webhook',
+    'open',
+    0,
+    '{"distribution_deferred":true}'::jsonb
+  ),
+  (
+    'd9000000-0000-4000-8000-000000000052',
+    'd1000000-0000-4000-8000-000000000001',
+    'd3000000-0000-4000-8000-000000000001',
+    'd4000000-0000-4000-8000-000000000001',
+    'd2000000-0000-4000-8000-000000000001',
+    '2026-09-08 11:00:00+00',
+    '2026-09-08 11:00:00+00',
+    'Rollback pool warning',
+    'webhook',
+    'open',
+    0,
+    '{"distribution_deferred":true}'::jsonb
+  );
+
+update public.leads
+set assigned_at = '2026-09-08 11:00:00+00',
+    stage_entered_at = '2026-09-08 11:00:00+00'
+where id in (
+  'd9000000-0000-4000-8000-000000000051',
+  'd9000000-0000-4000-8000-000000000052'
+);
+
+insert into public.assignments_log (
+  organization_id,
+  lead_id,
+  assigned_user_id,
+  round_robin_id,
+  reason,
+  assigned_at,
+  created_at
+)
+values
+  (
+    'd1000000-0000-4000-8000-000000000001',
+    'd9000000-0000-4000-8000-000000000051',
+    'd2000000-0000-4000-8000-000000000001',
+    'd7000000-0000-4000-8000-000000000002',
+    'canonical_round_robin',
+    '2026-09-08 11:00:00+00',
+    '2026-09-08 11:00:00+00'
+  ),
+  (
+    'd1000000-0000-4000-8000-000000000001',
+    'd9000000-0000-4000-8000-000000000052',
+    'd2000000-0000-4000-8000-000000000001',
+    'd7000000-0000-4000-8000-000000000002',
+    'canonical_round_robin',
+    '2026-09-08 11:00:00+00',
+    '2026-09-08 11:00:00+00'
+  );
+
+create temporary table pool_warning_results (
+  label text primary key,
+  result jsonb not null
+) on commit drop;
+
+insert into pool_warning_results (label, result)
+values (
+  'first',
+  public.send_pool_redistribution_warning_from_backend(
+    'd1000000-0000-4000-8000-000000000001',
+    'd9000000-0000-4000-8000-000000000051',
+    'd7000000-0000-4000-8000-000000000002',
+    'd2000000-0000-4000-8000-000000000001',
+    '2026-09-08 11:00:00+00',
+    '2026-09-08 11:00:00+00',
+    0,
+    '2026-09-08 11:09:00+00'
+  )
+);
+
+select ok(
+  (
+    select
+      (result->>'success')::boolean
+      and (result->>'warning_sent')::boolean
+      and not (result->>'skipped')::boolean
+    from pool_warning_results
+    where label = 'first'
+  )
+  and (
+    select redistribution_warning_sent_at = '2026-09-08 11:09:00+00'
+    from public.leads
+    where id = 'd9000000-0000-4000-8000-000000000051'
+  )
+  and (
+    select count(*) = 1
+    from public.notifications
+    where lead_id = 'd9000000-0000-4000-8000-000000000051'
+      and type = 'lead_redistribution_warning'
+      and metadata->>'dedupe_key' =
+        'lead_redistribution_warning:d9000000-0000-4000-8000-000000000051:1788865200'
+  ),
+  'warning notification and lead marker commit as one aggregate'
+);
+
+insert into pool_warning_results (label, result)
+values (
+  'replay',
+  public.send_pool_redistribution_warning_from_backend(
+    'd1000000-0000-4000-8000-000000000001',
+    'd9000000-0000-4000-8000-000000000051',
+    'd7000000-0000-4000-8000-000000000002',
+    'd2000000-0000-4000-8000-000000000001',
+    '2026-09-08 11:00:00+00',
+    '2026-09-08 11:00:00+00',
+    0,
+    '2026-09-08 11:09:30+00'
+  )
+);
+
+select ok(
+  (
+    select
+      (result->>'replayed')::boolean
+      and (result->>'skipped')::boolean
+      and result->>'reason' = 'warning_already_sent'
+    from pool_warning_results
+    where label = 'replay'
+  )
+  and (
+    select count(*) = 1
+    from public.notifications
+    where lead_id = 'd9000000-0000-4000-8000-000000000051'
+      and type = 'lead_redistribution_warning'
+  ),
+  'serialized replay observes the marker and creates no duplicate notification'
+);
+
+create or replace function pg_temp.reject_pool_warning_marker()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.id = 'd9000000-0000-4000-8000-000000000052'::uuid
+     and old.redistribution_warning_sent_at is null
+     and new.redistribution_warning_sent_at is not null then
+    raise exception using
+      errcode = 'P0001',
+      message = 'forced_pool_warning_marker_failure';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger reject_pool_warning_marker
+before update on public.leads
+for each row execute function pg_temp.reject_pool_warning_marker();
+
+select throws_ok(
+  $$
+    select public.send_pool_redistribution_warning_from_backend(
+      'd1000000-0000-4000-8000-000000000001',
+      'd9000000-0000-4000-8000-000000000052',
+      'd7000000-0000-4000-8000-000000000002',
+      'd2000000-0000-4000-8000-000000000001',
+      '2026-09-08 11:00:00+00',
+      '2026-09-08 11:00:00+00',
+      0,
+      '2026-09-08 11:09:00+00'
+    )
+  $$,
+  'P0001',
+  'forced_pool_warning_marker_failure',
+  'a marker failure aborts the warning aggregate'
+);
+
+select ok(
+  (
+    select redistribution_warning_sent_at is null
+    from public.leads
+    where id = 'd9000000-0000-4000-8000-000000000052'
+  )
+  and not exists (
+    select 1
+    from public.notifications
+    where lead_id = 'd9000000-0000-4000-8000-000000000052'
+      and type = 'lead_redistribution_warning'
+  ),
+  'notification insertion rolls back when its marker cannot commit'
+);
+
+drop trigger reject_pool_warning_marker on public.leads;
+
+insert into pool_warning_results (label, result)
+values (
+  'timeout-boundary',
+  public.send_pool_redistribution_warning_from_backend(
+    'd1000000-0000-4000-8000-000000000001',
+    'd9000000-0000-4000-8000-000000000052',
+    'd7000000-0000-4000-8000-000000000002',
+    'd2000000-0000-4000-8000-000000000001',
+    '2026-09-08 11:00:00+00',
+    '2026-09-08 11:00:00+00',
+    0,
+    '2026-09-08 11:10:00+00'
+  )
+);
+
+select ok(
+  (
+    select
+      (result->>'skipped')::boolean
+      and result->>'reason' = 'pool_timeout_already_due'
+    from pool_warning_results
+    where label = 'timeout-boundary'
+  )
+  and not exists (
+    select 1
+    from public.notifications
+    where lead_id = 'd9000000-0000-4000-8000-000000000052'
+      and type = 'lead_redistribution_warning'
+  ),
+  'exact timeout boundary belongs to redistribution rather than warning delivery'
+);
+
+update public.leads
+set board_order_at = '2000-01-01 00:00:00+00'
+where id = 'd9000000-0000-4000-8000-000000000001';
+
+create temporary table same_stage_distribution_snapshots (
+  label text primary key,
+  pipeline_id uuid,
+  stage_id uuid,
+  stage_entered_at timestamptz,
+  board_order_at timestamptz
+) on commit drop;
+
+insert into same_stage_distribution_snapshots (
+  label,
+  pipeline_id,
+  stage_id,
+  stage_entered_at,
+  board_order_at
+)
+select
+  'before',
+  pipeline_id,
+  stage_id,
+  stage_entered_at,
+  board_order_at
+from public.leads
+where id = 'd9000000-0000-4000-8000-000000000001';
+
+select is(
+  private.distribute_lead(
+    'd1000000-0000-4000-8000-000000000001',
+    'd9000000-0000-4000-8000-000000000001',
+    'pipeline-order:same-stage',
+    'd7000000-0000-4000-8000-000000000001',
+    false,
+    'manual',
+    '2026-09-08 12:00:00+00'
+  )->>'reason',
+  'assigned',
+  'canonical redistribution completes while the queue keeps the current stage'
+);
+
+select ok(
+  (
+    select
+      lead.pipeline_id = snapshot.pipeline_id
+      and lead.stage_id = snapshot.stage_id
+      and lead.stage_entered_at is not distinct from snapshot.stage_entered_at
+      and lead.board_order_at > snapshot.board_order_at
+    from public.leads as lead
+    join same_stage_distribution_snapshots as snapshot
+      on snapshot.label = 'before'
+    where lead.id = 'd9000000-0000-4000-8000-000000000001'
+  ),
+  'same-stage canonical distribution advances only the board ordering clock'
+);
+
+insert into same_stage_distribution_snapshots (
+  label,
+  pipeline_id,
+  stage_id,
+  stage_entered_at,
+  board_order_at
+)
+select
+  'after',
+  pipeline_id,
+  stage_id,
+  stage_entered_at,
+  board_order_at
+from public.leads
+where id = 'd9000000-0000-4000-8000-000000000001';
+
+do $$
+begin
+  perform private.distribute_lead(
+    'd1000000-0000-4000-8000-000000000001',
+    'd9000000-0000-4000-8000-000000000001',
+    'pipeline-order:same-stage',
+    'd7000000-0000-4000-8000-000000000001',
+    false,
+    'manual',
+    '2026-09-08 12:01:00+00'
+  );
+end;
+$$;
+
+select ok(
+  (
+    select
+      lead.stage_entered_at is not distinct from snapshot.stage_entered_at
+      and lead.board_order_at = snapshot.board_order_at
+    from public.leads as lead
+    join same_stage_distribution_snapshots as snapshot
+      on snapshot.label = 'after'
+    where lead.id = 'd9000000-0000-4000-8000-000000000001'
+  ),
+  'canonical distribution replay does not promote the same card twice'
 );
 
 select ok(

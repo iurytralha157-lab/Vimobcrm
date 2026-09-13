@@ -75,7 +75,7 @@ func (client storageClient) upload(ctx context.Context, bucket string, objectPat
 		"%s/storage/v1/object/%s/%s",
 		client.projectURL,
 		url.PathEscape(bucket),
-		escapeStorageObjectPath(objectPath),
+		supabasehttp.EscapeObjectPath(objectPath),
 	)
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
@@ -117,7 +117,7 @@ func (client storageClient) delete(ctx context.Context, bucket string, objectPat
 		"%s/storage/v1/object/%s/%s",
 		client.projectURL,
 		url.PathEscape(bucket),
-		escapeStorageObjectPath(objectPath),
+		supabasehttp.EscapeObjectPath(objectPath),
 	)
 	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
 	if err != nil {
@@ -147,7 +147,7 @@ func (client storageClient) signedURL(ctx context.Context, bucket string, object
 		"%s/storage/v1/object/sign/%s/%s",
 		client.projectURL,
 		url.PathEscape(bucket),
-		escapeStorageObjectPath(objectPath),
+		supabasehttp.EscapeObjectPath(objectPath),
 	)
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
@@ -192,21 +192,14 @@ func (client storageClient) publicURL(bucket string, objectPath string) string {
 		return ""
 	}
 
+	// whatsapp-media is private. This stable path is stored as an object
+	// reference and exchanged for a signed URL before it is returned to users.
 	return fmt.Sprintf(
 		"%s/storage/v1/object/public/%s/%s",
 		client.projectURL,
 		url.PathEscape(bucket),
-		escapeStorageObjectPath(objectPath),
+		supabasehttp.EscapeObjectPath(objectPath),
 	)
-}
-
-func escapeStorageObjectPath(value string) string {
-	parts := strings.Split(strings.Trim(value, "/"), "/")
-	for index, part := range parts {
-		parts[index] = url.PathEscape(part)
-	}
-
-	return strings.Join(parts, "/")
 }
 
 func (client storageClient) resolveSignedURL(value string) string {

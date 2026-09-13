@@ -1,12 +1,4 @@
-/**
- * Hook para validação de força de senha
- * Valida:
- * - Tamanho mínimo (8 caracteres)
- * - Letra maiúscula
- * - Letra minúscula
- * - Número
- * - Caractere especial
- */
+import { evaluatePasswordPolicy } from '@/lib/validation/password';
 
 export interface PasswordStrength {
   score: number; // 0-5
@@ -16,10 +8,6 @@ export interface PasswordStrength {
 }
 
 export function usePasswordStrength(password: string): PasswordStrength {
-  const feedback: string[] = [];
-  let score = 0;
-
-  // Verificar tamanho
   if (password.length === 0) {
     return {
       score: 0,
@@ -29,39 +17,8 @@ export function usePasswordStrength(password: string): PasswordStrength {
     };
   }
 
-  if (password.length < 8) {
-    feedback.push('Mínimo 8 caracteres');
-  } else {
-    score += 1;
-  }
-
-  // Verificar letra maiúscula
-  if (!/[A-Z]/.test(password)) {
-    feedback.push('Adicione letra maiúscula (A-Z)');
-  } else {
-    score += 1;
-  }
-
-  // Verificar letra minúscula
-  if (!/[a-z]/.test(password)) {
-    feedback.push('Adicione letra minúscula (a-z)');
-  } else {
-    score += 1;
-  }
-
-  // Verificar número
-  if (!/[0-9]/.test(password)) {
-    feedback.push('Adicione número (0-9)');
-  } else {
-    score += 1;
-  }
-
-  // Verificar caractere especial
-  if (!/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password)) {
-    feedback.push('Adicione caractere especial (!@#$%...)');
-  } else {
-    score += 1;
-  }
+  const requirements = evaluatePasswordPolicy(password);
+  const score = requirements.filter((requirement) => requirement.isValid).length;
 
   // Mapear score para level
   let level: PasswordStrength['level'];
@@ -86,12 +43,16 @@ export function usePasswordStrength(password: string): PasswordStrength {
       level = 'very-weak';
   }
 
-  const isValid = score >= 4 && password.length >= 8; // Mínimo "good"
+  const isValid = requirements.every((requirement) => requirement.isValid);
 
   return {
     score,
     level,
-    feedback: feedback.length > 0 ? feedback : ['Senha forte!'],
+    feedback: isValid
+      ? ['Senha forte!']
+      : requirements
+          .filter((requirement) => !requirement.isValid)
+          .map((requirement) => requirement.message),
     isValid,
   };
 }

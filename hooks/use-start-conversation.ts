@@ -38,7 +38,7 @@ export function getWhatsAppStartErrorMessage(error: unknown) {
 
 export function useStartConversation() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { activeOrganization, profile } = useAuth();
 
   return useMutation({
     mutationFn: async ({ phone, sessionId, leadId, leadName }: StartConversationParams): Promise<WhatsAppConversation> => {
@@ -51,7 +51,7 @@ export function useStartConversation() {
         sessionId,
         leadId,
         leadName,
-      }, profile?.organization_id) as Promise<WhatsAppConversation>;
+      }, activeOrganization.organizationId) as Promise<WhatsAppConversation>;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-conversations"] });
@@ -67,7 +67,7 @@ export function useStartConversation() {
 }
 
 export function useFindConversationByPhone() {
-  const { profile } = useAuth();
+  const { activeOrganization, profile } = useAuth();
 
   return useMutation({
     mutationFn: async ({ phone, leadId, sessionId }: { phone: string; leadId?: string; sessionId?: string }): Promise<WhatsAppConversation | null> => {
@@ -81,7 +81,7 @@ export function useFindConversationByPhone() {
         phone,
         leadId,
         sessionId,
-        organizationId: profile?.organization_id,
+        organizationId: activeOrganization.organizationId,
       }) as Promise<WhatsAppConversation | null>;
     },
   });

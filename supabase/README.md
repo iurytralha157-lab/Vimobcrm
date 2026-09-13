@@ -37,6 +37,35 @@ produção é `iemalzlfnbouobyjwlwi` (`Vimob`).
    fora de `migrations/`. Preserve o roteiro somente enquanto a operação
    estiver ativa e remova-o depois de verificar o resultado.
 
+## Gate local de integridade
+
+`migrations.source-lock.json` registra o SHA-256 normalizado de cada migration
+ativa. O gate não consulta nem altera banco algum; ele detecta migration vazia,
+nome ou timestamp inválido, descrição repetida, arquivo removido, migration
+nova ainda não revisada e alteração retroativa no conteúdo.
+
+Execute antes de abrir um PR:
+
+```sh
+node scripts/supabase/verify-migrations.mjs
+node scripts/supabase/verify-edge-functions.mjs
+```
+
+Depois de criar uma migration exclusivamente com
+`supabase migration new <nome>`, revise o SQL e atualize deliberadamente o
+lock no mesmo PR:
+
+```sh
+node scripts/supabase/verify-migrations.mjs --write
+```
+
+Uma alteração no lock torna a mudança visível na revisão, mas não prova que o
+ledger local ou remoto esteja reconciliado. `migration list`, reset descartável,
+pgTAP e o roteiro de produção continuam obrigatórios.
+
+Para o analytics do site, siga também o roteiro de rollout migration-first em
+[`docs/runbooks/site-analytics-release.md`](../docs/runbooks/site-analytics-release.md).
+
 ## Bloqueio de segurança atual
 
 Ainda não execute `supabase db push`. A baseline foi validada, mas o ledger de

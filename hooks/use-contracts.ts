@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { financialAPI } from "@/lib/api/financial";
 import { useToast } from "@/hooks/use-toast";
+import { formatBRLCurrencyWithMinimumTwoDecimals } from "@/lib/utils/formatting";
 
 export interface ContractBroker {
   id: string;
@@ -78,8 +79,8 @@ export function useContracts(
   filters?: { status?: string; type?: string; limit?: number; offset?: number },
   options: { enabled?: boolean } = {},
 ) {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ['contracts', organizationId, filters],
@@ -89,8 +90,8 @@ export function useContracts(
 }
 
 export function useContract(id: string | undefined) {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ['contract', organizationId, id],
@@ -101,12 +102,12 @@ export function useContract(id: string | undefined) {
 
 export function useCreateContract() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile, organization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
     mutationFn: (data: CreateContractInput) => {
-      const orgId = organization?.id || profile?.organization_id;
+      const orgId = activeOrganization.organizationId;
       if (!orgId) throw new Error('Organização não encontrada');
       return financialAPI.createContract<Contract>(data, orgId);
     },
@@ -122,12 +123,12 @@ export function useCreateContract() {
 
 export function useUpdateContract() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile, organization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
     mutationFn: ({ id, ...data }: UpdateContractInput) => {
-      const orgId = organization?.id || profile?.organization_id;
+      const orgId = activeOrganization.organizationId;
       if (!orgId) throw new Error('Organização não encontrada');
       return financialAPI.updateContract<Contract>(id, data, orgId);
     },
@@ -144,12 +145,12 @@ export function useUpdateContract() {
 
 export function useActivateContract() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile, organization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
     mutationFn: ({ contractId, skipCommissions = false }: { contractId: string; skipCommissions?: boolean }) => {
-      const orgId = organization?.id || profile?.organization_id;
+      const orgId = activeOrganization.organizationId;
       if (!orgId) throw new Error('Organização não encontrada');
       return financialAPI.activateContract<Contract>(contractId, { skipCommissions }, orgId);
     },
@@ -170,12 +171,12 @@ export function useActivateContract() {
 
 export function useRegenerateCommissions() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile, organization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
     mutationFn: (contractId: string) => {
-      const orgId = organization?.id || profile?.organization_id;
+      const orgId = activeOrganization.organizationId;
       if (!orgId) throw new Error('Organização não encontrada');
       return financialAPI.regenerateCommissions<{ commissionsCount: number; totalValue: number }>(contractId, orgId);
     },
@@ -187,7 +188,7 @@ export function useRegenerateCommissions() {
       queryClient.invalidateQueries({ queryKey: ['financial-dashboard'] });
       toast({
         title: "Comissoes regeneradas",
-        description: `${data.commissionsCount} comissoes criadas totalizando R$ ${data.totalValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
+        description: `${data.commissionsCount} comissoes criadas totalizando ${formatBRLCurrencyWithMinimumTwoDecimals(data.totalValue)}`,
       });
     },
     onError: (error: Error) => {
@@ -198,12 +199,12 @@ export function useRegenerateCommissions() {
 
 export function useDeleteContract() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile, organization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
     mutationFn: (id: string) => {
-      const orgId = organization?.id || profile?.organization_id;
+      const orgId = activeOrganization.organizationId;
       if (!orgId) throw new Error('Organização não encontrada');
       return financialAPI.deleteContract(id, orgId);
     },

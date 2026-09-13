@@ -15,7 +15,7 @@ import {
 
 type UserListPayload = { data: Array<{ id: string; email: string }> };
 type PropertyPayload = {
-  data: { id: string; title: string; [key: string]: unknown };
+  data: { id: string; title: string; updated_at: string; [key: string]: unknown };
 };
 const PROPERTY_FORM_TAB_NAMES = [
   'Proprietário',
@@ -79,8 +79,8 @@ async function expectPropertyFormSegmentedTabs(page: Page) {
     PROPERTY_FORM_TAB_NAMES[0],
     PROPERTY_FORM_TAB_NAMES.at(-1)!,
   ]) {
-    await tabList.getByRole('tab', { name, exact: true }).hover();
-    await expect(page.getByRole('tooltip')).toHaveText(name);
+    await tabList.getByRole('tab', { name, exact: true }).focus();
+    await expect(page.getByRole('tooltip', { name, exact: true })).toBeVisible();
   }
 }
 
@@ -94,6 +94,7 @@ async function fillCreationForm(page: Page, title: string, suffix: string) {
     'Dados do imóvel',
     '[data-tour="property-structure-section"]',
   );
+  await expect(page.getByPlaceholder('Nova modalidade...')).toHaveCount(0);
   await page.getByPlaceholder('Ex: Apartamento 3 quartos...').fill(title);
   const structureSelects = page.locator(
     '[data-tour="property-structure-section"] button[role="combobox"]',
@@ -220,6 +221,17 @@ async function createPropertyThroughUI(page: Page, persona: string) {
   const title = `Imovel E2E ${suffix}`;
   await page.goto('/properties/new');
   await expectPropertyFormSegmentedTabs(page);
+  await openTab(page, 'Proprietário', '[data-tour="property-owner-section"]');
+  await expect(
+    page.getByRole('combobox', { name: /Responsável pela captação/ }),
+  ).not.toContainText(
+    'Selecione o captador responsável',
+  );
+  await page.getByRole('button', { name: 'Cadastrar', exact: true }).click();
+  await expect(page.locator('#property-form-validation-summary')).toContainText(
+    'Faltam alguns dados obrigatórios',
+  );
+  await expect(page.getByLabel(/Nome do Proprietário/)).toBeFocused();
   await fillCreationForm(page, title, suffix);
 
   const responsePromise = page.waitForResponse(
@@ -238,6 +250,11 @@ async function createPropertyThroughUI(page: Page, persona: string) {
   expect(requestPayload.anunciar).toBeUndefined();
   expect(requestPayload.published_on_site).toBeUndefined();
   const property = (JSON.parse(body) as PropertyPayload).data;
+  // The property POST completes before staged photos are persisted. Wait for
+  // the form's post-upload navigation so a second page cannot begin editing
+  // with the pre-media property revision while the first page is still
+  // creating canonical assets.
+  await expect(page).toHaveURL(/\/properties$/, { timeout: 120_000 });
   return { id: property.id, title, suffix };
 }
 
@@ -319,11 +336,26 @@ async function editPropertyThroughUI(
   await page.getByRole('button', { name: 'Salvar', exact: true }).click();
   const response = await responsePromise;
   const body = await response.text();
-  expect(response.ok(), body).toBeTruthy();
   const requestPayload = response.request().postDataJSON() as Record<
     string,
     unknown
   >;
+  if (!response.ok()) {
+    const latestResponse = await authenticatedAPIRequest(
+      page,
+      'GET',
+      `/v1/properties/${property.id}`,
+    );
+    const latestBody = (await latestResponse.json()) as PropertyPayload;
+    console.log(
+      JSON.stringify({
+        patchStatus: response.status(),
+        expectedUpdatedAt: requestPayload.expected_updated_at,
+        latestUpdatedAt: latestBody.data.updated_at,
+      }),
+    );
+  }
+  expect(response.ok(), body).toBeTruthy();
   expect(requestPayload.anunciar).toBeUndefined();
   expect(requestPayload.published_on_site).toBeUndefined();
   const payload = (JSON.parse(body) as PropertyPayload).data;
@@ -359,6 +391,24 @@ async function setPropertyManage(
       );
   const body = await response.text();
   expect(response.ok(), body).toBeTruthy();
+}
+
+async function deletePropertyAtLatestVersion(page: Page, propertyID: string) {
+  const current = await authenticatedAPIRequest(
+    page,
+    'GET',
+    `/v1/properties/${propertyID}`,
+  );
+  const currentBody = await current.text();
+  expect(current.ok(), currentBody).toBeTruthy();
+  const property = (JSON.parse(currentBody) as PropertyPayload).data;
+  const deleted = await authenticatedAPIRequest(
+    page,
+    'DELETE',
+    `/v1/properties/${propertyID}`,
+    { expected_updated_at: property.updated_at },
+  );
+  expect(deleted.ok(), await deleted.text()).toBeTruthy();
 }
 
 async function runLifecycle(browser: Browser, key: E2EUserKey) {
@@ -400,12 +450,7 @@ async function runLifecycle(browser: Browser, key: E2EUserKey) {
       const editPage = await actorContext.newPage();
       await editPropertyThroughUI(editPage, property);
       await editPage.close();
-      const deleted = await authenticatedAPIRequest(
-        actorPage,
-        'DELETE',
-        `/v1/properties/${property.id}`,
-      );
-      expect(deleted.ok(), await deleted.text()).toBeTruthy();
+      await deletePropertyAtLatestVersion(actorPage, property.id);
     } else {
       actorContext = await browser.newContext();
       const actorPage = await actorContext.newPage();
@@ -414,12 +459,7 @@ async function runLifecycle(browser: Browser, key: E2EUserKey) {
       const editPage = await actorContext.newPage();
       await editPropertyThroughUI(editPage, property);
       await editPage.close();
-      const deleted = await authenticatedAPIRequest(
-        actorPage,
-        'DELETE',
-        `/v1/properties/${property.id}`,
-      );
-      expect(deleted.ok(), await deleted.text()).toBeTruthy();
+      await deletePropertyAtLatestVersion(actorPage, property.id);
     }
   } finally {
     if (userID && adminContext) {

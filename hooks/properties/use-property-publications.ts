@@ -51,17 +51,15 @@ export const propertyPublicationKeys = {
 
 function usePropertyPublicationQueryScope() {
   const {
+    activeOrganization,
     user,
     profile,
     organization,
-    organizationsLoaded,
-    isInitializingOrg,
     tenantContext,
     isSuperAdmin,
     impersonating,
   } = useAuth()
-  const organizationId = organization?.id
-    ?? ((!organizationsLoaded || isInitializingOrg) ? undefined : profile?.organization_id || undefined)
+  const organizationId = activeOrganization.organizationId || undefined
 
   return {
     userId: user?.id,

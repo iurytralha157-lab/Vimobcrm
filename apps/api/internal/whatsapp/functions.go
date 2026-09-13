@@ -20,12 +20,14 @@ type functionsClient struct {
 	apiKey                     string
 	evolutionGoAPIURL          string
 	evolutionGoAPIKey          string
+	evolutionGoImageDigest     string
 	evolutionWebhookURL        string
 	evolutionBackendWebhookURL string
 	webhookProcessorMode       string
 	webhookRolloutSessionIDs   []string
 	db                         *dbpkg.Postgres
 	httpClient                 *http.Client
+	runtimeStats               *whatsappRuntimeCounters
 }
 
 func newFunctionsClient(config StorageConfig, db *dbpkg.Postgres) functionsClient {
@@ -34,12 +36,53 @@ func newFunctionsClient(config StorageConfig, db *dbpkg.Postgres) functionsClien
 		apiKey:                     strings.TrimSpace(config.APIKey),
 		evolutionGoAPIURL:          strings.TrimRight(strings.TrimSpace(config.EvolutionGo.APIURL), "/"),
 		evolutionGoAPIKey:          strings.TrimSpace(config.EvolutionGo.APIKey),
+		evolutionGoImageDigest:     strings.ToLower(strings.TrimSpace(config.EvolutionGo.ImageDigest)),
 		evolutionWebhookURL:        strings.TrimRight(strings.TrimSpace(config.EvolutionGo.WebhookURL), "/"),
 		evolutionBackendWebhookURL: strings.TrimRight(strings.TrimSpace(config.EvolutionGo.BackendWebhookURL), "/"),
 		webhookProcessorMode:       strings.TrimSpace(config.EvolutionGo.WebhookProcessorMode),
-		webhookRolloutSessionIDs:   append([]string(nil), config.EvolutionGo.WebhookRolloutSessionIDs...),
+		webhookRolloutSessionIDs:   canonicalWhatsAppSessionScope(config.EvolutionGo.WebhookRolloutSessionIDs),
 		db:                         db,
-		httpClient:                 &http.Client{Timeout: 45 * time.Second},
+		httpClient:                 newEvolutionHTTPClient(),
+		runtimeStats:               &whatsappRuntimeCounters{},
+	}
+}
+
+func canonicalWhatsAppSessionScope(values []string) []string {
+	canonical := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if value == "*" {
+			canonical = append(canonical, value)
+			continue
+		}
+		if normalized, ok := normalizeUUID(value); ok {
+			canonical = append(canonical, normalized)
+			continue
+		}
+		canonical = append(canonical, value)
+	}
+	return canonical
+}
+
+func newEvolutionHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Bound the reusable provider pool. This prevents a request burst from
+	// creating an unbounded number of sockets while still allowing status probes
+	// to progress independently from the serialized lifecycle lane.
+	transport.MaxIdleConns = 32
+	transport.MaxIdleConnsPerHost = 8
+	transport.MaxConnsPerHost = 16
+	transport.IdleConnTimeout = 90 * time.Second
+	transport.TLSHandshakeTimeout = 10 * time.Second
+	transport.ResponseHeaderTimeout = 15 * time.Second
+	transport.ExpectContinueTimeout = time.Second
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   30 * time.Second,
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -2018,10 +2019,7 @@ func fallbackLevel(xp int64) int {
 }
 
 func textPointer(value pgtype.Text) *string {
-	if !value.Valid || value.String == "" {
-		return nil
-	}
-	return &value.String
+	return pgvalue.TextPointerNonEmpty(value)
 }
 
 func jsonb(value any) string {

@@ -15,6 +15,7 @@ type Config struct {
 	URL                  string
 	MaxConns             int32
 	MinConns             int32
+	ForceReadOnly        bool
 	MaxConnLifetime      time.Duration
 	MaxConnIdleTime      time.Duration
 	HealthTimeout        time.Duration
@@ -49,6 +50,7 @@ func NewPostgres(ctx context.Context, cfg Config) (*Postgres, error) {
 		poolConfig.MaxConnIdleTime = cfg.MaxConnIdleTime
 	}
 	poolConfig.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+	configureReadOnlySessions(poolConfig, cfg.ForceReadOnly)
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
@@ -78,6 +80,26 @@ func NewPostgres(ctx context.Context, cfg Config) (*Postgres, error) {
 	}
 
 	return postgres, nil
+}
+
+func configureReadOnlySessions(poolConfig *pgxpool.Config, forceReadOnly bool) {
+	if poolConfig == nil || !forceReadOnly {
+		return
+	}
+
+	previousAfterConnect := poolConfig.AfterConnect
+	poolConfig.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		if previousAfterConnect != nil {
+			if err := previousAfterConnect(ctx, conn); err != nil {
+				return err
+			}
+		}
+
+		if _, err := conn.Exec(ctx, "set default_transaction_read_only = on"); err != nil {
+			return fmt.Errorf("failed to enforce read-only postgres session: %w", err)
+		}
+		return nil
+	}
 }
 
 func retryStartupPing(ctx context.Context, postgres *Postgres, cfg Config) error {

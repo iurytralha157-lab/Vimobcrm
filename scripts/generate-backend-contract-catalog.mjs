@@ -4,10 +4,10 @@ import { fileURLToPath } from "node:url";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(scriptDirectory, "..");
-const appFile = join(repositoryRoot, "apps", "api", "internal", "app", "app.go");
+const routesFile = join(repositoryRoot, "apps", "api", "internal", "app", "routes.go");
 const markdownFile = join(repositoryRoot, "docs", "catalogo-contratos-backend.md");
 const csvFile = join(repositoryRoot, "docs", "catalogo-contratos-backend.csv");
-const expectedContractCount = 472;
+const expectedContractCount = 541;
 
 const groupLabels = {
   health: "Saúde da aplicação",
@@ -106,6 +106,16 @@ function getGroup(pathname) {
 }
 
 function getAccess(registration, pathname) {
+  const modulesPermission = registration.match(
+    /withModulesPermission\(\[\]string\{([^}]+)\}, permissions\.([A-Za-z0-9_]+)/,
+  );
+  if (modulesPermission) {
+    const modules = [...modulesPermission[1].matchAll(/"([^"]+)"/g)]
+      .map((match) => match[1])
+      .join(" + ");
+    return `Módulos ${modules} + permissão ${modulesPermission[2]}`;
+  }
+
   const modulePermission = registration.match(
     /withModulePermission\("([^"]+)", permissions\.([A-Za-z0-9_]+)/,
   );
@@ -148,7 +158,7 @@ function escapeCsv(value) {
   return `"${text.replaceAll('"', '""')}"`;
 }
 
-const source = readFileSync(appFile, "utf8");
+const source = readFileSync(routesFile, "utf8");
 const contracts = [];
 
 for (const [index, line] of source.split(/\r?\n/).entries()) {
@@ -160,15 +170,17 @@ for (const [index, line] of source.split(/\r?\n/).entries()) {
   }
 
   const [, method, pathname, registration] = match;
-  const handlerMatch = registration.match(
+  const methodHandlerMatch = registration.match(
     /([A-Za-z0-9_]+Handler)\.([A-Za-z0-9_]+)/,
   );
+  const directHandlerMatch = registration.match(/\b([A-Za-z0-9_]+Handler)\b/);
 
-  if (!handlerMatch) {
+  if (!methodHandlerMatch && !directHandlerMatch) {
     throw new Error(`Handler não identificado na linha ${index + 1}: ${line}`);
   }
 
-  const [, handlerObject, operation] = handlerMatch;
+  const handlerObject = methodHandlerMatch?.[1] ?? directHandlerMatch[1];
+  const operation = methodHandlerMatch?.[2] ?? handlerObject;
   const group = getGroup(pathname);
 
   contracts.push({
@@ -176,7 +188,7 @@ for (const [index, line] of source.split(/\r?\n/).entries()) {
     method,
     pathname,
     operation,
-    handler: `${handlerObject}.${operation}`,
+    handler: methodHandlerMatch ? `${handlerObject}.${operation}` : handlerObject,
     access: getAccess(registration, pathname),
     group,
     groupLabel: groupLabels[group] ?? group,
@@ -210,7 +222,7 @@ const groupSummary = [...groups.entries()]
 const markdown = [
   `# Catálogo dos ${contracts.length} contratos do backend`,
   "",
-  "Gerado automaticamente a partir de `apps/api/internal/app/app.go`.",
+  "Gerado automaticamente a partir de `apps/api/internal/app/routes.go`.",
   "",
   "Cada contrato abaixo contém o método HTTP, a rota exata, a operação/handler responsável, a camada de acesso registrada e a linha de origem. A indicação “sem middleware na rota” não significa necessariamente acesso irrestrito: webhooks e rotas internas podem validar assinatura, segredo ou token dentro do próprio handler.",
   "",

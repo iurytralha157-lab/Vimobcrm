@@ -14,10 +14,11 @@ func validOnboardingSignupRequest() OnboardingSignupRequest {
 		DocumentNumber:   "04.252.011/0001-10",
 		BrokersCount:     25,
 		AdminName:        "Andre Silva",
+		AdminCPF:         "529.982.247-25",
 		PhoneCountryCode: "+55",
 		Phone:            "(11) 99999-9999",
 		Email:            "ANDRE@EXAMPLE.COM",
-		Password:         "12345678",
+		Password:         "Senha@2026",
 		SignupPath:       "paid",
 		PlanSlug:         "pro",
 		TermsAccepted:    true,
@@ -68,6 +69,9 @@ func TestValidatePublicOnboardingSignupRequestNormalizesTrustedFields(t *testing
 	if validated.DocumentNumber != "04252011000110" {
 		t.Fatalf("document = %q, want canonical digits", validated.DocumentNumber)
 	}
+	if validated.AdminCPF != "52998224725" {
+		t.Fatalf("admin CPF = %q, want canonical digits", validated.AdminCPF)
+	}
 	if validated.Email != "andre@example.com" {
 		t.Fatalf("email = %q, want normalized lowercase", validated.Email)
 	}
@@ -76,6 +80,36 @@ func TestValidatePublicOnboardingSignupRequestNormalizesTrustedFields(t *testing
 	}
 	if validated.AttemptID != "0f5ecbd9-c8c9-490c-b70a-3beb8ef44d6f" {
 		t.Fatalf("attempt id = %q, want canonical UUID", validated.AttemptID)
+	}
+}
+
+func TestValidatePublicOnboardingSignupRequestResolvesAdminCPFByOrganizationDocument(t *testing.T) {
+	t.Parallel()
+
+	company := validOnboardingSignupRequest()
+	validatedCompany, err := validatePublicOnboardingSignupRequest(company)
+	if err != nil {
+		t.Fatalf("validate company signup: %v", err)
+	}
+	if validatedCompany.AdminCPF != "52998224725" {
+		t.Fatalf("company admin CPF = %q, want 52998224725", validatedCompany.AdminCPF)
+	}
+	if got := onboardingOrganizationCNPJ(validatedCompany.DocumentNumber); got != "04252011000110" {
+		t.Fatalf("organization CNPJ = %q, want 04252011000110", got)
+	}
+
+	individual := validOnboardingSignupRequest()
+	individual.DocumentNumber = "529.982.247-25"
+	individual.AdminCPF = ""
+	validatedIndividual, err := validatePublicOnboardingSignupRequest(individual)
+	if err != nil {
+		t.Fatalf("validate individual signup: %v", err)
+	}
+	if validatedIndividual.AdminCPF != "52998224725" {
+		t.Fatalf("individual admin CPF = %q, want document CPF", validatedIndividual.AdminCPF)
+	}
+	if got := onboardingOrganizationCNPJ(validatedIndividual.DocumentNumber); got != "" {
+		t.Fatalf("individual organization CNPJ = %q, want empty", got)
 	}
 }
 
@@ -95,8 +129,16 @@ func TestValidatePublicOnboardingSignupRequestRejectsUnsafeFields(t *testing.T) 
 		{name: "long company", mutate: func(value *OnboardingSignupRequest) { value.CompanyName = strings.Repeat("A", 161) }},
 		{name: "short admin", mutate: func(value *OnboardingSignupRequest) { value.AdminName = "A" }},
 		{name: "long admin", mutate: func(value *OnboardingSignupRequest) { value.AdminName = strings.Repeat("A", 141) }},
-		{name: "short password", mutate: func(value *OnboardingSignupRequest) { value.Password = strings.Repeat("1", 7) }},
-		{name: "long password", mutate: func(value *OnboardingSignupRequest) { value.Password = strings.Repeat("1", 129) }},
+		{name: "missing admin CPF for CNPJ", mutate: func(value *OnboardingSignupRequest) { value.AdminCPF = "" }},
+		{name: "invalid admin CPF for CNPJ", mutate: func(value *OnboardingSignupRequest) { value.AdminCPF = "529.982.247-24" }},
+		{name: "admin CNPJ instead of CPF", mutate: func(value *OnboardingSignupRequest) { value.AdminCPF = "04.252.011/0001-10" }},
+		{name: "short password", mutate: func(value *OnboardingSignupRequest) { value.Password = "Aa1!xyz" }},
+		{name: "long password", mutate: func(value *OnboardingSignupRequest) { value.Password = "Aa1!" + strings.Repeat("x", 125) }},
+		{name: "password missing uppercase", mutate: func(value *OnboardingSignupRequest) { value.Password = "senhaforte1!" }},
+		{name: "password missing lowercase", mutate: func(value *OnboardingSignupRequest) { value.Password = "SENHAFORTE1!" }},
+		{name: "password missing number", mutate: func(value *OnboardingSignupRequest) { value.Password = "SenhaForte!" }},
+		{name: "password missing symbol", mutate: func(value *OnboardingSignupRequest) { value.Password = "SenhaForte1" }},
+		{name: "password space is not symbol", mutate: func(value *OnboardingSignupRequest) { value.Password = "Senha Forte1" }},
 		{name: "zero brokers", mutate: func(value *OnboardingSignupRequest) { value.BrokersCount = 0 }},
 		{name: "too many brokers", mutate: func(value *OnboardingSignupRequest) { value.BrokersCount = 501 }},
 		{name: "unsupported country", mutate: func(value *OnboardingSignupRequest) { value.PhoneCountryCode = "+999" }},
@@ -144,5 +186,28 @@ func TestPublicOnboardingValidationRunsBeforeAuthMutation(t *testing.T) {
 	authMutation := strings.Index(signup, "repo.createPublicSignupAuthUser(")
 	if validation < 0 || authMutation < 0 || validation >= authMutation {
 		t.Fatalf("signup validation must run before Auth mutation: validation=%d auth=%d", validation, authMutation)
+	}
+}
+
+func TestPublicOnboardingProvisioningSeparatesOrganizationAndAdminTaxIDs(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile("onboarding.go")
+	if err != nil {
+		t.Fatalf("read onboarding source: %v", err)
+	}
+	source := string(raw)
+
+	for _, required := range []string{
+		"nullableText(onboardingOrganizationCNPJ(canonicalDocument))",
+		"nullableText(canonicalDocument)",
+		"nullableText(request.AdminCPF)",
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("onboarding provisioning must contain %q", required)
+		}
+	}
+	if strings.Contains(source, "nullableText(onlyDigitsAdmin(request.DocumentNumber))") {
+		t.Fatal("organization document must not be copied directly into the admin CPF")
 	}
 }

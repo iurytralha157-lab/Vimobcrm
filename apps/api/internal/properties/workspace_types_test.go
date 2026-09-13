@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 func TestUpsertPropertyOfferInputValidation(t *testing.T) {
@@ -107,10 +108,72 @@ func TestBuildWorkspaceSummary(t *testing.T) {
 	}
 }
 
+func TestBuildWorkspaceSummaryDoesNotResurrectLegacyPhotoBehindCanonicalFence(t *testing.T) {
+	workspace := PropertyWorkspace{
+		Property: Property{
+			"imagem_principal": "https://legacy.example/retired.jpg",
+			"fotos":            []string{"https://legacy.example/retired.jpg"},
+		},
+	}
+
+	legacySummary := buildWorkspaceSummaryWithAssetFence(workspace, false)
+	retiredSummary := buildWorkspaceSummaryWithAssetFence(workspace, true)
+	legacyPhoto, retiredPhoto := false, false
+	for _, check := range legacySummary.Checklist {
+		if check.Code == "photo" {
+			legacyPhoto = check.Resolved
+		}
+	}
+	for _, check := range retiredSummary.Checklist {
+		if check.Code == "photo" {
+			retiredPhoto = check.Resolved
+		}
+	}
+	if !legacyPhoto {
+		t.Fatal("legacy media should remain available when no canonical asset exists")
+	}
+	if retiredPhoto {
+		t.Fatal("an inclusive canonical-photo fence must block retired legacy media resurrection")
+	}
+}
+
 func TestNormalizeWorkspaceDatabaseErrorMapsExclusionViolation(t *testing.T) {
 	err := normalizeWorkspaceDatabaseError(&pgconn.PgError{Code: "23P01"})
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("exclusion violation normalized to %v, want invalid input", err)
+	}
+}
+
+func TestNormalizeWorkspaceDatabaseErrorMapsCatalogLockContention(t *testing.T) {
+	for _, code := range []string{"40001", "55P03"} {
+		err := normalizeWorkspaceDatabaseError(&pgconn.PgError{Code: code})
+		if !errors.Is(err, ErrPropertyWorkspaceConflict) {
+			t.Fatalf("catalog lock error %s normalized to %v, want workspace conflict", code, err)
+		}
+	}
+}
+
+func TestNormalizeWorkspaceDatabaseErrorPreservesPropertyInvariantConflicts(t *testing.T) {
+	tests := []struct {
+		constraint string
+		want       error
+	}{
+		{constraint: "property_owners_org_identity_unique", want: ErrPropertyOwnerIdentityConflict},
+		{constraint: "property_owner_active_reference", want: ErrPropertyOwnerInUse},
+		{constraint: "property_owner_assignment_invalid", want: ErrPropertyOwnerAssignmentInvalid},
+		{constraint: "property_owner_projection_conflict", want: ErrPropertyOwnershipConflict},
+		{constraint: "property_location_in_use", want: ErrPropertyLocationInUse},
+	}
+	for _, test := range tests {
+		t.Run(test.constraint, func(t *testing.T) {
+			err := normalizeWorkspaceDatabaseError(&pgconn.PgError{
+				Code:           "23514",
+				ConstraintName: test.constraint,
+			})
+			if !errors.Is(err, test.want) {
+				t.Fatalf("normalized error = %v, want %v", err, test.want)
+			}
+		})
 	}
 }
 
@@ -218,11 +281,24 @@ func TestBuildLegacyWorkspaceResponseIsSafeAndExplicitlyDegraded(t *testing.T) {
 		"owner_id":"44444444-4444-4444-8444-444444444444",
 		"owner_name":"Maria Proprietaria",
 		"owner_email":"maria@example.com",
+		"created_by":"33333333-3333-4333-8333-333333333333",
 		"comentarios_internos":"nao expor",
 		"imagem_principal":"https://images.example.test/property.jpg"
 	}`
 
-	response, err := buildLegacyWorkspaceResponse(raw, false, false)
+	viewer := tenant.Context{
+		OrganizationID: "11111111-1111-4111-8111-111111111111",
+		UserID:         "33333333-3333-4333-8333-333333333333",
+		MemberRole:     "user",
+		Permissions:    []string{"property_view"},
+	}
+	authorization := propertyUpdateAuthorizationFromProperty(
+		viewer,
+		Property{"created_by": viewer.UserID},
+		propertyEditPolicyResponsibleOrAdmin,
+		"hidden",
+	)
+	response, err := buildLegacyWorkspaceResponse(raw, false, false, authorization.CanEdit)
 	if err != nil {
 		t.Fatalf("build legacy workspace: %v", err)
 	}
@@ -240,6 +316,12 @@ func TestBuildLegacyWorkspaceResponseIsSafeAndExplicitlyDegraded(t *testing.T) {
 	}
 	if _, exposed := response.Data.Property["comentarios_internos"]; exposed {
 		t.Fatal("fallback exposed an internal property field")
+	}
+	if response.Data.Property["can_edit"] != true {
+		t.Fatalf("fallback lost the server-derived creator edit capability: %#v", response.Data.Property)
+	}
+	if _, exposed := response.Data.Property["created_by"]; exposed {
+		t.Fatal("fallback edit capability re-exposed the internal creator id")
 	}
 	if response.Data.Offers == nil || response.Data.Ownerships == nil || response.Data.Assets == nil ||
 		response.Data.Keys == nil || response.Data.RecentKeyMovements == nil {

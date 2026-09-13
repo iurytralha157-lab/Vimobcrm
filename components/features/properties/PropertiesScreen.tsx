@@ -45,13 +45,14 @@ import {
 import { PropertyCard } from "@/components/features/properties/PropertyCard";
 import { PropertyHistoryDialog } from "@/components/features/properties/PropertyHistoryDialog";
 import { PropertyPreviewDialog } from "@/components/features/properties/PropertyPreviewDialog";
+import { PropertyOwnerCombobox } from "@/components/features/properties/PropertyOwnerCombobox";
+import { PropertySectionTabs } from "@/components/features/properties/PropertySectionTabs";
 import { VimobLoader } from "@/components/shared/loading";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAuth } from "@/contexts/AuthContext";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useUsers } from "@/hooks/use-users";
 import { usePropertyTypes } from "@/hooks/use-property-types";
-import { usePropertyOwners } from "@/hooks/use-property-owners";
 import {
   usePropertyCities,
   usePropertyCondominiums,
@@ -59,30 +60,54 @@ import {
 } from "@/hooks/use-property-locations";
 import {
   canDeleteProperties,
-  canEditPropertyDetails,
   canManageProperties,
   canUpdatePropertyAvailability,
 } from "@/lib/access/properties";
 import { cn } from "@/lib/utils";
 import { getPropertySiteInfo } from "@/lib/api/property-support";
+import { isPropertyWorkspaceConflict } from "@/lib/property-concurrency";
 import { getUserFilterLabel } from "@/lib/user-display";
+import {
+  formatFixedBRLCurrency,
+  formatPtBRNumber,
+} from "@/lib/utils/formatting";
 
 const formatPrice = (value: number | null, tipo: string | null) => {
   if (!value) return "Preço não informado";
-  const formatted = `R$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  if (tipo === "Aluguel") {
+  const formatted = formatFixedBRLCurrency(value);
+  const normalizedType = (tipo || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  if (normalizedType === "temporada") {
+    return `${formatted}/diária`;
+  }
+  if (
+    ["aluguel", "locacao", "venda e aluguel", "venda e locacao"].includes(
+      normalizedType,
+    )
+  ) {
     return `${formatted}/mês`;
   }
   return formatted;
 };
 
 const ALL_FILTER_VALUE = "__all__";
-const EMPTY_FILTERS: PropertyFilters = {};
 
-type PropertyWithCreator = Property & {
-  cadastrado_por?: string | null;
-  created_by?: string | null;
-  responsible_user_id?: string | null;
+export type PropertyCatalogPreset = "all" | "launches" | "rentals";
+
+type PropertiesScreenProps = {
+  preset?: PropertyCatalogPreset;
+};
+
+const getPresetFilters = (preset: PropertyCatalogPreset): PropertyFilters => {
+  if (preset === "rentals") {
+    return { tipo_de_negocio: "rental_catalog" };
+  }
+  if (preset === "launches") {
+    return { tipo_de_negocio: "Lançamento" };
+  }
+  return {};
 };
 
 const getAvailabilityValue = (filters: PropertyFilters) => {
@@ -99,27 +124,37 @@ const getAvailabilityValue = (filters: PropertyFilters) => {
   return ALL_FILTER_VALUE;
 };
 
-export default function Properties() {
+export default function Properties({ preset = "all" }: PropertiesScreenProps) {
   const router = useRouter();
   const [search, setSearch] = useState("");
-  const [filters, setFilters] = useState<PropertyFilters>(EMPTY_FILTERS);
+  const [filters, setFilters] = useState<PropertyFilters>(() =>
+    getPresetFilters(preset),
+  );
   const [previewProperty, setPreviewProperty] = useState<Property | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [historyProperty, setHistoryProperty] = useState<Property | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
+  const [selectedOwnerLabel, setSelectedOwnerLabel] = useState("");
   const [deletePropertyTarget, setDeletePropertyTarget] =
     useState<Property | null>(null);
   const isMobile = useIsMobile();
-  const { profile, organization, tenantContext, isSuperAdmin } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const {
+    activeOrganization,
+    organization,
+    profile,
+    tenantContext,
+    isSuperAdmin,
+  } = useAuth();
+  const organizationId = activeOrganization.organizationId;
   const propertyAccessContext = {
     userId: profile?.id,
     organizationId,
     isSuperAdmin,
     memberRole: tenantContext?.memberRole,
     permissions: tenantContext?.permissions,
+    propertyEditPolicy: organization?.property_edit_policy,
   };
   const canUpdateAvailability = canUpdatePropertyAvailability(
     propertyAccessContext,
@@ -128,12 +163,20 @@ export default function Properties() {
   const canCreateProperty = canManageProperties(propertyAccessContext);
   const { data: users = [] } = useUsers({ scope: "filters" });
   const { data: propertyTypes = [] } = usePropertyTypes();
-  const { data: propertyOwners = [] } = usePropertyOwners();
   const { data: cities = [] } = usePropertyCities();
   const selectedCity = cities.find((city) => city.name === filters.cidade);
-  const { data: neighborhoods = [] } = usePropertyNeighborhoods(
-    selectedCity?.id,
-  );
+  // Keep the full read-only location set in cache. Legacy cities are discovered
+  // from property text and do not have a writable catalog id, so filtering the
+  // API by their synthetic id would incorrectly make their neighborhoods look
+  // empty in the main property catalog.
+  const { data: allNeighborhoods = [] } = usePropertyNeighborhoods();
+  const neighborhoods = selectedCity
+    ? allNeighborhoods.filter(
+        (neighborhood) =>
+          neighborhood.city?.name?.trim().toLocaleLowerCase("pt-BR") ===
+          selectedCity.name.trim().toLocaleLowerCase("pt-BR"),
+      )
+    : allNeighborhoods;
   const { data: condominiums = [] } = usePropertyCondominiums();
   const { data: siteInfo = null } = useQuery({
     queryKey: ["org-site-info", organizationId],
@@ -169,16 +212,22 @@ export default function Properties() {
     router.push(`/properties/${property.id}`);
   };
 
-  const handleDelete = async (id: string) => {
-    await deleteProperty.mutateAsync(id);
+  const handleDelete = async (property: Property) => {
+    await deleteProperty.mutateAsync({
+      id: property.id,
+      expected_updated_at: property.updated_at,
+    });
   };
 
   const confirmDelete = async () => {
     if (!deletePropertyTarget) return;
     try {
-      await handleDelete(deletePropertyTarget.id);
+      await handleDelete(deletePropertyTarget);
       setDeletePropertyTarget(null);
-    } catch {
+    } catch (error) {
+      if (isPropertyWorkspaceConflict(error)) {
+        setDeletePropertyTarget(null);
+      }
       // The mutation already exposes the safe error message through the shared toast flow.
     }
   };
@@ -186,11 +235,17 @@ export default function Properties() {
   const handleChangeStatus = async (
     id: string,
     status: "ativo" | "reservado" | "vendido" | "alugado",
+    expectedUpdatedAt: string,
   ) => {
-    await updateProperty.mutateAsync({
-      id,
-      status,
-    });
+    try {
+      await updateProperty.mutateAsync({
+        id,
+        status,
+        expected_updated_at: expectedUpdatedAt,
+      });
+    } catch {
+      // The mutation hook reports the error without leaking a rejected event promise.
+    }
   };
 
   const handleOpenPublication = (id: string) => {
@@ -236,7 +291,8 @@ export default function Properties() {
 
   const clearFilters = () => {
     setSearch("");
-    setFilters({});
+    setFilters(getPresetFilters(preset));
+    setSelectedOwnerLabel("");
   };
 
   const updateAvailabilityFilter = (value: string) => {
@@ -259,13 +315,13 @@ export default function Properties() {
   };
 
   const activeFilterCount =
-    Object.values(filters).filter(Boolean).length + (search.trim() ? 1 : 0);
+    Object.entries(filters).filter(([key, value]) => {
+      if (!value) return false;
+      return getPresetFilters(preset)[key as keyof PropertyFilters] !== value;
+    }).length + (search.trim() ? 1 : 0);
   const availabilityValue = getAvailabilityValue(filters);
   const selectedResponsible = users.find(
     (user) => user.id === filters.responsavel_id,
-  );
-  const selectedOwner = propertyOwners.find(
-    (owner) => owner.id === filters.owner_id,
   );
   const selectedNeighborhood = neighborhoods.find(
     (neighborhood) => neighborhood.name === filters.bairro,
@@ -278,11 +334,32 @@ export default function Properties() {
     : "Cidade";
   const neighborhoodLabel = selectedNeighborhood?.name || "Bairro";
   const modalidadeLabel =
-    filters.tipo_de_negocio === "Aluguel"
-      ? "Locação"
-      : filters.tipo_de_negocio === "Venda e Aluguel"
-        ? "Venda e locação"
-        : filters.tipo_de_negocio || "Modalidade";
+    filters.tipo_de_negocio === "rental_catalog"
+      ? "Locação e temporada"
+      : filters.tipo_de_negocio === "Lançamento"
+        ? "Lançamento"
+        : filters.tipo_de_negocio === "Aluguel"
+          ? "Locação"
+          : filters.tipo_de_negocio === "Venda e Aluguel"
+            ? "Venda e locação"
+            : filters.tipo_de_negocio || "Modalidade";
+  const isRentalCatalog = preset === "rentals";
+  const isLaunchCatalog = preset === "launches";
+  const activeSection = isRentalCatalog
+    ? "rentals"
+    : isLaunchCatalog
+      ? "developments"
+      : "all";
+  const pageTitle = isRentalCatalog
+    ? "Imóveis para locação e temporada"
+    : isLaunchCatalog
+      ? "Imóveis em lançamento"
+      : "Imóveis";
+  const searchPlaceholder = isRentalCatalog
+    ? "Buscar imóveis para locação ou temporada"
+    : isLaunchCatalog
+      ? "Buscar imóveis em lançamento"
+      : "Buscar endereço, nome, bairro ou código";
   const availabilityLabel =
     availabilityValue === "available"
       ? "Disponível"
@@ -312,7 +389,6 @@ export default function Properties() {
       : filters.aceita_financiamento === "false"
         ? "Não aceita financiamento"
         : "Financiamento";
-  const ownerLabel = selectedOwner?.name || "Proprietário";
   const condominiumLabel = selectedCondominium?.name || "Condomínio";
   const furnitureLabel = filters.mobilia || "Mobília";
   const exclusiveLabel =
@@ -376,7 +452,7 @@ export default function Properties() {
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar endereço, nome, bairro ou código"
+            placeholder={searchPlaceholder}
             className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] py-0 pl-9 pr-9 text-[12px] font-light shadow-none focus-visible:ring-1 focus-visible:ring-primary/30 focus-visible:ring-offset-0"
           />
           {isFilterUpdating && (
@@ -401,12 +477,28 @@ export default function Properties() {
                 </span>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={ALL_FILTER_VALUE}>Todas</SelectItem>
-                <SelectItem value="Venda">Venda</SelectItem>
-                <SelectItem value="Aluguel">Locação</SelectItem>
-                <SelectItem value="Venda e Aluguel">Venda e locação</SelectItem>
-                <SelectItem value="Temporada">Temporada</SelectItem>
-                <SelectItem value="Lançamento">Lançamento</SelectItem>
+                {isRentalCatalog ? (
+                  <>
+                    <SelectItem value="rental_catalog">
+                      Locação e temporada
+                    </SelectItem>
+                    <SelectItem value="Aluguel">Locação</SelectItem>
+                    <SelectItem value="Temporada">Temporada</SelectItem>
+                  </>
+                ) : isLaunchCatalog ? (
+                  <SelectItem value="Lançamento">Lançamento</SelectItem>
+                ) : (
+                  <>
+                    <SelectItem value={ALL_FILTER_VALUE}>Todas</SelectItem>
+                    <SelectItem value="Venda">Venda</SelectItem>
+                    <SelectItem value="Aluguel">Locação</SelectItem>
+                    <SelectItem value="Venda e Aluguel">
+                      Venda e locação
+                    </SelectItem>
+                    <SelectItem value="Temporada">Temporada</SelectItem>
+                    <SelectItem value="Lançamento">Lançamento</SelectItem>
+                  </>
+                )}
               </SelectContent>
             </Select>
           </div>
@@ -591,29 +683,15 @@ export default function Properties() {
         {advancedFiltersOpen && (
           <div data-tour="properties-filter-more-panel" className="space-y-3">
             <div>
-              <Select
-                value={filters.owner_id || ALL_FILTER_VALUE}
-                onValueChange={(value) => updateFilter("owner_id", value)}
-              >
-                <SelectTrigger className="border-0 bg-[var(--app-surface-soft)]">
-                  <span
-                    className={cn(
-                      "truncate",
-                      !filters.owner_id && "text-muted-foreground",
-                    )}
-                  >
-                    {ownerLabel}
-                  </span>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL_FILTER_VALUE}>Todos</SelectItem>
-                  {propertyOwners.map((owner) => (
-                    <SelectItem key={owner.id} value={owner.id}>
-                      {owner.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <PropertyOwnerCombobox
+                value={filters.owner_id}
+                selectedLabel={selectedOwnerLabel || "Proprietário"}
+                ariaLabel="Filtrar por proprietário"
+                onSelect={(owner) => {
+                  setSelectedOwnerLabel(owner?.name || "");
+                  updateFilter("owner_id", owner?.id || ALL_FILTER_VALUE);
+                }}
+              />
             </div>
 
             <div>
@@ -951,17 +1029,21 @@ export default function Properties() {
 
   if (isLoading && !data) {
     return (
-      <AppLayout title="Imóveis">
-        <div className="grid min-h-[360px] place-items-center">
-          <VimobLoader size="lg" label="Carregando imóveis..." />
+      <AppLayout title={pageTitle}>
+        <div className="space-y-3">
+          <PropertySectionTabs activeSection={activeSection} />
+          <div className="grid min-h-[360px] place-items-center">
+            <VimobLoader size="lg" label="Carregando imóveis..." />
+          </div>
         </div>
       </AppLayout>
     );
   }
 
   return (
-    <AppLayout title="Imóveis">
-      <div className="properties-screen animate-in">
+    <AppLayout title={pageTitle}>
+      <div className="properties-screen animate-in space-y-3">
+        <PropertySectionTabs activeSection={activeSection} />
         <div className="grid gap-3 lg:grid-cols-[320px_minmax(0,1fr)] lg:items-start">
           <div className="hidden lg:sticky lg:top-0 lg:block lg:self-start">
             {filtersPanel}
@@ -977,7 +1059,7 @@ export default function Properties() {
                 <Input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Buscar endereço, nome, bairro ou código"
+                  placeholder={searchPlaceholder}
                   className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] py-0 pl-9 pr-9 text-[12px] font-light shadow-none focus-visible:ring-1 focus-visible:ring-primary/30 focus-visible:ring-offset-0"
                 />
                 {isFilterUpdating && (
@@ -989,7 +1071,7 @@ export default function Properties() {
                 <span className="min-w-0 truncate text-[12px] font-light text-[var(--app-text-secondary)] sm:mr-auto sm:pl-1">
                   {isFilterUpdating
                     ? "Atualizando carteira..."
-                    : `${totalCount.toLocaleString("pt-BR")} imóveis`}
+                    : `${formatPtBRNumber(totalCount)} ${isRentalCatalog ? "imóveis para locação ou temporada" : isLaunchCatalog ? "imóveis em lançamento" : "imóveis"}`}
                 </span>
                 <Button
                   data-tour="properties-filter-button"
@@ -1066,12 +1148,20 @@ export default function Properties() {
                     <h3 className="mb-1 text-[14px] font-normal">
                       {activeFilterCount > 0
                         ? "Nenhum imóvel encontrado"
-                        : "Nenhum imóvel cadastrado"}
+                        : isRentalCatalog
+                          ? "Nenhum imóvel para locação ou temporada"
+                          : isLaunchCatalog
+                            ? "Nenhum imóvel em lançamento"
+                            : "Nenhum imóvel cadastrado"}
                     </h3>
                     <p className="mb-4 text-[12px] font-light text-[var(--app-text-secondary)]">
                       {activeFilterCount > 0
                         ? "Ajuste os filtros para ampliar a busca."
-                        : "Cadastre o primeiro imóvel para começar a carteira."}
+                        : isRentalCatalog
+                          ? "Cadastre um imóvel para locação ou temporada para vê-lo aqui."
+                          : isLaunchCatalog
+                            ? "Cadastre um imóvel com modalidade de lançamento para vê-lo aqui."
+                            : "Cadastre o primeiro imóvel para começar a carteira."}
                     </p>
                     {activeFilterCount > 0 ? (
                       <Button
@@ -1098,17 +1188,8 @@ export default function Properties() {
               )}
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {properties.map((property) => {
-                  const propertyWithOwner = property as PropertyWithCreator;
-                  const ownerIds = [
-                    propertyWithOwner.cadastrado_por,
-                    propertyWithOwner.created_by,
-                    propertyWithOwner.responsible_user_id,
-                  ].filter(Boolean);
-                  const canEditProperty = canEditPropertyDetails({
-                    ...propertyAccessContext,
-                    ownerIds,
-                  });
+                {properties.map((property, index) => {
+                  const canEditProperty = property.can_edit;
 
                   return (
                     <PropertyCard
@@ -1132,6 +1213,7 @@ export default function Properties() {
                       canUpdateAvailability={canUpdateAvailability}
                       canDelete={canDeleteProperty}
                       siteInfo={siteInfo}
+                      prioritizeImage={index === 0}
                     />
                   );
                 })}

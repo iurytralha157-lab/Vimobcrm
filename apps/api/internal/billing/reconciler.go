@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/supabasehttp"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
@@ -239,7 +240,7 @@ func (reconciler *Reconciler) TriggerCardRecurrenceBatch(ctx context.Context) (i
 	}
 	request.Header.Set("accept", "application/json")
 	request.Header.Set("content-type", "application/json")
-	setSupabaseServiceAPIAuth(request, reconciler.config.FunctionsAPIKey)
+	supabasehttp.SetServiceAuth(request, reconciler.config.FunctionsAPIKey)
 	request.Header.Set("User-Agent", "VimobCRM/1.0 (Go API)")
 
 	// The private worker also redrives checkout cancellations. One cancellation
@@ -273,15 +274,6 @@ func (reconciler *Reconciler) TriggerCardRecurrenceBatch(ctx context.Context) (i
 		return result.Processed, nil
 	}
 	return result.Claimed, nil
-}
-
-func setSupabaseServiceAPIAuth(request *http.Request, apiKey string) {
-	request.Header.Set("apikey", apiKey)
-	request.Header.Del("authorization")
-	segments := strings.Split(apiKey, ".")
-	if len(segments) == 3 && segments[0] != "" && segments[1] != "" && segments[2] != "" {
-		request.Header.Set("authorization", "Bearer "+apiKey)
-	}
 }
 
 func (reconciler *Reconciler) ProcessBatch(ctx context.Context) (int, error) {

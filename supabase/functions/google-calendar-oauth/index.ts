@@ -16,6 +16,7 @@ import {
   htmlResponse,
   jsonResponse,
   redirectResponse,
+  stopGoogleWatches,
   supabase,
   syncConnectionFromGoogle,
   upsertConnectionFromOAuth,
@@ -40,6 +41,16 @@ function callbackError(message: string, returnUrl?: string | null) {
     `<html><body><h1>Google Calendar</h1><p>${escapeHtml(message)}</p></body></html>`,
     400,
   );
+}
+
+async function recordConnectionError(connectionId: string, error: unknown) {
+  const message = errorMessage(error).slice(0, 2_000);
+  const { error: updateError } = await supabase
+    .from("google_calendar_tokens")
+    .update({ sync_status: "error", last_error: message })
+    .eq("id", connectionId);
+  if (updateError) console.error("google connection error persistence failed", updateError);
+  return message;
 }
 
 Deno.serve(async (req) => {
@@ -67,19 +78,25 @@ Deno.serve(async (req) => {
       const tokenResponse = await exchangeOAuthCode(code);
       const userInfo = await fetchGoogleUserInfo(tokenResponse.access_token);
       const connection = await upsertConnectionFromOAuth({ state: oauthState, tokenResponse, userInfo });
+      let setupWarning: string | null = null;
 
       await syncConnectionFromGoogle(connection, true).catch(async (syncError) => {
         console.error("google initial sync failed", syncError);
+        setupWarning = await recordConnectionError(connection.id, syncError);
       });
 
       await ensureGoogleWatch(connection).catch(async (watchError) => {
         console.error("google watch creation failed", watchError);
+        setupWarning = await recordConnectionError(connection.id, watchError);
       });
 
       const destination = oauthState.return_url || getGoogleOAuthConfig().postConnectRedirectUrl;
       if (destination) {
         const redirectUrl = new URL(destination);
         redirectUrl.searchParams.set("google_calendar_connected", "1");
+        if (setupWarning) {
+          redirectUrl.searchParams.set("google_calendar_warning", setupWarning);
+        }
         return redirectResponse(redirectUrl.toString());
       }
 
@@ -170,7 +187,14 @@ Deno.serve(async (req) => {
       if (error) throw error;
 
       if (enabled) {
-        await ensureGoogleWatch(connection).catch((watchError) => console.error("watch renewal failed", watchError));
+        try {
+          await ensureGoogleWatch({ ...connection, sync_enabled: true });
+        } catch (watchError) {
+          await recordConnectionError(connection.id, watchError);
+          throw watchError;
+        }
+      } else {
+        await stopGoogleWatches({ ...connection, sync_enabled: false });
       }
 
       return jsonResponse({ success: true, sync_enabled: enabled });
@@ -189,7 +213,14 @@ Deno.serve(async (req) => {
       }
 
       const result = await syncConnectionFromGoogle(connection, body.full === true);
-      await ensureGoogleWatch(connection).catch((watchError) => console.error("watch renewal failed", watchError));
+      if (connection.sync_enabled) {
+        try {
+          await ensureGoogleWatch(connection);
+        } catch (watchError) {
+          await recordConnectionError(connection.id, watchError);
+          throw watchError;
+        }
+      }
       return jsonResponse({ success: true, result });
     }
 

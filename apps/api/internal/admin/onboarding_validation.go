@@ -3,6 +3,8 @@ package admin
 import (
 	"strings"
 	"unicode/utf8"
+
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/passwordpolicy"
 )
 
 const (
@@ -11,8 +13,6 @@ const (
 	onboardingAdminNameMinLength   = 2
 	onboardingAdminNameMaxLength   = 140
 	onboardingEmailMaxLength       = 180
-	onboardingPasswordMinLength    = 8
-	onboardingPasswordMaxLength    = 128
 	onboardingBrokersMin           = 1
 	onboardingBrokersMax           = 500
 )
@@ -40,6 +40,20 @@ func validatePublicOnboardingSignupRequest(request OnboardingSignupRequest) (Onb
 		return OnboardingSignupRequest{}, ErrInvalidInput
 	}
 	request.DocumentNumber = normalizeBrazilianTaxID(request.DocumentNumber)
+	request.AdminCPF = strings.TrimSpace(request.AdminCPF)
+	if len(request.DocumentNumber) == 11 {
+		// A pessoa física já informou o próprio CPF como documento da
+		// organização; a cópia canônica também identifica o perfil administrador.
+		request.AdminCPF = request.DocumentNumber
+	} else {
+		if !hasOnlyBrazilianTaxIDCharacters(request.AdminCPF) {
+			return OnboardingSignupRequest{}, ErrInvalidInput
+		}
+		request.AdminCPF = normalizeBrazilianTaxID(request.AdminCPF)
+		if len(request.AdminCPF) != 11 || !isValidCPF(request.AdminCPF) {
+			return OnboardingSignupRequest{}, ErrInvalidInput
+		}
+	}
 	request.PhoneCountryCode = strings.TrimSpace(request.PhoneCountryCode)
 	request.Phone = strings.TrimSpace(request.Phone)
 	request.TermsVersion = strings.TrimSpace(request.TermsVersion)
@@ -53,7 +67,6 @@ func validatePublicOnboardingSignupRequest(request OnboardingSignupRequest) (Onb
 
 	companyNameLength := utf8.RuneCountInString(request.CompanyName)
 	adminNameLength := utf8.RuneCountInString(request.AdminName)
-	passwordLength := utf8.RuneCountInString(request.Password)
 	if !utf8.ValidString(request.CompanyName) ||
 		companyNameLength < onboardingCompanyNameMinLength ||
 		companyNameLength > onboardingCompanyNameMaxLength ||
@@ -61,8 +74,7 @@ func validatePublicOnboardingSignupRequest(request OnboardingSignupRequest) (Onb
 		adminNameLength < onboardingAdminNameMinLength ||
 		adminNameLength > onboardingAdminNameMaxLength ||
 		utf8.RuneCountInString(request.Email) > onboardingEmailMaxLength ||
-		passwordLength < onboardingPasswordMinLength ||
-		passwordLength > onboardingPasswordMaxLength ||
+		!passwordpolicy.IsStrong(request.Password) ||
 		request.BrokersCount < onboardingBrokersMin ||
 		request.BrokersCount > onboardingBrokersMax ||
 		!isValidBrazilianTaxID(request.DocumentNumber) ||
@@ -79,6 +91,14 @@ func validatePublicOnboardingSignupRequest(request OnboardingSignupRequest) (Onb
 
 func normalizeBrazilianTaxID(value string) string {
 	return onlyDigitsAdmin(value)
+}
+
+func onboardingOrganizationCNPJ(documentNumber string) string {
+	documentNumber = normalizeBrazilianTaxID(documentNumber)
+	if len(documentNumber) == 14 {
+		return documentNumber
+	}
+	return ""
 }
 
 func hasOnlyBrazilianTaxIDCharacters(value string) bool {

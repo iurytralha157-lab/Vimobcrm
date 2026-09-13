@@ -9,8 +9,8 @@ const HOME_NOTICES_STALE_TIME_MS = 60_000;
 const HOME_NOTICES_GC_TIME_MS = 10 * 60_000;
 
 export function useHomeNotices() {
-  const { organization, profile, user } = useAuth();
-  const organizationId = organization?.id ?? profile?.organization_id;
+  const { activeOrganization, organization, profile, user } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ["home", "notices", organizationId, user?.id],

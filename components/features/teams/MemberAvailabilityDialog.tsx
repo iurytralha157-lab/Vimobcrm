@@ -1,6 +1,11 @@
 import { useState, useEffect } from "react";
 import { AlertTriangle, Clock, Loader2, RefreshCw, X } from "lucide-react";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -20,6 +25,7 @@ import {
   type MemberAvailability,
 } from "@/hooks/use-member-availability";
 import { isValidAvailabilityWeek } from "./availability-week";
+import { getInitials } from "@/lib/user-display";
 
 interface MemberAvailabilityDialogProps {
   open: boolean;
@@ -27,6 +33,7 @@ interface MemberAvailabilityDialogProps {
   teamMemberId: string;
   memberName: string;
   memberAvatar?: string | null;
+  readOnly?: boolean;
 }
 
 interface DaySchedule {
@@ -99,6 +106,7 @@ export function MemberAvailabilityDialog({
   teamMemberId,
   memberName,
   memberAvatar,
+  readOnly = false,
 }: MemberAvailabilityDialogProps) {
   const {
     data: existingAvailabilityData,
@@ -202,6 +210,7 @@ export function MemberAvailabilityDialog({
   };
 
   const handleSave = async () => {
+    if (readOnly) return;
     await bulkUpdate.mutateAsync({
       teamMemberId,
       availability: schedules.map((schedule) => ({
@@ -213,15 +222,6 @@ export function MemberAvailabilityDialog({
       })),
     });
     onOpenChange(false);
-  };
-
-  const getInitials = (name: string) => {
-    return name
-      .split(" ")
-      .map((part) => part[0])
-      .join("")
-      .toUpperCase()
-      .slice(0, 2);
   };
 
   const activeDays = schedules.filter((schedule) => schedule.is_active).length;
@@ -239,12 +239,22 @@ export function MemberAvailabilityDialog({
                 </AvatarFallback>
               </Avatar>
               <div>
-                <DialogTitle className="text-left text-[14px] font-normal">
-                  Disponibilidade
-                </DialogTitle>
-                <p className="text-[12px] font-light text-[var(--app-text-tertiary)]">
+                <div className="flex items-center gap-2">
+                  <DialogTitle className="text-left text-[14px] font-normal">
+                    Disponibilidade
+                  </DialogTitle>
+                  {readOnly && (
+                    <Badge
+                      variant="secondary"
+                      className="rounded-[4px] border-0 bg-[var(--app-surface-soft)] text-[9px] font-light text-[var(--app-text-tertiary)]"
+                    >
+                      Somente leitura
+                    </Badge>
+                  )}
+                </div>
+                <DialogDescription className="text-[12px] font-light text-[var(--app-text-tertiary)]">
                   {memberName}
-                </p>
+                </DialogDescription>
               </div>
             </div>
             <button
@@ -288,17 +298,21 @@ export function MemberAvailabilityDialog({
                         Sem escala configurada: recebe leads 24h
                       </p>
                       <p className="mt-1 text-[10px] leading-4 opacity-80">
-                        Revise os sete dias abaixo. Ao salvar, esta escala passará a controlar a distribuição.
+                        {readOnly
+                          ? "Esta equipe ainda não possui uma escala configurada."
+                          : "Revise os sete dias abaixo. Ao salvar, esta escala passará a controlar a distribuição."}
                       </p>
-                      <label className="mt-2 flex cursor-pointer items-center gap-2 text-[10px]">
-                        <input
-                          type="checkbox"
-                          checked={legacyConfirmed}
-                          onChange={(event) => setLegacyConfirmed(event.target.checked)}
-                          className="h-3.5 w-3.5 rounded-[4px] accent-primary"
-                        />
-                        Confirmo que revisei a escala.
-                      </label>
+                      {!readOnly && (
+                        <label className="mt-2 flex cursor-pointer items-center gap-2 text-[10px]">
+                          <input
+                            type="checkbox"
+                            checked={legacyConfirmed}
+                            onChange={(event) => setLegacyConfirmed(event.target.checked)}
+                            className="h-3.5 w-3.5 rounded-[4px] accent-primary"
+                          />
+                          Confirmo que revisei a escala.
+                        </label>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -315,6 +329,7 @@ export function MemberAvailabilityDialog({
                 <Switch
                   checked={globalAllDay}
                   onCheckedChange={toggleGlobalAllDay}
+                  disabled={readOnly}
                 />
               </div>
 
@@ -345,6 +360,7 @@ export function MemberAvailabilityDialog({
                         checked={schedule.is_active}
                         onCheckedChange={() => toggleDay(schedule.day_of_week)}
                         className="shrink-0"
+                        disabled={readOnly}
                       />
 
                       <span
@@ -363,6 +379,7 @@ export function MemberAvailabilityDialog({
                                 toggleDayAllDay(schedule.day_of_week, checked)
                               }
                               className="scale-75"
+                              disabled={readOnly}
                             />
                             <Label
                               htmlFor={`all-day-${schedule.day_of_week}`}
@@ -383,6 +400,7 @@ export function MemberAvailabilityDialog({
                                     value,
                                   )
                                 }
+                                disabled={readOnly}
                               >
                                 <SelectTrigger className="h-8 min-w-0 flex-1 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2 text-[12px] font-light text-[var(--app-text-primary)] shadow-none">
                                   <SelectValue />
@@ -411,6 +429,7 @@ export function MemberAvailabilityDialog({
                                     value,
                                   )
                                 }
+                                disabled={readOnly}
                               >
                                 <SelectTrigger className="h-8 min-w-0 flex-1 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2 text-[12px] font-light text-[var(--app-text-primary)] shadow-none">
                                   <SelectValue />
@@ -453,27 +472,29 @@ export function MemberAvailabilityDialog({
 
           <div className="flex gap-3 pt-4">
             <Button
-              className="h-9 w-[36%] rounded-[6px] bg-[var(--app-surface-soft)] text-[12px] font-light text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]"
+              className={`h-9 rounded-[6px] bg-[var(--app-surface-soft)] text-[12px] font-light text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)] ${readOnly ? "w-full" : "w-[36%]"}`}
               onClick={() => onOpenChange(false)}
             >
-              Cancelar
+              {readOnly ? "Fechar" : "Cancelar"}
             </Button>
-            <Button
-              className="h-9 w-[64%] rounded-[6px] bg-primary/50 text-[12px] font-light text-white shadow-none hover:bg-primary"
-              onClick={handleSave}
-              disabled={
-                bulkUpdate.isPending ||
-                isLoading ||
-                isError ||
-                !legacyConfirmed ||
-                !isValidAvailabilityWeek(schedules)
-              }
-            >
-              {bulkUpdate.isPending && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
-              Salvar
-            </Button>
+            {!readOnly && (
+              <Button
+                className="h-9 w-[64%] rounded-[6px] bg-primary/50 text-[12px] font-light text-white shadow-none hover:bg-primary"
+                onClick={handleSave}
+                disabled={
+                  bulkUpdate.isPending ||
+                  isLoading ||
+                  isError ||
+                  !legacyConfirmed ||
+                  !isValidAvailabilityWeek(schedules)
+                }
+              >
+                {bulkUpdate.isPending && (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                )}
+                Salvar
+              </Button>
+            )}
           </div>
         </div>
       </DialogContent>

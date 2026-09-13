@@ -9,11 +9,20 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 )
 
 const (
 	defaultPipelineBoardLimit = 12
 	maxPipelineBoardLimit     = 100
+	maxPipelineBoardSources   = 500
+)
+
+type PipelineBoardDateMode string
+
+const (
+	PipelineBoardDateModeOperational PipelineBoardDateMode = "operational"
+	PipelineBoardDateModeOrigin      PipelineBoardDateMode = "origin"
 )
 
 type PipelineBoardFilter struct {
@@ -34,6 +43,9 @@ type PipelineBoardFilter struct {
 	FilterSource     string
 	DateFrom         *time.Time
 	DateTo           *time.Time
+	DateMode         PipelineBoardDateMode
+	CursorBefore     *time.Time
+	CursorBeforeID   string
 }
 
 type PipelineBoardStage struct {
@@ -105,6 +117,7 @@ type LeadMetaFilters struct {
 	Campaigns []LeadMetaCampaignOption `json:"campaigns"`
 	Adsets    []LeadMetaAdsetOption    `json:"adsets"`
 	Ads       []LeadMetaAdOption       `json:"ads"`
+	Sources   []string                 `json:"sources"`
 }
 
 type LeadMetaCampaignOption struct {
@@ -132,9 +145,42 @@ func ParsePipelineBoardFilter(values url.Values) (PipelineBoardFilter, error) {
 	if err != nil {
 		return PipelineBoardFilter{}, err
 	}
+	dateModeRaw := values.Get("dateMode")
+	legacyDateModeRaw := values.Get("date_mode")
+	if strings.TrimSpace(dateModeRaw) != "" && strings.TrimSpace(legacyDateModeRaw) != "" && strings.TrimSpace(dateModeRaw) != strings.TrimSpace(legacyDateModeRaw) {
+		return PipelineBoardFilter{}, fmt.Errorf("%w: conflicting dateMode", ErrInvalidInput)
+	}
+	if strings.TrimSpace(dateModeRaw) == "" {
+		dateModeRaw = legacyDateModeRaw
+	}
+	dateMode, err := parsePipelineBoardDateMode(dateModeRaw)
+	if err != nil {
+		return PipelineBoardFilter{}, err
+	}
 	dateTo, err := parseOptionalTime(values.Get("dateTo"))
 	if err != nil {
 		return PipelineBoardFilter{}, err
+	}
+	if dateFrom != nil && dateTo != nil && dateFrom.After(*dateTo) {
+		return PipelineBoardFilter{}, fmt.Errorf("%w: dateFrom must not be after dateTo", ErrInvalidInput)
+	}
+	cursorBeforeRaw := strings.TrimSpace(values.Get("cursorBefore"))
+	cursorBeforeIDRaw := strings.TrimSpace(values.Get("cursorBeforeId"))
+	if (cursorBeforeRaw == "") != (cursorBeforeIDRaw == "") {
+		return PipelineBoardFilter{}, fmt.Errorf("%w: cursorBefore and cursorBeforeId must be provided together", ErrInvalidInput)
+	}
+	var cursorBefore *time.Time
+	cursorBeforeID := ""
+	if cursorBeforeRaw != "" {
+		cursorBefore, err = parseOptionalTime(cursorBeforeRaw)
+		if err != nil {
+			return PipelineBoardFilter{}, fmt.Errorf("%w: invalid cursorBefore", ErrInvalidInput)
+		}
+		var ok bool
+		cursorBeforeID, ok = normalizeUUID(cursorBeforeIDRaw)
+		if !ok {
+			return PipelineBoardFilter{}, fmt.Errorf("%w: invalid cursorBeforeId", ErrInvalidInput)
+		}
 	}
 
 	filterUserIDs, filterUserIDsSet := parseOptionalCSV(values, "filterUserIds")
@@ -158,7 +204,23 @@ func ParsePipelineBoardFilter(values url.Values) (PipelineBoardFilter, error) {
 		FilterSource:     strings.TrimSpace(values.Get("filterSource")),
 		DateFrom:         dateFrom,
 		DateTo:           dateTo,
+		DateMode:         dateMode,
+		CursorBefore:     cursorBefore,
+		CursorBeforeID:   cursorBeforeID,
 	}, nil
+}
+
+func parsePipelineBoardDateMode(raw string) (PipelineBoardDateMode, error) {
+	switch PipelineBoardDateMode(strings.TrimSpace(raw)) {
+	case "":
+		return "", nil
+	case PipelineBoardDateModeOperational:
+		return PipelineBoardDateModeOperational, nil
+	case PipelineBoardDateModeOrigin:
+		return PipelineBoardDateModeOrigin, nil
+	default:
+		return "", fmt.Errorf("%w: invalid dateMode", ErrInvalidInput)
+	}
 }
 
 func parsePipelineBoundedInt(raw string, fallback int, min int, max int) int {
@@ -214,11 +276,7 @@ func parseOptionalCSV(values url.Values, key string) ([]string, bool) {
 }
 
 func pipelineTextPtr(value pgtype.Text) *string {
-	if !value.Valid {
-		return nil
-	}
-
-	return &value.String
+	return pgvalue.TextPointer(value)
 }
 
 func pipelineTimePtr(value pgtype.Timestamptz) *time.Time {

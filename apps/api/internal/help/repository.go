@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
@@ -347,11 +348,7 @@ func audienceVisibilities(audience Audience) ([]string, error) {
 }
 
 func textPointer(value pgtype.Text) *string {
-	if !value.Valid {
-		return nil
-	}
-	result := value.String
-	return &result
+	return pgvalue.TextPointer(value)
 }
 
 func timestampPointer(value pgtype.Timestamptz) *time.Time {

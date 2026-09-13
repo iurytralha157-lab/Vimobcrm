@@ -5,16 +5,29 @@ import {
   timestampSchema,
   uuidSchema,
 } from "./common";
-import {
-  dynamicRecordSchema,
-  nonEmptyDynamicRecordSchema,
-  safePathSegmentSchema,
-} from "./final-domains";
+import { dynamicRecordSchema, safePathSegmentSchema } from "./final-domains";
 
 const nullableString = z.string().nullable();
 const optionalNullableString = z.string().max(20_000).nullish();
 const optionalUUID = uuidSchema.nullish();
 const finiteNullableNumber = z.number().finite().nullable();
+const siteGoogleAnalyticsIdSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^(?:G-[A-Z0-9]{4,32}|UA-[0-9]+-[0-9]+)$/)
+  .nullable();
+const siteGoogleTagManagerIdSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^GTM-[A-Z0-9]{4,32}$/)
+  .nullable();
+const siteGoogleSearchConsoleVerificationSchema = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z0-9_-]{10,255}$/)
+  .nullable();
 
 export const uuidListSchema = z.array(uuidSchema).min(1).max(1_000);
 export const organizationIdSchema = uuidSchema;
@@ -75,37 +88,6 @@ export const apiAuditLogListResponseSchema = z
   })
   .passthrough();
 
-export const userActivitySessionStatusSchema = z.enum([
-  "online",
-  "idle",
-  "offline",
-]);
-export const userActivitySessionMutationInputSchema = z
-  .object({
-    organizationId: uuidSchema,
-    userId: uuidSchema,
-    sessionId: z.string().trim().min(8).max(160),
-    status: userActivitySessionStatusSchema.optional(),
-    currentPath: z.string().trim().max(4_000).nullish(),
-    currentPageTitle: z.string().trim().max(500).nullish(),
-    userAgent: z.string().max(2_000).nullish(),
-    metadata: dynamicRecordSchema.optional(),
-  })
-  .strict();
-export const userActivityPresenceSessionInputSchema =
-  userActivitySessionMutationInputSchema.strip();
-export const onlineUserActivityListInputSchema = z
-  .object({
-    organizationId: uuidSchema,
-    activeWithinMinutes: z
-      .number()
-      .int()
-      .min(1)
-      .max(24 * 60)
-      .optional(),
-    limit: z.number().int().min(1).max(500).optional(),
-  })
-  .strict();
 export const auditFeedEventPayloadSchema = z
   .object({
     auditId: uuidSchema,
@@ -292,45 +274,6 @@ export const apiLeadVisibilityResponseSchema = apiEnvelopeSchema(
     .passthrough(),
 );
 
-const billingTimestampSchema = z.string().datetime({ offset: true });
-const tenantContextSchema = z
-  .object({
-    userId: uuidSchema,
-    userRole: z.string(),
-    organizationId: uuidSchema.optional(),
-    subscriptionStatus: z.string().optional(),
-    subscriptionType: z.string().optional(),
-    trialEndsAt: billingTimestampSchema.optional(),
-    billingGraceUntil: billingTimestampSchema.optional(),
-    permissions: z.array(z.string()),
-    enabledModules: z.array(z.string()),
-    isSuperAdmin: z.boolean(),
-  })
-  .passthrough();
-const meResponseSchema = z
-  .object({
-    user: z
-      .object({ id: uuidSchema, email: z.string().email().optional() })
-      .passthrough(),
-    context: tenantContextSchema,
-  })
-  .passthrough();
-export const apiMeResponseSchema = meResponseSchema;
-export const apiMeProfileResponseSchema = meResponseSchema.extend({
-  profile: z
-    .object({
-      id: uuidSchema,
-      name: z.string(),
-      email: z.string().email(),
-      is_active: z.boolean(),
-    })
-    .passthrough(),
-  organization: z
-    .object({ id: uuidSchema, name: z.string() })
-    .passthrough()
-    .nullable(),
-});
-
 export const messageTemplateCreateInputSchema = z
   .object({
     name: z.string().trim().min(1).max(180),
@@ -477,12 +420,32 @@ export const propertyCityInputSchema = z
     uf: z.string().trim().length(2).toUpperCase().optional(),
   })
   .strict();
+export const propertyCityUpdateInputSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120).optional(),
+    uf: z.union([z.string().trim().length(2).toUpperCase(), z.literal(""), z.null()]).optional(),
+    expected_updated_at: z.string().trim().datetime({ offset: true }),
+  })
+  .strict()
+  .refine(
+    (input) => input.name !== undefined || input.uf !== undefined,
+    "Informe ao menos uma alteracao",
+  );
 export const propertyNeighborhoodInputSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
     city_id: uuidSchema,
   })
   .strict();
+export const propertyNeighborhoodUpdateInputSchema = propertyNeighborhoodInputSchema
+  .partial()
+  .extend({
+    expected_updated_at: z.string().trim().datetime({ offset: true }),
+  })
+  .refine(
+    (input) => input.name !== undefined || input.city_id !== undefined,
+    "Informe ao menos uma alteracao",
+  );
 export const propertyCondominiumInputSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
@@ -507,6 +470,38 @@ export const propertyCondominiumInputSchema = z
     longitude: z.number().finite().min(-180).max(180).optional(),
   })
   .strict();
+export const propertyCondominiumUpdateInputSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120).optional(),
+    city_id: z.union([uuidSchema, z.literal(""), z.null()]).optional(),
+    neighborhood_id: z.union([uuidSchema, z.literal(""), z.null()]).optional(),
+    address: z.string().trim().max(300).nullable().optional(),
+    photo_url: z.union([
+      z.string().trim().max(1_000).url().regex(/^https?:\/\//i, "Use uma URL HTTP ou HTTPS"),
+      z.literal(""),
+      z.null(),
+    ]).optional(),
+    cep: z.string().trim().max(20).nullable().optional(),
+    number: z.string().trim().max(40).nullable().optional(),
+    complement: z.string().trim().max(160).nullable().optional(),
+    default_condominium_fee: z.number().finite().min(0).nullable().optional(),
+    has_concierge: z.boolean().optional(),
+    concierge_type: z.string().trim().max(80).nullable().optional(),
+    notes: z.string().max(1_200).nullable().optional(),
+    latitude: z.number().finite().min(-90).max(90).nullable().optional(),
+    longitude: z.number().finite().min(-180).max(180).nullable().optional(),
+    expected_updated_at: z.string().trim().datetime({ offset: true }),
+  })
+  .strict()
+  .refine(
+    (input) => Object.keys(input).some((key) => key !== "expected_updated_at"),
+    "Informe ao menos uma alteracao",
+  );
+export const propertyCatalogDeleteInputSchema = z
+  .object({
+    expected_updated_at: z.string().trim().datetime({ offset: true }),
+  })
+  .strict();
 const propertyCitySchema = z
   .object({
     id: uuidSchema,
@@ -515,6 +510,9 @@ const propertyCitySchema = z
     uf: nullableString,
     is_active: z.boolean(),
     created_at: timestampSchema,
+    updated_at: timestampSchema,
+    catalog_source: z.enum(["catalog", "property"]).optional(),
+    property_count: nonNegativeIntegerSchema.optional(),
   })
   .passthrough();
 const propertyNeighborhoodSchema = z
@@ -525,6 +523,9 @@ const propertyNeighborhoodSchema = z
     name: z.string(),
     is_active: z.boolean(),
     created_at: timestampSchema,
+    updated_at: timestampSchema,
+    catalog_source: z.enum(["catalog", "property"]).optional(),
+    property_count: nonNegativeIntegerSchema.optional(),
   })
   .passthrough();
 const propertyCondominiumSchema = z
@@ -534,6 +535,9 @@ const propertyCondominiumSchema = z
     name: z.string(),
     is_active: z.boolean(),
     created_at: timestampSchema,
+    updated_at: timestampSchema,
+    catalog_source: z.enum(["catalog", "property"]).optional(),
+    property_count: nonNegativeIntegerSchema.optional(),
   })
   .passthrough();
 export const apiPropertyCityResponseSchema =
@@ -554,18 +558,39 @@ export const apiPropertyCondominiumListResponseSchema = apiEnvelopeSchema(
   z.array(propertyCondominiumSchema),
 );
 
+const propertyOwnerInputShape = {
+  name: z.string().trim().min(1).max(160),
+  phone_residential: z.string().trim().max(40).optional(),
+  phone_commercial: z.string().trim().max(40).optional(),
+  cellphone: z.string().trim().max(40).optional(),
+  email: z.union([z.string().trim().email(), z.literal("")]).optional(),
+  media_source: z.string().trim().max(80).optional(),
+  notify_email: z.boolean().optional(),
+  notes: z.string().max(1_200).optional(),
+};
+const validateCatalogOwnerNotificationEmail = (
+  owner: { notify_email?: boolean; email?: string },
+  context: z.RefinementCtx,
+) => {
+  if (owner.notify_email && !owner.email?.trim()) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["email"],
+      message: "Informe o email para ativar notificacoes",
+    });
+  }
+};
 export const propertyOwnerInputSchema = z
+  .object(propertyOwnerInputShape)
+  .strict()
+  .superRefine(validateCatalogOwnerNotificationEmail);
+export const propertyOwnerCatalogUpdateInputSchema = z
   .object({
-    name: z.string().trim().min(1).max(180),
-    phone_residential: z.string().trim().max(40).optional(),
-    phone_commercial: z.string().trim().max(40).optional(),
-    cellphone: z.string().trim().max(40).optional(),
-    email: z.union([z.string().trim().email(), z.literal("")]).optional(),
-    media_source: z.string().trim().max(180).optional(),
-    notify_email: z.boolean().optional(),
-    notes: z.string().max(10_000).optional(),
+    ...propertyOwnerInputShape,
+    expected_updated_at: z.string().trim().datetime({ offset: true }),
   })
-  .strict();
+  .strict()
+  .superRefine(validateCatalogOwnerNotificationEmail);
 export const propertyOwnerPageQuerySchema = z
   .object({
     search: z.string().trim().max(120).optional(),
@@ -585,9 +610,6 @@ const propertyOwnerSchema = z
   .passthrough();
 export const apiPropertyOwnerResponseSchema =
   apiEnvelopeSchema(propertyOwnerSchema);
-export const apiPropertyOwnerListResponseSchema = apiEnvelopeSchema(
-  z.array(propertyOwnerSchema),
-);
 export const apiPropertyOwnerPageResponseSchema = apiEnvelopeSchema(
   z.array(propertyOwnerSchema),
 )
@@ -645,8 +667,6 @@ export const publicSiteQuerySchema = z.record(
     z.undefined(),
   ]),
 );
-export const publicContactInputSchema = nonEmptyDynamicRecordSchema;
-export const publicTrackingInputSchema = nonEmptyDynamicRecordSchema;
 export const apiPublicSiteResolveResponseSchema = z
   .object({
     found: z.boolean(),
@@ -815,6 +835,10 @@ const organizationSiteSchema = z
     domain_verification_token: uuidSchema,
     site_title: z.string().trim().max(180).nullable(),
     site_description: z.string().trim().max(500).nullable(),
+    google_analytics_id: siteGoogleAnalyticsIdSchema,
+    google_search_console_verification:
+      siteGoogleSearchConsoleVerificationSchema.optional(),
+    gtm_id: siteGoogleTagManagerIdSchema,
     site_theme: z.string(),
     background_color: z.string(),
     text_color: z.string(),
@@ -1131,6 +1155,20 @@ export const apiUserSummaryListResponseSchema = apiEnvelopeSchema(
   z.array(userSummarySchema),
 );
 
+export const outgoingWebhookEventSchema = z.enum([
+  "lead.created",
+  "lead.reentered",
+]);
+
+const outgoingWebhookURLSchema = z
+  .string()
+  .trim()
+  .url()
+  .max(2_048)
+  .refine((value) => new URL(value).protocol === "https:", {
+    message: "Use uma URL HTTPS",
+  });
+
 const webhookMutationSchema = z
   .object({
     name: z.string().trim().min(1).max(180),
@@ -1140,26 +1178,65 @@ const webhookMutationSchema = z
     target_stage_id: optionalUUID,
     target_tag_ids: z.array(uuidSchema).max(500).optional(),
     target_property_id: optionalUUID,
-    field_mapping: z.record(z.string()).optional(),
-    webhook_url: z.string().url().nullish(),
+    field_mapping: z
+      .record(z.string().trim().min(1).max(120))
+      .superRefine((value, ctx) => {
+        if (Object.keys(value).length > 100) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Use no maximo 100 mapeamentos",
+          });
+        }
+        if (
+          Object.keys(value).some(
+            (key) => key.trim().length === 0 || key.trim().length > 120,
+          )
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Nomes de mapeamento devem ter entre 1 e 120 caracteres",
+          });
+        }
+      })
+      .optional(),
+    webhook_url: outgoingWebhookURLSchema.nullish(),
     trigger_events: z
-      .array(z.string().trim().min(1).max(120))
-      .max(100)
+      .array(outgoingWebhookEventSchema)
+      .max(2)
+      .refine((events) => new Set(events).size === events.length, {
+        message: "Eventos duplicados nao sao permitidos",
+      })
       .optional(),
   })
   .strict();
 export const webhookCreateInputSchema = webhookMutationSchema.superRefine(
   (input, ctx) => {
-    if (input.type === "outgoing" && !input.webhook_url) {
+    if (input.type === "outgoing") {
+      if (!input.webhook_url) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["webhook_url"],
+          message: "URL obrigatoria para webhook de saida",
+        });
+      }
+      if (!input.trigger_events?.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["trigger_events"],
+          message: "Selecione ao menos um evento",
+        });
+      }
+    } else if (input.webhook_url || input.trigger_events?.length) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["webhook_url"],
-        message: "URL obrigatoria para webhook de saida",
+        message: "Webhook de entrada nao aceita destino de saida",
       });
     }
   },
 );
 export const webhookUpdateInputSchema = webhookMutationSchema
+  .omit({ type: true })
   .partial()
   .extend({
     id: uuidSchema,
@@ -1168,6 +1245,71 @@ export const webhookUpdateInputSchema = webhookMutationSchema
   .refine(
     (value) => Object.keys(value).length > 1,
     "Informe ao menos uma alteracao",
+  );
+
+export const publicAPIIdempotencyKeySchema = z
+  .string()
+  .trim()
+  .min(8)
+  .max(128)
+  .regex(/^[\x21-\x7E]+$/);
+
+export const publicAPILeadInputSchema = z
+  .object({
+    name: z.string().trim().min(2).max(180),
+    phone: z.string().trim().max(32),
+    email: z.string().trim().email().max(320).optional(),
+    message: z.string().trim().max(10_000).optional(),
+    property_id: uuidSchema.optional(),
+    property_code: z.string().trim().max(120).optional(),
+    source_detail: z.string().trim().max(240).optional(),
+    campaign_id: z.string().trim().max(240).optional(),
+    campaign_name: z.string().trim().max(500).optional(),
+    adset_id: z.string().trim().max(240).optional(),
+    adset_name: z.string().trim().max(500).optional(),
+    ad_id: z.string().trim().max(240).optional(),
+    ad_name: z.string().trim().max(500).optional(),
+    form_id: z.string().trim().max(240).optional(),
+    form_name: z.string().trim().max(500).optional(),
+    utm_source: z.string().trim().max(500).optional(),
+    utm_medium: z.string().trim().max(500).optional(),
+    utm_campaign: z.string().trim().max(500).optional(),
+    utm_content: z.string().trim().max(500).optional(),
+    utm_term: z.string().trim().max(500).optional(),
+    occurred_at: z.string().trim().datetime({ offset: true }).optional(),
+    custom_fields: z
+      .record(z.string().trim().max(1_000))
+      .superRefine((value, ctx) => {
+        if (Object.keys(value).length > 50) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Use no maximo 50 campos personalizados",
+          });
+        }
+        if (
+          Object.keys(value).some(
+            (key) => key.trim().length === 0 || key.trim().length > 120,
+          )
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              "Nomes de campos personalizados devem ter entre 1 e 120 caracteres",
+          });
+        }
+      })
+      .optional(),
+  })
+  .strict()
+  .refine(
+    (value) => {
+      const digits = value.phone.replace(/\D/g, "");
+      return digits.length >= 10 && digits.length <= 15;
+    },
+    {
+      path: ["phone"],
+      message: "Telefone deve ter entre 10 e 15 digitos",
+    },
   );
 const webhookSchema = z
   .object({

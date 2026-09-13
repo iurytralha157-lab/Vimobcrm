@@ -4,8 +4,8 @@ import { financialAPI } from "@/lib/api/financial";
 import { startOfDay } from "date-fns";
 
 export function useDashboardAlerts() {
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id ?? profile?.organization_id;
+  const { activeOrganization, organization, profile } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ["dashboard-alerts", organizationId],

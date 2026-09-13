@@ -65,6 +65,33 @@ func TestPublicMediaContractKeepsEveryDeliveredVersionUntilImmediateUnpublish(t 
 	}
 }
 
+func TestRetiredAssetsAreExcludedOnlyFromNewPublicationSources(t *testing.T) {
+	raw, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatalf("read repository: %v", err)
+	}
+	repository := string(raw)
+	resolverStart := strings.Index(repository, "func (repo Repository) ResolvePublicMedia(")
+	resolverEnd := strings.Index(repository, "func (repo Repository) executeCommand(")
+	sourceStart := strings.Index(repository, "func (repo Repository) loadPublicationSource(")
+	sourceEnd := strings.Index(repository, "func (repo Repository) createPublication(")
+	if resolverStart < 0 || resolverEnd <= resolverStart || sourceStart < 0 || sourceEnd <= sourceStart {
+		t.Fatal("could not isolate publication repository contracts")
+	}
+
+	resolver := repository[resolverStart:resolverEnd]
+	if strings.Contains(resolver, "integration_retired") {
+		t.Fatal("historical public media resolution must keep retired asset rows servable")
+	}
+	source := repository[sourceStart:sourceEnd]
+	if !strings.Contains(source, "metadata->>'integration_retired'") {
+		t.Fatal("new publication sources must exclude retired assets")
+	}
+	if !strings.Contains(source, "from public.property_assets as any_photo") {
+		t.Fatal("new publication sources must retain the inclusive canonical-photo fallback fence")
+	}
+}
+
 func TestPropertyAssetGuardMatchesEveryServablePublicationVersion(t *testing.T) {
 	raw, err := os.ReadFile("../properties/workspace_ownership_assets.go")
 	if err != nil {
@@ -168,7 +195,7 @@ func TestRetryCapabilityIncludesLastGoodDeliveryErrorsWithoutProviderAnnotationF
 }
 
 func TestAppRegistersGrupoOLXCanonicalPublicationRoutes(t *testing.T) {
-	raw, err := os.ReadFile("../app/app.go")
+	raw, err := os.ReadFile("../app/routes.go")
 	if err != nil {
 		t.Fatalf("read app routes: %v", err)
 	}

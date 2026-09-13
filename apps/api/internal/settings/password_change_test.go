@@ -37,7 +37,7 @@ func TestChangePasswordHandlerRejectsSourceSessionMismatch(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			body := bytes.NewBufferString(`{"password":"valid-password","source":"` + test.source + `"}`)
+			body := bytes.NewBufferString(`{"password":"Valid-password1!","source":"` + test.source + `"}`)
 			request := httptest.NewRequest(http.MethodPost, "/v1/settings/password", body)
 			request = request.WithContext(httpserver.ContextWithUser(request.Context(), test.user))
 			response := httptest.NewRecorder()
@@ -94,7 +94,7 @@ func TestChangePasswordRejectsInvalidSourceBeforeAuthMutation(t *testing.T) {
 	result, err := changePassword(
 		context.Background(),
 		"user-123",
-		ChangePasswordRequest{Password: "valid-password", Source: "untrusted"},
+		ChangePasswordRequest{Password: "Valid-password1!", Source: "untrusted"},
 		func(context.Context, string, string) error {
 			authCalled = true
 			return nil
@@ -121,6 +121,41 @@ func TestChangePasswordRejectsInvalidSourceBeforeAuthMutation(t *testing.T) {
 	}
 }
 
+func TestChangePasswordRejectsWeakPasswordBeforeSideEffects(t *testing.T) {
+	authCalled := false
+	auditCalled := false
+	notifyCalled := false
+
+	result, err := changePassword(
+		context.Background(),
+		"user-weak-password",
+		ChangePasswordRequest{Password: "somente-minusculas", Source: "settings"},
+		func(context.Context, string, string) error {
+			authCalled = true
+			return nil
+		},
+		func(context.Context, string, string) error {
+			auditCalled = true
+			return nil
+		},
+		func(context.Context, string) bool {
+			notifyCalled = true
+			return true
+		},
+		slog.Default(),
+	)
+
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+	if result != (ChangePasswordResult{}) {
+		t.Fatalf("expected empty result, got %#v", result)
+	}
+	if authCalled || auditCalled || notifyCalled {
+		t.Fatalf("weak password must not trigger side effects: auth=%t audit=%t notify=%t", authCalled, auditCalled, notifyCalled)
+	}
+}
+
 func TestChangePasswordReturnsSuccessWhenAuditPersistenceFailsAfterAuthMutation(t *testing.T) {
 	auditErr := errors.New("database unavailable")
 	var logOutput bytes.Buffer
@@ -130,10 +165,10 @@ func TestChangePasswordReturnsSuccessWhenAuditPersistenceFailsAfterAuthMutation(
 	result, err := changePassword(
 		context.Background(),
 		"user-456",
-		ChangePasswordRequest{Password: "valid-password", Source: " RECOVERY "},
+		ChangePasswordRequest{Password: "Valid-password1!", Source: " RECOVERY "},
 		func(_ context.Context, userID string, password string) error {
 			callOrder = append(callOrder, "auth")
-			if userID != "user-456" || password != "valid-password" {
+			if userID != "user-456" || password != "Valid-password1!" {
 				t.Fatalf("unexpected auth arguments: user=%q password=%q", userID, password)
 			}
 			return nil
@@ -193,7 +228,7 @@ func TestChangePasswordStopsWhenAuthMutationFails(t *testing.T) {
 	result, err := changePassword(
 		context.Background(),
 		"user-789",
-		ChangePasswordRequest{Password: "valid-password"},
+		ChangePasswordRequest{Password: "Valid-password1!"},
 		func(context.Context, string, string) error {
 			return authErr
 		},

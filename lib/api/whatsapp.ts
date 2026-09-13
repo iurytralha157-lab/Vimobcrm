@@ -1,4 +1,4 @@
-import type { Json } from '@/integrations/supabase/types'
+import type { Json } from '@/lib/supabase/types'
 import {
   createWhatsAppSessionInputSchema,
   parseDomainInput,
@@ -12,13 +12,16 @@ import {
   whatsAppConversationResponseSchema,
   whatsAppConversationsResponseSchema,
   whatsAppHistoryResponseSchema,
+  whatsAppMessageMediaURLResponseSchema,
   whatsAppMessagesResponseSchema,
   whatsAppOptionalConversationResponseSchema,
   whatsAppSessionAccessInputSchema,
   whatsAppSessionAccessResponseSchema,
   whatsAppSessionOperationResponseSchema,
   whatsAppSessionResponseSchema,
+  whatsAppSessionStatusesResponseSchema,
   whatsAppSessionsResponseSchema,
+  whatsAppUnreadCountResponseSchema,
 } from '@/lib/validation'
 import { vimobAPIRequest } from './vimob-client'
 
@@ -62,6 +65,33 @@ export interface WhatsAppSessionQuota {
 
 export type WhatsAppSessionsResponse = Envelope<WhatsAppSession[]> & {
   meta?: WhatsAppSessionQuota
+}
+
+export type WhatsAppSessionStatusScope = 'organization' | 'team' | 'self'
+
+export interface WhatsAppSessionStatusSummary {
+  id: string
+  display_name: string
+  status: string
+  phone_number: string | null
+  profile_name: string | null
+  last_connected_at: string | null
+  updated_at: string
+  owner: {
+    id: string
+    name: string
+  }
+  capabilities: {
+    can_manage: boolean
+    can_set_notification_sender: boolean
+  }
+}
+
+export type WhatsAppSessionStatusesResponse = {
+  data: WhatsAppSessionStatusSummary[]
+  meta: {
+    scope: WhatsAppSessionStatusScope
+  }
 }
 
 export type WhatsAppAccessMode = 'assigned_leads_only'
@@ -169,6 +199,24 @@ export interface WhatsAppMessage {
   sender_name: string | null
 }
 
+export type WhatsAppMediaDownloadRequestData = {
+  ok?: boolean
+  message_id?: string
+  queued?: boolean
+  job_id?: string
+  deduplicated?: boolean
+  media_status?: 'pending' | 'ready' | 'failed'
+  media_error?: string | null
+  media_url?: string | null
+  media_storage_path?: string | null
+  already_ready?: boolean
+}
+
+export type WhatsAppMediaDownloadRequestResult = {
+  ok: boolean
+  data?: WhatsAppMediaDownloadRequestData
+}
+
 export interface ConversationFilters {
   hideGroups?: boolean
   showArchived?: boolean
@@ -183,9 +231,19 @@ export type WhatsAppConversationsPage = {
   nextCursor: string | null
 }
 
+export type WhatsAppUnreadCountResponse = {
+  count: number
+}
+
 export type WhatsAppMessagesPage = {
   messages: WhatsAppMessage[]
   nextCursor: string | null
+}
+
+export type WhatsAppMessageMediaURL = {
+  messageId: string
+  url: string
+  expiresIn: number
 }
 
 export type SendWhatsAppMessageInput = {
@@ -275,6 +333,19 @@ export const whatsappAPI = {
       organizationId,
     })
     validateDomainResponse(whatsAppSessionsResponseSchema, response, 'whatsapp.sessions.list')
+    return response
+  },
+
+  async getSessionStatuses(organizationId?: string | null) {
+    const response = await vimobAPIRequest<WhatsAppSessionStatusesResponse>(
+      '/v1/whatsapp/session-statuses',
+      { organizationId },
+    )
+    validateDomainResponse(
+      whatsAppSessionStatusesResponseSchema,
+      response,
+      'whatsapp.sessions.statuses',
+    )
     return response
   },
 
@@ -437,6 +508,32 @@ export const whatsappAPI = {
     return page.conversations
   },
 
+  async getUnreadCount(params: {
+    organizationId?: string | null
+    sessionId?: string
+    filters?: ConversationFilters
+    accessibleSessionIds?: string[]
+  }) {
+    const response = await vimobAPIRequest<WhatsAppUnreadCountResponse>(
+      '/v1/whatsapp/conversations/unread-count',
+      {
+        organizationId: params.organizationId,
+        query: {
+          sessionId: params.sessionId,
+          hideGroups: params.filters?.hideGroups,
+          showArchived: params.filters?.showArchived,
+          onlyLeads: params.filters?.onlyLeads,
+          withoutLead: params.filters?.withoutLead,
+          pendingReply: params.filters?.pendingReply,
+          search: params.filters?.search,
+          sessionIds: params.accessibleSessionIds?.join(','),
+        },
+      },
+    )
+    validateDomainResponse(whatsAppUnreadCountResponseSchema, response, 'whatsapp.conversations.unread-count')
+    return response.count
+  },
+
   async startConversation(input: {
     phone: string
     sessionId?: string
@@ -478,6 +575,7 @@ export const whatsappAPI = {
     limit?: number
     cursor?: string | null
     organizationId?: string | null
+    signal?: AbortSignal
   }) {
     const response = await vimobAPIRequest<Envelope<{
       conversation?: WhatsAppConversation
@@ -488,6 +586,7 @@ export const whatsappAPI = {
       '/v1/whatsapp/history',
       {
         organizationId: params.organizationId,
+        signal: params.signal,
         query: {
           conversationId: params.conversationId || undefined,
           leadId: params.leadId || undefined,
@@ -515,6 +614,7 @@ export const whatsappAPI = {
     organizationId?: string | null
     limit?: number
     cursor?: string | null
+    includeMediaUrls?: boolean
   }) {
     const response = await vimobAPIRequest<Envelope<WhatsAppMessagesPage>>(
       `/v1/whatsapp/conversations/${params.conversationId}/messages`,
@@ -523,10 +623,20 @@ export const whatsappAPI = {
         query: {
           limit: params.limit,
           cursor: params.cursor,
+          includeMediaUrls: params.includeMediaUrls,
         },
       },
     )
     validateDomainResponse(whatsAppMessagesResponseSchema, response, 'whatsapp.messages.list')
+    return response.data
+  },
+
+  async getMessageMediaURL(messageId: string, organizationId?: string | null) {
+    const response = await vimobAPIRequest<Envelope<WhatsAppMessageMediaURL>>(
+      `/v1/whatsapp/messages/${messageId}/media-url`,
+      { organizationId },
+    )
+    validateDomainResponse(whatsAppMessageMediaURLResponseSchema, response, 'whatsapp.messages.media-url')
     return response.data
   },
 
@@ -600,7 +710,7 @@ export const whatsappAPI = {
   },
 
   async retryMediaDownload(messageId: string, organizationId?: string | null) {
-    return vimobAPIRequest<{ ok: boolean; data?: unknown }>(`/v1/whatsapp/messages/${messageId}/retry-media`, {
+    return vimobAPIRequest<WhatsAppMediaDownloadRequestResult>(`/v1/whatsapp/messages/${messageId}/retry-media`, {
       method: 'POST',
       organizationId,
     })

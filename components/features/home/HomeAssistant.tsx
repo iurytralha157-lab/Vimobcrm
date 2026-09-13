@@ -17,19 +17,13 @@ import {
   useHomeSearch,
   type HomeSearchResult,
 } from '@/hooks/home'
+import { normalizeSearchText } from '@/lib/search-text'
 
 import type { HomeQuickAction } from './home-catalog'
 
 type HomeAssistantProps = {
   firstName: string
   quickActions: HomeQuickAction[]
-}
-
-function normalizeSearchText(value: string) {
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLocaleLowerCase('pt-BR')
 }
 
 export function HomeAssistant({ firstName, quickActions }: HomeAssistantProps) {

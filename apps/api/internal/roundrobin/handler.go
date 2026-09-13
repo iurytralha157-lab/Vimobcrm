@@ -66,6 +66,42 @@ func (handler Handler) List(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteJSON(w, http.StatusOK, map[string][]RoundRobin{"data": items})
 }
 
+func (handler Handler) Get(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
+	if !ok {
+		return
+	}
+
+	item, err := handler.repo.Get(r.Context(), tenantContext, r.PathValue("id"))
+	if err != nil {
+		writeRoundRobinError(w, r, err)
+		return
+	}
+
+	httpserver.WriteJSON(w, http.StatusOK, map[string]RoundRobin{"data": item})
+}
+
+func (handler Handler) ListHistory(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
+	if !ok {
+		return
+	}
+
+	limit, err := parseHistoryLimit(r.URL.Query().Get("limit"))
+	if err != nil {
+		writeRoundRobinError(w, r, err)
+		return
+	}
+
+	items, err := handler.repo.ListHistory(r.Context(), tenantContext, r.PathValue("id"), limit)
+	if err != nil {
+		writeRoundRobinError(w, r, err)
+		return
+	}
+
+	httpserver.WriteJSON(w, http.StatusOK, map[string][]HistoryEvent{"data": items})
+}
+
 func (handler Handler) Create(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := tenant.FromContext(r.Context())
 	if !ok || tenantContext.OrganizationID == "" {

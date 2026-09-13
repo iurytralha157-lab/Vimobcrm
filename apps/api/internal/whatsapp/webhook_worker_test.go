@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -30,21 +31,195 @@ func TestEvolutionWebhookProcessedRetention(t *testing.T) {
 	}
 }
 
-func TestClaimEvolutionWebhooksQuerySerializesSessionsAcrossReplicas(t *testing.T) {
+func TestClaimEvolutionWebhooksQueryFairlyClaimsOneHeadPerSession(t *testing.T) {
 	normalized := strings.Join(strings.Fields(strings.ToLower(claimEvolutionWebhooksQuery)), " ")
 
 	for _, fragment := range []string{
-		"and not exists ( select 1 from public.whatsapp_webhook_inbox blocker",
-		"blocker.session_id = wi.session_id",
-		"blocker.status = 'processing'",
-		"blocker.status in ('pending', 'retry')",
-		"(blocker.next_attempt_at, blocker.created_at, blocker.id) < (wi.next_attempt_at, wi.created_at, wi.id)",
-		"order by wi.next_attempt_at, wi.created_at, wi.id",
-		"for update skip locked",
+		"from public.whatsapp_sessions ws",
+		"nullif(btrim($3), '') is null or ws.id > nullif(btrim($3), '')::uuid",
+		"coalesce(ws.is_active, true) = true",
+		"coalesce(ws.status, '') <> 'deleted'",
+		"limit $1 for no key update of ws skip locked",
+		"cross join lateral",
+		"head.id as event_id",
+		"wi.session_id = ws.id",
+		"wi.processing_lane = $4",
+		"and ($4 <> 'live' or wi.next_attempt_at <= now())",
+		"older.processing_lane = wi.processing_lane",
+		"(older.created_at, older.id) < (wi.created_at, wi.id)",
+		"older.status in ('pending', 'retry')",
+		"{__vimob_ingress,routing_key}",
+		"or head.routing_key = '__session__'",
+		"and head.next_attempt_at <= now()",
+		"join public.whatsapp_webhook_inbox wi on wi.id = selected.event_id",
+		"for update of wi skip locked",
+		"active.session_id = ws.id",
+		"active.status = 'processing'",
+		"$4 <> 'backlog' or not exists ( select 1",
+		"live_due.processing_lane = 'live'",
+		"live_due.next_attempt_at <= now()",
+		"order by claimed.session_id",
 	} {
 		if !strings.Contains(normalized, fragment) {
-			t.Errorf("claim query is missing cross-replica session guard %q", fragment)
+			t.Errorf("claim query is missing fair session guard %q", fragment)
 		}
+	}
+	if strings.Contains(normalized, "limit 1 for update of wi skip locked") {
+		t.Fatal("claim query may not skip a locked head and claim a newer row from the same session")
+	}
+	if strings.Contains(normalized, "wi.processing_lane = 'backlog' or wi.next_attempt_at <= now()") {
+		t.Fatal("backlog must retain strict FIFO and may not bypass a deferred head")
+	}
+	if strings.Contains(normalized, "media_jobs") {
+		t.Fatal("inbox claiming must not depend on media job completion; queued media cannot block subsequent live text")
+	}
+	if got := strings.Count(normalized, "active.payload #>> '{__vimob_ingress,routing_key}'"); got < 3 {
+		t.Fatalf("conversation-aware active guard count = %d, want every claim race check", got)
+	}
+	if strings.Contains(normalized, "older.next_attempt_at <= now()") {
+		t.Fatal("a deferred retry must remain an ordering barrier for its own conversation")
+	}
+	if strings.Contains(normalized, "claim_bucket") || strings.Contains(normalized, "gen_random_uuid") || strings.Contains(normalized, "case when ws.id") {
+		t.Fatal("claim query must use a monotonic PK cursor without a global CASE sort or random start")
+	}
+	if strings.Contains(normalized, "ws.status = 'connected'") || strings.Contains(normalized, "ws.status in ('connected'") {
+		t.Fatal("claim query must keep active disconnected sessions eligible; only inactive or deleted sessions are terminally excluded")
+	}
+	if !shouldWrapEvolutionWebhookLaneClaim("ffffffff-ffff-4fff-8fff-ffffffffffff", 0) {
+		t.Fatal("an exhausted non-empty cursor must wrap once")
+	}
+	if shouldWrapEvolutionWebhookLaneClaim("", 0) || shouldWrapEvolutionWebhookLaneClaim("cursor", 1) {
+		t.Fatal("an initial or successful cursor segment must not wrap")
+	}
+}
+
+func TestWebhookWorkerLaneReservationAndContinuousDrain(t *testing.T) {
+	tests := []struct {
+		batch    int
+		wantLive int
+	}{
+		{batch: 1, wantLive: 1},
+		{batch: 2, wantLive: 1},
+		{batch: 5, wantLive: 4},
+		{batch: 10, wantLive: 8},
+		{batch: 25, wantLive: 20},
+	}
+	for _, test := range tests {
+		if got := reservedLiveWebhookBatch(test.batch); got != test.wantLive {
+			t.Errorf("reservedLiveWebhookBatch(%d) = %d, want %d", test.batch, got, test.wantLive)
+		}
+	}
+	if shouldContinueWebhookDrain(0) {
+		t.Fatal("an empty claim must return to polling")
+	}
+	if !shouldContinueWebhookDrain(1) {
+		t.Fatal("a partial claim must continue draining without a polling delay")
+	}
+
+	for _, test := range []struct {
+		total       int
+		wantLive    int
+		wantBacklog int
+	}{
+		{total: 1, wantLive: 1, wantBacklog: 1},
+		{total: 2, wantLive: 1, wantBacklog: 1},
+		{total: 3, wantLive: 2, wantBacklog: 1},
+		{total: 4, wantLive: 2, wantBacklog: 2},
+		{total: 5, wantLive: 3, wantBacklog: 2},
+		{total: 8, wantLive: 6, wantBacklog: 2},
+		{total: 16, wantLive: 12, wantBacklog: 4},
+	} {
+		live, backlog := evolutionWebhookLaneConcurrency(test.total)
+		if live != test.wantLive || backlog != test.wantBacklog {
+			t.Errorf("evolutionWebhookLaneConcurrency(%d) = (%d, %d), want (%d, %d)", test.total, live, backlog, test.wantLive, test.wantBacklog)
+		}
+		if test.total > 1 && live+backlog != test.total {
+			t.Errorf("lane concurrency (%d, %d) exceeds configured DB budget %d", live, backlog, test.total)
+		}
+	}
+}
+
+func TestDedicatedLiveLaneDoesNotWaitForBlockedBacklog(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	liveWake := newEvolutionWebhookWorkerSignal()
+	backlogWake := newEvolutionWebhookWorkerSignal()
+	backlogStarted := make(chan struct{}, 1)
+	backlogRelease := make(chan struct{})
+	backlogFinished := make(chan struct{})
+	liveProcessed := make(chan struct{})
+	liveDone := make(chan struct{})
+	backlogDone := make(chan struct{})
+	var liveReady atomic.Bool
+
+	go func() {
+		defer close(backlogDone)
+		runEvolutionWebhookLaneWorker(ctx, time.Hour, backlogWake, func() (int, error) {
+			select {
+			case backlogStarted <- struct{}{}:
+			default:
+			}
+			<-backlogRelease
+			select {
+			case <-backlogFinished:
+			default:
+				close(backlogFinished)
+			}
+			return 0, nil
+		}, nil)
+	}()
+	go func() {
+		defer close(liveDone)
+		runEvolutionWebhookLaneWorker(ctx, time.Hour, liveWake, func() (int, error) {
+			if liveReady.CompareAndSwap(true, false) {
+				close(liveProcessed)
+				return 1, nil
+			}
+			return 0, nil
+		}, nil)
+	}()
+
+	select {
+	case <-backlogStarted:
+	case <-time.After(time.Second):
+		t.Fatal("backlog runner did not start")
+	}
+	liveReady.Store(true)
+	liveWake.Notify()
+	select {
+	case <-liveProcessed:
+	case <-time.After(time.Second):
+		t.Fatal("live runner waited for blocked backlog capacity")
+	}
+	select {
+	case <-backlogFinished:
+		t.Fatal("backlog unexpectedly finished before it was released")
+	default:
+	}
+	close(backlogRelease)
+	cancel()
+	for name, done := range map[string]<-chan struct{}{"live": liveDone, "backlog": backlogDone} {
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatalf("%s runner did not stop", name)
+		}
+	}
+}
+
+func TestSummarizeEvolutionWebhookBatchSeparatesLaneAge(t *testing.T) {
+	now := time.Date(2026, time.September, 9, 15, 0, 0, 0, time.UTC)
+	cursors := evolutionWebhookLaneCursors{LiveSessionID: "live-cursor", BacklogSessionID: "backlog-cursor"}
+	stats := summarizeEvolutionWebhookBatch([]pendingEvolutionWebhook{
+		{ProcessingLane: evolutionWebhookLaneLive, CreatedAt: now.Add(-3 * time.Second)},
+		{ProcessingLane: evolutionWebhookLaneLive, CreatedAt: now.Add(-12 * time.Second)},
+		{ProcessingLane: evolutionWebhookLaneBacklog, CreatedAt: now.Add(-48 * time.Hour)},
+	}, cursors, now)
+	if stats.Cursors != cursors || stats.LiveClaimed != 2 || stats.BacklogClaimed != 1 || stats.Claimed() != 3 {
+		t.Fatalf("batch stats = %#v", stats)
+	}
+	if stats.OldestLiveClaimAge != 12*time.Second || stats.OldestBacklogClaimAge != 48*time.Hour {
+		t.Fatalf("batch ages = live:%s backlog:%s", stats.OldestLiveClaimAge, stats.OldestBacklogClaimAge)
 	}
 }
 
@@ -99,6 +274,38 @@ func TestForwardEvolutionWebhookBoundsTargetResponseBody(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "exceeded the allowed size") {
 		t.Fatalf("forwardEvolutionWebhook() error = %v, want bounded response failure", err)
+	}
+}
+
+func TestForwardEvolutionWebhookStripsInternalRoutingMetadata(t *testing.T) {
+	var forwarded []byte
+	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		forwarded, _ = io.ReadAll(request.Body)
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"ok":true}`))
+	}))
+	defer target.Close()
+
+	repo := Repository{functions: functionsClient{
+		apiKey:              "sb_secret_webhook_worker_test_0123456789",
+		evolutionWebhookURL: target.URL,
+		httpClient:          target.Client(),
+	}}
+	err := repo.forwardEvolutionWebhook(context.Background(), pendingEvolutionWebhook{
+		SessionID:    "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9",
+		InstanceID:   "instance-1",
+		WebhookToken: "session-secret",
+		Payload: []byte(`{
+			"event":"MESSAGES_UPSERT",
+			"data":{"message":{"conversation":"oi"}},
+			"__vimob_ingress":{"routing_key":"phone:5511999991111"}
+		}`),
+	})
+	if err != nil {
+		t.Fatalf("forwardEvolutionWebhook() returned error: %v", err)
+	}
+	if strings.Contains(string(forwarded), evolutionWebhookRoutingMetaKey) || !strings.Contains(string(forwarded), `"conversation":"oi"`) {
+		t.Fatalf("forwarded provider payload = %s", forwarded)
 	}
 }
 
@@ -216,7 +423,7 @@ func TestDrainEvolutionWebhookBatchHonorsConcurrencyLimit(t *testing.T) {
 	}
 }
 
-func TestDrainEvolutionWebhookBatchCancelsRemainingWorkAfterError(t *testing.T) {
+func TestDrainEvolutionWebhookBatchContinuesOtherSessionsAfterError(t *testing.T) {
 	wantErr := errors.New("database unavailable")
 	processed := []string{}
 	err := drainEvolutionWebhookBatch(context.Background(), []pendingEvolutionWebhook{
@@ -225,12 +432,15 @@ func TestDrainEvolutionWebhookBatchCancelsRemainingWorkAfterError(t *testing.T) 
 		{ID: "b-1", SessionID: "session-b"},
 	}, 1, func(_ context.Context, item pendingEvolutionWebhook) error {
 		processed = append(processed, item.ID)
-		return wantErr
+		if item.SessionID == "session-a" {
+			return wantErr
+		}
+		return nil
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("drainEvolutionWebhookBatch() error = %v, want %v", err, wantErr)
 	}
-	if got, want := processed, []string{"a-1"}; !reflect.DeepEqual(got, want) {
+	if got, want := processed, []string{"a-1", "b-1"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("processed after error = %#v, want %#v", got, want)
 	}
 }
@@ -254,6 +464,9 @@ func TestDrainEvolutionWebhookBatchPropagatesCancellation(t *testing.T) {
 }
 
 func TestWebhookWorkerConcurrencyNormalization(t *testing.T) {
+	if got := (WorkerConfig{}).normalized().WebhookWorkerBatch; got != 10 {
+		t.Fatalf("default batch = %d, want 10", got)
+	}
 	if got := (WorkerConfig{}).normalized().WebhookWorkerConcurrency; got != 4 {
 		t.Fatalf("default concurrency = %d, want 4", got)
 	}

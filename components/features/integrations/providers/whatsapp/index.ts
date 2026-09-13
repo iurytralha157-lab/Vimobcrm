@@ -1,0 +1,1 @@
+export { whatsappIntegrationProviderManifest } from "./manifest";

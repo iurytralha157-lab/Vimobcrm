@@ -145,7 +145,7 @@ function buildSnapshotFromDatabase(data: NonNullable<ReturnType<typeof useCampai
           id: ad.ad_id,
           name: ad.ad_name,
           type: ad.creative_video_url ? "video" : "image",
-          thumbnailUrl: ad.creative_url,
+          thumbnailUrl: ad.thumbnail_url,
           creativeUrl: ad.creative_url,
           videoUrl: ad.creative_video_url,
           permalinkUrl: (ad as typeof ad & { creative_permalink_url?: string | null }).creative_permalink_url || null,

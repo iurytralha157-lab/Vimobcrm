@@ -10,7 +10,9 @@ import {
   whatsAppConversationResponseSchema,
   whatsAppHistoryResponseSchema,
   whatsAppMessagesResponseSchema,
+  whatsAppSessionStatusesResponseSchema,
   whatsAppSessionsResponseSchema,
+  whatsAppUnreadCountResponseSchema,
 } from './whatsapp'
 import {
   formatPhoneForDisplay,
@@ -77,7 +79,8 @@ test('preserva E.164 no contexto e usa o telefone canonico ao iniciar conversa',
   assert.match(floatingChatContextSource, /normalizePhoneToE164\(phone\)/)
   assert.doesNotMatch(floatingChatContextSource, /phone\.replace\(\/\\D\/g/)
   assert.match(floatingChatSource, /const canonicalPhone = normalizePhoneToE164\(phone\)/)
-  assert.equal((floatingChatSource.match(/phone: canonicalPhone/g) || []).length >= 3, true)
+  assert.equal((floatingChatSource.match(/phone: canonicalPhone/g) || []).length, 2)
+  assert.match(floatingChatSource, /handleStartConversationWithSession\(canonicalPhone,/)
 })
 
 test('aceita sessao Evolution GO e rejeita provider legado', () => {
@@ -120,6 +123,54 @@ test('valida lista de sessoes e cota', () => {
   })
 
   assert.equal(result.success, true)
+})
+
+test('aceita apenas o DTO minimo e escopado de status das sessoes', () => {
+  const safeStatus = {
+    data: [{
+      id: ID,
+      display_name: 'Atendimento',
+      status: 'connected',
+      phone_number: '5511999999999',
+      profile_name: 'Vimob',
+      last_connected_at: '2026-09-12T12:00:00Z',
+      updated_at: '2026-09-12T12:00:01Z',
+      owner: { id: USER_ID, name: 'Maria' },
+      capabilities: {
+        can_manage: false,
+        can_set_notification_sender: false,
+      },
+    }],
+    meta: { scope: 'team' },
+  }
+
+  assert.equal(whatsAppSessionStatusesResponseSchema.safeParse(safeStatus).success, true)
+  assert.equal(
+    whatsAppSessionStatusesResponseSchema.safeParse({
+      ...safeStatus,
+      data: [{
+        ...safeStatus.data[0],
+        instance_name: 'private-provider-key',
+      }],
+    }).success,
+    false,
+  )
+  assert.equal(
+    whatsAppSessionStatusesResponseSchema.safeParse({
+      ...safeStatus,
+      data: [{
+        ...safeStatus.data[0],
+        owner: { ...safeStatus.data[0].owner, email: 'private@example.com' },
+      }],
+    }).success,
+    false,
+  )
+})
+
+test('valida contador leve de mensagens WhatsApp nao lidas', () => {
+  assert.equal(whatsAppUnreadCountResponseSchema.safeParse({ count: 12 }).success, true)
+  assert.equal(whatsAppUnreadCountResponseSchema.safeParse({ count: -1 }).success, false)
+  assert.equal(whatsAppUnreadCountResponseSchema.safeParse({ count: 1.5 }).success, false)
 })
 
 test('aceita conversa historica sem sessao confiavel', () => {

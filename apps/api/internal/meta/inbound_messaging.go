@@ -53,6 +53,19 @@ const findMessagingIntegrationQuery = `
 	 and lower(btrim(conversations_access.module_name)) = 'whatsapp'
 	 and conversations_access.is_enabled = true
 	where coalesce(integration.is_connected, false) = true
+	  and exists (
+		select 1
+		from unnest(coalesce(integration.granted_scopes, array[]::text[])) as granted_scope(value)
+		where lower(btrim(granted_scope.value)) = 'pages_messaging'
+	  )
+	  and (
+		$2 <> 'instagram'
+		or exists (
+			select 1
+			from unnest(coalesce(integration.granted_scopes, array[]::text[])) as instagram_scope(value)
+			where lower(btrim(instagram_scope.value)) = 'instagram_manage_messages'
+		)
+	  )
 	  and (
 		($2 = 'messenger' and integration.page_id = $1)
 		or (

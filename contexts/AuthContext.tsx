@@ -2,13 +2,21 @@
 
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { User, Session } from '@supabase/supabase-js';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/lib/supabase/client';
 import { logAuditAction } from '@/hooks/use-audit-logs';
 import { performanceTracker } from '@/lib/performance';
 import { performFullCacheClear } from '@/lib/cache-utils';
-import { ROUTES, getPublicAppUrl } from '@/config/constants';
-import { meAPI, type TenantContext } from '@/lib/api/me';
+import { ROUTES } from '@/config/constants';
+import { authAPI } from '@/lib/api/auth';
+import { meAPI } from '@/lib/api/me';
 import { usersAPI } from '@/lib/api/users';
+import {
+  cachedAuthSnapshotSchema,
+  type CachedAuthSnapshot,
+  type Organization,
+  type TenantContext,
+  type UserProfile,
+} from '@/lib/validation/auth-context';
 import {
   VimobAPIError,
   setVimobAPIAccessToken,
@@ -17,7 +25,15 @@ import {
   clearPasswordRecoveryEvidence,
   isPasswordRecoveryAccessToken,
 } from '@/lib/auth/password-recovery';
-import { initializeSignedInUserContext } from '@/lib/auth/frontend-auth-reliability';
+import {
+  initializeSignedInUserContext,
+  shouldForceOrganizationSelectionForAuthEvent,
+} from '@/lib/auth/frontend-auth-reliability';
+import {
+  resolveActiveOrganization,
+  type ActiveOrganizationResolution,
+} from '@/lib/auth/active-organization';
+import { shouldPersistOrganizationSelectionRemotely } from '@/lib/local-read-only';
 import { deactivateCurrentPushEndpoint } from '@/lib/pwa/push-session';
 
 const isAuthDebugEnabled =
@@ -49,61 +65,6 @@ function isExpiredAPISessionError(error: unknown) {
   return /invalid or expired bearer token|sess[aã]o expirada|missing bearer token/i.test(message);
 }
 
-interface UserProfile {
-  id: string;
-  organization_id: string | null;
-  name: string;
-  email: string;
-  role: 'admin' | 'user' | 'super_admin';
-  avatar_url: string | null;
-  is_active: boolean;
-  language?: string | null;
-  theme_mode?: 'light' | 'dark' | 'system' | null;
-  phone?: string | null;
-  whatsapp?: string | null;
-  cpf?: string | null;
-  cep?: string | null;
-  endereco?: string | null;
-  numero?: string | null;
-  complemento?: string | null;
-  bairro?: string | null;
-  cidade?: string | null;
-  uf?: string | null;
-}
-
-interface Organization {
-  id: string;
-  name: string;
-  logo_url: string | null;
-  theme_mode?: string | null;
-  accent_color?: string | null;
-  is_active?: boolean;
-  subscription_status?: string;
-  subscription_type?: string | null;
-  trial_ends_at?: string | null;
-  billing_grace_until?: string | null;
-  segment?: 'imobiliario' | 'telecom' | 'servicos' | null;
-  cnpj?: string | null;
-  creci?: string | null;
-  inscricao_estadual?: string | null;
-  razao_social?: string | null;
-  nome_fantasia?: string | null;
-  cep?: string | null;
-  endereco?: string | null;
-  numero?: string | null;
-  complemento?: string | null;
-  bairro?: string | null;
-  cidade?: string | null;
-  uf?: string | null;
-  telefone?: string | null;
-  whatsapp?: string | null;
-  email?: string | null;
-  website?: string | null;
-  default_commission_percentage?: number | null;
-  property_edit_policy?: 'everyone' | 'responsible_or_admin' | null;
-  property_owner_contact_visibility?: 'visible' | 'hidden' | null;
-}
-
 const normalizeProfileRole = (role: string | null | undefined): UserProfile['role'] => {
   if (role === 'admin' || role === 'super_admin') return role;
   return 'user';
@@ -127,15 +88,6 @@ interface ImpersonateSession {
 const AUTH_SNAPSHOT_VERSION = 3;
 const AUTH_SNAPSHOT_TTL_MS = 1000 * 60 * 60 * 8;
 
-interface CachedAuthSnapshot {
-  version: number;
-  cachedAt: number;
-  profile: UserProfile;
-  organization: Organization | null;
-  tenantContext: TenantContext | null;
-  isSuperAdmin: boolean;
-}
-
 function authSnapshotKey(userId: string) {
   return `vimob_auth_snapshot_${userId}`;
 }
@@ -147,7 +99,13 @@ function readAuthSnapshot(userId: string): CachedAuthSnapshot | null {
     const raw = localStorage.getItem(authSnapshotKey(userId));
     if (!raw) return null;
 
-    const snapshot = JSON.parse(raw) as Partial<CachedAuthSnapshot>;
+    const parsedSnapshot = cachedAuthSnapshotSchema.safeParse(JSON.parse(raw));
+    if (!parsedSnapshot.success) {
+      localStorage.removeItem(authSnapshotKey(userId));
+      return null;
+    }
+
+    const snapshot = parsedSnapshot.data;
     if (
       snapshot.version !== AUTH_SNAPSHOT_VERSION ||
       !snapshot.cachedAt ||
@@ -158,7 +116,7 @@ function readAuthSnapshot(userId: string): CachedAuthSnapshot | null {
       return null;
     }
 
-    return snapshot as CachedAuthSnapshot;
+    return snapshot;
   } catch {
     localStorage.removeItem(authSnapshotKey(userId));
     return null;
@@ -183,6 +141,7 @@ interface AuthContextType {
   session: Session | null;
   profile: UserProfile | null;
   organization: Organization | null;
+  activeOrganization: ActiveOrganizationResolution;
   tenantContext: TenantContext | null;
   loading: boolean;
   isSuperAdmin: boolean;
@@ -190,7 +149,7 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ error: Error | null }>;
-  refreshProfile: () => Promise<void>;
+  refreshProfile: () => Promise<boolean>;
   refreshOrganizations: () => Promise<void>;
   startImpersonate: (orgId: string, orgName: string) => Promise<void>;
   stopImpersonate: () => Promise<void>;
@@ -209,6 +168,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const userRef = useRef<User | null>(null);
   const isLoggingOutRef = useRef(false);
   const recoveryActionScheduledRef = useRef(false);
+  const credentialSignInInFlightRef = useRef(false);
 
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -216,6 +176,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [organization, setOrganization] = useState<Organization | null>(null);
   const organizationRef = useRef<Organization | null>(null);
   const fetchProfileRequestRef = useRef(0);
+  const organizationSwitchGenerationRef = useRef(0);
   const [tenantContext, setTenantContext] = useState<TenantContext | null>(null);
   const [loading, setLoading] = useState(true);
   const [authInitialized, setAuthInitialized] = useState(false);
@@ -244,15 +205,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     organizationRef.current = organization;
   }, [organization]);
 
-  useEffect(() => {
-    if (organization) {
-      authDebug('[AuthContext] active organization changed:', organization.id);
-      if (user) {
-        localStorage.setItem(`vimob_active_organization_${user.id}`, organization.id);
-        authDebug('[AuthContext] saved active organization to localStorage:', organization.id);
-      }
-    }
-  }, [organization, user]);
   const [impersonating, setImpersonating] = useState<ImpersonateSession | null>(() => {
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem('impersonating');
@@ -261,7 +213,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return null;
   });
 
-  const fetchProfile = async (userId: string): Promise<boolean> => {
+  const fetchProfile = async (
+    userId: string,
+    requestedOrganizationId?: string | null,
+  ): Promise<boolean> => {
     const requestId = ++fetchProfileRequestRef.current;
     return performanceTracker.trackTimed('fetchProfile', async () => {
       try {
@@ -270,6 +225,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ? JSON.parse(storedImpersonating)
           : null;
         const preferredOrganizationId = activeImpersonation?.orgId
+          || requestedOrganizationId
           || localStorage.getItem(`vimob_active_organization_${userId}`);
         const response = await meAPI.getProfile(preferredOrganizationId);
         if (requestId !== fetchProfileRequestRef.current) return true;
@@ -278,7 +234,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ...response.profile,
           organization_id: response.context.organizationId || response.profile.organization_id,
           role: superAdmin ? 'super_admin' : normalizeProfileRole(response.context.memberRole),
-        } as UserProfile;
+        };
 
         setIsSuperAdmin(superAdmin);
         if (!profileData.is_active && !superAdmin) {
@@ -360,6 +316,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const startImpersonate = async (orgId: string, orgName: string) => {
     if (!user) return;
 
+    const switchGeneration = ++organizationSwitchGenerationRef.current;
+    setIsInitializingOrg(true);
+
     // Log auditoria (sem alterar o banco)
     logAuditAction('impersonate_start', 'organization', orgId, undefined, {
       org_name: orgName,
@@ -372,10 +331,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('impersonating', JSON.stringify(impersonateSession));
     setImpersonating(impersonateSession);
 
-    await fetchProfile(user.id);
+    try {
+      const profileLoaded = await fetchProfile(user.id);
+      if (!profileLoaded) {
+        setImpersonating(null);
+        localStorage.removeItem('impersonating');
+        throw new Error('Não foi possível carregar a organização impersonada.');
+      }
+    } finally {
+      if (switchGeneration === organizationSwitchGenerationRef.current) {
+        setIsInitializingOrg(false);
+      }
+    }
   };
 
   const stopImpersonate = async () => {
+    const switchGeneration = ++organizationSwitchGenerationRef.current;
+    setIsInitializingOrg(true);
+
     // Log auditoria antes de limpar o estado
     if (user && impersonating) {
       logAuditAction('impersonate_stop', 'organization', impersonating.orgId, undefined, {
@@ -390,8 +363,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setOrganization(null); // Limpa org impersonada imediatamente
 
     // Recarregar org original do super admin (usando organization_id real do banco)
-    if (user) {
-      await fetchProfile(user.id);
+    try {
+      if (user) {
+        const profileLoaded = await fetchProfile(user.id);
+        if (!profileLoaded) {
+          localStorage.removeItem(`vimob_active_organization_${user.id}`);
+          localStorage.removeItem(authSnapshotKey(user.id));
+          setTenantContext(null);
+          setProfile((currentProfile) => {
+            const nextProfile = currentProfile
+              ? { ...currentProfile, organization_id: null }
+              : currentProfile;
+            profileRef.current = nextProfile;
+            return nextProfile;
+          });
+          throw new Error('Não foi possível restaurar a organização original.');
+        }
+      }
+    } finally {
+      if (switchGeneration === organizationSwitchGenerationRef.current) {
+        setIsInitializingOrg(false);
+      }
     }
   };
 
@@ -399,12 +391,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const activeUser = userRef.current || user;
     if (!activeUser) return;
 
+    const switchGeneration = ++organizationSwitchGenerationRef.current;
+    setIsInitializingOrg(true);
+
     authDebug('[AuthContext] switching organization to:', orgId);
 
-    await meAPI.switchOrganization(orgId);
-    localStorage.setItem(`vimob_active_organization_${activeUser.id}`, orgId);
+    try {
+      if (shouldPersistOrganizationSelectionRemotely()) {
+        await meAPI.switchOrganization(orgId);
+      }
 
-    await fetchProfile(activeUser.id);
+      // Pass the target explicitly and let fetchProfile persist it only after
+      // the complete tenant payload has passed validation.
+      const profileLoaded = await fetchProfile(activeUser.id, orgId);
+      if (!profileLoaded) {
+        // The previous organization, tenant context and snapshot remain valid;
+        // do not turn a failed switch into a forced selector redirect.
+        throw new Error('Não foi possível carregar a organização selecionada.');
+      }
+    } finally {
+      if (switchGeneration === organizationSwitchGenerationRef.current) {
+        setIsInitializingOrg(false);
+      }
+    }
   };
 
   const checkMultiOrg = async (
@@ -530,6 +539,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const clearAllStates = () => {
       authDebug('Cleaning auth states');
+      credentialSignInInFlightRef.current = false;
       setVimobAPIAccessToken(null, null);
       const currentUserId = userRef.current?.id;
       if (currentUserId) {
@@ -720,6 +730,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if (authEvent === 'SIGNED_IN' || authEvent === 'USER_UPDATED') {
           if (session) {
+            const forceSelectorForMultiOrg = shouldForceOrganizationSelectionForAuthEvent({
+              authEvent,
+              credentialSignInInFlight: credentialSignInInFlightRef.current,
+            });
             const isSameInitializedUser =
               authStateRef.current.authInitialized &&
               authStateRef.current.organizationsLoaded &&
@@ -750,7 +764,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               void initializeSignedInUserContext(
                 () => fetchProfileRef.current(session.user.id),
                 () => checkMultiOrgRef.current(session.user.id, {
-                  forceSelectorForMultiOrg: authEvent === 'SIGNED_IN',
+                  forceSelectorForMultiOrg,
                 }),
               )
                 .catch((error) => {
@@ -818,29 +832,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    const { error, data } = await supabase.auth.signInWithPassword({ email, password });
+    credentialSignInInFlightRef.current = true;
 
-    // Log successful login (async to avoid blocking)
-    if (!error && data.user) {
-      setTimeout(() => {
-        logAuditAction('login', 'session', data.user.id, undefined, {
-          email,
-          login_at: new Date().toISOString()
-        }).catch(console.error);
-      }, 0);
+    try {
+      const { error, data } = await authAPI.login(email, password);
+
+      // Log successful login (async to avoid blocking)
+      if (!error && data.user) {
+        setTimeout(() => {
+          logAuditAction('login', 'session', data.user.id, undefined, {
+            email,
+            login_at: new Date().toISOString()
+          }).catch(console.error);
+        }, 0);
+      }
+
+      return { error };
+    } finally {
+      credentialSignInInFlightRef.current = false;
     }
-
-    return { error };
   };
 
   const resetPassword = async (email: string) => {
     try {
-      const redirectUrl = getPublicAppUrl(ROUTES.RESET_PASSWORD);
-      authDebug('[AuthContext] Resetting password for:', email, 'redirectUrl:', redirectUrl);
-
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: redirectUrl,
-      });
+      const { error } = await authAPI.resetPassword(email);
 
       if (error) {
         console.error('[AuthContext] Reset password error:', error);
@@ -893,9 +908,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const refreshProfile = async () => {
-    if (user) {
-      await fetchProfile(user.id);
-    }
+    if (!user) return false;
+    return fetchProfile(user.id);
   };
 
   const refreshOrganizations = async () => {
@@ -907,12 +921,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await checkMultiOrg(activeUser.id);
   };
 
+  const activeOrganization = resolveActiveOrganization({
+    userId: user?.id,
+    authInitialized,
+    authLoading: loading,
+    organizationsLoaded,
+    isInitializingOrganization: isInitializingOrg,
+    organizationId: organization?.id,
+    tenantOrganizationId: tenantContext?.organizationId,
+    profileOrganizationId: profile?.organization_id,
+    impersonatedOrganizationId: impersonating?.orgId,
+    organizationsError,
+  });
+
   return (
     <AuthContext.Provider value={{
       user,
       session,
       profile,
       organization,
+      activeOrganization,
       tenantContext,
       loading,
       isSuperAdmin,

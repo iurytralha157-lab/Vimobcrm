@@ -15,6 +15,7 @@ import { DREAccountConfig } from '@/components/features/financial/DREAccountConf
 import { startOfMonth, endOfMonth, startOfQuarter, endOfQuarter, startOfYear, endOfYear, subMonths, format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
+import { formatWholePtBRCurrency } from '@/lib/utils/formatting';
 
 type PeriodType = 'month' | 'quarter' | 'year' | 'custom';
 type RegimeType = 'cash' | 'accrual';
@@ -340,14 +341,7 @@ interface SummaryCardProps {
 }
 
 function SummaryCard({ title, value, type }: SummaryCardProps) {
-  const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat('pt-BR', {
-      style: 'currency',
-      currency: 'BRL',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    }).format(val);
-  };
+  const formatCurrency = formatWholePtBRCurrency;
 
   const getColors = () => {
     switch (type) {

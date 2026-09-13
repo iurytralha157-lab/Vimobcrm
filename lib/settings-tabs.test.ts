@@ -10,6 +10,7 @@ import {
 test("recognizes canonical settings tabs", () => {
   assert.equal(isSettingsPageTab("account"), true);
   assert.equal(isSettingsPageTab("team"), true);
+  assert.equal(isSettingsPageTab("properties"), false);
   assert.equal(isSettingsPageTab("users"), false);
   assert.equal(isSettingsPageTab("unknown"), false);
 });

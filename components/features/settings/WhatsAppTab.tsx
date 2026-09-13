@@ -78,7 +78,12 @@ function wait(ms: number) {
 }
 
 export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
-  const { profile, tenantContext, isSuperAdmin } = useAuth();
+  const {
+    activeOrganization,
+    profile,
+    isSuperAdmin,
+    userOrganizations,
+  } = useAuth();
   const queryClient = useQueryClient();
   const { data: sessions, isLoading, isError: sessionsFailed, refetch: refetchSessions } = useWhatsAppSessions({ live: true });
   const createSession = useCreateWhatsAppSession();
@@ -106,9 +111,13 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
     : sessionQuota ? null : "Verificando limite";
   const newSessionDisabled = !canCreateSession || isLoading;
   const newSessionTitle = !canCreateSession ? "Limite do plano atingido" : undefined;
+  const activeMemberRole = userOrganizations.find(
+    (membership) =>
+      membership.organization_id === activeOrganization.organizationId,
+  )?.member_role;
   const canManageNotificationSession = canManageOrganization({
     isSuperAdmin,
-    memberRole: tenantContext?.memberRole,
+    memberRole: activeMemberRole,
   });
   useWhatsAppLiveStatusSync(sessions);
 

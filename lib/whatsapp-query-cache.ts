@@ -77,6 +77,12 @@ export function resolveWhatsAppSessionStatus(
 export const whatsappInboxTopic = (organizationId: string) =>
   `whatsapp:${organizationId}:inbox`
 
+export const WHATSAPP_MESSAGES_RECONCILE_EVENT = 'vimob:whatsapp-messages-reconcile'
+
+export type WhatsAppMessagesReconcileEventDetail = {
+  conversationIds?: readonly string[]
+}
+
 export function isWhatsAppInboxWakePayload(payload: unknown): payload is { scope: 'conversations' } {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false
   const record = payload as Record<string, unknown>
@@ -139,6 +145,30 @@ export const whatsappQueryKeys = {
     scopedPrefix('accessible-sessions', scope),
   conversationsScope: (scope: WhatsAppQueryScope) =>
     scopedPrefix('whatsapp-conversations', scope),
+  unreadCount: (
+    scope: WhatsAppQueryScope,
+    params: {
+      sessionId?: string
+      hideGroups: boolean
+      showArchived: boolean
+      onlyLeads: boolean
+      withoutLead: boolean
+      pendingReply: boolean
+      search?: string
+      accessibleSessionKey: string
+    },
+  ) => [
+    ...scopedPrefix('whatsapp-conversations', scope),
+    'unread-count',
+    params.sessionId ?? 'all',
+    params.hideGroups,
+    params.showArchived,
+    params.onlyLeads,
+    params.withoutLead,
+    params.pendingReply,
+    params.search ?? '',
+    params.accessibleSessionKey,
+  ] as const,
   conversations: (
     scope: WhatsAppQueryScope,
     params: {
@@ -309,13 +339,21 @@ type PendingMessageIdentity = {
   client_message_id?: string | null
   status?: string | null
   sent_at?: string | null
+  media_error?: string | null
+  metadata?: Record<string, unknown>
 }
 
-const LOCAL_MESSAGE_STATUSES = new Set([
+export const WHATSAPP_UNCERTAIN_SEND_TTL_MS = 5 * 60_000
+
+const TRANSIENT_LOCAL_MESSAGE_STATUSES = new Set([
   'queued',
   'pending',
   'sending',
   'confirming',
+])
+
+const LOCAL_MESSAGE_STATUSES = new Set([
+  ...TRANSIENT_LOCAL_MESSAGE_STATUSES,
   'failed',
   'error',
 ])
@@ -323,6 +361,36 @@ const LOCAL_MESSAGE_STATUSES = new Set([
 const messageAliases = (message: PendingMessageIdentity) =>
   [message.id, message.message_id, message.client_message_id]
     .filter((value): value is string => Boolean(value))
+
+const isLocalOptimisticWhatsAppMessage = (message: PendingMessageIdentity) => (
+  LOCAL_MESSAGE_STATUSES.has(message.status ?? '')
+    && Boolean(
+      (message.client_message_id && message.id === message.client_message_id)
+        || (message.id === message.message_id
+          && (!message.client_message_id || message.client_message_id === message.id)),
+    )
+)
+
+function settleExpiredWhatsAppLocalMessage<T extends PendingMessageIdentity>(
+  message: T,
+  nowMs: number,
+  uncertainTtlMs: number,
+): T {
+  if (!TRANSIENT_LOCAL_MESSAGE_STATUSES.has(message.status ?? '')) return message
+
+  const sentAtMs = Date.parse(message.sent_at ?? '')
+  if (!Number.isFinite(sentAtMs) || nowMs - sentAtMs < uncertainTtlMs) return message
+
+  return {
+    ...message,
+    status: 'failed',
+    media_error: message.media_error || 'SEND_CONFIRMATION_TIMEOUT',
+    metadata: {
+      ...(message.metadata ?? {}),
+      local_delivery_state: 'confirmation_timeout',
+    },
+  }
+}
 
 /**
  * Infinite history pages arrive newest-page first while each page is already
@@ -366,18 +434,99 @@ export function flattenWhatsAppMessagePages<T extends PendingMessageIdentity>(
 export function mergeWhatsAppMessagesWithLocalState<T extends PendingMessageIdentity>(
   serverMessages: readonly T[],
   cachedMessages?: readonly T[],
+  options?: { nowMs?: number; uncertainTtlMs?: number },
 ): T[] {
   if (!cachedMessages?.length) return [...serverMessages]
 
   const serverAliases = new Set(serverMessages.flatMap(messageAliases))
+  const nowMs = options?.nowMs ?? Date.now()
+  const uncertainTtlMs = options?.uncertainTtlMs ?? WHATSAPP_UNCERTAIN_SEND_TTL_MS
   const localOnly = cachedMessages.filter((message) =>
     LOCAL_MESSAGE_STATUSES.has(message.status ?? '')
       && !messageAliases(message).some((alias) => serverAliases.has(alias)),
-  )
+  ).map((message) => settleExpiredWhatsAppLocalMessage(message, nowMs, uncertainTtlMs))
 
   return [...serverMessages, ...localOnly].sort((left, right) =>
     (left.sent_at ?? '').localeCompare(right.sent_at ?? ''),
   )
+}
+
+export function shouldRebaseWhatsAppMessagePages<T extends PendingMessageIdentity>(
+  cachedHeadMessages: readonly T[],
+  latestMessages: readonly T[],
+): boolean {
+  const cachedCanonicalMessages = cachedHeadMessages.filter(
+    (message) => !isLocalOptimisticWhatsAppMessage(message),
+  )
+  if (!cachedCanonicalMessages.length) return false
+
+  const latestAliases = new Set(latestMessages.flatMap(messageAliases))
+  return !cachedCanonicalMessages.some((message) =>
+    messageAliases(message).some((alias) => latestAliases.has(alias)),
+  )
+}
+
+/**
+ * Keeps the newest page bounded to the current server head plus optimistic
+ * rows. Canonical rows displaced by new traffic are rebalanced into bounded
+ * history pages, preserving the oldest loaded cursor for the next fetch.
+ */
+export function mergeWhatsAppLatestMessagePage<
+  T extends PendingMessageIdentity,
+  TPage extends { messages: T[]; nextCursor: string | null },
+>(
+  cachedPages: readonly TPage[],
+  latestPage: TPage,
+  options?: { nowMs?: number; uncertainTtlMs?: number; pageSize?: number },
+): TPage[] {
+  const cachedHead = cachedPages[0]
+  const cachedHeadMessages = cachedHead?.messages ?? []
+  const latestAliases = new Set(latestPage.messages.flatMap(messageAliases))
+  const nowMs = options?.nowMs ?? Date.now()
+  const uncertainTtlMs = options?.uncertainTtlMs ?? WHATSAPP_UNCERTAIN_SEND_TTL_MS
+  const pageSize = Math.max(1, options?.pageSize ?? (latestPage.messages.length || 1))
+  const localHeadMessages = cachedHeadMessages
+    .filter((message) => isLocalOptimisticWhatsAppMessage(message))
+    .filter((message) => !messageAliases(message).some((alias) => latestAliases.has(alias)))
+    .map((message) => settleExpiredWhatsAppLocalMessage(message, nowMs, uncertainTtlMs))
+  const reconciledHeadMessages = flattenWhatsAppMessagePages([
+    { messages: latestPage.messages },
+    { messages: localHeadMessages },
+  ]).sort((left, right) => (left.sent_at ?? '').localeCompare(right.sent_at ?? ''))
+  const reconciledHeadAliases = new Set(reconciledHeadMessages.flatMap(messageAliases))
+  const displacedCanonicalHead = cachedHeadMessages.filter(
+    (message) => !isLocalOptimisticWhatsAppMessage(message)
+      && !messageAliases(message).some((alias) => reconciledHeadAliases.has(alias)),
+  )
+  const historicalMessages = flattenWhatsAppMessagePages([
+    { messages: displacedCanonicalHead },
+    ...cachedPages.slice(1).map((page) => ({ messages: page.messages })),
+  ])
+    .filter((message) => !messageAliases(message).some((alias) => reconciledHeadAliases.has(alias)))
+    .sort((left, right) => (left.sent_at ?? '').localeCompare(right.sent_at ?? ''))
+  const oldestLoadedCursor = cachedPages.length > 0
+    ? cachedPages[cachedPages.length - 1].nextCursor
+    : latestPage.nextCursor
+  const historicalPages: TPage[] = []
+
+  for (let end = historicalMessages.length; end > 0; end -= pageSize) {
+    const start = Math.max(0, end - pageSize)
+    const template = cachedPages[Math.min(historicalPages.length + 1, cachedPages.length - 1)]
+      ?? cachedHead
+      ?? latestPage
+    historicalPages.push({
+      ...template,
+      messages: historicalMessages.slice(start, end),
+      nextCursor: start === 0 ? oldestLoadedCursor : template.nextCursor,
+    })
+  }
+
+  const reconciledHead = {
+    ...latestPage,
+    messages: reconciledHeadMessages,
+  }
+
+  return [reconciledHead, ...historicalPages]
 }
 
 const DEFINITIVE_SEND_FAILURES = [
@@ -386,7 +535,7 @@ const DEFINITIVE_SEND_FAILURES = [
   'muitas requisi',
   'whatsapp_session_unavailable',
   'whatsapp_disconnected',
-  'desconectada',
+  'desconectad',
   'qr code',
   'not connected',
   'nao possui whatsapp',
@@ -397,8 +546,37 @@ const DEFINITIVE_SEND_FAILURES = [
   'permission denied',
 ]
 
-export function getWhatsAppSendFailureStatus(errorMessage: string): 'confirming' | 'failed' {
+type WhatsAppSendErrorLike = {
+  message?: unknown
+  code?: unknown
+  status?: unknown
+  name?: unknown
+  direction?: unknown
+}
+
+export function getWhatsAppSendFailureStatus(error: unknown): 'confirming' | 'failed' {
+  const errorLike = typeof error === 'object' && error !== null
+    ? error as WhatsAppSendErrorLike
+    : null
+  const errorMessage = typeof error === 'string'
+    ? error
+    : typeof errorLike?.message === 'string'
+      ? errorLike.message
+      : String(error ?? '')
   const normalizedMessage = errorMessage.toLowerCase()
+  const normalizedCode = typeof errorLike?.code === 'string'
+    ? errorLike.code.toLowerCase()
+    : ''
+  const status = typeof errorLike?.status === 'number' ? errorLike.status : null
+  const isInputContractFailure = errorLike?.direction === 'input'
+    && (errorLike.name === 'DomainValidationError' || normalizedCode === 'domain_validation_error')
+  const isDefinitiveHTTPRejection = status !== null
+    && status >= 400
+    && status < 500
+    && status !== 408
+
+  if (isInputContractFailure || isDefinitiveHTTPRejection) return 'failed'
+
   return DEFINITIVE_SEND_FAILURES.some((token) => normalizedMessage.includes(token))
     ? 'failed'
     : 'confirming'

@@ -1,10 +1,13 @@
 package leads
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/publicingress"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -40,13 +43,39 @@ func newMoveStageRateLimiter() *moveStageRateLimiter {
 	}
 }
 
-func (handler Handler) allowMoveStageRequest(tenantContext tenant.Context) bool {
+func (handler Handler) allowMoveStageRequest(ctx context.Context, tenantContext tenant.Context) (bool, error) {
 	limiter := handler.moveStageLimiter
 	if limiter == nil {
 		limiter = defaultMoveStageRateLimiter
 	}
 
-	return limiter.allow(moveStageRateLimitKey(tenantContext))
+	if !limiter.allow(moveStageRateLimitKey(tenantContext)) {
+		return false, nil
+	}
+	if handler.repo.db == nil {
+		return false, errors.New("move-stage shared rate limiter is not initialized")
+	}
+	for index, rule := range limiter.rules {
+		scope := "authenticated_move_stage_minute"
+		if index == 0 {
+			scope = "authenticated_move_stage_burst"
+		}
+		allowed, err := publicingress.Allow(
+			ctx,
+			handler.repo.db.Pool(),
+			scope,
+			[]string{tenantContext.OrganizationID, tenantContext.UserID},
+			rule.limit,
+			rule.window,
+		)
+		if err != nil {
+			return false, err
+		}
+		if !allowed {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (limiter *moveStageRateLimiter) allow(key string) bool {

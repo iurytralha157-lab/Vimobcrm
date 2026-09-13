@@ -11,11 +11,12 @@ import { useQuery } from '@tanstack/react-query';
 import { getPropertySiteInfo } from '@/lib/api/property-support';
 import { buildPropertySiteUrl } from '@/lib/property-site-url';
 import { getSafePropertyImageSource } from '@/lib/property-media';
+import { formatPropertyCurrency } from '@/lib/property-display-utils';
 import { toast } from 'sonner';
 import { normalizeSearchText, searchTextIncludes } from '@/lib/search-text';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
 
-interface Property {
+export interface PropertyPickerProperty {
   id: string;
   code?: string | null;
   title?: string | null;
@@ -27,17 +28,20 @@ interface Property {
   tipo_de_negocio?: string | null;
   commission_percentage?: number | null;
   status?: string | null;
+  updated_at?: string | null;
 }
 
 interface PropertyPickerDialogProps {
-  properties: Property[];
+  properties: PropertyPickerProperty[];
   selectedPropertyId?: string | null;
-  onSelect: (property: Property) => void;
+  onSelect: (property: PropertyPickerProperty) => void;
   trigger?: React.ReactNode;
   disabled?: boolean;
   isLoading?: boolean;
+  open?: boolean;
   onOpenChange?: (open: boolean) => void;
   onSearchChange?: (search: string) => void;
+  getBlockedReason?: (property: PropertyPickerProperty) => string | null;
 }
 
 type PropertyStatusBadge = {
@@ -104,19 +108,22 @@ export function PropertyPickerDialog({
   trigger,
   disabled = false,
   isLoading = false,
+  open: controlledOpen,
   onOpenChange,
   onSearchChange,
+  getBlockedReason,
 }: PropertyPickerDialogProps) {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
   const [search, setSearch] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [filterType, setFilterType] = useState('');
   const [filterPurpose, setFilterPurpose] = useState('');
   const [filterLocation, setFilterLocation] = useState('');
-  const { profile, organization } = useAuth();
+  const { activeOrganization } = useAuth();
   const { hasModule } = useOrganizationModules();
   const hasPropertiesModule = hasModule('properties');
-  const organizationId = organization?.id || profile?.organization_id;
+  const organizationId = activeOrganization.organizationId;
 
   const { data: siteInfo } = useQuery({
     queryKey: ['org-site-info', organizationId],
@@ -153,12 +160,12 @@ export function PropertyPickerDialog({
     setFilterPurpose('');
     setFilterLocation('');
     setShowFilters(false);
-    setOpen(true);
+    if (controlledOpen === undefined) setInternalOpen(true);
     onOpenChange?.(true);
   };
 
   const handleOpenChange = (nextOpen: boolean) => {
-    setOpen(nextOpen);
+    if (controlledOpen === undefined) setInternalOpen(nextOpen);
     onOpenChange?.(nextOpen);
   };
 
@@ -272,7 +279,9 @@ export function PropertyPickerDialog({
                 {filteredProperties.map(p => {
                   const statusBadge = getPropertyStatusBadge(p.status);
                   const StatusIcon = statusBadge?.icon;
-                  const blockedMessage = getSelectionBlockedMessage(p.status);
+                  const blockedMessage = getBlockedReason
+                    ? getBlockedReason(p)
+                    : getSelectionBlockedMessage(p.status);
                   const imageSource = getSafePropertyImageSource(p.imagem_principal);
 
                   return (
@@ -362,7 +371,7 @@ export function PropertyPickerDialog({
                       )}
                       {p.preco && (
                         <p className="text-[11px] font-normal text-primary">
-                          {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(p.preco))}
+                          {formatPropertyCurrency(Number(p.preco))}
                         </p>
                       )}
                       </div>

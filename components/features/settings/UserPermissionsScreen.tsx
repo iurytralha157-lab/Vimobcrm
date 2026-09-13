@@ -19,14 +19,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { useOrganizationUsers } from '@/hooks/use-users'
 import {
   useReplaceUserPermissions,
   useResetUserPermissions,
   useUserPermissionsAdmin,
 } from '@/hooks/use-user-permissions-admin'
+import { getOrganizationMemberRoleLabel } from '@/lib/user-display'
 
 const domainLabels: Record<string, string> = {
+  access: 'Usuários e acesso',
   dashboard: 'Dashboards',
   leads: 'Leads e contatos',
   crm: 'CRM',
@@ -40,14 +41,6 @@ const domainLabels: Record<string, string> = {
   settings: 'Configurações',
 }
 
-const profileLabels: Record<string, string> = {
-  owner: 'Proprietário',
-  admin: 'Administrador',
-  manager: 'Gerente',
-  leader: 'Líder',
-  user: 'Usuário padrão',
-}
-
 function userInitials(name?: string) {
   return (name ?? 'Usuário')
     .split(' ')
@@ -59,13 +52,11 @@ function userInitials(name?: string) {
 }
 
 export default function UserPermissionsScreen({ userId }: { userId: string }) {
-  const { data: users = [] } = useOrganizationUsers()
   const { data, isLoading, error } = useUserPermissionsAdmin(userId)
   const replacePermissions = useReplaceUserPermissions(userId)
   const resetPermissions = useResetUserPermissions(userId)
   const [editedValues, setEditedValues] = useState<Record<string, boolean> | null>(null)
   const [resetDialogOpen, setResetDialogOpen] = useState(false)
-  const user = users.find((candidate) => candidate.id === userId)
   const values = editedValues ?? Object.fromEntries(
     (data?.permissions ?? []).map((permission) => [permission.key, permission.allowed]),
   )
@@ -101,28 +92,38 @@ export default function UserPermissionsScreen({ userId }: { userId: string }) {
   }
 
   return (
-    <AppLayout title="Permissões do usuário">
-      <div className="mx-auto w-full max-w-6xl space-y-4 px-0 py-4 sm:px-4 md:space-y-5 md:px-6 md:py-6">
+    <AppLayout title="Permissões do usuário" disableMainScroll>
+      <div
+        data-testid="user-permissions-scroller"
+        className="flex h-full min-h-0 w-full flex-col gap-4 overflow-x-hidden overflow-y-auto px-0 py-4 sm:px-4 md:gap-5 md:px-6 md:py-6"
+      >
         <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg bg-muted/45 px-4 py-4 md:px-5">
           <div className="flex min-w-0 items-center gap-3 md:gap-4">
             <Button asChild variant="ghost" size="icon" className="h-9 w-9 shrink-0" aria-label="Voltar para usuários">
               <Link href="/settings?tab=team"><ArrowLeft className="h-4 w-4" /></Link>
             </Button>
             <Avatar className="h-11 w-11 shrink-0 md:h-12 md:w-12">
-              <AvatarImage src={user?.avatar_url ?? undefined} alt={user?.name ?? 'Usuário'} />
+              <AvatarImage src={data?.avatarUrl ?? undefined} alt={data?.name ?? 'Usuário'} />
               <AvatarFallback className="bg-primary/50 text-sm font-light text-primary-foreground">
-                {userInitials(user?.name)}
+                {userInitials(data?.name)}
               </AvatarFallback>
             </Avatar>
             <div className="min-w-0">
-              <h1 className="truncate text-[14px] font-normal">{user?.name ?? 'Usuário'}</h1>
-              <p className="truncate text-sm text-foreground/60">{user?.email ?? 'E-mail não informado'}</p>
+              <h1 className="truncate text-[14px] font-normal">{data?.name ?? 'Usuário'}</h1>
+              <p className="truncate text-sm text-foreground/60">{data?.email ?? 'Carregando e-mail...'}</p>
             </div>
           </div>
           {data && (
-            <Badge className="rounded-md border-0 bg-primary px-3 py-1 text-primary-foreground hover:bg-primary">
-              {profileLabels[data.profile] ?? data.profile}
-            </Badge>
+            <div className="flex flex-wrap items-center gap-2">
+              {!data.isActive && (
+                <Badge variant="secondary" className="rounded-md border-0 bg-muted px-3 py-1 text-muted-foreground">
+                  Desativado
+                </Badge>
+              )}
+              <Badge className="rounded-md border-0 bg-primary px-3 py-1 text-primary-foreground hover:bg-primary">
+                {getOrganizationMemberRoleLabel(data.profile)}
+              </Badge>
+            </div>
           )}
         </div>
 
@@ -132,7 +133,7 @@ export default function UserPermissionsScreen({ userId }: { userId: string }) {
         {data?.locked && (
           <div className="flex items-center gap-3 rounded-lg bg-muted/45 px-4 py-4">
             <ShieldCheck className="h-5 w-5 text-primary" />
-            <p className="text-sm">Administradores possuem acesso total e não podem ter permissões individuais removidas.</p>
+            <p className="text-sm">Proprietários e administradores possuem acesso total e não podem ter permissões individuais removidas.</p>
           </div>
         )}
 
@@ -163,14 +164,39 @@ export default function UserPermissionsScreen({ userId }: { userId: string }) {
         )}
 
         {data && !data.locked && (
-          <div className="flex flex-col-reverse justify-end gap-2 pb-2 pt-1 sm:flex-row">
-            <Button variant="ghost" className="bg-muted/50 hover:bg-muted" onClick={() => setResetDialogOpen(true)} disabled={resetPermissions.isPending || replacePermissions.isPending}>
-              <RotateCcw className="mr-2 h-4 w-4" />Restaurar padrão
-            </Button>
-            <Button onClick={handleSave} disabled={editedValues === null || replacePermissions.isPending || resetPermissions.isPending}>
-              {replacePermissions.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-              Salvar
-            </Button>
+          <div
+            data-testid="user-permissions-actions"
+            className="sticky bottom-0 z-20 mx-auto flex w-full max-w-[680px] shrink-0 flex-col gap-2 rounded-[8px] bg-[var(--app-surface-solid)] p-2 shadow-[0_-10px_30px_rgba(15,23,42,0.12)] sm:flex-row sm:items-center sm:justify-between"
+          >
+            <p className="px-1 text-[10px] text-[var(--app-text-tertiary)]" aria-live="polite">
+              {replacePermissions.isPending
+                ? 'Salvando alterações...'
+                : resetPermissions.isPending
+                  ? 'Restaurando permissões...'
+                  : editedValues === null
+                    ? 'Nenhuma alteração para salvar.'
+                    : 'Alterações prontas para salvar.'}
+            </p>
+            <div className="grid w-full grid-cols-2 gap-2 sm:w-[350px]">
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-9 rounded-[6px] bg-[var(--app-surface-soft)] px-2 text-[12px] font-light text-[var(--app-text-primary)] shadow-none hover:bg-[var(--app-surface-hover)]"
+                onClick={() => setResetDialogOpen(true)}
+                disabled={resetPermissions.isPending || replacePermissions.isPending}
+              >
+                <RotateCcw className="mr-2 h-4 w-4" />Restaurar padrão
+              </Button>
+              <Button
+                type="button"
+                onClick={handleSave}
+                disabled={editedValues === null || replacePermissions.isPending || resetPermissions.isPending}
+                className="h-9 rounded-[6px] bg-primary text-[12px] font-light text-white shadow-none hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {replacePermissions.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                Salvar
+              </Button>
+            </div>
           </div>
         )}
 

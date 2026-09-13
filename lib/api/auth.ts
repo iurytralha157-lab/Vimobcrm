@@ -1,4 +1,4 @@
-import { supabase } from '@/integrations/supabase/client'
+import { supabase } from '@/lib/supabase/client'
 import { ROUTES, getPublicAppUrl } from '@/config/constants'
 import { meAPI } from './me'
 import { settingsAPI } from './settings'

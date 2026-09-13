@@ -36,6 +36,27 @@ func (service *MarketingSyncService) Sync(ctx context.Context, request Marketing
 		deadline = parentDeadline
 	}
 
+	releaseLocalLock, acquired := service.tryAcquireLocalMarketingSync(request.OrganizationID)
+	if !acquired {
+		err := newMarketingSyncFailure("marketing_sync_in_progress", http.StatusConflict, nil)
+		return MarketingSyncResult{Errors: []string{err.Code}}, err
+	}
+	defer releaseLocalLock()
+	if service.acquireOrganizationLock == nil {
+		err := newMarketingSyncFailure("marketing_sync_lock_unavailable", http.StatusServiceUnavailable, nil)
+		return MarketingSyncResult{Errors: []string{err.Code}}, err
+	}
+	releaseOrganizationLock, acquired, lockErr := service.acquireOrganizationLock(syncCtx, request.OrganizationID)
+	if lockErr != nil {
+		err := newMarketingSyncFailure("marketing_sync_lock_unavailable", http.StatusServiceUnavailable, lockErr)
+		return MarketingSyncResult{Errors: []string{err.Code}}, err
+	}
+	if !acquired {
+		err := newMarketingSyncFailure("marketing_sync_in_progress", http.StatusConflict, nil)
+		return MarketingSyncResult{Errors: []string{err.Code}}, err
+	}
+	defer releaseOrganizationLock()
+
 	targets, err := service.loadMarketingSyncTargets(syncCtx, strings.TrimSpace(request.OrganizationID))
 	if err != nil {
 		return MarketingSyncResult{Errors: []string{marketingSyncErrorCode(err)}}, err
@@ -76,8 +97,27 @@ func (service *MarketingSyncService) syncMarketingIntegration(ctx context.Contex
 	}
 	result := marketingSyncAggregate{}
 	accountIDs := selectedMarketingSyncAccountIDs(target)
-	accountResults := marketingSyncMapLimited(ctx, accountIDs, marketingSyncAccountConcurrency, func(ctx context.Context, accountID string, _ int) marketingSyncAccountResult {
-		return service.syncMarketingAdAccount(ctx, target, accountID, dateRange, deadline, graphSemaphore)
+	type accountTarget struct {
+		ID         string
+		PageScoped bool
+		FormScoped bool
+	}
+	accountTargets := make([]accountTarget, 0, len(accountIDs))
+	for _, accountID := range accountIDs {
+		scope, scopeErr := service.marketingSyncAdAccountScope(ctx, target, accountID)
+		if scopeErr != nil {
+			result.Errors = append(result.Errors, marketingSyncScopedError(accountID, scopeErr))
+			continue
+		}
+		accountTargets = append(accountTargets, accountTarget{
+			ID: accountID, PageScoped: scope.Page, FormScoped: scope.Form,
+		})
+	}
+	accountResults := marketingSyncMapLimited(ctx, accountTargets, marketingSyncAccountConcurrency, func(ctx context.Context, account accountTarget, _ int) marketingSyncAccountResult {
+		accountTarget := target
+		accountTarget.PageScopedPaidData = account.PageScoped
+		accountTarget.FormScopedPaidData = account.FormScoped
+		return service.syncMarketingAdAccount(ctx, accountTarget, account.ID, dateRange, deadline, graphSemaphore)
 	})
 	for _, account := range accountResults {
 		result.Synced += account.Synced
@@ -136,11 +176,35 @@ func (service *MarketingSyncService) syncMarketingAdAccount(ctx context.Context,
 	}
 
 	catalog := fetchMarketingSyncEntityCatalog(ctx, graph, accountID)
+	accountCatalog := catalog
+	// A CRM owner count alone cannot prove exclusive ownership of an external
+	// agency account. Inspect the provider catalog on every run and switch to
+	// tenant-safe ad/form scope whenever any creative is foreign or ambiguous.
+	if marketingSyncCatalogRequiresPageScope(catalog, target) {
+		target.PageScopedPaidData = true
+	}
+	if target.FormScopedPaidData {
+		target.PageScopedPaidData = true
+	}
+	if target.PageScopedPaidData || target.FormScopedPaidData {
+		catalog, err = scopeMarketingSyncCatalogToTarget(catalog, target)
+		if err != nil {
+			code := marketingSyncScopedError(accountID, err)
+			_ = service.recordMarketingSyncAccountError(ctx, target, accountID, code)
+			return marketingSyncAccountResult{Errors: []string{code}}
+		}
+	}
 	errorsList := make([]string, 0, len(catalog.Errors))
 	for _, item := range catalog.Errors {
 		errorsList = append(errorsList, accountID+":"+item)
 	}
 	levels := []string{"account", "campaign", "adset", "ad"}
+	if target.PageScopedPaidData || target.FormScopedPaidData {
+		// Account/campaign/adset insights can contain ads belonging to another
+		// organization when an agency ad account is shared. Ad-level facts are
+		// the only provider rows that can be filtered by creative + form scope.
+		levels = []string{"ad"}
+	}
 	insights := marketingSyncMapLimited(ctx, levels, len(levels), func(ctx context.Context, level string, _ int) marketingSyncInsightResult {
 		return fetchMarketingSyncInsights(ctx, graph, accountID, level, dateRange)
 	})
@@ -154,6 +218,18 @@ func (service *MarketingSyncService) syncMarketingAdAccount(ctx context.Context,
 		}
 		if insightResult.Warning != "" {
 			errorsList = append(errorsList, accountID+"_"+level+":"+insightResult.Warning)
+		}
+		if target.PageScopedPaidData || target.FormScopedPaidData {
+			var missingCatalogRows int
+			insightResult.Items, missingCatalogRows = filterMarketingSyncInsightsToCatalog(
+				insightResult.Items,
+				catalog,
+				accountCatalog,
+			)
+			if missingCatalogRows > 0 {
+				insightResult.Complete = false
+				errorsList = append(errorsList, accountID+"_ad:tenant_scope_catalog_miss")
+			}
 		}
 		levelRows := make([]marketingSyncPerformanceRow, 0, len(insightResult.Items))
 		for _, insight := range insightResult.Items {
@@ -182,6 +258,13 @@ func (service *MarketingSyncService) syncMarketingAdAccount(ctx context.Context,
 			}
 			if _, reconcileErr := service.reconcileMarketingSyncPerformance(ctx, target, accountID, level, dateRange, rows); reconcileErr != nil {
 				errorsList = append(errorsList, marketingSyncScopedError(accountID+"_"+level, reconcileErr))
+			}
+		}
+		if target.PageScopedPaidData || target.FormScopedPaidData {
+			if _, complete := completeSnapshots["ad"]; complete {
+				if _, cleanupErr := service.deleteMarketingSyncUnscopedAggregateLevels(ctx, target, accountID); cleanupErr != nil {
+					errorsList = append(errorsList, marketingSyncScopedError(accountID, cleanupErr))
+				}
 			}
 		}
 	}

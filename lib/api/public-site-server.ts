@@ -12,8 +12,9 @@ import {
   validateDomainResponse,
 } from "@/lib/validation";
 import type { ZodTypeAny } from "zod";
+import { getVimobServerAPIBaseURL } from "@/lib/api/vimob-server-url";
+import { stripStalePublicSiteIntegrations } from "@/lib/site/public-site-cache-safety";
 
-const DEFAULT_API_URL = "http://localhost:8081";
 const PUBLIC_SITE_REVALIDATE_SECONDS = 60;
 const PUBLIC_SITE_STALE_FALLBACK_MS = 1000 * 60 * 60 * 24;
 
@@ -53,6 +54,7 @@ export interface PublicSiteConfig {
   seo_description: string | null;
   seo_keywords: string | null;
   google_analytics_id?: string | null;
+  google_search_console_verification?: string | null;
   hero_image_url: string | null;
   hero_title: string | null;
   hero_subtitle: string | null;
@@ -105,8 +107,6 @@ export interface PublicProperty {
   taxa_de_servico?: number | null;
   valor_itr?: number | null;
   seguro_incendio?: number | null;
-  valor_venda_avaliado?: number | null;
-  valor_locacao_avaliado?: number | null;
   quartos: number | null;
   suites: number | null;
   banheiros: number | null;
@@ -204,7 +204,7 @@ const emptyHomeData: PublicHomeData = {
 const publicSiteFallbackCache = new Map<string, FallbackCacheEntry>();
 
 export function getAPIBaseURL() {
-  return (process.env.VIMOB_API_URL || process.env.NEXT_PUBLIC_VIMOB_API_URL || DEFAULT_API_URL).replace(/\/+$/, "");
+  return getVimobServerAPIBaseURL();
 }
 
 export async function getRequestPublicDomain() {
@@ -440,7 +440,7 @@ function getCachedResolvedSite(candidates: string[]) {
       publicCacheKey(["resolve", normalizePublicDomain(candidate)]),
     );
 
-    if (site) return site;
+    if (site) return stripStalePublicSiteIntegrations(site);
   }
 
   return null;

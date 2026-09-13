@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "rewriteRelativeImportExtensions": true,
+    "noEmit": false,
+    "outDir": ".property-media-tests",
+    "rootDir": ".",
+    "types": ["node"]
+  },
+  "include": [
+    "lib/property-media.ts",
+    "lib/property-media.test.ts",
+    "lib/property-media-draft.ts",
+    "lib/property-media-draft.test.ts",
+    "lib/property-media-asset-input.ts",
+    "lib/property-media-asset-input.test.ts",
+    "lib/property-media-persistence.ts",
+    "lib/api/property-media.test.ts",
+    "lib/validation/common.ts",
+    "lib/validation/properties.ts",
+    "lib/validation/property-media-capacity.test.ts",
+    "lib/validation/property-workspace.ts"
+  ]
+}

@@ -1,6 +1,12 @@
 package permissions
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+)
 
 func TestResolveAppliesDefaultsAndLeaderScope(t *testing.T) {
 	standard := Resolve("user", false, nil, nil)
@@ -43,6 +49,40 @@ func TestResolveAddsReadPermissionForManagementGrants(t *testing.T) {
 	for _, permission := range []string{AutomationsView, FinancialView, WhatsAppView, WhatsAppOperate} {
 		if !Has(resolved, permission) {
 			t.Fatalf("management grant did not imply %s: %v", permission, resolved)
+		}
+	}
+}
+
+func TestOperationalManagementPermissionsImplyTeamRead(t *testing.T) {
+	for _, granted := range []string{DistributionManage, PipelineManage} {
+		resolved := Resolve("user", false, nil, map[string]bool{granted: true})
+		if !Has(resolved, TeamView) {
+			t.Fatalf("%s must imply %s: %v", granted, TeamView, resolved)
+		}
+	}
+}
+
+func TestActiveMigrationSeedsEveryCanonicalPermission(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not resolve catalog test path")
+	}
+	repositoryRoot := filepath.Clean(filepath.Join(filepath.Dir(testFile), "..", "..", "..", ".."))
+	migrationPath := filepath.Join(
+		repositoryRoot,
+		"supabase",
+		"migrations",
+		"20260905120000_sync_available_permission_catalog.sql",
+	)
+	payload, err := os.ReadFile(migrationPath)
+	if err != nil {
+		t.Fatalf("read permission catalog migration: %v", err)
+	}
+	migration := string(payload)
+
+	for _, definition := range Catalog() {
+		if !strings.Contains(migration, "('"+definition.Key+"',") {
+			t.Errorf("active migration is missing canonical permission %q", definition.Key)
 		}
 	}
 }

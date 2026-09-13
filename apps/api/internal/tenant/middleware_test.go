@@ -356,3 +356,38 @@ func TestRequireModule(t *testing.T) {
 		})
 	}
 }
+
+func TestRequireAnyPermission(t *testing.T) {
+	t.Parallel()
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	middleware := RequireAnyPermission([]string{"property_view", "property_manage"}, next)
+
+	for _, test := range []struct {
+		name           string
+		permissions    []string
+		wantStatusCode int
+	}{
+		{name: "view", permissions: []string{"property_view"}, wantStatusCode: http.StatusNoContent},
+		{name: "manage", permissions: []string{"property_manage"}, wantStatusCode: http.StatusNoContent},
+		{name: "neither", permissions: []string{"lead_view"}, wantStatusCode: http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPatch, "/v1/properties/property-1", nil)
+			request = request.WithContext(ContextWithTenant(request.Context(), Context{
+				UserID:         "10000000-0000-0000-0000-000000000001",
+				OrganizationID: "20000000-0000-0000-0000-000000000001",
+				MemberRole:     "user",
+				Permissions:    test.permissions,
+			}))
+			recorder := httptest.NewRecorder()
+
+			middleware.ServeHTTP(recorder, request)
+			if recorder.Code != test.wantStatusCode {
+				t.Fatalf("status = %d, want %d", recorder.Code, test.wantStatusCode)
+			}
+		})
+	}
+}

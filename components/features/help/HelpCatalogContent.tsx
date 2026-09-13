@@ -12,6 +12,7 @@ import {
 import Link from 'next/link'
 import { useMemo, useRef, useState, type FormEvent } from 'react'
 
+import { normalizeSearchText } from '@/lib/search-text'
 import { cn } from '@/lib/utils'
 import type { HelpArticleSummary } from '@/lib/validation'
 
@@ -26,13 +27,6 @@ type HelpCatalogContentProps = {
   showIntro?: boolean
   onRetry?: () => void
   onSearch?: (query: string) => Promise<HelpArticleSummary[]>
-}
-
-function normalizeSearchText(value: string) {
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLocaleLowerCase('pt-BR')
 }
 
 function filterLocally(articles: HelpArticleSummary[], query: string) {

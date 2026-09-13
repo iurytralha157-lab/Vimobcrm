@@ -1,0 +1,1 @@
+export { GoogleAnalyticsIntegrationSettings } from './GoogleAnalyticsIntegrationSettings'

@@ -112,6 +112,7 @@ export const apiStageResponseSchema = apiEnvelopeSchema(apiStageSchema)
 
 export const pipelineBoardLeadSchema = z.object({
   id: uuidSchema,
+  board_sort_at: timestampSchema.nullable().optional(),
   board_order_at: timestampSchema.nullable().optional(),
   stage_entered_at: timestampSchema.nullable().optional(),
 }).passthrough()
@@ -135,6 +136,7 @@ export const pipelineStageCountsResponseSchema = apiEnvelopeSchema(
 
 const metaOptionSchema = z.object({ id: z.string().min(1), name: z.string() }).passthrough()
 export const leadMetaFiltersResponseSchema = apiEnvelopeSchema(z.object({
+  sources: z.array(z.string().trim().min(1).max(180)).max(500),
   campaigns: z.array(metaOptionSchema),
   adsets: z.array(metaOptionSchema.extend({ campaignId: z.string().min(1) })),
   ads: z.array(metaOptionSchema.extend({

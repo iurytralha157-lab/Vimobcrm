@@ -7,7 +7,7 @@ import (
 )
 
 func TestPublicOnboardingRoutesAreRegisteredAsOneReleaseContract(t *testing.T) {
-	raw, err := os.ReadFile("app.go")
+	raw, err := os.ReadFile("routes.go")
 	if err != nil {
 		t.Fatalf("read app.go: %v", err)
 	}

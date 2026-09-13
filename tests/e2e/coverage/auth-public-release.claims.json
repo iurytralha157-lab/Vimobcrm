@@ -47,14 +47,14 @@
           }
         },
         {
-          "claimId": "claim:37feb011e22b690dd6a6",
+          "claimId": "claim:505cd35f8e87d9ff393f",
           "category": "routeViewport",
           "inventoryId": "route:6bcb6e971c4cdde6ebf4",
           "route": "/reset-password",
           "viewport": "desktop",
           "ready": {
             "role": "heading",
-            "name": "Recuperar senha"
+            "name": "Link inválido ou expirado"
           }
         }
       ]

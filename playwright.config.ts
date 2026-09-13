@@ -6,6 +6,7 @@ import {
 } from "./tests/e2e/support/e2e-env";
 
 const discoveryOnly = process.env.E2E_DISCOVERY_ONLY === "true";
+const skipGlobalSeed = process.env.E2E_SKIP_GLOBAL_SEED === "true";
 const e2eConfig = discoveryOnly
   ? {
       baseURL: "http://127.0.0.1:3100",
@@ -18,7 +19,8 @@ const appPort = appURL.port || "3000";
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  globalSetup: discoveryOnly ? undefined : "./tests/e2e/global-setup.ts",
+  globalSetup:
+    discoveryOnly || skipGlobalSeed ? undefined : "./tests/e2e/global-setup.ts",
   timeout: 60_000,
   expect: {
     timeout: 15_000,

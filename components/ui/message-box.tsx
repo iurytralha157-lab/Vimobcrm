@@ -8,6 +8,7 @@ interface MessageBoxProps {
   onSend: () => void;
   onKeyDown?: (e: React.KeyboardEvent) => void;
   placeholder?: string;
+  inputAriaLabel?: string;
   disabled?: boolean;
   isSending?: boolean;
   /** Left-side action buttons (file upload, automation trigger, etc.) */
@@ -25,7 +26,7 @@ interface MessageBoxProps {
 }
 
 const FileUploadIcon = ({ className }: { className?: string }) => (
-  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 337 337" className={cn("h-5 w-5", className)}>
+  <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 337 337" className={cn("h-5 w-5", className)}>
     <circle strokeWidth="20" stroke="currentColor" fill="none" r="158.5" cy="168.5" cx="168.5" />
     <path strokeLinecap="round" strokeWidth="25" stroke="currentColor" d="M167.759 79V259" />
     <path strokeLinecap="round" strokeWidth="25" stroke="currentColor" d="M79 167.138H259" />
@@ -33,7 +34,7 @@ const FileUploadIcon = ({ className }: { className?: string }) => (
 );
 
 const SendIcon = ({ className }: { className?: string }) => (
-  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 664 663" className={cn("h-5 w-5", className)}>
+  <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 664 663" className={cn("h-5 w-5", className)}>
     <path
       strokeLinejoin="round"
       strokeLinecap="round"
@@ -52,6 +53,7 @@ export const MessageBox = React.forwardRef<HTMLDivElement, MessageBoxProps>(
       onSend,
       onKeyDown,
       placeholder = "Message...",
+      inputAriaLabel = "Mensagem",
       disabled = false,
       isSending = false,
       leftActions,
@@ -122,6 +124,7 @@ export const MessageBox = React.forwardRef<HTMLDivElement, MessageBoxProps>(
         {multiline ? (
           <textarea
             ref={setTextareaRef}
+            aria-label={inputAriaLabel}
             placeholder={placeholder}
             value={value}
             onChange={(e) => {
@@ -141,6 +144,7 @@ export const MessageBox = React.forwardRef<HTMLDivElement, MessageBoxProps>(
         ) : (
           <input
             ref={setInputElementRef}
+            aria-label={inputAriaLabel}
             placeholder={placeholder}
             type="text"
             value={value}
@@ -157,6 +161,7 @@ export const MessageBox = React.forwardRef<HTMLDivElement, MessageBoxProps>(
 
         {showSendButton ? (
           <button
+            aria-label={isSending ? "Enviando mensagem" : "Enviar mensagem"}
             className={cn(
               "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[7px] bg-[#FF4529] text-white transition-colors hover:bg-[#ff5a42] disabled:pointer-events-none disabled:opacity-40",
               compact && "h-8 w-8"
@@ -166,7 +171,7 @@ export const MessageBox = React.forwardRef<HTMLDivElement, MessageBoxProps>(
             type="button"
           >
             {isSending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             ) : (
               <SendIcon className="h-4 w-4" />
             )}

@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/authorization"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -488,14 +489,7 @@ func canEditCadences(tenantContext tenant.Context) bool {
 }
 
 func normalizeUUID(value string) (string, bool) {
-	var uuid pgtype.UUID
-	if err := uuid.Scan(strings.TrimSpace(value)); err != nil {
-		return "", false
-	}
-	if !uuid.Valid {
-		return "", false
-	}
-	return uuid.String(), true
+	return pgvalue.NormalizeUUID(value)
 }
 
 func cleanStringPointer(value *string) *string {
@@ -524,10 +518,7 @@ func textOrNil(value *string) any {
 }
 
 func textPointer(value pgtype.Text) *string {
-	if !value.Valid {
-		return nil
-	}
-	return &value.String
+	return pgvalue.TextPointer(value)
 }
 
 func textValue(value pgtype.Text) string {

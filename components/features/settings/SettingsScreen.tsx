@@ -5,14 +5,15 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   BellRing,
-  Building2,
   CreditCard,
   Globe,
   Plug,
+  Search,
   Settings as SettingsIcon,
   Users,
 } from "lucide-react";
 import { AppLayout } from "@/components/shared/layout/AppLayout";
+import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -22,7 +23,6 @@ import { TeamTab } from "@/components/features/settings/TeamTab";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
 import { SubscriptionTab } from "@/components/features/settings/SubscriptionTab";
 import { IntegrationsTab } from "@/components/features/settings/IntegrationsTab";
-import { PropertySettingsTab } from "@/components/features/settings/PropertySettingsTab";
 import { NotificationsTab } from "@/components/features/settings/NotificationsTab";
 import { isBillingAccessBlocked } from "@/lib/billing-access";
 import { canManageOrganization as canManageOrganizationAccess } from "@/lib/access/organization";
@@ -36,6 +36,7 @@ import {
 
 export default function Settings() {
   const {
+    activeOrganization,
     profile,
     isSuperAdmin,
     organization,
@@ -61,7 +62,7 @@ export default function Settings() {
   const normalizedRequestedTab = normalizeSettingsTabAlias(requestedTab);
   const isBillingBlocked =
     !isSuperAdmin && isBillingAccessBlocked(organization);
-  const activeOrganizationId = organization?.id || profile?.organization_id;
+  const activeOrganizationId = activeOrganization.organizationId;
   const activeMemberRole = userOrganizations.find(
     (org) => org.organization_id === activeOrganizationId,
   )?.member_role;
@@ -77,12 +78,12 @@ export default function Settings() {
     canManageOrganization || hasPermission("settings_integrations");
   const canManageWhatsApp =
     canManageOrganization || hasPermission("whatsapp_manage");
+  const canViewWhatsApp =
+    canManageWhatsApp ||
+    hasPermission("whatsapp_view");
   const canManageAI = canManageOrganization || hasPermission("settings_ai");
   const canManageBilling =
     canManageOrganization || hasPermission("settings_billing");
-  const canManageProperties =
-    hasModule("properties") &&
-    (canManageOrganization || hasPermission("property_manage"));
   const canAccessIntegrations = Boolean(profile?.id && activeOrganizationId);
   const accessReady =
     !!profile &&
@@ -93,10 +94,10 @@ export default function Settings() {
       ...(canManageIntegrations
         ? ["webhooks", "meta", "grupo-olx", "api"]
         : []),
-      ...(canManageWhatsApp ? ["whatsapp"] : []),
+      ...(canViewWhatsApp ? ["whatsapp"] : []),
       ...(canManageAI ? ["ai"] : []),
     ],
-    [canManageAI, canManageIntegrations, canManageWhatsApp],
+    [canManageAI, canManageIntegrations, canViewWhatsApp],
   );
   const isUnauthorizedAIRequest =
     accessReady && normalizedRequestedTab === "ai" && !canManageAI;
@@ -123,6 +124,8 @@ export default function Settings() {
           ? normalizedRequestedTab
           : "account";
   const [activeTab, setActiveTab] = useState(initialTab);
+  const [integrationSearch, setIntegrationSearch] = useState("");
+  const [userSearch, setUserSearch] = useState("");
 
   // Sync tab when URL query param changes (e.g. external navigation)
   useEffect(() => {
@@ -178,8 +181,7 @@ export default function Settings() {
       return;
     }
     if (
-      (normalizedTab === "subscription" && !canManageBilling) ||
-      (normalizedTab === "properties" && !canManageProperties)
+      normalizedTab === "subscription" && !canManageBilling
     ) {
       if (activeTab !== "account") setActiveTab("account");
       const next = new URLSearchParams(searchParams);
@@ -199,7 +201,6 @@ export default function Settings() {
     canAccessUsers,
     canManageAI,
     canManageBilling,
-    canManageProperties,
     accessReady,
     legacyIntegrationTabs,
   ]);
@@ -227,8 +228,9 @@ export default function Settings() {
   const hasWebhooksModule = hasModule("webhooks");
   const hasAPIModule = hasModule("api");
   const hasPortalsModule = hasModule("portals");
+  const hasSiteModule = hasModule("site");
   const canManageSite =
-    hasModule("site") &&
+    hasSiteModule &&
     (canManageOrganization || hasPermission("settings_site"));
   const settingsTabs = [
     {
@@ -261,12 +263,6 @@ export default function Settings() {
       icon: Plug,
       visible: !isBillingBlocked && accessReady && canAccessIntegrations,
     },
-    {
-      value: "properties",
-      label: t.nav.settingsProperties,
-      icon: Building2,
-      visible: !isBillingBlocked && accessReady && canManageProperties,
-    },
   ].filter((tab) => tab.visible);
 
   return (
@@ -277,10 +273,10 @@ export default function Settings() {
           onValueChange={handleTabChange}
           className="min-w-0 space-y-3"
         >
-          <div className="flex min-w-0 flex-row items-center gap-2">
+          <div className="flex min-w-0 flex-col gap-2 md:flex-row md:items-center">
             <div
-              className="app-responsive-tab-list min-w-0 flex-1"
-              data-collapse="wide"
+              className="app-responsive-tab-list w-full min-w-0 md:flex-1"
+              data-collapse="standard"
             >
               <nav
                 aria-label="Áreas de Configurações"
@@ -332,6 +328,31 @@ export default function Settings() {
                 </div>
               </nav>
             </div>
+
+            {activeTab === "integrations" && accessReady && canAccessIntegrations ? (
+              <div className="relative w-full shrink-0 md:w-56 lg:w-80">
+                <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={integrationSearch}
+                  onChange={(event) => setIntegrationSearch(event.target.value)}
+                  placeholder="Pesquisar integrações"
+                  aria-label="Pesquisar integrações"
+                  className="h-8 rounded-[8px] pl-8 text-xs"
+                />
+              </div>
+            ) : activeTab === "team" && accessReady && canAccessUsers ? (
+              <div className="relative w-full shrink-0 md:w-56 lg:w-80">
+                <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  type="search"
+                  value={userSearch}
+                  onChange={(event) => setUserSearch(event.target.value)}
+                  placeholder="Pesquisar usuários"
+                  aria-label="Pesquisar usuários e convites"
+                  className="h-8 rounded-[8px] pl-8 text-xs"
+                />
+              </div>
+            ) : null}
           </div>
 
           <TabsContent value="account">
@@ -343,7 +364,7 @@ export default function Settings() {
           </TabsContent>
 
           {!accessReady &&
-            ["team", "subscription", "properties"].includes(activeTab) && (
+            ["team", "subscription"].includes(activeTab) && (
               <TabsContent value={activeTab}>
                 <div className="app-card p-6 text-sm text-muted-foreground">
                   Carregando permissões da organização...
@@ -353,7 +374,7 @@ export default function Settings() {
 
           {accessReady && canAccessUsers && (
             <TabsContent value="team">
-              <TeamTab />
+              <TeamTab search={userSearch} />
             </TabsContent>
           )}
 
@@ -367,16 +388,13 @@ export default function Settings() {
                 hasWebhooksModule={hasWebhooksModule}
                 hasAPIModule={hasAPIModule}
                 hasPortalsModule={hasPortalsModule}
+                hasSiteModule={hasSiteModule}
                 canManageIntegrations={canManageIntegrations}
-                canManageWhatsApp={canManageWhatsApp}
+                canViewWhatsApp={canViewWhatsApp}
                 canManageAI={canManageAI}
+                canManageSite={canManageSite}
+                search={integrationSearch}
               />
-            </TabsContent>
-          )}
-
-          {accessReady && canManageProperties && (
-            <TabsContent value="properties">
-              <PropertySettingsTab />
             </TabsContent>
           )}
 

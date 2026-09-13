@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -719,11 +720,7 @@ func workerActor(job pendingJob) string {
 }
 
 func pgTextPointer(value pgtype.Text) *string {
-	if !value.Valid {
-		return nil
-	}
-	result := value.String
-	return &result
+	return pgvalue.TextPointer(value)
 }
 
 func pgInt4Pointer(value pgtype.Int4) *int64 {

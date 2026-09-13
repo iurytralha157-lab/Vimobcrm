@@ -25,18 +25,51 @@ const leadDetailSource = readFileSync(
   "components/features/leads/LeadDetailDialog.tsx",
   "utf8",
 );
+const leadDetailOverlaysSource = readFileSync(
+  "components/features/leads/lead-detail/LeadDetailOverlays.tsx",
+  "utf8",
+);
 const contactsSource = readFileSync(
   "components/features/contacts/ContactsScreen.tsx",
   "utf8",
 );
+const contactsOverlaysSource = readFileSync(
+  "components/features/contacts/contacts-screen/ContactsOverlays.tsx",
+  "utf8",
+);
 const pipelinesSource = readFileSync(
-  "components/features/pipelines/Pipelines-screen.tsx",
+  "components/features/pipelines/PipelinesScreen.tsx",
+  "utf8",
+);
+const pipelineDialogsSource = readFileSync(
+  "components/features/pipelines/pipeline-screen/PipelineDialogs.tsx",
   "utf8",
 );
 const eventSheetSource = readFileSync(
   "components/features/schedule/EventSheet.tsx",
   "utf8",
 );
+const eventSheetSectionSource = [
+  "EventAssigneesSection.tsx",
+  "EventNotesAndComments.tsx",
+  "EventRelationsSections.tsx",
+  "EventSheetActions.tsx",
+  "EventSheetFeedback.tsx",
+  "EventSheetHeader.tsx",
+  "EventSheetPrimitives.tsx",
+  "EventTimingSection.tsx",
+  "EventVisibilitySection.tsx",
+  "config.tsx",
+  "model.ts",
+]
+  .map((fileName) =>
+    readFileSync(
+      `components/features/schedule/event-sheet/${fileName}`,
+      "utf8",
+    ),
+  )
+  .join("\n");
+const eventSheetFeatureSource = `${eventSheetSource}\n${eventSheetSectionSource}`;
 const agendaSource = readFileSync(
   "components/features/schedule/AgendaScreen.tsx",
   "utf8",
@@ -59,6 +92,10 @@ const homeScreenSource = readFileSync(
 );
 const homeNoticeRailSource = readFileSync(
   "components/features/home/HomeNoticeRail.tsx",
+  "utf8",
+);
+const homePublicationCarouselSource = readFileSync(
+  "components/features/home/HomePublicationCarousel.tsx",
   "utf8",
 );
 
@@ -486,13 +523,16 @@ test("reordenação exige itens únicos e ordens válidas", () => {
 });
 
 test("detalhe do lead monta somente os layouts V2 ativos em mobile e desktop", () => {
-  for (const callerSource of [contactsSource, pipelinesSource]) {
+  for (const callerSource of [contactsOverlaysSource, pipelineDialogsSource]) {
     assert.match(
       callerSource,
       /import\(["']@\/components\/features\/leads\/LeadDetailDialog["']\)/,
     );
     assert.match(callerSource, /<LeadDetailDialog\b/);
   }
+
+  assert.match(contactsSource, /<ContactsOverlays\b/);
+  assert.match(pipelinesSource, /<PipelineDialogs\b/);
 
   assert.match(
     leadDetailSource,
@@ -504,16 +544,18 @@ test("detalhe do lead monta somente os layouts V2 ativos em mobile e desktop", (
   );
   assert.match(leadDetailSource, /disabled=\{!canOperateLead\}/);
   assert.equal(
-    [...leadDetailSource.matchAll(/\{hasAgendaModule && <EventSheet\b/g)].length,
+    [...leadDetailSource.matchAll(/\{overlays\}/g)].length,
     2,
   );
+  assert.match(leadDetailSource, /const overlays = \(\s*<LeadDetailOverlays\b/);
+  assert.match(leadDetailOverlaysSource, /hasAgendaModule && \(\s*<EventSheet\b/);
   assert.match(
     leadDetailSource,
-    /if \(isMobile\) \{[\s\S]*?\{MobileContentV2\(\)\}[\s\S]*?\{hasAgendaModule && <EventSheet\b/,
+    /if \(isMobile\) \{[\s\S]*?\{MobileContentV2\(\)\}[\s\S]*?\{overlays\}/,
   );
   assert.match(
     leadDetailSource,
-    /data-tour="lead-detail-dialog"[\s\S]*?\{DesktopContentV2\(\)\}[\s\S]*?\{hasAgendaModule && <EventSheet\b/,
+    /data-tour="lead-detail-dialog"[\s\S]*?\{DesktopContentV2\(\)\}[\s\S]*?\{overlays\}/,
   );
   assert.match(leadDetailSource, /data-tour="lead-detail-stages"/);
   assert.match(leadDetailSource, /data-tour="lead-detail-history"/);
@@ -524,7 +566,11 @@ test("detalhe do lead monta somente os layouts V2 ativos em mobile e desktop", (
 });
 
 test("EventSheet mantém a superfície responsiva ativa e seus três chamadores", () => {
-  for (const callerSource of [agendaSource, conversationLeadPanelSource, leadDetailSource]) {
+  for (const callerSource of [
+    agendaSource,
+    conversationLeadPanelSource,
+    leadDetailOverlaysSource,
+  ]) {
     assert.match(callerSource, /<EventSheet\b/);
   }
 
@@ -535,11 +581,26 @@ test("EventSheet mantém a superfície responsiva ativa e seus três chamadores"
   );
   assert.match(eventSheetSource, /if \(!hasAgendaModule\) return null/);
   assert.match(eventSheetSource, /hasPermission\("schedule_manage"\)/);
-  assert.match(eventSheetSource, /if \(!nextOpen && isLoading\) return/);
+  assert.match(
+    eventSheetSource,
+    /if \(!nextOpen && \(isLoading \|\| outcomeDialogOpen\)\) return/,
+  );
+  for (const sectionName of [
+    "EventSheetHeader",
+    "EventSheetFeedback",
+    "EventTimingSection",
+    "EventAssigneesSection",
+    "EventVisibilitySection",
+    "EventRelationsSections",
+    "EventNotesAndComments",
+    "EventSheetActions",
+  ]) {
+    assert.match(eventSheetSource, new RegExp(`<${sectionName}\\b`));
+  }
 
-  assert.doesNotMatch(eventSheetSource, /className="hidden"/);
-  assert.doesNotMatch(eventSheetSource, /Mais opções/);
-  assert.doesNotMatch(eventSheetSource, /typeConf\.color/);
+  assert.doesNotMatch(eventSheetFeatureSource, /className="hidden"/);
+  assert.doesNotMatch(eventSheetFeatureSource, /Mais opções/);
+  assert.doesNotMatch(eventSheetFeatureSource, /typeConf\.color/);
 });
 
 test("cabeçalho e aviso da Home mantêm a superfície lisa e resiliente", () => {
@@ -552,7 +613,10 @@ test("cabeçalho e aviso da Home mantêm a superfície lisa e resiliente", () =>
     appHeaderSource,
     /<header className="[^"]*bg-\[var\(--app-surface-solid\)\]/,
   );
-  assert.match(appHeaderSource, /<header className="[^"]*\bpx-5\b[^"]*\bmd:px-8\b/);
+  assert.match(
+    appHeaderSource,
+    /<header className="[^"]*\bpx-5\b[^"]*\bmd:px-8\b/,
+  );
   assert.doesNotMatch(appHeaderSource, /<header className="[^"]*\bmd:ml-/);
   assert.doesNotMatch(appHeaderSource, /from ['"]next\/image['"]/);
   assert.match(
@@ -572,7 +636,11 @@ test("cabeçalho e aviso da Home mantêm a superfície lisa e resiliente", () =>
     /aria-label=\{`Notificações[\s\S]*?className="[^"]*rounded-\[6px\][^"]*\bborder-0\b[^"]*\bbg-card\b/,
   );
   assert.equal(
-    [...appHeaderSource.matchAll(/className="[^"]*rounded-\[6px\][^"]*\bborder-0\b[^"]*\bbg-card\b[^"]*\bshadow-none\b/g)].length,
+    [
+      ...appHeaderSource.matchAll(
+        /className="[^"]*rounded-\[6px\][^"]*\bborder-0\b[^"]*\bbg-card\b[^"]*\bshadow-none\b/g,
+      ),
+    ].length,
     3,
   );
   assert.match(
@@ -593,5 +661,79 @@ test("cabeçalho e aviso da Home mantêm a superfície lisa e resiliente", () =>
     homeScreenSource,
     /belowHeader=\{<HomeNoticeRail notices=\{noticesQuery\.data \|\| \[\]\} \/>\}/,
   );
-  assert.match(homeNoticeRailSource, /\bw-full\b[^"\n]*\brounded-none\b[^"\n]*\bpx-5\b[^"\n]*\bshadow-none\b[^"\n]*\bmd:px-8\b/);
+  assert.match(
+    homeNoticeRailSource,
+    /\bw-full\b[^"\n]*\brounded-none\b[^"\n]*\bpx-5\b[^"\n]*\bshadow-none\b[^"\n]*\bmd:px-8\b/,
+  );
+});
+
+test("Página inicial publica novidades em um carrossel automático e visualmente limpo", () => {
+  assert.match(homeScreenSource, /<HomePublicationCarousel/);
+  assert.match(homeScreenSource, /-mx-5 -mt-2 md:-mx-6 md:-mt-3/);
+  assert.match(homeScreenSource, /hasError=\{publicationsQuery\.isError\}/);
+  assert.doesNotMatch(homeScreenSource, /FALLBACK_HOME_PUBLICATIONS/);
+  assert.match(homePublicationCarouselSource, /Comunicados indisponíveis/);
+  assert.match(
+    homePublicationCarouselSource,
+    /Não foi possível carregar os comunicados reais desta organização\./,
+  );
+  assert.match(
+    homePublicationCarouselSource,
+    /aria-label="Novidades e comunicados"/,
+  );
+  assert.match(
+    homePublicationCarouselSource,
+    /aria-live=\{autoplayPaused \? "polite" : "off"\}/,
+  );
+  assert.match(homePublicationCarouselSource, /prefers-reduced-motion: reduce/);
+  assert.match(
+    homePublicationCarouselSource,
+    /document\.visibilityState === "visible"/,
+  );
+  assert.match(
+    homePublicationCarouselSource,
+    /window\.setInterval\([\s\S]*?\(\) => api\.scrollNext\(\)/,
+  );
+  assert.match(homePublicationCarouselSource, /loop: hasMultipleSlides/);
+  assert.match(
+    homePublicationCarouselSource,
+    /onMouseEnter=\{\(\) => setIsHovering\(true\)\}/,
+  );
+  assert.match(
+    homePublicationCarouselSource,
+    /onMouseLeave=\{\(\) => setIsHovering\(false\)\}/,
+  );
+  assert.match(
+    homePublicationCarouselSource,
+    /aria-label="Comunicado anterior"/,
+  );
+  assert.match(
+    homePublicationCarouselSource,
+    /aria-label="Próximo comunicado"/,
+  );
+  assert.match(homePublicationCarouselSource, /ChevronLeft/);
+  assert.match(homePublicationCarouselSource, /ChevronRight/);
+  assert.match(
+    homePublicationCarouselSource,
+    /h-7 w-7[^"\n]*shadow-none[^"\n]*hover:bg-primary[^"\n]*active:scale-95[^"\n]*active:bg-primary/,
+  );
+  assert.doesNotMatch(homePublicationCarouselSource, /from "next\/link"/);
+  assert.doesNotMatch(homePublicationCarouselSource, /publication\.ctaLabel/);
+  assert.doesNotMatch(homePublicationCarouselSource, /\n\s*ArrowRight,\n/);
+  assert.match(homePublicationCarouselSource, /min-h-\[140px\]/);
+  assert.match(homePublicationCarouselSource, /sm:min-h-\[152px\]/);
+  assert.doesNotMatch(
+    homePublicationCarouselSource,
+    /Pausar rotação automática/,
+  );
+  assert.doesNotMatch(homePublicationCarouselSource, /Selecionar comunicado/);
+  assert.doesNotMatch(homePublicationCarouselSource, /aria-current=/);
+  assert.doesNotMatch(homePublicationCarouselSource, /isManuallyPaused/);
+  assert.doesNotMatch(
+    homePublicationCarouselSource,
+    /border-t border-\[var\(--app-border\)\]/,
+  );
+  assert.match(homePublicationCarouselSource, /overflow-hidden rounded-none/);
+  assert.match(homePublicationCarouselSource, /event\.key === "ArrowLeft"/);
+  assert.match(homePublicationCarouselSource, /event\.key === "ArrowRight"/);
 });

@@ -20,6 +20,7 @@ import { CONTRACT_DOCUMENT_CONFIG } from '@/config/constants';
 import { useToast } from '@/hooks/use-toast';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { financialAPI } from '@/lib/api/financial';
+import { getNonBlankErrorMessageOrFallback } from '@/lib/api/vimob-error';
 import type { ContractDocument } from '@/lib/validation';
 
 interface ContractDocumentsProps {
@@ -29,10 +30,6 @@ interface ContractDocumentsProps {
 
 const CONTRACT_DOCUMENT_ACCEPT = Object.keys(CONTRACT_DOCUMENT_CONFIG.acceptedTypes).join(',');
 const CONTRACT_DOCUMENT_FORMATS = 'PDF, DOC, DOCX, JPG, PNG, WEBP, XLS ou XLSX';
-
-function getErrorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message.trim() ? error.message : fallback;
-}
 
 function validateContractDocument(file: File) {
   const fileName = file.name.trim();
@@ -94,7 +91,7 @@ export function ContractDocuments({ contractId, organizationId }: ContractDocume
     },
     onError: (error: unknown) => toast({
       title: 'Não foi possível anexar o documento',
-      description: getErrorMessage(error, 'Tente novamente em instantes.'),
+      description: getNonBlankErrorMessageOrFallback(error, 'Tente novamente em instantes.'),
       variant: 'destructive',
     }),
   });
@@ -113,7 +110,7 @@ export function ContractDocuments({ contractId, organizationId }: ContractDocume
     },
     onError: (error: unknown) => toast({
       title: 'Não foi possível remover o documento',
-      description: getErrorMessage(error, 'Tente novamente em instantes.'),
+      description: getNonBlankErrorMessageOrFallback(error, 'Tente novamente em instantes.'),
       variant: 'destructive',
     }),
   });
@@ -139,7 +136,7 @@ export function ContractDocuments({ contractId, organizationId }: ContractDocume
     } catch (error) {
       toast({
         title: 'Não foi possível baixar o documento',
-        description: getErrorMessage(error, 'Tente novamente em instantes.'),
+        description: getNonBlankErrorMessageOrFallback(error, 'Tente novamente em instantes.'),
         variant: 'destructive',
       });
     } finally {
@@ -166,7 +163,10 @@ export function ContractDocuments({ contractId, organizationId }: ContractDocume
   const showError = !hasDocumentContext || documentsQuery.isError;
   const queryErrorMessage = !hasDocumentContext
     ? 'O contrato não possui um contexto de organização válido.'
-    : getErrorMessage(documentsQuery.error, 'Tente carregar os documentos novamente.');
+    : getNonBlankErrorMessageOrFallback(
+        documentsQuery.error,
+        'Tente carregar os documentos novamente.',
+      );
 
   return (
     <>

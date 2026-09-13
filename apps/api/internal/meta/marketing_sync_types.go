@@ -8,10 +8,12 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/vimob-crm/vimob-crm/packages/db"
 )
 
@@ -122,7 +124,16 @@ type marketingSyncTarget struct {
 	InstagramUsername          string
 	AdAccountID                string
 	SelectedAdAccounts         []any
+	ActiveLeadFormIDs          []string
 	AccessToken                string
+	// PageScopedPaidData enables tenant-safe ad-level synchronization. In this
+	// mode an ad must belong to this integration's Page/Instagram asset before
+	// any provider fact is persisted.
+	PageScopedPaidData bool
+	// FormScopedPaidData is stricter and is enabled when the same external ad
+	// account and Page/Instagram asset are bound to multiple integrations. In
+	// that mode an ad must also reference one active Lead Ads form of this tenant.
+	FormScopedPaidData bool
 }
 
 type marketingSyncAggregate struct {
@@ -151,16 +162,20 @@ type marketingSyncDB interface {
 	SendBatch(context.Context, *pgx.Batch) pgx.BatchResults
 }
 
+type marketingSyncOrganizationLockAcquirer func(context.Context, string) (func(), bool, error)
+
 type MarketingSyncService struct {
-	db             marketingSyncDB
-	graphBaseURL   string
-	graphVersion   string
-	appSecret      string
-	httpClient     *http.Client
-	runtimeLimit   time.Duration
-	requestTimeout time.Duration
-	now            func() time.Time
-	sleep          func(context.Context, time.Duration) error
+	db                      marketingSyncDB
+	acquireOrganizationLock marketingSyncOrganizationLockAcquirer
+	localOrganizationSyncs  sync.Map
+	graphBaseURL            string
+	graphVersion            string
+	appSecret               string
+	httpClient              *http.Client
+	runtimeLimit            time.Duration
+	requestTimeout          time.Duration
+	now                     func() time.Time
+	sleep                   func(context.Context, time.Duration) error
 }
 
 // NewMarketingSyncService creates the Meta Marketing synchronizer used by the
@@ -182,7 +197,7 @@ func newMarketingSyncService(database marketingSyncDB, config Config, client *ht
 	if client == nil {
 		client = &http.Client{}
 	}
-	return &MarketingSyncService{
+	service := &MarketingSyncService{
 		db:             database,
 		graphBaseURL:   graphBaseURL,
 		graphVersion:   graphVersion,
@@ -202,6 +217,12 @@ func newMarketingSyncService(database marketingSyncDB, config Config, client *ht
 			}
 		},
 	}
+	if pool, ok := database.(*pgxpool.Pool); ok {
+		service.acquireOrganizationLock = func(ctx context.Context, organizationID string) (func(), bool, error) {
+			return acquireMarketingSyncOrganizationLock(ctx, pool, organizationID)
+		}
+	}
+	return service
 }
 
 func normalizeMarketingSyncGraphBaseURL(value string) string {

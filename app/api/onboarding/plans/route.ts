@@ -1,3 +1,5 @@
+import { getVimobServerAPIBaseURL as getAPIBaseURL } from '@/lib/api/vimob-server-url'
+
 export const runtime = 'nodejs'
 
 const PLANS_BACKEND_TIMEOUT_MS = 10_000
@@ -34,10 +36,6 @@ function isLegacyPublicPlan(plan: PublicPlan) {
   const name = plan.name?.trim().toLowerCase() || ''
 
   return legacyPublicPlanSlugs.has(slug) || legacyPublicPlanNames.has(name)
-}
-
-function getAPIBaseURL() {
-  return (process.env.VIMOB_API_URL || process.env.NEXT_PUBLIC_VIMOB_API_URL || 'http://localhost:8081').replace(/\/+$/, '')
 }
 
 export async function GET() {

@@ -104,10 +104,11 @@ Esses clientes mantem o formato legado em snake_case para os componentes atuais,
 - listar/criar/remover bairros;
 - listar/criar/remover condominios.
 
-`property-images.ts` usa a Vimob API para:
-
-- enviar imagem principal e galeria de imoveis via `multipart/form-data`;
-- manter o bucket `properties` acessado apenas pelo backend, nunca pelo componente React.
+`property-images.ts` e o endpoint multipart legado estao desativados. Imagens
+novas usam `property-media.ts`: intent de upload no bucket privado, envio direto
+ao Storage e cadastro canonico em `property_assets`. O descarte e a exclusao
+fisica aguardam o vencimento do token assinado mais a margem de seguranca; a
+reserva consumida permanece como tombstone ate esse prazo contra replay.
 
 `property-support.ts` usa a Vimob API para:
 

@@ -1,0 +1,17 @@
+export const INTEGRATION_BRAND_ASSETS = {
+  canalPro: "/images/integrations/canal-pro.svg",
+  claude: "/images/integrations/claude.svg",
+  googleAnalytics: "/images/integrations/google-analytics.svg",
+  googleCalendar: "/images/integrations/google-calendar.svg",
+  googleSearchConsole: "/images/integrations/google-search-console.svg",
+  googleTagManager: "/images/integrations/google-tag-manager.svg",
+  instagram: "/images/integrations/instagram.svg",
+  zapImoveis: "/images/integrations/zap-imoveis.svg",
+  meta: "/images/integrations/meta.svg",
+  vivaReal: "/images/integrations/viva-real.svg",
+  olx: "/images/integrations/olx.svg",
+  openAI: "/images/integrations/openai.svg",
+  manyChat: "/images/integrations/manychat.svg",
+  vista: "/images/integrations/vista.svg",
+  whatsapp: "/images/integrations/whatsapp.svg",
+} as const;

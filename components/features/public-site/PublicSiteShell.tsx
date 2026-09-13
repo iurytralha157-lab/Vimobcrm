@@ -1,6 +1,6 @@
 /* eslint-disable @next/next/no-img-element */
 
-import type { CSSProperties, ReactNode } from "react";
+import { Suspense, type CSSProperties, type ReactNode } from "react";
 import Link from "next/link";
 import { Heart, Mail, MapPin, Menu, MessageCircle, Phone } from "lucide-react";
 
@@ -92,8 +92,11 @@ export function PublicSiteShell({
         gtmId={site.gtm_id}
         headScripts={site.head_scripts}
         metaPixelId={site.meta_pixel_id}
+        organizationId={site.organization_id}
       />
-      <PublicSiteTracker organizationId={site.organization_id} pageTitle={pageTitle} propertyId={propertyId} />
+      <Suspense fallback={null}>
+        <PublicSiteTracker organizationId={site.organization_id} pageTitle={pageTitle} propertyId={propertyId} />
+      </Suspense>
 
       <a
         href="#public-site-content"
@@ -294,6 +297,7 @@ export function PublicSiteShell({
       </footer>
 
       <PublicCookieConsent
+        organizationId={site.organization_id}
         primaryColor={tokens.primary}
         privacyHref={buildSiteHref(basePath, "/politica-de-privacidade")}
         siteTitle={title}

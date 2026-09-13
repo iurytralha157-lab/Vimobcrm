@@ -18,6 +18,20 @@ func TestValidateSiteAnalyticsValues(t *testing.T) {
 	}{
 		{name: "keeps the API defaults when dates are omitted", values: url.Values{}},
 		{
+			name: "rejects dateFrom without dateTo",
+			values: url.Values{
+				"dateFrom": {"2026-08-01"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects dateTo without dateFrom",
+			values: url.Values{
+				"dateTo": {"2026-08-31"},
+			},
+			wantErr: true,
+		},
+		{
 			name: "accepts local calendar dates",
 			values: url.Values{
 				"dateFrom": {"2026-08-01"},
@@ -96,11 +110,13 @@ func TestValidateCampaignInsightsValues(t *testing.T) {
 		{
 			name: "accepts local calendar dates and UUID filters",
 			values: url.Values{
-				"dateFrom": {"2026-07-01"},
-				"dateTo":   {"2026-07-31"},
-				"teamId":   {"11111111-1111-4111-8111-111111111111"},
-				"userId":   {"22222222-2222-4222-8222-222222222222"},
-				"tagId":    {"33333333-3333-4333-8333-333333333333"},
+				"dateFrom":  {"2026-07-01"},
+				"dateTo":    {"2026-07-31"},
+				"accountId": {"act_123456789"},
+				"objective": {"OUTCOME_LEADS"},
+				"teamId":    {"11111111-1111-4111-8111-111111111111"},
+				"userId":    {"22222222-2222-4222-8222-222222222222"},
+				"tagId":     {"33333333-3333-4333-8333-333333333333"},
 			},
 		},
 		{
@@ -136,6 +152,24 @@ func TestValidateCampaignInsightsValues(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "rejects oversized provider filters",
+			values: url.Values{
+				"dateFrom":  {"2026-07-01"},
+				"dateTo":    {"2026-07-31"},
+				"accountId": {strings.Repeat("x", 256)},
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects unsupported deal statuses",
+			values: url.Values{
+				"dateFrom":   {"2026-07-01"},
+				"dateTo":     {"2026-07-31"},
+				"dealStatus": {"deleted"},
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, test := range tests {
@@ -153,10 +187,53 @@ func TestValidateCampaignInsightsValues(t *testing.T) {
 	}
 }
 
-func TestCampaignInsightsDoesNotFabricateUnknownHistoricalFollowers(t *testing.T) {
-	source, err := os.ReadFile("repository.go")
+func TestSiteSummaryExposesOrganizationFreshnessOutsideSelectedPeriod(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("site_repository.go")
 	if err != nil {
-		t.Fatalf("read repository.go: %v", err)
+		t.Fatalf("read site_repository.go: %v", err)
+	}
+	query := string(source)
+	for _, required := range []string{
+		"lastObservedAtSQL := siteAnalyticsObservedAtSQL(\"e.\", capabilities.lastSeenAt)",
+		"select max(`+lastObservedAtSQL+`) as last_collected_at",
+		"where e.organization_id = $1::uuid",
+		"'lastCollectedAt', f.last_collected_at",
+	} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("site summary is missing freshness contract %q", required)
+		}
+	}
+}
+
+func TestSiteSummaryPreviousConversionRateUsesConvertedSessions(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("site_repository.go")
+	if err != nil {
+		t.Fatalf("read site_repository.go: %v", err)
+	}
+	query := string(source)
+	for _, required := range []string{
+		"count(distinct session_id) filter (",
+		"where event_type = 'form_submit' and session_id not like 'site-contact:%'",
+		")::int converted_sessions",
+		"round(p.converted_sessions::numeric*100/p.sessions,2)",
+	} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("site summary is missing session conversion contract %q", required)
+		}
+	}
+	if strings.Contains(query, "round(p.conversions::numeric*100/p.sessions,2)") {
+		t.Fatal("previous conversion rate must not exceed 100% because one session submitted more than once")
+	}
+}
+
+func TestCampaignInsightsDoesNotFabricateUnknownHistoricalFollowers(t *testing.T) {
+	source, err := os.ReadFile("marketing_repository.go")
+	if err != nil {
+		t.Fatalf("read marketing_repository.go: %v", err)
 	}
 	query := string(source)
 	for _, required := range []string{
@@ -173,12 +250,106 @@ func TestCampaignInsightsDoesNotFabricateUnknownHistoricalFollowers(t *testing.T
 	}
 }
 
+func TestCampaignInsightsExposesSanitizedMetaCapabilitiesToDashboardViewers(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("marketing_repository.go")
+	if err != nil {
+		t.Fatalf("read marketing_repository.go: %v", err)
+	}
+	query := string(source)
+	for _, required := range []string{
+		"@> array['ads_read']::text[] as marketing_token_available",
+		"integration.token_expires_at > now() + interval '5 minutes'",
+		"'instagram_manage_insights'",
+		"coalesce(bool_or(marketing_token_available), false)",
+		"'marketingTokenAvailable'",
+		"'instagramInsightsAvailable'",
+	} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("campaign insights is missing sanitized capability contract %q", required)
+		}
+	}
+	if strings.Contains(query, "'accessToken'") || strings.Contains(query, "'userAccessToken'") {
+		t.Fatal("campaign insights must never expose Meta credentials")
+	}
+}
+
+func TestCampaignInsightsRecalculatesPaidMediaMetricsForSelectedPeriod(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("marketing_repository.go")
+	if err != nil {
+		t.Fatalf("read marketing_repository.go: %v", err)
+	}
+	query := string(source)
+	for _, required := range []string{
+		"left join paid_ads as current_paid_ad",
+		"when asset.source_kind = 'paid' then jsonb_strip_nulls",
+		"'impressions', current_paid_ad.impressions",
+		"'spend', current_paid_ad.spend",
+		"else asset.metrics",
+	} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("campaign insights is missing period-scoped paid media contract %q", required)
+		}
+	}
+}
+
+func TestCampaignInsightsFallsBackToTenantScopedAdFacts(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("marketing_repository.go")
+	if err != nil {
+		t.Fatalf("read marketing_repository.go: %v", err)
+	}
+	query := string(source)
+	for _, required := range []string{
+		"from paid as preferred_campaign",
+		"from paid as preferred_adset",
+		"from paid as account_metric",
+		"from paid as campaign_metric",
+		"from paid as adset_metric",
+		"then 'adset_fallback'",
+		"else 'ad_fallback'",
+	} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("campaign insights is missing safe paid-fact fallback %q", required)
+		}
+	}
+}
+
+func TestCampaignInsightsSupportsTenantScopedMarketingDimensionsAndReconciliation(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("marketing_repository.go")
+	if err != nil {
+		t.Fatalf("read marketing_repository.go: %v", err)
+	}
+	query := string(source)
+	for _, required := range []string{
+		"metric.organization_id = $1::uuid",
+		"metric.external_account_id = params.account_id",
+		"metric.objective = params.objective",
+		"from available_accounts as account",
+		"from available_objectives as objective",
+		"'filterOptions'",
+		"'reportedResults', (select leads_reported + conversations from summary)",
+		"'crmAttributedLeads', (select leads from summary)",
+		"'meta_leads_plus_messaging_conversations_non_unique'",
+	} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("campaign insights is missing dimension/reconciliation contract %q", required)
+		}
+	}
+}
+
 func TestCampaignInsightsScopesContactToTheAttributedEntry(t *testing.T) {
 	t.Parallel()
 
-	source, err := os.ReadFile("repository.go")
+	source, err := os.ReadFile("marketing_repository.go")
 	if err != nil {
-		t.Fatalf("read repository.go: %v", err)
+		t.Fatalf("read marketing_repository.go: %v", err)
 	}
 	query := string(source)
 	for _, required := range []string{
@@ -199,9 +370,9 @@ func TestCampaignInsightsScopesContactToTheAttributedEntry(t *testing.T) {
 func TestCampaignInsightsUsesCanonicalEntryOrderAndImmutableWonValue(t *testing.T) {
 	t.Parallel()
 
-	source, err := os.ReadFile("repository.go")
+	source, err := os.ReadFile("marketing_repository.go")
 	if err != nil {
-		t.Fatalf("read repository.go: %v", err)
+		t.Fatalf("read marketing_repository.go: %v", err)
 	}
 	query := string(source)
 	for _, required := range []string{

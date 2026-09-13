@@ -39,6 +39,9 @@ func TestClientIPResolverIgnoresSpoofedForwardingFromUntrustedPeer(t *testing.T)
 	if got := resolver.Resolve(request); got != "203.0.113.20" {
 		t.Fatalf("client IP = %q, want direct untrusted peer", got)
 	}
+	if resolver.TrustsForwardedHeaders(request) {
+		t.Fatal("untrusted peer must not authorize infrastructure metadata headers")
+	}
 }
 
 func TestClientIPResolverWalksTrustedProxyChainFromTheRight(t *testing.T) {
@@ -55,6 +58,9 @@ func TestClientIPResolverWalksTrustedProxyChainFromTheRight(t *testing.T) {
 
 	if got := resolver.Resolve(request); got != "198.51.100.44" {
 		t.Fatalf("client IP = %q, want first untrusted hop", got)
+	}
+	if !resolver.TrustsForwardedHeaders(request) {
+		t.Fatal("trusted immediate proxy should authorize infrastructure metadata headers")
 	}
 }
 

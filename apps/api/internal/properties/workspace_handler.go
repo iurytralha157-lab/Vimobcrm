@@ -1,9 +1,6 @@
 package properties
 
 import (
-	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
 	"strings"
 
@@ -38,8 +35,7 @@ func (handler Handler) UpsertOffer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var input UpsertPropertyOfferInput
-	if err := decodePropertyWorkspaceJSON(w, r, &input); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+	if err := httpserver.DecodeJSON(w, r, &input, propertyWorkspaceBodyLimit); err != nil {
 		return
 	}
 	offer, err := handler.repo.UpsertPropertyOffer(
@@ -65,8 +61,7 @@ func (handler Handler) CreateKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var input CreatePropertyKeyInput
-	if err := decodePropertyWorkspaceJSON(w, r, &input); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+	if err := httpserver.DecodeJSON(w, r, &input, propertyWorkspaceBodyLimit); err != nil {
 		return
 	}
 	key, err := handler.repo.CreatePropertyKey(r.Context(), tenantContext, r.PathValue("id"), input)
@@ -86,8 +81,7 @@ func (handler Handler) MoveKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var input PropertyKeyMovementInput
-	if err := decodePropertyWorkspaceJSON(w, r, &input); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+	if err := httpserver.DecodeJSON(w, r, &input, propertyWorkspaceBodyLimit); err != nil {
 		return
 	}
 	input.IdempotencyKey = strings.TrimSpace(r.Header.Get("Idempotency-Key"))
@@ -103,22 +97,6 @@ func (handler Handler) MoveKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpserver.WriteJSON(w, http.StatusCreated, map[string]PropertyKeyMovementResult{"data": result})
-}
-
-func decodePropertyWorkspaceJSON(w http.ResponseWriter, r *http.Request, destination any) error {
-	defer r.Body.Close()
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, propertyWorkspaceBodyLimit))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		return err
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return errors.New("request body must contain a single JSON value")
-		}
-		return err
-	}
-	return nil
 }
 
 func setPropertyWorkspacePrivateHeaders(w http.ResponseWriter) {

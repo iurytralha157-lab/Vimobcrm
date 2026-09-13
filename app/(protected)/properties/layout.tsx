@@ -4,7 +4,11 @@ import { PermissionBoundary } from '@/components/shared/access/PermissionBoundar
 
 export default function PropertiesLayout({ children }: { children: ReactNode }) {
   return (
-    <PermissionBoundary module="properties" title="Imoveis" anyOf={["property_view", "property_manage"]}>
+    <PermissionBoundary
+      module="properties"
+      title="Imoveis"
+      anyOf={["property_view", "property_manage", "settings_organization"]}
+    >
       {children}
     </PermissionBoundary>
   );

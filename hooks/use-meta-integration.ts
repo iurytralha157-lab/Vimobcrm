@@ -4,6 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import {
   metaAdAccountsActionResponseSchema,
+  metaConnectPageActionResponseSchema,
   metaOAuthFlowResultSchema,
   metaPublicIntegrationSchema,
   type MetaOAuthAdAccount,
@@ -25,8 +26,8 @@ function invokeMeta<T>(body: Record<string, unknown>, organizationId?: string | 
 }
 
 export function useMetaIntegrations(options: { enabled?: boolean } = {}) {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ["meta-integrations", organizationId],
@@ -40,8 +41,8 @@ export function useMetaIntegrations(options: { enabled?: boolean } = {}) {
 }
 
 export function useMetaGetAuthUrl() {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useMutation({
     mutationFn: async (params: string | { returnUrl: string; includeInstagram?: boolean }) => {
@@ -59,8 +60,8 @@ export function useMetaGetAuthUrl() {
 
 export function useMetaConnectPage() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useMutation({
     mutationFn: ({
@@ -80,7 +81,7 @@ export function useMetaConnectPage() {
       adAccountId?: string;
       selectedAdAccountIds?: string[];
     }) =>
-      invokeMeta<{ success?: boolean; messenger_active?: boolean }>({
+      invokeMeta<unknown>({
         action: "connect_page",
         page_id: pageId,
         flow_id: flowId,
@@ -89,14 +90,18 @@ export function useMetaConnectPage() {
         default_status: defaultStatus || null,
         ad_account_id: adAccountId,
         selected_ad_accounts: selectedAdAccountIds,
-      }, organizationId),
+      }, organizationId).then((result) => metaConnectPageActionResponseSchema.parse(result)),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["meta-integrations"] });
       queryClient.invalidateQueries({ queryKey: ["meta-form-configs"] });
-      if (data.success && data.messenger_active === false) {
+      if (data.missing_permissions.includes("ads_read")) {
+        toast.warning(
+          "Página conectada, mas o Meta não liberou ads_read. Reconecte a conta para ativar a sincronização da Dashboard de Marketing.",
+        );
+      } else if (data.messenger_active === false) {
         toast.success("A página foi conectada para leads. Mensagens do Messenger exigem permissão adicional.");
       } else {
-      toast.success("Página conectada com sucesso!");
+        toast.success("Página conectada com sucesso!");
       }
     },
     onError: (error: Error) => {
@@ -107,8 +112,8 @@ export function useMetaConnectPage() {
 
 export function useMetaUpdatePage() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useMutation({
     mutationFn: ({
@@ -144,8 +149,8 @@ export function useMetaUpdatePage() {
 
 export function useMetaDisconnectPage() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useMutation({
     mutationFn: (pageId: string) =>
@@ -165,8 +170,8 @@ export function useMetaDisconnectPage() {
 
 export function useMetaTogglePage() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useMutation({
     mutationFn: ({ pageId, isActive }: { pageId: string; isActive: boolean }) =>
@@ -186,8 +191,8 @@ export function useMetaTogglePage() {
 
 export function useMetaUpdateAdAccounts() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useMutation({
     mutationFn: ({ pageId, adAccountIds }: { pageId: string; adAccountIds: string[] }) =>
@@ -208,8 +213,8 @@ export function useMetaUpdateAdAccounts() {
 
 export function useMetaConversionFeedback() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useMutation({
     mutationFn: (input: {
@@ -246,8 +251,8 @@ export function useMetaAdAccounts(
   pageId?: string | null,
   options: { enabled: boolean } = { enabled: false },
 ) {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ["meta-ad-accounts", organizationId, pageId],
@@ -266,8 +271,8 @@ export function useMetaAdAccounts(
 }
 
 export function useMetaOAuthFlowResult() {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useMutation({
     mutationFn: async (flowId: string) => {

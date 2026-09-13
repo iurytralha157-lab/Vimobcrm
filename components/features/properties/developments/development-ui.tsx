@@ -4,6 +4,7 @@ import { Building2, CircleDashed } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
+import { formatWholePtBRCurrency } from '@/lib/utils/formatting'
 
 export const DEVELOPMENT_STATUS_LABELS: Record<string, string> = {
   planning: 'Planejamento',
@@ -81,11 +82,7 @@ export function isSafeDevelopmentImageUrl(value?: string | null): value is strin
 
 export function formatDevelopmentCurrency(value?: number | null, currency = 'BRL') {
   if (value == null) return '—'
-  return new Intl.NumberFormat('pt-BR', {
-    style: 'currency',
-    currency,
-    maximumFractionDigits: 0,
-  }).format(value)
+  return formatWholePtBRCurrency(value, currency)
 }
 
 export function formatDevelopmentDate(value?: string | null, withTime = false) {

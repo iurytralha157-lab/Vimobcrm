@@ -4,6 +4,7 @@ import { Suspense } from 'react'
 
 import { AuthSplitLayout } from '@/components/features/auth/AuthSplitLayout'
 import ResetPasswordScreen from '@/components/features/auth/screens/ResetPasswordScreen'
+import { VimobLoader } from '@/components/shared/loading'
 
 export const metadata: Metadata = {
   title: {
@@ -37,7 +38,13 @@ export default function ResetPasswordPage() {
         </p>
       )}
     >
-      <Suspense fallback={null}>
+      <Suspense
+        fallback={(
+          <div className="flex min-h-[260px] items-center justify-center">
+            <VimobLoader size="lg" label="Carregando recuperação de senha..." />
+          </div>
+        )}
+      >
         <ResetPasswordScreen />
       </Suspense>
     </AuthSplitLayout>

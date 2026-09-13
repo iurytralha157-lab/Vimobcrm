@@ -384,13 +384,10 @@ func (repo Repository) RunProviderAction(ctx context.Context, tenantContext tena
 		return ProviderActionResponse{}, err
 	}
 
-	payload := map[string]any{"session_id": session.ID}
-	if request.InstanceID != "" {
-		payload["instance_id"] = request.InstanceID
-	}
-	if request.Body != nil {
-		payload["body"] = request.Body
-	}
+	// The authorized session row is the only source of provider identity. Never
+	// let a public request select another Evolution instance, even as a fallback
+	// when a legacy session is missing its resolved provider key.
+	payload := providerActionPayload(session.ID, request)
 
 	result, err := repo.functions.invokeEvolution(ctx, action, payload)
 	if err != nil {
@@ -398,6 +395,25 @@ func (repo Repository) RunProviderAction(ctx context.Context, tenantContext tena
 	}
 
 	return ProviderActionResponse{OK: true, Data: result["data"]}, nil
+}
+
+func providerActionPayload(sessionID string, request ProviderActionRequest) map[string]any {
+	payload := map[string]any{"session_id": sessionID}
+	if request.Body != nil {
+		payload["body"] = providerActionBody(request.Body)
+	}
+	return payload
+}
+
+func providerActionBody(input map[string]any) map[string]any {
+	body := make(map[string]any, len(input))
+	for key, value := range input {
+		body[key] = value
+	}
+	for _, identityKey := range []string{"instance_id", "instanceId", "instance_name", "instanceName", "name"} {
+		delete(body, identityKey)
+	}
+	return body
 }
 
 func scanWhatsAppLabel(row scanner) (WhatsAppLabel, error) {

@@ -1,12 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useAuth } from "@/contexts/AuthContext";
+import { useActiveOrganizationId } from "@/hooks/use-active-organization";
 import { useToast } from "@/hooks/use-toast";
 import { aiAPI, type AIAgentInput, type AIRoutingRuleInput, type AISettingsInput } from "@/lib/api/ai";
-
-function useActiveOrganizationId() {
-  const { organization, profile } = useAuth();
-  return organization?.id || profile?.organization_id || null;
-}
 
 export function useAISettings() {
   const organizationId = useActiveOrganizationId();

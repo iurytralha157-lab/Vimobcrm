@@ -13,8 +13,18 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { uploadPropertyImage } from '@/lib/api/property-images';
+import { stringifyErrorMessage as getErrorMessage } from '@/lib/api/vimob-error';
 import { getSafePropertyImageSource } from '@/lib/property-media';
+import {
+  getRemainingPropertyPhotoSlots,
+  isStagedPropertyPhoto,
+  normalizePropertyPhotoSelection,
+  PROPERTY_MEDIA_MAX_PHOTOS,
+  releaseStagedPropertyPhoto,
+  stagePropertyPhoto,
+  validatePropertyMainPhotoCapacity,
+  validatePropertyPhotoFile,
+} from '@/lib/property-media-draft';
 import { cn } from '@/lib/utils';
 
 interface ImageUploaderProps {
@@ -23,12 +33,7 @@ interface ImageUploaderProps {
   onImagesChange: (images: string[], mainImage: string) => void;
   hiddenSiteImages?: string[];
   onHiddenSiteImagesChange?: (images: string[]) => void;
-  organizationId?: string;
-  propertyId?: string;
 }
-
-const MAX_IMAGE_SIZE_MB = 10;
-const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
 interface MediaActionButtonProps {
   label: string;
@@ -62,50 +67,36 @@ function MediaActionButton({ label, onClick, children, className }: MediaActionB
   );
 }
 
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
-
 export function ImageUploader({
   images,
   mainImage,
   onImagesChange,
   hiddenSiteImages = [],
   onHiddenSiteImagesChange,
-  organizationId,
-  propertyId,
 }: ImageUploaderProps) {
   const [uploadingMain, setUploadingMain] = useState(false);
   const [uploadingGallery, setUploadingGallery] = useState(false);
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null);
-  const safeMainImage = getSafePropertyImageSource(mainImage);
+  const safeMainImage = isStagedPropertyPhoto(mainImage)
+    ? mainImage
+    : getSafePropertyImageSource(mainImage);
 
   const uploadFile = useCallback(
-    async (file: File): Promise<string | null> => {
-      if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-        toast.error(`${file.name}: tipo de arquivo nao permitido.`);
-        return null;
-      }
-
-      if (file.size > MAX_IMAGE_SIZE_MB * 1024 * 1024) {
-        toast.error(`${file.name}: arquivo muito grande (limite 10MB).`);
+    (file: File): string | null => {
+      const validationError = validatePropertyPhotoFile(file);
+      if (validationError) {
+        toast.error(validationError);
         return null;
       }
 
       try {
-        const uploaded = await uploadPropertyImage(file, {
-          organizationId,
-          propertyId,
-        });
-
-        return uploaded.url;
+        return stagePropertyPhoto(file);
       } catch (error: unknown) {
-        console.error('Upload error:', error);
-        toast.error(`Falha no upload de ${file.name}: ${getErrorMessage(error)}`);
+        toast.error(`Falha ao preparar ${file.name}: ${getErrorMessage(error)}`);
         return null;
       }
     },
-    [organizationId, propertyId],
+    [],
   );
 
   const handleMainImageUpload = useCallback(
@@ -118,12 +109,22 @@ export function ImageUploader({
         return;
       }
 
+      const capacityError = validatePropertyMainPhotoCapacity(images, mainImage);
+      if (capacityError) {
+        toast.error(capacityError);
+        event.target.value = '';
+        return;
+      }
+
       setUploadingMain(true);
       try {
-        const url = await uploadFile(file);
+        const url = uploadFile(file);
         if (url) {
+          if (isStagedPropertyPhoto(mainImage)) {
+            releaseStagedPropertyPhoto(mainImage);
+          }
           onImagesChange(images, url);
-          toast.success('Imagem principal enviada!');
+          toast.success('Imagem principal pronta para salvar!');
         }
       } catch (error: unknown) {
         toast.error('Erro ao enviar imagem: ' + getErrorMessage(error));
@@ -132,7 +133,7 @@ export function ImageUploader({
         event.target.value = '';
       }
     },
-    [images, onImagesChange, uploadFile],
+    [images, mainImage, onImagesChange, uploadFile],
   );
 
   const handleGalleryUpload = useCallback(
@@ -140,13 +141,16 @@ export function ImageUploader({
       const files = event.target.files;
       if (!files || files.length === 0) return;
 
-      const validFiles = Array.from(files).filter((file) => {
-        if (!file.type.startsWith('image/')) {
-          toast.error(`${file.name} nao e uma imagem valida`);
-          return false;
-        }
-
-        return true;
+      const availableSlots = getRemainingPropertyPhotoSlots(images, mainImage);
+      const selectedFiles = Array.from(files);
+      if (selectedFiles.length > availableSlots) {
+        toast.error(`Cada imóvel pode ter no máximo ${PROPERTY_MEDIA_MAX_PHOTOS} fotos.`);
+      }
+      const validFiles = selectedFiles.slice(0, availableSlots).filter((file) => {
+        const validationError = validatePropertyPhotoFile(file);
+        if (!validationError) return true;
+        toast.error(validationError);
+        return false;
       });
 
       if (validFiles.length === 0) {
@@ -156,12 +160,24 @@ export function ImageUploader({
 
       setUploadingGallery(true);
       try {
-        const results = await Promise.all(validFiles.map((file) => uploadFile(file)));
+        const results = validFiles.map((file) => uploadFile(file));
         const newUrls = results.filter((url): url is string => url !== null);
 
         if (newUrls.length > 0) {
-          onImagesChange([...images, ...newUrls], mainImage);
-          toast.success(`${newUrls.length} imagem(s) adicionada(s) a galeria!`);
+          const normalized = normalizePropertyPhotoSelection(
+            [...images, ...newUrls],
+            mainImage,
+          );
+          onImagesChange(normalized.galleryImages, normalized.mainImage);
+          if (
+            normalized.mainImage &&
+            hiddenSiteImages.includes(normalized.mainImage)
+          ) {
+            onHiddenSiteImagesChange?.(
+              hiddenSiteImages.filter((image) => image !== normalized.mainImage),
+            );
+          }
+          toast.success(`${newUrls.length} imagem(s) pronta(s) para salvar!`);
         }
       } catch (error: unknown) {
         toast.error('Erro ao enviar imagens: ' + getErrorMessage(error));
@@ -170,10 +186,18 @@ export function ImageUploader({
         event.target.value = '';
       }
     },
-    [images, mainImage, onImagesChange, uploadFile],
+    [
+      hiddenSiteImages,
+      images,
+      mainImage,
+      onHiddenSiteImagesChange,
+      onImagesChange,
+      uploadFile,
+    ],
   );
 
   const removeFromGallery = (url: string) => {
+    if (url !== mainImage && isStagedPropertyPhoto(url)) releaseStagedPropertyPhoto(url);
     onImagesChange(
       images.filter((image) => image !== url),
       mainImage,
@@ -182,7 +206,20 @@ export function ImageUploader({
   };
 
   const removeMainImage = () => {
-    onImagesChange(images, '');
+    if (isStagedPropertyPhoto(mainImage)) releaseStagedPropertyPhoto(mainImage);
+    const normalized = normalizePropertyPhotoSelection(
+      images.filter((image) => image !== mainImage),
+      '',
+    );
+    onImagesChange(normalized.galleryImages, normalized.mainImage);
+    if (
+      normalized.mainImage &&
+      hiddenSiteImages.includes(normalized.mainImage)
+    ) {
+      onHiddenSiteImagesChange?.(
+        hiddenSiteImages.filter((image) => image !== normalized.mainImage),
+      );
+    }
   };
 
   const promoteToMain = (url: string) => {
@@ -192,6 +229,11 @@ export function ImageUploader({
     }
 
     onImagesChange(nextImages, url);
+    if (hiddenSiteImages.includes(url)) {
+      onHiddenSiteImagesChange?.(
+        hiddenSiteImages.filter((image) => image !== url),
+      );
+    }
     toast.success('Imagem promovida para principal!');
   };
 
@@ -306,7 +348,7 @@ export function ImageUploader({
       <div className="space-y-3">
         <Label className="text-[14px] font-normal">Galeria de Fotos</Label>
         <p className="text-[12px] font-light text-muted-foreground">
-          Adicione mais fotos do imóvel. Arraste para reordenar.
+          Adicione as fotos do imóvel. Sem destaque definido, a primeira vira principal. Arraste as demais para reordenar.
         </p>
 
         <label
@@ -327,7 +369,7 @@ export function ImageUploader({
                   arquivos
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Multiplas imagens permitidas
+                  Até {PROPERTY_MEDIA_MAX_PHOTOS} fotos; o envio acontece ao salvar
                 </p>
               </>
             )}
@@ -353,7 +395,9 @@ export function ImageUploader({
                 >
                   {images.map((url, index) => {
                     const isHiddenFromSite = hiddenSiteImages.includes(url);
-                    const safeImageURL = getSafePropertyImageSource(url);
+                    const safeImageURL = isStagedPropertyPhoto(url)
+                      ? url
+                      : getSafePropertyImageSource(url);
 
                     return (
                       <Draggable key={url} draggableId={url} index={index}>
@@ -433,7 +477,7 @@ export function ImageUploader({
             <ImageIcon className="h-8 w-8 text-muted-foreground" />
             <div>
               <p className="text-[14px] font-normal">Nenhuma foto na galeria</p>
-              <p className="text-xs text-muted-foreground">Adicione mais fotos do imóvel</p>
+              <p className="text-xs text-muted-foreground">Adicione fotos do imóvel</p>
             </div>
           </div>
         )}

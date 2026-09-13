@@ -47,16 +47,19 @@ func TestAppBackgroundWorkerStartsUseGlobalGate(t *testing.T) {
 		"gamificationRepository.StartWorker":                      1,
 		"leadsRepository.StartRedistributionWorker":               1,
 		"leadsRepository.StartNotificationDispatchWorker":         1,
+		"propertiesRepository.StartAssetCleanupWorker":            1,
 		"publicationsRepository.StartWorker":                      1,
 		"developmentsRepository.StartReservationExpirationWorker": 1,
 		"automationsRepository.StartRuntimeWorker":                1,
 		"whatsappHandler.StartAIWorker":                           1,
 		"whatsappHandler.StartOutboxWorker":                       1,
 		"whatsappHandler.StartWebhookWorker":                      1,
+		"whatsappHandler.StartMediaWorker":                        1,
 		"whatsappHandler.StartSessionSupervisor":                  1,
 		"metaHandler.StartWebhookWorker":                          1,
 		"metaHandler.StartConversionFeedbackWorker":               1,
 		"portalsRepository.StartImportReportWorker":               1,
+		"webhooksRepository.StartDeliveryWorker":                  1,
 	}
 	actual := make(map[string]int, len(expected))
 

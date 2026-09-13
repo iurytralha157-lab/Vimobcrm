@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { stageConfigAPI, type JsonValue } from "@/lib/api/stage-config";
+import { getErrorMessageOrFallback as getErrorMessage } from "@/lib/api/vimob-error";
 import { toast } from "sonner";
 
 export type Json = JsonValue;
@@ -40,10 +41,6 @@ type StageOperationalConfigWithStage = StageOperationalConfig & {
 
 type StageOperationalConfigUpsert = Partial<StageOperationalConfig> & Pick<StageOperationalConfig, "stage_id">;
 
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Erro desconhecido";
-}
-
 function normalizeOperationContext(value: string): OperationContext {
   const allowed: OperationContext[] = [
     "comercial",
@@ -58,8 +55,8 @@ function normalizeOperationContext(value: string): OperationContext {
 }
 
 export function useStageOperationalConfigs(pipelineId?: string, stageId?: string) {
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ["stage-operational-configs", organizationId, pipelineId, stageId],
@@ -83,8 +80,8 @@ export function useStageOperationalConfigs(pipelineId?: string, stageId?: string
 
 export function useUpsertStageOperationalConfig() {
   const queryClient = useQueryClient();
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useMutation({
     mutationFn: async (values: StageOperationalConfigUpsert) => {

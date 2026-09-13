@@ -1,15 +1,13 @@
 "use client";
 
+import { useMemo } from "react";
 import Link from "next/link";
 import {
   BarChart3,
-  BrainCircuit,
   CircleAlert,
   ImageIcon,
   LayoutDashboard,
   Megaphone,
-  MessageCircleMore,
-  Radio,
   RefreshCw,
   Settings2,
   Share2,
@@ -20,13 +18,19 @@ import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { SharedFilters } from "@/components/shared/SharedFilters";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useMarketingDashboard } from "@/hooks/marketing";
+import {
+  useMarketingDashboard,
+  useMarketingScopeFilters,
+} from "@/hooks/marketing";
 import { useSharedFilters } from "@/hooks/use-shared-filters";
-import { VimobAPIError } from "@/lib/api/vimob-error";
+import { getMarketingDashboardErrorState } from "@/lib/analytics/marketing-dashboard-error";
 import { cn } from "@/lib/utils";
-import { DomainValidationError } from "@/lib/validation";
 
 import { MarketingDataState } from "./MarketingDataState";
+import {
+  MarketingScopeFilters,
+  type MarketingScopeFilterOption,
+} from "./MarketingScopeFilters";
 import { MarketingTabViews } from "./MarketingTabViews";
 import {
   MARKETING_TABS,
@@ -36,53 +40,36 @@ import {
 
 const INTEGRATION_HREF = "/settings/integrations/meta";
 
+function uniqueScopeOptions(options: MarketingScopeFilterOption[]) {
+  const unique = new Map<string, string>();
+  options.forEach((option) => {
+    const value = option.value.trim();
+    const label = option.label.trim();
+    if (value && label && !unique.has(value)) unique.set(value, label);
+  });
+  return Array.from(unique, ([value, label]) => ({ value, label })).sort(
+    (left, right) => left.label.localeCompare(right.label, "pt-BR"),
+  );
+}
+
+function formatObjectiveLabel(value: string) {
+  return value
+    .toLocaleLowerCase("pt-BR")
+    .replaceAll("_", " ")
+    .replace(/(^|\s)\S/g, (letter) => letter.toLocaleUpperCase("pt-BR"));
+}
+
 const TAB_ICONS: Record<MarketingTab, LucideIcon> = {
   overview: LayoutDashboard,
-  acquisition: Share2,
   paid: BarChart3,
   media: ImageIcon,
+  acquisition: Share2,
   social: Megaphone,
-  relationship: MessageCircleMore,
-  reputation: Radio,
-  intelligence: BrainCircuit,
 };
 
 interface MarketingScreenProps {
   activeTab: MarketingTab;
   tabHrefs: MarketingTabHrefs;
-}
-
-function formatDateTime(value: string | null) {
-  if (!value) return null;
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return null;
-
-  return new Intl.DateTimeFormat("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
-
-function isInvalidMarketingFilterError(error: unknown) {
-  return (
-    (error instanceof DomainValidationError && error.direction === "input") ||
-    (error instanceof VimobAPIError && error.code === "invalid_analytics_filters")
-  );
-}
-
-function marketingErrorDescription(error: unknown) {
-  if (isInvalidMarketingFilterError(error)) {
-    return "O período ou um filtro salvo não é mais válido. Limpe os filtros e selecione o período novamente.";
-  }
-  if (error instanceof DomainValidationError && error.direction === "response") {
-    return "A API respondeu em um formato incompatível com esta versão do CRM. Nenhum número foi estimado.";
-  }
-  return error instanceof Error
-    ? error.message
-    : "Tente novamente. Nenhum número foi estimado enquanto a consulta falhou.";
 }
 
 function MarketingSkeleton() {
@@ -105,14 +92,40 @@ function MarketingSkeleton() {
 }
 
 export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
-  const sharedFilters = useSharedFilters();
-  const model = useMarketingDashboard(sharedFilters.filters);
+  const sharedFilters = useSharedFilters({ loadDynamicOptions: false });
+  const marketingScope = useMarketingScopeFilters();
+  const usesPaidMediaScope = activeTab !== "social";
+  const dashboardFilters = useMemo(
+    () => ({
+      ...sharedFilters.filters,
+      teamId: null,
+      userId: null,
+      source: null,
+      campaignId: usesPaidMediaScope
+        ? sharedFilters.filters.campaignId
+        : null,
+      adSetId: usesPaidMediaScope ? sharedFilters.filters.adSetId : null,
+      adId: usesPaidMediaScope ? sharedFilters.filters.adId : null,
+      tagId: null,
+      dealStatus: null,
+      searchQuery: "",
+      accountId: usesPaidMediaScope ? marketingScope.accountId : null,
+      objective: usesPaidMediaScope ? marketingScope.objective : null,
+    }),
+    [
+      marketingScope.accountId,
+      marketingScope.objective,
+      sharedFilters.filters,
+      usesPaidMediaScope,
+    ],
+  );
+  const model = useMarketingDashboard(dashboardFilters);
   const data = model.insightsQuery.data;
   const insightsError = model.insightsQuery.error;
+  const errorState = getMarketingDashboardErrorState(insightsError);
   const hasStaleDataError = Boolean(data && model.insightsQuery.isError);
-  const hasInvalidFilters = isInvalidMarketingFilterError(insightsError);
-  const lastSyncLabel = formatDateTime(model.lastSyncAt);
-  const dataDependentTab = !["social", "reputation"].includes(activeTab);
+  const hasInvalidFilters = errorState.shouldClearFilters;
+  const dataDependentTab = activeTab !== "social";
   // prettier-ignore
   const canSyncIntegration = model.canManageIntegration && model.integrationState.isConnected && model.canSyncIntegration;
   const hasSynchronizedData = Boolean(
@@ -128,151 +141,136 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
     data?.summary.totalRevenue ||
     data?.summary.conversations_count,
   );
+  const scopeOptions = useMemo(() => {
+    const responseOptions = data?.filterOptions ?? {
+      accounts: [],
+      objectives: [],
+    };
+    const accounts = uniqueScopeOptions([
+      ...responseOptions.accounts.map((account) => ({
+        value: account.id,
+        label: account.currency
+          ? `${account.name} · ${account.currency}`
+          : account.name,
+      })),
+      ...(marketingScope.accountId
+        ? [{ value: marketingScope.accountId, label: marketingScope.accountId }]
+        : []),
+    ]);
+
+    const campaigns = uniqueScopeOptions([
+      ...(!marketingScope.accountId && !marketingScope.objective
+        ? sharedFilters.campaigns.map((campaign) => ({
+            value: campaign.id,
+            label: campaign.name,
+          }))
+        : []),
+      ...(data?.campaigns ?? []).map((campaign) => ({
+        value: campaign.campaign_id,
+        label: campaign.campaign_name,
+      })),
+      ...(sharedFilters.campaignId
+        ? [{ value: sharedFilters.campaignId, label: sharedFilters.campaignId }]
+        : []),
+    ]);
+
+    const adSets = uniqueScopeOptions([
+      ...(!marketingScope.accountId &&
+      !marketingScope.objective &&
+      !sharedFilters.campaignId
+        ? sharedFilters.adSets.map((adSet) => ({
+            value: adSet.id,
+            label: adSet.name,
+          }))
+        : []),
+      ...(data?.campaigns ?? [])
+        .filter(
+          (campaign) =>
+            !sharedFilters.campaignId ||
+            campaign.campaign_id === sharedFilters.campaignId,
+        )
+        .flatMap((campaign) =>
+          campaign.adsets.map((adSet) => ({
+            value: adSet.adset_id,
+            label: adSet.adset_name,
+          })),
+        ),
+      ...(sharedFilters.adSetId
+        ? [{ value: sharedFilters.adSetId, label: sharedFilters.adSetId }]
+        : []),
+    ]);
+
+    const objectives = uniqueScopeOptions([
+      ...responseOptions.objectives,
+      ...(data?.campaigns ?? []).flatMap((campaign) =>
+        campaign.objective
+          ? [
+              {
+                value: campaign.objective,
+                label: formatObjectiveLabel(campaign.objective),
+              },
+            ]
+          : [],
+      ),
+      ...(marketingScope.objective
+        ? [
+            {
+              value: marketingScope.objective,
+              label: formatObjectiveLabel(marketingScope.objective),
+            },
+          ]
+        : []),
+    ]);
+
+    return { accounts, campaigns, adSets, objectives };
+  }, [
+    data,
+    marketingScope.accountId,
+    marketingScope.objective,
+    sharedFilters.adSetId,
+    sharedFilters.adSets,
+    sharedFilters.campaignId,
+    sharedFilters.campaigns,
+  ]);
+
+  const clearMarketingScope = () => {
+    marketingScope.clearScope();
+    sharedFilters.setCampaignId(null);
+    sharedFilters.setAdSetId(null);
+    sharedFilters.setAdId(null);
+  };
+
+  const changeMarketingAccount = (accountId: string | null) => {
+    marketingScope.setAccountId(accountId);
+    sharedFilters.setCampaignId(null);
+    sharedFilters.setAdSetId(null);
+    sharedFilters.setAdId(null);
+  };
+
+  const changeMarketingObjective = (objective: string | null) => {
+    marketingScope.setObjective(objective);
+    sharedFilters.setCampaignId(null);
+    sharedFilters.setAdSetId(null);
+    sharedFilters.setAdId(null);
+  };
+
+  const hasActiveMarketingScope = Boolean(
+    marketingScope.accountId ||
+    sharedFilters.campaignId ||
+    sharedFilters.adSetId ||
+    marketingScope.objective,
+  );
+  const hasActiveMarketingFilters =
+    (usesPaidMediaScope && hasActiveMarketingScope) ||
+    sharedFilters.datePreset !== "last30days";
+  const clearAllMarketingFilters = () => {
+    marketingScope.clearScope();
+    sharedFilters.clearFilters();
+  };
 
   return (
     <AppLayout title="Marketing" borderless>
       <div className="w-full space-y-4 pb-8 sm:pt-1">
-        <section
-          aria-label="Status da integração de Marketing"
-          className="flex flex-col gap-3 rounded-[8px] bg-[var(--app-surface-solid)] p-3.5 sm:flex-row sm:items-center sm:justify-between"
-        >
-          {model.integrationsQuery.isLoading ? (
-            <div className="flex items-center gap-3">
-              <Skeleton className="h-9 w-9 rounded-[6px]" />
-              <div>
-                <Skeleton className="h-3 w-40" />
-                <Skeleton className="mt-2 h-3 w-56" />
-              </div>
-            </div>
-          ) : model.integrationsQuery.isError && !model.integrationState.isConnected ? (
-            <div className="min-w-0">
-              <p className="text-[12px] font-normal text-[var(--app-text-primary)]">
-                Não foi possível verificar a conexão da Meta
-              </p>
-              <p className="mt-1 text-[11px] text-[var(--app-text-tertiary)]">
-                Os dados já sincronizados continuam disponíveis.
-              </p>
-            </div>
-          ) : model.integrationState.isConnected ? (
-            <div className="flex min-w-0 items-start gap-3">
-              <span
-                aria-hidden="true"
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] bg-success/10 text-success"
-              >
-                <Megaphone className="h-4 w-4" />
-              </span>
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-[12px] font-normal text-[var(--app-text-primary)]">
-                    Meta conectada
-                  </p>
-                  <span className="rounded-[4px] bg-success/10 px-2 py-0.5 text-[9px] font-light text-success">
-                    Ativa
-                  </span>
-                  {!model.integrationState.hasAdAccount ? (
-                    <span className="rounded-[4px] bg-warning/10 px-2 py-0.5 text-[9px] font-light text-warning">
-                      Conta de anúncio pendente
-                    </span>
-                  ) : null}
-                  {!model.integrationState.hasMarketingToken ? (
-                    <span className="rounded-[4px] bg-warning/10 px-2 py-0.5 text-[9px] font-light text-warning">
-                      Reconexão para Marketing
-                    </span>
-                  ) : null}
-                </div>
-                <p className="mt-1 truncate text-[11px] text-[var(--app-text-tertiary)]">
-                  {model.integrationState.pageCount} página(s)
-                  {" · "}
-                  {model.integrationState.adAccountCount} conta(s) de anúncio
-                  {lastSyncLabel
-                    ? ` · Última sincronização ${lastSyncLabel}`
-                    : ""}
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="flex min-w-0 items-start gap-3">
-              <span
-                aria-hidden="true"
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground"
-              >
-                <Megaphone className="h-4 w-4" />
-              </span>
-              <div className="min-w-0">
-              <p className="text-[12px] font-normal text-[var(--app-text-primary)]">
-                  Conecte a Meta para começar
-                </p>
-                <p className="mt-1 text-[11px] leading-4 text-[var(--app-text-tertiary)]">
-                  Escolha a página, a conta de anúncios e o perfil do Instagram
-                  que serão analisados.
-                </p>
-              </div>
-            </div>
-          )}
-
-          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0">
-            {model.canManageIntegration && model.integrationsQuery.isError ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => model.integrationsQuery.refetch()}
-                className="h-9 flex-1 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)] sm:flex-none"
-              >
-                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-                Tentar novamente
-              </Button>
-            ) : null}
-
-            {model.canManageIntegration ? (
-              <Button
-                asChild
-                variant="ghost"
-                size="sm"
-                className="h-9 flex-1 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-3 text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)] sm:flex-none"
-              >
-                <Link href={INTEGRATION_HREF}>
-                  <Settings2 className="mr-1.5 h-3.5 w-3.5" />
-                  {model.integrationState.isConnected
-                    ? model.integrationState.hasMarketingToken
-                      ? "Configurar"
-                      : "Reconectar Meta"
-                    : "Conectar Meta"}
-                </Link>
-              </Button>
-            ) : null}
-
-            {canSyncIntegration ? (
-              <Button
-                type="button"
-                size="sm"
-                onClick={model.sync}
-                disabled={
-                  !model.integrationState.hasAdAccount ||
-                  !model.integrationState.hasMarketingToken ||
-                  model.syncMutation.isPending
-                }
-                title={
-                  !model.integrationState.hasMarketingToken
-                    ? "Reconecte a Meta para autorizar Ads Insights com segurança"
-                    : model.integrationState.hasAdAccount
-                      ? "Sincronizar o período selecionado"
-                      : "Selecione uma conta de anúncio antes de sincronizar"
-                }
-                className="h-9 flex-1 rounded-[6px] border-0 bg-primary/50 px-3 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary sm:flex-none"
-              >
-                <RefreshCw
-                  className={cn(
-                    "mr-1.5 h-3.5 w-3.5",
-                    model.syncMutation.isPending && "animate-spin",
-                  )}
-                />
-                {model.syncMutation.isPending ? "Sincronizando" : "Sincronizar"}
-              </Button>
-            ) : null}
-          </div>
-        </section>
-
         <div className="flex min-w-0 flex-row items-center gap-2">
           <div
             className="app-responsive-tab-list min-w-0 flex-1"
@@ -315,14 +313,99 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
           </div>
 
           <div className="ml-auto flex min-h-8 w-auto min-w-0 shrink-0 items-center justify-end gap-2">
+            {model.canManageIntegration && model.integrationsQuery.isError ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => model.integrationsQuery.refetch()}
+                title="Tentar verificar a integração Meta novamente"
+                className="h-8 w-8 rounded-[6px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
+              >
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                <span className="sr-only">Tentar conexão Meta novamente</span>
+              </Button>
+            ) : null}
+
+            {model.canManageIntegration ? (
+              <Button
+                asChild
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-0 text-[10px] font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] xl:w-auto xl:px-2.5"
+              >
+                <Link
+                  href={INTEGRATION_HREF}
+                  title={
+                    model.integrationState.isConnected
+                      ? model.integrationState.hasMarketingToken
+                        ? "Configurar integração Meta"
+                        : "Reconectar integração Meta"
+                      : "Conectar integração Meta"
+                  }
+                >
+                  <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span className="sr-only xl:not-sr-only xl:ml-1.5">
+                    {model.integrationState.isConnected
+                      ? model.integrationState.hasMarketingToken
+                        ? "Meta"
+                        : "Reconectar"
+                      : "Conectar Meta"}
+                  </span>
+                </Link>
+              </Button>
+            ) : null}
+
+            {canSyncIntegration ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={model.sync}
+                disabled={
+                  !model.integrationState.hasAdAccount ||
+                  !model.integrationState.hasMarketingToken ||
+                  model.syncMutation.isPending
+                }
+                title={
+                  !model.integrationState.hasAdAccount
+                    ? "Selecione uma conta de anúncios na integração Meta"
+                    : !model.integrationState.hasMarketingToken
+                      ? "Reconecte a Meta para liberar ads_read e sincronizar Marketing"
+                      : model.syncMutation.isPending
+                        ? "Sincronização em andamento"
+                        : "Sincronizar o período selecionado com a Meta"
+                }
+                className="mx-0.5 h-8 w-8 min-w-8 shrink-0 rounded-[6px] border-0 bg-primary/50 p-0 text-primary-foreground shadow-none hover:bg-primary"
+              >
+                <RefreshCw
+                  className={cn(
+                    "h-3.5 w-3.5",
+                    model.syncMutation.isPending && "animate-spin",
+                  )}
+                  aria-hidden="true"
+                />
+                <span className="sr-only">
+                  {model.syncMutation.isPending
+                    ? "Sincronizando"
+                    : "Sincronizar"}
+                </span>
+              </Button>
+            ) : null}
+
             {data && model.insightsQuery.isFetching && !hasStaleDataError ? (
               <span
                 role="status"
                 className="inline-flex h-8 items-center gap-1.5 rounded-[6px] bg-[var(--app-surface-soft)] px-2 text-[10px] text-[var(--app-text-tertiary)]"
               >
-                <RefreshCw className="h-3 w-3 animate-spin" aria-hidden="true" />
+                <RefreshCw
+                  className="h-3 w-3 animate-spin"
+                  aria-hidden="true"
+                />
                 <span className="hidden sm:inline">Atualizando</span>
-                <span className="sr-only sm:hidden">Atualizando dados de Marketing</span>
+                <span className="sr-only sm:hidden">
+                  Atualizando dados de Marketing
+                </span>
               </span>
             ) : null}
             <SharedFilters
@@ -348,8 +431,8 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
               onDealStatusChange={sharedFilters.setDealStatus}
               searchQuery={sharedFilters.searchQuery}
               onSearchChange={sharedFilters.setSearchQuery}
-              onClear={sharedFilters.clearFilters}
-              hasActiveFilters={sharedFilters.hasActiveFilters}
+              onClear={clearAllMarketingFilters}
+              hasActiveFilters={hasActiveMarketingFilters}
               dynamicSources={sharedFilters.dynamicSources}
               campaigns={sharedFilters.campaigns}
               adSets={sharedFilters.adSets}
@@ -360,11 +443,44 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
               isLoadingAdSets={sharedFilters.isLoadingAdSets}
               isLoadingAds={sharedFilters.isLoadingAds}
               datePosition="start"
+              loadDynamicOptions={false}
               mobileIconOnly
               tourPrefix="marketing"
+              advancedContentOnly
+              hasAdvancedContentFilters={
+                usesPaidMediaScope && hasActiveMarketingScope
+              }
+              advancedContent={
+                usesPaidMediaScope ? (
+                  <MarketingScopeFilters
+                    accountId={marketingScope.accountId}
+                    onAccountChange={changeMarketingAccount}
+                    accounts={scopeOptions.accounts}
+                    campaignId={sharedFilters.campaignId}
+                    onCampaignChange={sharedFilters.setCampaignId}
+                    campaigns={scopeOptions.campaigns}
+                    adSetId={sharedFilters.adSetId}
+                    onAdSetChange={sharedFilters.setAdSetId}
+                    adSets={scopeOptions.adSets}
+                    objective={marketingScope.objective}
+                    onObjectiveChange={changeMarketingObjective}
+                    objectives={scopeOptions.objectives}
+                    onClear={clearMarketingScope}
+                    isLoading={model.insightsQuery.isLoading}
+                    variant="panel"
+                  />
+                ) : (
+                  <p className="rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 py-2 text-[11px] font-light leading-4 text-[var(--app-text-secondary)]">
+                    Nesta aba, o período é aplicado ao Instagram. Conta,
+                    campanha, conjunto e objetivo ficam preservados para as
+                    abas de mídia paga, mas não alteram os dados sociais.
+                  </p>
+                )
+              }
             />
           </div>
         </div>
+
         {hasStaleDataError ? (
           <div
             role="alert"
@@ -376,7 +492,8 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
                 aria-hidden="true"
               />
               <span>
-                Não foi possível atualizar agora. Os últimos dados carregados continuam visíveis.
+                Os últimos dados válidos continuam visíveis.{" "}
+                {errorState.description}
               </span>
             </span>
             <Button
@@ -402,39 +519,41 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
         ) : model.insightsQuery.isError && !data ? (
           <MarketingDataState
             kind="error"
-            title="Não foi possível carregar os dados de Marketing"
-            description={marketingErrorDescription(insightsError)}
+            title={errorState.title}
+            description={errorState.description}
             action={
               <div className="flex flex-wrap items-center justify-center gap-2">
                 {hasInvalidFilters ? (
                   <Button
                     type="button"
-                    onClick={sharedFilters.clearFilters}
+                    onClick={clearAllMarketingFilters}
                     className="h-9 rounded-[6px] border-0 bg-primary/50 px-4 text-[12px] font-light text-primary-foreground shadow-none hover:bg-primary"
                   >
                     Limpar filtros
                   </Button>
                 ) : null}
-                <Button
-                  type="button"
-                  variant={hasInvalidFilters ? "ghost" : "default"}
-                  onClick={() => model.insightsQuery.refetch()}
-                  disabled={model.insightsQuery.isFetching}
-                  className={cn(
-                    "h-9 rounded-[6px] border-0 px-4 text-[12px] font-light shadow-none",
-                    hasInvalidFilters
-                      ? "bg-[var(--app-surface-solid)] hover:bg-[var(--app-surface-hover)]"
-                      : "bg-primary/50 text-primary-foreground hover:bg-primary",
-                  )}
-                >
-                  <RefreshCw
+                {errorState.canRetry ? (
+                  <Button
+                    type="button"
+                    variant={hasInvalidFilters ? "ghost" : "default"}
+                    onClick={() => model.insightsQuery.refetch()}
+                    disabled={model.insightsQuery.isFetching}
                     className={cn(
-                      "mr-1.5 h-3.5 w-3.5",
-                      model.insightsQuery.isFetching && "animate-spin",
+                      "h-9 rounded-[6px] border-0 px-4 text-[12px] font-light shadow-none",
+                      hasInvalidFilters
+                        ? "bg-[var(--app-surface-solid)] hover:bg-[var(--app-surface-hover)]"
+                        : "bg-primary/50 text-primary-foreground hover:bg-primary",
                     )}
-                  />
-                  Tentar novamente
-                </Button>
+                  >
+                    <RefreshCw
+                      className={cn(
+                        "mr-1.5 h-3.5 w-3.5",
+                        model.insightsQuery.isFetching && "animate-spin",
+                      )}
+                    />
+                    Tentar novamente
+                  </Button>
+                ) : null}
               </div>
             }
           />

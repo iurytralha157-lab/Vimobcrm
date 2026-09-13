@@ -6,6 +6,9 @@ import {
   RefreshCw,
   Unlink,
 } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -34,7 +37,16 @@ type GoogleCalendarConnectProps = {
 export function GoogleCalendarConnect({
   compact = false,
 }: GoogleCalendarConnectProps) {
-  const { data: calendarStatus, isLoading } = useGoogleCalendarStatus();
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const handledSettingsOAuthRef = useRef(false);
+  const {
+    data: calendarStatus,
+    isError: statusLoadFailed,
+    isLoading,
+    refetch: refetchStatus,
+  } = useGoogleCalendarStatus();
   const connectCalendar = useConnectGoogleCalendar();
   const disconnectCalendar = useDisconnectGoogleCalendar();
   const toggleSync = useToggleGoogleCalendarSync();
@@ -49,6 +61,34 @@ export function GoogleCalendarConnect({
       : calendarStatus?.sync_enabled
         ? "Ativo"
         : "Pausado";
+
+  useEffect(() => {
+    if (!pathname.startsWith("/settings") || handledSettingsOAuthRef.current) return;
+
+    const connected = searchParams.get("google_calendar_connected") === "1";
+    const callbackError = searchParams.get("google_calendar_error");
+    const callbackWarning = searchParams.get("google_calendar_warning");
+    if (!connected && !callbackError && !callbackWarning) return;
+
+    handledSettingsOAuthRef.current = true;
+    if (callbackError) {
+      toast.error(`Não foi possível conectar o Google Agenda: ${callbackError.slice(0, 300)}`);
+    } else if (callbackWarning) {
+      toast.warning(
+        `Google Agenda conectada, mas a sincronização precisa de atenção: ${callbackWarning.slice(0, 300)}`,
+      );
+    } else {
+      toast.success("Google Agenda conectada e sincronizada.");
+    }
+    void refetchStatus();
+
+    const cleanParams = new URLSearchParams(searchParams.toString());
+    cleanParams.delete("google_calendar_connected");
+    cleanParams.delete("google_calendar_error");
+    cleanParams.delete("google_calendar_warning");
+    const cleanSearch = cleanParams.toString();
+    router.replace(`${pathname}${cleanSearch ? `?${cleanSearch}` : ""}`, { scroll: false });
+  }, [pathname, refetchStatus, router, searchParams]);
 
   if (!FEATURES.ENABLE_GOOGLE_CALENDAR_INTEGRATION) {
     if (compact) {
@@ -140,6 +180,59 @@ export function GoogleCalendarConnect({
           <div className="flex items-center justify-center">
             <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (statusLoadFailed) {
+    if (compact) {
+      return (
+        <div className="flex flex-col gap-3 rounded-[8px] bg-destructive/10 p-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
+            <div className="min-w-0">
+              <span className="block text-[14px] font-light text-[var(--app-text-primary)]">
+                Google Agenda
+              </span>
+              <span className="block truncate text-[12px] font-light text-destructive">
+                Falha ao verificar a conexão
+              </span>
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 rounded-[6px] px-3 text-[12px] font-light"
+            onClick={() => void refetchStatus()}
+          >
+            <RefreshCw className="h-4 w-4" />
+            Tentar novamente
+          </Button>
+        </div>
+      );
+    }
+
+    return (
+      <Card className="rounded-[8px] border-0 bg-transparent shadow-none">
+        <CardHeader className="p-0 pb-3">
+          <CardTitle className="flex items-center gap-2 text-[14px] font-light text-[var(--app-text-primary)]">
+            <AlertCircle className="h-4 w-4 text-destructive" />
+            Google Agenda
+          </CardTitle>
+          <CardDescription className="text-[12px] font-light text-destructive">
+            Não foi possível verificar a conexão. Nenhum estado foi alterado.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          <Button
+            variant="ghost"
+            className="h-9 w-full rounded-[6px] bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none"
+            onClick={() => void refetchStatus()}
+          >
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Tentar novamente
+          </Button>
         </CardContent>
       </Card>
     );
@@ -295,7 +388,7 @@ export function GoogleCalendarConnect({
               >
                 <span>Sincronização automática</span>
                 <span className="text-[12px] font-light text-[var(--app-text-tertiary)]">
-                  Enviar e receber eventos automaticamente
+                  Receber alterações do Google automaticamente
                 </span>
               </Label>
               <Switch

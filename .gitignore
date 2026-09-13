@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/node_modules.recovery-*/
 /.pnp
 .pnp.*
 .yarn/*
@@ -13,6 +14,7 @@
 # testing
 /coverage
 /.validation-tests/
+/.property-media-tests/
 /test-results/
 /playwright-report/
 /blob-report/

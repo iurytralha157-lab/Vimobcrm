@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
@@ -59,7 +60,11 @@ type Repository struct {
 	httpClient           *http.Client
 }
 
-const organizationAuthCleanupTimeout = 10 * time.Second
+const (
+	organizationAuthCleanupTimeout = 10 * time.Second
+	invitationMaximumValidity      = 7 * 24 * time.Hour
+	invitationEmailMaximumBytes    = 254
+)
 
 func NewRepository(db *dbpkg.Postgres, externalConfig ExternalConfig) Repository {
 	return Repository{
@@ -292,7 +297,7 @@ func (repo Repository) ListInvitations(ctx context.Context, tenantContext tenant
 			  and logs.provider = 'resend'
 			  and logs.template_key = 'invitation'
 			  and logs.metadata ->> 'invitation_id' = i.id::text
-			order by logs.created_at desc
+			order by logs.created_at desc, logs.id desc
 			limit 1
 		) delivery on true
 		where i.organization_id = $1::uuid
@@ -302,6 +307,14 @@ func (repo Repository) ListInvitations(ctx context.Context, tenantContext tenant
 }
 
 func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenant.Context, request InvitationRequest) (map[string]any, error) {
+	if request.Email == nil {
+		return nil, ErrInvalidInput
+	}
+	expiresAt, err := normalizeInvitationExpiresAt(request.ExpiresAt, time.Now())
+	if err != nil {
+		return nil, err
+	}
+
 	organizationID := ""
 	if request.OrganizationID != nil {
 		organizationID = *request.OrganizationID
@@ -389,7 +402,7 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 			$7
 		)
 		returning to_jsonb(invitations) - 'token' - 'token_hash'
-	`, resolvedOrganizationID, email, role, tenantContext.UserID, cleanString(request.ExpiresAt), plaintextToken, tokenHash)
+	`, resolvedOrganizationID, email, role, tenantContext.UserID, expiresAt, plaintextToken, tokenHash)
 	if err != nil {
 		if isPendingInvitationUniqueViolation(err) {
 			return nil, ErrInvitationAlreadyPending
@@ -429,6 +442,11 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 					"error", sendErr,
 				)
 				item["email_sent"] = false
+				if errors.Is(sendErr, errInvitationEmailDefinitelyNotAccepted) {
+					item["email_status"] = "failed"
+				} else {
+					item["email_status"] = "delivery_unknown"
+				}
 				item["existing_account"] = existingAccount
 				return item, nil
 			}
@@ -439,6 +457,51 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 	}
 	item["email_sent"] = emailSent
 	item["existing_account"] = existingAccount
+	return item, nil
+}
+
+func (repo Repository) UpdateInvitationRole(
+	ctx context.Context,
+	tenantContext tenant.Context,
+	invitationID string,
+	request InvitationRoleUpdateRequest,
+) (map[string]any, error) {
+	invitationID, ok := normalizeUUID(invitationID)
+	if !ok {
+		return nil, ErrInvalidInput
+	}
+	organizationID, ok := normalizeUUID(tenantContext.OrganizationID)
+	if !ok {
+		return nil, tenant.ErrOrganizationAccessDenied
+	}
+
+	desiredRole, err := normalizeInvitationRoleUpdate(request.Role)
+	if err != nil {
+		return nil, err
+	}
+	canManagePrivileged := canCreatePrivilegedInvitation(tenantContext)
+	if isPrivilegedInvitationRole(desiredRole) && !canManagePrivileged {
+		return nil, tenant.ErrOrganizationAccessDenied
+	}
+
+	item, err := repo.queryJSONObject(ctx, `
+		update public.invitations
+		set role = $3,
+		    updated_at = now()
+		where id = $1::uuid
+		  and organization_id = $2::uuid
+		  and used_at is null
+		  and expires_at > now()
+		  and ($4::boolean or coalesce(nullif(role, ''), 'user') not in ('admin', 'manager'))
+		returning to_jsonb(invitations) - 'token' - 'token_hash'
+	`, invitationID, organizationID, desiredRole, canManagePrivileged)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	stripInvitationToken(item)
 	return item, nil
 }
 
@@ -531,8 +594,9 @@ func (repo Repository) ResendInvitation(ctx context.Context, tenantContext tenan
 		  and used_at is null
 		  and token = $4
 		  and token_hash = $5
+		  and ($6::boolean or coalesce(nullif(role, ''), 'user') not in ('admin', 'manager'))
 		returning to_jsonb(invitations) - 'token' - 'token_hash'
-	`, invitationID, newToken, newTokenHash, previousToken, previousTokenHash)
+	`, invitationID, newToken, newTokenHash, previousToken, previousTokenHash, canCreatePrivilegedInvitation(tenantContext))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -540,6 +604,9 @@ func (repo Repository) ResendInvitation(ctx context.Context, tenantContext tenan
 		return nil, err
 	}
 	stripInvitationToken(item)
+	if persistedRole := strings.TrimSpace(stringValue(item["role"])); persistedRole != "" {
+		role = persistedRole
+	}
 
 	delivery, sendErr := repo.sendInvitationEmail(ctx, invitationEmailInput{
 		InvitationID:     invitationID,
@@ -633,6 +700,47 @@ func canCreatePrivilegedInvitation(tenantContext tenant.Context) bool {
 			tenantContext.HasPermission(permissions.PermissionsManage))
 }
 
+func normalizeInvitationRoleUpdate(role string) (string, error) {
+	role = strings.TrimSpace(role)
+	switch role {
+	case "admin", "manager", "user":
+		return role, nil
+	default:
+		return "", ErrInvalidInput
+	}
+}
+
+func isPrivilegedInvitationRole(role string) bool {
+	return role == "admin" || role == "manager"
+}
+
+func normalizeInvitationExpiresAt(value *string, now time.Time) (*time.Time, error) {
+	if value == nil {
+		return nil, nil
+	}
+	cleaned := strings.TrimSpace(*value)
+	if cleaned == "" {
+		return nil, ErrInvalidInput
+	}
+	expiresAt, err := time.Parse(time.RFC3339, cleaned)
+	if err != nil || !expiresAt.After(now) || expiresAt.After(now.Add(invitationMaximumValidity)) {
+		return nil, ErrInvalidInput
+	}
+	expiresAt = expiresAt.UTC()
+	return &expiresAt, nil
+}
+
+func normalizeInvitationToken(value string) (string, bool) {
+	token := strings.TrimSpace(value)
+	if len(token) != 64 || token != strings.ToLower(token) {
+		return "", false
+	}
+	if _, err := hex.DecodeString(token); err != nil {
+		return "", false
+	}
+	return token, true
+}
+
 func (repo Repository) userBelongsToOrganization(ctx context.Context, userID string, organizationID string) (bool, error) {
 	var belongs bool
 	err := repo.db.Pool().QueryRow(ctx, `
@@ -640,13 +748,24 @@ func (repo Repository) userBelongsToOrganization(ctx context.Context, userID str
 			select 1
 			from public.users u
 			where u.id = $1::uuid
+			  and coalesce(u.is_active, false) = true
 			  and (
-				u.organization_id = $2::uuid
-				or exists (
+				exists (
 					select 1
 					from public.organization_members om
 					where om.user_id = u.id
 					  and om.organization_id = $2::uuid
+					  and om.is_active = true
+					  and om.deleted_at is null
+				)
+				or (
+					u.organization_id = $2::uuid
+					and not exists (
+						select 1
+						from public.organization_members legacy_membership
+						where legacy_membership.user_id = u.id
+						  and legacy_membership.organization_id = $2::uuid
+					)
 				)
 			  )
 		)
@@ -683,7 +802,11 @@ func (repo Repository) DeleteInvitation(ctx context.Context, tenantContext tenan
 	}
 
 	if tenantContext.IsSuperAdmin {
-		tag, err := repo.db.Pool().Exec(ctx, `delete from public.invitations where id = $1::uuid`, invitationID)
+		tag, err := repo.db.Pool().Exec(ctx, `
+			delete from public.invitations
+			where id = $1::uuid
+			  and used_at is null
+		`, invitationID)
 		if err != nil {
 			return err
 		}
@@ -701,6 +824,7 @@ func (repo Repository) DeleteInvitation(ctx context.Context, tenantContext tenan
 		delete from public.invitations
 		where id = $1::uuid
 		  and organization_id = $2::uuid
+		  and used_at is null
 		  and (coalesce(nullif(role, ''), 'user') not in ('admin', 'manager') or $3)
 	`, invitationID, tenantContext.OrganizationID, canCreatePrivilegedInvitation(tenantContext))
 	if err != nil {
@@ -713,8 +837,8 @@ func (repo Repository) DeleteInvitation(ctx context.Context, tenantContext tenan
 }
 
 func (repo Repository) ShowInvitationByToken(ctx context.Context, token string) (map[string]any, error) {
-	token = strings.TrimSpace(token)
-	if token == "" {
+	token, ok := normalizeInvitationToken(token)
+	if !ok {
 		return nil, ErrInvalidInput
 	}
 	tokenHash := invitationTokenHash(token)
@@ -1703,6 +1827,9 @@ func (repo Repository) createAuthUser(ctx context.Context, email string, passwor
 
 func normalizeEmail(value string) (string, error) {
 	value = strings.ToLower(strings.TrimSpace(value))
+	if len(value) == 0 || len(value) > invitationEmailMaximumBytes {
+		return "", ErrInvalidInput
+	}
 	parsed, err := mail.ParseAddress(value)
 	if err != nil || parsed.Address != value {
 		return "", ErrInvalidInput
@@ -1711,14 +1838,7 @@ func normalizeEmail(value string) (string, error) {
 }
 
 func normalizeUUID(value string) (string, bool) {
-	var uuid pgtype.UUID
-	if err := uuid.Scan(strings.TrimSpace(value)); err != nil {
-		return "", false
-	}
-	if !uuid.Valid {
-		return "", false
-	}
-	return uuid.String(), true
+	return pgvalue.NormalizeUUID(value)
 }
 
 func cleanString(value *string) *string {

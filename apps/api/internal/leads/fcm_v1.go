@@ -41,6 +41,19 @@ type fcmOAuthTokenResponse struct {
 	ExpiresIn   int64  `json:"expires_in"`
 }
 
+type fcmAccessTokenHTTPError struct {
+	Status     int
+	RetryAfter time.Duration
+	Message    string
+}
+
+func (err *fcmAccessTokenHTTPError) Error() string {
+	if err == nil {
+		return ""
+	}
+	return "fcm_access_token_error: " + err.Message
+}
+
 func (client *notificationPushClient) fcmV1AccessToken(ctx context.Context) (string, string, error) {
 	client.fcmTokenMu.Lock()
 	defer client.fcmTokenMu.Unlock()
@@ -141,7 +154,11 @@ func (client *notificationPushClient) requestFCMAccessToken(ctx context.Context,
 		return "", time.Time{}, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return "", time.Time{}, fmt.Errorf("fcm_access_token_error: %s", trimMax(firstNotificationText(strings.TrimSpace(string(payload)), response.Status), 240))
+		return "", time.Time{}, &fcmAccessTokenHTTPError{
+			Status:     response.StatusCode,
+			RetryAfter: parseNotificationRetryAfter(response.Header.Get("Retry-After"), time.Now()),
+			Message:    trimMax(firstNotificationText(strings.TrimSpace(string(payload)), response.Status), 240),
+		}
 	}
 
 	var parsed fcmOAuthTokenResponse

@@ -4,8 +4,8 @@ import {
   claimEvolutionMessageDelivery,
   completeEvolutionMessageDelivery,
   EvolutionMessageClaimError,
-  retryEvolutionMessageDelivery,
   type OwnedEvolutionMessageClaim,
+  retryEvolutionMessageDelivery,
 } from "./delivery-claim.ts";
 import {
   readSupabaseSecretKeyEnvironment,
@@ -15,17 +15,18 @@ import {
   authorizeEvolutionWebhookIngressRequest,
   validateEvolutionCallbackSessionToken,
 } from "./request-security.ts";
+import { buildDistributionIdempotencyKey } from "../_shared/distribution-idempotency.ts";
 
 const MAGIC_BYTES: Record<string, string[]> = {
-  'image/jpeg': ['FFD8FF'],
-  'image/png': ['89504E47'],
-  'image/gif': ['47494638'],
-  'image/webp': ['52494646'],
-  'audio/mpeg': ['494433', 'FFF1', 'FFF9'],
-  'audio/ogg': ['4F676753'],
-  'audio/mp4': ['000000'],
-  'video/mp4': ['000000'],
-  'application/pdf': ['25504446'],
+  "image/jpeg": ["FFD8FF"],
+  "image/png": ["89504E47"],
+  "image/gif": ["47494638"],
+  "image/webp": ["52494646"],
+  "audio/mpeg": ["494433", "FFF1", "FFF9"],
+  "audio/ogg": ["4F676753"],
+  "audio/mp4": ["000000"],
+  "video/mp4": ["000000"],
+  "application/pdf": ["25504446"],
 };
 
 // ============================================================
@@ -79,7 +80,13 @@ function extractAdContext(contextInfo: any) {
 function extractUtmFromText(text: string) {
   const utm: Record<string, string> = {};
   if (!text) return utm;
-  const params = ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"];
+  const params = [
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_content",
+    "utm_term",
+  ];
   for (const p of params) {
     const m = text.match(new RegExp(`${p}=([^\\s&]+)`, "i"));
     if (m) utm[p] = decodeURIComponent(m[1]);
@@ -87,25 +94,29 @@ function extractUtmFromText(text: string) {
   return utm;
 }
 
-async function recordLeadMetaFromWhatsApp(
-  supabase: any,
-  leadId: string,
-  hubCtx: { rule: any | null; adContext: any; utm: Record<string, string> } | null,
+function buildLeadMetaFromWhatsApp(
+  hubCtx:
+    | { rule: any | null; adContext: any; utm: Record<string, string> }
+    | null,
   isFromAds: boolean,
-  adSource: string | null
+  adSource: string | null,
 ) {
   const rule = hubCtx?.rule || null;
   const adCtx = hubCtx?.adContext || {};
   const utm = hubCtx?.utm || {};
-  const campaignId = adCtx.meta_campaign_id || utm.utm_campaign || rule?.campaign_label || null;
-  const campaignName = rule?.campaign_label || utm.utm_campaign || adCtx.headline || campaignId;
+  const campaignId = adCtx.meta_campaign_id || utm.utm_campaign ||
+    rule?.campaign_label || null;
+  const campaignName = rule?.campaign_label || utm.utm_campaign ||
+    adCtx.headline || campaignId;
 
-  if (!campaignId && !campaignName && !adCtx.meta_ad_id && !adCtx.meta_click_id && Object.keys(utm).length === 0) {
-    return;
+  if (
+    !campaignId && !campaignName && !adCtx.meta_ad_id && !adCtx.meta_click_id &&
+    Object.keys(utm).length === 0
+  ) {
+    return null;
   }
 
-  const { error } = await supabase.from("lead_meta").insert({
-    lead_id: leadId,
+  return {
     campaign_id: campaignId,
     campaign_name: campaignName,
     ad_id: adCtx.meta_ad_id || null,
@@ -127,6 +138,24 @@ async function recordLeadMetaFromWhatsApp(
       utm,
       inbound_rule_id: rule?.id || null,
     },
+  };
+}
+
+async function recordLeadMetaFromWhatsApp(
+  supabase: any,
+  leadId: string,
+  hubCtx:
+    | { rule: any | null; adContext: any; utm: Record<string, string> }
+    | null,
+  isFromAds: boolean,
+  adSource: string | null,
+) {
+  const leadMeta = buildLeadMetaFromWhatsApp(hubCtx, isFromAds, adSource);
+  if (!leadMeta) return;
+
+  const { error } = await supabase.from("lead_meta").insert({
+    lead_id: leadId,
+    ...leadMeta,
   });
 
   if (error) {
@@ -137,7 +166,13 @@ async function recordLeadMetaFromWhatsApp(
 async function applyInboundRules(
   supabase: any,
   session: any,
-  ctx: { content: string; pushName: string; phone: string; adContext: any; utm: Record<string, string> }
+  ctx: {
+    content: string;
+    pushName: string;
+    phone: string;
+    adContext: any;
+    utm: Record<string, string>;
+  },
 ): Promise<InboundRule | null> {
   const { data: rules } = await supabase
     .from("whatsapp_inbound_rules")
@@ -154,7 +189,9 @@ async function applyInboundRules(
     if (field === "message") haystack = ctx.content || "";
     else if (field === "push_name") haystack = ctx.pushName || "";
     else if (field === "phone") haystack = ctx.phone || "";
-    else if (field === "meta_source_id") haystack = ctx.adContext?.meta_campaign_id || "";
+    else if (field === "meta_source_id") {
+      haystack = ctx.adContext?.meta_campaign_id || "";
+    }
 
     const value = (rule.match_value || "").toString();
     try {
@@ -162,16 +199,27 @@ async function applyInboundRules(
         case "any":
           return rule;
         case "meta_ctwa":
-          if (ctx.adContext?.meta_campaign_id || ctx.adContext?.meta_click_id) return rule;
+          if (ctx.adContext?.meta_campaign_id || ctx.adContext?.meta_click_id) {
+            return rule;
+          }
           break;
         case "utm":
-          if (value && (ctx.utm["utm_campaign"] === value || ctx.utm["utm_source"] === value)) return rule;
+          if (
+            value &&
+            (ctx.utm["utm_campaign"] === value ||
+              ctx.utm["utm_source"] === value)
+          ) return rule;
           break;
         case "contains":
-          if (value && haystack.toLowerCase().includes(value.toLowerCase())) return rule;
+          if (value && haystack.toLowerCase().includes(value.toLowerCase())) {
+            return rule;
+          }
           break;
         case "equals":
-          if (value && haystack.trim().toLowerCase() === value.trim().toLowerCase()) return rule;
+          if (
+            value &&
+            haystack.trim().toLowerCase() === value.trim().toLowerCase()
+          ) return rule;
           break;
         case "regex":
           if (value && new RegExp(value, "i").test(haystack)) return rule;
@@ -184,27 +232,32 @@ async function applyInboundRules(
   return null;
 }
 
-
-function validateMagicBytes(content: Uint8Array, expectedMime: string): boolean {
+function validateMagicBytes(
+  content: Uint8Array,
+  expectedMime: string,
+): boolean {
   if (content.length < 4) return false;
   const hex = Array.from(content.slice(0, 8))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('').toUpperCase();
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("").toUpperCase();
 
-  const mimeBase = expectedMime.split(';')[0].toLowerCase();
-  
-  if (mimeBase === 'image/webp' && hex.startsWith('52494646')) return true;
-  if ((mimeBase === 'video/mp4' || mimeBase === 'audio/mp4') && hex.includes('66747970')) return true;
+  const mimeBase = expectedMime.split(";")[0].toLowerCase();
+
+  if (mimeBase === "image/webp" && hex.startsWith("52494646")) return true;
+  if (
+    (mimeBase === "video/mp4" || mimeBase === "audio/mp4") &&
+    hex.includes("66747970")
+  ) return true;
 
   const expectedSignatures = MAGIC_BYTES[mimeBase];
   if (!expectedSignatures) return true;
 
-  return expectedSignatures.some(sig => hex.startsWith(sig));
+  return expectedSignatures.some((sig) => hex.startsWith(sig));
 }
 
 function normalizeBase64(base64: string): string {
   if (!base64) return "";
-  return base64.replace(/^data:.*?;base64,/, '').replace(/[\r\n\s]/g, '');
+  return base64.replace(/^data:.*?;base64,/, "").replace(/[\r\n\s]/g, "");
 }
 
 function isValidBase64(str: string): boolean {
@@ -218,7 +271,7 @@ function extractBase64FromPayload(
   message: any,
   messageData: any,
   payload: any,
-  mediaContainer: any
+  mediaContainer: any,
 ): string | null {
   const candidates: any[] = [
     mediaContainer?.base64,
@@ -246,7 +299,10 @@ function jpegThumbnailToBytes(thumbnail: any): Uint8Array | null {
   try {
     if (Array.isArray(thumbnail)) return new Uint8Array(thumbnail);
     if (typeof thumbnail === "string") {
-      const normalized = thumbnail.replace(/^data:.*?;base64,/, "").replace(/[\r\n\s]/g, "");
+      const normalized = thumbnail.replace(/^data:.*?;base64,/, "").replace(
+        /[\r\n\s]/g,
+        "",
+      );
       if (normalized.length > 0) return decode(normalized);
     }
     if (typeof thumbnail === "object") {
@@ -267,7 +323,8 @@ declare const EdgeRuntime: { waitUntil: (promise: Promise<unknown>) => void };
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, x-api-key, x-webhook-secret, x-webhook-token, x-evolution-webhook-token, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, x-api-key, x-webhook-secret, x-webhook-token, x-evolution-webhook-token, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -282,15 +339,18 @@ function normalizeRemoteJid(jid: string): string {
 
 // Helper to extract clean phone number
 function extractPhoneNumber(jid: string): string {
-  return jid.replace("@s.whatsapp.net", "").replace("@c.us", "").replace("@g.us", "");
+  return jid.replace("@s.whatsapp.net", "").replace("@c.us", "").replace(
+    "@g.us",
+    "",
+  );
 }
 
 // Helper to normalize phone number (remove country code 55 if present)
 function normalizePhoneNumber(phone: string): string {
-  if (!phone) return '';
-  const cleaned = phone.replace(/\D/g, '');
+  if (!phone) return "";
+  const cleaned = phone.replace(/\D/g, "");
   // If starts with 55 and has 12+ digits, remove the 55
-  if (cleaned.length >= 12 && cleaned.startsWith('55')) {
+  if (cleaned.length >= 12 && cleaned.startsWith("55")) {
     return cleaned.substring(2);
   }
   return cleaned;
@@ -306,7 +366,11 @@ Deno.serve(async (req) => {
       JSON.stringify({ success: false, error: "Method not allowed" }),
       {
         status: 405,
-        headers: { ...corsHeaders, "Content-Type": "application/json", Allow: "POST, OPTIONS" },
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/json",
+          Allow: "POST, OPTIONS",
+        },
       },
     );
   }
@@ -322,12 +386,17 @@ Deno.serve(async (req) => {
       providerApiKey: Deno.env.get("EVOLUTION_API_KEY"),
     });
     if (!authorization.authorized) {
-      const missingServerSecret = authorization.reason === "missing_server_secret";
-      console.error(`Evolution webhook authentication rejected: ${authorization.reason}`);
+      const missingServerSecret =
+        authorization.reason === "missing_server_secret";
+      console.error(
+        `Evolution webhook authentication rejected: ${authorization.reason}`,
+      );
       return new Response(
         JSON.stringify({
           success: false,
-          error: missingServerSecret ? "Webhook authentication unavailable" : "Unauthorized",
+          error: missingServerSecret
+            ? "Webhook authentication unavailable"
+            : "Unauthorized",
         }),
         {
           status: missingServerSecret ? 503 : 401,
@@ -341,20 +410,36 @@ Deno.serve(async (req) => {
     // envelope here would replay a different event schema under the wrong
     // processor while still returning a superficially successful response.
     if (authorization.contract === "internal_worker_lease") {
-      console.error("Evolution webhook rejected an unsupported worker delivery contract");
+      console.error(
+        "Evolution webhook rejected an unsupported worker delivery contract",
+      );
       return new Response(
-        JSON.stringify({ success: false, error: "Unsupported webhook delivery contract" }),
-        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        JSON.stringify({
+          success: false,
+          error: "Unsupported webhook delivery contract",
+        }),
+        {
+          status: 409,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
 
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_ADMIN_KEY = selectSupabaseAdminSecretKey(secretEnvironment);
     if (!SUPABASE_URL || !SUPABASE_ADMIN_KEY) {
-      console.error("Evolution webhook rejected because its Supabase environment is incomplete");
+      console.error(
+        "Evolution webhook rejected because its Supabase environment is incomplete",
+      );
       return new Response(
-        JSON.stringify({ success: false, error: "Webhook temporarily unavailable" }),
-        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        JSON.stringify({
+          success: false,
+          error: "Webhook temporarily unavailable",
+        }),
+        {
+          status: 503,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
     const supabase = createClient(SUPABASE_URL, SUPABASE_ADMIN_KEY);
@@ -367,7 +452,8 @@ Deno.serve(async (req) => {
     const instanceName = payload.instance;
     const data = payload.data;
     const requestUrl = new URL(req.url);
-    const requestedSessionId = requestUrl.searchParams.get("session_id")?.trim() || "";
+    const requestedSessionId =
+      requestUrl.searchParams.get("session_id")?.trim() || "";
 
     // Direct callbacks may provide a session route hint; otherwise a globally
     // unambiguous active Evolution instance name is required.
@@ -395,7 +481,8 @@ Deno.serve(async (req) => {
         .neq("status", "deleted")
         .limit(2);
       sessionError = sessionLookup.error;
-      ambiguousSession = Array.isArray(sessionLookup.data) && sessionLookup.data.length > 1;
+      ambiguousSession = Array.isArray(sessionLookup.data) &&
+        sessionLookup.data.length > 1;
       session = !ambiguousSession && sessionLookup.data?.length === 1
         ? sessionLookup.data[0]
         : null;
@@ -406,7 +493,9 @@ Deno.serve(async (req) => {
       return new Response(
         JSON.stringify({
           success: false,
-          error: ambiguousSession ? "Ambiguous webhook session" : "Webhook session not found",
+          error: ambiguousSession
+            ? "Ambiguous webhook session"
+            : "Webhook session not found",
         }),
         {
           status: ambiguousSession ? 409 : 404,
@@ -420,15 +509,25 @@ Deno.serve(async (req) => {
       session,
     );
     if (!callbackTokenBinding.valid) {
-      console.error(`Evolution callback session token rejected: ${callbackTokenBinding.reason}`);
+      console.error(
+        `Evolution callback session token rejected: ${callbackTokenBinding.reason}`,
+      );
       return new Response(
         JSON.stringify({ success: false, error: "Webhook session mismatch" }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
 
     const expectedInstanceSignals = new Set(
-      [session.instance_id, session.instance_name, session.provider_instance_id, session.name]
+      [
+        session.instance_id,
+        session.instance_name,
+        session.provider_instance_id,
+        session.name,
+      ]
         .filter((value) => typeof value === "string" && value.trim())
         .map((value) => value.trim()),
     );
@@ -439,13 +538,19 @@ Deno.serve(async (req) => {
       .filter((value) => typeof value === "string" && value.trim())
       .map((value) => value.trim());
     if (
-      expectedInstanceSignals.size === 0 || suppliedInstanceSignals.length === 0 ||
-      suppliedInstanceSignals.some((value) => !expectedInstanceSignals.has(value))
+      expectedInstanceSignals.size === 0 ||
+      suppliedInstanceSignals.length === 0 ||
+      suppliedInstanceSignals.some((value) =>
+        !expectedInstanceSignals.has(value)
+      )
     ) {
       console.error("Evolution webhook session/instance binding was rejected");
       return new Response(
         JSON.stringify({ success: false, error: "Webhook session mismatch" }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
 
@@ -454,7 +559,10 @@ Deno.serve(async (req) => {
       console.error(`Session ${session.id} has no organization_id - rejecting`);
       return new Response(
         JSON.stringify({ success: false, error: "Session not configured" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
 
@@ -471,39 +579,69 @@ Deno.serve(async (req) => {
       .neq("status", "deleted")
       .maybeSingle();
     if (sessionRevalidation.error || !sessionRevalidation.data) {
-      console.error("Evolution webhook session failed its pre-effect revalidation");
+      console.error(
+        "Evolution webhook session failed its pre-effect revalidation",
+      );
       return new Response(
-        JSON.stringify({ success: false, error: "Webhook session unavailable" }),
-        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        JSON.stringify({
+          success: false,
+          error: "Webhook session unavailable",
+        }),
+        {
+          status: 409,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
     session = sessionRevalidation.data;
 
-    const revalidatedCallbackToken = await validateEvolutionCallbackSessionToken(
-      req.headers,
-      session,
-    );
+    const revalidatedCallbackToken =
+      await validateEvolutionCallbackSessionToken(
+        req.headers,
+        session,
+      );
     if (!revalidatedCallbackToken.valid) {
-      console.error(`Evolution callback session token changed before effects: ${revalidatedCallbackToken.reason}`);
+      console.error(
+        `Evolution callback session token changed before effects: ${revalidatedCallbackToken.reason}`,
+      );
       return new Response(
-        JSON.stringify({ success: false, error: "Webhook session unavailable" }),
-        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        JSON.stringify({
+          success: false,
+          error: "Webhook session unavailable",
+        }),
+        {
+          status: 409,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
 
     const revalidatedInstanceSignals = new Set(
-      [session.instance_id, session.instance_name, session.provider_instance_id, session.name]
+      [
+        session.instance_id,
+        session.instance_name,
+        session.provider_instance_id,
+        session.name,
+      ]
         .filter((value) => typeof value === "string" && value.trim())
         .map((value) => value.trim()),
     );
     if (
       revalidatedInstanceSignals.size === 0 ||
-      suppliedInstanceSignals.some((value) => !revalidatedInstanceSignals.has(value))
+      suppliedInstanceSignals.some((value) =>
+        !revalidatedInstanceSignals.has(value)
+      )
     ) {
       console.error("Evolution webhook session changed before effects");
       return new Response(
-        JSON.stringify({ success: false, error: "Webhook session unavailable" }),
-        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        JSON.stringify({
+          success: false,
+          error: "Webhook session unavailable",
+        }),
+        {
+          status: 409,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
 
@@ -566,17 +704,21 @@ Deno.serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify(messageResult
-        ? { success: true, result: messageResult }
-        : { success: true }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify(
+        messageResult
+          ? { success: true, result: messageResult }
+          : { success: true },
+      ),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
-
   } catch (error: unknown) {
     console.error("Evolution webhook error:", error);
     return new Response(
       JSON.stringify({ success: false, error: "Webhook processing failed" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
     );
   }
 });
@@ -599,7 +741,7 @@ async function handleConnectionUpdate(supabase: any, session: any, data: any) {
     status = "disconnected";
   }
 
-  const updateData: any = { 
+  const updateData: any = {
     status,
     updated_at: new Date().toISOString(),
   };
@@ -617,7 +759,8 @@ async function handleConnectionUpdate(supabase: any, session: any, data: any) {
     updateData.profile_name = data.profileName || data.instance.profileName;
   }
   if (data?.profilePictureUrl || data?.instance?.profilePictureUrl) {
-    updateData.profile_picture = data.profilePictureUrl || data.instance.profilePictureUrl;
+    updateData.profile_picture = data.profilePictureUrl ||
+      data.instance.profilePictureUrl;
   }
 
   await supabase
@@ -632,12 +775,12 @@ async function handleConnectionUpdate(supabase: any, session: any, data: any) {
       entity_type: "whatsapp_session",
       entity_id: session.id,
       organization_id: session.organization_id,
-      new_data: { 
+      new_data: {
         instance_name: session.instance_name,
         previous_status: previousStatus,
         new_status: status,
-        trigger: "webhook"
-      }
+        trigger: "webhook",
+      },
     });
   }
 }
@@ -702,7 +845,9 @@ async function handleMessagesUpsert(
       const fromMe = key.fromMe || false;
       const messageId = typeof key.id === "string" ? key.id.trim() : "";
       if (!messageId) {
-        console.log("Invalid Evolution message without provider message ID, skipping");
+        console.log(
+          "Invalid Evolution message without provider message ID, skipping",
+        );
         result.ignored += 1;
         continue;
       }
@@ -745,14 +890,17 @@ async function handleMessagesUpsert(
       // introduced. This read is safe because the atomic claim above already
       // excluded every competing direct callback. A resumed stale claim may
       // reuse the canonical message after a partial crash.
-      const { data: existingAutomationMsg, error: existingMessageError } = await supabase
-        .from("whatsapp_messages")
-        .select("id, sender_name, client_message_id")
-        .eq("session_id", session.id)
-        .eq("message_id", messageId)
-        .maybeSingle();
+      const { data: existingAutomationMsg, error: existingMessageError } =
+        await supabase
+          .from("whatsapp_messages")
+          .select("id, sender_name, client_message_id")
+          .eq("session_id", session.id)
+          .eq("message_id", messageId)
+          .maybeSingle();
       if (existingMessageError) {
-        throw new Error("Unable to verify the canonical WhatsApp message claim");
+        throw new Error(
+          "Unable to verify the canonical WhatsApp message claim",
+        );
       }
       if (
         existingAutomationMsg?.id && ownedClaim &&
@@ -767,41 +915,45 @@ async function handleMessagesUpsert(
       // ===== FACEBOOK ADS DETECTION =====
       const contextInfo = message.contextInfo || messageData.contextInfo || {};
 
-      const isFromFacebookAds =
-        contextInfo.conversionSource === "FB_Ads" ||
+      const isFromFacebookAds = contextInfo.conversionSource === "FB_Ads" ||
         contextInfo.entryPointConversionSource === "ctwa_ad" ||
         !!contextInfo.externalAdReply;
-      
-      const adSource = isFromFacebookAds 
+
+      const adSource = isFromFacebookAds
         ? (contextInfo.entryPointConversionApp || "facebook").toLowerCase()
         : null;
-      
+
       // When from ads, real number might be in "sender" field (remoteJid may be @lid format)
       if (rawRemoteJid.endsWith("@lid") && payload?.sender) {
-        console.log(`Facebook Ads detected: using sender ${payload.sender} instead of ${rawRemoteJid}`);
+        console.log(
+          `Facebook Ads detected: using sender ${payload.sender} instead of ${rawRemoteJid}`,
+        );
         rawRemoteJid = payload.sender;
       }
 
       // Normalize remote_jid for consistency
       const remoteJid = normalizeRemoteJid(rawRemoteJid);
       const isGroup = remoteJid.endsWith("@g.us");
-      
+
       // Extract phone number
       const contactPhone = extractPhoneNumber(remoteJid);
-      
+
       // Extract group subject/name if available
-      let groupSubject = isGroup 
-        ? (messageData.groupMetadata?.subject || messageData.source?.groupMetadata?.subject || null)
+      let groupSubject = isGroup
+        ? (messageData.groupMetadata?.subject ||
+          messageData.source?.groupMetadata?.subject || null)
         : null;
 
       // If group has no subject, fetch it from Evolution API
       if (isGroup && (!groupSubject || groupSubject === contactPhone)) {
         const EVOLUTION_API_URL = Deno.env.get("EVOLUTION_API_URL");
         const EVOLUTION_API_KEY = Deno.env.get("EVOLUTION_API_KEY");
-        
+
         if (EVOLUTION_API_URL && EVOLUTION_API_KEY) {
           try {
-            console.log(`Group without name detected, fetching from API: ${remoteJid}`);
+            console.log(
+              `Group without name detected, fetching from API: ${remoteJid}`,
+            );
             const groupInfoResponse = await fetch(
               `${EVOLUTION_API_URL}/group/findGroupInfos/${session.instance_name}?groupJid=${remoteJid}`,
               {
@@ -809,9 +961,9 @@ async function handleMessagesUpsert(
                 headers: {
                   "apikey": EVOLUTION_API_KEY,
                 },
-              }
+              },
             );
-            
+
             if (groupInfoResponse.ok) {
               const groupInfo = await groupInfoResponse.json();
               if (groupInfo.subject) {
@@ -837,7 +989,8 @@ async function handleMessagesUpsert(
         contactName = contactPhone;
       } else {
         // Received message: use pushName from the contact
-        contactName = messageData.pushName || messageData.verifiedBizName || contactPhone;
+        contactName = messageData.pushName || messageData.verifiedBizName ||
+          contactPhone;
       }
 
       // Extract sender info for group messages
@@ -861,42 +1014,78 @@ async function handleMessagesUpsert(
         content = message.imageMessage.caption || "[Imagem]";
         mediaUrl = message.imageMessage.url || "";
         const rawMime = message.imageMessage.mimetype;
-        mediaMimeType = (rawMime && rawMime !== "false" && rawMime !== false) ? rawMime : "image/jpeg";
-        base64FromWebhook = extractBase64FromPayload(message, messageData, payload, message.imageMessage);
+        mediaMimeType = (rawMime && rawMime !== "false" && rawMime !== false)
+          ? rawMime
+          : "image/jpeg";
+        base64FromWebhook = extractBase64FromPayload(
+          message,
+          messageData,
+          payload,
+          message.imageMessage,
+        );
         jpegThumbnailRaw = message.imageMessage.jpegThumbnail || null;
       } else if (message.videoMessage) {
         messageType = "video";
         content = message.videoMessage.caption || "[Vídeo]";
         mediaUrl = message.videoMessage.url || "";
         const rawMime = message.videoMessage.mimetype;
-        mediaMimeType = (rawMime && rawMime !== "false" && rawMime !== false) ? rawMime : "video/mp4";
-        base64FromWebhook = extractBase64FromPayload(message, messageData, payload, message.videoMessage);
+        mediaMimeType = (rawMime && rawMime !== "false" && rawMime !== false)
+          ? rawMime
+          : "video/mp4";
+        base64FromWebhook = extractBase64FromPayload(
+          message,
+          messageData,
+          payload,
+          message.videoMessage,
+        );
         jpegThumbnailRaw = message.videoMessage.jpegThumbnail || null;
       } else if (message.audioMessage) {
         messageType = "audio";
         content = message.audioMessage.ptt ? "[Áudio]" : "[Gravação]";
         mediaUrl = message.audioMessage.url || "";
         const rawMime = message.audioMessage.mimetype;
-        mediaMimeType = (rawMime && rawMime !== "false" && rawMime !== false) ? rawMime : "audio/ogg";
-        base64FromWebhook = extractBase64FromPayload(message, messageData, payload, message.audioMessage);
+        mediaMimeType = (rawMime && rawMime !== "false" && rawMime !== false)
+          ? rawMime
+          : "audio/ogg";
+        base64FromWebhook = extractBase64FromPayload(
+          message,
+          messageData,
+          payload,
+          message.audioMessage,
+        );
       } else if (message.documentMessage) {
         messageType = "document";
         content = message.documentMessage.fileName || "[Documento]";
         mediaUrl = message.documentMessage.url || "";
         const rawMime = message.documentMessage.mimetype;
-        mediaMimeType = (rawMime && rawMime !== "false" && rawMime !== false) ? rawMime : "application/octet-stream";
-        base64FromWebhook = extractBase64FromPayload(message, messageData, payload, message.documentMessage);
+        mediaMimeType = (rawMime && rawMime !== "false" && rawMime !== false)
+          ? rawMime
+          : "application/octet-stream";
+        base64FromWebhook = extractBase64FromPayload(
+          message,
+          messageData,
+          payload,
+          message.documentMessage,
+        );
       } else if (message.stickerMessage) {
         messageType = "sticker";
         content = "[Figurinha]";
         mediaUrl = message.stickerMessage.url || "";
         const rawMime = message.stickerMessage.mimetype;
-        mediaMimeType = (rawMime && rawMime !== "false" && rawMime !== false) ? rawMime : "image/webp";
-        base64FromWebhook = extractBase64FromPayload(message, messageData, payload, message.stickerMessage);
+        mediaMimeType = (rawMime && rawMime !== "false" && rawMime !== false)
+          ? rawMime
+          : "image/webp";
+        base64FromWebhook = extractBase64FromPayload(
+          message,
+          messageData,
+          payload,
+          message.stickerMessage,
+        );
       }
 
       // Get timestamp
-      const timestamp = messageData.messageTimestamp || Math.floor(Date.now() / 1000);
+      const timestamp = messageData.messageTimestamp ||
+        Math.floor(Date.now() / 1000);
       const messageDate = new Date(Number(timestamp) * 1000).toISOString();
 
       // Find or create conversation - search by contact_phone to avoid duplicates
@@ -916,7 +1105,7 @@ async function handleMessagesUpsert(
       if (!conversation) {
         // For new conversations, only set name if it's a received message
         const initialContactName = fromMe ? contactPhone : contactName;
-        
+
         // Create new conversation
         const { data: newConv, error: createError } = await supabase
           .from("whatsapp_conversations")
@@ -942,7 +1131,12 @@ async function handleMessagesUpsert(
 
         // Fetch and save profile picture for new conversations (non-group)
         if (!isGroup && !fromMe) {
-          await fetchAndSaveProfilePicture(supabase, session, conversation.id, contactPhone);
+          await fetchAndSaveProfilePicture(
+            supabase,
+            session,
+            conversation.id,
+            contactPhone,
+          );
         }
 
         // ===== HUB: identificação & distribuição inbound =====
@@ -960,12 +1154,21 @@ async function handleMessagesUpsert(
 
           if (isFromFacebookAds || matchedRule) {
             await createLeadFromConversation(
-              supabase, session, conversation, contactName, contactPhone, content,
-              isFromFacebookAds, adSource,
-              { rule: matchedRule, adContext, utm }
+              supabase,
+              session,
+              conversation,
+              contactName,
+              contactPhone,
+              content,
+              messageId,
+              isFromFacebookAds,
+              adSource,
+              { rule: matchedRule, adContext, utm },
             );
           } else {
-            console.log(`Conversation sem match de regra/ads - sem criação de lead: ${contactPhone}`);
+            console.log(
+              `Conversation sem match de regra/ads - sem criação de lead: ${contactPhone}`,
+            );
           }
         }
 
@@ -990,20 +1193,25 @@ async function handleMessagesUpsert(
                 .update({ lead_id: matchingLead.id })
                 .eq("id", conversation.id);
               conversation.lead_id = matchingLead.id;
-              console.log(`✅ Auto-linked new conversation to lead ${matchingLead.id} by phone ${contactPhone}`);
+              console.log(
+                `✅ Auto-linked new conversation to lead ${matchingLead.id} by phone ${contactPhone}`,
+              );
             }
           } catch (linkError) {
-            console.error("Error auto-linking conversation to lead:", linkError);
+            console.error(
+              "Error auto-linking conversation to lead:",
+              linkError,
+            );
           }
         }
       } else {
         // Update existing conversation
         const unreadIncrement = fromMe ? 0 : 1;
-        
+
         // ===== FIX: Only update name if it's a received message with a real name =====
         // Don't overwrite with phone number or our own name
         let updatedContactName = conversation.contact_name;
-        
+
         if (isGroup) {
           // Group: only update if we have actual subject
           if (groupSubject) {
@@ -1014,7 +1222,7 @@ async function handleMessagesUpsert(
           updatedContactName = contactName;
         }
         // If fromMe or contactName is just the phone, keep existing name
-        
+
         await supabase
           .from("whatsapp_conversations")
           .update({
@@ -1022,29 +1230,48 @@ async function handleMessagesUpsert(
             contact_name: updatedContactName,
             last_message: content,
             last_message_at: messageDate,
-            unread_count: fromMe ? 0 : (conversation.unread_count || 0) + unreadIncrement,
+            unread_count: fromMe
+              ? 0
+              : (conversation.unread_count || 0) + unreadIncrement,
           })
           .eq("id", conversation.id);
-        
+
         // ===== AUTO-SYNC PROFILE PICTURE =====
         // Fetch profile picture more frequently:
         // (a) no picture yet, (b) every ~10 received messages, (c) picture URL likely expired (>7 days old)
         const shouldFetchPicture = !isGroup && !fromMe && (
-          !conversation.contact_picture || 
+          !conversation.contact_picture ||
           ((conversation.unread_count || 0) % 10 === 0) ||
           // If picture URL is a WhatsApp CDN URL (pps.whatsapp.net), it expires - refresh periodically
-          (conversation.contact_picture && conversation.contact_picture.includes('pps.whatsapp.net'))
+          (conversation.contact_picture &&
+            conversation.contact_picture.includes("pps.whatsapp.net"))
         );
-        
+
         if (shouldFetchPicture) {
-          console.log(`Conversation ${conversation.id} - fetching profile picture (current: ${conversation.contact_picture ? 'exists but refreshing' : 'missing'})...`);
-          if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime.waitUntil) {
+          console.log(
+            `Conversation ${conversation.id} - fetching profile picture (current: ${
+              conversation.contact_picture ? "exists but refreshing" : "missing"
+            })...`,
+          );
+          if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
             EdgeRuntime.waitUntil(
-              fetchAndSaveProfilePicture(supabase, session, conversation.id, contactPhone)
+              fetchAndSaveProfilePicture(
+                supabase,
+                session,
+                conversation.id,
+                contactPhone,
+              ),
             );
           } else {
-            fetchAndSaveProfilePicture(supabase, session, conversation.id, contactPhone)
-              .catch(err => console.log('Background profile picture fetch failed:', err));
+            fetchAndSaveProfilePicture(
+              supabase,
+              session,
+              conversation.id,
+              contactPhone,
+            )
+              .catch((err) =>
+                console.log("Background profile picture fetch failed:", err)
+              );
           }
         }
 
@@ -1069,10 +1296,15 @@ async function handleMessagesUpsert(
                 .update({ lead_id: matchingLead.id })
                 .eq("id", conversation.id);
               conversation.lead_id = matchingLead.id;
-              console.log(`✅ Auto-linked existing conversation to lead ${matchingLead.id} by phone ${contactPhone}`);
+              console.log(
+                `✅ Auto-linked existing conversation to lead ${matchingLead.id} by phone ${contactPhone}`,
+              );
             }
           } catch (linkError) {
-            console.error("Error auto-linking conversation to lead:", linkError);
+            console.error(
+              "Error auto-linking conversation to lead:",
+              linkError,
+            );
           }
         }
       }
@@ -1080,18 +1312,22 @@ async function handleMessagesUpsert(
       // Process media if exists - download and store permanently
       // IMPORTANT: Never save temporary mmg.whatsapp.net URLs - they expire quickly
       let permanentMediaUrl: string | null = null; // Start with null, only set if we get a valid storage URL
-      let mediaStatusForInsert: 'pending' | 'ready' | 'failed' | null = null;
+      let mediaStatusForInsert: "pending" | "ready" | "failed" | null = null;
       let mediaStoragePath: string | null = null;
       const normalizedMimeType = normalizeMimeType(mediaMimeType);
-      
+
       if (messageType !== "text") {
         try {
           // Log media processing attempt
-          console.log(`Processing ${messageType} media: base64=${!!base64FromWebhook}, url=${!!mediaUrl}, mime=${mediaMimeType}, hasThumbnail=${!!jpegThumbnailRaw}`);
-          
+          console.log(
+            `Processing ${messageType} media: base64=${!!base64FromWebhook}, url=${!!mediaUrl}, mime=${mediaMimeType}, hasThumbnail=${!!jpegThumbnailRaw}`,
+          );
+
           // If base64 came directly in webhook, use it directly (faster, most reliable)
           if (base64FromWebhook) {
-            console.log(`Using base64 from webhook directly for ${messageType}, length: ${base64FromWebhook.length}`);
+            console.log(
+              `Using base64 from webhook directly for ${messageType}, length: ${base64FromWebhook.length}`,
+            );
             const result = await storeBase64MediaWithPath(
               supabase,
               session,
@@ -1099,14 +1335,16 @@ async function handleMessagesUpsert(
               messageId,
               messageType,
               normalizedMimeType,
-              base64FromWebhook
+              base64FromWebhook,
             );
             permanentMediaUrl = result.url;
             mediaStoragePath = result.path;
-            mediaStatusForInsert = permanentMediaUrl ? 'ready' : 'pending';
+            mediaStatusForInsert = permanentMediaUrl ? "ready" : "pending";
           } else if (mediaUrl && fromMe) {
             // Outgoing media: try to download immediately via Evolution API
-            console.log(`Downloading outgoing media from Evolution API for ${messageType}`);
+            console.log(
+              `Downloading outgoing media from Evolution API for ${messageType}`,
+            );
             const result = await downloadAndStoreMediaWithPath(
               supabase,
               supabaseUrl,
@@ -1117,61 +1355,82 @@ async function handleMessagesUpsert(
               normalizedMimeType,
               key,
               messageData,
-              fromMe
+              fromMe,
             );
             permanentMediaUrl = result.url;
             mediaStoragePath = result.path;
-            mediaStatusForInsert = permanentMediaUrl ? 'ready' : 'pending';
+            mediaStatusForInsert = permanentMediaUrl ? "ready" : "pending";
           } else {
             // Incoming media without inline base64 — defer to worker
             console.log(`Defer incoming ${messageType} media to worker`);
-            mediaStatusForInsert = 'pending';
+            mediaStatusForInsert = "pending";
           }
 
           // Fallback: if we still don't have a final URL but have a jpegThumbnail,
           // store it as a temporary preview so the UI shows something instead of an empty loader.
-          if (!permanentMediaUrl && jpegThumbnailRaw && (messageType === "image" || messageType === "video")) {
+          if (
+            !permanentMediaUrl && jpegThumbnailRaw &&
+            (messageType === "image" || messageType === "video")
+          ) {
             const thumbBytes = jpegThumbnailToBytes(jpegThumbnailRaw);
             if (thumbBytes && thumbBytes.length > 32) {
               try {
-                const thumbPath = `orgs/${session.organization_id}/sessions/${session.id}/media/${messageId}_thumb.jpg`;
+                const thumbPath =
+                  `orgs/${session.organization_id}/sessions/${session.id}/media/${messageId}_thumb.jpg`;
                 const { error: thumbErr } = await supabase.storage
                   .from("whatsapp-media")
-                  .upload(thumbPath, thumbBytes, { contentType: "image/jpeg", upsert: true });
+                  .upload(thumbPath, thumbBytes, {
+                    contentType: "image/jpeg",
+                    upsert: true,
+                  });
                 if (!thumbErr) {
-                  const { data: thumbUrl } = supabase.storage.from("whatsapp-media").getPublicUrl(thumbPath);
+                  const { data: thumbUrl } = supabase.storage.from(
+                    "whatsapp-media",
+                  ).getPublicUrl(thumbPath);
                   permanentMediaUrl = thumbUrl.publicUrl;
                   mediaStoragePath = thumbPath;
                   // Keep status pending — worker will replace with full-size when available
-                  console.log(`Stored jpegThumbnail preview: ${permanentMediaUrl}`);
+                  console.log(
+                    `Stored jpegThumbnail preview: ${permanentMediaUrl}`,
+                  );
                 }
               } catch (thumbStoreErr) {
-                console.warn("Failed to store thumbnail preview:", thumbStoreErr);
+                console.warn(
+                  "Failed to store thumbnail preview:",
+                  thumbStoreErr,
+                );
               }
             }
           }
-          
+
           if (permanentMediaUrl) {
-            console.log(`Media stored: ${permanentMediaUrl} (status=${mediaStatusForInsert})`);
+            console.log(
+              `Media stored: ${permanentMediaUrl} (status=${mediaStatusForInsert})`,
+            );
           } else {
-            console.log(`No media stored yet, marking as ${mediaStatusForInsert} for retry`);
+            console.log(
+              `No media stored yet, marking as ${mediaStatusForInsert} for retry`,
+            );
           }
         } catch (mediaError) {
           console.error("Error processing media:", mediaError);
-          mediaStatusForInsert = 'pending';
+          mediaStatusForInsert = "pending";
           permanentMediaUrl = null;
         }
       }
 
-      const existingSenderName = normalizeText(existingAutomationMsg?.sender_name || "");
-      const existingClientMessageId = String(existingAutomationMsg?.client_message_id || "");
-      const isAutomationMessage =
-        existingSenderName === "automacao"
-        || existingSenderName.includes("jhenny")
-        || existingSenderName.includes("jenny")
-        || existingSenderName === "ia"
-        || existingSenderName === "ai"
-        || existingClientMessageId.startsWith("jhenny-");
+      const existingSenderName = normalizeText(
+        existingAutomationMsg?.sender_name || "",
+      );
+      const existingClientMessageId = String(
+        existingAutomationMsg?.client_message_id || "",
+      );
+      const isAutomationMessage = existingSenderName === "automacao" ||
+        existingSenderName.includes("jhenny") ||
+        existingSenderName.includes("jenny") ||
+        existingSenderName === "ia" ||
+        existingSenderName === "ai" ||
+        existingClientMessageId.startsWith("jhenny-");
 
       // Insert without updating an existing row. Direct callback contenders do
       // not execute effects; only the owner of a resumed stale claim may reuse
@@ -1223,7 +1482,11 @@ async function handleMessagesUpsert(
         result.duplicates += 1;
       } else {
         result.accepted += 1;
-        console.log(`${resumedDelivery ? "Message resumed" : "Message saved"}: ${messageId} in conversation ${conversation.id}`);
+        console.log(
+          `${
+            resumedDelivery ? "Message resumed" : "Message saved"
+          }: ${messageId} in conversation ${conversation.id}`,
+        );
 
         // ===== TIMELINE LOGGING: Log incoming messages to lead_timeline_events =====
         if (!fromMe && conversation.lead_id) {
@@ -1238,17 +1501,22 @@ async function handleMessagesUpsert(
                 content: content,
                 media_type: messageType,
                 contact_name: contactName,
-                contact_phone: contactPhone
-              }
+                contact_phone: contactPhone,
+              },
             });
-            console.log(`✅ Incoming message logged to timeline for lead ${conversation.lead_id}`);
+            console.log(
+              `✅ Incoming message logged to timeline for lead ${conversation.lead_id}`,
+            );
           } catch (timelineError) {
-            console.error("Error logging incoming message to timeline:", timelineError);
+            console.error(
+              "Error logging incoming message to timeline:",
+              timelineError,
+            );
           }
         }
-        
+
         // If media failed to download, create a job for the media-worker
-        if (mediaStatusForInsert === 'pending' && insertedMessage?.id) {
+        if (mediaStatusForInsert === "pending" && insertedMessage?.id) {
           console.log(`Creating media job for message ${insertedMessage.id}`);
           const { error: jobError } = await supabase.from("media_jobs").insert({
             organization_id: session.organization_id,
@@ -1258,44 +1526,49 @@ async function handleMessagesUpsert(
             message_key: key,
             media_type: messageType,
             media_mime_type: normalizeMimeType(mediaMimeType),
-            status: 'pending',
+            status: "pending",
             next_retry_at: new Date().toISOString(),
           });
-          
+
           if (jobError) {
             console.error("Error creating media job:", jobError);
             // Mark message with error so user sees a retry button instead of eternal loading
             await supabase
               .from("whatsapp_messages")
-              .update({ 
-                media_status: 'failed', 
-                media_error: `Falha ao agendar download: ${jobError.message}` 
+              .update({
+                media_status: "failed",
+                media_error: `Falha ao agendar download: ${jobError.message}`,
               })
               .eq("id", insertedMessage.id);
           } else {
             console.log(`Media job created for retry`);
-            
+
             // Trigger media-worker immediately to process the job
             // Use EdgeRuntime.waitUntil to not block the response
             const triggerWorker = async () => {
               try {
                 // Small delay to ensure job is committed to database
-                await new Promise(resolve => setTimeout(resolve, 3000));
-                console.log("Triggering media-worker for immediate processing...");
-                const workerResponse = await fetch(`${supabaseUrl}/functions/v1/media-worker`, {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${supabaseKey}`,
+                await new Promise((resolve) => setTimeout(resolve, 3000));
+                console.log(
+                  "Triggering media-worker for immediate processing...",
+                );
+                const workerResponse = await fetch(
+                  `${supabaseUrl}/functions/v1/media-worker`,
+                  {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                      Authorization: `Bearer ${supabaseKey}`,
+                    },
+                    body: JSON.stringify({}),
                   },
-                  body: JSON.stringify({}),
-                });
+                );
                 console.log(`media-worker triggered: ${workerResponse.status}`);
               } catch (workerError) {
                 console.error("Failed to trigger media-worker:", workerError);
               }
             };
-            
+
             // Fire and forget - don't await
             EdgeRuntime.waitUntil(triggerWorker());
           }
@@ -1305,26 +1578,38 @@ async function handleMessagesUpsert(
         if (fromMe && !isGroup && conversation.lead_id) {
           // If this is a manual message (fromMe = true and not from automation), stop any active automations
           if (!isAutomationMessage) {
-            console.log(`Manual interaction detected for lead ${conversation.lead_id}, checking for automations to stop`);
-            await handleStopFollowUpOnReply(supabase, conversation.id, conversation.lead_id, true);
+            console.log(
+              `Manual interaction detected for lead ${conversation.lead_id}, checking for automations to stop`,
+            );
+            await handleStopFollowUpOnReply(
+              supabase,
+              conversation.id,
+              conversation.lead_id,
+              true,
+            );
           }
 
           try {
-            console.log(`Tracking first response for lead ${conversation.lead_id} via native WhatsApp (session owner: ${session.owner_user_id})`);
-            const response = await fetch(`${supabaseUrl}/functions/v1/calculate-first-response`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${supabaseKey}`,
+            console.log(
+              `Tracking first response for lead ${conversation.lead_id} via native WhatsApp (session owner: ${session.owner_user_id})`,
+            );
+            const response = await fetch(
+              `${supabaseUrl}/functions/v1/calculate-first-response`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${supabaseKey}`,
+                },
+                body: JSON.stringify({
+                  lead_id: conversation.lead_id,
+                  channel: "whatsapp",
+                  actor_user_id: session.owner_user_id || null,
+                  is_automation: isAutomationMessage,
+                  organization_id: session.organization_id,
+                }),
               },
-              body: JSON.stringify({
-                lead_id: conversation.lead_id,
-                channel: "whatsapp",
-                actor_user_id: session.owner_user_id || null,
-                is_automation: isAutomationMessage,
-                organization_id: session.organization_id,
-              }),
-            });
+            );
             if (!response.ok) {
               throw new Error("First-response calculation was not accepted");
             }
@@ -1336,14 +1621,13 @@ async function handleMessagesUpsert(
 
         // PUSH NOTIFICATION: Removed automatic WhatsApp/Push on every message per user request
 
-
         // The canonical whatsapp_messages INSERT above is the automation
         // trigger. `zz_automation_inbound_message` enqueues the durable event
         // exactly once; the retired event-shaped POST to automation-trigger is
         // intentionally not repeated here (that worker only accepts batch_size).
         if (!fromMe && !isGroup) {
           // ===== AI AGENT: Auto-respond to incoming text messages =====
-          if (messageType === 'text' && content) {
+          if (messageType === "text" && content) {
             try {
               const { data: activeAgentConversation } = await supabase
                 .from("ai_agent_conversations")
@@ -1372,24 +1656,27 @@ async function handleMessagesUpsert(
                 throw new Error("AI agent delivery scope is incomplete");
               }
 
-              const aiAgentResponse = await fetch(`${supabaseUrl}/functions/v1/ai-agent-responder`, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  // Private workers authenticate opaque hosted secrets via
-                  // `apikey`; Bearer preserves the legacy service-role path.
-                  apikey: supabaseKey,
-                  Authorization: `Bearer ${supabaseKey}`,
+              const aiAgentResponse = await fetch(
+                `${supabaseUrl}/functions/v1/ai-agent-responder`,
+                {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    // Private workers authenticate opaque hosted secrets via
+                    // `apikey`; Bearer preserves the legacy service-role path.
+                    apikey: supabaseKey,
+                    Authorization: `Bearer ${supabaseKey}`,
+                  },
+                  body: JSON.stringify({
+                    conversation_id: conversation.id,
+                    session_id: session.id,
+                    organization_id: session.organization_id,
+                    provider_message_id: messageId,
+                    message: content,
+                    contact_name: contactName,
+                  }),
                 },
-                body: JSON.stringify({
-                  conversation_id: conversation.id,
-                  session_id: session.id,
-                  organization_id: session.organization_id,
-                  provider_message_id: messageId,
-                  message: content,
-                  contact_name: contactName,
-                }),
-              });
+              );
               if (!aiAgentResponse.ok) {
                 throw new Error("AI agent responder was not accepted");
               }
@@ -1404,21 +1691,23 @@ async function handleMessagesUpsert(
           // Cancel running/waiting automation executions when lead replies
           // Even if conversation has no lead_id, try to find lead by phone
           let leadIdForStop = conversation.lead_id;
-          
+
           if (!leadIdForStop) {
             // Try to find lead by phone number with multiple variations
             // Covers: with/without country code 55, with/without 9th digit
-            const cleanPhone = contactPhone.replace(/\D/g, '');
-            const basePhone = cleanPhone.startsWith('55') ? cleanPhone.substring(2) : cleanPhone;
-            
+            const cleanPhone = contactPhone.replace(/\D/g, "");
+            const basePhone = cleanPhone.startsWith("55")
+              ? cleanPhone.substring(2)
+              : cleanPhone;
+
             // Generate all possible phone variations
             const phoneVariants = new Set<string>();
-            
+
             // Original formats
-            phoneVariants.add(cleanPhone);                      // 5522974063727
-            phoneVariants.add(basePhone);                       // 22974063727
-            phoneVariants.add(`55${basePhone}`);                // 5522974063727
-            
+            phoneVariants.add(cleanPhone); // 5522974063727
+            phoneVariants.add(basePhone); // 22974063727
+            phoneVariants.add(`55${basePhone}`); // 5522974063727
+
             // Handle 9th digit variations for Brazilian mobile numbers
             // DDD (2 digits) + 9 (optional) + number (8 digits)
             if (basePhone.length === 11) {
@@ -1426,47 +1715,59 @@ async function handleMessagesUpsert(
               const ddd = basePhone.substring(0, 2);
               const numberPart = basePhone.substring(3); // Skip the 9
               const without9 = `${ddd}${numberPart}`;
-              phoneVariants.add(without9);                      // 2297406372
-              phoneVariants.add(`55${without9}`);               // 552297406372
+              phoneVariants.add(without9); // 2297406372
+              phoneVariants.add(`55${without9}`); // 552297406372
             } else if (basePhone.length === 10) {
               // Missing 9th digit, create variant with it
               const ddd = basePhone.substring(0, 2);
               const numberPart = basePhone.substring(2);
               const with9 = `${ddd}9${numberPart}`;
-              phoneVariants.add(with9);                         // 22997406372
-              phoneVariants.add(`55${with9}`);                  // 5522997406372
+              phoneVariants.add(with9); // 22997406372
+              phoneVariants.add(`55${with9}`); // 5522997406372
             }
-            
+
             const variantsArray = Array.from(phoneVariants);
-            console.log(`Stop-on-reply: searching lead with phone variants: ${variantsArray.join(', ')}`);
-            
+            console.log(
+              `Stop-on-reply: searching lead with phone variants: ${
+                variantsArray.join(", ")
+              }`,
+            );
+
             const { data: matchingLead } = await supabase
               .from("leads")
               .select("id")
               .eq("organization_id", session.organization_id)
-              .or(variantsArray.map(p => `phone.eq.${p}`).join(','))
+              .or(variantsArray.map((p) => `phone.eq.${p}`).join(","))
               .limit(1)
               .maybeSingle();
-            
+
             if (matchingLead) {
               leadIdForStop = matchingLead.id;
-              console.log(`Found lead ${leadIdForStop} by phone match for stop-on-reply`);
-              
+              console.log(
+                `Found lead ${leadIdForStop} by phone match for stop-on-reply`,
+              );
+
               // BONUS: Link the conversation to the lead for future messages
               await supabase
                 .from("whatsapp_conversations")
                 .update({ lead_id: matchingLead.id })
                 .eq("id", conversation.id);
-              
+
               // Update local variable too for notifications below
               conversation.lead_id = matchingLead.id;
             } else {
-              console.log(`No lead found for phone variants: ${variantsArray.join(', ')}`);
+              console.log(
+                `No lead found for phone variants: ${variantsArray.join(", ")}`,
+              );
             }
           }
-          
+
           if (leadIdForStop) {
-            await handleStopFollowUpOnReply(supabase, conversation.id, leadIdForStop);
+            await handleStopFollowUpOnReply(
+              supabase,
+              conversation.id,
+              leadIdForStop,
+            );
           }
 
           // ===== WHATSAPP MESSAGE NOTIFICATIONS =====
@@ -1500,9 +1801,9 @@ async function handleMessagesUpsert(
 
 // Helper to normalize MIME type (remove codec info like ; codecs=opus)
 function normalizeMimeType(mime: string | null): string {
-  if (!mime) return 'application/octet-stream';
+  if (!mime) return "application/octet-stream";
   // Remove codec info: "audio/ogg; codecs=opus" -> "audio/ogg"
-  return mime.split(';')[0].trim();
+  return mime.split(";")[0].trim();
 }
 
 // Helper to get file extension from MIME type
@@ -1522,11 +1823,13 @@ function getExtensionFromMime(mediaMimeType: string): string {
     "audio/mp4": "m4a",
     "audio/aac": "aac",
     "application/pdf": "pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+      "docx",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
     "text/csv": "csv",
   };
-  return mimeExtMap[mediaMimeType] || mediaMimeType.split("/")[1]?.split(";")[0] || "bin";
+  return mimeExtMap[mediaMimeType] ||
+    mediaMimeType.split("/")[1]?.split(";")[0] || "bin";
 }
 
 // Store base64 media directly (when webhook sends base64) - returns both URL and path
@@ -1537,12 +1840,13 @@ async function storeBase64MediaWithPath(
   messageId: string,
   messageType: string,
   mediaMimeType: string,
-  base64Content: string
+  base64Content: string,
 ): Promise<{ url: string; path: string | null }> {
   try {
     const extension = getExtensionFromMime(mediaMimeType);
-    const filePath = `orgs/${session.organization_id}/sessions/${session.id}/media/${messageId}.${extension}`;
-    
+    const filePath =
+      `orgs/${session.organization_id}/sessions/${session.id}/media/${messageId}.${extension}`;
+
     // Normalize and validate base64
     const normalized = normalizeBase64(base64Content);
     if (!isValidBase64(normalized)) {
@@ -1552,14 +1856,18 @@ async function storeBase64MediaWithPath(
 
     // Decode base64 to Uint8Array
     const fileContent = decode(normalized);
-    
+
     // Validate magic bytes
     if (!validateMagicBytes(fileContent, mediaMimeType)) {
-      console.warn(`Magic bytes validation failed for ${mediaMimeType} in storeBase64MediaWithPath`);
+      console.warn(
+        `Magic bytes validation failed for ${mediaMimeType} in storeBase64MediaWithPath`,
+      );
       return { url: "", path: null };
     }
 
-    console.log(`Storing base64 media: ${filePath}, size: ${fileContent.length} bytes`);
+    console.log(
+      `Storing base64 media: ${filePath}, size: ${fileContent.length} bytes`,
+    );
 
     const { error: uploadError } = await supabase.storage
       .from("whatsapp-media")
@@ -1595,7 +1903,7 @@ async function downloadAndStoreMediaWithPath(
   mediaMimeType: string,
   key: any,
   messageData: any,
-  fromMe: boolean = true
+  fromMe: boolean = true,
 ): Promise<{ url: string; path: string | null }> {
   const EVOLUTION_API_URL = Deno.env.get("EVOLUTION_API_URL");
   const EVOLUTION_API_KEY = Deno.env.get("EVOLUTION_API_KEY");
@@ -1606,9 +1914,12 @@ async function downloadAndStoreMediaWithPath(
   }
 
   const isDiagnostic = Deno.env.get("DEBUG_MEDIA") === "true";
-  console.log(`Attempting to download media: type=${messageType}, mimeType=${mediaMimeType}, instance=${session.instance_name}, fromMe=${fromMe}, diagnostic=${isDiagnostic}`);
+  console.log(
+    `Attempting to download media: type=${messageType}, mimeType=${mediaMimeType}, instance=${session.instance_name}, fromMe=${fromMe}, diagnostic=${isDiagnostic}`,
+  );
 
-  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  const delay = (ms: number) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
 
   const getExtension = (mime: string): string => {
     const mimeExtMap: Record<string, string> = {
@@ -1633,9 +1944,12 @@ async function downloadAndStoreMediaWithPath(
     }
 
     const extension = getExtension(mediaMimeType);
-    const filePath = `orgs/${session.organization_id}/sessions/${session.id}/media/${messageId}.${extension}`;
+    const filePath =
+      `orgs/${session.organization_id}/sessions/${session.id}/media/${messageId}.${extension}`;
 
-    console.log(`Uploading to storage: ${filePath}, size: ${content.length} bytes`);
+    console.log(
+      `Uploading to storage: ${filePath}, size: ${content.length} bytes`,
+    );
 
     const { error: uploadError } = await supabase.storage
       .from("whatsapp-media")
@@ -1660,7 +1974,7 @@ async function downloadAndStoreMediaWithPath(
   // === STRATEGY 1: getBase64FromMediaMessage (PRIORITIZED) ===
   const tryGetBase64FromEvolution = async (): Promise<string | null> => {
     if (!fromMe) await delay(3000);
-    
+
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         await delay(1000 * attempt);
@@ -1676,7 +1990,7 @@ async function downloadAndStoreMediaWithPath(
               message: { key },
               convertToMp4: messageType === "video",
             }),
-          }
+          },
         );
 
         if (response.ok) {
@@ -1706,7 +2020,10 @@ async function downloadAndStoreMediaWithPath(
       try {
         const response = await fetch(endpoint, {
           method: "POST",
-          headers: { "apikey": EVOLUTION_API_KEY, "Content-Type": "application/json" },
+          headers: {
+            "apikey": EVOLUTION_API_KEY,
+            "Content-Type": "application/json",
+          },
           body: JSON.stringify({ message: { key } }),
         });
         if (response.ok) {
@@ -1719,23 +2036,32 @@ async function downloadAndStoreMediaWithPath(
             if (data.base64) return decode(normalizeBase64(data.base64));
           }
         }
-      } catch (e) { console.log(`S2 failed:`, e); }
+      } catch (e) {
+        console.log(`S2 failed:`, e);
+      }
     }
 
     // Strategy 3/5: Direct URL/Path
     const message = messageData.message || {};
-    const mediaMessage = message.imageMessage || message.videoMessage || 
-                         message.audioMessage || message.documentMessage;
-    const mediaUrl = mediaMessage?.url || (mediaMessage?.directPath ? `https://mmg.whatsapp.net${mediaMessage.directPath}` : null);
-    
+    const mediaMessage = message.imageMessage || message.videoMessage ||
+      message.audioMessage || message.documentMessage;
+    const mediaUrl = mediaMessage?.url ||
+      (mediaMessage?.directPath
+        ? `https://mmg.whatsapp.net${mediaMessage.directPath}`
+        : null);
+
     if (mediaUrl) {
       try {
-        const response = await fetch(mediaUrl, { headers: { "User-Agent": "WhatsApp/2.24.1.0" } });
+        const response = await fetch(mediaUrl, {
+          headers: { "User-Agent": "WhatsApp/2.24.1.0" },
+        });
         if (response.ok) {
           const buffer = await response.arrayBuffer();
           if (buffer.byteLength > 100) return new Uint8Array(buffer);
         }
-      } catch (e) { console.log(`S3/5 failed:`, e); }
+      } catch (e) {
+        console.log(`S3/5 failed:`, e);
+      }
     }
     return null;
   };
@@ -1763,14 +2089,14 @@ async function handleMessagesUpdate(supabase: any, session: any, data: any) {
     try {
       const key = update.key || {};
       const messageId = key.id;
-      
+
       if (!messageId) continue;
 
       // Evolution v2 status format
       const status = update.update?.status || update.status;
 
       const updateData: any = {};
-      
+
       // Status codes: 0 = error, 1 = pending, 2 = server, 3 = delivery, 4 = read, 5 = played
       if (status === 2 || status === "SERVER_ACK") {
         updateData.status = "sent";
@@ -1791,10 +2117,11 @@ async function handleMessagesUpdate(supabase: any, session: any, data: any) {
           .update(updateData)
           .eq("session_id", session.id)
           .eq("message_id", messageId);
-        
-        console.log(`Message ${messageId} status updated to: ${updateData.status}`);
-      }
 
+        console.log(
+          `Message ${messageId} status updated to: ${updateData.status}`,
+        );
+      }
     } catch (error) {
       console.error("Error updating message status:", error);
     }
@@ -1805,24 +2132,24 @@ async function handleMessagesUpdate(supabase: any, session: any, data: any) {
 async function handleMessagesDelete(supabase: any, session: any, data: any) {
   try {
     const messageId = data?.key?.id || data?.id;
-    
+
     if (!messageId) {
       console.log("Delete event missing message id:", data);
       return;
     }
-    
+
     console.log(`Deleting message ${messageId} from session ${session.id}`);
-    
+
     // Soft delete by updating content or completely remove
     const { error } = await supabase
       .from("whatsapp_messages")
-      .update({ 
+      .update({
         content: "[Mensagem apagada]",
-        message_type: "deleted"
+        message_type: "deleted",
       })
       .eq("session_id", session.id)
       .eq("message_id", messageId);
-      
+
     if (error) {
       console.error("Error deleting message:", error);
     } else {
@@ -1839,25 +2166,28 @@ async function handlePresenceUpdate(supabase: any, session: any, data: any) {
     // data format: { id: "5511999999999@s.whatsapp.net", presences: { "5511999999999@s.whatsapp.net": { lastKnownPresence: "composing" } } }
     const contactJid = data?.id;
     const presenceInfo = data?.presences?.[contactJid];
-    
+
     if (!contactJid || !presenceInfo) {
       console.log("Presence update missing data:", data);
       return;
     }
-    
+
     // Possible values: 'composing', 'recording', 'paused', 'available', 'unavailable'
     const presence = presenceInfo.lastKnownPresence;
-    const contactPhone = contactJid.replace("@s.whatsapp.net", "").replace("@c.us", "").replace("@g.us", "");
-    
+    const contactPhone = contactJid.replace("@s.whatsapp.net", "").replace(
+      "@c.us",
+      "",
+    ).replace("@g.us", "");
+
     console.log(`Presence update for ${contactPhone}: ${presence}`);
-    
+
     // Only update for active presence states
-    if (presence === 'composing' || presence === 'recording') {
+    if (presence === "composing" || presence === "recording") {
       await supabase
         .from("whatsapp_conversations")
-        .update({ 
+        .update({
           contact_presence: presence,
-          presence_updated_at: new Date().toISOString()
+          presence_updated_at: new Date().toISOString(),
         })
         .eq("session_id", session.id)
         .eq("contact_phone", contactPhone);
@@ -1865,9 +2195,9 @@ async function handlePresenceUpdate(supabase: any, session: any, data: any) {
       // Clear presence after paused/available/unavailable
       await supabase
         .from("whatsapp_conversations")
-        .update({ 
+        .update({
           contact_presence: null,
-          presence_updated_at: new Date().toISOString()
+          presence_updated_at: new Date().toISOString(),
         })
         .eq("session_id", session.id)
         .eq("contact_phone", contactPhone);
@@ -1882,24 +2212,23 @@ async function handleSendMessage(supabase: any, session: any, data: any) {
   try {
     const key = data?.key || {};
     const messageId = key.id;
-    
+
     if (!messageId) {
       console.log("Send message event missing id:", data);
       return;
     }
-    
+
     console.log(`Send message confirmed: ${messageId}`);
-    
+
     // Update message status to sent
     await supabase
       .from("whatsapp_messages")
-      .update({ 
+      .update({
         status: "sent",
-        sent_at: new Date().toISOString()
+        sent_at: new Date().toISOString(),
       })
       .eq("session_id", session.id)
       .eq("message_id", messageId);
-      
   } catch (error) {
     console.error("Error in handleSendMessage:", error);
   }
@@ -1908,27 +2237,29 @@ async function handleSendMessage(supabase: any, session: any, data: any) {
 // Handle GROUPS_UPSERT event - when groups are created or updated
 async function handleGroupsUpsert(supabase: any, session: any, data: any) {
   const groups = Array.isArray(data) ? data : [data];
-  console.log(`Processing ${groups.length} groups upsert for session ${session.id}`);
-  
+  console.log(
+    `Processing ${groups.length} groups upsert for session ${session.id}`,
+  );
+
   for (const group of groups) {
     try {
       const groupId = group.id; // xxxxx@g.us
       const groupSubject = group.subject; // Nome do grupo
-      
+
       if (!groupId || !groupSubject) {
         console.log("Group missing id or subject, skipping:", group);
         continue;
       }
-      
+
       console.log(`Updating group: ${groupId} -> ${groupSubject}`);
-      
+
       // Update existing conversation with real group name
       const { error } = await supabase
         .from("whatsapp_conversations")
         .update({ contact_name: groupSubject })
         .eq("session_id", session.id)
         .eq("remote_jid", groupId);
-        
+
       if (error) {
         console.error(`Error updating group ${groupId}:`, error);
       } else {
@@ -1943,27 +2274,29 @@ async function handleGroupsUpsert(supabase: any, session: any, data: any) {
 // Handle GROUP_UPDATE event - when group name/description/photo changes
 async function handleGroupUpdate(supabase: any, session: any, data: any) {
   const updates = Array.isArray(data) ? data : [data];
-  console.log(`Processing ${updates.length} group updates for session ${session.id}`);
-  
+  console.log(
+    `Processing ${updates.length} group updates for session ${session.id}`,
+  );
+
   for (const update of updates) {
     try {
       const groupId = update.id;
       const newSubject = update.subject; // Novo nome
-      
+
       if (!groupId) {
         console.log("Group update missing id, skipping:", update);
         continue;
       }
-      
+
       if (newSubject) {
         console.log(`Updating group name: ${groupId} -> ${newSubject}`);
-        
+
         const { error } = await supabase
           .from("whatsapp_conversations")
           .update({ contact_name: newSubject })
           .eq("session_id", session.id)
           .eq("remote_jid", groupId);
-          
+
         if (error) {
           console.error(`Error updating group ${groupId}:`, error);
         } else {
@@ -1977,23 +2310,30 @@ async function handleGroupUpdate(supabase: any, session: any, data: any) {
 }
 
 async function createLeadFromConversation(
-  supabase: any, 
-  session: any, 
+  supabase: any,
+  session: any,
   conversation: any,
   contactName: string,
   contactPhone: string,
   firstMessage: string,
+  providerMessageId: string,
   isFromAds: boolean = false,
   adSource: string | null = null,
-  hubCtx: { rule: any | null; adContext: any; utm: Record<string, string> } | null = null
+  hubCtx:
+    | { rule: any | null; adContext: any; utm: Record<string, string> }
+    | null = null,
 ) {
   try {
-    console.log(`Attempting to create lead: phone=${contactPhone}, session_owner=${session.owner_user_id}, org=${session.organization_id}, isFromAds=${isFromAds}, adSource=${adSource}`);
-    
+    console.log(
+      `Attempting to create lead: phone=${contactPhone}, session_owner=${session.owner_user_id}, org=${session.organization_id}, isFromAds=${isFromAds}, adSource=${adSource}`,
+    );
+
     // ===== BUSCAR LEAD EXISTENTE COM TELEFONE NORMALIZADO =====
     const normalizedPhone = normalizePhoneNumber(contactPhone);
-    console.log(`Normalized phone: ${normalizedPhone} (original: ${contactPhone})`);
-    
+    console.log(
+      `Normalized phone: ${normalizedPhone} (original: ${contactPhone})`,
+    );
+
     // Buscar todos os leads da organização com telefone
     const { data: allLeads, error: searchError } = await supabase
       .from("leads")
@@ -2006,60 +2346,78 @@ async function createLeadFromConversation(
     }
 
     // Verificar se algum lead tem telefone que combina (normalizado)
-    const existingLead = allLeads?.find((l: { id: string; phone: string | null }) => {
-      if (!l.phone) return false;
-      const leadNormalizedPhone = normalizePhoneNumber(l.phone);
-      return leadNormalizedPhone === normalizedPhone;
-    });
+    const existingLead = allLeads?.find(
+      (l: { id: string; phone: string | null }) => {
+        if (!l.phone) return false;
+        const leadNormalizedPhone = normalizePhoneNumber(l.phone);
+        return leadNormalizedPhone === normalizedPhone;
+      },
+    );
 
     if (existingLead) {
-      // Registrar reentrada via RPC
-      const { error: reentryError } = await supabase.rpc('register_lead_reentry', {
-        p_lead_id: existingLead.id,
-        p_org_id: session.organization_id,
-        p_entry_type: 'whatsapp_reentry',
-        p_source: 'whatsapp',
-        p_campaign_name: hubCtx?.rule?.campaign_label || hubCtx?.utm?.utm_campaign || hubCtx?.adContext?.headline || null,
-        p_utm_source: hubCtx?.utm?.utm_source || null,
-        p_utm_medium: hubCtx?.utm?.utm_medium || null,
-        p_utm_campaign: hubCtx?.utm?.utm_campaign || hubCtx?.rule?.campaign_label || null,
-        p_metadata: {
-          from_ads: isFromAds,
-          ad_source: adSource || null,
-          phone: contactPhone,
-          first_message: firstMessage,
-          ad_context: hubCtx?.adContext || null,
-          inbound_rule_id: hubCtx?.rule?.id || null,
-        }
-      });
+      const providerEventId = await buildDistributionIdempotencyKey(
+        "evolution-whatsapp-ingress",
+        {
+          sessionId: session.id,
+          providerMessageId,
+        },
+      );
+      const campaignName = hubCtx?.rule?.campaign_label ||
+        hubCtx?.utm?.utm_campaign ||
+        hubCtx?.adContext?.headline ||
+        null;
+
+      const leadMeta = buildLeadMetaFromWhatsApp(
+        hubCtx,
+        isFromAds,
+        adSource,
+      );
+      const reentryOccurredAt = new Date().toISOString();
+      const { data: reentryProcessing, error: reentryError } = await supabase
+        .rpc("process_whatsapp_lead_reentry_from_backend", {
+          p_organization_id: session.organization_id,
+          p_lead_id: existingLead.id,
+          p_provider_event_id: providerEventId,
+          p_conversation_id: conversation.id,
+          p_source: "whatsapp",
+          p_entry_subtype: "whatsapp_reentry",
+          p_metadata: {
+            from_ads: isFromAds,
+            ad_source: adSource || null,
+            phone: contactPhone,
+            first_message: firstMessage,
+            provider_message_id: providerMessageId,
+            campaign_name: campaignName,
+            utm_source: hubCtx?.utm?.utm_source || null,
+            utm_medium: hubCtx?.utm?.utm_medium || null,
+            utm_campaign: hubCtx?.utm?.utm_campaign ||
+              hubCtx?.rule?.campaign_label || null,
+            ad_context: hubCtx?.adContext || null,
+            inbound_rule_id: hubCtx?.rule?.id || null,
+          },
+          p_lead_meta: leadMeta,
+          p_occurred_at: reentryOccurredAt,
+        });
 
       if (reentryError) {
-        console.error('Error recording reentry via RPC:', reentryError);
-        // Fallback update
-        await supabase
-          .from('leads')
-          .update({
-            deal_status: 'open',
-            last_entry_at: new Date().toISOString(),
-          })
-          .eq('id', existingLead.id);
+        console.error("Error recording reentry via RPC:", reentryError);
+        throw reentryError;
       }
-      
-      // Link conversation to existing lead
-      await supabase
-        .from("whatsapp_conversations")
-        .update({ lead_id: existingLead.id })
-        .eq("id", conversation.id);
+      if (!reentryProcessing?.success || !reentryProcessing?.event_id) {
+        throw new Error("lead_reentry_processing_incomplete");
+      }
 
-      await recordLeadMetaFromWhatsApp(supabase, existingLead.id, hubCtx, isFromAds, adSource);
-      
-      console.log(`Linked conversation to existing lead: ${existingLead.id}`);
+      console.log(
+        reentryProcessing.replayed
+          ? `Acknowledged completed WhatsApp reentry: ${reentryProcessing.event_id}`
+          : `Atomically linked conversation to existing lead: ${existingLead.id}`,
+      );
       return;
     }
 
     // Determinar usuário responsável
     let assignedUserId = session.owner_user_id;
-    
+
     // Se não houver owner_user_id, buscar primeiro usuário admin da organização
     if (!assignedUserId) {
       console.log("No owner_user_id, searching for org admin...");
@@ -2070,7 +2428,7 @@ async function createLeadFromConversation(
         .eq("role", "admin")
         .limit(1)
         .maybeSingle();
-      
+
       if (orgUser) {
         assignedUserId = orgUser.id;
         console.log(`Found org admin: ${assignedUserId}`);
@@ -2082,7 +2440,7 @@ async function createLeadFromConversation(
           .eq("organization_id", session.organization_id)
           .limit(1)
           .maybeSingle();
-        
+
         if (anyUser) {
           assignedUserId = anyUser.id;
           console.log(`Found org user: ${assignedUserId}`);
@@ -2097,7 +2455,7 @@ async function createLeadFromConversation(
 
     // Get default pipeline and first stage
     let pipelineId: string | null = null;
-    
+
     const { data: defaultPipeline, error: pipelineError } = await supabase
       .from("pipelines")
       .select("id")
@@ -2119,12 +2477,12 @@ async function createLeadFromConversation(
         .eq("organization_id", session.organization_id)
         .limit(1)
         .maybeSingle();
-      
+
       if (!anyPipeline) {
         console.log("No pipeline found, skipping lead creation");
         return;
       }
-      
+
       console.log(`Using first available pipeline: ${anyPipeline.id}`);
       pipelineId = anyPipeline.id;
     }
@@ -2172,8 +2530,12 @@ async function createLeadFromConversation(
     }
 
     // Create new lead
-    console.log(`Creating lead: name=${contactName}, phone=${contactPhone}, pipeline=${pipelineId}, stage=${stage.id}, user=${assignedUserId}, source=${leadSource}, rule=${rule?.id || 'none'}`);
-    
+    console.log(
+      `Creating lead: name=${contactName}, phone=${contactPhone}, pipeline=${pipelineId}, stage=${stage.id}, user=${assignedUserId}, source=${leadSource}, rule=${
+        rule?.id || "none"
+      }`,
+    );
+
     const { data: newLead, error: leadError } = await supabase
       .from("leads")
       .insert({
@@ -2212,16 +2574,27 @@ async function createLeadFromConversation(
       .from("whatsapp_conversations")
       .update({ lead_id: newLead.id })
       .eq("id", conversation.id);
-    
+
     if (linkError) {
       console.error("Error linking conversation to lead:", linkError);
     }
 
-    await recordLeadMetaFromWhatsApp(supabase, newLead.id, hubCtx, isFromAds, adSource);
+    await recordLeadMetaFromWhatsApp(
+      supabase,
+      newLead.id,
+      hubCtx,
+      isFromAds,
+      adSource,
+    );
 
     // Apply Facebook Ads tag if from ads
     if (isFromAds) {
-      await applyFacebookAdsTag(supabase, session.organization_id, newLead.id, adSource);
+      await applyFacebookAdsTag(
+        supabase,
+        session.organization_id,
+        newLead.id,
+        adSource,
+      );
     }
 
     // Audit log
@@ -2250,10 +2623,12 @@ async function createLeadFromConversation(
     // Create activity
     const activityContent = rule
       ? `Lead criado via regra "${rule.name}" (WhatsApp)`
-      : isFromAds 
-        ? `Lead criado automaticamente via WhatsApp (Facebook Ads - ${adSource || 'unknown'})`
-        : `Lead criado automaticamente via WhatsApp`;
-    
+      : isFromAds
+      ? `Lead criado automaticamente via WhatsApp (Facebook Ads - ${
+        adSource || "unknown"
+      })`
+      : `Lead criado automaticamente via WhatsApp`;
+
     const { error: activityError } = await supabase
       .from("activities")
       .insert({
@@ -2262,15 +2637,19 @@ async function createLeadFromConversation(
         content: activityContent,
         user_id: assignedUserId,
       });
-    
+
     if (activityError) {
       console.error("Error creating activity:", activityError);
     }
 
-    console.log(`Created new lead from WhatsApp: ${newLead.id}, isFromAds: ${isFromAds}, rule: ${rule?.id || 'none'}`);
-
+    console.log(
+      `Created new lead from WhatsApp: ${newLead.id}, isFromAds: ${isFromAds}, rule: ${
+        rule?.id || "none"
+      }`,
+    );
   } catch (error) {
     console.error("Error creating lead from conversation:", error);
+    throw error;
   }
 }
 
@@ -2279,23 +2658,23 @@ async function applyFacebookAdsTag(
   supabase: any,
   organizationId: string,
   leadId: string,
-  adSource: string | null
+  adSource: string | null,
 ) {
   try {
     // Tag única "Tráfego" para todos os leads de ads (padrão para todas as organizações)
     const tagName = "Tráfego";
     const tagColor = "#F97316"; // Laranja
-    
+
     // Find or create tag
     let tagId: string | null = null;
-    
+
     const { data: existingTag } = await supabase
       .from("tags")
       .select("id")
       .eq("organization_id", organizationId)
       .eq("name", tagName)
       .maybeSingle();
-    
+
     if (existingTag) {
       tagId = existingTag.id;
     } else {
@@ -2306,22 +2685,23 @@ async function applyFacebookAdsTag(
           organization_id: organizationId,
           name: tagName,
           color: tagColor,
-          description: "Lead originado de tráfego pago (Facebook/Instagram Ads)"
+          description:
+            "Lead originado de tráfego pago (Facebook/Instagram Ads)",
         })
         .select()
         .single();
-      
+
       if (tagError) {
         console.error("Error creating Facebook Ads tag:", tagError);
         return;
       }
-      
+
       if (newTag) {
         tagId = newTag.id;
         console.log(`Created ${tagName} tag: ${tagId}`);
       }
     }
-    
+
     // Check if tag is already applied
     if (tagId) {
       const { data: existingLink } = await supabase
@@ -2330,13 +2710,13 @@ async function applyFacebookAdsTag(
         .eq("lead_id", leadId)
         .eq("tag_id", tagId)
         .maybeSingle();
-      
+
       if (!existingLink) {
         // Link tag to lead
         const { error: linkError } = await supabase
           .from("lead_tags")
           .insert({ lead_id: leadId, tag_id: tagId });
-        
+
         if (linkError) {
           console.error("Error linking Facebook Ads tag to lead:", linkError);
         } else {
@@ -2355,7 +2735,7 @@ async function fetchAndSaveProfilePicture(
   supabase: any,
   session: any,
   conversationId: string,
-  phone: string
+  phone: string,
 ) {
   try {
     const evolutionUrl = Deno.env.get("EVOLUTION_API_URL");
@@ -2367,19 +2747,26 @@ async function fetchAndSaveProfilePicture(
     }
 
     const formattedPhone = phone.replace(/\D/g, "");
-    console.log(`Fetching profile picture for ${formattedPhone} on instance ${session.instance_name}`);
+    console.log(
+      `Fetching profile picture for ${formattedPhone} on instance ${session.instance_name}`,
+    );
 
-    const response = await fetch(`${evolutionUrl}/chat/fetchProfilePictureUrl/${session.instance_name}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "apikey": evolutionKey,
+    const response = await fetch(
+      `${evolutionUrl}/chat/fetchProfilePictureUrl/${session.instance_name}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": evolutionKey,
+        },
+        body: JSON.stringify({ number: formattedPhone }),
       },
-      body: JSON.stringify({ number: formattedPhone }),
-    });
+    );
 
     if (!response.ok) {
-      console.log(`Could not fetch profile picture for ${formattedPhone}: ${response.status}`);
+      console.log(
+        `Could not fetch profile picture for ${formattedPhone}: ${response.status}`,
+      );
       return;
     }
 
@@ -2395,7 +2782,9 @@ async function fetchAndSaveProfilePicture(
     try {
       const imgResponse = await fetch(pictureUrl);
       if (!imgResponse.ok) {
-        console.log(`Failed to download profile picture: ${imgResponse.status}`);
+        console.log(
+          `Failed to download profile picture: ${imgResponse.status}`,
+        );
         // Fall back to saving the URL directly
         await supabase
           .from("whatsapp_conversations")
@@ -2410,8 +2799,9 @@ async function fetchAndSaveProfilePicture(
         return;
       }
 
-      const filePath = `orgs/${session.organization_id}/profile-pictures/${formattedPhone}.jpg`;
-      
+      const filePath =
+        `orgs/${session.organization_id}/profile-pictures/${formattedPhone}.jpg`;
+
       const { error: uploadError } = await supabase.storage
         .from("whatsapp-media")
         .upload(filePath, new Uint8Array(imgBuffer), {
@@ -2443,10 +2833,15 @@ async function fetchAndSaveProfilePicture(
       if (error) {
         console.error("Error saving profile picture:", error);
       } else {
-        console.log(`Profile picture stored permanently for conversation ${conversationId}: ${filePath}`);
+        console.log(
+          `Profile picture stored permanently for conversation ${conversationId}: ${filePath}`,
+        );
       }
     } catch (downloadError) {
-      console.log("Error downloading/storing profile picture, saving URL directly:", downloadError);
+      console.log(
+        "Error downloading/storing profile picture, saving URL directly:",
+        downloadError,
+      );
       // Fallback: save the temporary URL
       await supabase
         .from("whatsapp_conversations")
@@ -2465,11 +2860,13 @@ async function handleStopFollowUpOnReply(
   supabase: any,
   conversationId: string,
   leadId: string,
-  isManualInteraction: boolean = false
+  isManualInteraction: boolean = false,
 ) {
   try {
-    console.log(`Checking for follow-up automations to stop for lead ${leadId}`);
-    
+    console.log(
+      `Checking for follow-up automations to stop for lead ${leadId}`,
+    );
+
     // Find all running or waiting executions for this lead or conversation
     const { data: executions, error: execError } = await supabase
       .from("automation_executions")
@@ -2488,19 +2885,19 @@ async function handleStopFollowUpOnReply(
       `)
       .or(`lead_id.eq.${leadId},conversation_id.eq.${conversationId}`)
       .in("status", ["running", "waiting"]);
-    
+
     if (execError) {
       console.error("Error fetching automation executions:", execError);
       return;
     }
-    
+
     if (!executions || executions.length === 0) {
       console.log("No running/waiting automations found for this lead");
       return;
     }
-    
+
     console.log(`Found ${executions.length} automation execution(s) to check`);
-    
+
     // Fetch lead info once for all executions
     const { data: leadInfo } = await supabase
       .from("leads")
@@ -2513,15 +2910,25 @@ async function handleStopFollowUpOnReply(
 
     for (const exec of executions) {
       const triggerConfig = exec.automation?.trigger_config || {};
-      
+
       // Default behavior: stop on reply UNLESS explicitly disabled (stop_on_reply === false)
       if (!isManualInteraction && triggerConfig.stop_on_reply === false) {
-        console.log(`Automation ${exec.automation?.name || exec.id} has stop_on_reply explicitly disabled, skipping`);
+        console.log(
+          `Automation ${
+            exec.automation?.name || exec.id
+          } has stop_on_reply explicitly disabled, skipping`,
+        );
         continue;
       }
-      
-      console.log(`${isManualInteraction ? 'Manual interaction' : 'Lead replied'} during automation "${exec.automation?.name}" - checking for ${isManualInteraction ? 'cancellation' : 'replied branch'}`);
-      
+
+      console.log(
+        `${
+          isManualInteraction ? "Manual interaction" : "Lead replied"
+        } during automation "${exec.automation?.name}" - checking for ${
+          isManualInteraction ? "cancellation" : "replied branch"
+        }`,
+      );
+
       // If it's a manual interaction, we cancel everything and DON'T follow branches or send auto-replies
       if (isManualInteraction) {
         await supabase
@@ -2532,27 +2939,34 @@ async function handleStopFollowUpOnReply(
             error_message: "Cancelado: intervenção humana",
           })
           .eq("id", exec.id);
-        
+
         // Activity log for audit
         if (exec.lead_id) {
           await supabase.from("activities").insert({
             lead_id: exec.lead_id,
             type: "automation_cancelled_manual",
-            content: `Automação "${exec.automation?.name}" cancelada: atendimento humano iniciado`,
-            metadata: { is_automation: true, execution_id: exec.id, automation_id: exec.automation?.id },
+            content:
+              `Automação "${exec.automation?.name}" cancelada: atendimento humano iniciado`,
+            metadata: {
+              is_automation: true,
+              execution_id: exec.id,
+              automation_id: exec.automation?.id,
+            },
             user_id: null,
           }).then(() => {}, () => {});
         }
         if (exec.automation?.name) stoppedAutomations.add(exec.automation.name);
-        console.log(`Automation ${exec.id} cancelled due to manual intervention`);
+        console.log(
+          `Automation ${exec.id} cancelled due to manual intervention`,
+        );
         continue;
       }
-      
+
       // Keep track of the user to notify (prefer lead owner, fallback to automation creator)
       if (!notifyUserId) {
         notifyUserId = exec.automation?.created_by;
       }
-      
+
       // ===== KEY FIX: Instead of cancelling, check if there's a "replied" branch to continue =====
       // Fetch the full automation with nodes and connections to find the replied branch
       const { data: fullAutomation } = await supabase
@@ -2564,9 +2978,9 @@ async function handleStopFollowUpOnReply(
         `)
         .eq("id", exec.automation?.id)
         .single();
-      
+
       let continuedViaReplyBranch = false;
-      
+
       if (fullAutomation) {
         // First, get the execution's current state
         const { data: execState } = await supabase
@@ -2574,45 +2988,61 @@ async function handleStopFollowUpOnReply(
           .select("current_node_id")
           .eq("id", exec.id)
           .single();
-        
+
         const currentNodeId = execState?.current_node_id;
-        
-        if (currentNodeId && fullAutomation.connections && fullAutomation.nodes) {
+
+        if (
+          currentNodeId && fullAutomation.connections && fullAutomation.nodes
+        ) {
           // Find which delay node leads to current_node_id via "no_reply"
           const noReplyConn = fullAutomation.connections.find(
-            (c: any) => c.target_node_id === currentNodeId && 
-                         (c.source_handle === "no_reply" || c.source_handle === "default" || !c.source_handle)
+            (c: any) =>
+              c.target_node_id === currentNodeId &&
+              (c.source_handle === "no_reply" ||
+                c.source_handle === "default" || !c.source_handle),
           );
-          
+
           let delayNodeId = noReplyConn?.source_node_id;
-          
+
           if (!delayNodeId) {
-            const currentNode = fullAutomation.nodes.find((n: any) => n.id === currentNodeId);
+            const currentNode = fullAutomation.nodes.find((n: any) =>
+              n.id === currentNodeId
+            );
             if (currentNode && (currentNode.node_type === "delay")) {
               delayNodeId = currentNodeId;
             }
           }
-          
+
           if (!delayNodeId) {
             const anyConn = fullAutomation.connections.find(
-              (c: any) => c.target_node_id === currentNodeId
+              (c: any) => c.target_node_id === currentNodeId,
             );
             if (anyConn) {
-              const sourceNode = fullAutomation.nodes.find((n: any) => n.id === anyConn.source_node_id);
+              const sourceNode = fullAutomation.nodes.find((n: any) =>
+                n.id === anyConn.source_node_id
+              );
               if (sourceNode && sourceNode.node_type === "delay") {
                 delayNodeId = sourceNode.id;
               }
             }
           }
-          
+
           // ===== Per-node stop_on_reply override =====
           // If the delay node explicitly has stop_on_reply === false, keep waiting and
           // skip this execution entirely (no branch, no cancel).
           if (delayNodeId) {
-            const delayNode = fullAutomation.nodes.find((n: any) => n.id === delayNodeId);
-            const delayCfg = (delayNode?.node_config || delayNode?.config || {}) as Record<string, unknown>;
+            const delayNode = fullAutomation.nodes.find((n: any) =>
+              n.id === delayNodeId
+            );
+            const delayCfg =
+              (delayNode?.node_config || delayNode?.config || {}) as Record<
+                string,
+                unknown
+              >;
             if (delayCfg.stop_on_reply === false) {
-              console.log(`Delay node ${delayNodeId} has stop_on_reply=false — keeping execution running`);
+              console.log(
+                `Delay node ${delayNodeId} has stop_on_reply=false — keeping execution running`,
+              );
               continuedViaReplyBranch = true; // prevents the fallback cancel below
             }
           }
@@ -2620,12 +3050,16 @@ async function handleStopFollowUpOnReply(
           if (delayNodeId && !continuedViaReplyBranch) {
             // Now find the "replied" branch connection from this delay node
             const repliedConn = fullAutomation.connections.find(
-              (c: any) => c.source_node_id === delayNodeId && c.source_handle === "replied"
+              (c: any) =>
+                c.source_node_id === delayNodeId &&
+                c.source_handle === "replied",
             );
-            
+
             if (repliedConn && repliedConn.target_node_id) {
-              console.log(`✅ Found "replied" branch! Continuing flow to node ${repliedConn.target_node_id}`);
-              
+              console.log(
+                `✅ Found "replied" branch! Continuing flow to node ${repliedConn.target_node_id}`,
+              );
+
               // Update execution to continue along the replied branch (NOT cancel!)
               const { error: updateError } = await supabase
                 .from("automation_executions")
@@ -2636,35 +3070,49 @@ async function handleStopFollowUpOnReply(
                   error_message: null,
                 })
                 .eq("id", exec.id);
-              
+
               if (!updateError) {
                 continuedViaReplyBranch = true;
-                
+
                 // Invoke executor to process the next node in the replied branch
                 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-                const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-                
-                const resp = await fetch(`${SUPABASE_URL}/functions/v1/automation-executor`, {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get(
+                  "SUPABASE_SERVICE_ROLE_KEY",
+                )!;
+
+                const resp = await fetch(
+                  `${SUPABASE_URL}/functions/v1/automation-executor`,
+                  {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                    },
+                    body: JSON.stringify({ execution_id: exec.id }),
                   },
-                  body: JSON.stringify({ execution_id: exec.id }),
-                });
-                console.log(`Executor invoked for replied branch: ${resp.status}`);
+                );
+                console.log(
+                  `Executor invoked for replied branch: ${resp.status}`,
+                );
               } else {
-                console.error(`Error updating execution for replied branch:`, updateError);
+                console.error(
+                  `Error updating execution for replied branch:`,
+                  updateError,
+                );
               }
             } else {
-              console.log(`No "replied" branch found for delay node ${delayNodeId}`);
+              console.log(
+                `No "replied" branch found for delay node ${delayNodeId}`,
+              );
             }
           } else {
-            console.log(`Could not find delay node for current_node_id ${currentNodeId}`);
+            console.log(
+              `Could not find delay node for current_node_id ${currentNodeId}`,
+            );
           }
         }
       }
-      
+
       // If we didn't continue via reply branch, fall back to cancel + legacy behavior
       if (!continuedViaReplyBranch) {
         const { error: updateError } = await supabase
@@ -2675,22 +3123,30 @@ async function handleStopFollowUpOnReply(
             error_message: "Cancelado: lead respondeu",
           })
           .eq("id", exec.id);
-        
+
         if (!updateError) {
-          console.log(`Falling back to cancel behavior for execution ${exec.id}`);
+          console.log(
+            `Falling back to cancel behavior for execution ${exec.id}`,
+          );
           if (exec.lead_id) {
             await supabase.from("activities").insert({
               lead_id: exec.lead_id,
               type: "automation_cancelled_reply",
-              content: `Automação "${exec.automation?.name}" cancelada: lead respondeu`,
-              metadata: { is_automation: true, execution_id: exec.id, automation_id: exec.automation?.id },
+              content:
+                `Automação "${exec.automation?.name}" cancelada: lead respondeu`,
+              metadata: {
+                is_automation: true,
+                execution_id: exec.id,
+                automation_id: exec.automation?.id,
+              },
               user_id: null,
             }).then(() => {}, () => {});
           }
-          if (exec.automation?.name) stoppedAutomations.add(exec.automation.name);
+          if (exec.automation?.name) {
+            stoppedAutomations.add(exec.automation.name);
+          }
         }
       }
-
     }
 
     // ===== CREATE CONSOLIDATED "LEAD RECOVERED" NOTIFICATION =====
@@ -2698,10 +3154,11 @@ async function handleStopFollowUpOnReply(
       try {
         const leadName = leadInfo?.name || "Lead";
         const automationNames = Array.from(stoppedAutomations).join(", ");
-        
+
         await supabase.from("notifications").insert({
           user_id: notifyUserId,
-          organization_id: leadInfo?.organization_id || executions[0].organization_id,
+          organization_id: leadInfo?.organization_id ||
+            executions[0].organization_id,
           title: "🎉 Lead Recuperado!",
           content: `"${leadName}" respondeu à automação "${automationNames}"`,
           type: "lead",

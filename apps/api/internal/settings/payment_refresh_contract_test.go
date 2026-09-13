@@ -9,7 +9,7 @@ import (
 func TestPaymentRefreshRouteKeepsBillingPermissionAndAccessRecovery(t *testing.T) {
 	t.Parallel()
 
-	source, err := os.ReadFile("../app/app.go")
+	source, err := os.ReadFile("../app/routes.go")
 	if err != nil {
 		t.Fatalf("read app routes: %v", err)
 	}

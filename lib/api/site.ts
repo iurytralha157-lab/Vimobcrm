@@ -60,6 +60,7 @@ export interface OrganizationSite {
   seo_description: string | null
   seo_keywords: string | null
   google_analytics_id: string | null
+  google_search_console_verification?: string | null
   hero_image_url: string | null
   hero_title: string | null
   hero_subtitle: string | null

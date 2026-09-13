@@ -87,6 +87,33 @@ func TestEvolutionStatusDoesNotTreatUnrelatedErrorsAsDisconnected(t *testing.T) 
 	}
 }
 
+func TestEvolutionDownloadGatewayTimeoutQuarantinesProviderOutcome(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "upstream timeout", http.StatusGatewayTimeout)
+	}))
+	defer server.Close()
+
+	client := functionsClient{
+		evolutionGoAPIURL: server.URL,
+		evolutionGoAPIKey: "global-key",
+		httpClient:        server.Client(),
+	}
+	result, err := client.invokeEvolutionDirect(context.Background(), "message.downloadMedia", map[string]any{
+		"instance_id": "instance-1",
+		"token":       "session-token",
+		"body":        map[string]any{"message": map[string]any{"id": "message-1"}},
+	})
+	if !errors.Is(err, ErrProviderOutcomeUnknown) {
+		t.Fatalf("download gateway timeout error = %v, want ErrProviderOutcomeUnknown; result=%#v", err, result)
+	}
+	if !evolutionHTTPOutcomeUnknown("message.downloadMedia", http.StatusGatewayTimeout) {
+		t.Fatal("download 504 must retain the provider in-flight fence")
+	}
+	if evolutionHTTPOutcomeUnknown("message.downloadMedia", http.StatusTooManyRequests) {
+		t.Fatal("download 429 is a definitive admission-control rejection")
+	}
+}
+
 func TestEvolutionSendMediaBodyKeepsURLAndBase64Separate(t *testing.T) {
 	body := evolutionSendMediaBody(map[string]any{
 		"number":       "5511999999999",
@@ -123,9 +150,14 @@ func TestEvolutionSendMediaBodyDoesNotTreatBase64AsURL(t *testing.T) {
 	}
 }
 
-func TestEvolutionCreateDefaultsPreserveMobileNotifications(t *testing.T) {
+func TestEvolutionCreateDefaultsKeepPhoneNotificationsAndIgnoreGroups(t *testing.T) {
 	endpoint, err := evolutionEndpointFor("instance.create", map[string]any{
 		"name": "test-instance",
+		"advancedSettings": map[string]any{
+			"rejectCall":      true,
+			"ignoreGroups":    false,
+			"syncFullHistory": true,
+		},
 	}, "test-instance")
 	if err != nil {
 		t.Fatalf("evolutionEndpointFor() returned error: %v", err)
@@ -138,8 +170,17 @@ func TestEvolutionCreateDefaultsPreserveMobileNotifications(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected advancedSettings map, got %#v", body["advancedSettings"])
 	}
-	if advanced["alwaysOnline"] != false || advanced["readMessages"] != false || advanced["ignoreStatus"] != false || advanced["ignoreGroups"] != false {
+	if advanced["alwaysOnline"] != false || advanced["readMessages"] != false || advanced["ignoreStatus"] != false {
 		t.Fatalf("unsafe notification defaults: %#v", advanced)
+	}
+	if advanced["ignoreGroups"] != true {
+		t.Fatalf("caller disabled ignoreGroups: %#v", advanced)
+	}
+	if advanced["rejectCall"] != true {
+		t.Fatalf("expected unrelated caller setting to remain configurable, got %#v", advanced)
+	}
+	if advanced["syncFullHistory"] != false {
+		t.Fatalf("caller enabled syncFullHistory: %#v", advanced)
 	}
 }
 
@@ -172,6 +213,12 @@ func TestEvolutionAdvancedSettingsEndpointIsInstanceScopedAndNotificationSafe(t 
 		if body[key] != value {
 			t.Fatalf("advanced setting %q = %#v, want %#v", key, body[key], value)
 		}
+	}
+	if body["syncFullHistory"] != false {
+		t.Fatalf("syncFullHistory = %#v, want false", body["syncFullHistory"])
+	}
+	if body["ignoreGroups"] != true {
+		t.Fatalf("ignoreGroups = %#v, want true", body["ignoreGroups"])
 	}
 	if _, exists := body["unexpected"]; exists {
 		t.Fatalf("unexpected caller-controlled field escaped normalization: %#v", body)
@@ -775,5 +822,41 @@ func TestEvolutionRecoveryEndpointsUseCorrectAuthenticationScope(t *testing.T) {
 	body, ok := force.Body.(map[string]any)
 	if !ok || body["number"] != "5511999999999" {
 		t.Fatalf("unexpected force reconnect body %#v", force.Body)
+	}
+}
+
+func TestEvolutionInstanceKeyUsesFencedReplacementUUID(t *testing.T) {
+	const (
+		operationID = "session-1:recreate:42"
+		oldUUID     = "11111111-1111-4111-8111-111111111111"
+		newUUID     = "22222222-2222-4222-8222-222222222222"
+	)
+	client := functionsClient{}
+	session := evolutionSessionConfig{
+		InstanceName: "stable-instance-name",
+		InstanceID:   oldUUID,
+		Settings: map[string]any{
+			"evolution_go_resolved_instance_key": oldUUID,
+			"lifecycle_operation_id":             operationID,
+		},
+	}
+
+	payload := map[string]any{
+		"instance_id":                           newUUID,
+		evolutionInstanceKeyOverridePayloadKey:  newUUID,
+		evolutionLifecycleOperationIDPayloadKey: operationID,
+	}
+	if got := client.evolutionInstanceKey(session, payload, nil); got != newUUID {
+		t.Fatalf("fenced replacement instance key = %q, want new provider UUID %q", got, newUUID)
+	}
+
+	payload[evolutionLifecycleOperationIDPayloadKey] = "newer-operation"
+	if got := client.evolutionInstanceKey(session, payload, nil); got != oldUUID {
+		t.Fatalf("stale operation override escaped fence: got %q, want persisted key %q", got, oldUUID)
+	}
+
+	delete(payload, evolutionLifecycleOperationIDPayloadKey)
+	if got := client.evolutionInstanceKey(session, payload, nil); got != oldUUID {
+		t.Fatalf("unfenced internal override was accepted: got %q, want persisted key %q", got, oldUUID)
 	}
 }

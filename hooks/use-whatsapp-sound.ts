@@ -11,13 +11,13 @@ type WebkitAudioWindow = Window & typeof globalThis & {
 };
 
 export function useWhatsAppSound() {
-  const { user, organization } = useAuth();
+  const { activeOrganization, user, organization } = useAuth();
   const lastPlayedRef = useRef<number>(0);
   const notifyAfterRef = useRef<number>(0);
   const audioContextRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
-    if (!user?.id || !organization?.id) return;
+    if (!user?.id || !activeOrganization.organizationId) return;
     notifyAfterRef.current = Date.now();
 
     const isFreshRealtimeInsert = (createdAt?: string | null) => {
@@ -77,5 +77,5 @@ export function useWhatsAppSound() {
     return () => {
       window.removeEventListener("vimob:whatsapp-message-insert", onMessageInsert);
     };
-  }, [user?.id, organization?.id]);
+  }, [user?.id, activeOrganization.organizationId]);
 }

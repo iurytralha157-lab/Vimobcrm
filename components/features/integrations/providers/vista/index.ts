@@ -1,0 +1,1 @@
+export { vistaIntegrationProviderManifest } from "./manifest";

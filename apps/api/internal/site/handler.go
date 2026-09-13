@@ -2,7 +2,6 @@ package site
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -41,7 +40,7 @@ func (handler Handler) WithPublicClientIPResolver(
 }
 
 func (handler Handler) ShowSite(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -55,12 +54,12 @@ func (handler Handler) ShowSite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) CreateSite(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 
-	payload, ok := decodeMap(w, r)
+	payload, ok := httpserver.DecodeJSONMap(w, r, 2<<20)
 	if !ok {
 		return
 	}
@@ -73,12 +72,12 @@ func (handler Handler) CreateSite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) UpdateSite(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 
-	payload, ok := decodeMap(w, r)
+	payload, ok := httpserver.DecodeJSONMap(w, r, 2<<20)
 	if !ok {
 		return
 	}
@@ -91,7 +90,7 @@ func (handler Handler) UpdateSite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) UploadAsset(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -114,7 +113,7 @@ func (handler Handler) UploadAsset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) ListMenuItems(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -127,12 +126,12 @@ func (handler Handler) ListMenuItems(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) CreateMenuItem(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request MenuItemRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.CreateMenuItem(r.Context(), tenantContext, request)
@@ -144,12 +143,12 @@ func (handler Handler) CreateMenuItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) UpdateMenuItem(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request MenuItemRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.UpdateMenuItem(r.Context(), tenantContext, r.PathValue("id"), request)
@@ -161,7 +160,7 @@ func (handler Handler) UpdateMenuItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) DeleteMenuItem(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -173,12 +172,12 @@ func (handler Handler) DeleteMenuItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) ReorderMenuItems(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request ReorderRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	if err := handler.repo.ReorderMenuItems(r.Context(), tenantContext, request.Items); err != nil {
@@ -189,7 +188,7 @@ func (handler Handler) ReorderMenuItems(w http.ResponseWriter, r *http.Request) 
 }
 
 func (handler Handler) ListSearchFilters(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -202,12 +201,12 @@ func (handler Handler) ListSearchFilters(w http.ResponseWriter, r *http.Request)
 }
 
 func (handler Handler) CreateSearchFilter(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request SearchFilterRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.CreateSearchFilter(r.Context(), tenantContext, request)
@@ -219,12 +218,12 @@ func (handler Handler) CreateSearchFilter(w http.ResponseWriter, r *http.Request
 }
 
 func (handler Handler) UpdateSearchFilter(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request SearchFilterRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.UpdateSearchFilter(r.Context(), tenantContext, r.PathValue("id"), request)
@@ -236,7 +235,7 @@ func (handler Handler) UpdateSearchFilter(w http.ResponseWriter, r *http.Request
 }
 
 func (handler Handler) DeleteSearchFilter(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -248,12 +247,12 @@ func (handler Handler) DeleteSearchFilter(w http.ResponseWriter, r *http.Request
 }
 
 func (handler Handler) ReorderSearchFilters(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request ReorderRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	if err := handler.repo.ReorderSearchFilters(r.Context(), tenantContext, request.Items); err != nil {
@@ -320,7 +319,7 @@ func (handler Handler) ListPublicSearchFilters(w http.ResponseWriter, r *http.Re
 
 func (handler Handler) SubmitPublicContact(w http.ResponseWriter, r *http.Request) {
 	var request PublicContactRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	request.ClientIP = handler.publicClientIPResolver.Resolve(r)
@@ -351,16 +350,27 @@ func (handler Handler) SubmitPublicContact(w http.ResponseWriter, r *http.Reques
 
 func (handler Handler) TrackPublicEvent(w http.ResponseWriter, r *http.Request) {
 	var request PublicTrackingRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
+		return
+	}
+	if !validatePublicTrackingRequest(request, false) {
+		writeSiteError(w, r, ErrInvalidInput)
 		return
 	}
 	request.ClientIP = handler.publicClientIPResolver.Resolve(r)
-	enrichTrackingLocation(&request, r.Header)
+	request.Metadata = sanitizePublicTrackingClientMetadata(request.EventType, request.Metadata)
+	if handler.publicClientIPResolver.TrustsForwardedHeaders(r) {
+		enrichTrackingLocation(&request, r.Header)
+	} else {
+		// Browser timezone may still provide a coarse country fallback, but
+		// client-forgeable infrastructure headers are ignored.
+		enrichTrackingLocation(&request, nil)
+	}
 	if err := handler.repo.CreatePublicTrackingEvent(r.Context(), request); err != nil {
 		writeSiteError(w, r, err)
 		return
 	}
-	// Site analytics already refresh every 30 seconds. Broadcasting every
+	// Site analytics already refresh on bounded per-view polling. Broadcasting every
 	// pageview/click would fan out private visitor identifiers and trigger a
 	// dashboard refetch storm under normal public traffic.
 	httpserver.WriteJSON(w, http.StatusCreated, map[string]bool{"ok": true})
@@ -398,6 +408,7 @@ func enrichTrackingLocation(request *PublicTrackingRequest, header http.Header) 
 	if country != "" {
 		request.Metadata["country"] = cleanTrackingLocationText(country)
 	}
+	request.LocationEnriched = true
 }
 
 func trackingCountryFromMetadata(metadata map[string]any) string {
@@ -492,40 +503,6 @@ func optionalStringValue(value *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*value)
-}
-
-func organizationContext(w http.ResponseWriter, r *http.Request) (tenant.Context, bool) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.OrganizationID == "" {
-		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
-		return tenant.Context{}, false
-	}
-	return tenantContext, true
-}
-
-func decodeMap(w http.ResponseWriter, r *http.Request) (map[string]any, bool) {
-	defer r.Body.Close()
-	var payload map[string]any
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20))
-	if err := decoder.Decode(&payload); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
-		return nil, false
-	}
-	if payload == nil {
-		payload = map[string]any{}
-	}
-	return payload, true
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
-	defer r.Body.Close()
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
-		return false
-	}
-	return true
 }
 
 func parseAssetUpload(w http.ResponseWriter, r *http.Request) (string, string, int64, string, io.Reader, func(), error) {

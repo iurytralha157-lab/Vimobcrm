@@ -20,6 +20,12 @@ type TenantContext = {
 
 const accessTokens = new WeakMap<Page, string>();
 
+export function getAuthenticatedAccessToken(page: Page) {
+  const accessToken = accessTokens.get(page);
+  expect(accessToken, 'Supabase access token should be present after login').toBeTruthy();
+  return accessToken as string;
+}
+
 export async function signInAs(page: Page, userKey: E2EUserKey) {
   const user = E2E_USERS[userKey];
 
@@ -30,7 +36,7 @@ export async function signInAs(page: Page, userKey: E2EUserKey) {
   const tokenResponsePromise = page.waitForResponse((response) =>
     response.url().includes('/auth/v1/token') && response.request().method() === 'POST',
   );
-  await page.getByRole('button', { name: /^Entrar$/ }).click();
+  await page.getByRole('button', { name: /^Acessar o CRM$/ }).click();
 
   const tokenResponse = await tokenResponsePromise;
   const tokenResponseBody = await tokenResponse.text();
@@ -63,8 +69,7 @@ export async function authenticatedAPIRequest(
   path: string,
   data?: unknown,
 ): Promise<APIResponse> {
-  const accessToken = accessTokens.get(page);
-  expect(accessToken, 'Supabase access token should be present after login').toBeTruthy();
+  const accessToken = getAuthenticatedAccessToken(page);
 
   const config = getE2EConfig();
   return page.request.fetch(`${config.apiURL}${path}`, {

@@ -80,7 +80,7 @@ SUPABASE_SERVICE_ROLE_KEY=sua-chave-server-side
 SUPABASE_SECRET_KEY=sua-chave-secreta-server-side
 BILLING_EDGE_CLIENT_IP_SIGNING_SECRET=segredo-hmac-exclusivo-com-no-minimo-32-caracteres
 DATABASE_URL=postgresql://...
-DATABASE_MAX_CONNS=16
+DATABASE_MAX_CONNS=8
 DATABASE_MIN_CONNS=0
 DATABASE_MAX_CONN_IDLE_TIME=2m
 
@@ -107,15 +107,20 @@ ASAAS_RECONCILIATION_ENABLED=true
 
 EVOLUTION_GO_API_URL=https://seu-evolution-go
 EVOLUTION_GO_API_KEY=sua-chave-evolution-go
+EVOLUTION_GO_IMAGE_DIGEST=sha256:<digest-real-de-64-hex>
 EVOLUTION_GO_WEBHOOK_URL=https://seu-projeto.supabase.co/functions/v1/evolution-go-webhook
 EVOLUTION_GO_BACKEND_WEBHOOK_URL=https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go
 WHATSAPP_WEBHOOK_PROCESSOR_MODE=native_fallback
 WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS=13eea7e8-a74f-4bfb-bb36-024e3d26ccc9
-WHATSAPP_OUTBOX_WORKER_INTERVAL=2s
+WHATSAPP_OUTBOX_WORKER_INTERVAL=1s
 WHATSAPP_OUTBOX_WORKER_BATCH=10
-WHATSAPP_WEBHOOK_WORKER_INTERVAL=2s
+WHATSAPP_OUTBOX_WORKER_CONCURRENCY=4
+WHATSAPP_WEBHOOK_WORKER_INTERVAL=1s
 WHATSAPP_WEBHOOK_WORKER_BATCH=10
 WHATSAPP_WEBHOOK_WORKER_CONCURRENCY=4
+WHATSAPP_MEDIA_WORKER_ENABLED=false
+WHATSAPP_MEDIA_WORKER_INTERVAL=2s
+WHATSAPP_MEDIA_WORKER_LEASE=5m
 WHATSAPP_SESSION_SUPERVISOR_INTERVAL=1m
 WHATSAPP_SESSION_SUPERVISOR_BATCH=10
 WHATSAPP_SESSION_SUPERVISOR_RECOVERY_SESSION_IDS=
@@ -196,15 +201,23 @@ confirme o e-mail e valide que o envio e o evento assinado apareceram em
 `public.email_logs`; uma resposta `503` nesse endpoint significa configuracao
 incompleta e bloqueia a liberacao do fluxo.
 
-`EVOLUTION_GO_API_URL` e `EVOLUTION_GO_API_KEY` fazem a API Go criar instancias, consultar QR Code, status e enviar mensagens diretamente no Evo Go. `EVOLUTION_GO_BACKEND_WEBHOOK_URL` e obrigatoria quando a Evolution esta habilitada e deve apontar para `/v1/whatsapp/webhook/evolution-go` da API Go. Ela e o callback de **todas** as sessoes e pode conter somente `session_id` e `instance_id`; nunca inclua `token`, `apikey` ou `webhook_token`. `EVOLUTION_GO_WEBHOOK_URL` e apenas o receptor interno da Edge Function: quando o processador esta em `edge`/fallback, a API o chama com `x-webhook-token` no header.
+`EVOLUTION_GO_API_URL` e `EVOLUTION_GO_API_KEY` fazem a API Go criar instancias, consultar QR Code, status e enviar mensagens diretamente no Evo Go. `EVOLUTION_GO_IMAGE_DIGEST` e evidencia obrigatoria para o go-live: copie o digest real da imagem implantada no formato `sha256:<64 hex>`; nao use tag, `latest` nem valor inventado. A API valida o formato e expoe o digest no health operacional. `EVOLUTION_GO_BACKEND_WEBHOOK_URL` e obrigatoria quando a Evolution esta habilitada e deve apontar para `/v1/whatsapp/webhook/evolution-go` da API Go. Ela e o callback de **todas** as sessoes e pode conter somente `session_id` e `instance_id`; nunca inclua `token`, `apikey` ou `webhook_token`. `EVOLUTION_GO_WEBHOOK_URL` e apenas o receptor interno da Edge Function: quando o processador esta em `edge`/fallback, a API o chama com `x-webhook-token` no header.
 
-O valor de `DATABASE_MAX_CONNS` e **por replica**. A carga local com 25 entradas simultaneas mostrou que 8 conexoes criavam espera artificial no ingresso de leads; 16 manteve o p95 abaixo do contrato sem deadlocks. Antes de replicar a API, reserve folga para PostgREST, Auth, Realtime, operacoes e workers: `replicas da API × DATABASE_MAX_CONNS + demais consumidores` deve permanecer abaixo do orcamento do projeto Supabase. Se esse orcamento nao comportar 16 por replica, nao compense aumentando o pool; use o pooler e aumente replicas somente com uma medicao de capacidade. Controle a pressao dos workers de WhatsApp pelas variaveis `WHATSAPP_*_WORKER_INTERVAL`, `WHATSAPP_*_WORKER_BATCH` e `WHATSAPP_WEBHOOK_WORKER_CONCURRENCY`. A concorrencia do webhook (padrao 4, maximo 16) ocorre apenas entre sessoes; eventos da mesma sessao continuam sequenciais.
+O valor de `DATABASE_MAX_CONNS` e **por replica**. O padrao operacional e 8 conexoes por replica, coerente com os stacks versionados. Antes de replicar a API, reserve folga para PostgREST, Auth, Realtime, operacoes e workers: `replicas da API × DATABASE_MAX_CONNS + demais consumidores` deve permanecer abaixo do orcamento do projeto Supabase. Em um pool de sessao com limite 20, nao configure uma unica replica com 20 conexoes: use no maximo 8 e mantenha as demais sessoes livres para os outros consumidores. Nao compense pressao aumentando o pool sem medir a capacidade; reduza concorrencia, use o pooler adequado e aumente replicas somente com uma medicao de capacidade. Controle a pressao dos workers de WhatsApp pelas variaveis `WHATSAPP_*_WORKER_INTERVAL`, `WHATSAPP_*_WORKER_BATCH` e `WHATSAPP_WEBHOOK_WORKER_CONCURRENCY`. A concorrencia do webhook (padrao 4, maximo 16) ocorre apenas entre sessoes; eventos da mesma sessao continuam sequenciais.
 
-`WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS` controla somente o processador nativo e as configuracoes avancadas do canario. Ele nao controla mais a URL do callback: criacao, recriacao e supervisor sempre usam o ingresso seguro da API. Com a lista vazia e modo `edge`, a Evolution chama a API, a API grava a fila duravel e o worker encaminha o evento para a Edge usando header. Uma lista de UUIDs libera `native_fallback`/`native` apenas para aquelas sessoes; `*` libera o processador nativo para todas.
+`WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS` controla o processador nativo, as configuracoes avancadas e qualquer reconciliacao do callback que o supervisor faria no provider. Criacao e recriacao usam o ingresso seguro da API; uma sessao existente nao sofre mutacao de configuracao pelo supervisor fora da allowlist. Com a lista vazia e modo `edge`, a Evolution chama a API, a API grava a fila duravel e o worker encaminha o evento para a Edge usando header. Uma lista de UUIDs libera `native_fallback`/`native` apenas para aquelas sessoes; `*` libera o processador nativo para todas.
+
+Antes de publicar uma API que grave `processing_lane`, execute, com cliente em autocommit, `supabase/cutovers/20260909_prepare_whatsapp_webhook_fair_claim_indexes.sql`; em seguida registre/aplique `20260909152547_optimize_whatsapp_webhook_fair_claim.sql` e somente depois troque a imagem da API. A API nova devolve `503` no ingresso e nao inicia o worker enquanto as colunas e os dois indices de claim nao estiverem prontos e validos. Linhas anteriores ao corte permanecem em `backlog`, sem backfill nem exclusao. O worker preserva FIFO estrito em `backlog`; em `live`, um retry ainda fora do prazo nao bloqueia eventos atuais que ja podem rodar. `live` tambem pode ultrapassar ou coexistir com `backlog` da mesma sessao: essa concessao de ordem entre lanes e intencional para uma mensagem atual nao aguardar milhares de eventos historicos. Com a concorrencia padrao 4, dois slots sao exclusivos de `live` e dois de `backlog`; cada slot reivindica somente o item que pode iniciar imediatamente.
+
+O mesmo release exige o preparo online da outbox: execute `supabase/cutovers/20260909_prepare_whatsapp_outbox_fast_lane_indexes.sql` e depois registre/aplique `20260909164702_optimize_whatsapp_outbox_fast_lane.sql` antes da imagem nova. Texto e midia mantem FIFO estrito dentro de suas lanes; texto espera no maximo dois segundos por uma midia anterior e depois pode prosseguir em paralelo, portanto a ordem visivel entre lanes passa a ser best-effort quando o provider de midia demora. Para a fila de midia, aposente primeiro o `media-worker` Edge, confirme zero jobs em `processing`, execute `supabase/cutovers/20260909_prepare_whatsapp_media_queue.sql` e aplique `20260904225214_harden_whatsapp_media_queue.sql`. Em uma fila populada, execute depois `supabase/cutovers/20260912_scale_whatsapp_media_queue.sql` em autocommit e aplique `20260912152432_scale_whatsapp_media_queue_safely.sql`. Nao rode workers de imagens antiga e nova ao mesmo tempo nesse corte: pause temporariamente os workers mantendo o ingresso duravel ativo, substitua todas as replicas da API pelo mesmo tag SHA e reative os workers somente depois de confirmar que nenhuma replica antiga permanece.
 
 `WHATSAPP_SESSION_SUPERVISOR_RECOVERY_SESSION_IDS` controla mutacoes de reconexao no provider. Vazio desativa a reconexao automatica e mantem a sincronizacao de status em segundo plano; a manutencao ja existente de webhook/configuracao em sessoes conectadas continua independente. Comece com um UUID canario e monitore o PostgreSQL do Evolution Go; o supervisor aplica espera progressiva e abre o circuito depois de tres falhas. Nao use `*` enquanto a imagem implantada do Evolution Go nao tiver a correcao de ciclo de vida dos pools de reconnect validada.
 
-`DATABASE_URL` deve usar a conexao direta ou o pooler Supabase em modo sessao (porta 5432). Nao use o pooler transacional (porta 6543): a serializacao do lifecycle do WhatsApp depende de advisory locks de sessao mantidos entre as consultas da operacao.
+Mantenha `WHATSAPP_SESSION_SUPERVISOR_BATCH=10` no canario. O fallback interno do binario e 50 quando a variavel nao existe; depois do soak e do teste de capacidade, aumente explicitamente para 50 e, se necessario, no maximo 100 por ciclo. Aproximadamente 200 sessoes sao cobertas ao longo de ciclos sucessivos; `200` nao e um batch valido. O batch amplia cobertura de leitura; nao amplia a allowlist de mutacao.
+
+`WHATSAPP_MEDIA_WORKER_ENABLED` ativa a fila duravel de download sob demanda e fica desligado por padrao. Habilite-o somente depois de aposentar o worker Edge e aplicar `20260904225214_harden_whatsapp_media_queue.sql` seguido de `20260912152432_scale_whatsapp_media_queue_safely.sql`. O worker aceita tanto `*` quanto uma allowlist canario em `WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS`; o claim no banco impede que ele saia desse escopo. `WHATSAPP_MEDIA_WORKER_CONCURRENCY` controla slots globais entre replicas (padrao 4, maximo 16), com no maximo um download ativo por sessao. O advisory lock protege apenas a atribuicao curta do slot; nenhuma chamada HTTP segura transacao ou lock. `WHATSAPP_MEDIA_WORKER_INTERVAL` controla o polling e `WHATSAPP_MEDIA_WORKER_LEASE` recupera jobs abandonados. Mantenha `WEBHOOK_FILES=false` no Evolution Go para que videos e anexos sejam materializados somente pela fila cercada.
+
+`DATABASE_URL` deve usar a conexao direta ou o pooler Supabase em modo sessao (porta 5432). Nao use o pooler transacional (porta 6543): a serializacao do lifecycle do WhatsApp e do sync de Marketing depende de advisory locks de sessao mantidos entre as consultas da operacao.
 
 ## Canary e rollback do WhatsApp
 

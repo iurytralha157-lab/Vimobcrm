@@ -127,15 +127,17 @@ function SortableQueueRow({
 }
 
 export function DistributionQueueTab() {
-  const { organization } = useAuth();
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
   const queryClient = useQueryClient();
   const [localItems, setLocalItems] = useState<QueueItem[]>([]);
 
   // Fetch leads unassigned (in queue)
   const { isLoading } = useQuery({
-    queryKey: ['distribution-queue-leads', organization?.id],
+    queryKey: ['distribution-queue-leads', organizationId],
     queryFn: async () => {
-      const { data } = await leadsAPI.getLeads(organization!.id, {
+      if (!organizationId) return [];
+      const { data } = await leadsAPI.getLeads(organizationId, {
         assigned: 'none',
         limit: 200,
       });
@@ -154,7 +156,7 @@ export function DistributionQueueTab() {
       setLocalItems(mapped);
       return mapped;
     },
-    enabled: !!organization?.id
+    enabled: !!organizationId
   });
 
   const sensors = useSensors(
@@ -180,12 +182,13 @@ export function DistributionQueueTab() {
 
   const handleRemove = async (id: string) => {
     if (!confirm('Tem certeza que deseja remover este item da fila?')) return;
+    if (!organizationId) return;
 
     try {
       const { error } = await leadsAPI.updateLead(id, {
         deal_status: 'lost',
         lost_reason: 'Removido da fila manualmente',
-      }, organization?.id);
+      }, organizationId);
 
       if (error) throw error;
 
@@ -200,11 +203,12 @@ export function DistributionQueueTab() {
     // This could open a dialog, but for now let's just pick a random admin or show users
     const userId = prompt('Digite o ID do usuário ou use a interface de atribuição manual');
     if (!userId) return;
+    if (!organizationId) return;
 
     try {
       const { error } = await leadsAPI.updateLead(item.id, {
         assigned_user_id: userId,
-      }, organization?.id);
+      }, organizationId);
 
       if (error) throw error;
 

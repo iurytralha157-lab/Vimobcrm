@@ -1,115 +1,125 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { authorizePrivateWorkerRequest } from "../_shared/private-worker-auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+type JsonRecord = Record<string, unknown>;
+
+function json(body: JsonRecord, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function firstText(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+/**
+ * Compatibility adapter for legacy server-to-server callers.
+ *
+ * Template resolution, rendering, sanitization, dedupe and the durable insert
+ * all belong to notification-dispatcher. This adapter performs no provider or
+ * database I/O of its own.
+ */
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+  if (req.method !== "POST") {
+    return json(
+      { success: false, queued: false, error: "method_not_allowed" },
+      405,
+    );
+  }
+  if (!authorizePrivateWorkerRequest(req)) {
+    return json({ success: false, queued: false, error: "unauthorized" }, 401);
   }
 
+  let body: JsonRecord;
   try {
-    const { templateSlug, organizationId, userId, recipient, variables, leadId } = await req.json();
-
-    const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-
-    console.log(`[NotificationService] Sending template: ${templateSlug} to org: ${organizationId}`);
-
-    // 1. Fetch template
-    const { data: template, error: templateError } = await supabase
-      .from('notification_templates')
-      .select('*')
-      .eq('slug', templateSlug)
-      .eq('is_active', true)
-      .maybeSingle();
-
-    if (templateError || !template) {
-      console.error(`[NotificationService] Template ${templateSlug} not found or inactive.`);
-      return new Response(JSON.stringify({ success: false, error: 'Template not found' }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    const parsed: unknown = await req.json();
+    if (!isRecord(parsed)) {
+      return json(
+        { success: false, queued: false, error: "invalid_payload" },
+        400,
+      );
     }
+    body = parsed;
+  } catch {
+    return json({ success: false, queued: false, error: "invalid_json" }, 400);
+  }
 
-    // 2. Format message and title
-    let formattedMessage = template.message;
-    let formattedTitle = template.title || '';
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  if (!supabaseUrl || !serviceRoleKey) {
+    return json(
+      {
+        success: false,
+        queued: false,
+        error: "notification_queue_unavailable",
+      },
+      503,
+    );
+  }
 
-    if (variables) {
-      Object.entries(variables).forEach(([key, value]) => {
-        const placeholder = `{${key}}`;
-        formattedMessage = formattedMessage.replace(new RegExp(placeholder, 'g'), String(value));
-        if (formattedTitle) {
-          formattedTitle = formattedTitle.replace(new RegExp(placeholder, 'g'), String(value));
-        }
-      });
-    }
+  const payload: JsonRecord = {
+    event_key: firstText(
+      body.event_key,
+      body.eventKey,
+      body.template_slug,
+      body.templateSlug,
+    ),
+    organization_id: firstText(body.organization_id, body.organizationId),
+    user_id: firstText(body.user_id, body.userId),
+    lead_id: firstText(body.lead_id, body.leadId) || null,
+    recipient: firstText(body.recipient) || null,
+    variables: body.variables,
+    dedupe_key: firstText(body.dedupe_key, body.dedupeKey) || null,
+    is_test: body.is_test === true || body.isTest === true,
+  };
 
-    // 3. Dispatch
-    let result: any = { success: false };
-
-    if (template.channel === 'system' && userId) {
-      const { error } = await supabase.from('notifications').insert({
-        user_id: userId,
-        organization_id: organizationId,
-        title: formattedTitle || template.name,
-        content: formattedMessage,
-        type: template.category || 'info',
-        lead_id: leadId || null,
-        is_read: false,
-      });
-      result = { success: !error, error };
-    } else if (template.channel === 'whatsapp') {
-      const resp = await fetch(`${SUPABASE_URL}/functions/v1/whatsapp-notifier`, {
+  try {
+    const response = await fetch(
+      `${supabaseUrl.replace(/\/+$/, "")}/functions/v1/notification-dispatcher`,
+      {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          "apikey": serviceRoleKey,
+          "Authorization": `Bearer ${serviceRoleKey}`,
         },
-        body: JSON.stringify({
-          organization_id: organizationId,
-          user_id: userId,
-          phone: recipient,
-          message: formattedMessage,
-          lead_id: leadId || null,
-        }),
-      });
-      result = { success: resp.ok };
-    } else if (template.channel === 'push' && userId) {
-      const resp = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        },
-        body: JSON.stringify({
-          user_id: userId,
-          title: formattedTitle || template.name,
-          body: formattedMessage,
-          data: { lead_id: leadId }
-        }),
-      });
-      result = { success: resp.ok };
+        body: JSON.stringify(payload),
+      },
+    );
+    const result: unknown = await response.json().catch(() => null);
+    if (!isRecord(result)) {
+      return json(
+        { success: false, queued: false, error: "dispatcher_invalid_response" },
+        502,
+      );
     }
-
-    // 4. Log
-    await supabase.from('notification_logs').insert({
-      template_id: template.id,
-      organization_id: organizationId,
-      user_id: userId,
-      recipient: recipient || userId || 'system',
-      channel: template.channel,
-      payload: { variables, formattedTitle, formattedMessage },
-      response: result,
-      status: result.success ? 'sent' : 'failed',
-      error: result.error ? String(result.error) : null
-    });
-
-    return new Response(JSON.stringify(result), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-
-  } catch (error) {
-    console.error("Notification Service Error:", error);
-    return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return json(result, response.status);
+  } catch (error: unknown) {
+    console.error(
+      "notification_service_adapter_failed",
+      error instanceof Error ? error.name : "unknown",
+    );
+    return json(
+      { success: false, queued: false, error: "dispatcher_unavailable" },
+      502,
+    );
   }
 });

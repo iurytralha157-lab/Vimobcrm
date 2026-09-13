@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -37,7 +38,11 @@ func TestPortalCanonicalQueriesCompileAgainstDatabase(t *testing.T) {
 	t.Cleanup(postgres.Close)
 	repo := NewRepository(postgres)
 
-	items, err := repo.ListPublications(ctx, tenant.Context{OrganizationID: portalContractOrganizationID})
+	items, err := repo.ListPublications(ctx, tenant.Context{
+		OrganizationID: portalContractOrganizationID,
+		UserID:         "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+		Permissions:    []string{permissions.PropertyManage},
+	})
 	if err != nil {
 		t.Fatalf("canonical-aware settings query: %v", err)
 	}

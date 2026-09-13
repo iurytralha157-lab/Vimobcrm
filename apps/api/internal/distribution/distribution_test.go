@@ -118,6 +118,27 @@ func TestDistributeSupportsPoolStyleCallWithoutOptionalValues(t *testing.T) {
 	}
 }
 
+func TestDistributeSurfacesNoAvailableMembersAsACompletedOutcome(t *testing.T) {
+	stub := &stubQueryer{payload: []byte(`{
+		"success": false,
+		"reason": "no_available_members",
+		"lead_id": "d9000000-0000-4000-8000-000000000003",
+		"round_robin_id": "d7000000-0000-4000-8000-000000000001"
+	}`)}
+
+	result, err := Distribute(context.Background(), stub, Request{
+		OrganizationID: "d1000000-0000-4000-8000-000000000001",
+		LeadID:         "d9000000-0000-4000-8000-000000000003",
+		IdempotencyKey: "manual:d9000000-0000-4000-8000-000000000003",
+	})
+	if err != nil {
+		t.Fatalf("Distribute() error = %v", err)
+	}
+	if result.Success || result.Reason != "no_available_members" || result.RoundRobinID == nil {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
 func TestDistributeRejectsInvalidRequest(t *testing.T) {
 	t.Parallel()
 

@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -30,29 +31,65 @@ func TestCanonicalDistributionChannelContracts(t *testing.T) {
 		source := goFunctionSource(t, filepath.Join("..", "leads", "repository.go"), "createNewLead")
 		requireContains(t, source,
 			`leadMetadata["distribution_deferred"] = true`,
-			`"manual:" + leadID`,
+			"distributionOutcome := CreateDistributionOutcomeSkipped",
+			"if shouldAutoDistribute(input)",
 			"distribution.Distribute(ctx, tx",
-			"PreserveAssignee: true",
-			"Source:           &distributionSource",
+			"newLeadDistributionRequest(tenantContext, input, leadID)",
+			"distributionOutcome = CreateDistributionOutcome(distributionResult.Reason)",
+			"DistributionOutcome: distributionOutcome",
 		)
 		requireOrdered(t, source, "repo.insertInitialFeedbackActivity", "distribution.Distribute(ctx, tx")
 		requireOrdered(t, source, "distribution.Distribute(ctx, tx", "repo.insertNotification")
 		requireAbsent(t, source, "handle_lead_intake", "round_robin_logs")
+
+		request := goFunctionSource(t, filepath.Join("..", "leads", "repository.go"), "newLeadDistributionRequest")
+		requireContains(t, request,
+			`"manual:" + leadID`,
+			"RoundRobinID:     input.RoundRobinID",
+			"PreserveAssignee: true",
+			"Source:           &distributionSource",
+		)
+		requireAbsent(t, request, "handle_lead_intake", "round_robin_logs", "request.jwt.claim.role")
+
+		reentry := goFunctionSource(t, filepath.Join("..", "leads", "repository.go"), "registerReentry")
+		requireContains(t, reentry,
+			"Reentry:             true",
+			"DistributionOutcome: CreateDistributionOutcomeReentryPreserved",
+		)
+		requireAbsent(t, reentry, "distribution.Distribute")
 	})
 
 	t.Run("generic webhook", func(t *testing.T) {
-		source := goFunctionSource(t, filepath.Join("..", "webhooks", "repository.go"), "ReceiveLead")
-		requireContains(t, source,
+		delegation := goFunctionSource(t, filepath.Join("..", "webhooks", "repository.go"), "ReceiveLead")
+		requireContains(t, delegation,
+			"repo.receiveLead(ctx",
+			`Source:                "webhook"`,
+			`Provider:              "generic_webhook"`,
+			"SourceWebhookID:       &webhookID",
+			"IncrementWebhookStats: true",
+		)
+
+		apiDelegation := goFunctionSource(t, filepath.Join("..", "webhooks", "repository.go"), "ReceiveAPILead")
+		requireContains(t, apiDelegation,
+			"repo.receiveLead(ctx",
+			`Source:          "api"`,
+			`Provider:        "public_api"`,
+			"ProviderEventID: &idempotencyKey",
+			"RequirePhone:    true",
+		)
+
+		shared := goFunctionSource(t, filepath.Join("..", "webhooks", "repository.go"), "receiveLead")
+		requireContains(t, shared,
 			`"distribution_deferred": true`,
 			"sha256.Sum256",
-			`"generic-webhook:"`,
+			`distributionKey := options.Provider + ":"`,
 			"distribution.Distribute(ctx, tx",
 			"PreserveAssignee: true",
-			`distributionSource := "webhook"`,
+			"distributionSource := options.Source",
 			"OccurredAt:       occurredAt",
 		)
-		requireOrdered(t, source, "repo.insertWebhookLeadEntry", "distribution.Distribute(ctx, tx")
-		requireAbsent(t, source, "handle_lead_intake", "round_robin_members", "round_robin_logs")
+		requireOrdered(t, shared, "repo.insertWebhookLeadEntry", "distribution.Distribute(ctx, tx")
+		requireAbsent(t, shared, "handle_lead_intake", "round_robin_members", "round_robin_logs")
 	})
 
 	t.Run("meta", func(t *testing.T) {
@@ -133,23 +170,56 @@ func TestCanonicalDistributionChannelContracts(t *testing.T) {
 
 func goFunctionSource(t *testing.T, path string, name string) string {
 	t.Helper()
-	source := readSourceBytes(t, path)
-	files := token.NewFileSet()
-	parsed, err := parser.ParseFile(files, path, source, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", path, err)
-	}
-	for _, declaration := range parsed.Decls {
-		function, ok := declaration.(*ast.FuncDecl)
-		if !ok || function.Name.Name != name {
-			continue
+	sourcePaths := canonicalGoSourcePaths(t, path)
+	for _, sourcePath := range sourcePaths {
+		source := readSourceBytes(t, sourcePath)
+		files := token.NewFileSet()
+		parsed, err := parser.ParseFile(files, sourcePath, source, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", sourcePath, err)
 		}
-		start := files.Position(function.Pos()).Offset
-		end := files.Position(function.End()).Offset
-		return string(source[start:end])
+		for _, declaration := range parsed.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Name.Name != name {
+				continue
+			}
+			start := files.Position(function.Pos()).Offset
+			end := files.Position(function.End()).Offset
+			return string(source[start:end])
+		}
 	}
-	t.Fatalf("function %s not found in %s", name, path)
+	t.Fatalf("function %s not found in canonical sources: %s", name, strings.Join(sourcePaths, ", "))
 	return ""
+}
+
+func canonicalGoSourcePaths(t *testing.T, path string) []string {
+	t.Helper()
+	if filepath.Base(path) != "repository.go" {
+		return []string{path}
+	}
+
+	directory := filepath.Dir(path)
+	switch filepath.Base(directory) {
+	case "site", "portals", "roundrobin":
+	default:
+		return []string{path}
+	}
+
+	matches, err := filepath.Glob(filepath.Join(directory, "repository*.go"))
+	if err != nil {
+		t.Fatalf("glob canonical repository sources in %s: %v", directory, err)
+	}
+	sources := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if !strings.HasSuffix(match, "_test.go") {
+			sources = append(sources, match)
+		}
+	}
+	sort.Strings(sources)
+	if len(sources) == 0 {
+		t.Fatalf("no canonical repository sources found in %s", directory)
+	}
+	return sources
 }
 
 func readSource(t *testing.T, path string) string {

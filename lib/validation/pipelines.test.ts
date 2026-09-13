@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   apiStageSchema,
   apiPipelineListResponseSchema,
+  leadMetaFiltersResponseSchema,
   pipelineBoardResponseSchema,
   pipelineCreateInputSchema,
   stageCreateInputSchema,
@@ -95,6 +96,7 @@ test('valida os relogios separados no board da pipeline', () => {
       is_qualified: true,
       leads: [{
         id: ID,
+        board_sort_at: '2026-07-12T16:00:00Z',
         board_order_at: '2026-07-12T15:30:00Z',
         stage_entered_at: '2026-07-12T14:00:00Z',
       }],
@@ -104,7 +106,10 @@ test('valida os relogios separados no board da pipeline', () => {
   })
 
   assert.equal(result.success, true)
-  if (result.success) assert.equal(result.data.data[0].is_qualified, true)
+  if (result.success) {
+    assert.equal(result.data.data[0].is_qualified, true)
+    assert.equal(result.data.data[0].leads[0].board_sort_at, '2026-07-12T16:00:00Z')
+  }
 })
 
 test('exige o marcador de qualificacao no board da pipeline', () => {
@@ -118,6 +123,22 @@ test('exige o marcador de qualificacao no board da pipeline', () => {
   })
 
   assert.equal(result.success, false)
+})
+
+test('valida origens junto das opcoes meta do mesmo conjunto visivel', () => {
+  const result = leadMetaFiltersResponseSchema.safeParse({
+    data: {
+      sources: ['manual', 'meta_ads'],
+      campaigns: [],
+      adsets: [],
+      ads: [],
+    },
+  })
+
+  assert.equal(result.success, true)
+  assert.equal(leadMetaFiltersResponseSchema.safeParse({
+    data: { campaigns: [], adsets: [], ads: [] },
+  }).success, false)
 })
 
 test('preserva isQualified no patch e na resposta de etapa', () => {

@@ -9,11 +9,11 @@ function normalizeRole(value: string | null | undefined) {
 
 export function useScheduleUsers(options?: { enabled?: boolean }) {
   const usersQuery = useUsers(options)
-  const { profile, organization, tenantContext, isSuperAdmin, userOrganizations } = useAuth()
+  const { activeOrganization, profile, organization, tenantContext, isSuperAdmin, userOrganizations } = useAuth()
 
   const profileId = profile?.id
   const tenantLedUserIds = tenantContext?.ledUserIds
-  const activeOrganizationId = organization?.id ?? profile?.organization_id
+  const activeOrganizationId = activeOrganization.organizationId
   const activeMemberRole =
     tenantContext?.memberRole ??
     userOrganizations.find((item) => item.organization_id === activeOrganizationId)?.member_role ??

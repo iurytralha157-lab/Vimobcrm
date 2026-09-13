@@ -63,9 +63,12 @@ func TestInboundMessagingPersistsMessengerAndInstagramIdempotently(t *testing.T)
 	if _, err := database.Pool().Exec(ctx, `
 		insert into public.meta_integrations (
 			organization_id, page_id, page_name, access_token,
-			instagram_business_account_id, is_connected
+			instagram_business_account_id, is_connected, granted_scopes
 		)
-		values ($1::uuid, $2, 'Messaging test page', $3, $4, true)
+		values (
+			$1::uuid, $2, 'Messaging test page', $3, $4, true,
+			array['pages_messaging', 'instagram_manage_messages']::text[]
+		)
 	`, organizationID, pageID, "messaging-test-token-"+suffix, instagramID); err != nil {
 		t.Fatal(err)
 	}
@@ -169,6 +172,19 @@ func TestInboundMessagingPersistsMessengerAndInstagramIdempotently(t *testing.T)
 		insert into public.meta_integrations (organization_id, page_id, page_name, access_token, is_connected)
 		values ($1::uuid, $2, 'Ambiguous page', $3, true)
 	`, foreignOrganizationID, pageID, "messaging-foreign-token-"+suffix); err != nil {
+		t.Fatal(err)
+	}
+	// A leadgen-only shared Page never becomes a messaging route merely because
+	// the provider subscription is global and may still contain `messages`.
+	uniqueRoute, err := findMessagingIntegration(ctx, database.Pool(), pageID, "messenger")
+	if err != nil || uniqueRoute.OrganizationID != organizationID {
+		t.Fatalf("scope-filtered route = %#v, error = %v", uniqueRoute, err)
+	}
+	if _, err := database.Pool().Exec(ctx, `
+		update public.meta_integrations
+		set granted_scopes = array['pages_messaging']::text[]
+		where organization_id = $1::uuid and page_id = $2
+	`, foreignOrganizationID, pageID); err != nil {
 		t.Fatal(err)
 	}
 	ambiguousSender := "ambiguous-contact-" + suffix

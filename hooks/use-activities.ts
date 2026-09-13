@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import type { Json } from '@/integrations/supabase/types';
+import type { Json } from '@/lib/supabase/types';
 import { activitiesAPI, type Activity } from '@/lib/api/activities';
 import type { UnifiedHistoryEvent } from '@/hooks/use-lead-history';
 import { appendOptimisticHistoryEvent, invalidateLeadHistorySoon } from '@/hooks/use-optimistic-lead-history';

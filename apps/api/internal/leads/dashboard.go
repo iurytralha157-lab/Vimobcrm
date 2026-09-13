@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/propertyscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	"golang.org/x/sync/errgroup"
@@ -34,11 +35,11 @@ type dashboardAggregate struct {
 	AverageResponseSecs *float64
 }
 
-type dashboardEvolutionLead struct {
-	CreatedAt  time.Time
-	WonAt      *time.Time
-	LostAt     *time.Time
-	DealStatus string
+type dashboardWonSummary struct {
+	Count                 int64
+	TotalValue            float64
+	AverageConversionDays *int
+	Buckets               []WonConversionBucket
 }
 
 type conversionBucketDefinition struct {
@@ -77,22 +78,22 @@ var dashboardLossReasonDefinitions = []lossReasonDefinition{
 
 const dashboardLossReasonOtherColor = "#64748b"
 
-func (repo Repository) GetDashboardStats(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) (DashboardStats, error) {
-	currentFrom, currentTo := dashboardDateRange(filter)
-	interval := currentTo.Sub(currentFrom)
-	if interval <= 0 {
-		interval = 30 * 24 * time.Hour
-	}
-	prevFrom := currentFrom.Add(-interval)
-	prevTo := currentFrom
+const (
+	dashboardDetailLimit             = 100
+	dashboardMaxEvolutionBucketCount = 24
+)
 
-	currentFilter := filterWithDateRange(filter, currentFrom, currentTo)
-	previousFilter := filterWithDateRange(filter, prevFrom, prevTo)
+func (repo Repository) GetDashboardStats(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) (DashboardStats, error) {
+	currentFilter := filter
+	previousFilter, hasPreviousPeriod := dashboardPreviousPeriodFilter(filter)
 
 	var currentAggregate dashboardAggregate
 	var previousAggregate dashboardAggregate
+	var wonSummary dashboardWonSummary
+	var lostReasonBuckets []LostReasonBucket
 	var wonDeals []WonDealDetail
 	var lostDeals []LostDealDetail
+	var lostLeads int64
 	var previousWonCount int64
 	var previousLostCount int64
 
@@ -109,54 +110,50 @@ func (repo Repository) GetDashboardStats(ctx context.Context, tenantContext tena
 	if err != nil {
 		return DashboardStats{}, err
 	}
-	previousAggregate, err = repo.dashboardAggregate(ctx, tx, tenantContext, previousFilter, dashboardLeadWhereOptions{DateColumn: "created_at"})
+	wonSummary, err = repo.dashboardWonSummary(ctx, tx, tenantContext, currentFilter)
 	if err != nil {
 		return DashboardStats{}, err
 	}
-	wonDeals, err = repo.dashboardWonDeals(ctx, tx, tenantContext, currentFilter)
+	lostReasonBuckets, lostLeads, err = repo.dashboardLostReasonSummary(ctx, tx, tenantContext, currentFilter)
 	if err != nil {
 		return DashboardStats{}, err
 	}
-	lostDeals, err = repo.dashboardLostDeals(ctx, tx, tenantContext, currentFilter)
+	wonDeals, lostDeals, err = repo.dashboardDealDetails(ctx, tx, tenantContext, currentFilter)
 	if err != nil {
 		return DashboardStats{}, err
 	}
-	previousWonCount, err = repo.dashboardWonCount(ctx, tx, tenantContext, previousFilter)
-	if err != nil {
-		return DashboardStats{}, err
-	}
-	previousLostCount, err = repo.dashboardLostCount(ctx, tx, tenantContext, previousFilter)
-	if err != nil {
-		return DashboardStats{}, err
+	if hasPreviousPeriod {
+		previousAggregate, err = repo.dashboardAggregate(ctx, tx, tenantContext, previousFilter, dashboardLeadWhereOptions{DateColumn: "created_at"})
+		if err != nil {
+			return DashboardStats{}, err
+		}
+		previousWonCount, err = repo.dashboardWonCount(ctx, tx, tenantContext, previousFilter)
+		if err != nil {
+			return DashboardStats{}, err
+		}
+		previousLostCount, err = repo.dashboardLostCount(ctx, tx, tenantContext, previousFilter)
+		if err != nil {
+			return DashboardStats{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return DashboardStats{}, err
 	}
 
-	totalSalesValue := 0.0
-	conversionDays := []int{}
-	for _, deal := range wonDeals {
-		totalSalesValue += deal.Value
-		if deal.ConversionDays != nil {
-			conversionDays = append(conversionDays, *deal.ConversionDays)
-		}
-	}
-
-	closedLeads := int64(len(wonDeals))
-	lostLeads := int64(len(lostDeals))
+	closedLeads := wonSummary.Count
 	conversionRate := 0.0
 	if currentAggregate.Total > 0 {
 		conversionRate = (float64(closedLeads) / float64(currentAggregate.Total)) * 100
 	}
-
-	var averageConversionDays *int
-	if len(conversionDays) > 0 {
-		total := 0
-		for _, days := range conversionDays {
-			total += days
-		}
-		value := int(math.Round(float64(total) / float64(len(conversionDays))))
-		averageConversionDays = &value
+	leadsTrend := 0
+	openTrend := 0
+	lostTrend := 0
+	closedTrend := 0
+	if hasPreviousPeriod {
+		leadsTrend = calculateTrend(currentAggregate.Total, previousAggregate.Total)
+		openTrend = calculateTrend(currentAggregate.Open, previousAggregate.Open)
+		lostTrend = calculateTrend(lostLeads, previousLostCount)
+		closedTrend = calculateTrend(closedLeads, previousWonCount)
 	}
 
 	return DashboardStats{
@@ -168,19 +165,21 @@ func (repo Repository) GetDashboardStats(ctx context.Context, tenantContext tena
 		LostLeads:                lostLeads,
 		ConversionRate:           conversionRate,
 		ClosedLeads:              closedLeads,
-		WonAverageConversionDays: averageConversionDays,
-		WonConversionBuckets:     buildWonConversionBuckets(wonDeals, closedLeads),
+		WonAverageConversionDays: wonSummary.AverageConversionDays,
+		WonConversionBuckets:     wonSummary.Buckets,
 		WonDeals:                 wonDeals,
-		LostReasonBuckets:        buildLostReasonBuckets(lostDeals, lostLeads),
+		WonDealsTruncated:        int64(len(wonDeals)) < closedLeads,
+		LostReasonBuckets:        lostReasonBuckets,
 		LostDeals:                lostDeals,
+		LostDealsTruncated:       int64(len(lostDeals)) < lostLeads,
 		AverageResponseTime:      formatAverageResponseTime(currentAggregate.AverageResponseSecs),
-		TotalSalesValue:          totalSalesValue,
+		TotalSalesValue:          wonSummary.TotalValue,
 		PendingCommissions:       0,
-		LeadsTrend:               calculateTrend(currentAggregate.Total, previousAggregate.Total),
-		OpenTrend:                calculateTrend(currentAggregate.Open, previousAggregate.Open),
-		LostTrend:                calculateTrend(lostLeads, previousLostCount),
+		LeadsTrend:               leadsTrend,
+		OpenTrend:                openTrend,
+		LostTrend:                lostTrend,
 		ConversionTrend:          0,
-		ClosedTrend:              calculateTrend(closedLeads, previousWonCount),
+		ClosedTrend:              closedTrend,
 		TotalReceivables:         0,
 		TotalPayables:            0,
 		OverdueReceivables:       0,
@@ -190,9 +189,6 @@ func (repo Repository) GetDashboardStats(ctx context.Context, tenantContext tena
 }
 
 func (repo Repository) GetDashboardFunnel(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) ([]FunnelDataPoint, error) {
-	from, to := dashboardDateRange(filter)
-	filter = filterWithDateRange(filter, from, to)
-
 	pipelineID, err := repo.resolvePipelineBoardPipelineID(ctx, tenantContext, filter.PipelineID)
 	if err != nil {
 		return nil, err
@@ -214,6 +210,13 @@ func (repo Repository) GetDashboardFunnel(ctx context.Context, tenantContext ten
 	if err != nil {
 		return nil, err
 	}
+	stageIDs := make([]string, 0, len(stages))
+	stagePlaceholderStart := len(args) + 1
+	for _, stage := range stages {
+		stageIDs = append(stageIDs, stage.ID)
+		args = append(args, stage.ID)
+	}
+	where = append(where, "l.stage_id in ("+uuidPlaceholders(stagePlaceholderStart, stageIDs)+")")
 
 	rows, err := repo.db.Pool().Query(ctx, `
 		select l.stage_id::text, count(*)::bigint
@@ -227,7 +230,6 @@ func (repo Repository) GetDashboardFunnel(ctx context.Context, tenantContext ten
 	defer rows.Close()
 
 	counts := map[string]int64{}
-	var total int64
 	for rows.Next() {
 		var stageID string
 		var count int64
@@ -235,11 +237,15 @@ func (repo Repository) GetDashboardFunnel(ctx context.Context, tenantContext ten
 			return nil, err
 		}
 		counts[stageID] = count
-		total += count
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+
+	// Only active stages returned above belong in the displayed funnel. Leads
+	// still pointing at a removed stage (or at no stage) must not dilute the
+	// percentages of the visible columns.
+	total := dashboardVisibleFunnelTotal(stages, counts)
 
 	result := make([]FunnelDataPoint, 0, len(stages))
 	for _, stage := range stages {
@@ -263,10 +269,15 @@ func (repo Repository) GetDashboardFunnel(ctx context.Context, tenantContext ten
 	return result, nil
 }
 
-func (repo Repository) GetDashboardSources(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) ([]SourceDataPoint, error) {
-	from, to := dashboardDateRange(filter)
-	filter = filterWithDateRange(filter, from, to)
+func dashboardVisibleFunnelTotal(stages []PipelineBoardStage, counts map[string]int64) int64 {
+	var total int64
+	for _, stage := range stages {
+		total += counts[stage.ID]
+	}
+	return total
+}
 
+func (repo Repository) GetDashboardSources(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) ([]SourceDataPoint, error) {
 	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{DateColumn: "created_at"})
 	if err != nil {
 		return nil, err
@@ -305,9 +316,6 @@ func (repo Repository) GetDashboardTopBrokers(ctx context.Context, tenantContext
 	if !canViewAllLeads(tenantContext) && !tenantContext.HasPermission("lead_view_team") {
 		return TopBrokersResult{Brokers: []TopBroker{}, IsFallbackMode: false}, nil
 	}
-
-	from, to := dashboardDateRange(filter)
-	filter = filterWithDateRange(filter, from, to)
 
 	brokers, err := repo.dashboardTopBrokers(ctx, tenantContext, filter, false)
 	if err != nil {
@@ -404,58 +412,165 @@ func (repo Repository) GetDashboardUpcomingTasks(ctx context.Context, tenantCont
 }
 
 func (repo Repository) GetDashboardDealsEvolution(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) ([]DealsEvolutionPoint, error) {
-	from, to := dashboardDateRange(filter)
-	filter = filterWithDateRange(filter, from, to)
+	queryer := dashboardQueryer(repo.db.Pool())
+	var tx pgx.Tx
+	var err error
+
+	from, to, hasRange := dashboardExplicitDateRange(filter)
+	if !hasRange {
+		tx, err = repo.db.Pool().BeginTx(ctx, pgx.TxOptions{
+			IsoLevel:   pgx.RepeatableRead,
+			AccessMode: pgx.ReadOnly,
+		})
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Rollback(ctx)
+		queryer = tx
+
+		from, to, hasRange, err = repo.dashboardEvolutionBounds(ctx, queryer, tenantContext, filter)
+		if err != nil {
+			return nil, err
+		}
+		if !hasRange {
+			return []DealsEvolutionPoint{}, nil
+		}
+	}
+
+	data, err := repo.dashboardDealsEvolutionAggregate(ctx, queryer, tenantContext, filter, from, to)
+	if err != nil {
+		return nil, err
+	}
+	if tx != nil {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+	}
+
+	return data, nil
+}
+
+func (repo Repository) dashboardEvolutionBounds(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) (time.Time, time.Time, bool, error) {
+	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{})
+	if err != nil {
+		return time.Time{}, time.Time{}, false, err
+	}
+	eventAt := dashboardEvolutionEventSQL("l")
+
+	var minimum, maximum pgtype.Timestamptz
+	err = queryer.QueryRow(ctx, `
+		select min(`+eventAt+`), max(`+eventAt+`)
+		from public.leads l
+		where `+strings.Join(where, " and ")+`
+		  and `+eventAt+` is not null
+	`, args...).Scan(&minimum, &maximum)
+	if err != nil {
+		return time.Time{}, time.Time{}, false, err
+	}
+	if !minimum.Valid || !maximum.Valid {
+		return time.Time{}, time.Time{}, false, nil
+	}
+
+	from := minimum.Time
+	to := maximum.Time.Add(time.Microsecond)
+	if !to.After(from) {
+		to = from.Add(time.Microsecond)
+	}
+	return from, to, true, nil
+}
+
+func (repo Repository) dashboardDealsEvolutionAggregate(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter, from time.Time, to time.Time) ([]DealsEvolutionPoint, error) {
+	granularity := filter.Granularity
+	if filter.DateFrom == nil && filter.DateTo == nil && to.Sub(from) > 24*time.Hour {
+		granularity = ""
+	}
+	intervals, labels := dashboardEvolutionIntervals(from, to, granularity)
+	if len(intervals) == 0 {
+		return []DealsEvolutionPoint{}, nil
+	}
 
 	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{})
 	if err != nil {
 		return nil, err
 	}
+	eventAt := dashboardEvolutionEventSQL("l")
 	args = append(args, from, to)
 	fromIndex := len(args) - 1
 	toIndex := len(args)
-	where = append(where, fmt.Sprintf(`(
-		(l.created_at >= $%d and l.created_at <= $%d)
-		or (l.won_at is not null and l.won_at >= $%d and l.won_at <= $%d)
-		or (l.lost_at is not null and l.lost_at >= $%d and l.lost_at <= $%d)
-	)`, fromIndex, toIndex, fromIndex, toIndex, fromIndex, toIndex))
 
-	rows, err := repo.db.Pool().Query(ctx, `
-		select l.created_at, l.won_at, l.lost_at, l.deal_status
-		from public.leads l
-		where `+strings.Join(where, " and "),
-		args...,
-	)
+	caseParts := make([]string, 0, len(intervals))
+	for index := 0; index < len(intervals)-1; index++ {
+		args = append(args, intervals[index+1])
+		caseParts = append(caseParts, fmt.Sprintf("when event_at < $%d::timestamptz then %d", len(args), index))
+	}
+	caseParts = append(caseParts, fmt.Sprintf("else %d", len(intervals)-1))
+
+	rows, err := queryer.Query(ctx, `
+		with filtered_events as (
+			select
+				coalesce(l.deal_status, 'open') as deal_status,
+				`+eventAt+` as event_at
+			from public.leads l
+			where `+strings.Join(where, " and ")+`
+		), bucketed_events as (
+			select
+				deal_status,
+				case `+strings.Join(caseParts, " ")+` end as bucket_index
+			from filtered_events
+			where event_at >= $`+fmt.Sprintf("%d", fromIndex)+`::timestamptz
+			  and event_at < $`+fmt.Sprintf("%d", toIndex)+`::timestamptz
+		)
+		select
+			bucket_index,
+			count(*) filter (where deal_status = 'won')::bigint,
+			count(*) filter (where deal_status = 'lost')::bigint,
+			count(*) filter (where deal_status not in ('won', 'lost'))::bigint
+		from bucketed_events
+		group by bucket_index
+		order by bucket_index
+	`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	leads := []dashboardEvolutionLead{}
+	result := make([]DealsEvolutionPoint, len(intervals))
+	for index, label := range labels {
+		result[index].Date = label
+	}
+	var total int64
 	for rows.Next() {
-		var lead dashboardEvolutionLead
-		var wonAt, lostAt pgtype.Timestamptz
-		if err := rows.Scan(&lead.CreatedAt, &wonAt, &lostAt, &lead.DealStatus); err != nil {
+		var index int
+		var point DealsEvolutionPoint
+		if err := rows.Scan(&index, &point.Ganhos, &point.Perdas, &point.Abertos); err != nil {
 			return nil, err
 		}
-		lead.WonAt = pipelineTimePtr(wonAt)
-		lead.LostAt = pipelineTimePtr(lostAt)
-		leads = append(leads, lead)
+		if index < 0 || index >= len(result) {
+			return nil, fmt.Errorf("invalid dashboard evolution bucket index %d", index)
+		}
+		point.Date = labels[index]
+		result[index] = point
+		total += point.Ganhos + point.Perdas + point.Abertos
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if len(leads) == 0 {
+	if total == 0 {
 		return []DealsEvolutionPoint{}, nil
 	}
 
-	return buildDealsEvolutionPoints(leads, from, to, filter.Granularity), nil
+	return result, nil
+}
+
+func dashboardEvolutionEventSQL(alias string) string {
+	return `case
+		when coalesce(` + alias + `.deal_status, 'open') = 'won' then ` + alias + `.won_at
+		when coalesce(` + alias + `.deal_status, 'open') = 'lost' then coalesce(` + alias + `.lost_at, ` + alias + `.created_at)
+		else ` + alias + `.created_at
+	end`
 }
 
 func (repo Repository) GetDashboardExtraCounts(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) (DashboardExtraCounts, error) {
-	from, to := dashboardDateRange(filter)
-	filter = filterWithDateRange(filter, from, to)
-
 	var propertyCount int64
 	var siteVisits int64
 	var scheduledVisits int64
@@ -552,11 +667,6 @@ func (repo Repository) GetDashboardTeamLeadIDs(ctx context.Context, tenantContex
 	}
 	filter.TeamID = teamID
 
-	if filter.DateFrom == nil && filter.DateTo == nil {
-		from, to := dashboardDateRange(filter)
-		filter = filterWithDateRange(filter, from, to)
-	}
-
 	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{DateColumn: "created_at"})
 	if err != nil {
 		return nil, err
@@ -604,7 +714,7 @@ func (repo Repository) countDashboardSiteVisits(ctx context.Context, tenantConte
 	args := []any{tenantContext.OrganizationID}
 
 	where := []string{"le.organization_id = $1::uuid", "le.session_id is not null"}
-	needsPropertyScope := !canViewAllLeads(tenantContext) || (filter.UserID != "" && filter.UserID != "all") || (filter.TeamID != "" && filter.TeamID != "all")
+	needsPropertyScope := !propertyscope.CanViewAll(tenantContext) || (filter.UserID != "" && filter.UserID != "all") || (filter.TeamID != "" && filter.TeamID != "all")
 	if needsPropertyScope {
 		propertyWhere, propertyArgs, err := buildDashboardPropertyWhere(tenantContext, filter, false)
 		if err != nil {
@@ -713,6 +823,122 @@ func (repo Repository) dashboardAggregate(ctx context.Context, queryer dashboard
 	return aggregate, nil
 }
 
+func (repo Repository) dashboardWonSummary(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) (dashboardWonSummary, error) {
+	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{
+		DateColumn:      "won_at",
+		ForceDealStatus: "won",
+	})
+	if err != nil {
+		return dashboardWonSummary{}, err
+	}
+	args, propertyVisibility := appendCanonicalPropertyVisibility(args, tenantContext, "p")
+	propertyValue := dashboardPropertyValueSQL(tenantContext)
+	conversionDays := `case
+		when l.created_at is null or l.won_at is null then null
+		else greatest(floor(extract(epoch from (l.won_at - l.created_at)) / 86400), 0)::integer
+	end`
+
+	selects := []string{
+		"count(*)::bigint",
+		"coalesce(sum(value), 0)::double precision",
+		"avg(conversion_days)::double precision",
+	}
+	for _, definition := range dashboardConversionBuckets {
+		predicate := dashboardConversionBucketPredicate("conversion_days", definition)
+		selects = append(selects,
+			"count(*) filter (where "+predicate+")::bigint",
+			"coalesce(sum(value) filter (where "+predicate+"), 0)::double precision",
+		)
+	}
+
+	summary := dashboardWonSummary{Buckets: make([]WonConversionBucket, len(dashboardConversionBuckets))}
+	counts := make([]int64, len(dashboardConversionBuckets))
+	values := make([]float64, len(dashboardConversionBuckets))
+	var average pgtype.Float8
+	scanTargets := []any{&summary.Count, &summary.TotalValue, &average}
+	for index := range dashboardConversionBuckets {
+		scanTargets = append(scanTargets, &counts[index], &values[index])
+	}
+
+	err = queryer.QueryRow(ctx, `
+		with filtered_won as (
+			select
+				`+propertyValue+` as value,
+				`+conversionDays+` as conversion_days
+			from public.leads l
+			left join public.properties p
+			  on p.organization_id = l.organization_id
+			 and p.id = coalesce(l.interest_property_id, l.property_id)
+			 and `+propertyVisibility+`
+			where `+strings.Join(where, " and ")+`
+		)
+		select `+strings.Join(selects, ",\n\t\t\t")+`
+		from filtered_won
+	`, args...).Scan(scanTargets...)
+	if err != nil {
+		return dashboardWonSummary{}, err
+	}
+	if average.Valid {
+		value := int(math.Round(average.Float64))
+		summary.AverageConversionDays = &value
+	}
+	for index, definition := range dashboardConversionBuckets {
+		percentage := 0.0
+		if summary.Count > 0 {
+			percentage = (float64(counts[index]) / float64(summary.Count)) * 100
+		}
+		summary.Buckets[index] = WonConversionBucket{
+			Key:        definition.Key,
+			Label:      definition.Label,
+			Count:      counts[index],
+			Percentage: percentage,
+			Value:      values[index],
+			Color:      definition.Color,
+		}
+	}
+
+	return summary, nil
+}
+
+func (repo Repository) dashboardLostReasonSummary(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) ([]LostReasonBucket, int64, error) {
+	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{
+		DateExpression:  "coalesce(l.lost_at, l.created_at)",
+		ForceDealStatus: "lost",
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+
+	reasonKey := dashboardLostReasonKeySQL("l.lost_reason")
+	rows, err := queryer.Query(ctx, `
+		select `+reasonKey+` as reason_key, count(*)::bigint
+		from public.leads l
+		where `+strings.Join(where, " and ")+`
+		group by reason_key
+	`, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	counts := map[string]int64{}
+	var total int64
+	for rows.Next() {
+		var key string
+		var count int64
+		if err := rows.Scan(&key, &count); err != nil {
+			return nil, 0, err
+		}
+		counts[key] += count
+		total += count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	return buildLostReasonBucketsFromCounts(counts, total), total, nil
+}
+
 func (repo Repository) dashboardWonCount(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) (int64, error) {
 	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{
 		DateColumn:      "won_at",
@@ -753,6 +979,23 @@ func (repo Repository) dashboardLostCount(ctx context.Context, queryer dashboard
 	return count, err
 }
 
+func (repo Repository) dashboardDealDetails(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) ([]WonDealDetail, []LostDealDetail, error) {
+	if !filter.IncludeDetails {
+		return []WonDealDetail{}, []LostDealDetail{}, nil
+	}
+
+	wonDeals, err := repo.dashboardWonDeals(ctx, queryer, tenantContext, filter)
+	if err != nil {
+		return nil, nil, err
+	}
+	lostDeals, err := repo.dashboardLostDeals(ctx, queryer, tenantContext, filter)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return wonDeals, lostDeals, nil
+}
+
 func (repo Repository) dashboardWonDeals(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) ([]WonDealDetail, error) {
 	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{
 		DateColumn:      "won_at",
@@ -761,6 +1004,9 @@ func (repo Repository) dashboardWonDeals(ctx context.Context, queryer dashboardQ
 	if err != nil {
 		return nil, err
 	}
+	args, propertyVisibility := appendCanonicalPropertyVisibility(args, tenantContext, "p")
+	propertyValue := dashboardPropertyValueSQL(tenantContext)
+	args, limitClause := dashboardDetailLimitClause(args)
 
 	rows, err := queryer.Query(ctx, `
 		select
@@ -768,7 +1014,7 @@ func (repo Repository) dashboardWonDeals(ctx context.Context, queryer dashboardQ
 			l.name,
 			l.phone,
 			l.source,
-			coalesce(nullif(l.valor_interesse, 0), nullif(p.preco, 0), nullif(p.valor_venda_avaliado, 0), 0)::double precision,
+			`+propertyValue+`,
 			l.created_at,
 			l.won_at,
 			u.name
@@ -777,8 +1023,10 @@ func (repo Repository) dashboardWonDeals(ctx context.Context, queryer dashboardQ
 		left join public.properties p
 		  on p.organization_id = l.organization_id
 		 and p.id = coalesce(l.interest_property_id, l.property_id)
+		 and `+propertyVisibility+`
 		where `+strings.Join(where, " and ")+`
-		order by l.won_at desc nulls last, l.created_at desc
+		order by l.won_at desc nulls last, l.created_at desc, l.id desc
+		`+limitClause+`
 	`, args...)
 	if err != nil {
 		return nil, err
@@ -832,6 +1080,7 @@ func (repo Repository) dashboardLostDeals(ctx context.Context, queryer dashboard
 	if err != nil {
 		return nil, err
 	}
+	args, limitClause := dashboardDetailLimitClause(args)
 
 	rows, err := queryer.Query(ctx, `
 		select
@@ -846,7 +1095,8 @@ func (repo Repository) dashboardLostDeals(ctx context.Context, queryer dashboard
 		from public.leads l
 		left join public.users u on u.id = l.assigned_user_id
 		where `+strings.Join(where, " and ")+`
-		order by coalesce(l.lost_at, l.created_at) desc, l.created_at desc
+		order by coalesce(l.lost_at, l.created_at) desc, l.created_at desc, l.id desc
+		`+limitClause+`
 	`, args...)
 	if err != nil {
 		return nil, err
@@ -895,6 +1145,8 @@ func (repo Repository) dashboardTopBrokers(ctx context.Context, tenantContext te
 		return nil, err
 	}
 	where = append(where, "l.assigned_user_id is not null")
+	args, propertyVisibility := appendCanonicalPropertyVisibility(args, tenantContext, "p")
+	propertyValue := dashboardPropertyValueSQL(tenantContext)
 
 	commissionSelect := "0::double precision as total_commissions"
 	commissionJoin := ""
@@ -914,11 +1166,12 @@ func (repo Repository) dashboardTopBrokers(ctx context.Context, tenantContext te
 		with filtered_leads as (
 			select
 				l.assigned_user_id,
-				coalesce(nullif(l.valor_interesse, 0), nullif(p.preco, 0), nullif(p.valor_venda_avaliado, 0), 0)::double precision as value
+				`+propertyValue+` as value
 			from public.leads l
 			left join public.properties p
 			  on p.organization_id = l.organization_id
 			 and p.id = coalesce(l.interest_property_id, l.property_id)
+			 and `+propertyVisibility+`
 			where `+strings.Join(where, " and ")+`
 		)
 		select
@@ -1058,15 +1311,11 @@ func (repo Repository) buildDashboardLeadWhere(tenantContext tenant.Context, fil
 }
 
 func buildDashboardPropertyWhere(tenantContext tenant.Context, filter DashboardFilter, includeCreatedAt bool) ([]string, []any, error) {
-	args := []any{
-		tenantContext.OrganizationID,
-		canViewAllLeads(tenantContext),
-		tenantContext.UserID,
-		tenantContext.HasPermission("lead_view_team"),
-	}
+	args := []any{tenantContext.OrganizationID}
+	args, propertyVisibility := appendCanonicalPropertyVisibility(args, tenantContext, "p")
 	where := []string{
 		"p.organization_id = $1::uuid",
-		propertyUserVisibilitySQL("$2", "$3", "$4"),
+		propertyVisibility,
 	}
 
 	add := func(clause string, value any) {
@@ -1110,50 +1359,42 @@ func buildDashboardPropertyWhere(tenantContext tenant.Context, filter DashboardF
 }
 
 func propertyUserVisibilitySQL(canViewAllPlaceholder string, userIDPlaceholder string, canViewTeamPlaceholder string) string {
-	return `(
-		` + canViewAllPlaceholder + `::boolean
-		or p.responsible_user_id = ` + userIDPlaceholder + `::uuid
-		or p.created_by = ` + userIDPlaceholder + `::uuid
-		or (
-			` + canViewTeamPlaceholder + `::boolean
-			and exists (
-				select 1
-				from public.team_members leader
-				join public.team_members member
-				  on member.organization_id = leader.organization_id
-				 and member.team_id = leader.team_id
-				 and member.is_active = true
-				where leader.organization_id = p.organization_id
-				  and leader.user_id = ` + userIDPlaceholder + `::uuid
-				  and leader.is_active = true
-				  and leader.is_leader = true
-				  and (member.user_id = p.responsible_user_id or member.user_id = p.created_by)
-			)
-		)
-	)`
+	return propertyscope.VisibilitySQL("p", canViewAllPlaceholder, userIDPlaceholder, canViewTeamPlaceholder)
 }
 
-func dashboardDateRange(filter DashboardFilter) (time.Time, time.Time) {
-	now := time.Now().UTC()
-	to := now
-	from := now.AddDate(0, 0, -29)
-	if filter.DateFrom != nil {
-		from = *filter.DateFrom
+func dashboardExplicitDateRange(filter DashboardFilter) (time.Time, time.Time, bool) {
+	if filter.DateFrom == nil || filter.DateTo == nil {
+		return time.Time{}, time.Time{}, false
 	}
-	if filter.DateTo != nil {
-		to = *filter.DateTo
-	}
+	from := *filter.DateFrom
+	to := *filter.DateTo
 	if to.Before(from) {
 		from, to = to, from
 	}
 
-	return from, to
+	return from, to, true
 }
 
-func filterWithDateRange(filter DashboardFilter, from time.Time, to time.Time) DashboardFilter {
-	filter.DateFrom = &from
-	filter.DateTo = &to
-	return filter
+func dashboardPreviousPeriodFilter(filter DashboardFilter) (DashboardFilter, bool) {
+	from, to, ok := dashboardExplicitDateRange(filter)
+	if !ok {
+		return DashboardFilter{}, false
+	}
+	interval := to.Sub(from)
+	if interval <= 0 {
+		return DashboardFilter{}, false
+	}
+
+	previous := filter
+	previousFrom := from.Add(-interval)
+	previous.DateFrom = &previousFrom
+	previous.DateTo = &from
+	return previous, true
+}
+
+func dashboardDetailLimitClause(args []any) ([]any, string) {
+	args = append(args, dashboardDetailLimit)
+	return args, fmt.Sprintf("limit $%d", len(args))
 }
 
 func calculateTrend(current int64, previous int64) int {
@@ -1209,19 +1450,26 @@ func buildWonConversionBuckets(deals []WonDealDetail, closedLeads int64) []WonCo
 	return buckets
 }
 
+func dashboardConversionBucketPredicate(column string, definition conversionBucketDefinition) string {
+	if definition.Max == math.MaxInt {
+		return fmt.Sprintf("%s >= %d", column, definition.Min)
+	}
+	return fmt.Sprintf("%s between %d and %d", column, definition.Min, definition.Max)
+}
+
 func buildLostReasonBuckets(deals []LostDealDetail, lostLeads int64) []LostReasonBucket {
 	counts := map[string]int64{}
-	labels := map[string]string{}
-	colors := map[string]string{}
 
 	for _, deal := range deals {
-		key, label, color := classifyLostReason(deal.LostReason)
+		key, _, _ := classifyLostReason(deal.LostReason)
 		counts[key]++
-		labels[key] = label
-		colors[key] = color
 	}
+	return buildLostReasonBucketsFromCounts(counts, lostLeads)
+}
 
+func buildLostReasonBucketsFromCounts(counts map[string]int64, lostLeads int64) []LostReasonBucket {
 	buckets := make([]LostReasonBucket, 0, len(counts))
+	handled := map[string]struct{}{}
 	for _, definition := range dashboardLossReasonDefinitions {
 		count := counts[definition.Key]
 		if count == 0 {
@@ -1234,7 +1482,7 @@ func buildLostReasonBuckets(deals []LostDealDetail, lostLeads int64) []LostReaso
 			Percentage: lostReasonPercentage(count, lostLeads),
 			Color:      definition.Color,
 		})
-		delete(counts, definition.Key)
+		handled[definition.Key] = struct{}{}
 	}
 
 	if count := counts["outros"]; count > 0 {
@@ -1245,16 +1493,19 @@ func buildLostReasonBuckets(deals []LostDealDetail, lostLeads int64) []LostReaso
 			Percentage: lostReasonPercentage(count, lostLeads),
 			Color:      dashboardLossReasonOtherColor,
 		})
-		delete(counts, "outros")
+		handled["outros"] = struct{}{}
 	}
 
 	for key, count := range counts {
+		if _, exists := handled[key]; exists {
+			continue
+		}
 		buckets = append(buckets, LostReasonBucket{
 			Key:        key,
-			Label:      labels[key],
+			Label:      key,
 			Count:      count,
 			Percentage: lostReasonPercentage(count, lostLeads),
-			Color:      colors[key],
+			Color:      dashboardLossReasonOtherColor,
 		})
 	}
 
@@ -1266,6 +1517,33 @@ func buildLostReasonBuckets(deals []LostDealDetail, lostLeads int64) []LostReaso
 	})
 
 	return buckets
+}
+
+func dashboardLostReasonKeySQL(column string) string {
+	normalized := "translate(lower(btrim(coalesce(" + column + ", ''))), 'áàâãéêíóôõúç', 'aaaaeeiooouc')"
+	clauses := []string{
+		"when " + normalized + " = '' then 'outros'",
+		"when " + normalized + " like 'outro%' then 'outros'",
+	}
+	for _, definition := range dashboardLossReasonDefinitions {
+		seen := map[string]struct{}{}
+		conditions := make([]string, 0, len(definition.Aliases))
+		for _, alias := range definition.Aliases {
+			prefix := normalizeLostReason(alias)
+			if _, exists := seen[prefix]; exists {
+				continue
+			}
+			seen[prefix] = struct{}{}
+			conditions = append(conditions, normalized+" like "+dashboardSQLLiteral(prefix+"%"))
+		}
+		clauses = append(clauses, "when "+strings.Join(conditions, " or ")+" then "+dashboardSQLLiteral(definition.Key))
+	}
+
+	return "case " + strings.Join(clauses, " ") + " else 'outros' end"
+}
+
+func dashboardSQLLiteral(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 func lostReasonPercentage(count int64, total int64) float64 {
@@ -1323,42 +1601,6 @@ func normalizeDashboardTaskType(value string) string {
 	}
 }
 
-func buildDealsEvolutionPoints(leads []dashboardEvolutionLead, from time.Time, to time.Time, granularity string) []DealsEvolutionPoint {
-	intervals, labels := dashboardEvolutionIntervals(from, to, granularity)
-	result := make([]DealsEvolutionPoint, 0, len(intervals))
-	for index, start := range intervals {
-		end := to
-		if index < len(intervals)-1 {
-			end = intervals[index+1]
-		}
-
-		point := DealsEvolutionPoint{Date: labels[index]}
-		for _, lead := range leads {
-			switch lead.DealStatus {
-			case "won":
-				if lead.WonAt != nil && dateInRange(*lead.WonAt, start, end) {
-					point.Ganhos++
-				}
-			case "lost":
-				lostDate := lead.CreatedAt
-				if lead.LostAt != nil {
-					lostDate = *lead.LostAt
-				}
-				if dateInRange(lostDate, start, end) {
-					point.Perdas++
-				}
-			default:
-				if dateInRange(lead.CreatedAt, start, end) {
-					point.Abertos++
-				}
-			}
-		}
-		result = append(result, point)
-	}
-
-	return result
-}
-
 func dashboardEvolutionIntervals(from time.Time, to time.Time, granularity string) ([]time.Time, []string) {
 	if granularity == "hour" || sameDashboardDay(from, to) || isSingleDashboardDayRange(from, to) {
 		intervals := make([]time.Time, 0, 24)
@@ -1380,7 +1622,7 @@ func dashboardEvolutionIntervals(from time.Time, to time.Time, granularity strin
 			intervals = append(intervals, current)
 			labels = append(labels, current.Format("02/01"))
 		}
-		return intervals, labels
+		return limitDashboardIntervals(intervals, labels)
 	}
 
 	if days <= 90 {
@@ -1407,10 +1649,10 @@ func dashboardEvolutionIntervals(from time.Time, to time.Time, granularity strin
 }
 
 func limitDashboardIntervals(intervals []time.Time, labels []string) ([]time.Time, []string) {
-	if len(intervals) <= 12 {
+	if len(intervals) <= dashboardMaxEvolutionBucketCount {
 		return intervals, labels
 	}
-	step := int(math.Ceil(float64(len(intervals)) / 12))
+	step := int(math.Ceil(float64(len(intervals)) / dashboardMaxEvolutionBucketCount))
 	limitedIntervals := []time.Time{}
 	limitedLabels := []string{}
 	for index := range intervals {
@@ -1421,10 +1663,6 @@ func limitDashboardIntervals(intervals []time.Time, labels []string) ([]time.Tim
 	}
 
 	return limitedIntervals, limitedLabels
-}
-
-func dateInRange(value time.Time, start time.Time, end time.Time) bool {
-	return !value.Before(start) && value.Before(end)
 }
 
 func sameDashboardDay(left time.Time, right time.Time) bool {

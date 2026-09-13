@@ -19,6 +19,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/propertyscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -270,12 +272,28 @@ func (repo Repository) ListMetaIntegrations(ctx context.Context, tenantContext t
 					where secret.id = credentials.user_access_token_secret_ref
 					  and nullif(secret.decrypted_secret, '') is not null
 				)
+				and (
+					credentials.token_expires_at is null
+					or credentials.token_expires_at > now() + interval '5 minutes'
+				)
+				and coalesce(credentials.granted_scopes, array[]::text[]) @> array['ads_read']::text[],
+			'instagram_insights_available',
+				nullif(btrim(mi.instagram_business_account_id), '') is not null
+				and exists (
+					select 1
+					from vault.decrypted_secrets as secret
+					where secret.id = credentials.user_access_token_secret_ref
+					  and nullif(secret.decrypted_secret, '') is not null
+				)
+				and (
+					credentials.token_expires_at is null
+					or credentials.token_expires_at > now() + interval '5 minutes'
+				)
 				and coalesce(credentials.granted_scopes, array[]::text[]) @> array[
-					'ads_read',
-					'read_insights',
-					'instagram_basic',
-					'instagram_manage_insights'
-				]::text[]
+						'instagram_basic',
+						'instagram_manage_insights',
+						'pages_read_engagement'
+					]::text[]
 		)
 		from public.meta_integrations_public mi
 		join public.meta_integrations as credentials
@@ -294,10 +312,12 @@ func (repo Repository) ListMetaIntegrations(ctx context.Context, tenantContext t
 	// During a rolling migration the legacy, tokenless projection can already
 	// serve lead integrations while the durable Marketing columns are not yet
 	// available. Keep the connection visible, but fail the advanced capability
-	// closed until the database can prove both token presence and scopes.
+	// closed until the database can prove token presence and each capability's
+	// own scopes independently.
 	return repo.listJSON(ctx, `
 		select to_jsonb(mi) || jsonb_build_object(
-			'marketing_token_available', false
+			'marketing_token_available', false,
+			'instagram_insights_available', false
 		)
 		from public.meta_integrations_public mi
 		where mi.organization_id = $1::uuid
@@ -798,24 +818,43 @@ func (repo Repository) ClaimMetaOAuthConnectPayload(
 }
 
 func (repo Repository) ListMetaFormConfigs(ctx context.Context, tenantContext tenant.Context, integrationID string) ([]map[string]any, error) {
+	canReadProperties := propertyscope.CanRead(tenantContext)
+	args := []any{
+		tenantContext.OrganizationID,
+		canReadProperties,
+		canReadProperties && propertyscope.CanViewAll(tenantContext),
+		tenantContext.UserID,
+		canReadProperties && propertyscope.CanViewTeam(tenantContext),
+	}
+	where := "mfc.organization_id = $1::uuid"
 	integrationID = strings.TrimSpace(integrationID)
-	if integrationID == "" {
-		return repo.listJSON(ctx, `
-			select to_jsonb(mfc) || jsonb_build_object('created_by_name', coalesce(u.name, u.email))
-			from public.meta_form_configs mfc
-			left join public.users u on u.id = mfc.created_by
-			where mfc.organization_id = $1::uuid
-			order by mfc.created_at desc
-		`, tenantContext.OrganizationID)
+	if integrationID != "" {
+		args = append(args, integrationID)
+		where += " and mfc.integration_id = $6::uuid"
 	}
 	return repo.listJSON(ctx, `
-		select to_jsonb(mfc) || jsonb_build_object('created_by_name', coalesce(u.name, u.email))
+		select to_jsonb(mfc) || jsonb_build_object(
+			'property_id', case when property.id is null then null else property.id end,
+			'default_values', case
+				when property.id is null then coalesce(mfc.default_values, '{}'::jsonb) - 'property_id' - 'interest_property_id'
+				else mfc.default_values
+			end,
+			'created_by_name', coalesce(u.name, u.email)
+		)
 		from public.meta_form_configs mfc
 		left join public.users u on u.id = mfc.created_by
-		where mfc.organization_id = $1::uuid
-		  and mfc.integration_id = $2::uuid
+		left join public.properties property
+		  on property.organization_id = mfc.organization_id
+		 and property.id::text = coalesce(
+			mfc.property_id::text,
+			nullif(btrim(mfc.default_values->>'property_id'), ''),
+			nullif(btrim(mfc.default_values->>'interest_property_id'), '')
+		 )
+		 and $2::boolean
+		 and `+propertyscope.VisibilitySQL("property", "$3", "$4", "$5")+`
+		where `+where+`
 		order by mfc.created_at desc
-	`, tenantContext.OrganizationID, integrationID)
+	`, args...)
 }
 
 func (repo Repository) SaveMetaFormConfig(ctx context.Context, tenantContext tenant.Context, request MetaFormConfigRequest) (map[string]any, error) {
@@ -823,6 +862,14 @@ func (repo Repository) SaveMetaFormConfig(ctx context.Context, tenantContext ten
 	formID := strings.TrimSpace(request.FormID)
 	if integrationID == "" || formID == "" {
 		return nil, ErrInvalidInput
+	}
+	propertyID, err := canonicalMetaFormPropertyID(request)
+	if err != nil {
+		return nil, err
+	}
+	request.PropertyID = propertyID
+	if propertyID != nil && !propertyscope.CanRead(tenantContext) {
+		return nil, tenant.ErrOrganizationAccessDenied
 	}
 	isActive := true
 	if request.IsActive != nil {
@@ -864,6 +911,7 @@ func (repo Repository) SaveMetaFormConfig(ctx context.Context, tenantContext ten
 					from public.properties as property
 					where property.organization_id = $1::uuid
 					  and property.id = nullif($4, '')::uuid
+					  and `+propertyscope.VisibilitySQL("property", "$5", "$6", "$7")+`
 				)
 			)
 	`,
@@ -871,6 +919,9 @@ func (repo Repository) SaveMetaFormConfig(ctx context.Context, tenantContext ten
 		integrationID,
 		cleanString(request.RoundRobinID),
 		cleanString(request.PropertyID),
+		propertyscope.CanViewAll(tenantContext),
+		tenantContext.UserID,
+		propertyscope.CanViewTeam(tenantContext),
 	).Scan(&referencesBelongToOrganization); err != nil {
 		return nil, err
 	}
@@ -941,6 +992,9 @@ func (repo Repository) SaveMetaFormConfig(ctx context.Context, tenantContext ten
 		returning to_jsonb(meta_form_configs.*)
 	`, tenantContext.OrganizationID, integrationID, formID, nullableString(cleanString(request.FormName)), nullableString(cleanString(request.RoundRobinID)), nullableString(cleanString(request.PropertyID)), nullableString(cleanString(request.Purpose)), nullableString(cleanString(request.Source)), nullableString(cleanString(request.SourceDetails)), string(defaultValuesJSON), string(autoTagsJSON), string(fieldMappingJSON), string(customFieldsJSON), tenantContext.UserID, isActive).Scan(&raw)
 	if err != nil {
+		if isMetaFormRouteConflict(err) {
+			return nil, ErrMetaFormRouteConflict
+		}
 		return nil, err
 	}
 
@@ -958,6 +1012,37 @@ func (repo Repository) SaveMetaFormConfig(ctx context.Context, tenantContext ten
 	return item, nil
 }
 
+func canonicalMetaFormPropertyID(request MetaFormConfigRequest) (*string, error) {
+	candidates := []string{}
+	if request.PropertyID != nil {
+		candidates = append(candidates, *request.PropertyID)
+	}
+	for _, key := range []string{"property_id", "interest_property_id"} {
+		if value := cleanStringFromAny(request.DefaultValues[key]); value != "" {
+			candidates = append(candidates, value)
+		}
+	}
+	var canonical string
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		normalized, ok := pgvalue.NormalizeUUID(candidate)
+		if !ok {
+			return nil, ErrInvalidInput
+		}
+		if canonical != "" && canonical != normalized {
+			return nil, ErrInvalidInput
+		}
+		canonical = normalized
+	}
+	if canonical == "" {
+		return nil, nil
+	}
+	return &canonical, nil
+}
+
 func (repo Repository) ToggleMetaFormConfig(ctx context.Context, tenantContext tenant.Context, request ToggleMetaFormConfigRequest) error {
 	if strings.TrimSpace(request.IntegrationID) == "" || strings.TrimSpace(request.FormID) == "" {
 		return ErrInvalidInput
@@ -971,12 +1056,22 @@ func (repo Repository) ToggleMetaFormConfig(ctx context.Context, tenantContext t
 		  and form_id = $3
 	`, tenantContext.OrganizationID, request.IntegrationID, request.FormID, request.IsActive)
 	if err != nil {
+		if isMetaFormRouteConflict(err) {
+			return ErrMetaFormRouteConflict
+		}
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrIntegrationNotFound
 	}
 	return nil
+}
+
+func isMetaFormRouteConflict(err error) bool {
+	var postgresError *pgconn.PgError
+	return errors.As(err, &postgresError) &&
+		postgresError.Code == "23505" &&
+		postgresError.ConstraintName == "uq_meta_form_configs_active_provider_route"
 }
 
 func (repo Repository) DeleteMetaFormConfig(ctx context.Context, tenantContext tenant.Context, integrationID string, formID string) error {
@@ -1554,11 +1649,18 @@ func canManageMetaIntegrations(tenantContext tenant.Context) bool {
 
 const googleCalendarIntegrationEnabled = true
 
+func allowedGoogleCalendarFunction(name string) bool {
+	if !googleCalendarIntegrationEnabled {
+		return false
+	}
+	return name == "google-calendar-oauth" || name == "google-calendar-sync"
+}
+
 func allowedFunction(name string) bool {
 	switch name {
 	case "google-calendar-oauth",
 		"google-calendar-sync":
-		return googleCalendarIntegrationEnabled
+		return allowedGoogleCalendarFunction(name)
 	case "vista-sync",
 		"imoview-sync",
 		"asaas-checkout-info",
@@ -1662,8 +1764,5 @@ func cleanUniqueStringList(value any, limit int) []string {
 }
 
 func nullableString(value *string) any {
-	if value == nil {
-		return nil
-	}
-	return *value
+	return pgvalue.NullableStringPointer(value)
 }

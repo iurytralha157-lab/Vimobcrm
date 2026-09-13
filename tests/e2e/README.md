@@ -31,13 +31,15 @@ opt-ins are present. Never configure these variables in production.
 
 Release-critical coverage includes:
 
-- dedicated team create/edit pages, atomic seven-day schedules, role boundaries
-  and mobile overflow;
+- modal team creation, dedicated edit pages, atomic seven-day schedules, role
+  boundaries and mobile overflow;
 - the property list, quick view, history dialog and dedicated 360 workspace on
   admin, leader and user profiles;
 - the notification center on all three profiles and a cadence lifecycle
   assertion proving that moving/completing cadence work creates no cadence
   notification;
+- public-site intake, including contacts without a browser session, and the
+  site dashboard rendering controlled database-backed metrics;
 - the existing permission, navigation, lead, automation, attention, cadence and
   property-form lifecycle suites.
 

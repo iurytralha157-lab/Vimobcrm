@@ -8,6 +8,8 @@ import { MessageBubble as WhatsAppMessageBubble } from '@/components/features/wh
 import { MessageErrorBoundary } from '@/components/features/whatsapp/MessageErrorBoundary';
 import { AudioRecorderButton } from '@/components/features/whatsapp/AudioRecorderButton';
 import { cn } from '@/lib/utils';
+import { getSafeHttpUrl } from '@/lib/safe-http-url';
+import { formatBRLCurrencyWithDefaultDecimals } from '@/lib/utils/formatting';
 import { useLeadHistory, type UnifiedHistoryEvent } from '@/hooks/use-lead-history';
 import { useAccessibleSessions } from '@/hooks/use-accessible-sessions';
 import {
@@ -27,9 +29,13 @@ import { toast } from 'sonner';
 import { whatsappAPI } from '@/lib/api/whatsapp';
 import { getWhatsAppMessageInputState } from '@/lib/whatsapp-message-input';
 import { groupLatestWhatsAppReactions } from '@/lib/whatsapp-reactions';
-
-const MAX_IMAGE_DIMENSION = 1600;
-const IMAGE_QUALITY = 0.82;
+import {
+  blobToBase64,
+  compressOutboundImageFile,
+  getMessageMediaExtension,
+  getOutboundMessageMediaKind,
+  OUTBOUND_IMAGE_COMPRESSION_PROFILES,
+} from '@/components/features/whatsapp/message-media';
 
 type LeadUnifiedThreadProps = {
   leadId: string;
@@ -39,6 +45,7 @@ type LeadUnifiedThreadProps = {
   whatsappVerified?: boolean | null;
   leadCreatedAt?: string | null;
   composerRequest?: { id: number; text?: string } | null;
+  readOnly?: boolean;
 };
 
 type ThreadItem =
@@ -55,71 +62,9 @@ type ThreadItem =
       message: WhatsAppMessage;
     };
 
-const mimeExtension = (mimetype: string, fallback = 'bin') => {
-  const clean = mimetype.split(';')[0].toLowerCase();
-  const map: Record<string, string> = {
-    'image/jpeg': 'jpg',
-    'image/png': 'png',
-    'image/webp': 'webp',
-    'image/gif': 'gif',
-    'audio/ogg': 'ogg',
-    'audio/webm': 'webm',
-    'audio/mpeg': 'mp3',
-    'video/mp4': 'mp4',
-    'application/pdf': 'pdf',
-  };
-  return map[clean] || fallback;
-};
-
-const fileToBase64 = (file: Blob) => new Promise<string>((resolve, reject) => {
-  const reader = new FileReader();
-  reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
-  reader.onerror = reject;
-  reader.readAsDataURL(file);
-});
-
-async function compressImageFile(file: File): Promise<File> {
-  if (!file.type.startsWith('image/') || file.type === 'image/gif') return file;
-
-  const imageUrl = URL.createObjectURL(file);
-  try {
-    const image = new Image();
-    image.decoding = 'async';
-    const loaded = new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = reject;
-    });
-    image.src = imageUrl;
-    await loaded;
-
-    const scale = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(image.width, image.height));
-    if (scale >= 1 && file.size < 900_000) return file;
-
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(image.width * scale));
-    canvas.height = Math.max(1, Math.round(image.height * scale));
-    const context = canvas.getContext('2d');
-    if (!context) return file;
-    context.drawImage(image, 0, 0, canvas.width, canvas.height);
-
-    const targetType = file.type === 'image/png' ? 'image/webp' : file.type;
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, targetType, IMAGE_QUALITY));
-    if (!blob || blob.size >= file.size) return file;
-
-    const baseName = file.name.replace(/\.[^.]+$/, '') || 'imagem';
-    return new File([blob], `${baseName}.${mimeExtension(targetType, 'webp')}`, { type: targetType });
-  } catch {
-    return file;
-  } finally {
-    URL.revokeObjectURL(imageUrl);
-  }
-}
-
-const getMediaTypeFromFile = (file: File) => {
-  if (file.type.startsWith('image/')) return 'image';
-  if (file.type.startsWith('video/')) return 'video';
-  if (file.type.startsWith('audio/')) return 'audio';
-  return 'document';
+const LEAD_THREAD_IMAGE_COMPRESSION_OPTIONS = {
+  ...OUTBOUND_IMAGE_COMPRESSION_PROFILES.preferSmallerFile,
+  fallbackBaseName: 'imagem',
 };
 
 type MessageMediaStatus = 'pending' | 'ready' | 'failed' | null;
@@ -166,19 +111,6 @@ function metadataText(value: unknown): string | null {
   }
   if (value === null || value === undefined || value === false) return null;
   return String(value);
-}
-
-function safeExternalUrl(value: unknown): string | null {
-  const candidate = metadataText(value);
-  if (!candidate) return null;
-  if (candidate.startsWith('/') && !candidate.startsWith('//')) return candidate;
-
-  try {
-    const url = new URL(candidate);
-    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : null;
-  } catch {
-    return null;
-  }
 }
 
 function safeEventDate(value: string | null | undefined): Date | null {
@@ -295,7 +227,9 @@ function getEventDetail(event: UnifiedHistoryEvent) {
     const title = metadataText(metadata.property_title) || metadataText(metadata.property_name);
     const code = metadataText(metadata.property_code) || metadataText(metadata.property_ref);
     const rawPrice = Number(metadata.property_price);
-    const price = Number.isFinite(rawPrice) && rawPrice > 0 ? `R$ ${rawPrice.toLocaleString('pt-BR')}` : null;
+    const price = Number.isFinite(rawPrice) && rawPrice > 0
+      ? formatBRLCurrencyWithDefaultDecimals(rawPrice)
+      : null;
     return [title, code, price].filter(Boolean).join('\n') || null;
   }
 
@@ -700,12 +634,12 @@ function EventBubble({ event }: { event: UnifiedHistoryEvent }) {
 
   if (event.type === 'meta_creative') {
     const metadata = event.metadata || {};
-    const imageUrl = safeExternalUrl(metadata.creative_url);
-    const videoUrl = safeExternalUrl(metadata.creative_video_url);
+    const imageUrl = getSafeHttpUrl(metadataText(metadata.creative_url));
+    const videoUrl = getSafeHttpUrl(metadataText(metadata.creative_video_url));
     const linkUrl =
-      safeExternalUrl(metadata.creative_link_url) ||
-      safeExternalUrl(metadata.creative_destination_url) ||
-      safeExternalUrl(metadata.creative_instagram_url);
+      getSafeHttpUrl(metadataText(metadata.creative_link_url)) ||
+      getSafeHttpUrl(metadataText(metadata.creative_destination_url)) ||
+      getSafeHttpUrl(metadataText(metadata.creative_instagram_url));
 
     return (
       <div className="flex justify-end px-2">
@@ -814,7 +748,7 @@ function FeedbackBubble({ event }: { event: UnifiedHistoryEvent }) {
   );
 }
 
-export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, whatsappVerified, leadCreatedAt, composerRequest }: LeadUnifiedThreadProps) {
+export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, whatsappVerified, leadCreatedAt, composerRequest, readOnly = false }: LeadUnifiedThreadProps) {
   const [text, setText] = useState('');
   const [composerHighlighted, setComposerHighlighted] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -823,21 +757,28 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   const threadScrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const lastThreadItemIdRef = useRef<string | null>(null);
-  const { profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const { hasPermission } = useUserPermissions();
   const { hasModule } = useOrganizationModules();
   const hasWhatsAppModule = hasModule('whatsapp');
   const canViewWhatsApp = hasWhatsAppModule && (hasPermission('whatsapp_view') || hasPermission('whatsapp_operate'));
   const canOperateWhatsApp = hasWhatsAppModule && hasPermission('whatsapp_operate');
   const { data: history = [], isLoading: loadingHistory } = useLeadHistory(leadId);
-  const { data: sessions = [], isLoading: loadingSessions } = useAccessibleSessions({ enabled: canViewWhatsApp });
+  const shouldLoadComposerData = canViewWhatsApp && !readOnly;
+  const { data: sessions = [], isLoading: loadingSessions } = useAccessibleSessions({
+    enabled: shouldLoadComposerData,
+  });
   const accessibleSessionIds = useMemo(() => sessions.map((session) => session.id), [sessions]);
   const { data: conversations = [] } = useWhatsAppConversations(
     undefined,
     { hideGroups: true },
-    !canViewWhatsApp ? [] : loadingSessions ? undefined : accessibleSessionIds,
+    !shouldLoadComposerData ? [] : loadingSessions ? undefined : accessibleSessionIds,
+    80,
+    { enabled: shouldLoadComposerData },
   );
-  useWhatsAppLeadRealtime(canViewWhatsApp, [leadId]);
+  useWhatsAppLeadRealtime(canViewWhatsApp, [leadId], {
+    reconcileOnSubscribe: !readOnly,
+  });
 
   const conversation = useMemo<WhatsAppConversation | null>(() => {
     return conversations.find((item) => item.lead_id === leadId || item.lead?.id === leadId) || null;
@@ -875,6 +816,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       conversation ||
       (hasLeadPhone
         ? {
+            lead_id: leadId,
             session_id: null,
             contact_phone: leadPhone,
             remote_jid: null,
@@ -882,7 +824,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
             session: null,
           }
         : null),
-    [conversation, hasLeadPhone, leadPhone],
+    [conversation, hasLeadPhone, leadId, leadPhone],
   );
   const whatsappMessageInputState = useMemo(
     () => getWhatsAppMessageInputState(messageInputConversation, null, sessions),
@@ -908,7 +850,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
           : whatsappMessageInputState.placeholder;
 
   useEffect(() => {
-    if (!composerRequest || loadingSessions || lastHandledComposerRequestRef.current === composerRequest.id) return;
+    if (readOnly || !composerRequest || loadingSessions || lastHandledComposerRequestRef.current === composerRequest.id) return;
     lastHandledComposerRequestRef.current = composerRequest.id;
 
     if (!canOperateWhatsApp) {
@@ -951,7 +893,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       window.cancelAnimationFrame(frame);
       window.clearTimeout(timeout);
     };
-  }, [canOperateWhatsApp, composerRequest, hasLeadPhone, hasWhatsAppModule, leadHasNoWhatsApp, loadingSessions, whatsappMessageInputState.disabled, whatsappMessageInputState.placeholder]);
+  }, [canOperateWhatsApp, composerRequest, hasLeadPhone, hasWhatsAppModule, leadHasNoWhatsApp, loadingSessions, readOnly, whatsappMessageInputState.disabled, whatsappMessageInputState.placeholder]);
 
   const items = useMemo<ThreadItem[]>(() => {
     const visibleEvents = removeRedundantEvents(history.filter(shouldShowEvent));
@@ -1070,7 +1012,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       mediaType: 'audio',
       base64,
       mimetype,
-      filename: `audio.${mimeExtension(mimetype, 'webm')}`,
+      filename: `audio.${getMessageMediaExtension(mimetype, 'webm')}`,
       previewMediaUrl: `data:${mimetype || 'audio/webm'};base64,${base64}`,
       sendSessionId: whatsappMessageInputState.sendSessionId,
     });
@@ -1089,9 +1031,12 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     }
 
     try {
-      const processedFile = await compressImageFile(file);
-      const base64 = await fileToBase64(processedFile);
-      const mediaType = getMediaTypeFromFile(processedFile);
+      const processedFile = await compressOutboundImageFile(
+        file,
+        LEAD_THREAD_IMAGE_COMPRESSION_OPTIONS,
+      );
+      const base64 = await blobToBase64(processedFile);
+      const mediaType = getOutboundMessageMediaKind(processedFile.type);
       const targetConversation = await ensureConversationForSend();
 
       await sendMessage.mutateAsync({
@@ -1117,7 +1062,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
 
   const retryMediaDownload = async (messageId: string) => {
     try {
-      await whatsappAPI.retryMediaDownload(messageId, profile?.organization_id);
+      await whatsappAPI.retryMediaDownload(messageId, activeOrganization.organizationId);
       await refetchMessages();
     } catch {
       toast.error('Mídia não atualizada', {
@@ -1210,7 +1155,9 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
                       sentAt={item.message.sent_at}
                       senderName={item.message.from_me ? item.message.sender_name ?? 'Equipe' : item.message.sender_name ?? null}
                       isGroup={conversation?.is_group ?? false}
-                      onRetryMedia={() => retryMediaDownload(item.message.id)}
+                      onRetryMedia={!readOnly
+                        ? () => retryMediaDownload(item.message.id)
+                        : undefined}
                       messageId={item.message.id}
                       leadId={leadId}
                       leadName={leadName}
@@ -1218,12 +1165,13 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
                       conversationRemoteJid={conversation?.remote_jid ?? item.message.remote_jid ?? null}
                       conversationSessionId={conversation?.session_id ?? item.message.session_id ?? null}
                       compact
+                      reactionPickerPosition="outside"
                       reactions={(item.message.message_id
                         ? reactionsByMessageId.get(item.message.message_id)
                         : undefined)
                         || reactionsByMessageId.get(item.message.id)
                         || []}
-                      onReact={canOperateWhatsApp && item.message.session_id
+                      onReact={!readOnly && canOperateWhatsApp && item.message.session_id
                         ? (emoji) => reactToMessage.mutateAsync({
                         conversation: {
                           ...(conversation || {}),
@@ -1246,7 +1194,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
           <div ref={bottomRef} />
         </div>
 
-        {canViewWhatsApp && <div className="bg-transparent px-3 pb-3 pt-2">
+        {!readOnly && canViewWhatsApp && <div className="bg-transparent px-3 pb-3 pt-2">
           <input
             ref={fileInputRef}
             type="file"

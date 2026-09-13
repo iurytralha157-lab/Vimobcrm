@@ -32,10 +32,11 @@ select results_eq(
         'portal_import_reports',
         'portal_webhook_events'
       ])
+      and policyname <> 'vimob_active_membership_guard'
       and roles && array['public', 'anon', 'authenticated']::name[]
   $$,
   array[0::bigint],
-  'portal tables expose no browser RLS policies'
+  'portal tables expose no browser-authorizing policy beyond the membership guard'
 );
 
 select ok(
@@ -203,9 +204,10 @@ select results_eq(
         'property_channel_publication_versions',
         'property_channel_publication_jobs'
       ])
+      and policyname <> 'vimob_active_membership_guard'
   $$,
   array[0::bigint],
-  'canonical publication tables retain no direct policies'
+  'canonical publication tables retain no direct authorization policies beyond the membership guard'
 );
 
 select ok(

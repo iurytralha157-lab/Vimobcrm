@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.108.1";
+import { loadCanonicalPropertyLocationResolver } from "../_shared/property-import-location.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -8,6 +9,15 @@ const corsHeaders = {
 
 const externalRequestTimeoutMs = 20_000;
 const photoRequestTimeoutMs = 8_000;
+const propertyPhotoLimit = 20;
+const propertyCodeClaimAttempts = 64;
+const syncLeaseMs = 5 * 60 * 1_000;
+const propertyMediaCapacityError = "property_media_capacity_exhausted_append_only";
+const vistaManagedHost = "vistahost.com.br";
+// Server-side only: comma-separated exact hosts or explicit `*.example.com`
+// suffixes. Full DNS-to-socket pinning still belongs at the egress proxy; the
+// Edge runtime fetch API does not expose the connected peer address.
+const vistaAdditionalHostsEnv = "VISTA_ALLOWED_API_HOSTS";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -17,6 +27,44 @@ function isRecord(value: unknown): value is UnknownRecord {
 
 function isVistaProperty(value: unknown): value is UnknownRecord {
   return isRecord(value) && Boolean(value.Codigo);
+}
+
+function normalizeStatusToken(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function normalizeImportedPropertyStatus(value: unknown): string {
+  const status = normalizeStatusToken(value);
+  if (status.includes("vendid") || status === "sold") return "vendido";
+  if (
+    status.includes("locad") ||
+    status.includes("alugad") ||
+    status === "rented" ||
+    status === "leased"
+  ) return "alugado";
+  if (status.includes("reserv") || status === "reserved") return "reservado";
+  if (status.includes("arquiv") || status === "archived") return "arquivado";
+  if (status.includes("rascunh") || status === "draft") return "rascunho";
+  if (
+    status.includes("inativ") ||
+    status.includes("suspend") ||
+    status.includes("indispon") ||
+    status.includes("bloque") ||
+    status.includes("desativ") ||
+    status.includes("nao ativo")
+  ) return "inativo";
+  if (
+    status === "ativo" ||
+    status === "active" ||
+    status === "available" ||
+    status === "disponivel" ||
+    status === "vago"
+  ) return "ativo";
+  return "inativo";
 }
 
 function jsonResponse(body: Record<string, unknown>, status: number) {
@@ -50,11 +98,13 @@ async function fetchWithTimeout(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(input, { ...init, redirect: "error", signal: controller.signal });
-  } catch (error) {
+  } catch {
     if (controller.signal.aborted) {
       throw new Error(`Vista request timed out after ${timeoutMs} ms`);
     }
-    throw error;
+    // The Vista API key is carried in the query string. Do not persist or
+    // return a runtime fetch error that may echo the full credentialed URL.
+    throw new Error("Vista request failed");
   } finally {
     clearTimeout(timeoutId);
   }
@@ -125,6 +175,40 @@ function isPrivateIP(ip: string): boolean {
     parts[0] >= 224;
 }
 
+function isValidPublicHostname(value: string): boolean {
+  return value.length <= 253 &&
+    value.includes(".") &&
+    !value.includes(":") &&
+    !/^\d+(?:\.\d+){3}$/.test(value) &&
+    value.split(".").every((label) =>
+      label.length >= 1 &&
+      label.length <= 63 &&
+      /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label)
+    );
+}
+
+function configuredVistaHostRules(): string[] {
+  return (Deno.env.get(vistaAdditionalHostsEnv) ?? "")
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase().replace(/\.$/, ""))
+    .filter((entry) => {
+      const hostname = entry.startsWith("*.") ? entry.slice(2) : entry;
+      if (entry.includes("*") && !(entry.startsWith("*.") && !hostname.includes("*"))) {
+        return false;
+      }
+      return isValidPublicHostname(hostname);
+    });
+}
+
+function isAllowedVistaApiHost(host: string): boolean {
+  if (host === vistaManagedHost || host.endsWith(`.${vistaManagedHost}`)) return true;
+  return configuredVistaHostRules().some((rule) => {
+    if (!rule.startsWith("*.")) return host === rule;
+    const suffix = rule.slice(2);
+    return host.endsWith(`.${suffix}`);
+  });
+}
+
 async function normalizeVistaApiUrl(rawUrl: string): Promise<string> {
   const trimmed = rawUrl.trim();
   if (!trimmed) throw new Error("invalid_vista_api_url");
@@ -139,6 +223,9 @@ async function normalizeVistaApiUrl(rawUrl: string): Promise<string> {
   const host = target.hostname.toLowerCase();
   if (target.username || target.password || !host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) {
     throw new Error("unsafe_vista_api_url");
+  }
+  if (!isAllowedVistaApiHost(host)) {
+    throw new Error("unapproved_vista_api_host");
   }
   if (target.protocol === "http:" && (host === "vistahost.com.br" || host.endsWith(".vistahost.com.br"))) {
     target.protocol = "https:";
@@ -221,32 +308,64 @@ function getCategoryPrefix(categoria: string): string {
   const cat = (categoria || "").toLowerCase();
   if (cat.includes("casa") || cat.includes("sobrado")) return "CA";
   if (cat.includes("cobertura")) return "CB";
-  if (cat.includes("comercial") || cat.includes("sala") || cat.includes("loja") || cat.includes("galpao") || cat.includes("galpÃ£o")) return "CO";
+  if (cat.includes("comercial") || cat.includes("sala") || cat.includes("loja") || cat.includes("galpao") || cat.includes("galpão")) return "CO";
   if (cat.includes("terreno") || cat.includes("lote")) return "TE";
   return "AP";
 }
 
 async function generateCode(supabase: SupabaseClient, organizationId: string, prefix: string): Promise<string> {
-  const { data: seq } = await supabase
-    .from("property_sequences")
-    .select("*")
-    .eq("organization_id", organizationId)
-    .eq("prefix", prefix)
-    .single();
+  const normalizedPrefix = prefix.trim().toUpperCase();
 
-  let nextNumber = 1;
-  if (seq) {
-    nextNumber = (seq.last_number || 0) + 1;
-    await supabase
+  for (let attempt = 0; attempt < propertyCodeClaimAttempts; attempt += 1) {
+    const { data: sequence, error: sequenceError } = await supabase
+      .from("property_sequences")
+      .select("id, prefix, last_number")
+      .eq("organization_id", organizationId)
+      .ilike("prefix", normalizedPrefix)
+      .maybeSingle();
+    if (sequenceError) throw sequenceError;
+
+    if (!sequence) {
+      const { error: insertError } = await supabase
+        .from("property_sequences")
+        .insert({
+          organization_id: organizationId,
+          prefix: normalizedPrefix,
+          last_number: 0,
+        });
+      if (insertError && insertError.code !== "23505") throw insertError;
+      continue;
+    }
+
+    const currentNumber = Number(sequence.last_number) || 0;
+    const nextNumber = currentNumber + 1;
+    let claim = supabase
       .from("property_sequences")
       .update({ last_number: nextNumber })
-      .eq("id", seq.id);
-  } else {
-    await supabase
-      .from("property_sequences")
-      .insert({ organization_id: organizationId, prefix, last_number: 1 });
+      .eq("id", sequence.id)
+      .eq("organization_id", organizationId)
+      .eq("prefix", sequence.prefix);
+    claim = sequence.last_number === null
+      ? claim.is("last_number", null)
+      : claim.eq("last_number", sequence.last_number);
+    const { data: claimed, error: claimError } = await claim
+      .select("id")
+      .maybeSingle();
+    if (claimError) throw claimError;
+    if (!claimed) continue;
+
+    const code = `${normalizedPrefix}${String(nextNumber).padStart(4, "0")}`;
+    const { data: existing, error: existingError } = await supabase
+      .from("properties")
+      .select("id")
+      .eq("organization_id", organizationId)
+      .eq("code", code)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (!existing) return code;
   }
-  return `${prefix}${String(nextNumber).padStart(4, "0")}`;
+
+  throw new Error("property_code_generation_conflict");
 }
 
 async function testConnection(apiUrl: string, apiKey: string) {
@@ -268,7 +387,7 @@ async function testConnection(apiUrl: string, apiKey: string) {
     return { success: false, error: `API returned ${res.status}: ${text}` };
   }
   const data = await res.json();
-  return { success: true, message: "ConexÃ£o vÃ¡lida", sample: data };
+  return { success: true, message: "Conexão válida", sample: data };
 }
 
 function normalizeUrl(url: string): string {
@@ -280,46 +399,140 @@ function parseMobilia(value: unknown): string | null {
   const v = String(value).toLowerCase().trim();
   if (v === "sim" || v === "mobiliado" || v === "completo") return "Mobiliado";
   if (v.includes("semi") || v === "parcial" || v === "parcialmente") return "Semi-mobiliado";
-  if (v === "nao" || v === "nÃ£o" || v === "nenhum" || v === "sem") return "Sem mobÃ­lia";
+  if (v === "nao" || v === "não" || v === "nenhum" || v === "sem") return "Sem mobília";
   return null;
 }
 
-function extractPhotosFromPayload(payload: unknown): string[] {
+function extractPhotosFromPayload(payload: unknown): {
+  photos: string[];
+  galleryComplete: boolean;
+} {
   const seen = new Set<string>();
   const photos: string[] = [];
   const record = isRecord(payload) ? payload : {};
 
-  const pushPhoto = (value: unknown) => {
-    if (typeof value !== "string") return;
+  const pushPhoto = (value: unknown): string | null => {
+    if (typeof value !== "string") return null;
     const trimmed = value.trim();
-    if (!trimmed.startsWith("http")) return;
+    if (photos.length >= propertyPhotoLimit || !/^https:\/\//i.test(trimmed)) return null;
     const key = normalizeUrl(trimmed);
-    if (seen.has(key)) return;
+    if (seen.has(key)) return key;
     seen.add(key);
     photos.push(trimmed);
+    return key;
   };
 
-  pushPhoto(record.FotoDestaque);
-  pushPhoto(record.FotoDestaquePequena);
+  const featuredKey = pushPhoto(record.FotoDestaque) ?? pushPhoto(record.FotoDestaquePequena);
+  const collectionKey = ["Foto", "fotos", "Fotos"].find((key) =>
+    Object.prototype.hasOwnProperty.call(record, key)
+  );
+  if (!collectionKey) return { photos, galleryComplete: false };
 
-  const fotosData = record.Foto ?? record.fotos ?? record.Fotos;
+  const fotosData = record[collectionKey];
+  const collectionIsExplicit = Array.isArray(fotosData) && fotosData.length <= propertyPhotoLimit;
   const entries = Array.isArray(fotosData)
-    ? fotosData
-    : fotosData && typeof fotosData === "object"
-      ? Object.values(fotosData)
+    ? fotosData.slice(0, propertyPhotoLimit)
+    : isRecord(fotosData)
+      ? Object.values(fotosData).slice(0, propertyPhotoLimit)
       : [];
+  const entryKeys = new Set<string>();
+  let validEntries = 0;
 
   for (const entry of entries) {
     if (!isRecord(entry)) continue;
-    pushPhoto(entry.Foto);
-    if (!entry.Foto) {
-      pushPhoto(entry.FotoPequena);
-    }
+    const key = pushPhoto(entry.Foto) ?? pushPhoto(entry.FotoPequena);
+    if (!key || entryKeys.has(key)) continue;
+    entryKeys.add(key);
+    validEntries += 1;
+  }
+  return {
+    photos,
+    galleryComplete: collectionIsExplicit &&
+      validEntries === entries.length &&
+      entryKeys.size === entries.length &&
+      (!featuredKey || entryKeys.has(featuredKey)),
+  };
+}
+
+function normalizeImportedPhotos(candidates: unknown[]) {
+  const seen = new Set<string>();
+  const photos: string[] = [];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const trimmed = candidate.trim();
+    const key = normalizeUrl(trimmed);
+    if (!/^https:\/\//i.test(trimmed) || seen.has(key)) continue;
+    seen.add(key);
+    photos.push(trimmed);
+    if (photos.length >= propertyPhotoLimit) break;
   }
   return photos;
 }
 
-async function fetchPropertyPhotos(apiUrl: string, apiKey: string, codigo: string, fallbackMainImage?: string | null): Promise<string[]> {
+async function reconcileCanonicalPropertyPhotos(
+  supabase: SupabaseClient,
+  organizationId: string,
+  propertyId: string,
+  photos: string[],
+  galleryComplete: boolean,
+): Promise<string | null> {
+  const { error } = await supabase.rpc("reconcile_imported_property_photos", {
+    p_organization_id: organizationId,
+    p_property_id: propertyId,
+    p_provider: "vista",
+    p_photo_urls: photos,
+    p_primary_url: photos[0] ?? null,
+    p_gallery_complete: galleryComplete,
+  });
+  if (error) {
+    console.error("Vista canonical photo reconciliation failed:", error.code ?? "rpc_failed");
+    return error.code === "23514" && error.message.includes(propertyMediaCapacityError)
+      ? propertyMediaCapacityError
+      : "property_media_reconciliation_failed";
+  }
+  return null;
+}
+
+async function claimSyncLease(
+  supabase: SupabaseClient,
+  organizationId: string,
+  integration: UnknownRecord,
+): Promise<{ token: string | null; error: string | null }> {
+  const currentStatus = String(integration.status ?? "").trim() || "connected";
+  const currentUpdatedAt = String(integration.updated_at ?? "").trim();
+  if (currentStatus === "syncing") {
+    const updatedAtMs = Date.parse(currentUpdatedAt);
+    if (!Number.isFinite(updatedAtMs) || Date.now() - updatedAtMs < syncLeaseMs) {
+      return { token: null, error: "sync_already_running" };
+    }
+  }
+
+  let claim = supabase
+    .from("vista_integrations")
+    .update({
+      status: "syncing",
+      last_error: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("organization_id", organizationId)
+    .eq("status", currentStatus);
+  claim = currentUpdatedAt
+    ? claim.eq("updated_at", currentUpdatedAt)
+    : claim.is("updated_at", null);
+  const { data, error } = await claim.select("updated_at").maybeSingle();
+  if (error) return { token: null, error: "sync_lease_claim_failed" };
+  const token = String(data?.updated_at ?? "").trim();
+  return token
+    ? { token, error: null }
+    : { token: null, error: "sync_lease_changed" };
+}
+
+async function fetchPropertyPhotos(
+  apiUrl: string,
+  apiKey: string,
+  codigo: string,
+  fallbackMainImage?: string | null,
+): Promise<{ photos: string[]; galleryComplete: boolean }> {
   const fallbackPhotos = typeof fallbackMainImage === "string" && fallbackMainImage.startsWith("http")
     ? [fallbackMainImage]
     : [];
@@ -343,15 +556,25 @@ async function fetchPropertyPhotos(apiUrl: string, apiKey: string, codigo: strin
 
     if (!res.ok) {
       await res.text();
-      return fallbackPhotos;
+      return { photos: fallbackPhotos, galleryComplete: false };
     }
 
     const data = await res.json();
     const payload = Array.isArray(data) ? data[0] : data;
-    const photos = extractPhotosFromPayload(payload);
-    return photos.length > 0 ? photos : fallbackPhotos;
+    if (!isRecord(payload)) {
+      return { photos: fallbackPhotos, galleryComplete: false };
+    }
+    const returnedCode = String(payload.Codigo ?? payload.codigo ?? "").trim();
+    if (!returnedCode || returnedCode !== codigo) {
+      return { photos: fallbackPhotos, galleryComplete: false };
+    }
+    const gallery = extractPhotosFromPayload(payload);
+    return {
+      photos: gallery.photos.length > 0 ? gallery.photos : fallbackPhotos,
+      galleryComplete: gallery.galleryComplete,
+    };
   } catch {
-    return fallbackPhotos;
+    return { photos: fallbackPhotos, galleryComplete: false };
   }
 }
 
@@ -372,7 +595,13 @@ async function parallelMap<T, R>(items: T[], fn: (item: T) => Promise<R>, concur
   return results;
 }
 
-async function syncProperties(supabase: SupabaseClient, apiUrl: string, apiKey: string, organizationId: string, importInactive: boolean) {
+async function syncProperties(
+  supabase: SupabaseClient,
+  apiUrl: string,
+  apiKey: string,
+  organizationId: string,
+  importInactive: boolean,
+) {
   const fields = [
     "Codigo", "Categoria", "Status", "Finalidade",
     "ValorVenda", "ValorLocacao", "Dormitorios", "Suites",
@@ -388,16 +617,20 @@ async function syncProperties(supabase: SupabaseClient, apiUrl: string, apiKey: 
   const perPage = 50;
   let totalSynced = 0;
   let totalSkipped = 0;
+  // Vista's current response contract has no locally verified authoritative
+  // total/cursor. Missing rows are therefore never inferred as inactive.
+  const totalDeactivated = 0;
   let hasMore = true;
   const errors: string[] = [];
   const startTime = Date.now();
   const MAX_RUNTIME_MS = 140_000; // 140s safety margin (Supabase Pro = 150s)
+  let locationResolver: Awaited<ReturnType<typeof loadCanonicalPropertyLocationResolver>> | null = null;
 
   while (hasMore) {
     // Time guard - stop before timeout
     if (Date.now() - startTime > MAX_RUNTIME_MS) {
       console.log(`Time limit reached at page ${page}. Synced ${totalSynced} so far.`);
-      errors.push(`Timeout: processou atÃ© pÃ¡gina ${page - 1}. Sincronize novamente para continuar.`);
+      errors.push(`Timeout: processou até página ${page - 1}. Sincronize novamente para continuar.`);
       break;
     }
 
@@ -442,23 +675,17 @@ async function syncProperties(supabase: SupabaseClient, apiUrl: string, apiKey: 
       break;
     }
 
-    // Filter out inactive first
-    const activeItems = items.filter((item) => {
-      const itemStatus = String(item.Status || "").toLowerCase();
-      if (!importInactive && (itemStatus.includes("inativ") || itemStatus.includes("suspend"))) {
-        totalSkipped++;
-        return false;
-      }
-      return true;
-    });
-
     // Check existing properties in batch
-    const codigos = activeItems.map((item) => String(item.Codigo));
-    const { data: existingProps } = await supabase
+    const codigos = items.map((item) => String(item.Codigo));
+    const { data: existingProps, error: existingPropsError } = await supabase
       .from("properties")
       .select("id, vista_codigo")
       .eq("organization_id", organizationId)
       .in("vista_codigo", codigos);
+    if (existingPropsError) {
+      errors.push(`Existing property lookup failed on page ${page}`);
+      break;
+    }
 
     const existingMap = new Map<string, string>();
     if (existingProps) {
@@ -467,9 +694,22 @@ async function syncProperties(supabase: SupabaseClient, apiUrl: string, apiKey: 
       }
     }
 
+    // When inactive imports are disabled, terminal rows are still processed if
+    // they were imported before. This preserves sold/rented/inactive state
+    // transitions without creating a new inactive inventory.
+    const importItems = items.filter((item) => {
+      const codigo = String(item.Codigo);
+      const status = normalizeImportedPropertyStatus(item.Status);
+      if (!importInactive && status !== "ativo" && !existingMap.has(codigo)) {
+        totalSkipped++;
+        return false;
+      }
+      return true;
+    });
+
     // Fetch photos in parallel (10 concurrent requests)
     const photosResults = await parallelMap(
-      activeItems,
+      importItems,
       (item) => fetchPropertyPhotos(
         apiUrl,
         apiKey,
@@ -479,53 +719,70 @@ async function syncProperties(supabase: SupabaseClient, apiUrl: string, apiKey: 
       10
     );
 
+    if (!locationResolver) {
+      try {
+        locationResolver = await loadCanonicalPropertyLocationResolver(
+          supabase,
+          organizationId,
+        );
+      } catch {
+        errors.push(`Location catalog load failed on page ${page}`);
+        break;
+      }
+    }
+
     // Process items
-    for (let i = 0; i < activeItems.length; i++) {
-      const item = activeItems[i];
+    for (let i = 0; i < importItems.length; i++) {
+      const item = importItems[i];
       try {
         const codigo = String(item.Codigo);
-        const allPhotos = photosResults[i];
-        const imagemPrincipal = allPhotos[0] || "";
-
+        const photoResult = photosResults[i];
+        const allPhotos = normalizeImportedPhotos(photoResult.photos);
         const valorVenda = parseFloat(String(item.ValorVenda || "0").replace(/[^\d.,]/g, "").replace(",", ".")) || null;
         const valorLocacao = parseFloat(String(item.ValorLocacao || "0").replace(/[^\d.,]/g, "").replace(",", ".")) || null;
 
-        let tipoNegocio = "Venda";
+        let tipoNegocio = "venda";
         const finalidade = String(item.Finalidade || "").toLowerCase();
         const hasVenda = finalidade.includes("venda") || !!valorVenda;
         const hasLocacao = finalidade.includes("locac") || finalidade.includes("alugu") || !!valorLocacao;
 
         if (hasVenda && hasLocacao) {
-          tipoNegocio = "Venda e Aluguel";
+          tipoNegocio = "venda_locacao";
         } else if (hasLocacao) {
-          tipoNegocio = "Aluguel";
+          tipoNegocio = "locacao";
         }
 
         const preco = valorVenda || valorLocacao;
-        const itemStatus = String(item.Status || "").toLowerCase();
-        let status = "ativo";
-        if (itemStatus.includes("inativ") || itemStatus.includes("suspend")) {
-          status = "inativo";
-        } else if (itemStatus.includes("vendid") || itemStatus.includes("locad")) {
-          status = "vendido";
-        }
+        const status = normalizeImportedPropertyStatus(item.Status);
 
         const categoria = String(item.Categoria || "Apartamento");
         const existingId = existingMap.get(codigo);
+        const publicDescription = item.DescricaoWeb || null;
+        const sourceCity = item.Cidade || null;
+        const sourceState = item.UF || null;
+        const sourceNeighborhood = item.Bairro || null;
+        const canonicalLocation = locationResolver.resolve({
+          city: sourceCity,
+          state: sourceState,
+          neighborhood: sourceNeighborhood,
+        });
 
         const propertyData: Record<string, unknown> = {
           organization_id: organizationId,
           vista_codigo: codigo,
-          title: item.TituloSite || item.Categoria || `ImÃ³vel ${codigo}`,
+          title: item.TituloSite || item.Categoria || `Imóvel ${codigo}`,
+          tipo: categoria,
           tipo_de_imovel: categoria,
+          finalidade: tipoNegocio,
           tipo_de_negocio: tipoNegocio,
           status,
           endereco: item.Endereco || null,
           numero: item.Numero || null,
           complemento: item.Complemento || null,
-          bairro: item.Bairro || null,
-          cidade: item.Cidade || null,
-          uf: item.UF || null,
+          bairro: sourceNeighborhood,
+          cidade: sourceCity,
+          uf: sourceState,
+          ...canonicalLocation,
           cep: item.CEP || null,
           quartos: parseInt(String(item.Dormitorios || "")) || null,
           suites: parseInt(String(item.Suites || "")) || null,
@@ -538,9 +795,8 @@ async function syncProperties(supabase: SupabaseClient, apiUrl: string, apiKey: 
           condominio: parseFloat(String(item.ValorCondominio || "0").replace(/[^\d.,]/g, "").replace(",", ".")) || null,
           iptu: parseFloat(String(item.ValorIptu || "0").replace(/[^\d.,]/g, "").replace(",", ".")) || null,
           ano_construcao: parseInt(String(item.AnoConstrucao || "")) || null,
-          descricao: item.DescricaoWeb || null,
-          imagem_principal: imagemPrincipal || null,
-          fotos: allPhotos,
+          descricao: publicDescription,
+          descricao_site: publicDescription,
           latitude: parseFloat(String(item.Latitude || "")) || null,
           longitude: parseFloat(String(item.Longitude || "")) || null,
           mobilia: parseMobilia(item.Mobiliado),
@@ -548,22 +804,48 @@ async function syncProperties(supabase: SupabaseClient, apiUrl: string, apiKey: 
           exclusividade: String(item.Exclusividade || item.ExclusividadeVenda || "").toLowerCase() === "sim" ? true : false,
         };
 
-        let upsertError;
+        let persistedPropertyId: string | null = null;
+        let upsertError: { message: string } | null = null;
         if (existingId) {
-          const { error } = await supabase.from("properties").update(propertyData).eq("id", existingId);
+          const { data, error } = await supabase
+            .from("properties")
+            .update(propertyData)
+            .eq("id", existingId)
+            .eq("organization_id", organizationId)
+            .select("id")
+            .maybeSingle();
           upsertError = error;
+          persistedPropertyId = typeof data?.id === "string" ? data.id : null;
         } else {
           const prefix = getCategoryPrefix(categoria);
           const code = await generateCode(supabase, organizationId, prefix);
           propertyData.code = code;
-          const { error } = await supabase.from("properties").insert([propertyData]);
+          const { data, error } = await supabase
+            .from("properties")
+            .insert([propertyData])
+            .select("id")
+            .maybeSingle();
           upsertError = error;
+          persistedPropertyId = typeof data?.id === "string" ? data.id : null;
         }
 
         if (upsertError) {
           errors.push(`DB error ${codigo}: ${upsertError.message}`);
+        } else if (!persistedPropertyId) {
+          errors.push(`DB error ${codigo}: property_not_returned`);
         } else {
-          totalSynced++;
+          const mediaError = await reconcileCanonicalPropertyPhotos(
+            supabase,
+            organizationId,
+            persistedPropertyId,
+            allPhotos,
+            photoResult.galleryComplete,
+          );
+          if (mediaError) {
+            errors.push(`Media reconciliation error for ${codigo}: ${mediaError}`);
+          } else {
+            totalSynced++;
+          }
         }
       } catch (e) {
         errors.push(`Process error: ${(e as Error).message}`);
@@ -577,7 +859,7 @@ async function syncProperties(supabase: SupabaseClient, apiUrl: string, apiKey: 
     }
   }
 
-  return { totalSynced, totalSkipped, errors };
+  return { totalSynced, totalSkipped, totalDeactivated, errors };
 }
 
 async function recordSyncResult(
@@ -585,10 +867,12 @@ async function recordSyncResult(
   organizationId: string,
   synced: number,
   skipped: number,
+  deactivated: number,
   errors: string[],
+  runToken?: string | null,
 ): Promise<boolean> {
   const completedAt = new Date().toISOString();
-  const { error } = await supabase
+  let update = supabase
     .from("vista_integrations")
     .update({
       last_sync_at: completedAt,
@@ -599,13 +883,20 @@ async function recordSyncResult(
         last_run: completedAt,
         synced,
         skipped,
+        deactivated,
         errors: errors.slice(0, 20),
       },
       updated_at: completedAt,
     })
     .eq("organization_id", organizationId);
+  if (runToken) {
+    update = update
+      .eq("status", "syncing")
+      .eq("updated_at", runToken);
+  }
+  const { data, error } = await update.select("id");
   if (error) console.error("Vista sync status update failed:", error);
-  return !error;
+  return !error && data?.length === 1;
 }
 
 async function loadVistaIntegration(
@@ -669,6 +960,9 @@ Deno.serve(async (req) => {
     if (!organizationId) {
       return jsonResponse({ error: "organization_id_required" }, 400);
     }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(organizationId)) {
+      return jsonResponse({ error: "invalid_organization_id" }, 400);
+    }
     if (action !== "test" && action !== "sync") {
       return jsonResponse({ error: "invalid_action" }, 400);
     }
@@ -689,6 +983,9 @@ Deno.serve(async (req) => {
     if (intError || !integration) {
       return jsonResponse({ error: "integration_not_configured" }, 404);
     }
+    if (integration.is_active === false || integration.status === "disabled") {
+      return jsonResponse({ error: "integration_disabled" }, 409);
+    }
 
     let apiUrl: string;
     const apiKey = typeof integration.api_key === "string" ? integration.api_key.trim() : "";
@@ -700,7 +997,7 @@ Deno.serve(async (req) => {
     } catch (error) {
       const message = error instanceof Error ? error.message : "invalid_vista_configuration";
       if (action === "sync") {
-        await recordSyncResult(supabase, organizationId, 0, 0, [message]);
+        await recordSyncResult(supabase, organizationId, 0, 0, 0, [message]);
         return jsonResponse({ success: false, synced: 0, skipped: 0, errors: [message] }, 422);
       }
       return jsonResponse({ success: false, error: message }, 200);
@@ -718,7 +1015,15 @@ Deno.serve(async (req) => {
       }
     }
 
-    const { totalSynced, totalSkipped, errors } = await syncProperties(
+    const lease = await claimSyncLease(supabase, organizationId, integration);
+    if (!lease.token) {
+      return jsonResponse(
+        { error: lease.error ?? "sync_lease_claim_failed" },
+        lease.error === "sync_lease_claim_failed" ? 500 : 409,
+      );
+    }
+
+    const { totalSynced, totalSkipped, totalDeactivated, errors } = await syncProperties(
       supabase,
       apiUrl,
       apiKey,
@@ -731,7 +1036,9 @@ Deno.serve(async (req) => {
       organizationId,
       totalSynced,
       totalSkipped,
+      totalDeactivated,
       errors,
+      lease.token,
     ))) {
       return jsonResponse({ error: "sync_status_update_failed" }, 500);
     }
@@ -740,6 +1047,7 @@ Deno.serve(async (req) => {
       success: errors.length === 0,
       synced: totalSynced,
       skipped: totalSkipped,
+      deactivated: totalDeactivated,
       errors: errors.slice(0, 10),
     }, 200);
   } catch (e) {

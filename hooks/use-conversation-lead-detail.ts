@@ -3,8 +3,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { conversationLeadDetailAPI } from "@/lib/api/conversation-lead-detail";
 
 export function useConversationLeadDetail(leadId: string | null | undefined) {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id || undefined;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId || undefined;
 
   return useQuery({
     queryKey: ["conversation-lead-detail", organizationId, leadId],

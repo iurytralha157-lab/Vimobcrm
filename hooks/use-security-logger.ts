@@ -1,4 +1,4 @@
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase/client";
 import { auditAPI } from "@/lib/api/audit";
 /**
  * Hook para logging de eventos de segurança

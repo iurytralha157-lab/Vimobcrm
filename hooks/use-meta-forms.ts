@@ -1,21 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { integrationsAPI } from "@/lib/api";
+import type { MetaLeadForm } from "@/lib/validation";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 
-export interface MetaFormQuestion {
-  key: string;
-  label: string;
-  type: string;
-}
-
-export interface MetaForm {
-  id: string;
-  name: string;
-  status: string;
-  leads_count?: number;
-  questions?: MetaFormQuestion[];
-}
+export type MetaForm = MetaLeadForm;
+export type MetaFormQuestion = NonNullable<MetaLeadForm["questions"]>[number];
 
 export interface MetaFormConfig {
   id: string;
@@ -78,8 +68,8 @@ function normalizeMetaFormConfig(config: MetaFormConfigRecord): MetaFormConfig {
 }
 
 export function useMetaFormConfigs(integrationId: string | undefined) {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ["meta-form-configs", integrationId, organizationId],
@@ -93,8 +83,8 @@ export function useMetaFormConfigs(integrationId: string | undefined) {
 }
 
 export function useAllMetaFormConfigs() {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ["meta-form-configs", "all", organizationId],
@@ -108,19 +98,19 @@ export function useAllMetaFormConfigs() {
 }
 
 export function useFetchPageForms() {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useMutation({
     mutationFn: ({ pageId }: { pageId: string }) =>
-      integrationsAPI.listMetaPageForms<MetaForm>(pageId, organizationId),
+      integrationsAPI.listMetaPageForms(pageId, organizationId),
   });
 }
 
 export function useSaveFormConfig() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useMutation({
     mutationFn: async (config: {
@@ -170,8 +160,8 @@ export function useSaveFormConfig() {
 
 export function useToggleFormConfig() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useMutation({
     mutationFn: ({ formId, isActive, integrationId }: { formId: string; isActive: boolean; integrationId: string }) => {
@@ -190,8 +180,8 @@ export function useToggleFormConfig() {
 
 export function useDeleteFormConfig() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useMutation({
     mutationFn: ({ formId, integrationId }: { formId: string; integrationId: string }) => {

@@ -153,7 +153,7 @@ func TestConcurrentWonContendersReserveSharedPropertyOnce(t *testing.T) {
 	provisionalReservation, err := repository.lockWonLeadPropertyForUpdate(
 		ctx,
 		provisionalTx,
-		organizationID,
+		tenantContext,
 		leadSnapshot{
 			ID:                 contenderLeadIDs[0],
 			Name:               marker + "-0",

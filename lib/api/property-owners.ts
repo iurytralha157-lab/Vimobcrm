@@ -1,5 +1,5 @@
 import { vimobAPIRequest } from './vimob-client'
-import { apiPropertyOwnerListResponseSchema, apiPropertyOwnerPageResponseSchema, apiPropertyOwnerResponseSchema, entityIdSchema, organizationIdSchema, parseDomainInput, propertyOwnerInputSchema, propertyOwnerPageQuerySchema, validateDomainResponse } from '@/lib/validation'
+import { apiPropertyOwnerPageResponseSchema, apiPropertyOwnerResponseSchema, entityIdSchema, organizationIdSchema, parseDomainInput, propertyCatalogDeleteInputSchema, propertyOwnerCatalogUpdateInputSchema, propertyOwnerInputSchema, propertyOwnerPageQuerySchema, validateDomainResponse } from '@/lib/validation'
 
 export type PropertyOwnerProperty = {
   id: string
@@ -39,6 +39,10 @@ export type PropertyOwnerInput = {
   notes?: string
 }
 
+export type PropertyOwnerUpdateInput = PropertyOwnerInput & {
+  expected_updated_at: string
+}
+
 type ListResponse<T> = {
   data: T[]
 }
@@ -60,15 +64,6 @@ export type PropertyOwnerPage = {
 }
 
 export const propertyOwnersAPI = {
-  async getOwners(organizationId: string) {
-    const orgId = parseDomainInput(organizationIdSchema, organizationId, 'property-owners.list.organization')
-    const response = await vimobAPIRequest<ListResponse<PropertyOwner>>('/v1/property-owners', {
-      organizationId: orgId,
-    })
-    validateDomainResponse(apiPropertyOwnerListResponseSchema, response, 'property-owners.list')
-    return response
-  },
-
   async getOwnersPage(
     organizationId: string,
     params: { search?: string; limit: number; cursor?: string | null; signal?: AbortSignal },
@@ -110,9 +105,9 @@ export const propertyOwnersAPI = {
     return response
   },
 
-  async updateOwner(organizationId: string, ownerId: string, owner: PropertyOwnerInput) {
+  async updateOwner(organizationId: string, ownerId: string, owner: PropertyOwnerUpdateInput) {
     const id = parseDomainInput(entityIdSchema, ownerId, 'property-owners.update.id')
-    const body = parseDomainInput(propertyOwnerInputSchema, owner, 'property-owners.update')
+    const body = parseDomainInput(propertyOwnerCatalogUpdateInputSchema, owner, 'property-owners.update')
     const response = await vimobAPIRequest<ItemResponse<PropertyOwner>>(`/v1/property-owners/${id}`, {
       method: 'PATCH',
       organizationId,
@@ -120,5 +115,17 @@ export const propertyOwnersAPI = {
     })
     validateDomainResponse(apiPropertyOwnerResponseSchema, response, 'property-owners.update')
     return response
+  },
+
+  async deactivateOwner(organizationId: string, ownerId: string, expectedUpdatedAt: string) {
+    const id = parseDomainInput(entityIdSchema, ownerId, 'property-owners.deactivate.id')
+    const body = parseDomainInput(propertyCatalogDeleteInputSchema, {
+      expected_updated_at: expectedUpdatedAt,
+    }, 'property-owners.deactivate')
+    await vimobAPIRequest<null>(`/v1/property-owners/${id}`, {
+      method: 'DELETE',
+      organizationId,
+      body,
+    })
   },
 }

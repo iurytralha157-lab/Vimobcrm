@@ -5,9 +5,9 @@ import { AppSidebar } from './AppSidebar';
 import { AppHeader } from './AppHeader';
 import { MobileBottomNav } from './MobileBottomNav';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { FloatingChatProvider } from '@/contexts/FloatingChatContext';
 import { FloatingChat } from '@/components/features/chat/FloatingChat';
 import { FloatingChatButton } from '@/components/features/chat/FloatingChatButton';
+import { OnlineUsersPanel } from '@/components/features/presence';
 import { WhatsAppRealtimeBus } from '@/contexts/WhatsAppRealtimeBus';
 import { LeadRealtimeBus } from '@/contexts/LeadRealtimeBus';
 import { WebPushPrompt } from '@/components/features/pwa/WebPushPrompt';
@@ -16,7 +16,6 @@ import { usePushNotifications } from '@/hooks/use-push-notifications';
 import { usePhoneReminder } from '@/hooks/use-phone-reminder';
 import { useWhatsAppSound } from '@/hooks/use-whatsapp-sound';
 import { useAuditFeed } from '@/hooks/use-audit-feed';
-import { useUserActivitySession } from '@/hooks/use-user-activity-session';
 import { useSystemSettings } from '@/hooks/use-system-settings';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
@@ -39,9 +38,9 @@ interface AppLayoutProps {
 
 function MaintenanceBanner() {
   const { data: settings } = useSystemSettings();
-  const { profile, organization, tenantContext, isSuperAdmin, userOrganizations } = useAuth();
+  const { activeOrganization, profile, organization, tenantContext, isSuperAdmin, userOrganizations } = useAuth();
 
-  const activeOrganizationId = organization?.id || profile?.organization_id;
+  const activeOrganizationId = activeOrganization.organizationId;
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
   const fallbackMemberRole = tenantContext && tenantContext.organizationId === activeOrganizationId
     ? tenantContext.memberRole
@@ -69,7 +68,6 @@ function AppLayoutContent({ children, title, belowHeader, disableMainScroll = fa
   // Daily reminder for users without phone number
   usePhoneReminder();
   useWhatsAppSound();
-  useUserActivitySession({ currentPageTitle: title });
   useAuditFeed();
 
   return (
@@ -107,9 +105,10 @@ function AppLayoutContent({ children, title, belowHeader, disableMainScroll = fa
       {/* Mobile Bottom Navigation */}
       {isMobile && <MobileBottomNav />}
 
-      {/* Floating WhatsApp Chat + Unified Realtime Bus */}
+      {/* Presença da equipe, chat do WhatsApp e barramentos realtime */}
       <LeadRealtimeBus />
       <WhatsAppRealtimeBus />
+      <OnlineUsersPanel />
       <FloatingChatButton />
       <FloatingChat />
 
@@ -122,6 +121,7 @@ function AppLayoutContent({ children, title, belowHeader, disableMainScroll = fa
 
 export function AppLayout({ children, title, belowHeader, disableMainScroll = false, borderless = false }: AppLayoutProps) {
   const {
+    activeOrganization,
     organization,
     user,
     isSuperAdmin,
@@ -142,7 +142,7 @@ export function AppLayout({ children, title, belowHeader, disableMainScroll = fa
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const linkedOrganizationId = searchParams.get('organization');
-  const activeOrganizationId = organization?.id || profile?.organization_id;
+  const activeOrganizationId = activeOrganization.organizationId;
   const isResolvingLinkedOrganization = Boolean(
     linkedOrganizationId
       && organizationsLoaded
@@ -264,10 +264,8 @@ export function AppLayout({ children, title, belowHeader, disableMainScroll = fa
   }
 
   return (
-    <FloatingChatProvider>
-      <AppLayoutContent title={title} belowHeader={belowHeader} disableMainScroll={disableMainScroll} borderless={borderless}>
-        {children}
-      </AppLayoutContent>
-    </FloatingChatProvider>
+    <AppLayoutContent title={title} belowHeader={belowHeader} disableMainScroll={disableMainScroll} borderless={borderless}>
+      {children}
+    </AppLayoutContent>
   );
 }

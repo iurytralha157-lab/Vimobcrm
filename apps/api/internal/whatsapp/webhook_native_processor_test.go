@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -51,6 +52,37 @@ func TestNativeEvolutionFixtures(t *testing.T) {
 		}
 		if message.Content != "  Olá\r\nMundo  " {
 			t.Fatalf("content = %q, want exact whitespace with only NUL removed", message.Content)
+		}
+	})
+
+	t.Run("button click is a real lead message", func(t *testing.T) {
+		payload, err := decodeNativeEvolutionPayload([]byte(`{
+			"event":"ButtonClick",
+			"data":{
+				"buttonId":"support",
+				"buttonText":"Suporte tecnico",
+				"type":"native_flow_response",
+				"phone":"5511999991111",
+				"jid":"5511999991111@s.whatsapp.net",
+				"messageId":"button-click-1",
+				"fromMe":false,
+				"timestamp":1789214400
+			}
+		}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		messages := extractNativeEvolutionMessages(payload)
+		if len(messages) != 1 {
+			t.Fatalf("button-click messages = %d, want 1", len(messages))
+		}
+		message := messages[0]
+		if message.ProviderMessageID != "button-click-1" ||
+			message.RemoteJID != "5511999991111@s.whatsapp.net" ||
+			message.Content != "Suporte tecnico" ||
+			message.MessageType != "text" ||
+			message.FromMe {
+			t.Fatalf("unexpected normalized button-click message: %#v", message)
 		}
 	})
 
@@ -433,6 +465,72 @@ func TestNativeEvolutionFixtures(t *testing.T) {
 			t.Fatalf("connection = %q, %v, %q", status, recognized, connectionErr)
 		}
 	})
+}
+
+func TestNativeEvolutionReverseReactionBatchOrdersTargetFirst(t *testing.T) {
+	payload, err := decodeNativeEvolutionPayload([]byte(`{
+		"event": "messages.upsert",
+		"data": {
+			"messages": [
+				{
+					"Info": {
+						"ID": "batch-reaction-1",
+						"Chat": "5511999991111@s.whatsapp.net",
+						"SenderPN": "5511999991111@s.whatsapp.net",
+						"IsFromMe": false,
+						"Timestamp": 1783814402
+					},
+					"Message": {
+						"reactionMessage": {
+							"key": {"id": "batch-target-1"},
+							"text": "👍"
+						}
+					}
+				},
+				{
+					"Info": {
+						"ID": "batch-target-1",
+						"Chat": "5511999991111@s.whatsapp.net",
+						"SenderPN": "5511999991111@s.whatsapp.net",
+						"IsFromMe": false,
+						"Timestamp": 1783814401
+					},
+					"Message": {"conversation": "Mensagem alvo"}
+				}
+			]
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	messages := extractNativeEvolutionMessages(payload)
+	if len(messages) != 2 || !messages[0].IsReaction || messages[1].IsReaction {
+		t.Fatalf("unexpected extracted reverse-order batch: %#v", messages)
+	}
+
+	ordered := nativeEvolutionMessageProcessingOrder(messages)
+	if ordered[0].ProviderMessageID != "batch-target-1" || ordered[1].ProviderMessageID != "batch-reaction-1" {
+		t.Fatalf("processing order = [%q, %q], want [batch-target-1, batch-reaction-1]", ordered[0].ProviderMessageID, ordered[1].ProviderMessageID)
+	}
+}
+
+func TestNativeEvolutionMessageProcessingOrderIsStableWithinClasses(t *testing.T) {
+	messages := []nativeEvolutionMessage{
+		{ProviderMessageID: "reaction-1", IsReaction: true},
+		{ProviderMessageID: "message-1"},
+		{ProviderMessageID: "deletion-1", IsDeletion: true},
+		{ProviderMessageID: "message-2"},
+		{ProviderMessageID: "reaction-2", IsReaction: true},
+	}
+
+	ordered := nativeEvolutionMessageProcessingOrder(messages)
+	want := []string{"message-1", "message-2", "reaction-1", "deletion-1", "reaction-2"}
+	for index, providerMessageID := range want {
+		if ordered[index].ProviderMessageID != providerMessageID {
+			t.Fatalf("processing order at %d = %q, want %q", index, ordered[index].ProviderMessageID, providerMessageID)
+		}
+	}
 }
 
 func TestNativeCTWAConfirmationRequiresEntryPointAndCompatibleExplicitSourceType(t *testing.T) {
@@ -1052,6 +1150,242 @@ func TestEvolutionWebhookProcessorModeIsSessionGated(t *testing.T) {
 	}
 }
 
+func TestHistorySyncControlIsAcknowledgedWithoutReachingEdge(t *testing.T) {
+	const sessionID = "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"
+	var edgeCalls atomic.Int32
+	edge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		edgeCalls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer edge.Close()
+
+	repo := Repository{functions: functionsClient{
+		apiKey:               "edge-api-key",
+		evolutionWebhookURL:  edge.URL,
+		webhookProcessorMode: webhookProcessorEdge,
+		httpClient:           edge.Client(),
+	}}
+	items := []pendingEvolutionWebhook{
+		{
+			OrganizationID: "55f02ce7-4290-47f8-9ee3-61fc84619747",
+			SessionID:      sessionID,
+			EventType:      "HISTORY_SYNC",
+			Payload:        []byte(`{"event":"HISTORY_SYNC","data":{}}`),
+		},
+		{
+			OrganizationID: "55f02ce7-4290-47f8-9ee3-61fc84619747",
+			SessionID:      sessionID,
+			EventType:      "messages.upsert",
+			Payload: []byte(`{
+				"event":"messages.upsert",
+				"data":{
+					"Info":{"ID":"history-control-1","Chat":"5511999991111@s.whatsapp.net"},
+					"Message":{"protocolMessage":{"type":"history_sync_notification"}}
+				}
+			}`),
+		},
+		{
+			OrganizationID: "55f02ce7-4290-47f8-9ee3-61fc84619747",
+			SessionID:      sessionID,
+			EventType:      "messages.upsert",
+			Payload: []byte(`{
+				"event":"messages.upsert",
+				"data":{
+					"Info":{"ID":"history-control-numeric","Chat":"5511999991111@s.whatsapp.net"},
+					"Message":{"protocolMessage":{"type":5}}
+				}
+			}`),
+		},
+	}
+	for _, item := range items {
+		if err := repo.dispatchEvolutionWebhook(context.Background(), item); err != nil {
+			t.Fatalf("history sync control dispatch error = %v", err)
+		}
+	}
+	if got := edgeCalls.Load(); got != 0 {
+		t.Fatalf("history sync controls reached Edge %d times", got)
+	}
+
+	ordinaryText := pendingEvolutionWebhook{
+		EventType: "messages.upsert",
+		Payload: []byte(`{
+			"event":"messages.upsert",
+			"data":{
+				"Info":{"ID":"ordinary-1","Chat":"5511999991111@s.whatsapp.net"},
+				"Message":{"conversation":"history_sync_notification"}
+			}
+		}`),
+	}
+	if evolutionWebhookIsHistorySyncControl(ordinaryText) {
+		t.Fatal("ordinary message text was classified as a history-sync control")
+	}
+}
+
+func TestHistorySyncControlDoesNotDropOrdinaryOrMixedMessages(t *testing.T) {
+	tests := []struct {
+		name string
+		item pendingEvolutionWebhook
+	}{
+		{
+			name: "incidental metadata key",
+			item: pendingEvolutionWebhook{
+				EventType: "messages.upsert",
+				Payload: []byte(`{
+					"event":"messages.upsert",
+					"data":{
+						"Info":{"ID":"ordinary-metadata","Chat":"5511999991111@s.whatsapp.net"},
+						"Message":{"conversation":"mensagem real"},
+						"metadata":{"historySync":true}
+					}
+				}`),
+			},
+		},
+		{
+			name: "stored event type disagrees with payload",
+			item: pendingEvolutionWebhook{
+				EventType: "HISTORY_SYNC",
+				Payload: []byte(`{
+					"event":"Message",
+					"data":{
+						"Info":{"ID":"ordinary-divergent-event","Chat":"5511999991111@s.whatsapp.net"},
+						"Message":{"conversation":"mensagem real"}
+					}
+				}`),
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if evolutionWebhookIsHistorySyncControl(test.item) {
+				t.Fatal("ordinary message was classified as a history-sync control")
+			}
+		})
+	}
+
+	mixed := pendingEvolutionWebhook{
+		EventType: "messages.upsert",
+		Payload: []byte(`{
+			"event":"messages.upsert",
+			"data":{"messages":[
+				{
+					"Info":{"ID":"mixed-history-control","Chat":"5511999991111@s.whatsapp.net"},
+					"Message":{"protocolMessage":{"type":"history_sync_notification"}}
+				},
+				{
+					"Info":{"ID":"mixed-ordinary-message","Chat":"5511999992222@s.whatsapp.net"},
+					"Message":{"conversation":"mensagem real"}
+				}
+			]}
+		}`),
+	}
+	if evolutionWebhookIsHistorySyncControl(mixed) {
+		t.Fatal("mixed batch was classified as an all-history-sync control envelope")
+	}
+	payload, err := decodeNativeEvolutionPayload(mixed.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := extractNativeEvolutionMessages(payload)
+	filtered := withoutNativeEvolutionHistorySyncControls(messages)
+	if len(messages) != 2 || len(filtered) != 1 {
+		t.Fatalf("mixed batch messages = %d, filtered = %d; want 2 and 1", len(messages), len(filtered))
+	}
+	if filtered[0].ProviderMessageID != "mixed-ordinary-message" || filtered[0].Content != "mensagem real" {
+		t.Fatalf("unexpected message left after history control filtering: %#v", filtered[0])
+	}
+}
+
+func TestGroupOnlyWebhookIsAcknowledgedWithoutEdgeOrLeadData(t *testing.T) {
+	const sessionID = "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"
+	var edgeCalls atomic.Int32
+	edgeBodies := make(chan []byte, 1)
+	edge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		edgeCalls.Add(1)
+		body, _ := io.ReadAll(r.Body)
+		edgeBodies <- body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer edge.Close()
+
+	repo := Repository{functions: functionsClient{
+		apiKey:               "edge-api-key",
+		evolutionWebhookURL:  edge.URL,
+		webhookProcessorMode: webhookProcessorEdge,
+		httpClient:           edge.Client(),
+	}}
+	group := pendingEvolutionWebhook{
+		OrganizationID: "55f02ce7-4290-47f8-9ee3-61fc84619747",
+		SessionID:      sessionID,
+		EventType:      "messages.upsert",
+		Payload: []byte(`{
+			"event":"messages.upsert",
+			"data":{
+				"Info":{"ID":"group-only-1","Chat":"120363000000000000@g.us","IsGroup":true},
+				"Message":{"conversation":"mensagem de grupo"}
+			}
+		}`),
+	}
+	_, groupOnly, err := prepareEvolutionWebhookWithoutGroupMessages(group)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !groupOnly {
+		t.Fatal("group-only message was not recognized")
+	}
+	if err := repo.dispatchEvolutionWebhook(context.Background(), group); err != nil {
+		t.Fatalf("group-only dispatch error = %v", err)
+	}
+	if got := edgeCalls.Load(); got != 0 {
+		t.Fatalf("group-only webhook reached Edge %d times", got)
+	}
+
+	mixed := pendingEvolutionWebhook{
+		OrganizationID: "55f02ce7-4290-47f8-9ee3-61fc84619747",
+		SessionID:      sessionID,
+		EventType:      "messages.upsert",
+		Payload: []byte(`{
+			"event":"messages.upsert",
+			"data":{"messages":[
+				{
+					"Info":{"ID":"mixed-group","Chat":"120363000000000000@g.us","IsGroup":true},
+					"Message":{"conversation":"grupo"}
+				},
+				{
+					"Info":{"ID":"mixed-direct","Chat":"5511999992222@s.whatsapp.net"},
+					"Message":{"conversation":"mensagem real"}
+				}
+			]}
+		}`),
+	}
+	filteredItem, groupOnly, err := prepareEvolutionWebhookWithoutGroupMessages(mixed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if groupOnly {
+		t.Fatal("mixed batch was classified as group-only")
+	}
+	payload, err := decodeNativeEvolutionPayload(filteredItem.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := extractNativeEvolutionMessages(payload)
+	if len(messages) != 1 || messages[0].ProviderMessageID != "mixed-direct" {
+		t.Fatalf("mixed group filtering = %#v, want only mixed-direct", messages)
+	}
+	if err := repo.dispatchEvolutionWebhook(context.Background(), mixed); err != nil {
+		t.Fatalf("mixed dispatch error = %v", err)
+	}
+	if got := edgeCalls.Load(); got != 1 {
+		t.Fatalf("mixed direct webhook reached Edge %d times, want 1", got)
+	}
+	edgeBody := <-edgeBodies
+	if strings.Contains(string(edgeBody), "mixed-group") || !strings.Contains(string(edgeBody), "mixed-direct") {
+		t.Fatalf("Edge received unfiltered mixed body: %s", edgeBody)
+	}
+}
+
 func TestNativeFallbackNeverForwardsUnsupportedMessageOrCampaignToEdge(t *testing.T) {
 	const sessionID = "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"
 	var edgeCalls atomic.Int32
@@ -1074,17 +1408,6 @@ func TestNativeFallbackNeverForwardsUnsupportedMessageOrCampaignToEdge(t *testin
 		eventType string
 		payload   string
 	}{
-		{
-			name:      "unsupported protocol message",
-			eventType: "messages.upsert",
-			payload: `{
-				"event":"messages.upsert",
-				"data":{
-					"Info":{"ID":"unsupported-message-1","Chat":"5511999991111@s.whatsapp.net"},
-					"Message":{"protocolMessage":{"type":"history_sync_notification"}}
-				}
-			}`,
-		},
 		{
 			name:      "unsupported campaign referral",
 			eventType: "campaign.referral",
@@ -1157,6 +1480,85 @@ func TestNativeFallbackStillForwardsNonMessageLifecycleEvent(t *testing.T) {
 	}
 	if got := edgeCalls.Load(); got != 1 {
 		t.Fatalf("non-message lifecycle event reached Edge %d times, want 1", got)
+	}
+}
+
+func TestNativeProcessorKeepsOutboxBeforeMessageLockOrder(t *testing.T) {
+	sourceBytes, err := os.ReadFile("webhook_native_processor.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(sourceBytes)
+
+	mergeStart := strings.Index(source, "func mergeNativeEvolutionConversation(")
+	if mergeStart < 0 {
+		t.Fatal("mergeNativeEvolutionConversation source boundary not found")
+	}
+	mergeEnd := strings.Index(source[mergeStart:], "\nfunc ")
+	if mergeEnd < 0 {
+		t.Fatal("mergeNativeEvolutionConversation source boundary not found")
+	}
+	mergeBody := source[mergeStart : mergeStart+mergeEnd]
+	mergeOutbox := strings.Index(mergeBody, "update public.whatsapp_outbox")
+	mergeMessage := strings.Index(mergeBody, "update public.whatsapp_messages")
+	if mergeOutbox < 0 || mergeMessage < 0 || mergeOutbox >= mergeMessage {
+		t.Fatal("conversation merge must mutate whatsapp_outbox before whatsapp_messages")
+	}
+
+	statusLockStart := strings.Index(source, "func lockNativeStatusTransportRows(")
+	if statusLockStart < 0 {
+		t.Fatal("lockNativeStatusTransportRows source boundary not found")
+	}
+	statusLockEnd := strings.Index(source[statusLockStart:], "\nfunc ")
+	if statusLockEnd < 0 {
+		t.Fatal("lockNativeStatusTransportRows source boundary not found")
+	}
+	statusLockBody := source[statusLockStart : statusLockStart+statusLockEnd]
+	outboxLock := strings.Index(statusLockBody, "from public.whatsapp_outbox")
+	messageLock := strings.Index(statusLockBody, "from public.whatsapp_messages")
+	if outboxLock < 0 || messageLock < 0 || outboxLock >= messageLock {
+		t.Fatal("status reconciliation must lock whatsapp_outbox before whatsapp_messages")
+	}
+	for _, lockFragment := range []string{
+		"from public.whatsapp_outbox\n\t\twhere organization_id",
+		"from public.whatsapp_messages\n\t\twhere organization_id",
+	} {
+		lockAt := strings.Index(statusLockBody, lockFragment)
+		if lockAt < 0 {
+			t.Fatalf("lock query %q not found", lockFragment)
+		}
+		queryTail := statusLockBody[lockAt:]
+		forUpdate := strings.Index(queryTail, "for update")
+		orderBy := strings.Index(queryTail, "order by id")
+		if forUpdate < 0 || orderBy < 0 || orderBy >= forUpdate {
+			t.Fatalf("lock query %q must order rows before FOR UPDATE", lockFragment)
+		}
+	}
+
+	statusStart := strings.Index(source, "func (repo Repository) processNativeEvolutionStatuses(")
+	if statusStart < 0 {
+		t.Fatal("processNativeEvolutionStatuses source boundary not found")
+	}
+	statusBody := source[statusStart:]
+	batchLock := strings.Index(statusBody, "lockNativeStatusTransportRows(ctx, tx, session, receiptMessageIDs)")
+	firstLoop := strings.Index(statusBody, "for _, receipt := range statuses {")
+	if batchLock < 0 || firstLoop < 0 {
+		t.Fatal("status batch lock contract is incomplete")
+	}
+	secondLoopOffset := strings.Index(statusBody[firstLoop+1:], "for _, receipt := range statuses {")
+	if secondLoopOffset < 0 || batchLock >= firstLoop+1+secondLoopOffset {
+		t.Fatal("status rows must be prelocked once before per-receipt mutation")
+	}
+
+	messageProcessorStart := strings.Index(source, "func (repo Repository) processNativeEvolutionMessages(")
+	if messageProcessorStart < 0 {
+		t.Fatal("processNativeEvolutionMessages source boundary not found")
+	}
+	messageProcessorBody := source[messageProcessorStart:statusStart]
+	outboundLock := strings.Index(messageProcessorBody, "lockNativeOutboundOutbox(ctx, tx, session, message.ProviderMessageID)")
+	messageInsert := strings.Index(messageProcessorBody, "insertNativeEvolutionMessage(ctx, tx, session, conversation, message)")
+	if outboundLock < 0 || messageInsert < 0 || outboundLock >= messageInsert {
+		t.Fatal("outgoing webhook must lock its outbox row before any duplicate message lock")
 	}
 }
 

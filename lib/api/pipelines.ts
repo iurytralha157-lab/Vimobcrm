@@ -1,4 +1,4 @@
-import type { Tables } from '@/integrations/supabase/types'
+import type { Tables } from '@/lib/supabase/types'
 import {
   apiPipelineListResponseSchema,
   apiPipelineResponseSchema,
@@ -14,6 +14,7 @@ import {
   uuidSchema,
   validateDomainResponse,
 } from '@/lib/validation'
+import { PIPELINE_READ_TIMEOUT_MS } from '@/lib/pipeline-reliability'
 import { vimobAPIRequest } from './vimob-client'
 
 type PipelineRow = Tables<'pipelines'> & {
@@ -69,10 +70,12 @@ type StageOrderItem = {
 }
 
 export const pipelinesAPI = {
-  async getPipelines(organizationId?: string) {
+  async getPipelines(organizationId?: string, signal?: AbortSignal) {
     const response = await vimobAPIRequest<APIListResponse<APIPipeline>>('/v1/pipelines', {
       organizationId,
-      timeoutMs: 4_000,
+      signal,
+      timeoutMs: PIPELINE_READ_TIMEOUT_MS,
+      retry: false,
       skipTelemetry: true,
     })
     validateDomainResponse(apiPipelineListResponseSchema, response, 'pipelines.list')
@@ -111,11 +114,13 @@ export const pipelinesAPI = {
     })
   },
 
-  async getStages(pipelineId?: string, organizationId?: string) {
+  async getStages(pipelineId?: string, organizationId?: string, signal?: AbortSignal) {
     const response = await vimobAPIRequest<APIListResponse<APIStage>>('/v1/stages', {
       organizationId,
+      signal,
       query: { pipelineId },
-      timeoutMs: 4_000,
+      timeoutMs: PIPELINE_READ_TIMEOUT_MS,
+      retry: false,
       skipTelemetry: true,
     })
     validateDomainResponse(apiStageListResponseSchema, response, 'stages.list')

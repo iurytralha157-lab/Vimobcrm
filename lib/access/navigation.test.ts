@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import test from "node:test";
 import {
   APP_BOTTOM_NAVIGATION_ITEMS,
@@ -25,6 +27,23 @@ const baseAccess: NavigationAccess = {
   hasPermission: () => false,
 };
 
+function filterDashboardNavigation(
+  enabledModules: readonly string[],
+  permissions: readonly string[],
+) {
+  const dashboard = APP_NAVIGATION_ITEMS.find(
+    (item) => item.path === "/dashboard",
+  );
+  const moduleSet = new Set(enabledModules);
+  const permissionSet = new Set(permissions);
+
+  return filterNavigationItems(dashboard ? [dashboard] : [], {
+    ...baseAccess,
+    hasModule: (module) => moduleSet.has(module),
+    hasPermission: (permission) => permissionSet.has(permission),
+  });
+}
+
 test("mantem a Central de Atencao fora do menu principal", () => {
   const attentionItems = APP_NAVIGATION_ITEMS.filter(
     (item) => item.path === "/attention",
@@ -33,20 +52,13 @@ test("mantem a Central de Atencao fora do menu principal", () => {
   assert.deepEqual(attentionItems, []);
 });
 
-test("mantem Marketing dentro do menu Dashboard", () => {
+test("mantem Marketing dentro do menu Dashboard somente com modulo e permissao", () => {
   const directMarketingItems = APP_NAVIGATION_ITEMS.filter(
     (item) => item.path === "/marketing",
   );
-  const dashboard = APP_NAVIGATION_ITEMS.find(
-    (item) => item.path === "/dashboard",
-  );
-  const marketerNavigation = filterNavigationItems(
-    dashboard ? [dashboard] : [],
-    {
-      ...baseAccess,
-      hasModule: (module) => module === "campaigns",
-      hasPermission: (permission) => permission === "dashboard_campaigns_view",
-    },
+  const marketerNavigation = filterDashboardNavigation(
+    ["campaigns"],
+    ["dashboard_campaigns_view"],
   );
 
   const marketing = marketerNavigation[0]?.children?.[0];
@@ -56,6 +68,58 @@ test("mantem Marketing dentro do menu Dashboard", () => {
   assert.equal(marketing?.module, "campaigns");
   assert.equal(marketing?.permission, "dashboard_campaigns_view");
   assert.equal(marketing?.matchSection, true);
+  assert.deepEqual(
+    filterDashboardNavigation([], ["dashboard_campaigns_view"]),
+    [],
+  );
+  assert.deepEqual(filterDashboardNavigation(["campaigns"], []), []);
+});
+
+test("exibe Dashboard do Site somente para organizacao elegivel", () => {
+  const eligibleNavigation = filterDashboardNavigation(
+    ["site"],
+    ["dashboard_site_view"],
+  );
+  const siteDashboard = eligibleNavigation[0]?.children?.[0];
+
+  assert.equal(siteDashboard?.path, "/dashboard/site");
+  assert.equal(siteDashboard?.module, "site");
+  assert.equal(siteDashboard?.permission, "dashboard_site_view");
+  assert.deepEqual(
+    filterDashboardNavigation([], ["dashboard_site_view"]),
+    [],
+  );
+  assert.deepEqual(filterDashboardNavigation(["site"], []), []);
+});
+
+test("preserva Dashboard geral sem liberar dashboards especializados", () => {
+  const navigation = filterDashboardNavigation([], ["dashboard_view"]);
+
+  assert.deepEqual(
+    navigation[0]?.children?.map((item) => item.path),
+    ["/dashboard"],
+  );
+});
+
+test("rotas das dashboards repetem modulo e permissao do menu", () => {
+  const siteRoute = readFileSync(
+    resolve(process.cwd(), "app/(protected)/dashboard/site/page.tsx"),
+    "utf8",
+  );
+  const marketingRoute = readFileSync(
+    resolve(process.cwd(), "app/(protected)/marketing/page.tsx"),
+    "utf8",
+  );
+  const legacyCampaignsRoute = readFileSync(
+    resolve(process.cwd(), "app/(protected)/dashboard/campaigns/page.tsx"),
+    "utf8",
+  );
+
+  assert.match(siteRoute, /module="site"/);
+  assert.match(siteRoute, /permission="dashboard_site_view"/);
+  assert.match(marketingRoute, /module="campaigns"/);
+  assert.match(marketingRoute, /permission="dashboard_campaigns_view"/);
+  assert.match(legacyCampaignsRoute, /redirect\("\/marketing"\)/);
 });
 
 test("pagina inicial abre o catalogo principal sem exigir modulo ou permissao", () => {
@@ -101,6 +165,7 @@ test("libera somente as areas de gestao permitidas ao lider de equipe", () => {
   const result = filterNavigationItems(items, {
     ...baseAccess,
     isTeamLeader: true,
+    hasPermission: (permission) => permission === "team_manage",
   });
   assert.equal(result.length, 1);
   assert.deepEqual(
@@ -141,22 +206,52 @@ test("menu de imoveis respeita as mesmas permissoes das paginas", () => {
   });
   assert.deepEqual(
     viewer[0]?.children?.map((item) => item.path),
-    ["/properties", "/properties/developments", "/properties/rentals"],
+    ["/properties", "/properties/launches", "/properties/rentals"],
   );
 
-  const manager = filterNavigationItems(properties, {
+  const propertyManager = filterNavigationItems(properties, {
     ...baseAccess,
     hasPermission: (permission) => permission === "property_manage",
   });
   assert.deepEqual(
-    manager[0]?.children?.map((item) => item.path),
+    propertyManager[0]?.children?.map((item) => item.path),
     [
       "/properties",
-      "/properties/developments",
+      "/properties/launches",
       "/properties/rentals",
       "/properties/condominiums",
       "/properties/locations",
       "/properties/owners",
+    ],
+  );
+
+  const organizationSettingsManager = filterNavigationItems(properties, {
+    ...baseAccess,
+    hasPermission: (permission) => permission === "settings_organization",
+  });
+  assert.deepEqual(
+    organizationSettingsManager[0]?.children?.map((item) => item.path),
+    ["/properties/settings"],
+  );
+
+  const fullManagerPermissions = new Set([
+    "property_manage",
+    "settings_organization",
+  ]);
+  const fullManager = filterNavigationItems(properties, {
+    ...baseAccess,
+    hasPermission: (permission) => fullManagerPermissions.has(permission),
+  });
+  assert.deepEqual(
+    fullManager[0]?.children?.map((item) => item.path),
+    [
+      "/properties",
+      "/properties/launches",
+      "/properties/rentals",
+      "/properties/condominiums",
+      "/properties/locations",
+      "/properties/owners",
+      "/properties/settings",
     ],
   );
 });
@@ -199,6 +294,37 @@ test("catalogo principal repete as permissoes declaradas nas rotas", () => {
       .filter((item) => restrictedPaths.includes(item.path))
       .map((item) => item.path),
     restrictedPaths,
+  );
+});
+
+test("agenda expõe calendário e dashboard no mesmo grupo", () => {
+  const agenda = APP_NAVIGATION_ITEMS.find((item) => item.path === "/agenda");
+
+  assert.deepEqual(
+    agenda?.children?.map((item) => item.path),
+    ["/agenda", "/agenda?tab=dashboard"],
+  );
+  assert.equal(isNavigationPathActive("/agenda", "/agenda", ""), true);
+  assert.equal(
+    isNavigationPathActive(
+      "/agenda?tab=dashboard",
+      "/agenda",
+      "tab=dashboard",
+    ),
+    true,
+  );
+  assert.equal(
+    isNavigationPathActive("/agenda", "/agenda", "tab=dashboard"),
+    false,
+  );
+  assert.equal(
+    resolveMobileFabAction({
+      pathname: "/agenda",
+      tab: "dashboard",
+      isBillingBlocked: false,
+      hasPermission: () => true,
+    }),
+    null,
   );
 });
 
@@ -261,7 +387,6 @@ test("configuracoes mantem todas as abas reais para quem tem acesso", () => {
       "/settings?tab=subscription",
       "/settings?tab=integrations",
       "/settings?tab=ai",
-      "/settings?tab=properties",
       "/settings/site",
     ],
   );

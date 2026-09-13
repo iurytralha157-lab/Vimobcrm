@@ -1,0 +1,1 @@
+export { olxIntegrationProviderManifest } from "./manifest";

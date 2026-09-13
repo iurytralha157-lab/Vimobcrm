@@ -14,8 +14,8 @@ export type ModuleName = SystemModuleKey;
 export const DEFAULT_ENABLED_MODULES: ModuleName[] = [...DEFAULT_ENABLED_MODULE_KEYS];
 
 export function useOrganizationModules() {
-  const { organization, profile, tenantContext, loading: authLoading } = useAuth();
-  const orgId = organization?.id || profile?.organization_id;
+  const { activeOrganization, organization, profile, tenantContext, loading: authLoading } = useAuth();
+  const orgId = activeOrganization.organizationId;
   const hasCurrentTenantContext = isTenantContextForOrganization(orgId, tenantContext);
 
   const {

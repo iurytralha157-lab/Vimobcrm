@@ -114,8 +114,8 @@ export interface FinancialDashboardData {
 }
 
 export function useFinancialCategories() {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ["financial-categories", organizationId],
@@ -127,12 +127,12 @@ export function useFinancialCategories() {
 
 export function useCreateFinancialCategory() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile, organization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
     mutationFn: (data: { name: string; type: "income" | "expense" }) => {
-      const orgId = organization?.id || profile?.organization_id;
+      const orgId = activeOrganization.organizationId;
       if (!orgId) throw new Error("Organização não encontrada");
       return financialAPI.createCategory<FinancialCategory>(data, orgId);
     },
@@ -158,8 +158,8 @@ export function useFinancialEntries(filters?: {
   limit?: number;
   offset?: number;
 }) {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ["financial-entries", organizationId, filters],
@@ -171,12 +171,12 @@ export function useFinancialEntries(filters?: {
 
 export function useCreateFinancialEntry() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile, organization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
     mutationFn: (data: FinancialEntryMutationInput) => {
-      const orgId = organization?.id || profile?.organization_id;
+      const orgId = activeOrganization.organizationId;
       if (!orgId) throw new Error("Organização não encontrada");
       return financialAPI.createEntry<FinancialEntry>(data, orgId);
     },
@@ -197,7 +197,7 @@ export function useCreateFinancialEntry() {
 
 export function useUpdateFinancialEntry() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile, organization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
@@ -205,7 +205,7 @@ export function useUpdateFinancialEntry() {
       id,
       ...data
     }: FinancialEntryMutationInput & { id: string }) => {
-      const orgId = organization?.id || profile?.organization_id;
+      const orgId = activeOrganization.organizationId;
       if (!orgId) throw new Error("Organização não encontrada");
       return financialAPI.updateEntry<FinancialEntry>(id, data, orgId);
     },
@@ -226,12 +226,12 @@ export function useUpdateFinancialEntry() {
 
 export function useMarkEntryAsPaid() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile, organization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
     mutationFn: ({ id, paid_value }: { id: string; paid_value: number }) => {
-      const orgId = organization?.id || profile?.organization_id;
+      const orgId = activeOrganization.organizationId;
       if (!orgId) throw new Error("Organização não encontrada");
       return financialAPI.markEntryPaid<FinancialEntry>(
         id,
@@ -256,12 +256,12 @@ export function useMarkEntryAsPaid() {
 
 export function useDeleteFinancialEntry() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile, organization } = useAuth();
   const { toast } = useToast();
 
   return useMutation({
     mutationFn: (id: string) => {
-      const orgId = organization?.id || profile?.organization_id;
+      const orgId = activeOrganization.organizationId;
       if (!orgId) throw new Error("Organização não encontrada");
       return financialAPI.deleteEntry(id, orgId);
     },
@@ -281,8 +281,8 @@ export function useDeleteFinancialEntry() {
 }
 
 export function useFinancialDashboard() {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ["financial-dashboard", organizationId],

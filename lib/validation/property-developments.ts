@@ -527,6 +527,24 @@ export const propertyDevelopmentUnitPatchInputSchema = z.object({
   message: 'Informe ao menos uma alteracao para a unidade',
 })
 
+export const propertyDevelopmentUnitLinkInputSchema = z.object({
+  property_id: uuidSchema,
+  expected_unit_updated_at: inputTimestampSchema,
+  expected_property_updated_at: inputTimestampSchema,
+}).strict()
+
+export const propertyDevelopmentUnitPromoteInputSchema = z.object({
+  expected_unit_updated_at: inputTimestampSchema,
+  title: z.string().trim().min(1).max(240).optional(),
+  property_type: z.string().trim().min(1).max(120).optional(),
+  purpose: z.string().trim().min(1).max(80).optional(),
+  responsible_user_id: nullableUUIDSchema.optional(),
+}).strict()
+
+export const propertyDevelopmentUnitUnlinkInputSchema = z.object({
+  expected_unit_updated_at: inputTimestampSchema,
+}).strict()
+
 export const propertyDevelopmentPriceTableActivateInputSchema = z.object({
   expected_updated_at: inputTimestampSchema.optional(),
 }).strict()
@@ -640,6 +658,22 @@ export const apiPropertyDevelopmentUnitResponseSchema = z.object({
   data: propertyDevelopmentUnitSchema,
 }).passthrough()
 
+export const propertyDevelopmentLinkedPropertySchema = z.object({
+  id: uuidSchema,
+  code: z.string().min(1),
+  title: z.string().nullable().optional(),
+  status: z.string().nullable().optional(),
+  updated_at: responseTimestampSchema,
+}).strict()
+
+export const apiPropertyDevelopmentUnitPropertyLinkResponseSchema = z.object({
+  data: z.object({
+    unit: propertyDevelopmentUnitSchema,
+    property: propertyDevelopmentLinkedPropertySchema.nullable(),
+    replayed: z.boolean(),
+  }).strict(),
+}).strict()
+
 export const apiPropertyDevelopmentPriceTableResponseSchema = z.object({
   data: propertyDevelopmentPriceTableSchema,
 }).passthrough()
@@ -680,6 +714,10 @@ export type PropertyDevelopmentBuildingCreateInput = z.input<typeof propertyDeve
 export type PropertyDevelopmentFloorPlanCreateInput = z.input<typeof propertyDevelopmentFloorPlanCreateInputSchema>
 export type PropertyDevelopmentBulkUnitsInput = z.input<typeof propertyDevelopmentBulkUnitsInputSchema>
 export type PropertyDevelopmentUnitPatchInput = z.input<typeof propertyDevelopmentUnitPatchInputSchema>
+export type PropertyDevelopmentUnitLinkInput = z.input<typeof propertyDevelopmentUnitLinkInputSchema>
+export type PropertyDevelopmentUnitPromoteInput = z.input<typeof propertyDevelopmentUnitPromoteInputSchema>
+export type PropertyDevelopmentUnitUnlinkInput = z.input<typeof propertyDevelopmentUnitUnlinkInputSchema>
+export type PropertyDevelopmentUnitPropertyLinkResult = z.infer<typeof apiPropertyDevelopmentUnitPropertyLinkResponseSchema>['data']
 export type PropertyDevelopmentPriceTableActivateInput = z.input<typeof propertyDevelopmentPriceTableActivateInputSchema>
 export type PropertyDevelopmentReservationCreateInput = z.input<typeof propertyDevelopmentReservationCreateInputSchema>
 export type PropertyDevelopmentReservationCancelInput = z.input<typeof propertyDevelopmentReservationCancelInputSchema>

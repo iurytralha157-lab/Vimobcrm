@@ -35,6 +35,7 @@ import { Property } from "@/hooks/use-properties";
 import type { PropertySiteInfo } from "@/lib/api/property-support";
 import { buildPropertySiteUrl } from "@/lib/property-site-url";
 import { getSafePropertyImageSource } from "@/lib/property-media";
+import { getPropertyMetadataString as metadataString } from "@/lib/property-display-utils";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -62,6 +63,7 @@ interface PropertyCardProps {
   onChangeStatus?: (
     id: string,
     status: "ativo" | "reservado" | "vendido" | "alugado",
+    expectedUpdatedAt: string,
   ) => void;
   onOpenPublication?: (id: string) => void;
   formatPrice: (value: number | null, tipo: string | null) => string;
@@ -69,6 +71,8 @@ interface PropertyCardProps {
   canUpdateAvailability?: boolean;
   canDelete?: boolean;
   siteInfo?: PropertySiteInfo | null;
+  /** Load only the first visible catalog image eagerly to improve the list LCP. */
+  prioritizeImage?: boolean;
 }
 
 function getPropertyMetadata(property: Property) {
@@ -76,10 +80,6 @@ function getPropertyMetadata(property: Property) {
   return raw && typeof raw === "object" && !Array.isArray(raw)
     ? (raw as Record<string, unknown>)
     : {};
-}
-
-function metadataString(value: unknown) {
-  return typeof value === "string" ? value : "";
 }
 
 function isShareAbortError(error: unknown) {
@@ -100,6 +100,7 @@ export function PropertyCard({
   canUpdateAvailability,
   canDelete,
   siteInfo,
+  prioritizeImage = false,
 }: PropertyCardProps) {
   const publication = property as PropertyWithPublication;
   const propertyMetadata = getPropertyMetadata(property);
@@ -201,8 +202,13 @@ export function PropertyCard({
           ? Lock
           : Clock;
   const StatusIcon = statusIcon;
-  const statusBadgeClass =
-    "bg-[var(--app-surface-solid)]/90 text-[var(--app-text-primary)]";
+  const statusBadgeClass = isSold
+    ? "bg-zinc-900 text-white hover:bg-zinc-900 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-zinc-100"
+    : isRented
+      ? "bg-sky-950 text-white hover:bg-sky-950 dark:bg-sky-200 dark:text-sky-950 dark:hover:bg-sky-200"
+      : isReserved
+        ? "bg-amber-950 text-white hover:bg-amber-950 dark:bg-amber-200 dark:text-amber-950 dark:hover:bg-amber-200"
+        : "bg-black text-white hover:bg-black";
   const canRunAvailabilityActions = canUpdateAvailability ?? canEdit;
   const canDeleteProperty = canDelete ?? canEdit;
   const hasStatusActions = canRunAvailabilityActions && !!onChangeStatus;
@@ -273,6 +279,7 @@ export function PropertyCard({
             sizes="(max-width: 768px) 100vw, (max-width: 1536px) 50vw, 33vw"
             className="object-cover"
             unoptimized
+            loading={prioritizeImage ? "eager" : "lazy"}
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center">
@@ -290,6 +297,7 @@ export function PropertyCard({
         {isUnavailable && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[color-mix(in_srgb,var(--app-surface-solid)_74%,transparent)]">
             <Badge
+              data-property-card-status={statusLabel}
               className={cn(
                 "rounded-[6px] border-0 px-2.5 py-1 text-[10px] font-light shadow-none",
                 statusBadgeClass,
@@ -303,12 +311,15 @@ export function PropertyCard({
 
         <div className="pointer-events-none absolute left-0 top-0 z-20 flex flex-col items-start gap-1">
           {property.code && (
-            <div className="rounded-br-[6px] bg-primary/50 px-3 py-1.5 font-mono text-[10px] font-light text-primary-foreground shadow-none">
+            <div
+              data-property-card-code
+              className="rounded-br-[6px] bg-primary px-3 py-1.5 font-mono text-[10px] font-light text-primary-foreground shadow-none"
+            >
               {property.code}
             </div>
           )}
           {property.destaque && (
-            <Badge className="ml-2 rounded-[6px] border-0 bg-primary/50 px-2 py-1 text-[10px] font-light text-primary-foreground shadow-none">
+            <Badge className="ml-2 rounded-[6px] border-0 bg-primary px-2 py-1 text-[10px] font-light text-primary-foreground shadow-none hover:bg-primary">
               <Star className="mr-1 h-3 w-3" />
               Destaque
             </Badge>
@@ -317,13 +328,25 @@ export function PropertyCard({
 
         <div className="pointer-events-none absolute right-2 top-2 z-30 flex items-center gap-1.5">
           {isPrivate && !isInactive && (
-            <Badge className="rounded-[6px] border-0 bg-[var(--app-surface-solid)]/90 px-2 py-1 text-[10px] font-light text-[var(--app-text-primary)] shadow-none">
+            <Badge
+              data-property-card-status="Privado"
+              className={cn(
+                "rounded-[6px] border-0 px-2 py-1 text-[10px] font-light shadow-none",
+                statusBadgeClass,
+              )}
+            >
               <Lock className="mr-1 h-3 w-3" />
               Privado
             </Badge>
           )}
           {isInactive && (
-            <Badge className="rounded-[6px] border-0 bg-[var(--app-surface-solid)]/90 px-2 py-1 text-[10px] font-light text-[var(--app-text-primary)] shadow-none">
+            <Badge
+              data-property-card-status="Inativo"
+              className={cn(
+                "rounded-[6px] border-0 px-2 py-1 text-[10px] font-light shadow-none",
+                statusBadgeClass,
+              )}
+            >
               <Clock className="mr-1 h-3 w-3" />
               Inativo
             </Badge>
@@ -343,7 +366,7 @@ export function PropertyCard({
 
         {commissionPercentage != null && commissionPercentage > 0 && (
           <div className="pointer-events-none absolute bottom-2 right-2 z-20">
-            <Badge className="rounded-[6px] border-0 bg-[var(--app-surface-solid)]/90 px-2 py-1 text-[10px] font-light text-[var(--app-text-secondary)] shadow-none">
+            <Badge className="rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-2 py-1 text-[10px] font-light text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-solid)]">
               <Percent className="mr-1 h-3 w-3" />
               {commissionPercentage}%
             </Badge>
@@ -353,7 +376,10 @@ export function PropertyCard({
 
       <div className="relative p-3">
         <div className="mb-2 flex items-start justify-between gap-2">
-          <Badge className="rounded-[6px] border-0 bg-primary/50 px-2 py-1 text-[10px] font-light text-primary-foreground shadow-none hover:bg-primary/50">
+          <Badge
+            data-property-card-deal-type
+            className="rounded-[6px] border-0 bg-primary px-2 py-1 text-[10px] font-light text-primary-foreground shadow-none hover:bg-primary"
+          >
             {property.tipo_de_negocio}
           </Badge>
 
@@ -437,7 +463,13 @@ export function PropertyCard({
                   {!isReserved && !isSold && !isRented && (
                     <DropdownMenuItem
                       className={menuItemClass}
-                      onClick={() => onChangeStatus?.(property.id, "reservado")}
+                      onClick={() =>
+                        onChangeStatus?.(
+                          property.id,
+                          "reservado",
+                          property.updated_at,
+                        )
+                      }
                     >
                       <Clock className={menuIconClass} />
                       Marcar como reservado
@@ -446,7 +478,13 @@ export function PropertyCard({
                   {isSaleIntent && !isSold && (
                     <DropdownMenuItem
                       className={menuItemClass}
-                      onClick={() => onChangeStatus?.(property.id, "vendido")}
+                      onClick={() =>
+                        onChangeStatus?.(
+                          property.id,
+                          "vendido",
+                          property.updated_at,
+                        )
+                      }
                     >
                       <CheckCircle className={menuIconClass} />
                       Marcar como vendido
@@ -455,7 +493,13 @@ export function PropertyCard({
                   {isRentalIntent && !isRented && (
                     <DropdownMenuItem
                       className={menuItemClass}
-                      onClick={() => onChangeStatus?.(property.id, "alugado")}
+                      onClick={() =>
+                        onChangeStatus?.(
+                          property.id,
+                          "alugado",
+                          property.updated_at,
+                        )
+                      }
                     >
                       <KeyRound className={menuIconClass} />
                       Marcar como alugado
@@ -464,7 +508,13 @@ export function PropertyCard({
                   {(isUnavailable || isInactive || isPrivateStatus) && (
                     <DropdownMenuItem
                       className={menuItemClass}
-                      onClick={() => onChangeStatus?.(property.id, "ativo")}
+                      onClick={() =>
+                        onChangeStatus?.(
+                          property.id,
+                          "ativo",
+                          property.updated_at,
+                        )
+                      }
                     >
                       <RotateCcw className={menuIconClass} />
                       Voltar disponível

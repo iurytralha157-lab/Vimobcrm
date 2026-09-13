@@ -11,13 +11,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/phonenumber"
 )
 
 const (
-	defaultLimit = 50
-	maxLimit     = 200
+	defaultLimit            = 50
+	maxLimit                = 200
+	maxBoardOrderFutureSkew = 5 * time.Minute
 )
 
 var (
@@ -29,6 +30,7 @@ var (
 	ErrLeadNotFound            = errors.New("lead not found")
 	ErrNoLeadChanges           = errors.New("no lead changes provided")
 	ErrTagAlreadyExists        = errors.New("tag already exists on lead")
+	ErrLostReasonRequired      = fmt.Errorf("%w: lost reason required", ErrInvalidInput)
 )
 
 type Lead struct {
@@ -96,10 +98,22 @@ type ListResponse struct {
 	Offset int    `json:"offset"`
 }
 
+type CreateDistributionOutcome string
+
+const (
+	CreateDistributionOutcomeAssigned           CreateDistributionOutcome = "assigned"
+	CreateDistributionOutcomeAlreadyAssigned    CreateDistributionOutcome = "already_assigned"
+	CreateDistributionOutcomeNoMatchingQueue    CreateDistributionOutcome = "no_matching_queue"
+	CreateDistributionOutcomeNoAvailableMembers CreateDistributionOutcome = "no_available_members"
+	CreateDistributionOutcomeSkipped            CreateDistributionOutcome = "skipped"
+	CreateDistributionOutcomeReentryPreserved   CreateDistributionOutcome = "reentry_preserved"
+)
+
 type CreateResponse struct {
-	Data             Lead   `json:"data"`
-	Reentry          bool   `json:"reentry"`
-	AssignedUserName string `json:"assignedUserName,omitempty"`
+	Data                Lead                      `json:"data"`
+	Reentry             bool                      `json:"reentry"`
+	AssignedUserName    string                    `json:"assignedUserName,omitempty"`
+	DistributionOutcome CreateDistributionOutcome `json:"distributionOutcome"`
 }
 
 type ListFilter struct {
@@ -145,6 +159,8 @@ type CreateRequest struct {
 	FaixaValorImovel    string              `json:"faixaValorImovel,omitempty"`
 	Profile             *LeadProfileRequest `json:"profile,omitempty"`
 	ImportMode          bool                `json:"importMode,omitempty"`
+	AutoDistribute      *bool               `json:"autoDistribute,omitempty"`
+	RoundRobinID        string              `json:"roundRobinId,omitempty"`
 }
 
 type LeadProfileRequest struct {
@@ -193,6 +209,8 @@ type createInput struct {
 	FaixaValorImovel    *string
 	Metadata            LeadMetadata
 	ImportMode          bool
+	AutoDistribute      *bool
+	RoundRobinID        *string
 }
 
 type patchString struct {
@@ -264,6 +282,7 @@ type MoveStageRequest struct {
 	StageID       string     `json:"stageId"`
 	IsOwnResource *bool      `json:"isOwnResource,omitempty"`
 	BoardOrderAt  *time.Time `json:"boardOrderAt,omitempty"`
+	LostReason    *string    `json:"lostReason,omitempty"`
 	// StageEnteredAt is kept temporarily for compatibility with older clients
 	// that used this field as the visual Kanban order.
 	StageEnteredAt *time.Time `json:"stageEnteredAt,omitempty"`
@@ -274,6 +293,7 @@ type moveStageInput struct {
 	IsOwnResource  *bool
 	BoardOrderAt   *time.Time
 	StageEnteredAt *time.Time
+	LostReason     *string
 }
 
 type moveStageResult struct {
@@ -423,6 +443,7 @@ func (request CreateRequest) Validate() (createInput, error) {
 		RendaFamiliar:    optionalString(request.RendaFamiliar, 80),
 		FaixaValorImovel: optionalString(request.FaixaValorImovel, 80),
 		ImportMode:       request.ImportMode,
+		AutoDistribute:   request.AutoDistribute,
 	}
 
 	if input.Name == "" || len([]rune(input.Name)) < 2 {
@@ -440,7 +461,7 @@ func (request CreateRequest) Validate() (createInput, error) {
 		return createInput{}, fmt.Errorf("%w: dealStatus is invalid", ErrInvalidInput)
 	}
 	if input.DealStatus == "lost" && input.LostReason == nil {
-		return createInput{}, fmt.Errorf("%w: lostReason is required when dealStatus is lost", ErrInvalidInput)
+		return createInput{}, fmt.Errorf("%w: lostReason is required when dealStatus is lost", ErrLostReasonRequired)
 	}
 
 	if input.Email != nil {
@@ -520,6 +541,17 @@ func (request CreateRequest) Validate() (createInput, error) {
 		input.TeamID = &value
 	}
 
+	if request.RoundRobinID != "" {
+		value, ok := normalizeUUID(request.RoundRobinID)
+		if !ok {
+			return createInput{}, fmt.Errorf("%w: roundRobinId is invalid", ErrInvalidInput)
+		}
+		input.RoundRobinID = &value
+	}
+	if input.RoundRobinID != nil && (input.AutoDistribute == nil || !*input.AutoDistribute) {
+		return createInput{}, fmt.Errorf("%w: roundRobinId requires autoDistribute=true", ErrInvalidInput)
+	}
+
 	if request.ConversationID != "" {
 		value, ok := normalizeUUID(request.ConversationID)
 		if !ok {
@@ -584,12 +616,24 @@ func (request MoveStageRequest) Validate() (moveStageInput, error) {
 	if request.BoardOrderAt != nil && request.BoardOrderAt.IsZero() {
 		return moveStageInput{}, fmt.Errorf("%w: boardOrderAt is invalid", ErrInvalidInput)
 	}
+	maxBoardOrderAt := time.Now().Add(maxBoardOrderFutureSkew)
+	if request.BoardOrderAt != nil && request.BoardOrderAt.After(maxBoardOrderAt) {
+		return moveStageInput{}, fmt.Errorf("%w: boardOrderAt is too far in the future", ErrInvalidInput)
+	}
+	if request.StageEnteredAt != nil && request.StageEnteredAt.After(maxBoardOrderAt) {
+		return moveStageInput{}, fmt.Errorf("%w: stageEnteredAt is too far in the future", ErrInvalidInput)
+	}
+	var lostReason *string
+	if request.LostReason != nil {
+		lostReason = optionalString(*request.LostReason, 300)
+	}
 
 	return moveStageInput{
 		StageID:        stageID,
 		IsOwnResource:  request.IsOwnResource,
 		BoardOrderAt:   request.BoardOrderAt,
 		StageEnteredAt: request.StageEnteredAt,
+		LostReason:     lostReason,
 	}, nil
 }
 
@@ -1029,14 +1073,5 @@ func isUUID(value string) bool {
 }
 
 func normalizeUUID(value string) (string, bool) {
-	var uuid pgtype.UUID
-	if err := uuid.Scan(strings.TrimSpace(value)); err != nil {
-		return "", false
-	}
-
-	if !uuid.Valid {
-		return "", false
-	}
-
-	return uuid.String(), true
+	return pgvalue.NormalizeUUID(value)
 }

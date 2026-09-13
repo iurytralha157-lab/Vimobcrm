@@ -3,25 +3,9 @@
 import { useState, type KeyboardEvent } from "react";
 import { Check, ChevronLeft, ChevronRight } from "lucide-react";
 import { VIMOB_MARKETING_SITE_URL } from "@/config/constants";
+import type { OnboardingPlanOption } from "./form/types";
 
-export type OnboardingPlanOption = {
-  id?: string;
-  slug: string;
-  signupPath: "trial" | "paid";
-  name: string;
-  price: string;
-  originalPrice?: number | null;
-  discount?: number | null;
-  displayOrder?: number | null;
-  description: string;
-  billingCycle?: string | null;
-  trialEnabled?: boolean | null;
-  trialDays?: number | null;
-  maxUsers?: number | null;
-  maxWhatsappSessions?: number | null;
-  modules?: string[];
-  features?: string[];
-};
+export type { OnboardingPlanOption } from "./form/types";
 
 type PlanCarouselProps = Readonly<{
   plans: OnboardingPlanOption[];

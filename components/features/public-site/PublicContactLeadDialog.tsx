@@ -4,6 +4,7 @@ import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useEffect, useId, useRef, useState } from "react";
 import { X } from "lucide-react";
 
+import { trackEvent } from "@/hooks/useTracking";
 import { cn } from "@/lib/utils";
 import { PublicContactForm } from "./PublicContactForm";
 
@@ -56,6 +57,19 @@ export function PublicContactLeadDialog({
     setOpen(false);
   }
 
+  function openDialog() {
+    setOpen(true);
+    void trackEvent({
+      organizationId,
+      eventType: "cta_click",
+      propertyId,
+      metadata: {
+        action: "open_whatsapp_lead_form",
+        placement: variant,
+      },
+    });
+  }
+
   function handleDialogKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -89,7 +103,7 @@ export function PublicContactLeadDialog({
       <button
         ref={triggerRef}
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={openDialog}
         className={cn(getTriggerClassName(variant), className)}
         style={variant === "button" ? { backgroundColor: primaryColor } : undefined}
         aria-label={triggerLabel}

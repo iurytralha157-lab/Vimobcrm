@@ -46,6 +46,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { SidebarProvider, useSidebar } from "@/contexts/SidebarContext";
 import { useSystemSettings } from "@/hooks/use-system-settings";
 import { cn } from "@/lib/utils";
+import { getInitials } from "@/lib/user-display";
 import { DEFAULT_AUTHENTICATED_ROUTE } from "@/config/constants";
 
 const DEFAULT_BRAND_LOGO_DARK = "/images/logo-white.png";
@@ -58,16 +59,6 @@ const SIDEBAR_CHEVRON_STROKE = 1.7;
 type SidebarNavItem = AdminNavItem & {
   children?: AdminNavItem[];
 };
-
-function getInitials(name?: string | null) {
-  if (!name) return "SA";
-  return name
-    .split(" ")
-    .map((part) => part[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
-}
 
 function getPageTitle(pathname: string) {
   if (pathname.startsWith("/admin/organizations/")) {
@@ -514,7 +505,7 @@ export function SuperAdminLayout({ children }: { children: ReactNode }) {
                         <AvatarImage src={undefined} alt="" />
                       )}
                       <AvatarFallback className="bg-primary text-xs font-normal text-primary-foreground">
-                        {getInitials(profile?.name)}
+                        {getInitials(profile?.name, { fallback: "SA" })}
                       </AvatarFallback>
                     </Avatar>
                     <div className="hidden flex-col items-start gap-0.5 pr-1 text-left sm:flex">

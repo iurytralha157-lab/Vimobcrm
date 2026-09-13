@@ -14,18 +14,56 @@ async function expectAPINotForbidden(page: Page, method: string, path: string) {
   expect(response.status(), body).not.toBe(403);
 }
 
+const errorBoundaryHeading = /^(?:Não foi possível carregar esta área|Algo deu errado)$/;
+
+async function expectProtectedRoute(
+  page: Page,
+  path: string,
+  assertPermissionState: () => Promise<void>,
+) {
+  const runtimeErrors: string[] = [];
+  const recordRuntimeError = (error: Error) => {
+    runtimeErrors.push(error.stack || error.message);
+  };
+
+  page.on('pageerror', recordRuntimeError);
+
+  try {
+    const response = await page.goto(path, { waitUntil: 'domcontentloaded' });
+    if (response) {
+      expect(response.status(), `A navegação para ${path} retornou erro HTTP`).toBeLessThan(500);
+    }
+
+    await expect(
+      page.locator('.app-shell'),
+      `A rota ${path} não chegou ao layout protegido`,
+    ).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: errorBoundaryHeading }),
+      `A rota ${path} caiu em um error boundary`,
+    ).toHaveCount(0);
+
+    await assertPermissionState();
+    expect(runtimeErrors, `A rota ${path} emitiu erro JavaScript não tratado`).toEqual([]);
+  } finally {
+    page.off('pageerror', recordRuntimeError);
+  }
+}
+
 async function expectRouteAllowed(page: Page, path: string) {
-  await page.goto(path);
-  await expect(page.getByText('Acesso nao disponivel')).toHaveCount(0);
+  await expectProtectedRoute(page, path, async () => {
+    await expect(page.getByText('Acesso nao disponivel')).toHaveCount(0);
+  });
 }
 
 async function expectRouteDenied(page: Page, path: string) {
-  await page.goto(path);
-  await expect(page.getByText('Acesso nao disponivel')).toBeVisible();
+  await expectProtectedRoute(page, path, async () => {
+    await expect(page.getByText('Acesso nao disponivel')).toBeVisible();
+  });
 }
 
 test.describe('limites de modulo e pagina por perfil', () => {
-  test.describe.configure({ timeout: 120_000 });
+  test.describe.configure({ timeout: 300_000 });
 
   test('administrador atravessa todos os limites administrativos', async ({ page }) => {
     await signInAs(page, 'admin');

@@ -82,10 +82,10 @@ function useDelayedQueryEnabled(enabledKey: string | null, delayMs = NOTIFICATIO
 }
 
 export function useNotifications() {
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile, organization } = useAuth();
   const audioSetupDone = useRef(false);
   const queryEnabled = useDelayedQueryEnabled(
-    profile?.id && organization?.id ? `${profile.id}:${organization.id}` : null,
+    profile?.id && activeOrganization.organizationId ? `${profile.id}:${activeOrganization.organizationId}` : null,
   );
 
   useEffect(() => {
@@ -127,7 +127,7 @@ export function useNotifications() {
   }, []);
 
   const query = useInfiniteQuery({
-    queryKey: ['notifications', profile?.id, organization?.id, NOTIFICATIONS_PAGE_SIZE],
+    queryKey: ['notifications', profile?.id, activeOrganization.organizationId, NOTIFICATIONS_PAGE_SIZE],
     queryFn: ({ pageParam }) => notificationsAPI.list({
       userId: profile!.id,
       limit: NOTIFICATIONS_PAGE_SIZE,
@@ -151,13 +151,13 @@ export function useNotifications() {
 }
 
 export function useUnreadNotificationsCount() {
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile, organization } = useAuth();
   const queryEnabled = useDelayedQueryEnabled(
-    profile?.id && organization?.id ? `${profile.id}:${organization.id}` : null,
+    profile?.id && activeOrganization.organizationId ? `${profile.id}:${activeOrganization.organizationId}` : null,
   );
 
   return useQuery({
-    queryKey: ['unread-notifications-count', profile?.id, organization?.id],
+    queryKey: ['unread-notifications-count', profile?.id, activeOrganization.organizationId],
     queryFn: async () => {
       const response = await notificationsAPI.unreadCount(profile!.id);
       return response.count || 0;

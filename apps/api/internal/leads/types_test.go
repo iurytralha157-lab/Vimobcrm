@@ -48,6 +48,7 @@ func TestParseListFilterRejectsInvalidValues(t *testing.T) {
 
 func TestCreateRequestValidate(t *testing.T) {
 	interestValue := "450000.00"
+	autoDistribute := true
 	request := CreateRequest{
 		Name:          "Ana Silva",
 		Email:         "ana@example.com",
@@ -64,6 +65,8 @@ func TestCreateRequestValidate(t *testing.T) {
 		TagIDs:           []string{"33333333-3333-3333-3333-333333333333", "33333333-3333-3333-3333-333333333333"},
 		RendaFamiliar:    "12000",
 		FaixaValorImovel: "500k-700k",
+		AutoDistribute:   &autoDistribute,
+		RoundRobinID:     "66666666-6666-4666-8666-666666666666",
 		Profile: &LeadProfileRequest{
 			PersonType: "individual",
 			Gender:     "female",
@@ -85,8 +88,11 @@ func TestCreateRequestValidate(t *testing.T) {
 	if input.InterestValue == nil || *input.InterestValue != interestValue {
 		t.Fatalf("Validate() interest value = %#v", input.InterestValue)
 	}
-	if input.DealStatus != "won" || input.PropertyID == nil || input.ConversationID == nil || input.TeamID == nil {
+	if input.DealStatus != "won" || input.PropertyID == nil || input.ConversationID == nil || input.TeamID == nil || input.RoundRobinID == nil {
 		t.Fatalf("Validate() new fields = %#v", input)
+	}
+	if input.AutoDistribute == nil || !*input.AutoDistribute || *input.RoundRobinID != "66666666-6666-4666-8666-666666666666" {
+		t.Fatalf("Validate() distribution fields = %#v", input)
 	}
 	if len(input.TagIDs) != 1 || input.TagIDs[0] != "33333333-3333-3333-3333-333333333333" {
 		t.Fatalf("Validate() tag ids = %#v", input.TagIDs)
@@ -102,12 +108,16 @@ func TestCreateRequestValidate(t *testing.T) {
 
 func TestCreateRequestRejectsInvalidValues(t *testing.T) {
 	invalidInterestValue := "abc"
+	disableDistribution := false
 	tests := []CreateRequest{
 		{Name: "A"},
 		{Name: "Ana", Email: "not-email"},
 		{Name: "Ana", Phone: "+1 415 CALL-NOW"},
 		{Name: "Ana", PipelineID: "not-a-uuid"},
 		{Name: "Ana", TeamID: "not-a-uuid"},
+		{Name: "Ana", RoundRobinID: "not-a-uuid"},
+		{Name: "Ana", RoundRobinID: "66666666-6666-4666-8666-666666666666"},
+		{Name: "Ana", RoundRobinID: "66666666-6666-4666-8666-666666666666", AutoDistribute: &disableDistribution},
 		{Name: "Ana", InterestValue: &invalidInterestValue},
 		{Name: "Ana", DealStatus: "archived"},
 		{Name: "Ana", DealStatus: "lost"},
@@ -123,6 +133,24 @@ func TestCreateRequestRejectsInvalidValues(t *testing.T) {
 		if _, err := request.Validate(); err == nil {
 			t.Fatalf("Validate(%#v) expected error", request)
 		}
+	}
+}
+
+func TestCreateRequestPreservesAutoDistributePresence(t *testing.T) {
+	var omitted CreateRequest
+	if err := json.Unmarshal([]byte(`{"name":"Ana"}`), &omitted); err != nil {
+		t.Fatalf("decode omitted autoDistribute: %v", err)
+	}
+	if omitted.AutoDistribute != nil {
+		t.Fatalf("omitted autoDistribute = %#v, want nil", omitted.AutoDistribute)
+	}
+
+	var disabled CreateRequest
+	if err := json.Unmarshal([]byte(`{"name":"Ana","autoDistribute":false}`), &disabled); err != nil {
+		t.Fatalf("decode false autoDistribute: %v", err)
+	}
+	if disabled.AutoDistribute == nil || *disabled.AutoDistribute {
+		t.Fatalf("false autoDistribute = %#v", disabled.AutoDistribute)
 	}
 }
 
@@ -371,6 +399,32 @@ func TestMoveStageRequestRejectsZeroBoardOrderAt(t *testing.T) {
 	}
 }
 
+func TestMoveStageRequestRejectsFarFutureBoardOrderAt(t *testing.T) {
+	future := time.Now().Add(maxBoardOrderFutureSkew + time.Minute)
+	request := MoveStageRequest{
+		StageID:      "11111111-1111-1111-1111-111111111111",
+		BoardOrderAt: &future,
+	}
+
+	if _, err := request.Validate(); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("Validate() error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestMoveStageRequestNormalizesLostReason(t *testing.T) {
+	reason := "  sem retorno  "
+	input, err := (MoveStageRequest{
+		StageID:    "11111111-1111-1111-1111-111111111111",
+		LostReason: &reason,
+	}).Validate()
+	if err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if input.LostReason == nil || *input.LostReason != "sem retorno" {
+		t.Fatalf("lost reason = %#v", input.LostReason)
+	}
+}
+
 func TestValidateLostReasonContractAllowsExistingLostLeadUpdatesWithoutReason(t *testing.T) {
 	status := "lost"
 	stageID := "11111111-1111-1111-1111-111111111111"
@@ -398,8 +452,60 @@ func TestValidateLostReasonContractRequiresReasonWhenMovingToLost(t *testing.T) 
 		DealStatus: "open",
 	}
 
-	if err := validateLostReasonContract(current, input); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("validateLostReasonContract() error = %v, want ErrInvalidInput", err)
+	if err := validateLostReasonContract(current, input); !errors.Is(err, ErrLostReasonRequired) {
+		t.Fatalf("validateLostReasonContract() error = %v, want ErrLostReasonRequired", err)
+	}
+}
+
+func TestValidateLostReasonContractDoesNotReuseStaleReasonWhenMovingToLost(t *testing.T) {
+	status := "lost"
+	input := updateInput{DealStatus: patchString{Set: true, Value: &status}}
+	current := leadSnapshot{DealStatus: "open", LostReason: "motivo antigo"}
+
+	if err := validateLostReasonContract(current, input); !errors.Is(err, ErrLostReasonRequired) {
+		t.Fatalf("validateLostReasonContract() error = %v, want ErrLostReasonRequired", err)
+	}
+}
+
+func TestTerminalStageDealStatusRejectsAmbiguousTerminalStage(t *testing.T) {
+	if _, err := terminalStageDealStatus(true, true); !errors.Is(err, ErrInvalidReference) {
+		t.Fatalf("terminalStageDealStatus() error = %v, want ErrInvalidReference", err)
+	}
+	if got, err := terminalStageDealStatus(true, false); err != nil || got != "won" {
+		t.Fatalf("terminalStageDealStatus(won) = %q, %v", got, err)
+	}
+	if got, err := terminalStageDealStatus(false, true); err != nil || got != "lost" {
+		t.Fatalf("terminalStageDealStatus(lost) = %q, %v", got, err)
+	}
+}
+
+func TestEffectiveMoveStageDealStatusReopensWhenLeavingTerminalStage(t *testing.T) {
+	for _, current := range []string{"won", "lost"} {
+		if got := effectiveMoveStageDealStatus(current, ""); got != "open" {
+			t.Fatalf("effective status from %q to ordinary stage = %q, want open", current, got)
+		}
+	}
+	if got := effectiveMoveStageDealStatus("open", ""); got != "" {
+		t.Fatalf("open to ordinary stage = %q, want no status update", got)
+	}
+	if got := effectiveMoveStageDealStatus("lost", "won"); got != "won" {
+		t.Fatalf("explicit destination status = %q, want won", got)
+	}
+}
+
+func TestMergeStageDrivenDealStatusMatchesMoveStageSemantics(t *testing.T) {
+	input := updateInput{}
+	if err := mergeStageDrivenDealStatus(&input, "won"); err != nil {
+		t.Fatalf("mergeStageDrivenDealStatus() error = %v", err)
+	}
+	if !input.DealStatus.Set || input.DealStatus.Value == nil || *input.DealStatus.Value != "won" {
+		t.Fatalf("merged deal status = %#v", input.DealStatus)
+	}
+
+	conflict := "lost"
+	input = updateInput{DealStatus: patchString{Set: true, Value: &conflict}}
+	if err := mergeStageDrivenDealStatus(&input, "won"); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("conflicting merge error = %v, want ErrInvalidInput", err)
 	}
 }
 

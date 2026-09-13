@@ -5,23 +5,30 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
-	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
 
 type Repository struct {
-	db      *dbpkg.Postgres
-	storage storageClient
+	db              *dbpkg.Postgres
+	storage         storageClient
+	beginMutationTx func(context.Context) (pgx.Tx, error)
 }
+
+const (
+	maxTeamNameLength    = 120
+	maxTeamLogoURLLength = 2000
+	maxTeamMembers       = 500
+)
 
 type teamScanner interface {
 	Scan(dest ...any) error
@@ -47,13 +54,20 @@ func NewRepository(db *dbpkg.Postgres, storageConfig StorageConfig) Repository {
 	}
 }
 
+func (repo Repository) beginTeamMutation(ctx context.Context) (pgx.Tx, error) {
+	if repo.beginMutationTx != nil {
+		return repo.beginMutationTx(ctx)
+	}
+	return repo.db.Pool().Begin(ctx)
+}
+
 func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, includeInactive bool) ([]Team, error) {
 	where := []string{"t.organization_id = $1::uuid"}
 	args := []any{tenantContext.OrganizationID}
 	if !includeInactive {
 		where = append(where, "t.is_active = true")
 	}
-	if !canManageTeams(tenantContext) {
+	if !canViewAllTeams(tenantContext) {
 		if !tenantContext.IsTeamLeader || len(tenantContext.LedTeamIDs) == 0 {
 			return []Team{}, nil
 		}
@@ -121,20 +135,23 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	if !canManageTeams(tenantContext) {
 		return Team{}, tenant.ErrOrganizationAccessDenied
 	}
-	name := strings.TrimSpace(request.Name)
-	if name == "" {
+	name, err := normalizeTeamName(request.Name)
+	if err != nil || !validTeamLogoURL(request.LogoURL) {
 		return Team{}, ErrInvalidInput
 	}
 	isActive := true
 	if request.IsActive != nil {
 		isActive = *request.IsActive
 	}
-	members := normalizeMembers(normalizeMemberInputs(request))
+	members, err := normalizeMembersStrict(normalizeMemberInputs(request))
+	if err != nil {
+		return Team{}, err
+	}
 	if err := validateMemberAvailabilityWeeks(members, true); err != nil {
 		return Team{}, err
 	}
 
-	tx, err := repo.db.Pool().Begin(ctx)
+	tx, err := repo.beginTeamMutation(ctx)
 	if err != nil {
 		return Team{}, err
 	}
@@ -171,6 +188,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if !ok {
 		return Team{}, ErrInvalidInput
 	}
+	if !hasTeamUpdate(request) {
+		return Team{}, ErrInvalidInput
+	}
 	isAdminScope := canManageTeams(tenantContext)
 	if !isAdminScope {
 		if !tenantContext.LeadsTeam(teamID) || !hasMemberUpdate(request) {
@@ -181,8 +201,24 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		}
 		request.PreserveLeadership = true
 	}
+	if request.Name != nil {
+		if _, err := normalizeTeamName(*request.Name); err != nil {
+			return Team{}, err
+		}
+	}
+	if !validTeamLogoURL(request.LogoURL) {
+		return Team{}, ErrInvalidInput
+	}
+	var normalizedMemberInputs []TeamMemberInput
+	if hasMemberUpdate(request) {
+		var err error
+		normalizedMemberInputs, err = normalizeMembersStrict(normalizeMemberInputsFromUpdate(request))
+		if err != nil {
+			return Team{}, err
+		}
+	}
 
-	tx, err := repo.db.Pool().Begin(ctx)
+	tx, err := repo.beginTeamMutation(ctx)
 	if err != nil {
 		return Team{}, err
 	}
@@ -190,44 +226,54 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
 		return Team{}, err
 	}
+	var lockedTeamID string
+	if err := tx.QueryRow(ctx, `
+		select id::text
+		from public.teams
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		for update
+	`, tenantContext.OrganizationID, teamID).Scan(&lockedTeamID); errors.Is(err, pgx.ErrNoRows) {
+		return Team{}, ErrTeamNotFound
+	} else if err != nil {
+		return Team{}, err
+	}
 
-	var roundRobinMemberIDs []string
 	args := []any{tenantContext.OrganizationID, teamID}
 	assignments := []string{}
+	changePredicates := []string{}
 	if request.Name != nil {
-		name := strings.TrimSpace(*request.Name)
-		if name == "" {
-			return Team{}, ErrInvalidInput
-		}
+		name, _ := normalizeTeamName(*request.Name)
 		args = append(args, name)
 		assignments = append(assignments, fmt.Sprintf("name = $%d", len(args)))
+		changePredicates = append(changePredicates, fmt.Sprintf("name is distinct from $%d", len(args)))
 	}
 	if request.LogoURL != nil {
 		args = append(args, textOrNil(request.LogoURL))
 		assignments = append(assignments, fmt.Sprintf("logo_url = $%d", len(args)))
+		changePredicates = append(changePredicates, fmt.Sprintf("logo_url is distinct from $%d", len(args)))
 	}
 	if request.IsActive != nil {
 		args = append(args, *request.IsActive)
 		assignments = append(assignments, fmt.Sprintf("is_active = $%d", len(args)))
+		changePredicates = append(changePredicates, fmt.Sprintf("is_active is distinct from $%d", len(args)))
 	}
 	if len(assignments) > 0 {
 		assignments = append(assignments, "updated_at = now()")
-		tag, err := tx.Exec(ctx, `
+		_, err := tx.Exec(ctx, `
 			update public.teams
 			set `+strings.Join(assignments, ", ")+`
 			where organization_id = $1::uuid
 			  and id = $2::uuid
+			  and (`+strings.Join(changePredicates, " or ")+`)
 		`, args...)
 		if err != nil {
 			return Team{}, err
 		}
-		if tag.RowsAffected() == 0 {
-			return Team{}, ErrTeamNotFound
-		}
 	}
 
 	if hasMemberUpdate(request) {
-		memberInputs := normalizeMembers(normalizeMemberInputsFromUpdate(request))
+		memberInputs := normalizedMemberInputs
 		if err := validateMemberAvailabilityWeeks(memberInputs, false); err != nil {
 			return Team{}, err
 		}
@@ -256,41 +302,25 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		if err := repo.replaceMemberAvailabilityWeeks(ctx, tx, tenantContext.OrganizationID, teamID, memberInputs); err != nil {
 			return Team{}, err
 		}
-		roundRobinMemberIDs = memberUserIDs(memberInputs)
+		if err := syncRoundRobinWithTeam(
+			ctx,
+			tx,
+			tenantContext.OrganizationID,
+			teamID,
+			memberUserIDs(memberInputs),
+		); err != nil {
+			return Team{}, err
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return Team{}, err
-	}
-	if roundRobinMemberIDs != nil {
-		repo.syncRoundRobinWithTeamBestEffort(ctx, tenantContext, teamID, roundRobinMemberIDs)
 	}
 	return repo.Get(ctx, tenantContext, teamID)
 }
 
 func (repo Repository) UpdateStatus(ctx context.Context, tenantContext tenant.Context, teamID string, isActive bool) (Team, error) {
 	return repo.Update(ctx, tenantContext, teamID, UpdateTeamRequest{IsActive: &isActive})
-}
-
-func (repo Repository) syncRoundRobinWithTeamBestEffort(ctx context.Context, tenantContext tenant.Context, teamID string, memberIDs []string) {
-	tx, err := repo.db.Pool().Begin(ctx)
-	if err != nil {
-		slog.Warn("team round robin sync skipped", "organization_id", tenantContext.OrganizationID, "team_id", teamID, "error", err)
-		return
-	}
-	defer tx.Rollback(ctx)
-	if err := setAuditActor(ctx, tx, tenantContext); err != nil {
-		slog.Warn("team round robin sync audit context skipped", "organization_id", tenantContext.OrganizationID, "team_id", teamID, "error", err)
-		return
-	}
-
-	if err := syncRoundRobinWithTeam(ctx, tx, tenantContext.OrganizationID, teamID, memberIDs); err != nil {
-		slog.Warn("team round robin sync failed", "organization_id", tenantContext.OrganizationID, "team_id", teamID, "error", err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
-		slog.Warn("team round robin sync commit failed", "organization_id", tenantContext.OrganizationID, "team_id", teamID, "error", err)
-	}
 }
 
 func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context, teamID string) error {
@@ -302,7 +332,7 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 		return ErrInvalidInput
 	}
 
-	tx, err := repo.db.Pool().Begin(ctx)
+	tx, err := repo.beginTeamMutation(ctx)
 	if err != nil {
 		return err
 	}
@@ -357,7 +387,7 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, te
 	if !ok {
 		return Team{}, ErrInvalidInput
 	}
-	if !canManageTeams(tenantContext) && !tenantContext.LeadsTeam(teamID) {
+	if !canViewTeam(tenantContext, teamID) {
 		return Team{}, tenant.ErrOrganizationAccessDenied
 	}
 	team, err := scanTeam(repo.db.Pool().QueryRow(ctx, `
@@ -395,16 +425,13 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, te
 	return team, nil
 }
 
-func (repo Repository) UploadLogo(ctx context.Context, tenantContext tenant.Context, contentType string, size int64, fileName string, body io.Reader) (AssetUpload, error) {
+func (repo Repository) UploadLogo(ctx context.Context, tenantContext tenant.Context, contentType string, size int64, _ string, body io.Reader) (AssetUpload, error) {
 	if !canManageTeams(tenantContext) {
 		return AssetUpload{}, tenant.ErrOrganizationAccessDenied
 	}
-	ext := strings.ToLower(filepath.Ext(fileName))
+	ext := extensionForContentType(contentType)
 	if ext == "" {
-		ext = extensionForContentType(contentType)
-	}
-	if ext == "" {
-		ext = ".webp"
+		return AssetUpload{}, ErrInvalidInput
 	}
 	objectPath := fmt.Sprintf("organizations/%s/teams/%d%s", tenantContext.OrganizationID, time.Now().UTC().UnixMilli(), ext)
 	if err := repo.storage.upload(ctx, "logos", objectPath, contentType, body); err != nil {
@@ -427,12 +454,12 @@ func (repo Repository) ListTeamPipelines(ctx context.Context, tenantContext tena
 		if !ok {
 			return nil, ErrInvalidInput
 		}
-		if !canManageTeams(tenantContext) && !tenantContext.LeadsTeam(normalizedTeamID) {
+		if !canViewAllTeams(tenantContext) && !tenantContext.LeadsTeam(normalizedTeamID) {
 			return []TeamPipelineRelation{}, nil
 		}
 		args = append(args, normalizedTeamID)
 		where = append(where, fmt.Sprintf("tp.team_id = $%d::uuid", len(args)))
-	} else if !canManageTeams(tenantContext) {
+	} else if !canViewAllTeams(tenantContext) {
 		if !tenantContext.IsTeamLeader || len(tenantContext.LedTeamIDs) == 0 {
 			return []TeamPipelineRelation{}, nil
 		}
@@ -484,12 +511,12 @@ func (repo Repository) ListTeamPipelines(ctx context.Context, tenantContext tena
 }
 
 func (repo Repository) AssignPipelineToTeam(ctx context.Context, tenantContext tenant.Context, request AssignPipelineRequest) (TeamPipelineRelation, error) {
-	if !canManageTeams(tenantContext) {
-		return TeamPipelineRelation{}, tenant.ErrOrganizationAccessDenied
-	}
 	teamID, pipelineID, err := normalizeTeamPipelineRequest(request)
 	if err != nil {
 		return TeamPipelineRelation{}, err
+	}
+	if !canManageTeamPipeline(tenantContext, teamID) {
+		return TeamPipelineRelation{}, tenant.ErrOrganizationAccessDenied
 	}
 	if err := repo.ensureTeamAndPipeline(ctx, tenantContext.OrganizationID, teamID, pipelineID); err != nil {
 		return TeamPipelineRelation{}, err
@@ -519,12 +546,12 @@ func (repo Repository) AssignPipelineToTeam(ctx context.Context, tenantContext t
 }
 
 func (repo Repository) RemovePipelineFromTeam(ctx context.Context, tenantContext tenant.Context, request AssignPipelineRequest) error {
-	if !canManageTeams(tenantContext) {
-		return tenant.ErrOrganizationAccessDenied
-	}
 	teamID, pipelineID, err := normalizeTeamPipelineRequest(request)
 	if err != nil {
 		return err
+	}
+	if !canManageTeamPipeline(tenantContext, teamID) {
+		return tenant.ErrOrganizationAccessDenied
 	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
@@ -610,7 +637,7 @@ func (repo Repository) ListAvailability(ctx context.Context, tenantContext tenan
 		}
 		where = append(where, "ma.team_member_id in ("+strings.Join(placeholders, ", ")+")")
 	}
-	if !canManageTeams(tenantContext) {
+	if !canViewAllTeams(tenantContext) {
 		if !tenantContext.IsTeamLeader || len(tenantContext.LedTeamIDs) == 0 {
 			return []MemberAvailability{}, nil
 		}
@@ -734,14 +761,6 @@ func (repo Repository) ReplaceAvailability(ctx context.Context, tenantContext te
 		return nil, err
 	}
 
-	if _, err := tx.Exec(ctx, `
-		delete from public.member_availability
-		where organization_id = $1::uuid
-		  and team_member_id = $2::uuid
-	`, tenantContext.OrganizationID, teamMemberID); err != nil {
-		return nil, err
-	}
-
 	for _, input := range normalized {
 		if _, err := repo.upsertAvailability(ctx, tx, tenantContext.OrganizationID, input); err != nil {
 			return nil, err
@@ -817,13 +836,6 @@ func (repo Repository) replaceMemberAvailabilityWeeks(
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `
-			delete from public.member_availability
-			where organization_id = $1::uuid
-			  and team_member_id = $2::uuid
-		`, organizationID, teamMemberID); err != nil {
-			return err
-		}
 		for _, input := range normalized {
 			if _, err := repo.upsertAvailability(ctx, tx, organizationID, input); err != nil {
 				return err
@@ -848,7 +860,13 @@ func (repo Repository) membersByTeam(ctx context.Context, organizationID string)
 		from public.team_members tm
 		join public.teams t on t.id = tm.team_id and t.organization_id = $1::uuid
 		join public.users u on u.id = tm.user_id
-		where coalesce(u.is_active, true) = true
+		join public.organization_members om
+		  on om.organization_id = t.organization_id
+		 and om.user_id = tm.user_id
+		 and coalesce(om.is_active, false) = true
+		 and om.deleted_at is null
+		where coalesce(tm.is_active, true) = true
+		  and coalesce(u.is_active, false) = true
 		order by tm.created_at asc, tm.id asc
 	`, organizationID)
 	if err != nil {
@@ -956,7 +974,10 @@ func replaceMembers(ctx context.Context, tx pgx.Tx, organizationID string, teamI
 		return ErrTeamNotFound
 	}
 
-	normalized := normalizeMembers(members)
+	normalized, err := normalizeMembersStrict(members)
+	if err != nil {
+		return err
+	}
 	ids := memberUserIDs(normalized)
 
 	if len(ids) == 0 {
@@ -988,25 +1009,18 @@ func replaceMembers(ctx context.Context, tx pgx.Tx, organizationID string, teamI
 	}
 
 	for _, member := range normalized {
-		result, err := tx.Exec(ctx, `
-			update public.team_members
-			set is_leader = $4,
+		_, err := tx.Exec(ctx, `
+			insert into public.team_members as current_member (organization_id, team_id, user_id, is_leader)
+			values ($1::uuid, $2::uuid, $3::uuid, $4)
+			on conflict (team_id, user_id) do update
+			set is_leader = excluded.is_leader,
 			    is_active = true,
 			    updated_at = now()
-			where organization_id = $1::uuid
-			  and team_id = $2::uuid
-			  and user_id = $3::uuid
-		`, organizationID, teamID, member.UserID, member.IsLeader)
-		if err != nil {
-			return err
-		}
-		if result.RowsAffected() > 0 {
-			continue
-		}
-
-		_, err = tx.Exec(ctx, `
-			insert into public.team_members (organization_id, team_id, user_id, is_leader)
-			values ($1::uuid, $2::uuid, $3::uuid, $4)
+			where current_member.organization_id = excluded.organization_id
+			  and (
+				current_member.is_leader is distinct from excluded.is_leader
+				or current_member.is_active is distinct from true
+			  )
 		`, organizationID, teamID, member.UserID, member.IsLeader)
 		if err != nil {
 			return err
@@ -1057,6 +1071,8 @@ func syncRoundRobinWithTeam(ctx context.Context, tx pgx.Tx, organizationID strin
 		where rr.organization_id = $1::uuid
 		  and rrm.team_id = $2::uuid
 		  and rrm.user_id is not null
+		order by rr.id, rrm.position, rrm.id
+		for update of rr, rrm
 	`, organizationID, teamID)
 	if err != nil {
 		return err
@@ -1358,7 +1374,7 @@ func parseAvailabilityClock(value *string) (time.Time, bool) {
 
 func (repo Repository) upsertAvailability(ctx context.Context, q queryRowExecutor, organizationID string, input availabilityInput) (MemberAvailability, error) {
 	item, err := scanMemberAvailability(q.QueryRow(ctx, `
-		insert into public.member_availability (
+		insert into public.member_availability as current_availability (
 			organization_id,
 			team_member_id,
 			day_of_week,
@@ -1381,6 +1397,17 @@ func (repo Repository) upsertAvailability(ctx context.Context, q queryRowExecuto
 		    is_all_day = excluded.is_all_day,
 		    is_active = excluded.is_active,
 		    updated_at = now()
+		where (
+			current_availability.start_time,
+			current_availability.end_time,
+			current_availability.is_all_day,
+			current_availability.is_active
+		) is distinct from (
+			excluded.start_time,
+			excluded.end_time,
+			excluded.is_all_day,
+			excluded.is_active
+		)
 		returning
 			id::text,
 			team_member_id::text,
@@ -1393,7 +1420,25 @@ func (repo Repository) upsertAvailability(ctx context.Context, q queryRowExecuto
 			updated_at::text
 	`, organizationID, input.TeamMemberID, input.DayOfWeek, timeOrNil(input.StartTime), timeOrNil(input.EndTime), input.IsAllDay, input.IsActive))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return MemberAvailability{}, ErrTeamMemberNotFound
+		item, err = scanMemberAvailability(q.QueryRow(ctx, `
+			select
+				id::text,
+				team_member_id::text,
+				day_of_week,
+				start_time::text,
+				end_time::text,
+				coalesce(is_all_day, false),
+				coalesce(is_active, true),
+				created_at::text,
+				updated_at::text
+			from public.member_availability
+			where organization_id = $1::uuid
+			  and team_member_id = $2::uuid
+			  and day_of_week = $3
+		`, organizationID, input.TeamMemberID, input.DayOfWeek))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return MemberAvailability{}, ErrTeamMemberNotFound
+		}
 	}
 	return item, err
 }
@@ -1481,6 +1526,33 @@ func normalizeMembers(members []TeamMemberInput) []TeamMemberInput {
 	return out
 }
 
+func normalizeMembersStrict(members []TeamMemberInput) ([]TeamMemberInput, error) {
+	if len(members) > maxTeamMembers {
+		return nil, ErrInvalidInput
+	}
+	for _, member := range members {
+		if _, ok := normalizeUUID(strings.TrimSpace(member.UserID)); !ok {
+			return nil, ErrInvalidInput
+		}
+	}
+	return normalizeMembers(members), nil
+}
+
+func normalizeTeamName(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || utf8.RuneCountInString(value) > maxTeamNameLength {
+		return "", ErrInvalidInput
+	}
+	return value, nil
+}
+
+func validTeamLogoURL(value *string) bool {
+	if value == nil {
+		return true
+	}
+	return utf8.RuneCountInString(strings.TrimSpace(*value)) <= maxTeamLogoURLLength
+}
+
 func memberUserIDs(members []TeamMemberInput) []string {
 	out := make([]string, 0, len(members))
 	for _, member := range members {
@@ -1509,6 +1581,10 @@ func preservesCurrentLeaders(current map[string]bool, members []TeamMemberInput)
 
 func hasMemberUpdate(request UpdateTeamRequest) bool {
 	return request.Members != nil || request.MemberIDs != nil
+}
+
+func hasTeamUpdate(request UpdateTeamRequest) bool {
+	return request.Name != nil || request.LogoURL != nil || request.IsActive != nil || hasMemberUpdate(request)
 }
 
 func (repo Repository) ensureCanManageAvailability(ctx context.Context, q queryRowExecutor, tenantContext tenant.Context, teamMemberID string) error {
@@ -1553,6 +1629,40 @@ func canManageTeams(tenantContext tenant.Context) bool {
 	return tenantContext.HasPermission(permissions.TeamManage)
 }
 
+func canViewAllTeams(tenantContext tenant.Context) bool {
+	if canManageTeams(tenantContext) {
+		return true
+	}
+	if !tenantContext.HasPermission(permissions.TeamView) {
+		return false
+	}
+	if tenantContext.HasRole("manager") {
+		return true
+	}
+
+	// Team leaders keep a deliberately scoped view of the teams they lead.
+	// A manager retains organization-wide read visibility when also assigned
+	// as a team leader, while mutations remain restricted to led teams.
+	return !tenantContext.IsTeamLeader
+}
+
+func canManageTeamPipeline(tenantContext tenant.Context, teamID string) bool {
+	if tenantContext.IsSuperAdmin || tenantContext.HasRole("owner", "admin") {
+		return true
+	}
+	if !tenantContext.HasPermission(permissions.PipelineManage) {
+		return false
+	}
+	if tenantContext.IsTeamLeader {
+		return tenantContext.LeadsTeam(teamID)
+	}
+	return true
+}
+
+func canViewTeam(tenantContext tenant.Context, teamID string) bool {
+	return canViewAllTeams(tenantContext) || tenantContext.LeadsTeam(teamID)
+}
+
 func textOrNil(value *string) any {
 	if value == nil {
 		return nil
@@ -1565,10 +1675,7 @@ func textOrNil(value *string) any {
 }
 
 func textPointer(value pgtype.Text) *string {
-	if !value.Valid {
-		return nil
-	}
-	return &value.String
+	return pgvalue.TextPointer(value)
 }
 
 func cleanTimePointer(value *string) *string {
@@ -1591,14 +1698,7 @@ func timeOrNil(value *string) any {
 }
 
 func normalizeUUID(value string) (string, bool) {
-	var uuid pgtype.UUID
-	if err := uuid.Scan(strings.TrimSpace(value)); err != nil {
-		return "", false
-	}
-	if !uuid.Valid {
-		return "", false
-	}
-	return uuid.String(), true
+	return pgvalue.NormalizeUUID(value)
 }
 
 func extensionForContentType(contentType string) string {

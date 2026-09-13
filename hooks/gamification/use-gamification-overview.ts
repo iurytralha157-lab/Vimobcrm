@@ -39,8 +39,8 @@ export type {
 };
 
 export function useGamificationEvents(filters: Omit<GamificationEventListQuery, 'cursor'>, enabled = true) {
-  const { organization } = useAuth();
-  const organizationId = organization?.id;
+  const { activeOrganization, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
   const query = useInfiniteQuery({
     queryKey: [
       'gamification-events',
@@ -70,8 +70,8 @@ export function useGamificationEvents(filters: Omit<GamificationEventListQuery, 
 }
 
 export function useGamificationRanking(filters: GamificationRankingQuery, enabled = true) {
-  const { organization } = useAuth();
-  const organizationId = organization?.id;
+  const { activeOrganization, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   const query = useQuery({
     queryKey: [
@@ -94,8 +94,8 @@ export function useGamificationRanking(filters: GamificationRankingQuery, enable
 }
 
 export function useGamificationRealtime(enabled = true) {
-  const { organization } = useAuth();
-  const organizationId = organization?.id;
+  const { activeOrganization, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
   const queryClient = useQueryClient();
   const [isConnected, setIsConnected] = useState(false);
 
@@ -153,8 +153,8 @@ export function useGamificationRealtime(enabled = true) {
 }
 
 export function useGamificationOverview(enabled = true) {
-  const { organization } = useAuth();
-  const organizationId = organization?.id;
+  const { activeOrganization, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   const query = useQuery({
     queryKey: ['gamification-overview', organizationId],

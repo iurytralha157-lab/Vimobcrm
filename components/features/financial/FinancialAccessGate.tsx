@@ -11,8 +11,8 @@ import { DEFAULT_AUTHENTICATED_ROUTE } from '@/config/constants';
 
 export function FinancialAccessGate({ children }: { children: ReactNode }) {
   const router = useRouter();
-  const { loading, organization, profile, userOrganizations } = useAuth();
-  const activeOrganizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, loading, organization, profile, userOrganizations } = useAuth();
+  const activeOrganizationId = activeOrganization.organizationId;
   const activeOrganizationMembership = userOrganizations.find(
     (item) => item.organization_id === activeOrganizationId
   );

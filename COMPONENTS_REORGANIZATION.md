@@ -1,222 +1,68 @@
-# 📦 Reorganização de Componentes - Relatório
+# Reorganização de componentes
 
-## ✅ O que foi feito
+Este documento registra a direção da reorganização; não é uma declaração de
+que todo o frontend já está concluído ou livre de dívida técnica.
 
-Reorganizei **todos os componentes** para a estrutura por domínios em `components/features/`, alinhando com a arquitetura profissional.
+## Estrutura adotada
 
-### Movidos para `features/`:
-```
-components/features/
-├── auth/              ← Componentes de autenticação
-├── automations/       ← Builder de automações
-├── chat/              ← Chat flutuante e mensagens
-├── leads/             ← Gestão de leads
-├── onboarding/        ← Onboarding inicial
-├── pipelines/         ← Pipelines de vendas
-├── properties/        ← Gestão de imóveis
-├── pwa/               ← Progressive Web App
-├── schedule/          ← Agendamentos
-└── whatsapp/          ← Integração WhatsApp
-```
-
-### Movido para `shared/`:
-```
-components/shared/
-├── layout/            ← Componentes de layout reutilizáveis
-└── ...                ← Outros componentes compartilhados
-```
-
-### Mantidos como estão:
-```
+```text
 components/
-├── ui/                ← Radix + shadcn (nunca editar)
-├── providers/         ← Providers (Auth, Query, Theme)
-└── shared/            ← Componentes reutilizáveis
+  features/{dominio}/   UI e composição específicas do domínio
+  shared/               componentes usados por mais de um domínio
+  providers/            infraestrutura React global ou do grupo protegido
+  ui/                   primitivas shadcn/Radix
+
+hooks/{dominio}/        cache, estado e efeitos do domínio
+lib/api/{dominio}.ts    transporte para a API Go
+lib/validation/         contratos Zod e tipos derivados
 ```
 
----
+As rotas em `app/` devem ser finas: elas importam a tela do domínio, aplicam a
+boundary necessária e resolvem parâmetros/redirects. Regras de negócio não
+devem migrar para `page.tsx`.
 
-## 🔄 Mudanças de Imports
+## Critério de extração
 
-### Antes:
-```tsx
-import { CreateLeadDialog } from '@/components/leads/CreateLeadDialog'
-import { AutomationForm } from '@/components/automations/AutomationForm'
-import { AppLayout } from '@/components/layout/AppLayout'
-```
+Um arquivo grande é recortado quando existem responsabilidades coesas que
+podem ser nomeadas e verificadas, por exemplo:
 
-### Depois:
-```tsx
-import { CreateLeadDialog } from '@/components/features/leads/CreateLeadDialog'
-import { AutomationForm } from '@/components/features/automations/AutomationForm'
-import { AppLayout } from '@/components/shared/layout/AppLayout'
-```
+- tipos e mapeamentos puros;
+- seção visual com props explícitas;
+- hook de query/mutation;
+- estado de fluxo independente;
+- regra pura coberta por teste.
 
----
+Número de linhas sozinho não autoriza separar código. A extração deve preservar
+UI, ordem de efeitos, permissões, cache keys, payloads e estados de erro/loading.
 
-## 📊 Estatísticas
+## Barrels
 
-| Métrica | Valor |
-|---------|-------|
-| **Domínios organizados** | 10 |
-| **Pastas movidas** | 7 |
-| **Arquivos reorganizados** | ~200+ |
-| **Imports atualizados** | ~500+ |
-| **Tempo de execução** | ~2 minutos |
+`index.ts` é permitido quando representa a API pública real do domínio. Não
+exporte componentes sem consumidor apenas “por precaução”: isso esconde código
+morto e faz o grafo estático superestimar dependências.
 
----
+## Duplicações
 
-## ✨ Benefícios
+Antes de unificar, compare todos os callers e documente diferenças de:
 
-### 1. **Escalabilidade**
-- Cada domínio é independente
-- Fácil adicionar novos domínios
-- Estrutura clara para times crescerem
+- vazio versus `null`;
+- trim e normalização;
+- limites de payload e compressão;
+- mensagens/códigos de erro;
+- permissões e escopo de organização;
+- fallback e compatibilidade legada.
 
-### 2. **Manutenibilidade**
-- Encontrar componentes é mais fácil
-- Menos colisão de nomes
-- Imports previsíveis
+Quando as políticas diferirem, use opções ou funções com nomes explícitos. Não
+substitua comportamentos diferentes por um helper genérico silencioso.
 
-### 3. **Organização**
-```
-features/automations/
-├── AutomationForm.tsx
-├── AutomationList.tsx
-├── nodes/               ← Subnível por feature
-│   ├── StartNode.tsx
-│   ├── MessageNode.tsx
-│   └── ...
-└── index.ts             ← Exports limpos
-```
+## Validação
 
-### 4. **Desenvolvimento**
-- PR reviews mais focadas (por domínio)
-- Linting mais rápido
-- Code splitting natural
+Para cada lote:
 
----
+1. buscar import direto, barrel e import lazy/dynamic;
+2. executar teste focado da regra extraída;
+3. executar typecheck e lint;
+4. rodar os contratos gerais e o build antes do handoff;
+5. regenerar inventários somente depois que o lote estiver estável.
 
-## 🧪 Testes
-
-✅ Build compilou com sucesso
-✅ Todos os imports atualizados
-✅ Estrutura validada
-
----
-
-## 📋 Próximos Passos
-
-### 1. **Index Files** (Recomendado)
-Criar `index.ts` em cada domínio para exports limpos:
-
-```ts
-// components/features/leads/index.ts
-export { CreateLeadDialog } from './CreateLeadDialog'
-export { LeadCard } from './LeadCard'
-export { LeadHistory } from './LeadHistory'
-```
-
-Uso:
-```tsx
-import { CreateLeadDialog, LeadCard } from '@/components/features/leads'
-```
-
-### 2. **Shared Components**
-Consolidar componentes reutilizáveis em `shared/`:
-```
-shared/
-├── layout/
-├── buttons/
-├── dialogs/
-├── forms/
-└── index.ts
-```
-
-### 3. **Documentation**
-Criar `README.md` em cada domínio:
-```md
-# Automations Feature
-
-## Components
-- `AutomationForm`: Form para criar automações
-- `AutomationList`: Lista de automações
-
-## Usage
-```
-
----
-
-## ⚠️ Considerações
-
-### ✓ O que funciona bem
-- Estrutura escalável
-- Fácil de navegar
-- Alinhado com boas práticas
-
-### ⚠️ Mitigações
-- Imports absolutos (`@/components/features/`) - mantém tipo-safe
-- Barrel exports (`index.ts`) - simplifica imports futuros
-- TypeScript - catch erros em compile-time
-
----
-
-## 🚀 Estrutura Final (Visualização)
-
-```
-vimob-crm/
-├── app/                    ← Rotas
-│   ├── (auth)/
-│   ├── (protected)/
-│   └── api/
-├── components/             ← UI + Features
-│   ├── features/           ✨ REORGANIZADO
-│   │   ├── automations/
-│   │   ├── chat/
-│   │   ├── leads/
-│   │   ├── properties/
-│   │   ├── pipelines/
-│   │   ├── schedule/
-│   │   ├── whatsapp/
-│   │   ├── pwa/
-│   │   ├── auth/
-│   │   └── onboarding/
-│   ├── shared/
-│   │   ├── layout/
-│   │   └── ...
-│   ├── ui/                 (Radix)
-│   └── providers/
-├── lib/
-│   ├── supabase/
-│   ├── api/
-│   ├── validation/
-│   └── utils/
-├── stores/                 (Zustand)
-├── config/
-├── i18n/
-├── hooks/
-├── middleware.ts
-└── package.json
-```
-
----
-
-## 💡 Comandos Úteis
-
-```bash
-# Verificar estrutura
-ls -R components/features/
-
-# Encontrar imports que faltam
-grep -r "from '@/components/" --include="*.tsx" | grep -v "features" | grep -v "shared" | grep -v "ui" | grep -v "providers"
-
-# Buscar um componente
-grep -r "export.*MyComponent" components/features/
-```
-
----
-
-**Status**: ✅ Reorganização completa
-**Build**: ✅ Passing
-**Imports**: ✅ Atualizados
-**Escalabilidade**: ⭐⭐⭐⭐⭐
+Consulte `ARCHITECTURE.md` e `QUICK_REFERENCE.md` para o estado atual.

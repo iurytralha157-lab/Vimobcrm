@@ -237,7 +237,7 @@ test("checked-in handler preserves the security order and blocks downstream effe
   assert.match(tenantFunction, /query = query\.eq\("session_id", sessionId\)/);
 
   const callerStart = caller.indexOf("/functions/v1/ai-agent-responder");
-  const internalCall = caller.slice(callerStart, callerStart + 700);
+  const internalCall = caller.slice(callerStart, callerStart + 900);
   assert.ok(callerStart >= 0);
   assert.match(internalCall, /method:\s*"POST"/);
   assert.match(internalCall, /apikey:\s*supabaseKey/);

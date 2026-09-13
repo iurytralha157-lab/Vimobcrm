@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { RequestBodyTooLargeError, readRequestTextWithLimit } from '@/lib/security/limited-request-body'
+import { getVimobServerAPIBaseURL as getAPIBaseURL } from '@/lib/api/vimob-server-url'
+import { RequestBodyTooLargeError, readRequestJSONWithLimit } from '@/lib/security/limited-request-body'
 import {
   enforceServerRateLimit,
   getRequestIp,
@@ -43,10 +44,6 @@ function jsonResponse(
   return Response.json(body, { status, headers: responseHeaders })
 }
 
-function getAPIBaseURL() {
-  return (process.env.VIMOB_API_URL || process.env.NEXT_PUBLIC_VIMOB_API_URL || 'http://localhost:8081').replace(/\/+$/, '')
-}
-
 async function postPublicBackend(path: string, body: unknown) {
   const response = await fetch(`${getAPIBaseURL()}${path}`, {
     method: 'POST',
@@ -86,8 +83,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const rawText = await readRequestTextWithLimit(request, CHECKOUT_PLAN_MAX_BODY_BYTES)
-    rawBody = JSON.parse(rawText)
+    rawBody = await readRequestJSONWithLimit(request, CHECKOUT_PLAN_MAX_BODY_BYTES)
   } catch (error) {
     const tooLarge = error instanceof RequestBodyTooLargeError
     return jsonResponse(

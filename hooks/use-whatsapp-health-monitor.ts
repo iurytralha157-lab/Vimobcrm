@@ -20,8 +20,8 @@ interface SessionHealthState {
 }
 
 export function useWhatsAppHealthMonitor() {
-  const { profile } = useAuth();
-  const organizationId = profile?.organization_id;
+  const { activeOrganization, profile } = useAuth();
+  const organizationId = activeOrganization.organizationId;
   const queryClient = useQueryClient();
   const [monitorEnabledUserId, setMonitorEnabledUserId] = useState<string | null>(null);
   const monitorEnabled = !!profile?.id && monitorEnabledUserId === profile.id;

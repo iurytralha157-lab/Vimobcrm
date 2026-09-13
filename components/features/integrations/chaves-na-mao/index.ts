@@ -1,0 +1,1 @@
+export { ChavesNaMaoIntegrationSettings } from "./ChavesNaMaoIntegrationSettings";

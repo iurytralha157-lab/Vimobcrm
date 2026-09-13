@@ -43,6 +43,51 @@ func TestLeadPhoneUniqueViolationUsesStableConflictContract(t *testing.T) {
 	}
 }
 
+func TestLostReasonRequiredUsesStableMoveStageContract(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/v1/leads/11111111-1111-4111-8111-111111111111/move-stage", nil)
+	response := httptest.NewRecorder()
+	writeLeadError(response, request, ErrLostReasonRequired)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+	var payload struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Error.Code != "lead_lost_reason_required" {
+		t.Fatalf("error code = %q", payload.Error.Code)
+	}
+}
+
+func TestLinkedDevelopmentPropertyConsistencyViolationUsesLeadConflictContract(t *testing.T) {
+	for _, constraintName := range []string{
+		"property_development_unit_status_sync",
+		"property_development_unit_price_sync",
+		"property_development_unit_publication_sync",
+	} {
+		t.Run(constraintName, func(t *testing.T) {
+			if !isLinkedDevelopmentPropertyConsistencyViolation(&pgconn.PgError{
+				Code:           "23514",
+				ConstraintName: constraintName,
+			}) {
+				t.Fatalf("expected %s to be recognized", constraintName)
+			}
+		})
+	}
+
+	if isLinkedDevelopmentPropertyConsistencyViolation(&pgconn.PgError{
+		Code:           "23514",
+		ConstraintName: "unrelated_check",
+	}) {
+		t.Fatal("unrelated check constraint was recognized")
+	}
+}
+
 func TestChangedLeadAuditDataKeepsOnlyRealChanges(t *testing.T) {
 	current := map[string]any{
 		"name":                  "Maria",

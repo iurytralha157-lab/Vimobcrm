@@ -42,6 +42,29 @@ func TestInvitationIdentityLookupUsesCanonicalAuthIdentity(t *testing.T) {
 	}
 }
 
+func TestPublicInvitationUsesSharedStrongPasswordPolicy(t *testing.T) {
+	source, err := os.ReadFile("invitation_accept.go")
+	if err != nil {
+		t.Fatalf("read invitation acceptance source: %v", err)
+	}
+
+	text := string(source)
+	start := strings.Index(text, "func (repo Repository) AcceptInvitationPublic(")
+	end := strings.Index(text[start+1:], "\nfunc (")
+	if start < 0 || end < 0 {
+		t.Fatal("could not isolate AcceptInvitationPublic")
+	}
+	acceptance := text[start : start+1+end]
+
+	if !strings.Contains(acceptance, "passwordpolicy.IsStrong(password)") {
+		t.Fatalf("public invitation acceptance must enforce the shared strong password policy: %s", acceptance)
+	}
+	if strings.Contains(acceptance, "onboardingPasswordMinLength") ||
+		strings.Contains(acceptance, "onboardingPasswordMaxLength") {
+		t.Fatalf("public invitation acceptance must not fall back to a length-only password check: %s", acceptance)
+	}
+}
+
 func TestInvitationPreviewUsesCanonicalAuthIdentity(t *testing.T) {
 	source, err := os.ReadFile("repository.go")
 	if err != nil {
@@ -354,6 +377,7 @@ func TestRunInvitationActivationForNewAuthUserRecoversAmbiguousCommit(t *testing
 				InvitationUsed:      true,
 				MembershipExists:    true,
 				PublicProfileExists: true,
+				LegalConsentExists:  true,
 			}, nil
 		},
 	)

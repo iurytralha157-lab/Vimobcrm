@@ -13,11 +13,15 @@ import (
 	"math"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/jsonvalue"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/passwordpolicy"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/pushconfig"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
@@ -84,7 +88,7 @@ func (repo Repository) PublicSystemSettings(ctx context.Context) (map[string]any
 		return nil, err
 	}
 
-	item, err := decodeJSONObject(raw)
+	item, err := jsonvalue.DecodeObject(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -192,6 +196,74 @@ func (repo Repository) UpdateOrganization(ctx context.Context, tenantContext ten
 	return err
 }
 
+func normalizePropertySettingsRequest(request UpdatePropertySettingsRequest) (*string, *string, time.Time, error) {
+	expectedUpdatedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(request.ExpectedUpdatedAt))
+	if err != nil {
+		return nil, nil, time.Time{}, ErrInvalidInput
+	}
+
+	if request.PropertyEditPolicy.Set && request.PropertyEditPolicy.Value == nil {
+		return nil, nil, time.Time{}, ErrInvalidInput
+	}
+	propertyEditPolicy := cleanStringPointer(request.PropertyEditPolicy.Value)
+	if request.PropertyEditPolicy.Set && propertyEditPolicy == nil {
+		return nil, nil, time.Time{}, ErrInvalidInput
+	}
+	if propertyEditPolicy != nil && *propertyEditPolicy != "everyone" && *propertyEditPolicy != "responsible_or_admin" {
+		return nil, nil, time.Time{}, ErrInvalidInput
+	}
+
+	if request.PropertyOwnerContactVisibility.Set && request.PropertyOwnerContactVisibility.Value == nil {
+		return nil, nil, time.Time{}, ErrInvalidInput
+	}
+	propertyOwnerContactVisibility := cleanStringPointer(request.PropertyOwnerContactVisibility.Value)
+	if request.PropertyOwnerContactVisibility.Set && propertyOwnerContactVisibility == nil {
+		return nil, nil, time.Time{}, ErrInvalidInput
+	}
+	if propertyOwnerContactVisibility != nil && *propertyOwnerContactVisibility != "visible" && *propertyOwnerContactVisibility != "hidden" {
+		return nil, nil, time.Time{}, ErrInvalidInput
+	}
+	if propertyEditPolicy == nil && propertyOwnerContactVisibility == nil {
+		return nil, nil, time.Time{}, ErrInvalidInput
+	}
+
+	return propertyEditPolicy, propertyOwnerContactVisibility, expectedUpdatedAt, nil
+}
+
+func (repo Repository) UpdatePropertySettings(ctx context.Context, tenantContext tenant.Context, request UpdatePropertySettingsRequest) (PropertySettingsUpdateResult, error) {
+	if !canManageSetting(tenantContext, permissions.SettingsOrganization) {
+		return PropertySettingsUpdateResult{}, tenant.ErrOrganizationAccessDenied
+	}
+
+	propertyEditPolicy, propertyOwnerContactVisibility, expectedUpdatedAt, err := normalizePropertySettingsRequest(request)
+	if err != nil {
+		return PropertySettingsUpdateResult{}, err
+	}
+
+	var updatedAt time.Time
+	err = repo.db.Pool().QueryRow(ctx, `
+		update public.organizations
+		set
+			property_edit_policy = coalesce($2, property_edit_policy),
+			property_owner_contact_visibility = coalesce($3, property_owner_contact_visibility),
+			updated_at = clock_timestamp()
+		where id = $1::uuid
+		  and updated_at = $4::timestamptz
+		returning updated_at
+	`, tenantContext.OrganizationID, propertyEditPolicy, propertyOwnerContactVisibility, expectedUpdatedAt).Scan(&updatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PropertySettingsUpdateResult{}, ErrPropertySettingsConflict
+	}
+	if err != nil {
+		return PropertySettingsUpdateResult{}, err
+	}
+
+	return PropertySettingsUpdateResult{
+		OK:        true,
+		UpdatedAt: updatedAt.UTC().Format(time.RFC3339Nano),
+	}, nil
+}
+
 func (repo Repository) UploadProfileAvatar(ctx context.Context, tenantContext tenant.Context, contentType string, size int64, body io.Reader) (AssetUpload, error) {
 	objectPath := fmt.Sprintf("avatars/%s-%d.png", tenantContext.UserID, time.Now().UTC().UnixMilli())
 	if err := repo.storage.upload(ctx, "avatars", objectPath, contentType, body); err != nil {
@@ -276,7 +348,7 @@ func changePassword(
 	logger *slog.Logger,
 ) (ChangePasswordResult, error) {
 	password := request.Password
-	if len(password) < 8 || len(password) > 256 {
+	if !passwordpolicy.IsStrong(password) {
 		return ChangePasswordResult{}, ErrInvalidInput
 	}
 
@@ -404,9 +476,10 @@ func (repo Repository) ListAPIKeys(ctx context.Context, tenantContext tenant.Con
 			organization_id::text,
 			name,
 			key_prefix,
-			is_active,
+			(is_active and (expires_at is null or expires_at > now())) as is_active,
 			last_used_at::text,
 			created_by::text,
+			expires_at::text,
 			created_at::text,
 			updated_at::text
 		from public.organization_api_keys
@@ -872,6 +945,10 @@ func (repo Repository) CreateAPIKey(ctx context.Context, tenantContext tenant.Co
 	if !canManageSetting(tenantContext, permissions.SettingsIntegrations) {
 		return CreateAPIKeyResult{}, tenant.ErrOrganizationAccessDenied
 	}
+	name, ok := normalizeAPIKeyName(input.Name)
+	if !ok {
+		return CreateAPIKeyResult{}, ErrInvalidInput
+	}
 
 	rawKey, err := generateRawAPIKey()
 	if err != nil {
@@ -880,10 +957,6 @@ func (repo Repository) CreateAPIKey(ctx context.Context, tenantContext tenant.Co
 
 	keyHash := sha256.Sum256([]byte(rawKey))
 	prefix := rawKey[:14]
-	name := strings.TrimSpace(input.Name)
-	if name == "" {
-		name = "Chave Padrao"
-	}
 
 	item, err := scanAPIKey(repo.db.Pool().QueryRow(ctx, `
 		insert into public.organization_api_keys (
@@ -899,9 +972,10 @@ func (repo Repository) CreateAPIKey(ctx context.Context, tenantContext tenant.Co
 			organization_id::text,
 			name,
 			key_prefix,
-			is_active,
+			(is_active and (expires_at is null or expires_at > now())) as is_active,
 			last_used_at::text,
 			created_by::text,
+			expires_at::text,
 			created_at::text,
 			updated_at::text
 	`, tenantContext.OrganizationID, name, prefix, hex.EncodeToString(keyHash[:]), tenantContext.UserID))
@@ -910,6 +984,14 @@ func (repo Repository) CreateAPIKey(ctx context.Context, tenantContext tenant.Co
 	}
 
 	return CreateAPIKeyResult{APIKey: rawKey, Key: item}, nil
+}
+
+func normalizeAPIKeyName(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "Chave Padrao", true
+	}
+	return value, utf8.RuneCountInString(value) <= 80
 }
 
 func (repo Repository) DeleteAPIKey(ctx context.Context, tenantContext tenant.Context, apiKeyID string) error {
@@ -1808,7 +1890,7 @@ func (repo Repository) getSubscriptionOrgAndPlan(ctx context.Context, organizati
 		return nil, nil, nil, err
 	}
 
-	org, err := decodeJSONObject(orgRaw)
+	org, err := jsonvalue.DecodeObject(orgRaw)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -2084,27 +2166,19 @@ func (repo Repository) getActiveBillingPlanChange(ctx context.Context, organizat
 	if err != nil {
 		return nil, err
 	}
-	return decodeJSONObject(raw)
-}
-
-func decodeJSONObject(raw []byte) (map[string]any, error) {
-	var item map[string]any
-	if err := json.Unmarshal(raw, &item); err != nil {
-		return nil, err
-	}
-	return item, nil
+	return jsonvalue.DecodeObject(raw)
 }
 
 func decodeNullableJSONObject(raw []byte) (map[string]any, error) {
 	if strings.TrimSpace(string(raw)) == "null" || len(raw) == 0 {
 		return nil, nil
 	}
-	return decodeJSONObject(raw)
+	return jsonvalue.DecodeObject(raw)
 }
 
 func scanAPIKey(row apiKeyScanner) (APIKey, error) {
 	var item APIKey
-	var lastUsedAt, createdBy pgtype.Text
+	var lastUsedAt, createdBy, expiresAt pgtype.Text
 
 	err := row.Scan(
 		&item.ID,
@@ -2114,6 +2188,7 @@ func scanAPIKey(row apiKeyScanner) (APIKey, error) {
 		&item.IsActive,
 		&lastUsedAt,
 		&createdBy,
+		&expiresAt,
 		&item.CreatedAt,
 		&item.UpdatedAt,
 	)
@@ -2126,6 +2201,7 @@ func scanAPIKey(row apiKeyScanner) (APIKey, error) {
 
 	item.LastUsedAt = textPointer(lastUsedAt)
 	item.CreatedBy = textPointer(createdBy)
+	item.ExpiresAt = textPointer(expiresAt)
 	return item, nil
 }
 
@@ -2152,23 +2228,11 @@ func generateRawAPIKey() (string, error) {
 }
 
 func normalizeUUID(value string) (string, bool) {
-	var uuid pgtype.UUID
-	if err := uuid.Scan(strings.TrimSpace(value)); err != nil {
-		return "", false
-	}
-	if !uuid.Valid {
-		return "", false
-	}
-
-	return uuid.String(), true
+	return pgvalue.NormalizeUUID(value)
 }
 
 func textPointer(value pgtype.Text) *string {
-	if !value.Valid || strings.TrimSpace(value.String) == "" {
-		return nil
-	}
-
-	return &value.String
+	return pgvalue.TextPointerNonBlank(value)
 }
 
 func textValue(value pgtype.Text) string {

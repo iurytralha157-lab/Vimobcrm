@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/lib/supabase/client';
 import { auditAPI } from '@/lib/api/audit';
+import { isLocalReadOnlyMode } from '@/lib/local-read-only';
 
 export interface AuditLog {
   id: string;
@@ -49,6 +50,8 @@ export function useCreateAuditLog() {
       new_data?: Record<string, unknown>;
       organization_id?: string;
     }) => {
+      if (isLocalReadOnlyMode()) return;
+
       const { data: { session } } = await supabase.auth.getSession();
       const user = session?.user;
       
@@ -85,6 +88,8 @@ export async function logAuditAction(
   organizationId?: string
 ) {
   try {
+    if (isLocalReadOnlyMode()) return;
+
     const { data: { session } } = await supabase.auth.getSession();
     const user = session?.user;
 

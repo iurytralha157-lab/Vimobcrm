@@ -6,28 +6,10 @@ import {
   type CreateCadenceTaskInput,
   type UpdateCadenceTaskInput,
 } from '@/lib/api/cadences';
+import { getStructuredErrorMessage } from '@/lib/api/vimob-error';
 import { toast } from 'sonner';
 
 export type { CadenceTaskTemplate, CadenceTemplate, CreateCadenceTaskInput, UpdateCadenceTaskInput };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function asNullableString(value: unknown) {
-  return typeof value === 'string' ? value : null;
-}
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (isRecord(error)) {
-    const message = asNullableString(error.message);
-    const details = asNullableString(error.details);
-    const hint = asNullableString(error.hint);
-    return [message, details, hint].filter(Boolean).join(' ') || JSON.stringify(error);
-  }
-  return String(error);
-}
 
 export function useCadenceTemplates() {
   return useQuery({
@@ -49,7 +31,7 @@ export function useCreateCadenceTask() {
       toast.success('Tarefa adicionada!');
     },
     onError: (error) => {
-      toast.error('Erro ao adicionar tarefa: ' + getErrorMessage(error));
+      toast.error('Erro ao adicionar tarefa: ' + getStructuredErrorMessage(error));
     },
   });
 }
@@ -64,7 +46,7 @@ export function useUpdateCadenceTask() {
       toast.success('Tarefa atualizada!');
     },
     onError: (error) => {
-      toast.error('Erro ao atualizar tarefa: ' + getErrorMessage(error));
+      toast.error('Erro ao atualizar tarefa: ' + getStructuredErrorMessage(error));
     },
   });
 }
@@ -79,7 +61,7 @@ export function useDeleteCadenceTask() {
       toast.success('Tarefa removida!');
     },
     onError: (error) => {
-      toast.error('Erro ao remover tarefa: ' + getErrorMessage(error));
+      toast.error('Erro ao remover tarefa: ' + getStructuredErrorMessage(error));
     },
   });
 }
@@ -97,7 +79,7 @@ export function useSwitchLeadCadence() {
       toast.success('Cadencia alterada e tarefas recalculadas.');
     },
     onError: (error) => {
-      toast.error('Erro ao alterar cadencia: ' + getErrorMessage(error));
+      toast.error('Erro ao alterar cadencia: ' + getStructuredErrorMessage(error));
     },
   });
 }

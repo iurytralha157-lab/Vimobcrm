@@ -70,7 +70,7 @@ func (client storageClient) signedURL(ctx context.Context, bucket string, object
 		return "", ErrStorageMissing
 	}
 	payload, _ := json.Marshal(map[string]any{"expiresIn": expiresIn})
-	endpoint := fmt.Sprintf("%s/storage/v1/object/sign/%s/%s", client.projectURL, url.PathEscape(bucket), escapeStorageObjectPath(objectPath))
+	endpoint := fmt.Sprintf("%s/storage/v1/object/sign/%s/%s", client.projectURL, url.PathEscape(bucket), supabasehttp.EscapeObjectPath(objectPath))
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return "", err
@@ -113,13 +113,5 @@ func (client storageClient) doStorageRequest(request *http.Request) error {
 }
 
 func (client storageClient) objectURL(bucket string, objectPath string) string {
-	return fmt.Sprintf("%s/storage/v1/object/%s/%s", client.projectURL, url.PathEscape(bucket), escapeStorageObjectPath(objectPath))
-}
-
-func escapeStorageObjectPath(value string) string {
-	parts := strings.Split(strings.Trim(value, "/"), "/")
-	for index, part := range parts {
-		parts[index] = url.PathEscape(part)
-	}
-	return strings.Join(parts, "/")
+	return fmt.Sprintf("%s/storage/v1/object/%s/%s", client.projectURL, url.PathEscape(bucket), supabasehttp.EscapeObjectPath(objectPath))
 }

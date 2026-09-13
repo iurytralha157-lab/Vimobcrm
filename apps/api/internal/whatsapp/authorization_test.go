@@ -139,6 +139,40 @@ func TestProviderActionRequiresWhatsAppManager(t *testing.T) {
 	}
 }
 
+func TestProviderActionBodyCannotOverrideAuthorizedProviderInstance(t *testing.T) {
+	input := map[string]any{
+		"instance_id":   "foreign-instance-a",
+		"instanceId":    "foreign-instance-b",
+		"instance_name": "foreign-instance-c",
+		"instanceName":  "foreign-instance-d",
+		"name":          "foreign-instance-e",
+		"number":        "5511999999999",
+	}
+	body := providerActionBody(input)
+	for _, forbidden := range []string{"instance_id", "instanceId", "instance_name", "instanceName", "name"} {
+		if _, ok := body[forbidden]; ok {
+			t.Fatalf("public provider body retained forbidden identity field %q", forbidden)
+		}
+	}
+	if body["number"] != input["number"] {
+		t.Fatal("provider action sanitization removed the allowed action payload")
+	}
+	if _, ok := input["instanceId"]; !ok {
+		t.Fatal("provider action sanitization mutated the caller's input map")
+	}
+	payload := providerActionPayload("authorized-session", ProviderActionRequest{
+		SessionID:  "authorized-session",
+		InstanceID: "foreign-provider-instance",
+		Body:       input,
+	})
+	if payload["session_id"] != "authorized-session" {
+		t.Fatalf("provider payload session = %v, want authorized session", payload["session_id"])
+	}
+	if _, ok := payload["instance_id"]; ok {
+		t.Fatal("public provider instance override reached the internal Evolution payload")
+	}
+}
+
 func TestNotificationSenderAdministrationRequiresOrganizationAdmin(t *testing.T) {
 	tests := []struct {
 		name string
@@ -190,6 +224,47 @@ func TestToggleNotificationSessionRejectsOrdinaryUserBeforeDatabaseAccess(t *tes
 
 	if !errors.Is(err, tenant.ErrOrganizationAccessDenied) {
 		t.Fatalf("ToggleNotificationSession() error = %v, want organization access denied", err)
+	}
+}
+
+func TestNotificationSenderMutationRevalidatesRoleAndClearsTerminalFlags(t *testing.T) {
+	toggle := readWhatsAppSourceFunction(t, "session_operations.go", `func (repo Repository) ToggleNotificationSession`)
+	for _, required := range []string{
+		"revalidateNotificationSenderAdmin(ctx, tx, tenantContext)",
+		"notification_sender_selected_by_user_id",
+		"notification_sender_selected_at",
+		"status = 'connected'",
+	} {
+		if !strings.Contains(toggle, required) {
+			t.Fatalf("notification sender mutation is missing %q\n%s", required, toggle)
+		}
+	}
+
+	revalidate := readWhatsAppSourceFunction(t, "session_operations.go", `func revalidateNotificationSenderAdmin`)
+	for _, required := range []string{
+		"organization_members member",
+		"member.deleted_at is null",
+		`role != "owner" && role != "admin"`,
+		"for update",
+	} {
+		if !strings.Contains(strings.ToLower(revalidate), strings.ToLower(required)) {
+			t.Fatalf("live role revalidation is missing %q\n%s", required, revalidate)
+		}
+	}
+
+	for name, signature := range map[string]string{
+		"delete": `func (repo Repository) deleteSessionRow`,
+		"logout": `func (repo Repository) markSessionLoggedOut`,
+	} {
+		source := readWhatsAppSourceFunction(t, "session_operations.go", signature)
+		if !strings.Contains(source, "is_notification_session = false") {
+			t.Fatalf("%s must clear the notification sender flag\n%s", name, source)
+		}
+		for _, auditField := range []string{"notification_sender_selected_by_user_id", "notification_sender_selected_at"} {
+			if !strings.Contains(source, "- '"+auditField+"'") {
+				t.Fatalf("%s must clear stale notification sender audit field %s\n%s", name, auditField, source)
+			}
+		}
 	}
 }
 

@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/supabasehttp"
 )
 
 const publicationMediaBucket = "property-private"
@@ -49,7 +51,7 @@ func (client publicationStorageClient) signedURL(ctx context.Context, objectPath
 	if err != nil {
 		return "", err
 	}
-	setPublicationStorageAuth(request, client.apiKey)
+	supabasehttp.SetServiceAuth(request, client.apiKey)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := client.httpClient.Do(request)
 	if err != nil {
@@ -78,19 +80,6 @@ func (client publicationStorageClient) signedURL(ctx context.Context, objectPath
 		return client.resolveURL(item.SignedURL)
 	}
 	return "", errors.New("supabase storage did not sign the requested publication asset")
-}
-
-// Supabase accepts both legacy JWT service-role keys and the newer opaque
-// sb_secret_* keys through apikey. Only JWT-shaped keys are valid Bearer
-// credentials; sending an opaque secret in Authorization is rejected by the
-// storage gateway and needlessly duplicates a privileged credential.
-func setPublicationStorageAuth(request *http.Request, apiKey string) {
-	request.Header.Set("apikey", apiKey)
-	request.Header.Del("Authorization")
-	segments := strings.Split(apiKey, ".")
-	if len(segments) == 3 && segments[0] != "" && segments[1] != "" && segments[2] != "" {
-		request.Header.Set("Authorization", "Bearer "+apiKey)
-	}
 }
 
 func (client publicationStorageClient) resolveURL(value string) (string, error) {

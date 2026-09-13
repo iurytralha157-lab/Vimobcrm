@@ -27,20 +27,14 @@ const DASHBOARD_SHORT_STALE_TIME_MS = 1000 * 60 * 5;
 
 export function useDashboardQueryScope() {
   const {
+    activeOrganization,
     user,
     profile,
-    organization,
-    organizationsLoaded,
-    isInitializingOrg,
     tenantContext,
     isSuperAdmin,
     impersonating,
   } = useAuth();
-  const organizationId =
-    organization?.id ??
-    ((!organizationsLoaded || isInitializingOrg)
-      ? undefined
-      : profile?.organization_id || undefined);
+  const organizationId = activeOrganization.organizationId || undefined;
   const currentUserId = user?.id ?? profile?.id;
   const hasCurrentTenantContext = isTenantContextForOrganization(
     organizationId,
@@ -138,10 +132,14 @@ export function useDashboardStats() {
   });
 }
 
-export function useEnhancedDashboardStats(filters?: DashboardAPIFilters) {
+export function useEnhancedDashboardStats(
+  filters?: DashboardAPIFilters,
+  options: { enabled?: boolean; includeDetails?: boolean } = {},
+) {
   const { organizationId, currentUserId, accessSignature, isReady } =
     useDashboardQueryScope();
   const filterKey = getDashboardFiltersQueryKey(filters);
+  const includeDetails = options.includeDetails === true;
 
   return useQuery({
     queryKey: [
@@ -150,11 +148,17 @@ export function useEnhancedDashboardStats(filters?: DashboardAPIFilters) {
       currentUserId,
       accessSignature,
       filterKey,
+      includeDetails ? "details" : "summary",
     ],
-    enabled: isReady,
+    enabled: isReady && options.enabled !== false,
     queryFn: ({ signal }) =>
       performanceTracker.trackTimed("useEnhancedDashboardStats", () =>
-        getDashboardStats({ organizationId, filters, signal }),
+        getDashboardStats({
+          organizationId,
+          filters,
+          includeDetails,
+          signal,
+        }),
       ),
     staleTime: DASHBOARD_STALE_TIME_MS,
   });
@@ -179,7 +183,11 @@ export function useLeadsChartData() {
   });
 }
 
-export function useFunnelData(filters?: DashboardAPIFilters, pipelineId?: string | null) {
+export function useFunnelData(
+  filters?: DashboardAPIFilters,
+  pipelineId?: string | null,
+  options: { enabled?: boolean } = {},
+) {
   const { organizationId, currentUserId, accessSignature, isReady } =
     useDashboardQueryScope();
   const filterKey = getDashboardFiltersQueryKey(filters);
@@ -194,14 +202,18 @@ export function useFunnelData(filters?: DashboardAPIFilters, pipelineId?: string
       filterKey,
       pipelineKey,
     ],
-    enabled: isReady,
+    enabled: isReady && options.enabled !== false,
     queryFn: ({ signal }) =>
       getDashboardFunnel({ organizationId, filters, pipelineId, signal }),
     staleTime: DASHBOARD_STALE_TIME_MS,
   });
 }
 
-export function useLeadSourcesData(filters?: DashboardAPIFilters, pipelineId?: string | null) {
+export function useLeadSourcesData(
+  filters?: DashboardAPIFilters,
+  pipelineId?: string | null,
+  options: { enabled?: boolean } = {},
+) {
   const { organizationId, currentUserId, accessSignature, isReady } =
     useDashboardQueryScope();
   const filterKey = getDashboardFiltersQueryKey(filters);
@@ -216,7 +228,7 @@ export function useLeadSourcesData(filters?: DashboardAPIFilters, pipelineId?: s
       filterKey,
       pipelineKey,
     ],
-    enabled: isReady,
+    enabled: isReady && options.enabled !== false,
     queryFn: async ({ signal }): Promise<SourceDataPoint[]> => {
       const data = await getDashboardSources({
         organizationId,
@@ -276,7 +288,10 @@ export function useUpcomingTasks() {
   });
 }
 
-export function useDealsEvolutionData(filters?: DashboardAPIFilters) {
+export function useDealsEvolutionData(
+  filters?: DashboardAPIFilters,
+  options: { enabled?: boolean } = {},
+) {
   const { organizationId, currentUserId, accessSignature, isReady } =
     useDashboardQueryScope();
   const dealsEvolutionFilters = {
@@ -293,7 +308,7 @@ export function useDealsEvolutionData(filters?: DashboardAPIFilters) {
       accessSignature,
       filterKey,
     ],
-    enabled: isReady,
+    enabled: isReady && options.enabled !== false,
     queryFn: ({ signal }) =>
       performanceTracker.trackTimed("useDealsEvolutionData", () =>
         getDashboardDealsEvolution({

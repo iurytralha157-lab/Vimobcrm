@@ -6,18 +6,10 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { automationsAPI, type AutomationMediaFile } from "@/lib/api/automations";
+import { getOptionalErrorObjectMessage as getErrorMessage } from "@/lib/api/vimob-error";
 
 interface AudioRecorderInlineProps {
   onUploaded: (file: AutomationMediaFile) => void;
-}
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "object" && error && "message" in error) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === "string") return message;
-  }
-  return "";
 }
 
 function WaveformBars({ isActive }: { isActive: boolean }) {
@@ -59,7 +51,7 @@ function WaveformBars({ isActive }: { isActive: boolean }) {
 }
 
 export function AudioRecorderInline({ onUploaded }: AudioRecorderInlineProps) {
-  const { profile } = useAuth();
+  const { activeOrganization, profile } = useAuth();
   const queryClient = useQueryClient();
   const [isUploading, setIsUploading] = useState(false);
   const audioPlayRef = useRef<HTMLAudioElement | null>(null);
@@ -77,7 +69,7 @@ export function AudioRecorderInline({ onUploaded }: AudioRecorderInlineProps) {
     formatDuration,
   } = useAudioRecorder();
 
-  const orgId = profile?.organization_id;
+  const orgId = activeOrganization.organizationId;
 
   const handleStart = async () => {
     try {

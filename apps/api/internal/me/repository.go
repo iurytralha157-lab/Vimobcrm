@@ -4,10 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -160,7 +159,8 @@ func (repo Repository) organizationByID(ctx context.Context, organizationID stri
 			'website', o.website,
 			'default_commission_percentage', o.default_commission_percentage,
 			'property_edit_policy', coalesce(o.property_edit_policy, 'responsible_or_admin'),
-			'property_owner_contact_visibility', coalesce(o.property_owner_contact_visibility, 'visible')
+			'property_owner_contact_visibility', coalesce(o.property_owner_contact_visibility, 'visible'),
+			'updated_at', o.updated_at
 		)
 		from public.organizations o
 		where o.id = $1::uuid
@@ -185,12 +185,5 @@ func (repo Repository) queryJSONObject(ctx context.Context, sql string, args ...
 }
 
 func normalizeUUID(value string) (string, bool) {
-	var uuid pgtype.UUID
-	if err := uuid.Scan(strings.TrimSpace(value)); err != nil {
-		return "", false
-	}
-	if !uuid.Valid {
-		return "", false
-	}
-	return uuid.String(), true
+	return pgvalue.NormalizeUUID(value)
 }

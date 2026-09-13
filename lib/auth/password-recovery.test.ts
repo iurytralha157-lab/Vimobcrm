@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
@@ -12,6 +13,20 @@ import {
   readPasswordRecoveryUrlEvidence,
   type PasswordRecoveryStorage,
 } from './password-recovery'
+import { getSafeTelemetryLocation } from './telemetry-location'
+
+const resetPasswordScreenSource = readFileSync(
+  'components/features/auth/screens/ResetPasswordScreen.tsx',
+  'utf8',
+)
+const resetPasswordPageSource = readFileSync(
+  'app/(auth)/reset-password/page.tsx',
+  'utf8',
+)
+const telemetryProviderSource = readFileSync(
+  'components/providers/telemetry-provider.tsx',
+  'utf8',
+)
 
 function unsignedToken(payload: Record<string, unknown>) {
   const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url')
@@ -140,4 +155,82 @@ test('recognizes recovery only from the signed authentication-method claim', () 
   assert.equal(isPasswordRecoveryAccessToken(unsignedToken({ amr: [{ method: 'password' }] })), false)
   assert.equal(isPasswordRecoveryAccessToken('not-a-jwt'), false)
   assert.equal(isPasswordRecoveryAccessToken('x'.repeat((16 * 1024) + 1)), false)
+})
+
+test('frontend telemetry strips every auth credential and the complete fragment', () => {
+  const safeLocation = getSafeTelemetryLocation(new URL(
+    'https://app.test/reset-password?code=pkce-secret&token_hash=otp-secret&type=recovery&page=2#access_token=jwt-secret&refresh_token=refresh-secret',
+  ))
+
+  assert.deepEqual(safeLocation, {
+    url: 'https://app.test/reset-password?page=2',
+    origin: 'https://app.test',
+    pathname: '/reset-password',
+    search: '?page=2',
+  })
+  assert.doesNotMatch(JSON.stringify(safeLocation), /pkce-secret|otp-secret|jwt-secret|refresh-secret/)
+})
+
+test('frontend telemetry uses a strict query allowlist and redacts invitation paths', () => {
+  assert.deepEqual(
+    getSafeTelemetryLocation(new URL(
+      'https://app.test/crm?tab=kanban&view=mine&page=12&redirectTo=%2Fcrm%3Fcode%3Dsecret&search=cliente',
+    )),
+    {
+      url: 'https://app.test/crm?tab=kanban&view=mine&page=12',
+      origin: 'https://app.test',
+      pathname: '/crm',
+      search: '?tab=kanban&view=mine&page=12',
+    },
+  )
+
+  const invitation = getSafeTelemetryLocation(
+    new URL(`https://app.test/convite/${'a'.repeat(64)}?token=secret`),
+  )
+  assert.equal(invitation.pathname, '/convite/[token]')
+  assert.equal(invitation.search, '')
+  assert.doesNotMatch(invitation.url, /a{64}|secret/)
+})
+
+test('telemetry provider sends only the sanitized browser location', () => {
+  assert.match(telemetryProviderSource, /getSafeTelemetryLocation/)
+  assert.match(telemetryProviderSource, /url: safeLocation\.url/)
+  assert.match(telemetryProviderSource, /search: safeLocation\.search/)
+  assert.doesNotMatch(telemetryProviderSource, /url: window\.location\.href/)
+  assert.doesNotMatch(telemetryProviderSource, /search: window\.location\.search/)
+})
+
+test('reset screen maps external auth errors to fixed copy', () => {
+  assert.match(resetPasswordScreenSource, /hashParams\?\.has\("error_description"\)/)
+  assert.match(resetPasswordScreenSource, /Este link de recuperação expirou ou não é válido\./)
+  assert.doesNotMatch(resetPasswordScreenSource, /markInvalid\(hashError\)/)
+  assert.doesNotMatch(resetPasswordScreenSource, /hashParams\?\.get\("error_description"\)/)
+})
+
+test('recovery exits are bounded and always navigate from a finally block', () => {
+  const leaveStart = resetPasswordScreenSource.indexOf('async function leavePasswordRecovery')
+  const finishStart = resetPasswordScreenSource.indexOf('async function finishPasswordRecovery')
+  const passwordErrorStart = resetPasswordScreenSource.indexOf('function passwordErrorMessage')
+
+  assert.notEqual(leaveStart, -1)
+  assert.notEqual(finishStart, -1)
+  assert.notEqual(passwordErrorStart, -1)
+
+  const leaveSource = resetPasswordScreenSource.slice(leaveStart, finishStart)
+  const finishSource = resetPasswordScreenSource.slice(finishStart, passwordErrorStart)
+  assert.match(leaveSource, /runBestEffortAuthOperation/)
+  assert.match(leaveSource, /finally \{\s*window\.location\.replace\(destination\)/)
+  assert.match(finishSource, /signOutPasswordRecoverySession\("global"/)
+  assert.match(finishSource, /signOutPasswordRecoverySession\("local"/)
+  assert.match(finishSource, /finally \{[\s\S]*?window\.location\.replace/)
+})
+
+test('every recovery state is announced, focused and has a non-empty suspense fallback', () => {
+  assert.match(resetPasswordScreenSource, /role="status" aria-live="polite" aria-atomic="true"/)
+  assert.match(resetPasswordScreenSource, /recoveryState === "success"[\s\S]*?successHeadingRef\.current/)
+  assert.match(resetPasswordScreenSource, /ref=\{recoveryHeadingRef\}/)
+  assert.match(resetPasswordScreenSource, /ref=\{successHeadingRef\}/)
+  assert.match(resetPasswordScreenSource, /heading\?\.focus\(\)/)
+  assert.match(resetPasswordPageSource, /<Suspense[\s\S]*?fallback=\{\([\s\S]*?<VimobLoader/)
+  assert.doesNotMatch(resetPasswordPageSource, /fallback=\{null\}/)
 })

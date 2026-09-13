@@ -1,29 +1,7 @@
 import { z } from 'zod'
+import { strongPasswordSchema } from './password'
 
-// User Schemas
-export const userProfileSchema = z.object({
-  id: z.string().uuid(),
-  organization_id: z.string().uuid().nullable(),
-  name: z.string().min(1, 'Name is required'),
-  email: z.string().email('Invalid email'),
-  role: z.enum(['admin', 'user', 'super_admin']),
-  avatar_url: z.string().url().nullable(),
-  is_active: z.boolean(),
-  language: z.string().optional(),
-  theme_mode: z.enum(['light', 'dark', 'system']).optional(),
-  phone: z.string().optional(),
-  whatsapp: z.string().optional(),
-  cpf: z.string().optional(),
-  cep: z.string().optional(),
-  endereco: z.string().optional(),
-  numero: z.string().optional(),
-  complemento: z.string().optional(),
-  bairro: z.string().optional(),
-  cidade: z.string().optional(),
-  uf: z.string().optional(),
-})
-
-export type UserProfile = z.infer<typeof userProfileSchema>
+export * from './public-site'
 
 // Auth Schemas
 export const loginSchema = z.object({
@@ -35,7 +13,7 @@ export type LoginInput = z.infer<typeof loginSchema>
 
 export const signUpSchema = z.object({
   email: z.string().email('Email inválido'),
-  password: z.string().min(8, 'Senha deve ter no mínimo 8 caracteres'),
+  password: strongPasswordSchema,
   name: z.string().min(2, 'Nome deve ter no mínimo 2 caracteres'),
 })
 
@@ -46,37 +24,6 @@ export const resetPasswordSchema = z.object({
 })
 
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>
-
-// Organization Schemas
-export const organizationSchema = z.object({
-  id: z.string().uuid(),
-  name: z.string().min(1, 'Organization name is required'),
-  logo_url: z.string().url().nullable(),
-  theme_mode: z.string(),
-  accent_color: z.string(),
-  is_active: z.boolean().optional(),
-  subscription_status: z.string().optional(),
-  segment: z.enum(['imobiliario', 'telecom', 'servicos']).nullable(),
-  cnpj: z.string().optional().nullable(),
-  creci: z.string().optional().nullable(),
-  inscricao_estadual: z.string().optional().nullable(),
-  razao_social: z.string().optional().nullable(),
-  nome_fantasia: z.string().optional().nullable(),
-  cep: z.string().optional().nullable(),
-  endereco: z.string().optional().nullable(),
-  numero: z.string().optional().nullable(),
-  complemento: z.string().optional().nullable(),
-  bairro: z.string().optional().nullable(),
-  cidade: z.string().optional().nullable(),
-  uf: z.string().optional().nullable(),
-  telefone: z.string().optional().nullable(),
-  whatsapp: z.string().optional().nullable(),
-  email: z.string().email().optional().nullable(),
-  website: z.string().url().optional().nullable(),
-  default_commission_percentage: z.number().optional().nullable(),
-})
-
-export type Organization = z.infer<typeof organizationSchema>
 
 const nullableNumberInput = z.number().finite().nullable()
 
@@ -105,35 +52,6 @@ export const lostReasonSchema = z
   .max(300, 'Motivo da perda deve ter no maximo 300 caracteres')
 
 export type LostReasonInput = z.infer<typeof lostReasonSchema>
-
-export const publicSiteContactSchema = z.object({
-  organization_id: z.string().uuid(),
-  name: z.string().trim().min(2, 'Informe seu nome').max(120, 'Nome muito longo'),
-  email: z.string().trim().email('E-mail invalido').optional().or(z.literal('')),
-  phone: z.string().trim().min(8, 'Informe um telefone valido').max(30, 'Telefone muito longo'),
-  message: z.string().trim().min(2, 'Informe uma mensagem').max(1000, 'Mensagem muito longa'),
-  best_time: z.string().trim().max(80, 'Horario muito longo').optional().or(z.literal('')),
-  privacy_accepted: z.literal(true, {
-    errorMap: () => ({ message: 'Aceite a politica de privacidade para continuar' }),
-  }),
-  privacy_url: z.string().trim().max(300).optional().or(z.literal('')),
-  property_id: z.string().uuid().optional(),
-  property_code: z.string().trim().max(80).optional(),
-  session_id: z.string().trim().optional().nullable(),
-  submission_id: z.string().trim().min(8).max(120),
-  website: z.string().trim().max(200).optional().or(z.literal('')),
-  landing_page: z.string().trim().max(500).optional().or(z.literal('')),
-  referrer: z.string().trim().max(1000).optional().or(z.literal('')),
-  utm_source: z.string().trim().max(300).optional().nullable(),
-  utm_medium: z.string().trim().max(300).optional().nullable(),
-  utm_campaign: z.string().trim().max(300).optional().nullable(),
-  utm_term: z.string().trim().max(300).optional().nullable(),
-  utm_content: z.string().trim().max(300).optional().nullable(),
-  gclid: z.string().trim().max(300).optional().nullable(),
-  fbclid: z.string().trim().max(300).optional().nullable(),
-})
-
-export type PublicSiteContactInput = z.infer<typeof publicSiteContactSchema>
 
 // Meta Schemas
 export const metaLeadgenValueSchema = z.object({

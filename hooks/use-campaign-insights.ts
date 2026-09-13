@@ -21,10 +21,16 @@ export interface CampaignAggregated {
   link_clicks: number | null;
   leads_reported: number;
   leads_count: number;
+  conversations_count: number;
+  meta_reported_leads: number;
+  meta_reported_conversations: number;
+  reported_results: number;
+  crm_attributed_leads: number;
+  capture_gap: number;
+  capture_rate: number | null;
   contacted_count: number;
   responded_count: number;
   qualified_count: number;
-  conversations_count: number;
   won_count: number;
   lost_count: number;
   open_count: number;
@@ -56,6 +62,7 @@ export interface AdsetAggregated {
   link_clicks: number | null;
   leads_reported: number;
   leads_count: number;
+  conversations_count: number;
   contacted_count: number;
   responded_count: number;
   qualified_count: number;
@@ -67,6 +74,10 @@ export interface AdsetAggregated {
   ctr: number | null;
   cpc: number | null;
   hook_rate: number | null;
+  status: string | null;
+  budget: number | null;
+  budget_type: string | null;
+  optimization_goal: string | null;
   currency: string | null;
   ads: AdAggregated[];
 }
@@ -81,6 +92,7 @@ export interface AdAggregated {
   link_clicks: number | null;
   leads_reported: number;
   leads_count: number;
+  conversations_count: number;
   contacted_count: number;
   responded_count: number;
   qualified_count: number;
@@ -92,6 +104,8 @@ export interface AdAggregated {
   ctr: number | null;
   cpc: number | null;
   hook_rate: number | null;
+  status: string | null;
+  creative_id: string | null;
   creative_url: string | null;
   creative_video_url: string | null;
   creative_permalink_url: string | null;
@@ -141,6 +155,12 @@ export interface MarketingDailyPerformance {
   revenue: number;
   conversations: number;
   total: number;
+  metaReportedLeads: number;
+  metaReportedConversations: number;
+  reportedResults: number;
+  crmAttributedLeads: number;
+  captureGap: number;
+  captureRate: number | null;
 }
 
 export interface MarketingMediaAsset {
@@ -167,12 +187,20 @@ export interface MarketingMediaAsset {
   last_synced_at: string;
 }
 
+export interface CampaignInsightsFilters extends DashboardFilters {
+  accountId?: string | null;
+  objective?: string | null;
+}
+
 function parseCalendarDate(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     throw new Error("Período de sincronização inválido");
   }
   const date = new Date(`${value}T00:00:00.000Z`);
-  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
+  if (
+    !Number.isFinite(date.getTime()) ||
+    date.toISOString().slice(0, 10) !== value
+  ) {
     throw new Error("Período de sincronização inválido");
   }
   return date;
@@ -210,9 +238,9 @@ export function splitMarketingSyncRange(dateStart: string, dateStop: string) {
   return windows;
 }
 
-export function useCampaignInsights(filters: DashboardFilters) {
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+export function useCampaignInsights(filters: CampaignInsightsFilters) {
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
   const dateFrom = formatMarketingCalendarDate(filters.dateRange.from);
   const dateTo = formatMarketingCalendarDate(filters.dateRange.to);
 
@@ -230,6 +258,8 @@ export function useCampaignInsights(filters: DashboardFilters) {
       filters.adId,
       filters.tagId,
       filters.dealStatus,
+      filters.accountId,
+      filters.objective,
     ],
     queryFn: async ({ signal }) => {
       if (!organizationId) return emptyResult();
@@ -246,6 +276,8 @@ export function useCampaignInsights(filters: DashboardFilters) {
           adId: filters.adId,
           tagId: filters.tagId,
           dealStatus: filters.dealStatus,
+          accountId: filters.accountId,
+          objective: filters.objective,
         },
         { organizationId, signal },
       );
@@ -294,6 +326,12 @@ function emptyResult() {
     summary: {
       totalLeads: 0,
       reportedLeads: 0,
+      metaReportedLeads: 0,
+      metaReportedConversations: 0,
+      reportedResults: 0,
+      crmAttributedLeads: 0,
+      captureGap: 0,
+      captureRate: null as number | null,
       totalContacted: 0,
       totalResponded: 0,
       totalQualified: 0,
@@ -329,12 +367,16 @@ function emptyResult() {
       connectedPages: 0,
       adAccounts: 0,
       instagramAccounts: 0,
+      marketingTokenAvailable: false,
+      instagramInsightsAvailable: false,
       lastIntegrationSync: null as string | null,
     },
     dataQuality: {
       model: "daily_facts_v1",
       attribution: "last_meta_touch_in_entry_cohort",
       qualification: "qualified_stage_history",
+      reportedResultsRule: "meta_leads_plus_messaging_conversations_non_unique",
+      reportedResultsMayOverlap: true,
       hasDailyFacts: false,
       hasAccountFacts: false,
       hasCRMAttribution: false,
@@ -351,6 +393,14 @@ function emptyResult() {
       summaryLevel: "campaign_fallback",
       legacyRowsIgnored: 0,
     },
+    filterOptions: {
+      accounts: [] as Array<{
+        id: string;
+        name: string;
+        currency: string | null;
+      }>,
+      objectives: [] as Array<{ value: string; label: string }>,
+    },
     lastSync: null as string | null,
     hasSpendData: false,
   };
@@ -358,11 +408,17 @@ function emptyResult() {
 
 export function useSyncCampaignInsights() {
   const queryClient = useQueryClient();
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useMutation({
-    mutationFn: async ({ dateStart, dateStop }: { dateStart: string; dateStop: string }) => {
+    mutationFn: async ({
+      dateStart,
+      dateStop,
+    }: {
+      dateStart: string;
+      dateStop: string;
+    }) => {
       const aggregate: MetaMarketingSyncResponse = {
         success: true,
         synced: 0,
@@ -371,10 +427,13 @@ export function useSyncCampaignInsights() {
         errors: [],
       };
       for (const window of splitMarketingSyncRange(dateStart, dateStop)) {
-        const result = await integrationsAPI.syncMetaMarketing({
-          date_start: window.dateStart,
-          date_stop: window.dateStop,
-        }, organizationId);
+        const result = await integrationsAPI.syncMetaMarketing(
+          {
+            date_start: window.dateStart,
+            date_stop: window.dateStop,
+          },
+          organizationId,
+        );
         aggregate.success = aggregate.success && result.success !== false;
         aggregate.synced = (aggregate.synced ?? 0) + (result.synced ?? 0);
         aggregate.media_synced =

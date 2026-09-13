@@ -113,6 +113,7 @@ func TestFirstEligibleRecoveryObservationDoesNotReconnect(t *testing.T) {
 		Session{AdvancedSettings: map[string]any{}},
 		"provider-id",
 		"session-token",
+		"",
 	)
 	if err != nil {
 		t.Fatalf("first recovery observation: %v", err)
@@ -130,8 +131,8 @@ func TestFirstEligibleRecoveryObservationDoesNotReconnect(t *testing.T) {
 }
 
 func TestSupervisorMutationSQLPreservesLogoutAndDeletedSessions(t *testing.T) {
-	source := readWhatsAppSourceFunction(t, "session_supervisor.go", `func (repo Repository) updateSessionStatusFromProvider`)
-	assertLifecycleMutationGuards(t, "provider status update", source, 2)
+	source := readWhatsAppSourceFunction(t, "session_supervisor.go", `func (repo Repository) updateSessionStatusFromProviderIfCurrent`)
+	assertLifecycleMutationGuards(t, "provider status update", source, 1)
 
 	failureSource := readWhatsAppSourceFunction(t, "session_supervisor.go", `func (repo Repository) recordSessionRecoveryFailure`)
 	assertLifecycleMutationGuards(t, "recovery failure update", failureSource, 1)
@@ -156,6 +157,109 @@ func TestRecoveryExhaustionDoesNotDisablePassiveSynchronization(t *testing.T) {
 	deferredSource := readWhatsAppSourceFunction(t, "session_supervisor.go", `func (repo Repository) recordSessionRecoveryDeferred`)
 	if strings.Contains(deferredSource, "auto_reconnect_failure_count") {
 		t.Fatalf("the first provider-owned grace observation must not count as a failed CRM attempt\n%s", strings.TrimSpace(deferredSource))
+	}
+}
+
+func TestSupervisorClaimsPrivateStateInsteadOfMutatingSessionFreshness(t *testing.T) {
+	source := readWhatsAppSourceFunction(t, "session_supervisor.go", `func (repo Repository) superviseActiveSessionsWithLimit`)
+	if !strings.Contains(source, "private.claim_whatsapp_sessions_for_supervision") {
+		t.Fatalf("supervisor must use the backend-only atomic claim function\n%s", strings.TrimSpace(source))
+	}
+	for _, forbidden := range []string{
+		"supervisor_last_claimed_at_ms",
+		"supervisor_probe_claim_token",
+		"set updated_at = now()",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("supervisor claim leaked operational state into whatsapp_sessions via %q\n%s", forbidden, strings.TrimSpace(source))
+		}
+	}
+}
+
+func TestSupervisorProviderObservationUsesWebhookTupleFence(t *testing.T) {
+	source := readWhatsAppSourceFunction(t, "session_supervisor.go", `func (repo Repository) updateSessionStatusFromProviderIfCurrent`)
+	for _, required := range []string{
+		"webhook_state_event_at_ms",
+		"webhook_state_event_rank",
+		"webhook_state_event_key",
+		"supervisor_state.claim_token",
+		"for update",
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("provider observation is missing freshness fence %q\n%s", required, strings.TrimSpace(source))
+		}
+	}
+	if strings.Contains(source, "updated_at = $4::timestamptz") {
+		t.Fatalf("generic row churn must not be interpreted as provider freshness\n%s", strings.TrimSpace(source))
+	}
+	if !strings.Contains(source, `coalesce(status, '') <> 'connected' or last_connected_at is null`) {
+		t.Fatalf("last_connected_at must move only on a real transition or null repair\n%s", strings.TrimSpace(source))
+	}
+}
+
+func TestSupervisorLeadershipAndProbeConcurrencyAreBounded(t *testing.T) {
+	leadership := readWhatsAppSourceFunction(t, "session_supervisor.go", `func (repo Repository) acquireWhatsAppSessionSupervisorLeadership`)
+	if !strings.Contains(leadership, "acquireWhatsAppAdvisoryLocksWithPermit") || !strings.Contains(leadership, "whatsappSessionSupervisorLeaderKey") {
+		t.Fatalf("supervisor leadership must be cross-replica and non-overlapping\n%s", strings.TrimSpace(leadership))
+	}
+	workers := readWhatsAppSourceFunction(t, "session_supervisor.go", `func supervisorWorkerCount`)
+	if !strings.Contains(workers, "whatsappSessionSupervisorConcurrency") {
+		t.Fatalf("supervisor provider probes must have a hard concurrency ceiling\n%s", strings.TrimSpace(workers))
+	}
+}
+
+func TestSupervisorStateMigrationIsPrivateFencedAndFair(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve test source path")
+	}
+	migrationPath := filepath.Join(
+		filepath.Dir(testFile),
+		"..", "..", "..", "..",
+		"supabase", "migrations", "20260912173704_harden_whatsapp_session_supervisor_state.sql",
+	)
+	raw, err := os.ReadFile(migrationPath)
+	if err != nil {
+		t.Fatalf("read supervisor state migration: %v", err)
+	}
+	source := strings.ToLower(string(raw))
+	for _, required := range []string{
+		"begin;",
+		"set local lock_timeout = '3s'",
+		"end;\n$supervisor_foundation$;",
+		"end;\n$migration$;",
+		"end;\n$function$;",
+		"private.whatsapp_session_supervisor_state",
+		"security definer",
+		"set search_path = pg_catalog",
+		"for update of state skip locked",
+		"partition by state.organization_id",
+		"provider_instance_key",
+		"whatsapp_session_supervisor_state_provider_instance_uidx",
+		"provider_instance_unique_index_contract",
+		"if index_definition is distinct from",
+		"delete from private.whatsapp_session_supervisor_state as state",
+		"where not exists",
+		"'missing:' || session.id::text",
+		"claim_token",
+		"lease_expires_at",
+		"force row level security",
+		"revoke all on function private.claim_whatsapp_sessions_for_supervision",
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("supervisor state migration is missing %q", required)
+		}
+	}
+	if strings.Contains(source, "session.updated_at") {
+		t.Fatal("supervisor migration must not use whatsapp_sessions.updated_at as its cursor")
+	}
+	backfill := strings.Index(source, "materialize every session eligible for supervision")
+	providerIdentityFence := strings.Index(source, "create unique index if not exists whatsapp_session_supervisor_state_provider_instance_uidx")
+	if backfill < 0 || providerIdentityFence < 0 || backfill > providerIdentityFence {
+		t.Fatal("legacy provider identities must be materialized before the global uniqueness fence is installed")
+	}
+	if strings.Count(source, "delete from private.whatsapp_session_supervisor_state as state") < 2 {
+		t.Fatal("inactive provider identities must be retired both during migration and before later claims")
 	}
 }
 

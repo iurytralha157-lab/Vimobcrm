@@ -27,7 +27,7 @@ func (handler Handler) WithPublicClientIPResolver(resolver publicingress.ClientI
 }
 
 func (handler Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -46,8 +46,38 @@ func (handler Handler) InvokeFunction(w http.ResponseWriter, r *http.Request) {
 	)
 }
 
+// InvokeGoogleCalendarFunction exposes only the two self-scoped Google Calendar
+// functions to authenticated organization members. The generic function proxy
+// remains protected by SettingsIntegrations because its allowlist also contains
+// organization-wide and billing operations.
+func (handler Handler) InvokeGoogleCalendarFunction(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !allowedGoogleCalendarFunction(name) {
+		writeIntegrationError(w, r, ErrFunctionNotAllowed)
+		return
+	}
+
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
+	if !ok {
+		return
+	}
+	body, err := readJSONBodyWithOrganization(r, tenantContext.OrganizationID)
+	if err != nil {
+		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
+		return
+	}
+
+	handler.invokeAuthorizedFunction(
+		w,
+		r,
+		name,
+		r.Header.Get("Authorization"),
+		body,
+	)
+}
+
 func (handler Handler) CreateSubscriptionCharge(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -160,7 +190,7 @@ func (handler Handler) invokePublicFunction(w http.ResponseWriter, r *http.Reque
 }
 
 func (handler Handler) GetVista(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -177,13 +207,13 @@ func (handler Handler) GetVista(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) SaveVista(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	defer r.Body.Close()
 	var request VistaIntegrationRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.SaveVista(r.Context(), tenantContext, request)
@@ -195,7 +225,7 @@ func (handler Handler) SaveVista(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) DeleteVista(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -207,7 +237,7 @@ func (handler Handler) DeleteVista(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) GetImoview(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -224,13 +254,13 @@ func (handler Handler) GetImoview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) SaveImoview(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	defer r.Body.Close()
 	var request ImoviewIntegrationRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.SaveImoview(r.Context(), tenantContext, request)
@@ -242,7 +272,7 @@ func (handler Handler) SaveImoview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) DeleteImoview(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -254,7 +284,7 @@ func (handler Handler) DeleteImoview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) ListMetaIntegrations(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -267,13 +297,13 @@ func (handler Handler) ListMetaIntegrations(w http.ResponseWriter, r *http.Reque
 }
 
 func (handler Handler) SaveMetaConversionFeedback(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	defer r.Body.Close()
 	var request MetaConversionFeedbackRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.SaveMetaConversionFeedback(r.Context(), tenantContext, request)
@@ -285,7 +315,7 @@ func (handler Handler) SaveMetaConversionFeedback(w http.ResponseWriter, r *http
 }
 
 func (handler Handler) ListMetaPageForms(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -299,7 +329,7 @@ func (handler Handler) ListMetaPageForms(w http.ResponseWriter, r *http.Request)
 }
 
 func (handler Handler) ShowMetaOAuthFlow(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -312,7 +342,7 @@ func (handler Handler) ShowMetaOAuthFlow(w http.ResponseWriter, r *http.Request)
 }
 
 func (handler Handler) ListMetaFormConfigs(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -325,13 +355,13 @@ func (handler Handler) ListMetaFormConfigs(w http.ResponseWriter, r *http.Reques
 }
 
 func (handler Handler) SaveMetaFormConfig(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	defer r.Body.Close()
 	var request MetaFormConfigRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.SaveMetaFormConfig(r.Context(), tenantContext, request)
@@ -343,13 +373,13 @@ func (handler Handler) SaveMetaFormConfig(w http.ResponseWriter, r *http.Request
 }
 
 func (handler Handler) ToggleMetaFormConfig(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	defer r.Body.Close()
 	var request ToggleMetaFormConfigRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	if err := handler.repo.ToggleMetaFormConfig(r.Context(), tenantContext, request); err != nil {
@@ -360,7 +390,7 @@ func (handler Handler) ToggleMetaFormConfig(w http.ResponseWriter, r *http.Reque
 }
 
 func (handler Handler) DeleteMetaFormConfig(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -372,7 +402,7 @@ func (handler Handler) DeleteMetaFormConfig(w http.ResponseWriter, r *http.Reque
 }
 
 func (handler Handler) MetaWebhookHealth(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -385,7 +415,7 @@ func (handler Handler) MetaWebhookHealth(w http.ResponseWriter, r *http.Request)
 }
 
 func (handler Handler) ListMetaConversations(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -398,7 +428,7 @@ func (handler Handler) ListMetaConversations(w http.ResponseWriter, r *http.Requ
 }
 
 func (handler Handler) ListMetaMessages(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -411,13 +441,13 @@ func (handler Handler) ListMetaMessages(w http.ResponseWriter, r *http.Request) 
 }
 
 func (handler Handler) SendMetaMessage(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	defer r.Body.Close()
 	var request SendMetaMessageRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	result, err := handler.repo.SendMetaMessage(r.Context(), tenantContext, r.PathValue("id"), request)
@@ -426,25 +456,6 @@ func (handler Handler) SendMetaMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpserver.WriteJSON(w, result.StatusCode, Envelope[map[string]any]{Data: result.Message})
-}
-
-func organizationContext(w http.ResponseWriter, r *http.Request) (tenant.Context, bool) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.OrganizationID == "" {
-		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
-		return tenant.Context{}, false
-	}
-	return tenantContext, true
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
-		return err
-	}
-	return nil
 }
 
 func readJSONBodyWithOrganization(r *http.Request, organizationID string) ([]byte, error) {
@@ -490,6 +501,8 @@ func writeIntegrationError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusNotFound, "integration_not_found", "Integration was not found.")
 	case errors.Is(err, ErrMetaUpstream):
 		httpserver.WriteError(w, r, http.StatusBadGateway, "meta_upstream_failed", "Meta could not complete the request.")
+	case errors.Is(err, ErrMetaFormRouteConflict):
+		httpserver.WriteError(w, r, http.StatusConflict, "meta_form_route_conflict", "This Meta form is already assigned to another CRM organization.")
 	case errors.Is(err, ErrIdempotencyConflict):
 		httpserver.WriteError(w, r, http.StatusConflict, "idempotency_conflict", "This request key is already bound to another message.")
 	case errors.Is(err, tenant.ErrOrganizationAccessDenied):

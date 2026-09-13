@@ -108,7 +108,7 @@ func (handler Handler) RecordFirstResponse(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	request, ok := decodeJSON[RecordFirstResponseRequest](w, r, 1<<16)
+	request, ok := httpserver.DecodeJSONValue[RecordFirstResponseRequest](w, r, 1<<16)
 	if !ok {
 		return
 	}

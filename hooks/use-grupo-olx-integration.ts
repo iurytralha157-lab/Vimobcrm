@@ -7,12 +7,13 @@ import {
   type IntegrationJSON,
 } from '@/lib/api'
 import { getAPIBaseURL } from '@/lib/api/vimob-client'
+import { stringifyErrorMessage as getErrorMessage } from '@/lib/api/vimob-error'
 import type {
   GrupoOLXImportReport,
   PropertyPublicationDesiredState,
   PropertyPublicationObservedState,
 } from '@/lib/validation'
-import { useAuth } from '@/contexts/AuthContext'
+import { useOptionalActiveOrganizationId as useOrganizationId } from '@/hooks/use-active-organization'
 
 export type GrupoOLXIntegration = IntegrationJSON & {
   id?: string
@@ -60,18 +61,6 @@ export type GrupoOLXPublicURLs = {
   feedURL: string
   leadWebhookURL: string
   importReportURL: string
-}
-
-function useOrganizationId() {
-  const { profile, organization, organizationsLoaded, isInitializingOrg } = useAuth()
-  if (organization?.id) return organization.id
-  if (!organizationsLoaded || isInitializingOrg) return undefined
-  return profile?.organization_id || undefined
-}
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message
-  return String(error)
 }
 
 function invalidateGrupoOLX(queryClient: ReturnType<typeof useQueryClient>) {

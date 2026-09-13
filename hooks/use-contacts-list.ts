@@ -136,14 +136,17 @@ export interface Contact {
   meta_raw_payload_json: string | null;
 }
 
-export function useContactsList(filters: ContactListFilters) {
-  const { organization, profile, user } = useAuth();
-  const organizationId = organization?.id ?? profile?.organization_id ?? null;
+export function useContactsList(
+  filters: ContactListFilters,
+  options?: { enabled?: boolean },
+) {
+  const { activeOrganization, user } = useAuth();
+  const organizationId = activeOrganization.organizationId ?? null;
 
   return useQuery({
     queryKey: ['contacts-list', organizationId, user?.id, filters],
     queryFn: ({ signal }) => contactsAPI.list(filters, organizationId, { signal }),
-    enabled: !!user?.id && !!organizationId,
+    enabled: !!user?.id && !!organizationId && (options?.enabled ?? true),
     placeholderData: keepPreviousData,
     staleTime: CONTACTS_STALE_TIME_MS,
     gcTime: CONTACTS_CACHE_TIME_MS,

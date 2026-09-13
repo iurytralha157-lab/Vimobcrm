@@ -56,15 +56,16 @@ select is(
 select is(
   (
     select count(*)
-    from pg_policies
-    where schemaname = 'public'
-      and tablename = any(array[
+    from pg_policies as policy
+    where policy.schemaname = 'public'
+      and policy.tablename = any(array[
         'lead_funnel_events',
         'meta_crm_event_outbox'
       ])
+      and policy.permissive = 'PERMISSIVE'
   ),
   0::bigint,
-  'backend-only funnel tables expose no Data API policy'
+  'backend-only funnel tables expose no permissive Data API policy'
 );
 
 select ok(

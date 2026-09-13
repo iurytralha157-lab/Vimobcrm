@@ -11,9 +11,28 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/supabasehttp"
 )
 
-var ErrStorageNotConfigured = errors.New("storage is not configured")
+var (
+	ErrStorageNotConfigured = errors.New("storage is not configured")
+	ErrStorageOperation     = errors.New("storage operation failed")
+	errStorageObjectInvalid = errors.New("stored object is invalid")
+)
+
+type storageHTTPStatusError struct {
+	StatusCode int
+	Message    string
+}
+
+func (err *storageHTTPStatusError) Error() string {
+	return fmt.Sprintf("supabase storage request failed with HTTP %d: %s", err.StatusCode, err.Message)
+}
+
+func (err *storageHTTPStatusError) Unwrap() error {
+	return ErrStorageOperation
+}
 
 type StorageConfig struct {
 	ProjectURL string
@@ -48,7 +67,7 @@ func (client storageClient) upload(ctx context.Context, bucket string, objectPat
 		"%s/storage/v1/object/%s/%s",
 		client.projectURL,
 		url.PathEscape(bucket),
-		escapeStorageObjectPath(objectPath),
+		supabasehttp.EscapeObjectPath(objectPath),
 	)
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
@@ -58,7 +77,7 @@ func (client storageClient) upload(ctx context.Context, bucket string, objectPat
 	if strings.TrimSpace(contentType) == "" {
 		contentType = "application/octet-stream"
 	}
-	client.setAuthorizedHeaders(request)
+	supabasehttp.SetServiceAuth(request, client.apiKey)
 	request.Header.Set("Content-Type", contentType)
 	request.Header.Set("Cache-Control", "3600")
 	request.Header.Set("x-upsert", "false")
@@ -82,16 +101,7 @@ func (client storageClient) upload(ctx context.Context, bucket string, objectPat
 }
 
 func (client storageClient) publicURL(bucket string, objectPath string) string {
-	if client.projectURL == "" {
-		return ""
-	}
-
-	return fmt.Sprintf(
-		"%s/storage/v1/object/public/%s/%s",
-		client.projectURL,
-		url.PathEscape(bucket),
-		escapeStorageObjectPath(objectPath),
-	)
+	return supabasehttp.PublicObjectURL(client.projectURL, bucket, objectPath)
 }
 
 func (client storageClient) createSignedUploadURL(ctx context.Context, bucket string, objectPath string) (string, string, error) {
@@ -102,7 +112,7 @@ func (client storageClient) createSignedUploadURL(ctx context.Context, bucket st
 		"%s/storage/v1/object/upload/sign/%s/%s",
 		client.projectURL,
 		url.PathEscape(bucket),
-		escapeStorageObjectPath(objectPath),
+		supabasehttp.EscapeObjectPath(objectPath),
 	)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader([]byte(`{}`)))
 	if err != nil {
@@ -140,20 +150,20 @@ func (client storageClient) objectInfo(ctx context.Context, bucket string, objec
 		"%s/storage/v1/object/info/%s/%s",
 		client.projectURL,
 		url.PathEscape(bucket),
-		escapeStorageObjectPath(objectPath),
+		supabasehttp.EscapeObjectPath(objectPath),
 	)
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return propertyStorageObjectInfo{}, err
+		return propertyStorageObjectInfo{}, fmt.Errorf("%w: build object info request: %v", ErrStorageOperation, err)
 	}
-	client.setAuthorizedHeaders(request)
+	supabasehttp.SetServiceAuth(request, client.apiKey)
 	raw, err := client.doStorageRequest(request)
 	if err != nil {
 		return propertyStorageObjectInfo{}, err
 	}
 	var result map[string]any
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return propertyStorageObjectInfo{}, err
+		return propertyStorageObjectInfo{}, fmt.Errorf("%w: decode object info response: %v", ErrStorageOperation, err)
 	}
 	metadata, _ := result["metadata"].(map[string]any)
 	mimeType := firstStorageString(metadata, "mimetype", "mimeType", "content-type", "contentType")
@@ -178,17 +188,17 @@ func (client storageClient) objectPrefix(ctx context.Context, bucket string, obj
 		"%s/storage/v1/object/authenticated/%s/%s",
 		client.projectURL,
 		url.PathEscape(bucket),
-		escapeStorageObjectPath(objectPath),
+		supabasehttp.EscapeObjectPath(objectPath),
 	)
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: build object verification request: %v", ErrStorageOperation, err)
 	}
-	client.setAuthorizedHeaders(request)
+	supabasehttp.SetServiceAuth(request, client.apiKey)
 	request.Header.Set("Range", "bytes=0-511")
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: verify stored object: %v", ErrStorageOperation, err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -197,14 +207,14 @@ func (client storageClient) objectPrefix(ctx context.Context, bucket string, obj
 		if message == "" {
 			message = response.Status
 		}
-		return nil, fmt.Errorf("supabase storage object verification failed: %s", message)
+		return nil, &storageHTTPStatusError{StatusCode: response.StatusCode, Message: message}
 	}
 	prefix, err := io.ReadAll(io.LimitReader(response.Body, 512))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: read stored object bytes: %v", ErrStorageOperation, err)
 	}
 	if len(prefix) == 0 {
-		return nil, errors.New("supabase storage object verification returned no bytes")
+		return nil, fmt.Errorf("%w: stored object verification returned no bytes", errStorageObjectInvalid)
 	}
 	return prefix, nil
 }
@@ -275,34 +285,34 @@ func (client storageClient) remove(ctx context.Context, bucket string, objectPat
 func (client storageClient) doStorageRequest(request *http.Request) ([]byte, error) {
 	response, err := client.httpClient.Do(request)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrStorageOperation, err)
 	}
 	defer response.Body.Close()
 	raw, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if readErr != nil {
-		return nil, readErr
+		return nil, fmt.Errorf("%w: read response: %v", ErrStorageOperation, readErr)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		message := strings.TrimSpace(string(raw))
 		if message == "" {
 			message = response.Status
 		}
-		return nil, fmt.Errorf("supabase storage request failed: %s", message)
+		return nil, &storageHTTPStatusError{StatusCode: response.StatusCode, Message: message}
 	}
 	return raw, nil
 }
 
-func (client storageClient) setAuthorizedHeaders(request *http.Request) {
-	request.Header.Set("apikey", client.apiKey)
-	request.Header.Del("Authorization")
-	segments := strings.Split(client.apiKey, ".")
-	if len(segments) == 3 && segments[0] != "" && segments[1] != "" && segments[2] != "" {
-		request.Header.Set("Authorization", "Bearer "+client.apiKey)
+func isInvalidStoredObjectError(err error) bool {
+	if errors.Is(err, errStorageObjectInvalid) {
+		return true
 	}
+	var statusError *storageHTTPStatusError
+	return errors.As(err, &statusError) &&
+		(statusError.StatusCode == http.StatusBadRequest || statusError.StatusCode == http.StatusNotFound)
 }
 
 func (client storageClient) setAuthorizedJSONHeaders(request *http.Request) {
-	client.setAuthorizedHeaders(request)
+	supabasehttp.SetServiceAuth(request, client.apiKey)
 	request.Header.Set("Content-Type", "application/json")
 }
 
@@ -342,13 +352,4 @@ func firstStorageInt64(values map[string]any, keys ...string) int64 {
 		}
 	}
 	return -1
-}
-
-func escapeStorageObjectPath(value string) string {
-	parts := strings.Split(strings.Trim(value, "/"), "/")
-	for index, part := range parts {
-		parts[index] = url.PathEscape(part)
-	}
-
-	return strings.Join(parts, "/")
 }

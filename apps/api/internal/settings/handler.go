@@ -2,7 +2,6 @@ package settings
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -57,7 +56,7 @@ func (handler Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 
 	defer r.Body.Close()
 	var request UpdateProfileRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	if err := handler.repo.UpdateProfile(r.Context(), tenantContext, request); err != nil {
@@ -94,14 +93,14 @@ func (handler Handler) UploadProfileAvatar(w http.ResponseWriter, r *http.Reques
 }
 
 func (handler Handler) UpdateOrganization(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 
 	defer r.Body.Close()
 	var request UpdateOrganizationRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	if err := handler.repo.UpdateOrganization(r.Context(), tenantContext, request); err != nil {
@@ -112,8 +111,28 @@ func (handler Handler) UpdateOrganization(w http.ResponseWriter, r *http.Request
 	httpserver.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (handler Handler) UpdatePropertySettings(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
+	if !ok {
+		return
+	}
+
+	defer r.Body.Close()
+	var request UpdatePropertySettingsRequest
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
+		return
+	}
+	result, err := handler.repo.UpdatePropertySettings(r.Context(), tenantContext, request)
+	if err != nil {
+		writeSettingsError(w, r, err)
+		return
+	}
+
+	httpserver.WriteJSON(w, http.StatusOK, result)
+}
+
 func (handler Handler) UploadOrganizationLogo(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -145,7 +164,7 @@ func (handler Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	defer r.Body.Close()
 	var request ChangePasswordRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	source, err := passwordChangeSourceForSession(authenticatedUser, request.Source)
@@ -199,7 +218,7 @@ func (handler Handler) PasswordStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -214,7 +233,7 @@ func (handler Handler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) ListOrganizationModules(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -253,7 +272,7 @@ func (handler Handler) UpdateSetupGuideProgress(w http.ResponseWriter, r *http.R
 
 	defer r.Body.Close()
 	var request UpdateSetupGuideProgressRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 
@@ -267,14 +286,14 @@ func (handler Handler) UpdateSetupGuideProgress(w http.ResponseWriter, r *http.R
 }
 
 func (handler Handler) SavePushToken(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 
 	defer r.Body.Close()
 	var request PushTokenRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	result, err := handler.repo.SavePushToken(r.Context(), tenantContext, request)
@@ -308,7 +327,7 @@ func (handler Handler) DeactivatePushToken(w http.ResponseWriter, r *http.Reques
 
 	defer r.Body.Close()
 	var request DeactivatePushTokenRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	if err := handler.repo.DeactivatePushToken(r.Context(), tenantContext, request); err != nil {
@@ -319,14 +338,14 @@ func (handler Handler) DeactivatePushToken(w http.ResponseWriter, r *http.Reques
 }
 
 func (handler Handler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 
 	defer r.Body.Close()
 	var request CreateAPIKeyRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 
@@ -342,7 +361,7 @@ func (handler Handler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -356,7 +375,7 @@ func (handler Handler) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) ShowSubscription(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -371,7 +390,7 @@ func (handler Handler) ShowSubscription(w http.ResponseWriter, r *http.Request) 
 }
 
 func (handler Handler) RefreshSubscriptionPayment(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -391,14 +410,14 @@ func (handler Handler) RefreshSubscriptionPayment(w http.ResponseWriter, r *http
 }
 
 func (handler Handler) UpdateSubscriptionBilling(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 
 	defer r.Body.Close()
 	var request UpdateBillingRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 
@@ -412,14 +431,14 @@ func (handler Handler) UpdateSubscriptionBilling(w http.ResponseWriter, r *http.
 }
 
 func (handler Handler) SelectSubscriptionPlan(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 
 	defer r.Body.Close()
 	var request SelectSubscriptionPlanRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 
@@ -433,7 +452,7 @@ func (handler Handler) SelectSubscriptionPlan(w http.ResponseWriter, r *http.Req
 }
 
 func (handler Handler) ListOrganizationRoles(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -455,7 +474,7 @@ func (handler Handler) ListAvailablePermissions(w http.ResponseWriter, r *http.R
 }
 
 func (handler Handler) ShowUserPermissions(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -468,13 +487,13 @@ func (handler Handler) ShowUserPermissions(w http.ResponseWriter, r *http.Reques
 }
 
 func (handler Handler) ReplaceUserPermissions(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	defer r.Body.Close()
 	var request ReplaceUserPermissionsRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	profile, err := handler.repo.ReplaceUserPermissions(r.Context(), tenantContext, r.PathValue("id"), request.Permissions)
@@ -496,7 +515,7 @@ func (handler Handler) publishUserPermissionsChanged(tenantContext tenant.Contex
 }
 
 func (handler Handler) ResetUserPermissions(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -510,7 +529,7 @@ func (handler Handler) ResetUserPermissions(w http.ResponseWriter, r *http.Reque
 }
 
 func (handler Handler) ListRolePermissions(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -523,7 +542,7 @@ func (handler Handler) ListRolePermissions(w http.ResponseWriter, r *http.Reques
 }
 
 func (handler Handler) ListUserOrganizationRoles(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -536,13 +555,13 @@ func (handler Handler) ListUserOrganizationRoles(w http.ResponseWriter, r *http.
 }
 
 func (handler Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	defer r.Body.Close()
 	payload := map[string]any{}
-	if err := decodeJSON(w, r, &payload); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &payload, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.CreateRole(r.Context(), tenantContext, payload)
@@ -554,13 +573,13 @@ func (handler Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	defer r.Body.Close()
 	payload := map[string]any{}
-	if err := decodeJSON(w, r, &payload); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &payload, 1<<20); err != nil {
 		return
 	}
 	item, err := handler.repo.UpdateRole(r.Context(), tenantContext, r.PathValue("id"), payload)
@@ -572,7 +591,7 @@ func (handler Handler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) DeleteRole(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -584,7 +603,7 @@ func (handler Handler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) ReplaceRolePermissions(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -592,7 +611,7 @@ func (handler Handler) ReplaceRolePermissions(w http.ResponseWriter, r *http.Req
 	payload := struct {
 		Permissions []string `json:"permissions"`
 	}{}
-	if err := decodeJSON(w, r, &payload); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &payload, 1<<20); err != nil {
 		return
 	}
 	if err := handler.repo.ReplaceRolePermissions(r.Context(), tenantContext, r.PathValue("id"), payload.Permissions); err != nil {
@@ -603,7 +622,7 @@ func (handler Handler) ReplaceRolePermissions(w http.ResponseWriter, r *http.Req
 }
 
 func (handler Handler) AssignUserRole(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -612,7 +631,7 @@ func (handler Handler) AssignUserRole(w http.ResponseWriter, r *http.Request) {
 		UserID string  `json:"userId"`
 		RoleID *string `json:"roleId"`
 	}{}
-	if err := decodeJSON(w, r, &payload); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &payload, 1<<20); err != nil {
 		return
 	}
 	roleID := ""
@@ -638,27 +657,6 @@ func (handler Handler) HasPermission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[bool]{Data: allowed})
-}
-
-func organizationContext(w http.ResponseWriter, r *http.Request) (tenant.Context, bool) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.OrganizationID == "" {
-		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
-		return tenant.Context{}, false
-	}
-
-	return tenantContext, true
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
-		return err
-	}
-
-	return nil
 }
 
 func parseImageUpload(w http.ResponseWriter, r *http.Request) (string, int64, io.Reader, func(), error) {
@@ -745,6 +743,8 @@ func isAllowedImageContentType(value string) bool {
 
 func writeSettingsError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, ErrPropertySettingsConflict):
+		httpserver.WriteError(w, r, http.StatusConflict, "property_settings_conflict", "As configurações de imóveis foram alteradas em outra sessão. Recarregue os dados e revise suas escolhas antes de tentar novamente.")
 	case errors.Is(err, ErrPushVAPIDMismatch):
 		httpserver.WriteError(w, r, http.StatusConflict, "push_vapid_key_mismatch", "Push configuration changed. Refresh the app and enable notifications again.")
 	case errors.Is(err, ErrCheckoutInProgress):

@@ -9,7 +9,6 @@ import {
   Globe,
   FilePlus2,
   Loader2,
-  LockKeyhole,
   MoreVertical,
   Plug,
   Plus,
@@ -86,7 +85,6 @@ import {
   useToggleFormConfig,
 } from "@/hooks/use-meta-forms";
 import { MetaFormConfigDialog } from "./MetaFormConfigDialog";
-import { MetaConversionFeedbackPanel } from "./MetaConversionFeedbackPanel";
 
 interface OAuthPayload {
   pages?: MetaPage[];
@@ -129,6 +127,16 @@ interface AccountGroup {
 
 const getPagePicture = (page?: MetaPage | null) => page?.picture?.data?.url || "";
 const searchableText = (value: unknown) => normalizeSearchText(String(value ?? ""));
+
+function getNameInitials(value?: string | null) {
+  const parts = String(value ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (parts.length === 0) return "?";
+  return `${parts[0]?.[0] ?? ""}${parts.length > 1 ? parts.at(-1)?.[0] ?? "" : ""}`.toUpperCase();
+}
 const getIntegrationAdAccountIds = (integration?: MetaIntegration | null) => {
   const ids = Array.isArray(integration?.selected_ad_accounts)
     ? integration.selected_ad_accounts.flatMap((value) => {
@@ -249,10 +257,13 @@ export function MetaIntegrationSettings({
   const [wizardFormSearch, setWizardFormSearch] = useState("");
   const [wizardPageSearch, setWizardPageSearch] = useState("");
   const [selectedAccountKey, setSelectedAccountKey] = useState("");
-  const [selectedAdAccountIds, setSelectedAdAccountIds] = useState<string[]>([]);
+  const [managedAdAccountIds, setManagedAdAccountIds] = useState<string[]>([]);
+  const [managedAdAccountIntegration, setManagedAdAccountIntegration] = useState<MetaIntegration | null>(null);
   const [pendingPage, setPendingPage] = useState<MetaPage | null>(null);
   const [selectedIntegration, setSelectedIntegration] = useState<MetaIntegration | null>(null);
   const [forms, setForms] = useState<MetaForm[]>([]);
+  const [formsLoading, setFormsLoading] = useState(false);
+  const [formsLoadError, setFormsLoadError] = useState<string | null>(null);
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [editingForm, setEditingForm] = useState<MetaForm | null>(null);
   const [editingConfig, setEditingConfig] = useState<MetaFormConfig | undefined>();
@@ -262,9 +273,10 @@ export function MetaIntegrationSettings({
   const [formToDeactivate, setFormToDeactivate] = useState<MetaFormConfig | null>(null);
   const handledOAuthStatusRef = useRef<string | number | null>(null);
   const handledOAuthMessageRef = useRef<string | number | null>(null);
+  const formsRequestSequenceRef = useRef(0);
 
-  const { profile, organization } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, profile, organization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
   const {
     data: integrations = [],
     isLoading: integrationsLoading,
@@ -284,18 +296,17 @@ export function MetaIntegrationSettings({
   const fetchForms = useFetchPageForms();
   const toggleForm = useToggleFormConfig();
   const deleteForm = useDeleteFormConfig();
-  const { hasModule, isLoading: modulesLoading } = useOrganizationModules();
-  const { hasPermission, isLoading: permissionsLoading } = useUserPermissions();
+  const { hasModule } = useOrganizationModules();
+  const { hasPermission } = useUserPermissions();
   const hasMarketingModule = hasModule("campaigns");
   const canViewAdvancedMarketing =
     hasMarketingModule && hasPermission("dashboard_campaigns_view");
-  const accessLoading = modulesLoading || permissionsLoading;
-  const availableAdAccountsQuery = useMetaAdAccounts(selectedIntegration?.page_id, {
+  const availableAdAccountsQuery = useMetaAdAccounts(managedAdAccountIntegration?.page_id, {
     enabled:
-      wizardOpen &&
+      !!managedAdAccountIntegration &&
       canViewAdvancedMarketing &&
-      !!selectedIntegration?.page_id &&
-      selectedIntegration.is_connected !== false,
+      !!managedAdAccountIntegration?.page_id &&
+      managedAdAccountIntegration?.is_connected !== false,
   });
   const updateAdAccounts = useMetaUpdateAdAccounts();
 
@@ -305,12 +316,8 @@ export function MetaIntegrationSettings({
 
     setNewOAuth(normalized);
     setSelectedAccountKey("new-oauth");
-    const defaultAdAccountId =
-      normalized.adAccountId ||
-      normalized.ad_account_id ||
-      normalized.ad_accounts?.[0]?.id;
-    setSelectedAdAccountIds(defaultAdAccountId ? [defaultAdAccountId] : []);
     setPendingPage(null);
+    setFormsLoadError(null);
     setAccountSearch("");
     setWizardPageSearch("");
     setWizardFormSearch("");
@@ -515,9 +522,22 @@ export function MetaIntegrationSettings({
   const getConfiguredFormsForIntegration = (integrationId?: string | null) =>
     integrationId ? configs.filter((config) => config.integration_id === integrationId) : [];
 
-  const filteredAccounts = accounts.filter((account) =>
-    searchableText(account.name).includes(searchableText(accountSearch))
-  );
+  const filteredAccounts = accounts.filter((account) => {
+    const search = searchableText(accountSearch);
+    if (!search) return true;
+    return [
+      account.name,
+      account.facebookUserName,
+      ...account.integrations.flatMap((integration) => [
+        integration.page_name,
+        integration.instagram_username,
+      ]),
+      ...account.pages.flatMap((page) => [
+        page.name,
+        page.instagram_business_account?.username,
+      ]),
+    ].some((value) => searchableText(value).includes(search));
+  });
 
   const pageItems = selectedAccount
     ? selectedAccount.isNew
@@ -611,10 +631,23 @@ export function MetaIntegrationSettings({
       toast.error("Página sem identificador válido para buscar formulários.");
       return;
     }
+    const requestSequence = ++formsRequestSequenceRef.current;
     setSelectedIntegration(integration);
-    setSelectedAdAccountIds(getIntegrationAdAccountIds(integration));
-    const result = await fetchForms.mutateAsync({ pageId: integration.page_id });
-    setForms(mergeFormsWithConfigured(result.forms || [], getConfiguredFormsForIntegration(integration.id)));
+    setFormsLoadError(null);
+    setFormsLoading(true);
+    try {
+      const result = await fetchForms.mutateAsync({ pageId: integration.page_id });
+      if (formsRequestSequenceRef.current !== requestSequence) return;
+      setForms(mergeFormsWithConfigured(result.forms || [], getConfiguredFormsForIntegration(integration.id)));
+    } catch (error) {
+      if (formsRequestSequenceRef.current !== requestSequence) return;
+      setForms([]);
+      setFormsLoadError(metaErrorMessage(error, "Não foi possível carregar os formulários desta página."));
+    } finally {
+      if (formsRequestSequenceRef.current === requestSequence) {
+        setFormsLoading(false);
+      }
+    }
   };
 
   const connectAndLoadPage = async (page: MetaPage) => {
@@ -626,10 +659,6 @@ export function MetaIntegrationSettings({
     const result = await connectPage.mutateAsync({
       pageId: page.id,
       flowId: selectedAccount.flowId,
-      adAccountId: canViewAdvancedMarketing ? selectedAdAccountIds[0] : undefined,
-      selectedAdAccountIds: canViewAdvancedMarketing
-        ? selectedAdAccountIds
-        : undefined,
     });
 
     const refreshed = await refetchIntegrations();
@@ -644,7 +673,10 @@ export function MetaIntegrationSettings({
   };
 
   const handleSelectPage = async (page: MetaPage | MetaIntegration) => {
+    formsRequestSequenceRef.current += 1;
     setForms([]);
+    setFormsLoading(false);
+    setFormsLoadError(null);
     setWizardFormSearch("");
     setPendingPage(null);
 
@@ -661,6 +693,26 @@ export function MetaIntegrationSettings({
 
     setSelectedIntegration(null);
     setPendingPage(page);
+  };
+
+  const openAdAccountManager = (integration: MetaIntegration) => {
+    setManagedAdAccountIntegration(integration);
+    setManagedAdAccountIds(getIntegrationAdAccountIds(integration));
+    setAccountModalOpen(false);
+  };
+
+  const saveManagedAdAccounts = async () => {
+    if (!managedAdAccountIntegration?.page_id) return;
+    try {
+      await updateAdAccounts.mutateAsync({
+        pageId: managedAdAccountIntegration.page_id,
+        adAccountIds: managedAdAccountIds,
+      });
+      await refetchIntegrations();
+      setManagedAdAccountIntegration(null);
+    } catch {
+      // The mutation keeps the dialog open and already presents an actionable error.
+    }
   };
 
   const openConfig = (form: MetaForm, config?: MetaFormConfig, integration?: MetaIntegration | null) => {
@@ -701,15 +753,7 @@ export function MetaIntegrationSettings({
   });
 
   return (
-    <div className="space-y-4 text-[var(--app-text-primary)]">
-      <MetaConversionFeedbackPanel
-        integrations={integrations}
-        moduleEnabled={hasMarketingModule}
-        accessLoading={accessLoading}
-        integrationsLoading={integrationsLoading}
-        integrationsLoadFailed={integrationsLoadFailed}
-      />
-
+    <div className="crm-management-surface animate-in flex h-full min-h-0 flex-col gap-4 text-[var(--app-text-primary)]">
       {(integrationsLoadFailed || configsLoadFailed) && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
@@ -727,21 +771,21 @@ export function MetaIntegrationSettings({
         </Alert>
       )}
 
-      <div className="app-toolbar flex flex-col gap-3 p-3 lg:flex-row lg:items-center">
-        <div className="relative min-w-0 flex-1">
+      <div className="app-toolbar flex shrink-0 flex-col gap-2 p-2 lg:flex-row lg:items-center lg:justify-between">
+        <div className="relative w-full min-w-0 sm:max-w-sm lg:w-[360px] lg:flex-none">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={tableSearch}
             onChange={(event) => setTableSearch(event.target.value)}
             placeholder="Buscar formulário configurado"
             aria-label="Buscar formulário configurado"
-            className="border-0 bg-[var(--app-surface-soft)] pl-9"
+            className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] pl-9 text-[12px] font-light shadow-none focus-visible:ring-1 focus-visible:ring-primary/30"
           />
         </div>
         <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
           <Button
             variant="outline"
-            className="gap-2 whitespace-nowrap"
+            className="h-8 gap-2 whitespace-nowrap rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2.5 text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]"
             disabled={integrationsLoadFailed}
             onClick={() => setAccountModalOpen(true)}
           >
@@ -749,7 +793,7 @@ export function MetaIntegrationSettings({
             Gerenciar contas
           </Button>
           <Button
-            className="gap-2 whitespace-nowrap"
+            className="h-8 gap-2 whitespace-nowrap rounded-[6px] bg-primary/50 px-2.5 text-[12px] font-light shadow-none hover:bg-primary"
             disabled={integrationsLoadFailed}
             onClick={() => setWizardOpen(true)}
           >
@@ -759,15 +803,15 @@ export function MetaIntegrationSettings({
         </div>
       </div>
 
-      <div className="app-card overflow-x-auto">
-        <Table className="app-data-table">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Conta Facebook</TableHead>
-              <TableHead>Página Facebook</TableHead>
-              <TableHead>Nome do formulário</TableHead>
-              <TableHead>Criado por</TableHead>
-              <TableHead>Data de configuração</TableHead>
+      <div className="min-h-0 flex-1 overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none [&>div]:h-full [&>div]:overflow-auto">
+        <Table className="crm-management-table min-h-full min-w-[840px] table-fixed">
+          <TableHeader className="sticky top-0 z-10 bg-[var(--app-surface-soft)]">
+            <TableRow className="bg-[var(--app-surface-soft)]">
+              <TableHead className="w-[18%]">Conta Facebook</TableHead>
+              <TableHead className="w-[21%]">Página Facebook</TableHead>
+              <TableHead className="w-[29%]">Nome do formulário</TableHead>
+              <TableHead className="w-[10%]">Criado por</TableHead>
+              <TableHead className="w-[16%]">Data de configuração</TableHead>
               <TableHead className="w-12 text-right">Ações</TableHead>
             </TableRow>
           </TableHeader>
@@ -807,7 +851,7 @@ export function MetaIntegrationSettings({
                         }
                       }}
                     >
-                      <TableCell>{integration?.facebook_user_name || "Conta Facebook"}</TableCell>
+                      <TableCell className="text-[12px] font-light">{integration?.facebook_user_name || "Conta Facebook"}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <Avatar className="h-7 w-7">
@@ -815,7 +859,12 @@ export function MetaIntegrationSettings({
                             <AvatarFallback>{integration?.page_name?.[0] || "F"}</AvatarFallback>
                           </Avatar>
                           <div className="min-w-0">
-                            <span className="block truncate">{integration?.page_name || "Página conectada"}</span>
+                            <span
+                              className="block max-w-[220px] truncate text-[12px] font-light"
+                              title={integration?.page_name || "Página conectada"}
+                            >
+                              {integration?.page_name || "Página conectada"}
+                            </span>
                             {integration?.instagram_username && (
                               <span className="flex items-center gap-1 text-xs text-[var(--app-text-tertiary)]">
                                 <AtSign className="h-3 w-3" />{integration.instagram_username}
@@ -826,12 +875,38 @@ export function MetaIntegrationSettings({
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <span className="font-medium">{config.form_name || config.form_id}</span>
+                          <span
+                            className="max-w-[260px] truncate text-[12px] font-normal"
+                            title={config.form_name || config.form_id}
+                          >
+                            {config.form_name || config.form_id}
+                          </span>
                           <Badge variant={config.is_active ? "default" : "secondary"}>{config.is_active ? "Ativo" : "Inativo"}</Badge>
                         </div>
                       </TableCell>
-                      <TableCell>{config.created_by_name || "-"}</TableCell>
-                      <TableCell>{format(new Date(config.created_at), "dd/MM/yyyy HH:mm", { locale: ptBR })}</TableCell>
+                      <TableCell>
+                        {config.created_by_name ? (
+                          <Avatar
+                            className="h-7 w-7 bg-primary/10"
+                            aria-label={`Criado por ${config.created_by_name}`}
+                            title={config.created_by_name}
+                          >
+                            <AvatarFallback className="bg-primary/10 text-[9px] font-normal text-primary">
+                              {getNameInitials(config.created_by_name)}
+                            </AvatarFallback>
+                          </Avatar>
+                        ) : (
+                          <span className="text-[11px] text-[var(--app-text-tertiary)]">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-[11px] font-light leading-4 text-[var(--app-text-secondary)]">
+                          <span className="block">{format(new Date(config.created_at), "dd/MM/yyyy", { locale: ptBR })}</span>
+                          <span className="block text-[10px] text-[var(--app-text-tertiary)]">
+                            {format(new Date(config.created_at), "HH:mm", { locale: ptBR })}
+                          </span>
+                        </div>
+                      </TableCell>
                       <TableCell className="text-right" onClick={(event) => event.stopPropagation()}>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -879,40 +954,190 @@ export function MetaIntegrationSettings({
       </div>
 
       <Dialog open={accountModalOpen} onOpenChange={setAccountModalOpen}>
-        <DialogContent className="border-0 bg-[var(--app-surface-solid)] sm:max-w-xl">
+        <DialogContent className="max-h-[calc(100dvh-24px)] w-[calc(100vw-24px)] overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4 shadow-none sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><Globe className="h-5 w-5 text-primary" />Gerenciar conexão Meta</DialogTitle>
-            <DialogDescription>Uma conta pode liberar páginas, Instagram e formulários sem exigir uma nova conexão depois.</DialogDescription>
+            <DialogDescription>Contas, páginas e ativos de Marketing vinculados à organização.</DialogDescription>
           </DialogHeader>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input className="border-0 bg-[var(--app-surface-soft)] pl-9" value={accountSearch} onChange={(event) => setAccountSearch(event.target.value)} placeholder="Buscar conta" />
+            <Input className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-soft)] pl-9 text-[12px] font-light shadow-none focus-visible:ring-1 focus-visible:ring-primary/30" value={accountSearch} onChange={(event) => setAccountSearch(event.target.value)} placeholder="Buscar conta ou página" />
           </div>
-          <ScrollArea className="max-h-72 pr-3">
+          <ScrollArea className="max-h-[min(520px,62dvh)] pr-3">
             <div className="space-y-2">
               {filteredAccounts.map((account) => (
-                <div key={account.key} className="app-card-soft flex items-center justify-between p-3">
-                  <div>
-                    <p className="font-medium">{account.name}</p>
-                    <p className="text-xs text-muted-foreground">{account.integrations.length || account.pages.length} páginas disponíveis</p>
+                <div key={account.key} className="app-card-soft space-y-3 rounded-[8px] p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-[13px] font-normal">{account.name}</p>
+                      <p className="text-[11px] font-light text-muted-foreground">
+                        {account.integrations.length || account.pages.length} página{(account.integrations.length || account.pages.length) === 1 ? "" : "s"}
+                      </p>
+                    </div>
+                    {account.integrations.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 shrink-0 rounded-[6px] px-2.5 text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]"
+                        onClick={() => setDisconnectTarget(account)}
+                        disabled={disconnectPage.isPending}
+                      >
+                        <Unplug className="mr-1.5 h-3.5 w-3.5" />
+                        Desconectar
+                      </Button>
+                    )}
                   </div>
+
                   {account.integrations.length > 0 && (
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => setDisconnectTarget(account)}
-                      disabled={disconnectPage.isPending}
-                    >
-                      Desconectar
-                    </Button>
+                    <div className="space-y-1.5">
+                      {account.integrations.map((integration) => {
+                        const selectedCount = getIntegrationAdAccountIds(integration).length;
+                        return (
+                          <div
+                            key={integration.id}
+                            className="flex min-w-0 items-center gap-3 rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 py-2"
+                          >
+                            <Avatar className="h-8 w-8 shrink-0">
+                              <AvatarImage src={integration.page_picture_url || undefined} />
+                              <AvatarFallback>{integration.page_name?.[0] || "F"}</AvatarFallback>
+                            </Avatar>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-[12px] font-normal" title={integration.page_name || "Página conectada"}>
+                                {integration.page_name || "Página conectada"}
+                              </p>
+                              <p className="text-[10px] font-light text-[var(--app-text-tertiary)]">
+                                {selectedCount === 0
+                                  ? "Nenhuma conta de anúncio selecionada"
+                                  : `${selectedCount} conta${selectedCount === 1 ? "" : "s"} de anúncio`}
+                              </p>
+                            </div>
+                            {canViewAdvancedMarketing && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8 shrink-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2.5 text-[11px] font-light shadow-none hover:bg-[var(--app-surface-hover)]"
+                                onClick={() => openAdAccountManager(integration)}
+                              >
+                                Gerenciar anúncios
+                              </Button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
               ))}
+              {filteredAccounts.length === 0 && (
+                <p className="py-10 text-center text-[12px] font-light text-[var(--app-text-tertiary)]">
+                  Nenhuma conta corresponde à busca.
+                </p>
+              )}
             </div>
           </ScrollArea>
           <DialogFooter className="items-center justify-between sm:justify-between">
-            <p className="text-sm text-muted-foreground">Existem {accounts.filter((a) => !a.isNew).length} contas conectadas</p>
-            <Button onClick={openOAuth} disabled={getAuthUrl.isPending}>{getAuthUrl.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Conectar nova conta</Button>
+            <p className="text-[11px] font-light text-muted-foreground">{accounts.filter((a) => !a.isNew).length} conta{accounts.filter((a) => !a.isNew).length === 1 ? "" : "s"} conectada{accounts.filter((a) => !a.isNew).length === 1 ? "" : "s"}</p>
+            <Button className="h-8 rounded-[6px] px-3 text-[12px] font-light shadow-none" onClick={openOAuth} disabled={getAuthUrl.isPending}>{getAuthUrl.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Conectar nova conta</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!managedAdAccountIntegration}
+        onOpenChange={(open) => {
+          if (!open && !updateAdAccounts.isPending) setManagedAdAccountIntegration(null);
+        }}
+      >
+        <DialogContent className="max-h-[calc(100dvh-24px)] w-[calc(100vw-24px)] overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4 shadow-none sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Contas de anúncio</DialogTitle>
+            <DialogDescription>
+              {managedAdAccountIntegration?.page_name || "Página Meta"}
+            </DialogDescription>
+          </DialogHeader>
+
+          <ScrollArea className="max-h-[min(460px,58dvh)] pr-3">
+            {availableAdAccountsQuery.isLoading ? (
+              <div className="flex min-h-32 items-center justify-center">
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+              </div>
+            ) : availableAdAccountsQuery.isError ? (
+              <div className="flex min-h-32 flex-col items-center justify-center gap-3 rounded-[8px] bg-[var(--app-surface-soft)] p-4 text-center">
+                <p className="text-[12px] font-light text-[var(--app-text-secondary)]">
+                  Não foi possível carregar as contas de anúncio desta conexão.
+                </p>
+                <Button type="button" variant="outline" size="sm" onClick={() => availableAdAccountsQuery.refetch()}>
+                  Tentar novamente
+                </Button>
+              </div>
+            ) : availableAdAccountsQuery.data?.length ? (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {availableAdAccountsQuery.data.map((account) => {
+                  const checked = managedAdAccountIds.includes(account.id);
+                  const checkboxId = `managed-meta-ad-account-${account.id}`;
+                  return (
+                    <label
+                      key={account.id}
+                      htmlFor={checkboxId}
+                      className={cn(
+                        "flex cursor-pointer items-start gap-3 rounded-[6px] bg-[var(--app-surface-soft)] p-3 transition-colors hover:bg-[var(--app-surface-hover)]",
+                        checked && "bg-primary/10 ring-1 ring-inset ring-primary/30",
+                      )}
+                    >
+                      <Checkbox
+                        id={checkboxId}
+                        checked={checked}
+                        onCheckedChange={(nextChecked) => {
+                          setManagedAdAccountIds((current) =>
+                            nextChecked
+                              ? Array.from(new Set([...current, account.id]))
+                              : current.filter((id) => id !== account.id),
+                          );
+                        }}
+                        aria-label={`Selecionar ${account.name || account.account_id || account.id}`}
+                      />
+                      <span className="min-w-0">
+                        <span className="block break-words text-[12px] font-normal">
+                          {account.name || account.account_id || account.id}
+                        </span>
+                        <span className="mt-0.5 block text-[10px] font-light text-[var(--app-text-tertiary)]">
+                          {account.account_id || account.id}
+                          {account.currency ? ` · ${account.currency}` : ""}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="rounded-[8px] bg-[var(--app-surface-soft)] p-4 text-center text-[12px] font-light text-[var(--app-text-secondary)]">
+                Nenhuma conta de anúncio está disponível para esta conexão.
+              </p>
+            )}
+          </ScrollArea>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={updateAdAccounts.isPending}
+              onClick={() => setManagedAdAccountIntegration(null)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void saveManagedAdAccounts()}
+              disabled={
+                availableAdAccountsQuery.isLoading ||
+                availableAdAccountsQuery.isError ||
+                updateAdAccounts.isPending
+              }
+            >
+              {updateAdAccounts.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Salvar contas
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1001,36 +1226,59 @@ export function MetaIntegrationSettings({
         </AlertDialogContent>
       </AlertDialog>
 
-      <Dialog open={wizardOpen} onOpenChange={setWizardOpen}>
-        <DialogContent className="max-h-[92vh] w-[96vw] max-w-[1100px] overflow-hidden border-0 bg-[var(--app-surface-solid)] p-0">
-          <div className="grid max-h-[92vh] min-h-[520px] min-w-0 grid-cols-1 lg:grid-cols-[minmax(260px,320px)_minmax(0,1fr)]">
-            <aside className="min-w-0 space-y-3 overflow-y-auto border-r border-[var(--app-border)] bg-[var(--app-surface-soft)] p-4">
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2"><Plug className="h-5 w-5 text-primary" />Conectar Meta</DialogTitle>
-                <DialogDescription>Uma autorização para páginas, Instagram, formulários e ativos permitidos.</DialogDescription>
-              </DialogHeader>
-              <Button className="w-full gap-2" onClick={openOAuth}><ExternalLink className="h-4 w-4" />Conectar conta Meta</Button>
+      <Dialog
+        open={wizardOpen}
+        onOpenChange={(open) => {
+          setWizardOpen(open);
+          if (!open) {
+            formsRequestSequenceRef.current += 1;
+            setFormsLoading(false);
+            setFormsLoadError(null);
+          }
+        }}
+      >
+        <DialogContent className="max-h-[calc(100dvh-24px)] w-[calc(100vw-24px)] max-w-[1500px] overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 shadow-none sm:max-h-[88dvh]">
+          <DialogTitle className="sr-only">Adicionar formulários Meta</DialogTitle>
+          <DialogDescription className="sr-only">
+            Selecione uma conta e uma página para configurar os formulários recebidos pelo CRM.
+          </DialogDescription>
+          <div className="grid max-h-[calc(100dvh-24px)] min-h-[580px] min-w-0 grid-cols-1 sm:max-h-[88dvh] lg:grid-cols-[minmax(220px,260px)_minmax(0,1fr)]">
+            <aside className="max-h-[220px] min-w-0 space-y-3 overflow-y-auto border-b border-[var(--app-border)] bg-[var(--app-surface-soft)] p-3 lg:max-h-none lg:border-b-0 lg:border-r">
+              <Button
+                size="sm"
+                className="h-8 w-full gap-2 rounded-[6px] text-[12px] font-light shadow-none"
+                onClick={openOAuth}
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                Conectar conta Meta
+              </Button>
               <div className="space-y-2">
-                <p className="text-[12px] font-light text-muted-foreground">Contas Facebook</p>
+                <p className="text-[10px] font-light uppercase tracking-wide text-muted-foreground">Contas Facebook</p>
                 {accounts.map((account) => (
                   <button
                     key={account.key}
                     type="button"
-                    className={cn("app-card-soft flex w-full items-center justify-between p-2.5 text-left transition-colors hover:bg-[var(--app-surface-hover)]", selectedAccount?.key === account.key && "bg-primary/10 text-[var(--app-text-primary)] ring-1 ring-primary/30")}
+                    aria-pressed={selectedAccount?.key === account.key}
+                    className={cn(
+                      "flex w-full min-w-0 items-center justify-between rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 py-2 text-left transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/30",
+                      selectedAccount?.key === account.key && "bg-primary/10 text-[var(--app-text-primary)] ring-1 ring-inset ring-primary/30",
+                    )}
                     onClick={() => {
                       setSelectedAccountKey(account.key);
-                      const defaultAdAccountId =
-                        account.adAccountId || account.adAccounts?.[0]?.id;
-                      setSelectedAdAccountIds(defaultAdAccountId ? [defaultAdAccountId] : []);
+                      formsRequestSequenceRef.current += 1;
                       setSelectedIntegration(null);
                       setPendingPage(null);
                       setForms([]);
+                      setFormsLoading(false);
+                      setFormsLoadError(null);
                       setWizardPageSearch("");
                       setWizardFormSearch("");
                     }}
                   >
                     <div className="min-w-0">
-                      <p className="truncate font-medium">{account.name}</p>
+                      <p className="break-words text-[12px] font-normal leading-4">
+                        {account.name}
+                      </p>
                       <p className="text-xs text-muted-foreground">{account.isNew ? "Nova conexão" : "Conta conectada"}</p>
                     </div>
                     {selectedAccount?.key === account.key && <Check className="h-4 w-4 shrink-0 text-primary" />}
@@ -1039,209 +1287,26 @@ export function MetaIntegrationSettings({
               </div>
             </aside>
 
-            <main className="min-w-0 overflow-y-auto p-4 space-y-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <h3 className="text-[14px] font-normal">Escolha os ativos</h3>
-                  <p className="text-sm text-[var(--app-text-secondary)]">Selecione uma página, revise os dados e confirme antes de conectar.</p>
-                </div>
-              </div>
-
+            <main className="min-w-0 space-y-3 overflow-y-auto p-3 pr-12">
               {!selectedAccount ? (
                 <Alert><AlertCircle className="h-4 w-4" /><AlertDescription>Conecte ou selecione uma conta do Facebook para continuar.</AlertDescription></Alert>
               ) : (
                 <>
-                  {selectedAccount.isNew ? (
-                    <div className="app-card-soft p-3">
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div>
-                          <p className="text-sm font-medium">Contas de anúncio</p>
-                          <p className="mt-1 text-xs text-[var(--app-text-secondary)]">
-                            Selecione explicitamente quais ativos poderão alimentar o Marketing.
-                          </p>
-                        </div>
-                        <Badge variant={canViewAdvancedMarketing ? "secondary" : "outline"}>
-                          {canViewAdvancedMarketing
-                            ? `${selectedAdAccountIds.length} selecionada${selectedAdAccountIds.length === 1 ? "" : "s"}`
-                            : "Acesso restrito"}
-                        </Badge>
-                      </div>
-
-                      {!canViewAdvancedMarketing ? (
-                        <div className="mt-3 flex items-start gap-2 rounded-lg bg-[var(--app-surface-hover)] p-3 text-xs text-[var(--app-text-secondary)]">
-                          <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0" />
-                          <p>
-                            A captação de leads funciona normalmente. Contas de anúncio só serão
-                            vinculadas quando o módulo Meta e a permissão de Marketing estiverem liberados.
-                          </p>
-                        </div>
-                      ) : selectedAccount.adAccounts?.length ? (
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                          {selectedAccount.adAccounts.map((account) => {
-                            const checked = selectedAdAccountIds.includes(account.id);
-                            const checkboxId = `meta-ad-account-${account.id}`;
-                            return (
-                              <label
-                                key={account.id}
-                                htmlFor={checkboxId}
-                                className={cn(
-                                  "flex cursor-pointer items-start gap-3 rounded-lg bg-[var(--app-surface-solid)] p-3 transition-colors",
-                                  checked && "bg-primary/10 ring-1 ring-primary/30",
-                                )}
-                              >
-                                <Checkbox
-                                  id={checkboxId}
-                                  checked={checked}
-                                  onCheckedChange={(nextChecked) => {
-                                    setSelectedAdAccountIds((current) =>
-                                      nextChecked
-                                        ? Array.from(new Set([...current, account.id]))
-                                        : current.filter((id) => id !== account.id),
-                                    );
-                                  }}
-                                  aria-label={`Selecionar ${account.name || account.account_id || account.id}`}
-                                />
-                                <span className="min-w-0">
-                                  <span className="block truncate text-sm font-medium">
-                                    {account.name || account.account_id || account.id}
-                                  </span>
-                                  <span className="mt-0.5 block text-xs text-[var(--app-text-tertiary)]">
-                                    {account.account_id || account.id}
-                                    {account.currency ? ` · ${account.currency}` : ""}
-                                  </span>
-                                </span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <Alert className="mt-3 border-0 bg-[var(--app-surface-hover)]">
-                          <AlertCircle className="h-4 w-4" />
-                          <AlertDescription>
-                            Nenhuma conta de anúncios foi retornada. A página ainda pode receber leads.
-                          </AlertDescription>
-                        </Alert>
-                      )}
-                    </div>
-                  ) : null}
-
-                  {!selectedAccount.isNew && selectedIntegration && canViewAdvancedMarketing ? (
-                    <div className="app-card-soft p-3">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="text-sm font-medium">Contas de anúncio desta página</p>
-                            <Badge variant="secondary">Sem novo login</Badge>
-                          </div>
-                          <p className="mt-1 text-xs text-[var(--app-text-secondary)]">
-                            A lista usa a autorização segura já armazenada para a conexão Meta.
-                          </p>
-                        </div>
-                        <Badge variant="outline">
-                          {selectedAdAccountIds.length} selecionada{selectedAdAccountIds.length === 1 ? "" : "s"}
-                        </Badge>
-                      </div>
-
-                      {availableAdAccountsQuery.isLoading ? (
-                        <div className="mt-3 flex min-h-20 items-center justify-center rounded-lg bg-[var(--app-surface-solid)]">
-                          <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                        </div>
-                      ) : availableAdAccountsQuery.isError ? (
-                        <div className="mt-3 flex flex-col gap-3 rounded-lg bg-[var(--app-surface-hover)] p-3 sm:flex-row sm:items-center sm:justify-between">
-                          <p className="text-xs text-[var(--app-text-secondary)]">
-                            Não foi possível carregar as contas de anúncio desta conexão.
-                          </p>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => availableAdAccountsQuery.refetch()}
-                          >
-                            Tentar novamente
-                          </Button>
-                        </div>
-                      ) : availableAdAccountsQuery.data?.length ? (
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                          {availableAdAccountsQuery.data.map((account) => {
-                            const checked = selectedAdAccountIds.includes(account.id);
-                            const checkboxId = `stored-meta-ad-account-${account.id}`;
-                            return (
-                              <label
-                                key={account.id}
-                                htmlFor={checkboxId}
-                                className={cn(
-                                  "flex cursor-pointer items-start gap-3 rounded-lg bg-[var(--app-surface-solid)] p-3 transition-colors",
-                                  checked && "bg-primary/10 ring-1 ring-primary/30",
-                                )}
-                              >
-                                <Checkbox
-                                  id={checkboxId}
-                                  checked={checked}
-                                  onCheckedChange={(nextChecked) => {
-                                    setSelectedAdAccountIds((current) =>
-                                      nextChecked
-                                        ? Array.from(new Set([...current, account.id]))
-                                        : current.filter((id) => id !== account.id),
-                                    );
-                                  }}
-                                  aria-label={`Selecionar ${account.name || account.account_id || account.id}`}
-                                />
-                                <span className="min-w-0">
-                                  <span className="block truncate text-sm font-medium">
-                                    {account.name || account.account_id || account.id}
-                                  </span>
-                                  <span className="mt-0.5 block text-xs text-[var(--app-text-tertiary)]">
-                                    {account.account_id || account.id}
-                                    {account.currency ? ` · ${account.currency}` : ""}
-                                  </span>
-                                </span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <p className="mt-3 rounded-lg bg-[var(--app-surface-hover)] p-3 text-xs text-[var(--app-text-secondary)]">
-                          Nenhuma conta de anúncio está disponível para esta conexão.
-                        </p>
-                      )}
-
-                      <div className="mt-3 flex justify-end">
-                        <Button
-                          type="button"
-                          onClick={() => {
-                            if (!selectedIntegration.page_id) return;
-                            updateAdAccounts.mutate({
-                              pageId: selectedIntegration.page_id,
-                              adAccountIds: selectedAdAccountIds,
-                            });
-                          }}
-                          disabled={
-                            availableAdAccountsQuery.isLoading ||
-                            availableAdAccountsQuery.isError ||
-                            updateAdAccounts.isPending
-                          }
-                        >
-                          {updateAdAccounts.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                          Salvar contas de anúncio
-                        </Button>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  <div className="grid min-w-0 grid-cols-1 xl:grid-cols-[minmax(240px,300px)_minmax(0,1fr)] gap-4">
-                  <div className="app-card-soft min-w-0 space-y-2 p-2.5">
-                    <p className="text-[12px] font-light text-[var(--app-text-tertiary)]">Páginas</p>
+                  <div className="grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-[minmax(280px,0.8fr)_minmax(360px,1.4fr)]">
+                  <div className="min-w-0 space-y-2 rounded-[8px] bg-[var(--app-surface-soft)] p-2.5">
+                    <p className="text-[10px] font-light uppercase tracking-wide text-[var(--app-text-tertiary)]">Páginas</p>
                     <div className="relative">
-                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--app-text-tertiary)]" />
+                      <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--app-text-tertiary)]" />
                       <Input
-                        className="border-0 bg-[var(--app-surface-solid)] pl-9"
+                        className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-solid)] pl-8 text-[12px] font-light shadow-none focus-visible:ring-1 focus-visible:ring-primary/30"
                         value={wizardPageSearch}
                         onChange={(event) => setWizardPageSearch(event.target.value)}
                         placeholder="Buscar página ou Instagram"
+                        aria-label="Buscar página ou Instagram"
                       />
                     </div>
-                    <ScrollArea className="h-[370px] pr-3">
-                      <div className="space-y-2">
+                    <ScrollArea className="h-[460px] pr-2">
+                      <div className="space-y-1.5">
                         {filteredPageItems.map((page) => {
                           const isIntegrationPage = "page_id" in page;
                           const pageId = isIntegrationPage ? page.page_id : page.id;
@@ -1252,24 +1317,35 @@ export function MetaIntegrationSettings({
                             : page.instagram_business_account?.username;
                           const active = selectedIntegration?.page_id === pageId || pendingPage?.id === pageId;
                           return (
-                            <button key={pageId} type="button" className={cn("flex w-full min-w-0 items-center justify-between rounded-lg bg-[var(--app-surface-solid)] p-2.5 text-left transition-colors hover:bg-[var(--app-surface-hover)]", active && "bg-primary/10 ring-1 ring-primary/30")} onClick={() => handleSelectPage(page)}>
-                              <div className="flex min-w-0 items-center gap-3">
-                                <Avatar className="h-10 w-10"><AvatarImage src={picture || undefined} /><AvatarFallback>{name?.[0] || "F"}</AvatarFallback></Avatar>
+                            <button
+                              key={pageId}
+                              type="button"
+                              aria-pressed={active}
+                              className={cn(
+                                "flex w-full min-w-0 items-start justify-between rounded-[6px] bg-[var(--app-surface-solid)] px-2.5 py-2 text-left transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/30",
+                                active && "bg-primary/10 ring-1 ring-inset ring-primary/30",
+                              )}
+                              onClick={() => handleSelectPage(page)}
+                            >
+                              <div className="flex min-w-0 items-start gap-2.5">
+                                <Avatar className="h-9 w-9 shrink-0"><AvatarImage src={picture || undefined} /><AvatarFallback>{name?.[0] || "F"}</AvatarFallback></Avatar>
                                 <span className="min-w-0">
-                                  <span className="block truncate font-medium">{name}</span>
+                                  <span className="block break-words text-[12px] font-normal leading-[18px]">
+                                    {name}
+                                  </span>
                                   {instagramUsername && (
-                                    <span className="mt-0.5 flex items-center gap-1 truncate text-xs text-[var(--app-text-tertiary)]">
+                                    <span className="mt-1 flex items-center gap-1 break-all text-[10px] text-[var(--app-text-tertiary)]">
                                       <AtSign className="h-3 w-3 shrink-0" />{instagramUsername}
                                     </span>
                                   )}
                                 </span>
                               </div>
-                              {active && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                              {active && <Check className="ml-2 h-4 w-4 shrink-0 text-primary" />}
                             </button>
                           );
                         })}
                         {filteredPageItems.length === 0 && (
-                          <p className="px-3 py-10 text-center text-sm text-[var(--app-text-tertiary)]">
+                          <p className="px-3 py-10 text-center text-[12px] font-light text-[var(--app-text-tertiary)]">
                             Nenhuma página encontrada.
                           </p>
                         )}
@@ -1277,32 +1353,30 @@ export function MetaIntegrationSettings({
                     </ScrollArea>
                   </div>
 
-                  <div className="app-card-soft min-w-0 space-y-3 overflow-hidden p-2.5">
+                  <div className="min-w-0 space-y-2 overflow-hidden rounded-[8px] bg-[var(--app-surface-soft)] p-2.5">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="min-w-0">
-                        <p className="font-medium">{pendingPage ? "Confirmar ativo" : "Formulários"}</p>
-                        <p className="truncate text-xs text-[var(--app-text-tertiary)]">
-                          {pendingPage
-                            ? "Revise a página antes de concluir a conexão."
-                            : selectedIntegration
-                              ? `${forms.length} formulários encontrados em ${selectedIntegration.page_name}`
-                              : "Escolha uma página"}
-                        </p>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <p className="text-[12px] font-normal">{pendingPage ? "Confirmar página" : "Formulários"}</p>
+                        {selectedIntegration && !pendingPage && (
+                          <span className="rounded-full bg-[var(--app-surface-solid)] px-2 py-0.5 text-[10px] font-light text-[var(--app-text-tertiary)]">
+                            {forms.length}
+                          </span>
+                        )}
                       </div>
-                      {selectedIntegration && (
-                        <div className="relative min-w-0 sm:w-64 lg:w-72">
-                          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--app-text-tertiary)]" />
-                          <Input
-                            className="border-0 bg-[var(--app-surface-solid)] pl-9"
-                            value={wizardFormSearch}
-                            onChange={(event) => setWizardFormSearch(event.target.value)}
-                            placeholder="Buscar formulário"
-                          />
-                        </div>
-                      )}
+                      <div className="relative min-w-0 sm:w-[min(340px,54%)]">
+                        <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--app-text-tertiary)]" />
+                        <Input
+                          className="h-8 rounded-[6px] border-0 bg-[var(--app-surface-solid)] pl-8 text-[12px] font-light shadow-none focus-visible:ring-1 focus-visible:ring-primary/30"
+                          value={wizardFormSearch}
+                          onChange={(event) => setWizardFormSearch(event.target.value)}
+                          placeholder="Buscar formulário"
+                          aria-label="Buscar formulário"
+                          disabled={!selectedIntegration || !!pendingPage || formsLoading}
+                        />
+                      </div>
                     </div>
-                    <ScrollArea className="h-[370px] pr-2">
-                      {fetchForms.isPending || connectPage.isPending ? (
+                    <ScrollArea className="h-[460px] pr-2">
+                      {formsLoading || connectPage.isPending ? (
                         <div className="flex h-40 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin" /></div>
                       ) : pendingPage ? (
                         <div className="flex min-h-[300px] items-center justify-center p-3">
@@ -1313,9 +1387,9 @@ export function MetaIntegrationSettings({
                                 <AvatarFallback>{pendingPage.name?.[0] || "F"}</AvatarFallback>
                               </Avatar>
                               <div className="min-w-0">
-                                <p className="truncate font-medium">{pendingPage.name}</p>
+                                <p className="break-words font-medium">{pendingPage.name}</p>
                                 {pendingPage.instagram_business_account?.username ? (
-                                  <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-[var(--app-text-tertiary)]">
+                                  <p className="mt-0.5 flex items-center gap-1 break-all text-xs text-[var(--app-text-tertiary)]">
                                     <AtSign className="h-3 w-3 shrink-0" />
                                     {pendingPage.instagram_business_account.username}
                                   </p>
@@ -1327,25 +1401,15 @@ export function MetaIntegrationSettings({
                               </div>
                             </div>
 
-                            <div className="my-4 space-y-2 text-xs text-[var(--app-text-secondary)]">
+                            <div className="my-4 text-xs text-[var(--app-text-secondary)]">
                               <p className="flex items-start gap-2">
                                 <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
                                 Os formulários desta página poderão enviar leads ao CRM.
                               </p>
-                              <p className="flex items-start gap-2">
-                                {canViewAdvancedMarketing ? (
-                                  <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
-                                ) : (
-                                  <LockKeyhole className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                                )}
-                                {canViewAdvancedMarketing
-                                  ? `${selectedAdAccountIds.length} conta${selectedAdAccountIds.length === 1 ? "" : "s"} de anúncio selecionada${selectedAdAccountIds.length === 1 ? "" : "s"}.`
-                                  : "Nenhum dado avançado de Marketing será vinculado."}
-                              </p>
                             </div>
 
                             <Button
-                              className="w-full"
+                              className="h-9 w-full rounded-[6px] text-[12px] font-light shadow-none"
                               onClick={() => connectAndLoadPage(pendingPage)}
                               disabled={connectPage.isPending}
                             >
@@ -1357,12 +1421,35 @@ export function MetaIntegrationSettings({
                             </p>
                           </div>
                         </div>
+                      ) : formsLoadError && selectedIntegration ? (
+                        <div className="flex min-h-[260px] flex-col items-center justify-center gap-3 px-4 text-center">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--app-surface-solid)] text-primary">
+                            <AlertCircle className="h-4 w-4" />
+                          </div>
+                          <div>
+                            <p className="text-[12px] font-normal">Não foi possível carregar os formulários</p>
+                            <p className="mt-1 max-w-md text-[11px] font-light text-[var(--app-text-tertiary)]">
+                              {formsLoadError}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 rounded-[6px] text-[12px] font-light shadow-none"
+                            onClick={() => void loadFormsForIntegration(selectedIntegration)}
+                          >
+                            Tentar novamente
+                          </Button>
+                        </div>
                       ) : !selectedIntegration ? (
-                        <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">Selecione uma página para ver os formulários.</div>
+                        <div className="flex h-40 items-center justify-center text-[12px] font-light text-muted-foreground">Selecione uma página para ver os formulários.</div>
                       ) : filteredForms.length === 0 ? (
-                        <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">Nenhum formulário encontrado.</div>
+                        <div className="flex h-40 items-center justify-center text-[12px] font-light text-muted-foreground">
+                          {forms.length === 0 ? "Nenhum formulário encontrado." : "Nenhum formulário corresponde à busca."}
+                        </div>
                       ) : (
-                        <div className="app-card min-w-0 overflow-hidden">
+                        <div className="min-w-0 space-y-1.5">
                           {filteredForms.map((form) => {
                             const existing = configuredByFormId.get(form.id);
                             return (
@@ -1370,7 +1457,7 @@ export function MetaIntegrationSettings({
                                 key={form.id}
                                 role="button"
                                 tabIndex={0}
-                                className="grid w-full min-w-0 cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-3 p-3 text-left transition-colors hover:bg-[var(--app-surface-hover)]"
+                                className="grid w-full min-w-0 cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-[6px] bg-[var(--app-surface-solid)] px-3 py-2.5 text-left transition-colors hover:bg-[var(--app-surface-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/30"
                                 onClick={() => openConfig(form, existing, selectedIntegration)}
                                 onKeyDown={(event) => {
                                   if (event.key === "Enter" || event.key === " ") {
@@ -1381,13 +1468,15 @@ export function MetaIntegrationSettings({
                               >
                                 <div className="min-w-0 flex-1">
                                   <div className="flex min-w-0 items-center gap-2">
-                                    <span className="truncate font-medium">{form.name}</span>
+                                    <span className="break-words text-[12px] font-normal leading-4">
+                                      {form.name}
+                                    </span>
                                     {existing && <Badge variant="secondary" className="shrink-0">Configurado</Badge>}
                                   </div>
-                                  <p className="truncate text-xs text-muted-foreground">ID {form.id}</p>
+                                  <p className="mt-1 break-all text-[10px] text-muted-foreground">ID {form.id}</p>
                                 </div>
                                 <Button
-                                  className="shrink-0 whitespace-nowrap"
+                                  className="h-8 shrink-0 whitespace-nowrap rounded-[6px] px-2.5 text-[11px] font-light shadow-none"
                                   variant={existing ? "outline" : "default"}
                                   size="sm"
                                   onClick={(event) => {

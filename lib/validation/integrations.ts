@@ -5,6 +5,61 @@ import {
   propertyPublicationObservedStateSchema,
 } from './property-publications'
 
+export const googleAnalyticsMeasurementIdSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^G-[A-Z0-9]{4,32}$/, 'Use o ID de medição do GA4 no formato G-XXXXXXXXXX')
+
+export const googleTagManagerContainerIdSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^GTM-[A-Z0-9]{4,32}$/, 'Use o ID do contêiner no formato GTM-XXXXXXXX')
+
+function extractGoogleSearchConsoleVerificationToken(value: string) {
+  const normalized = value.trim()
+  if (!normalized.startsWith('<')) return normalized
+
+  const metaTag = normalized.match(/^<meta\s+([^>]+?)\s*\/?\s*>$/i)
+  if (!metaTag) return normalized
+
+  const attributes = metaTag[1]
+  const isGoogleVerificationTag =
+    /\bname\s*=\s*["']google-site-verification["']/i.test(attributes)
+  const content = attributes.match(/\bcontent\s*=\s*["']([^"']+)["']/i)?.[1]
+
+  return isGoogleVerificationTag && content ? content.trim() : normalized
+}
+
+export const googleSearchConsoleVerificationTokenSchema = z
+  .string()
+  .trim()
+  .max(512)
+  .transform(extractGoogleSearchConsoleVerificationToken)
+  .pipe(
+    z
+      .string()
+      .min(10, 'Informe o token de verificação do Search Console')
+      .max(255)
+      .regex(
+        /^[A-Za-z0-9_-]+$/,
+        'Cole apenas o token ou a meta tag de verificação fornecida pelo Google',
+      ),
+  )
+
+export const googleAnalyticsIntegrationInputSchema = z
+  .object({ measurementId: googleAnalyticsMeasurementIdSchema.nullable() })
+  .strict()
+
+export const googleTagManagerIntegrationInputSchema = z
+  .object({ containerId: googleTagManagerContainerIdSchema.nullable() })
+  .strict()
+
+export const googleSearchConsoleIntegrationInputSchema = z
+  .object({ verificationToken: googleSearchConsoleVerificationTokenSchema.nullable() })
+  .strict()
+
 export const vistaIntegrationInputSchema = z.object({
   api_url: z.string().trim().url().max(2_000),
   api_key: z.string().trim().min(1).max(2_000),
@@ -151,6 +206,66 @@ export const apiGrupoOLXPublicationListResponseSchema = apiEnvelopeSchema(
 
 export type GrupoOLXIntegration = z.infer<typeof grupoOLXIntegrationSchema>
 export type GrupoOLXPublication = z.infer<typeof grupoOLXPublicationSchema>
+
+export const chavesNaMaoIntegrationInputSchema = z.object({
+  settings: grupoOLXSettingsSchema.optional(),
+}).strict()
+
+export const chavesNaMaoPublicationTypeSchema = z.enum(['STANDARD', 'FEATURED'])
+
+export const chavesNaMaoPublicationInputSchema = z.object({
+  propertyId: uuidSchema,
+  clientListingId: z.string().trim().min(1).max(50).optional(),
+  publicationType: chavesNaMaoPublicationTypeSchema,
+  isEnabled: z.boolean().optional(),
+}).strict()
+
+export const chavesNaMaoPublicationsInputSchema = z.object({
+  publications: z.array(chavesNaMaoPublicationInputSchema).max(1_000),
+}).strict()
+
+export const chavesNaMaoIntegrationSchema = z.object({
+  id: uuidSchema,
+  organization_id: uuidSchema,
+  portal: z.literal('chaves_na_mao'),
+  status: z.enum(['draft', 'pending_setup', 'connected', 'paused', 'error']),
+  is_active: z.boolean(),
+  feed_token: z.string().trim().min(32).max(256).nullable(),
+  settings: grupoOLXSettingsSchema,
+  last_feed_accessed_at: grupoOLXNullableTimestampSchema,
+  last_sync_status: z.string().trim().max(64).nullable(),
+  last_error: z.string().trim().max(4_000).nullable(),
+  lead_webhook_available: z.literal(false),
+  lead_webhook_blocker: z.string().trim().min(1).max(1_000),
+  created_at: grupoOLXReportTimestampSchema,
+  updated_at: grupoOLXReportTimestampSchema,
+}).strict()
+
+export const chavesNaMaoPublicationSchema = z.object({
+  id: uuidSchema,
+  integration_id: uuidSchema,
+  property_id: uuidSchema,
+  client_listing_id: z.string().trim().min(1).max(50),
+  publication_type: chavesNaMaoPublicationTypeSchema,
+  is_enabled: z.boolean(),
+  status: z.string().trim().max(64).nullable(),
+  validation_errors: z.array(z.unknown()).max(1_000),
+  last_exported_at: grupoOLXNullableTimestampSchema,
+  last_seen_in_feed_at: grupoOLXNullableTimestampSchema,
+  last_error: z.string().trim().max(4_000).nullable(),
+  created_at: grupoOLXReportTimestampSchema,
+  updated_at: grupoOLXReportTimestampSchema,
+  property: grupoOLXPublicationPropertySchema,
+}).strict()
+
+export const apiChavesNaMaoIntegrationResponseSchema = apiEnvelopeSchema(chavesNaMaoIntegrationSchema)
+export const apiOptionalChavesNaMaoIntegrationResponseSchema = apiEnvelopeSchema(chavesNaMaoIntegrationSchema.nullable())
+export const apiChavesNaMaoPublicationListResponseSchema = apiEnvelopeSchema(
+  z.array(chavesNaMaoPublicationSchema).max(50_000),
+)
+
+export type ChavesNaMaoIntegration = z.infer<typeof chavesNaMaoIntegrationSchema>
+export type ChavesNaMaoPublication = z.infer<typeof chavesNaMaoPublicationSchema>
 export const metaFormConfigInputSchema = z.object({
   integrationId: uuidSchema,
   formId: z.string().trim().min(1).max(255),
@@ -273,6 +388,24 @@ export const metaAdAccountsActionResponseSchema = z.object({
   ad_accounts: z.array(metaOAuthAdAccountSchema).max(250),
 }).strict()
 
+export const metaLeadFormQuestionSchema = z.object({
+  key: z.string().trim().max(255),
+  label: z.string().trim().max(500),
+  type: z.string().trim().max(120),
+}).strict()
+
+export const metaLeadFormSchema = z.object({
+  id: metaProviderIdSchema,
+  name: z.string().trim().min(1).max(255),
+  status: z.string().trim().min(1).max(64),
+  leads_count: nonNegativeIntegerSchema.optional(),
+  questions: z.array(metaLeadFormQuestionSchema).max(500).optional(),
+}).strict()
+
+export const metaPageFormsActionResponseSchema = z.object({
+  forms: z.array(metaLeadFormSchema).max(1_000),
+}).strict()
+
 export const metaPublicIntegrationSchema = z.object({
   id: uuidSchema,
   organization_id: uuidSchema,
@@ -324,12 +457,25 @@ export const metaPublicIntegrationSchema = z.object({
   // Missing must fail closed: advanced data stays unavailable until the Go API
   // explicitly proves that the durable user token and required scopes exist.
   marketing_token_available: z.boolean().optional().default(false),
+  // Kept separate from Paid Ads: missing Instagram permissions must never
+  // disable Ads Insights when `ads_read` is valid.
+  instagram_insights_available: z.boolean().optional().default(false),
+}).strict()
+
+export const metaConnectPageActionResponseSchema = z.object({
+  success: z.literal(true),
+  marketing_active: z.boolean(),
+  messenger_active: z.boolean(),
+  integration: z.record(z.unknown()),
+  missing_permissions: z.array(z.string().trim().min(1).max(128)).max(64).default([]),
 }).strict()
 
 export type MetaOAuthAdAccount = z.infer<typeof metaOAuthAdAccountSchema>
 export type MetaOAuthPage = z.infer<typeof metaOAuthPageSchema>
 export type MetaOAuthFlowResult = z.infer<typeof metaOAuthFlowResultSchema>
+export type MetaLeadForm = z.infer<typeof metaLeadFormSchema>
 export type MetaPublicIntegration = z.infer<typeof metaPublicIntegrationSchema>
+export type MetaConnectPageActionResponse = z.infer<typeof metaConnectPageActionResponseSchema>
 
 export const apiIntegrationRecordSchema = z.record(z.unknown())
 export const apiOptionalIntegrationResponseSchema = apiEnvelopeSchema(apiIntegrationRecordSchema.nullable())

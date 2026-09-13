@@ -23,6 +23,7 @@ import {
   type AutomationMediaType,
 } from '@/lib/api/automations';
 import { VimobAPIError } from '@/lib/api/vimob-client';
+import { getErrorObjectMessage as getErrorMessage } from '@/lib/api/vimob-error';
 import { searchTextIncludes } from '@/lib/search-text';
 import { useAutomationMedia } from '@/hooks/use-automations';
 
@@ -34,15 +35,6 @@ interface AutomationMediaGalleryProps {
   mediaType?: AutomationMediaType;
 }
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (typeof error === 'object' && error && 'message' in error) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === 'string') return message;
-  }
-  return 'Erro desconhecido';
-}
-
 export function AutomationMediaGallery({
   onSelect,
   onClearSelection,
@@ -50,7 +42,7 @@ export function AutomationMediaGallery({
   accept = 'image/*',
   mediaType = 'image',
 }: AutomationMediaGalleryProps) {
-  const { organization, profile } = useAuth();
+  const { activeOrganization, organization, profile } = useAuth();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const onSelectRef = useRef(onSelect);
@@ -58,7 +50,7 @@ export function AutomationMediaGallery({
   const [search, setSearch] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<AutomationMediaFile | null>(null);
 
-  const orgId = organization?.id || profile?.organization_id;
+  const orgId = activeOrganization.organizationId;
   const mediaQueryKey = ['automation-media', orgId, mediaType] as const;
 
   const {

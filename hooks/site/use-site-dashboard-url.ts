@@ -8,9 +8,9 @@ import { siteAPI } from '@/lib/api/site'
 import { getSitePublicUrl } from '@/lib/site/site-publication'
 
 export function useSiteDashboardUrl() {
-  const { loading: authLoading, organization, profile } = useAuth()
+  const { activeOrganization, loading: authLoading, organization, profile } = useAuth()
   const { hasPermission, isLoading: permissionsLoading } = useUserPermissions()
-  const organizationId = organization?.id || profile?.organization_id || null
+  const organizationId = activeOrganization.organizationId || null
   const canReadSiteSettings = hasPermission('settings_site')
 
   const query = useQuery({

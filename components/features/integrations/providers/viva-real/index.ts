@@ -1,0 +1,1 @@
+export { vivaRealIntegrationProviderManifest } from "./manifest";

@@ -5,71 +5,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { PropertyPickerDialog } from "@/components/features/properties/PropertyPickerDialog";
+import {
+  DistributionQueueAutoTagsSection,
+  DistributionQueueBasicSection,
+  DistributionQueueMembersSection,
+  DistributionQueueRedistributionSection,
+  DistributionQueueRulesSection,
+  DistributionQueueWhatsAppAutoReplySection,
+} from "@/components/features/round-robin/distribution-queue-editor";
 import { createClientId } from "@/lib/client-id";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  ChevronDown,
-  Plus,
-  X,
-  Trash2,
-  Loader2,
-  Save,
-  Settings2,
-  Users,
-  Filter,
-  AlertCircle,
-  UsersRound,
-  Globe,
-  Webhook,
-  MessageSquare,
-  GripVertical,
-  Tag as TagIcon,
-} from "lucide-react";
+import { Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
 import { usePipelines, useStages } from "@/hooks/use-stages";
 import { useTeams } from "@/hooks/use-teams";
 import { useOrganizationUsers } from "@/hooks/use-users";
-import { useCreateTag, useTags } from "@/hooks/use-tags";
+import { useTags } from "@/hooks/use-tags";
 import { useProperties } from "@/hooks/use-properties";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
 import { useWebhooks } from "@/hooks/use-webhooks";
@@ -77,383 +28,70 @@ import {
   useRoundRobinMetaForms,
   useRoundRobinWhatsAppSessions,
 } from "@/hooks/use-round-robins";
-import { cn } from "@/lib/utils";
 import {
   activeTeamsForUser,
-  hydrateQueueMembers,
   queueIgnoresAvailability,
   queueMemberKey,
   resolveDirectUserTeamContext,
   type QueueMemberDraft,
-  type QueueTeamSource,
 } from "@/lib/round-robin/member-context";
-import { useUserPermissions } from '@/hooks/use-user-permissions';
 import {
-  commandSearchFilter,
-  searchTextEquals,
-  searchTextIncludes,
-} from "@/lib/search-text";
-
-// Drag and Drop imports
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent,
-} from "@dnd-kit/core";
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-  useSortable,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
-
-interface QueueSettings {
-  ignore_availability?: boolean;
-  auto_tag_ids?: string[];
-  enable_redistribution?: boolean;
-  redistribution_timeout_minutes?: number;
-  redistribution_warning_minutes?: number;
-  redistribution_max_attempts?: number;
-  preserve_position?: boolean;
-  require_checkin?: boolean;
-  reentry_behavior?: "redistribute" | "keep_assignee";
-  whatsapp_distribution_auto_reply_enabled?: boolean;
-  whatsapp_distribution_auto_reply_message?: string;
-  whatsapp_distribution_auto_reply_delay_seconds?: number;
-}
-
-interface RuleCondition {
-  id: string;
-  type:
-    | "source"
-    | "webhook"
-    | "whatsapp_session"
-    | "meta_form"
-    | "website_category"
-    | "campaign_contains"
-    | "whatsapp_message_contains"
-    | "tag"
-    | "city"
-    | "interest_property";
-  values: string[];
-  sessionId?: string;
-}
-
-type RuleConditionType = RuleCondition["type"];
-
-type QueueMember = QueueMemberDraft;
-
-interface QueueFormData {
-  name: string;
-  strategy: "simple" | "weighted";
-  target_pipeline_id: string;
-  target_stage_id: string;
-  is_active: boolean;
-  settings: QueueSettings;
-  conditions: RuleCondition[];
-  members: QueueMember[];
-}
-
-type QueueStrategy = QueueFormData["strategy"];
-
-interface ExistingQueueRule {
-  id: string;
-  match_type?: string | null;
-  match_value?: string | null;
-  match?: unknown;
-}
-
-interface ExistingQueueMember {
-  id?: string;
-  team_id?: string | null;
-  user_id?: string | null;
-  weight?: number | null;
-  user?: {
-    name?: string | null;
-  } | null;
-}
-
-interface ExistingDistributionQueue {
-  id?: string;
-  name?: string | null;
-  strategy?: string | null;
-  target_pipeline_id?: string | null;
-  target_stage_id?: string | null;
-  is_active?: boolean | null;
-  settings?: Partial<QueueSettings> | null;
-  reentry_behavior?: "redistribute" | "keep_assignee" | null;
-  rules?: ExistingQueueRule[] | null;
-  members?: ExistingQueueMember[] | null;
-}
+  DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY,
+  DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS,
+  createEmptyDistributionQueueFormData,
+  DISTRIBUTION_QUEUE_CONDITION_TYPES,
+  findConflictingDistributionQueueMetaForm,
+  hasValidDistributionQueueCriteria,
+  hydrateDistributionQueueFormData,
+  isValidWhatsAppDistributionAutoReplyDelay,
+  MAX_DISTRIBUTION_QUEUE_AUTO_TAGS,
+  MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS,
+  MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH,
+  normalizeDistributionQueueAutoTagIds,
+  sanitizeDistributionQueueConditions,
+  type DistributionQueueCondition,
+  type DistributionQueueFormData,
+  type ExistingDistributionQueue,
+} from "@/lib/round-robin/distribution-queue-form";
+import type { DragEndEvent } from "@dnd-kit/core";
+import { arrayMove } from "@dnd-kit/sortable";
 
 interface DistributionQueueEditorProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   queue?: ExistingDistributionQueue | null;
-  onSave: (data: QueueFormData) => Promise<void>;
+  onSave: (data: DistributionQueueFormData) => Promise<void>;
+  presentation?: "dialog" | "page";
   allowedTeamIds?: string[];
   allowedUserIds?: string[];
   allowedPipelineIds?: string[];
 }
 
 const EMPTY_RESTRICTION_IDS: string[] = [];
-const MAX_QUEUE_AUTO_TAGS = 50;
-const QUEUE_AUTO_TAG_DEFAULT_COLOR = "#3B82F6";
-const DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY = 'Olá! Recebemos seu interesse em um de nossos imóveis. Um de nossos corretores já foi acionado e falará com você por aqui em breve.';
-const DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS = 30;
-const MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH = 4000;
-const MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS = 3600;
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DEFAULT_PAGE_SECTION_IDS = ["basic", "members"];
 
-function isValidWhatsAppDistributionAutoReplyDelay(value: unknown): value is number {
-  return Number.isInteger(value)
-    && Number(value) >= 1
-    && Number(value) <= MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS;
-}
-
-function normalizeQueueAutoTagIDs(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-
-  const normalized: string[] = [];
-  const seen = new Set<string>();
-  for (const rawValue of value) {
-    if (typeof rawValue !== 'string') continue;
-    const tagID = rawValue.trim().toLowerCase();
-    if (!UUID_PATTERN.test(tagID) || seen.has(tagID)) continue;
-    seen.add(tagID);
-    normalized.push(tagID);
-  }
-  return normalized;
-}
-
-const SOURCE_OPTIONS = [
-  { value: "meta_ads", label: "Meta Ads" },
-  { value: "facebook", label: "Facebook" },
-  { value: "instagram", label: "Instagram" },
-  { value: "whatsapp", label: "WhatsApp" },
-  { value: "webhook", label: "Webhook" },
-  { value: "website", label: "Website" },
-];
-
-const CONDITION_TYPES = [
-  { value: "source", label: "Canal de entrada" },
-  { value: "webhook", label: "Webhook especifico" },
-  { value: "whatsapp_session", label: "Conexao WhatsApp" },
-  { value: "meta_form", label: "Formulario Meta" },
-  { value: "website_category", label: "Categoria do site" },
-  { value: "campaign_contains", label: "Nome da campanha contem" },
-  { value: "whatsapp_message_contains", label: "Campanha de WhatsApp" },
-  { value: "tag", label: "Tag já existente (filtro)" },
-  { value: "city", label: "Cidade" },
-  { value: "interest_property", label: "Interesse em imóvel" },
-];
-
-const WEBSITE_CATEGORY_OPTIONS = [
-  { value: "venda", label: "Venda" },
-  { value: "locacao", label: "Locacao" },
-  { value: "lancamento", label: "Lancamento" },
-];
-
-function isQueueStrategy(value: unknown): value is QueueStrategy {
-  return value === "simple" || value === "weighted";
-}
-
-function isRuleConditionType(value: unknown): value is RuleConditionType {
-  return (
-    typeof value === "string" &&
-    CONDITION_TYPES.some((condition) => condition.value === value)
-  );
-}
-
-function normalizeRuleConditionType(value: unknown): RuleConditionType {
-  if (value === 'form') return 'meta_form';
-  return isRuleConditionType(value) ? value : 'source';
-}
-
-function whatsappSessionIdFromMatch(match: unknown): string {
-  if (!match || typeof match !== 'object' || Array.isArray(match)) return '';
-  const sessionId = (match as Record<string, unknown>).whatsapp_session_id;
-  return typeof sessionId === 'string' ? sessionId.trim() : '';
-}
-
-function conditionOptionBadgeClass(selected: boolean) {
-  return cn(
-    "cursor-pointer rounded-[6px] border px-2.5 py-1 shadow-none",
-    selected
-      ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90"
-      : "border-[var(--app-border-strong)] bg-[var(--app-surface-solid)] text-[var(--app-text-primary)] hover:bg-[var(--app-surface-hover)]",
-  );
-}
-
-// Sortable Item Component for Members
-function SortableMemberRow({
-  member,
-  idx,
-  strategy,
-  totalWeight,
-  teamOptions,
-  ignoreAvailability,
-  onUpdateWeight,
-  onUpdateTeam,
-  onRemove,
-}: {
-  member: QueueMember;
-  idx: number;
-  strategy: string;
-  totalWeight: number;
-  teamOptions: QueueTeamSource[];
-  ignoreAvailability: boolean;
-  onUpdateWeight: (id: string, weight: number) => void;
-  onUpdateTeam: (id: string, teamId: string) => void;
-  onRemove: (id: string) => void;
-}) {
-  const memberKey = queueMemberKey(member);
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: memberKey });
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    zIndex: isDragging ? 50 : undefined,
-    opacity: isDragging ? 0.5 : undefined,
-  };
-
-  const percentage =
-    totalWeight > 0 ? Math.round((member.weight / totalWeight) * 100) : 0;
-  const hasValidTeamContext =
-    !member.teamId || teamOptions.some((team) => team.id === member.teamId);
-  const requiresTeamSelector =
-    member.type === "user" &&
-    (teamOptions.length > 1 ||
-      (teamOptions.length === 1 && !hasValidTeamContext));
-
-  return (
-    <TableRow
-      ref={setNodeRef}
-      style={style}
-      className={cn(
-        "border-0 hover:bg-[var(--app-surface-hover)]",
-        isDragging && "bg-[var(--app-surface-hover)]",
-      )}
-    >
-      <TableCell className="w-10">
-        <button
-          {...attributes}
-          {...listeners}
-          className="cursor-grab active:cursor-grabbing p-1"
-        >
-          <GripVertical className="h-4 w-4 text-muted-foreground" />
-        </button>
-      </TableCell>
-      <TableCell>
-        <div className="flex items-center gap-2">
-          {member.type === "team" ? (
-            <UsersRound className="h-4 w-4 text-muted-foreground" />
-          ) : (
-            <Avatar className="h-6 w-6">
-              <AvatarFallback className="text-xs bg-primary text-primary-foreground">
-                {member.name?.[0] || "?"}
-              </AvatarFallback>
-            </Avatar>
-          )}
-          <div className="min-w-0">
-            <span className="font-medium text-sm">
-              {member.name || "Desconhecido"}
-            </span>
-            {member.type === "team" && (
-              <Badge variant="outline" className="ml-2 text-xs">
-                Equipe
-              </Badge>
-            )}
-            {member.type === "user" &&
-              teamOptions.length === 1 &&
-              hasValidTeamContext && (
-                <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                  {teamOptions[0].name || "Equipe vinculada"}
-                </p>
-              )}
-            {requiresTeamSelector && (
-              <Select
-                value={member.teamId}
-                onValueChange={(teamId) => onUpdateTeam(memberKey, teamId)}
-              >
-                <SelectTrigger className="mt-1 h-7 min-w-[150px] rounded-[6px] border-[var(--app-border)] bg-[var(--app-surface-solid)] text-[11px] shadow-none">
-                  <SelectValue placeholder="Escolha a equipe" />
-                </SelectTrigger>
-                <SelectContent>
-                  {teamOptions.map((team) => (
-                    <SelectItem key={team.id} value={team.id}>
-                      {team.name || "Equipe"}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-            {member.type === "user" && teamOptions.length === 0 && (
-              <p
-                className={cn(
-                  "mt-0.5 text-[11px]",
-                  ignoreAvailability
-                    ? "text-muted-foreground"
-                    : "text-destructive",
-                )}
-              >
-                {ignoreAvailability
-                  ? "Sem equipe · horários ignorados"
-                  : "Sem equipe ativa para aplicar horários"}
-              </p>
-            )}
-          </div>
-        </div>
-      </TableCell>
-      <TableCell>
-        {strategy === "weighted" ? (
-          <div className="flex items-center justify-center gap-2">
-            <Input
-              type="number"
-              value={member.weight}
-              onChange={(e) =>
-                onUpdateWeight(memberKey, parseInt(e.target.value) || 1)
-              }
-              className="w-16 text-center h-8"
-              min={1}
-              max={100}
-            />
-            <span className="text-xs text-muted-foreground w-10">
-              ({percentage}%)
-            </span>
-          </div>
-        ) : (
-          <div className="text-center text-muted-foreground text-sm">
-            #{idx + 1}
-          </div>
-        )}
-      </TableCell>
-      <TableCell className="text-right">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 text-muted-foreground hover:text-destructive"
-          onClick={() => onRemove(memberKey)}
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
-      </TableCell>
-    </TableRow>
-  );
+function buildEditorFingerprint(formData: DistributionQueueFormData) {
+  return JSON.stringify({
+    name: formData.name.trim(),
+    strategy: formData.strategy,
+    targetPipelineId: formData.target_pipeline_id,
+    targetStageId: formData.target_stage_id,
+    isActive: formData.is_active,
+    settings: formData.settings,
+    conditions: formData.conditions.map((condition) => ({
+      id: condition.id,
+      type: condition.type,
+      values: condition.values,
+      sessionId: condition.sessionId,
+    })),
+    members: formData.members.map((member) => ({
+      id: member.id,
+      type: member.type,
+      entityId: member.entityId,
+      teamId: member.teamId,
+      weight: member.weight,
+    })),
+  });
 }
 
 export function DistributionQueueEditor({
@@ -461,34 +99,54 @@ export function DistributionQueueEditor({
   onOpenChange,
   queue,
   onSave,
+  presentation = "dialog",
   allowedTeamIds,
   allowedUserIds,
   allowedPipelineIds,
 }: DistributionQueueEditorProps) {
   const { hasModule } = useOrganizationModules();
   const hasPropertiesModule = hasModule("properties");
-  const { data: pipelines = [] } = usePipelines();
-  const { data: teams = [], isPending: teamsLoading } = useTeams({
-    includeInactive: true,
-  });
-  const { data: users = [], isPending: usersLoading } =
-    useOrganizationUsers();
+  const {
+    data: pipelines = [],
+    isPending: pipelinesLoading,
+    isError: pipelinesError,
+  } = usePipelines();
+  const {
+    data: teams = [],
+    isPending: teamsLoading,
+    isError: teamsError,
+  } = useTeams({ includeInactive: true });
+  const {
+    data: users = [],
+    isPending: usersLoading,
+    isError: usersError,
+  } = useOrganizationUsers();
   const {
     data: tags = [],
     isLoading: tagsLoading,
     isError: tagsError,
   } = useTags();
-  const { data: properties = [] } = useProperties(
+  const {
+    data: properties = [],
+    isPending: propertiesLoading,
+    isError: propertiesError,
+  } = useProperties(
     undefined,
     {},
     {
       enabled: hasPropertiesModule,
     },
   );
-  const { data: webhooks = [] } = useWebhooks();
-  const { data: whatsappSessions = [] } = useRoundRobinWhatsAppSessions();
-  const { hasPermission } = useUserPermissions();
-  const createTag = useCreateTag();
+  const {
+    data: webhooks = [],
+    isPending: webhooksLoading,
+    isError: webhooksError,
+  } = useWebhooks();
+  const {
+    data: whatsappSessions = [],
+    isPending: whatsappSessionsLoading,
+    isError: whatsappSessionsError,
+  } = useRoundRobinWhatsAppSessions();
   const {
     data: metaFormConfigs = [],
     isLoading: metaFormsLoading,
@@ -505,8 +163,8 @@ export function DistributionQueueEditor({
   const availableConditionTypes = useMemo(
     () =>
       hasPropertiesModule
-        ? CONDITION_TYPES
-        : CONDITION_TYPES.filter(
+        ? DISTRIBUTION_QUEUE_CONDITION_TYPES
+        : DISTRIBUTION_QUEUE_CONDITION_TYPES.filter(
             (condition) => condition.value !== "interest_property",
           ),
     [hasPropertiesModule],
@@ -555,66 +213,44 @@ export function DistributionQueueEditor({
     [whatsappSessions],
   );
   const campaignWhatsAppSessions = useMemo(
-    () => whatsappSessions.filter((session) => (
-      session.is_active
-      && !['disabled', 'deleted'].includes(session.status.trim().toLowerCase())
-      && (!session.provider || session.provider === 'evolution_go')
-    )),
-    [whatsappSessions]
+    () =>
+      whatsappSessions.filter(
+        (session) =>
+          session.is_active &&
+          !["disabled", "deleted"].includes(
+            session.status.trim().toLowerCase(),
+          ) &&
+          (!session.provider || session.provider === "evolution_go"),
+      ),
+    [whatsappSessions],
   );
 
   const [saving, setSaving] = useState(false);
   const [openSections, setOpenSections] = useState<string[]>([]);
   const [pendingUserId, setPendingUserId] = useState("");
-  const [userPickerOpen, setUserPickerOpen] = useState(false);
-  const [autoTagSearch, setAutoTagSearch] = useState("");
 
-  const [formData, setFormData] = useState<QueueFormData>({
-    name: "",
-    strategy: "simple",
-    target_pipeline_id: "",
-    target_stage_id: "",
-    is_active: true,
-    settings: {
-      auto_tag_ids: [],
-      enable_redistribution: false,
-      redistribution_timeout_minutes: 20,
-      redistribution_warning_minutes: 5,
-      redistribution_max_attempts: 10,
-      preserve_position: true,
-      require_checkin: false,
-      reentry_behavior: "redistribute",
-      whatsapp_distribution_auto_reply_enabled: false,
-      whatsapp_distribution_auto_reply_message: DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY,
-      whatsapp_distribution_auto_reply_delay_seconds: DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS,
-    },
-    conditions: [],
-    members: [],
-  });
+  const [formData, setFormData] = useState<DistributionQueueFormData>(
+    createEmptyDistributionQueueFormData,
+  );
+  const [savedFingerprint, setSavedFingerprint] = useState(() =>
+    buildEditorFingerprint(createEmptyDistributionQueueFormData()),
+  );
+
+  const persistedMemberById = useMemo(
+    () =>
+      new Map(
+        (queue?.members || [])
+          .filter((member) => Boolean(member.id))
+          .map((member) => [member.id as string, member]),
+      ),
+    [queue?.members],
+  );
 
   const hasWhatsAppMessageCondition = formData.conditions.some(
     (condition) => condition.type === "whatsapp_message_contains",
   );
-  const selectedAutoTagIDs = formData.settings.auto_tag_ids ?? [];
-  const knownAutoTagIDs = useMemo(
-    () => new Set(tags.flatMap((tag) => normalizeQueueAutoTagIDs([tag.id]))),
-    [tags],
-  );
-  const unavailableAutoTagIDs = tagsLoading
-    ? []
-    : selectedAutoTagIDs.filter((tagID) => !knownAutoTagIDs.has(tagID));
-  const visibleAutoTags = useMemo(
-    () =>
-      autoTagSearch.trim()
-        ? tags.filter((tag) => searchTextIncludes(tag.name, autoTagSearch))
-        : tags,
-    [autoTagSearch, tags],
-  );
-  const hasExactAutoTagMatch = useMemo(
-    () =>
-      Boolean(autoTagSearch.trim()) &&
-      tags.some((tag) => searchTextEquals(tag.name, autoTagSearch)),
-    [autoTagSearch, tags],
+  const selectedAutoTagIds = normalizeDistributionQueueAutoTagIds(
+    formData.settings.auto_tag_ids,
   );
 
   const selectableUsers = useMemo(
@@ -639,9 +275,7 @@ export function DistributionQueueEditor({
   );
   const pendingUserTeams = useMemo(
     () =>
-      pendingUserId
-        ? activeTeamsForUser(pendingUserId, visibleTeams)
-        : [],
+      pendingUserId ? activeTeamsForUser(pendingUserId, visibleTeams) : [],
     [pendingUserId, visibleTeams],
   );
   const teamSelectMessage =
@@ -653,113 +287,107 @@ export function DistributionQueueEditor({
           ? "Todas as equipes ativas ja foram adicionadas."
           : null;
 
-  // Sensors for DnD
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    }),
-  );
-
   // Get stages for selected pipeline
-  const { data: stages = [] } = useStages(
-    formData.target_pipeline_id || undefined,
+  const {
+    data: stages = [],
+    isPending: stagesLoading,
+    isError: stagesError,
+  } = useStages(formData.target_pipeline_id || undefined);
+
+  const hasWebhookCondition = formData.conditions.some(
+    (condition) => condition.type === "webhook",
   );
+  const hasWhatsAppCondition = formData.conditions.some(
+    (condition) =>
+      condition.type === "whatsapp_session" ||
+      condition.type === "whatsapp_message_contains",
+  );
+  const hasMetaFormCondition = formData.conditions.some(
+    (condition) => condition.type === "meta_form",
+  );
+  const hasTagCondition = formData.conditions.some(
+    (condition) => condition.type === "tag",
+  );
+  const hasPropertyCondition = formData.conditions.some(
+    (condition) => condition.type === "interest_property",
+  );
+  const blockingReferenceDataError =
+    pipelinesError ||
+    stagesError ||
+    teamsError ||
+    usersError ||
+    ((hasTagCondition || selectedAutoTagIds.length > 0) && tagsError) ||
+    (hasWebhookCondition && webhooksError) ||
+    (hasWhatsAppCondition && whatsappSessionsError) ||
+    (hasMetaFormCondition && metaFormsError) ||
+    (hasPropertyCondition && propertiesError);
+  const blockingReferenceDataLoading =
+    pipelinesLoading ||
+    (!!formData.target_pipeline_id && stagesLoading) ||
+    teamsLoading ||
+    usersLoading ||
+    ((hasTagCondition || selectedAutoTagIds.length > 0) && tagsLoading) ||
+    (hasWebhookCondition && webhooksLoading) ||
+    (hasWhatsAppCondition && whatsappSessionsLoading) ||
+    (hasMetaFormCondition && metaFormsLoading) ||
+    (hasPropertyCondition && propertiesLoading);
 
   useEffect(() => {
     if (open) {
       // This is UI draft hydration when the dialog opens or switches queue.
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setOpenSections([]);
+      setOpenSections(presentation === "page" ? DEFAULT_PAGE_SECTION_IDS : []);
       setPendingUserId("");
-      setUserPickerOpen(false);
-      setAutoTagSearch("");
     }
-  }, [open, queue?.id]);
+  }, [open, presentation, queue?.id]);
+
+  useEffect(() => {
+    if (!queue || teamsLoading || teams.length === 0) return;
+
+    const teamNamesById = new Map(
+      teams.map((team) => [team.id, team.name || "Equipe"]),
+    );
+    // Complete team labels after the team query resolves without replacing the
+    // rest of the in-progress form draft.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFormData((current) => {
+      let changed = false;
+      const members = current.members.map((member) => {
+        if (member.type !== "team") return member;
+        const resolvedName = teamNamesById.get(member.entityId);
+        if (!resolvedName || resolvedName === member.name) return member;
+        changed = true;
+        return { ...member, name: resolvedName };
+      });
+
+      return changed ? { ...current, members } : current;
+    });
+  }, [queue, teams, teamsLoading]);
 
   // Initialize form when queue changes
   useEffect(() => {
+    const hydratedFormData = queue
+      ? hydrateDistributionQueueFormData(
+          {
+            ...queue,
+            reentry_behavior:
+              queue.reentry_behavior ??
+              queue.settings?.reentry_behavior ??
+              "redistribute",
+          },
+          teams,
+        )
+      : createEmptyDistributionQueueFormData();
+
     if (queue) {
-      const existingConditions: RuleCondition[] = (queue.rules || []).map(
-        (rule) => {
-          const matchType = normalizeRuleConditionType(rule.match_type);
-          const matchValueStr = rule.match_value || "";
-          const sessionId =
-            matchType === "whatsapp_message_contains"
-              ? whatsappSessionIdFromMatch(rule.match)
-              : undefined;
-          let values: string[] = [];
-          if (matchValueStr) {
-            values =
-              matchType === "whatsapp_message_contains"
-                ? [matchValueStr.trim()].filter(Boolean)
-                : matchValueStr
-                    .split(",")
-                    .map((v: string) => v.trim())
-                    .filter(Boolean);
-          }
-          return { id: rule.id, type: matchType, values, sessionId };
-        },
-      );
-
-      const existingMembers = hydrateQueueMembers(queue.members || [], teams);
-      const strategy: QueueStrategy = isQueueStrategy(queue.strategy)
-        ? queue.strategy
-        : "simple";
-
       // This is form draft hydration from the selected queue.
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setFormData({
-        name: queue.name || "",
-        strategy,
-        target_pipeline_id: queue.target_pipeline_id || "",
-        target_stage_id: queue.target_stage_id || "",
-        is_active: queue.is_active ?? true,
-        settings: {
-          enable_redistribution: false,
-          redistribution_timeout_minutes: 20,
-          redistribution_warning_minutes: 5,
-          redistribution_max_attempts: 10,
-          preserve_position: true,
-          require_checkin: false,
-          whatsapp_distribution_auto_reply_enabled: false,
-          whatsapp_distribution_auto_reply_message: DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY,
-          whatsapp_distribution_auto_reply_delay_seconds: DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS,
-          ...(queue.settings || {}),
-          auto_tag_ids: normalizeQueueAutoTagIDs(queue.settings?.auto_tag_ids),
-          reentry_behavior:
-            queue.reentry_behavior ??
-            queue.settings?.reentry_behavior ??
-            "redistribute",
-        },
-        conditions: existingConditions,
-        members: existingMembers,
-      });
+      setFormData(hydratedFormData);
     } else {
       // This is form draft hydration for create mode.
-      setFormData({
-        name: "",
-        strategy: "simple",
-        target_pipeline_id: "",
-        target_stage_id: "",
-        is_active: true,
-        settings: {
-          auto_tag_ids: [],
-          enable_redistribution: false,
-          redistribution_timeout_minutes: 20,
-          redistribution_warning_minutes: 5,
-          redistribution_max_attempts: 10,
-          preserve_position: true,
-          require_checkin: false,
-          reentry_behavior: "redistribute",
-          whatsapp_distribution_auto_reply_enabled: false,
-          whatsapp_distribution_auto_reply_message: DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY,
-          whatsapp_distribution_auto_reply_delay_seconds: DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS,
-        },
-        conditions: [],
-        members: [],
-      });
+      setFormData(hydratedFormData);
     }
+    setSavedFingerprint(buildEditorFingerprint(hydratedFormData));
     // Intentionally initialize only when the dialog opens or switches queue.
     // Team/user query refreshes must not reset in-progress edits.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -791,7 +419,10 @@ export function DistributionQueueEditor({
     }));
   };
 
-  const updateCondition = (id: string, updates: Partial<RuleCondition>) => {
+  const updateCondition = (
+    id: string,
+    updates: Partial<DistributionQueueCondition>,
+  ) => {
     setFormData((prev) => {
       const current = prev.conditions.find((condition) => condition.id === id);
       const conditions = prev.conditions.map((condition) =>
@@ -905,9 +536,7 @@ export function DistributionQueueEditor({
     setFormData((prev) => ({
       ...prev,
       members: prev.members.map((member) =>
-        queueMemberKey(member) === memberKey
-          ? { ...member, teamId }
-          : member,
+        queueMemberKey(member) === memberKey ? { ...member, teamId } : member,
       ),
     }));
   };
@@ -919,58 +548,40 @@ export function DistributionQueueEditor({
     }));
   };
 
-  const toggleAutoTag = (tagID: string) => {
-    const normalizedTagID = normalizeQueueAutoTagIDs([tagID])[0];
-    if (!normalizedTagID) return;
+  const toggleAutoTag = (tagId: string) => {
+    const normalizedTagId = normalizeDistributionQueueAutoTagIds([tagId])[0];
+    if (!normalizedTagId) return;
 
-    const currentTagIDs = normalizeQueueAutoTagIDs(formData.settings.auto_tag_ids);
-    const isSelected = currentTagIDs.includes(normalizedTagID);
-    if (!isSelected && currentTagIDs.length >= MAX_QUEUE_AUTO_TAGS) {
-      toast.error(`Selecione no máximo ${MAX_QUEUE_AUTO_TAGS} tags automáticas.`);
+    const currentAutoTagIds = normalizeDistributionQueueAutoTagIds(
+      formData.settings.auto_tag_ids,
+    );
+    if (
+      !currentAutoTagIds.includes(normalizedTagId) &&
+      currentAutoTagIds.length >= MAX_DISTRIBUTION_QUEUE_AUTO_TAGS
+    ) {
+      toast.error(
+        `Selecione no máximo ${MAX_DISTRIBUTION_QUEUE_AUTO_TAGS} tags automáticas.`,
+      );
       return;
     }
 
-    setFormData(prev => {
-      const autoTagIDs = normalizeQueueAutoTagIDs(prev.settings.auto_tag_ids);
-      if (!autoTagIDs.includes(normalizedTagID) && autoTagIDs.length >= MAX_QUEUE_AUTO_TAGS) {
-        return prev;
-      }
+    setFormData((previous) => {
+      const autoTagIds = normalizeDistributionQueueAutoTagIds(
+        previous.settings.auto_tag_ids,
+      );
+      const alreadySelected = autoTagIds.includes(normalizedTagId);
       return {
-        ...prev,
+        ...previous,
         settings: {
-          ...prev.settings,
-          auto_tag_ids: autoTagIDs.includes(normalizedTagID)
-            ? autoTagIDs.filter((currentTagID) => currentTagID !== normalizedTagID)
-            : [...autoTagIDs, normalizedTagID],
+          ...previous.settings,
+          auto_tag_ids: alreadySelected
+            ? autoTagIds.filter(
+                (currentTagId) => currentTagId !== normalizedTagId,
+              )
+            : [...autoTagIds, normalizedTagId],
         },
       };
     });
-  };
-
-  const handleCreateAutoTag = async () => {
-    const tagName = autoTagSearch.trim();
-    if (
-      !tagName ||
-      hasExactAutoTagMatch ||
-      !hasPermission("tag_manage") ||
-      selectedAutoTagIDs.length >= MAX_QUEUE_AUTO_TAGS ||
-      createTag.isPending
-    ) {
-      return;
-    }
-
-    try {
-      const newTag = await createTag.mutateAsync({
-        name: tagName,
-        color: QUEUE_AUTO_TAG_DEFAULT_COLOR,
-      });
-      if (newTag?.id) {
-        toggleAutoTag(newTag.id);
-        setAutoTagSearch("");
-      }
-    } catch {
-      // The mutation already shows the API error to the user.
-    }
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -993,6 +604,16 @@ export function DistributionQueueEditor({
   };
 
   const handleSave = async () => {
+    if (blockingReferenceDataError) {
+      toast.error(
+        "Não foi possível validar todos os dados da fila. Recarregue as referências antes de salvar.",
+      );
+      return;
+    }
+    if (blockingReferenceDataLoading) {
+      toast.error("Aguarde o carregamento completo dos dados da fila.");
+      return;
+    }
     if (!formData.name.trim()) {
       toast.error("Nome da fila e obrigatorio");
       return;
@@ -1013,9 +634,7 @@ export function DistributionQueueEditor({
       return;
     }
     const participantDataLoading = formData.members.some((member) =>
-      member.type === "user"
-        ? teamsLoading || usersLoading
-        : teamsLoading,
+      member.type === "user" ? teamsLoading || usersLoading : teamsLoading,
     );
     if (participantDataLoading) {
       toast.error("Aguarde o carregamento das equipes e dos corretores.");
@@ -1047,14 +666,32 @@ export function DistributionQueueEditor({
     const ignoreAvailability = queueIgnoresAvailability(
       formData.settings.ignore_availability,
     );
-    const validMembers: QueueMember[] = [];
+    const validMembers: QueueMemberDraft[] = [];
     for (const member of formData.members) {
       if (!member.entityId?.trim()) continue;
+      const persistedMember = member.id
+        ? persistedMemberById.get(member.id)
+        : undefined;
       if (member.type === "team") {
-        if (validTeamIds.has(member.entityId)) validMembers.push(member);
+        const isPersistedTeam =
+          persistedMember?.team_id === member.entityId &&
+          !persistedMember.user_id;
+        if (validTeamIds.has(member.entityId) || isPersistedTeam) {
+          validMembers.push(member);
+        }
         continue;
       }
-      if (!validUserIds.has(member.entityId)) continue;
+      const isPersistedUser = persistedMember?.user_id === member.entityId;
+      if (!validUserIds.has(member.entityId)) {
+        if (isPersistedUser) validMembers.push(member);
+        continue;
+      }
+
+      const persistedTeamId = persistedMember?.team_id || undefined;
+      if (isPersistedUser && persistedTeamId === (member.teamId || undefined)) {
+        validMembers.push(member);
+        continue;
+      }
 
       const userTeams = activeTeamsForUser(member.entityId, visibleTeams);
       const resolution = resolveDirectUserTeamContext(
@@ -1108,7 +745,8 @@ export function DistributionQueueEditor({
           ["disabled", "deleted"].includes(
             selectedSession.status.trim().toLowerCase(),
           ) ||
-          selectedSession.provider !== "evolution_go"
+          (selectedSession.provider !== undefined &&
+            selectedSession.provider !== "evolution_go")
         );
       },
     );
@@ -1128,19 +766,29 @@ export function DistributionQueueEditor({
       "string"
         ? formData.settings.whatsapp_distribution_auto_reply_message.trim()
         : "";
-    const whatsappAutoReplyMessageLength = Array.from(rawWhatsAppAutoReplyMessage).length;
-    const rawWhatsAppAutoReplyDelay = formData.settings.whatsapp_distribution_auto_reply_delay_seconds;
+    const whatsappAutoReplyMessageLength = Array.from(
+      rawWhatsAppAutoReplyMessage,
+    ).length;
+    const rawWhatsAppAutoReplyDelay =
+      formData.settings.whatsapp_distribution_auto_reply_delay_seconds;
     if (
       whatsappAutoReplyEnabled &&
       (whatsappAutoReplyMessageLength < 1 ||
         whatsappAutoReplyMessageLength >
           MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH)
     ) {
-      toast.error(`A resposta automática deve conter entre 1 e ${MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH} caracteres.`);
+      toast.error(
+        `A resposta automática deve conter entre 1 e ${MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH} caracteres.`,
+      );
       return;
     }
-    if (whatsappAutoReplyEnabled && !isValidWhatsAppDistributionAutoReplyDelay(rawWhatsAppAutoReplyDelay)) {
-      toast.error(`O atraso da resposta automática deve ficar entre 1 e ${MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS} segundos.`);
+    if (
+      whatsappAutoReplyEnabled &&
+      !isValidWhatsAppDistributionAutoReplyDelay(rawWhatsAppAutoReplyDelay)
+    ) {
+      toast.error(
+        `O atraso da resposta automática deve ficar entre 1 e ${MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS} segundos.`,
+      );
       return;
     }
     const whatsappAutoReplyMessage =
@@ -1149,28 +797,26 @@ export function DistributionQueueEditor({
         MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH
         ? rawWhatsAppAutoReplyMessage
         : DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY;
-    const whatsappAutoReplyDelay =
-      isValidWhatsAppDistributionAutoReplyDelay(rawWhatsAppAutoReplyDelay)
-        ? rawWhatsAppAutoReplyDelay
-        : DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS;
+    const whatsappAutoReplyDelay = isValidWhatsAppDistributionAutoReplyDelay(
+      rawWhatsAppAutoReplyDelay,
+    )
+      ? rawWhatsAppAutoReplyDelay
+      : DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS;
     if (
       hasConfiguredWhatsAppMessageCondition &&
       formData.settings.require_checkin
     ) {
-      setFormData((prev) => ({
-        ...prev,
-        settings: { ...prev.settings, require_checkin: false },
+      setFormData((previous) => ({
+        ...previous,
+        settings: { ...previous.settings, require_checkin: false },
       }));
       toast.info(
-        "O check-in obrigatório foi desativado no rascunho desta fila porque a regra do WhatsApp ainda não é compatível com ele. Revise e salve novamente.",
+        "O check-in obrigatório foi desativado nesta fila de WhatsApp. Revise e salve novamente.",
       );
       return;
     }
-    const hasValidCriteria = formData.conditions.some(
-      (condition) =>
-        condition.values.some((value) => value.trim()) &&
-        (condition.type !== "whatsapp_message_contains" ||
-          Boolean(condition.sessionId?.trim())),
+    const hasValidCriteria = hasValidDistributionQueueCriteria(
+      formData.conditions,
     );
     if (!hasValidCriteria) {
       toast.error(
@@ -1210,48 +856,35 @@ export function DistributionQueueEditor({
         return;
       }
     }
-    const sanitizedConditions = formData.conditions
-      .map((condition) => {
-        const trimmedValues = condition.values.map((value) => value.trim()).filter(Boolean);
-        const values = condition.type === 'meta_form'
-          ? Array.from(new Set(trimmedValues.map((value) => (
-              metaFormConfigs.find(form => form.config_id === value)?.form_id || value
-            ))))
-          : trimmedValues;
-        return {
-          ...condition,
-          values,
-          sessionId: condition.type === 'whatsapp_message_contains'
-            ? condition.sessionId?.trim()
-            : undefined,
-        };
-      })
-      .filter((condition) => condition.values.length > 0);
-    const selectedMetaFormIds = new Set(
-      sanitizedConditions
-        .filter(condition => condition.type === 'meta_form')
-        .flatMap(condition => condition.values),
+    const sanitizedConditions = sanitizeDistributionQueueConditions(
+      formData.conditions,
+      metaFormConfigs,
     );
-    const conflictingMetaForm = metaFormConfigs.find(form => (
-      (selectedMetaFormIds.has(form.form_id) || selectedMetaFormIds.has(form.config_id))
-      && Boolean(form.round_robin_id)
-      && form.round_robin_id !== queue?.id
-    ));
+    const conflictingMetaForm = findConflictingDistributionQueueMetaForm(
+      sanitizedConditions,
+      metaFormConfigs,
+      queue?.id,
+    );
     if (conflictingMetaForm) {
-      toast.error(`O formulário "${conflictingMetaForm.form_name || conflictingMetaForm.form_id}" já está vinculado a outra fila.`);
+      toast.error(
+        `O formulário "${conflictingMetaForm.form_name || conflictingMetaForm.form_id}" já está vinculado a outra fila.`,
+      );
       return;
     }
     const sanitizedHasWhatsAppMessageCondition = sanitizedConditions.some(
       (condition) => condition.type === "whatsapp_message_contains",
     );
-    const sanitizedSettings: QueueSettings = {
+    const sanitizedSettings = {
       ...formData.settings,
-      auto_tag_ids: normalizeQueueAutoTagIDs(formData.settings.auto_tag_ids),
-      whatsapp_distribution_auto_reply_enabled: sanitizedHasWhatsAppMessageCondition && whatsappAutoReplyEnabled,
+      auto_tag_ids: normalizeDistributionQueueAutoTagIds(
+        formData.settings.auto_tag_ids,
+      ),
+      whatsapp_distribution_auto_reply_enabled:
+        sanitizedHasWhatsAppMessageCondition && whatsappAutoReplyEnabled,
       whatsapp_distribution_auto_reply_message: whatsappAutoReplyMessage,
       whatsapp_distribution_auto_reply_delay_seconds: whatsappAutoReplyDelay,
     };
-    const payload: QueueFormData = {
+    const payload: DistributionQueueFormData = {
       ...formData,
       settings: sanitizedHasWhatsAppMessageCondition
         ? {
@@ -1271,1402 +904,320 @@ export function DistributionQueueEditor({
     setSaving(true);
     try {
       await onSave(payload);
-      onOpenChange(false);
+      setFormData(payload);
+      setSavedFingerprint(buildEditorFingerprint(payload));
+      if (presentation === "dialog") onOpenChange(false);
     } finally {
       setSaving(false);
     }
   };
-  const totalWeight = formData.members.reduce((sum, m) => sum + m.weight, 0);
-  const renderConditionValueSelector = (condition: RuleCondition) => {
-    switch (condition.type) {
-      case "source":
-        return (
-          <div className="flex flex-wrap gap-1">
-            {SOURCE_OPTIONS.map((opt) => (
-              <Badge
-                key={opt.value}
-                variant="outline"
-                className={conditionOptionBadgeClass(
-                  condition.values.includes(opt.value),
-                )}
-                onClick={() => {
-                  const newValues = condition.values.includes(opt.value)
-                    ? condition.values.filter((v) => v !== opt.value)
-                    : [...condition.values, opt.value];
-                  updateCondition(condition.id, { values: newValues });
-                }}
-              >
-                {opt.label}
-              </Badge>
-            ))}
-          </div>
-        );
-      case "webhook":
-        return (
-          <div className="space-y-2">
-            <p className="text-xs text-muted-foreground">Webhooks:</p>
-            <div className="flex flex-wrap gap-1">
-              {incomingWebhooks.length === 0 && (
-                <span className="rounded-md bg-[var(--app-surface)] px-2 py-1 text-xs text-muted-foreground">
-                  Nenhum webhook de entrada encontrado.
-                </span>
-              )}
-              {incomingWebhooks.map((wh) => (
-                <Badge
-                  key={wh.id}
-                  variant="outline"
-                  className={cn(
-                    conditionOptionBadgeClass(condition.values.includes(wh.id)),
-                    "gap-1",
-                  )}
-                  onClick={() => {
-                    const newValues = condition.values.includes(wh.id)
-                      ? condition.values.filter((v) => v !== wh.id)
-                      : [...condition.values, wh.id];
-                    updateCondition(condition.id, { values: newValues });
-                  }}
-                >
-                  <Webhook className="h-3 w-3" />
-                  {wh.name}
-                </Badge>
-              ))}
-            </div>
-          </div>
-        );
-      case "whatsapp_session":
-        return (
-          <div className="space-y-2">
-            <p className="text-xs text-muted-foreground">Conexoes WhatsApp:</p>
-            <div className="flex flex-wrap gap-1">
-              {activeWhatsAppSessions.length === 0 && (
-                <span className="rounded-md bg-[var(--app-surface)] px-2 py-1 text-xs text-muted-foreground">
-                  Nenhuma conexão WhatsApp ativa.
-                </span>
-              )}
-              {activeWhatsAppSessions.map((session) => (
-                <Badge
-                  key={session.id}
-                  variant="outline"
-                  className={cn(
-                    conditionOptionBadgeClass(
-                      condition.values.includes(session.id),
-                    ),
-                    "gap-1",
-                  )}
-                  onClick={() => {
-                    const newValues = condition.values.includes(session.id)
-                      ? condition.values.filter((v) => v !== session.id)
-                      : [...condition.values, session.id];
-                    updateCondition(condition.id, { values: newValues });
-                  }}
-                >
-                  <MessageSquare className="h-3 w-3" />
-                  {session.display_name ||
-                    session.phone_number ||
-                    session.instance_name}
-                </Badge>
-              ))}
-            </div>
-          </div>
-        );
-      case "meta_form": {
-        const knownFormIds = new Set(
-          metaFormConfigs.flatMap((form) => [form.form_id, form.config_id]),
-        );
-        const unavailableFormIds = condition.values.filter(
-          (formId) => !knownFormIds.has(formId),
-        );
-        const visibleMetaForms = metaFormConfigs.filter(
-          (form) =>
-            (form.is_active && form.integration_connected) ||
-            condition.values.includes(form.form_id) ||
-            condition.values.includes(form.config_id) ||
-            form.round_robin_id === queue?.id,
-        );
-
-        return (
-          <div className="space-y-2">
-            <p className="text-xs text-muted-foreground">Formulários Meta:</p>
-            <div className="flex flex-wrap gap-1">
-              {metaFormsLoading &&
-                visibleMetaForms.length === 0 &&
-                unavailableFormIds.length === 0 && (
-                  <span className="rounded-md bg-[var(--app-surface)] px-2 py-1 text-xs text-muted-foreground">
-                    Carregando formulários Meta...
-                  </span>
-                )}
-              {metaFormsError && (
-                <span className="rounded-md bg-destructive/10 px-2 py-1 text-xs text-destructive">
-                  Não foi possível carregar os formulários Meta.
-                </span>
-              )}
-              {!metaFormsLoading &&
-                !metaFormsError &&
-                visibleMetaForms.length === 0 &&
-                unavailableFormIds.length === 0 && (
-                  <span className="rounded-md bg-[var(--app-surface)] px-2 py-1 text-xs text-muted-foreground">
-                    Nenhum formulário Meta ativo configurado nesta organização.
-                  </span>
-                )}
-              {visibleMetaForms.map((form) => {
-                const formValues = [form.form_id, form.config_id];
-                const selected = condition.values.some((value) =>
-                  formValues.includes(value),
-                );
-                const linkedToCurrentQueue =
-                  Boolean(queue?.id) && form.round_robin_id === queue?.id;
-                const linkedToAnotherQueue =
-                  Boolean(form.round_robin_id) && !linkedToCurrentQueue;
-                const available = form.is_active && form.integration_connected;
-                const canToggle =
-                  selected ||
-                  (!metaFormsFetching &&
-                    !metaFormsError &&
-                    available &&
-                    !linkedToAnotherQueue);
-                const statusLabel = linkedToAnotherQueue
-                  ? "Outra fila"
-                  : !form.is_active
-                    ? "Inativo"
-                    : !form.integration_connected
-                      ? "Desconectado"
-                      : linkedToCurrentQueue
-                        ? "Nesta fila"
-                        : null;
-                const toggleForm = () => {
-                  if (!canToggle) return;
-                  const newValues = selected
-                    ? condition.values.filter(
-                        (value) => !formValues.includes(value),
-                      )
-                    : [...condition.values, form.form_id];
-                  updateCondition(condition.id, { values: newValues });
-                };
-
-                return (
-                  <Badge
-                    key={form.form_id}
-                    variant="outline"
-                    role="button"
-                    aria-pressed={selected}
-                    aria-disabled={!canToggle}
-                    tabIndex={canToggle ? 0 : -1}
-                    title={
-                      linkedToAnotherQueue
-                        ? "Este formulário já está vinculado a outra fila."
-                        : undefined
-                    }
-                    className={cn(
-                      conditionOptionBadgeClass(selected),
-                      "gap-1",
-                      !canToggle &&
-                        "!cursor-not-allowed opacity-60 hover:bg-[var(--app-surface-solid)]",
-                    )}
-                    onClick={toggleForm}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        toggleForm();
-                      }
-                    }}
-                  >
-                    {form.form_name || form.form_id}
-                    <span className="font-normal opacity-70">
-                      · {form.page_name || form.page_id || "Página Meta"}
-                    </span>
-                    {statusLabel && (
-                      <span className="rounded bg-black/10 px-1 text-[10px] font-normal">
-                        {statusLabel}
-                      </span>
-                    )}
-                  </Badge>
-                );
-              })}
-              {unavailableFormIds.map((formId) => (
-                <Badge
-                  key={formId}
-                  variant="outline"
-                  role="button"
-                  aria-pressed={true}
-                  tabIndex={0}
-                  className={cn(conditionOptionBadgeClass(true), "gap-1")}
-                  onClick={() =>
-                    updateCondition(condition.id, {
-                      values: condition.values.filter(
-                        (value) => value !== formId,
-                      ),
-                    })
-                  }
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      updateCondition(condition.id, {
-                        values: condition.values.filter(
-                          (value) => value !== formId,
-                        ),
-                      });
-                    }
-                  }}
-                >
-                  {formId}
-                  <span className="rounded bg-black/10 px-1 text-[10px] font-normal">
-                    Indisponível
-                  </span>
-                </Badge>
-              ))}
-            </div>
-          </div>
-        );
-      }
-      case "website_category":
-        return (
-          <div className="flex flex-wrap gap-1">
-            {WEBSITE_CATEGORY_OPTIONS.map((opt) => (
-              <Badge
-                key={opt.value}
-                variant="outline"
-                className={cn(
-                  conditionOptionBadgeClass(
-                    condition.values.includes(opt.value),
-                  ),
-                  "gap-1",
-                )}
-                onClick={() => {
-                  const newValues = condition.values.includes(opt.value)
-                    ? condition.values.filter((v) => v !== opt.value)
-                    : [...condition.values, opt.value];
-                  updateCondition(condition.id, { values: newValues });
-                }}
-              >
-                <Globe className="h-3 w-3" />
-                {opt.label}
-              </Badge>
-            ))}
-          </div>
-        );
-      case "campaign_contains":
-        return (
-          <Input
-            placeholder="Digite parte do nome da campanha..."
-            value={condition.values[0] || ""}
-            onChange={(e) =>
-              updateCondition(condition.id, { values: [e.target.value] })
-            }
-          />
-        );
-      case "whatsapp_message_contains": {
-        const selectedSession = whatsappSessions.find(
-          (session) => session.id === condition.sessionId,
-        );
-        const selectableSession = campaignWhatsAppSessions.find(
-          (session) => session.id === condition.sessionId,
-        );
-        const selectedSessionUnavailable = Boolean(
-          condition.sessionId && !selectableSession,
-        );
-        const selectedSessionLabel =
-          selectedSession?.display_name ||
-          selectedSession?.phone_number ||
-          selectedSession?.instance_name ||
-          "Conexão salva indisponível";
-        const selectedSessionConnected =
-          selectedSession?.status.trim().toLowerCase() === "connected";
-
-        return (
-          <div className="space-y-3">
-            <div className="space-y-2">
-              <Label htmlFor={`whatsapp-session-${condition.id}`}>
-                Conexão WhatsApp *
-              </Label>
-              <Select
-                value={condition.sessionId || ""}
-                onValueChange={(sessionId) =>
-                  updateCondition(condition.id, { sessionId })
-                }
-                disabled={
-                  campaignWhatsAppSessions.length === 0 && !condition.sessionId
-                }
-              >
-                <SelectTrigger
-                  id={`whatsapp-session-${condition.id}`}
-                  className={!condition.sessionId ? "border-destructive" : ""}
-                >
-                  <SelectValue placeholder="Selecione uma conexão..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {selectedSessionUnavailable && condition.sessionId && (
-                    <SelectItem value={condition.sessionId} disabled>
-                      {selectedSessionLabel} (indisponível)
-                    </SelectItem>
-                  )}
-                  {campaignWhatsAppSessions.map((session) => (
-                    <SelectItem key={session.id} value={session.id}>
-                      {session.display_name ||
-                        session.phone_number ||
-                        session.instance_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {campaignWhatsAppSessions.length === 0 &&
-                !condition.sessionId && (
-                  <p className="text-xs text-destructive">
-                    Nenhuma conexão do WhatsApp ativa está disponível para esta
-                    conta.
-                  </p>
-                )}
-              {!condition.sessionId &&
-                campaignWhatsAppSessions.length > 0 && (
-                  <p className="text-xs text-destructive">
-                    Selecione a conexão que receberá esta campanha.
-                  </p>
-                )}
-            </div>
-
-            <Label htmlFor={`whatsapp-message-${condition.id}`}>
-              Mensagem contém
-            </Label>
-            <Input
-              id={`whatsapp-message-${condition.id}`}
-              maxLength={180}
-              placeholder="Digite uma palavra ou trecho da mensagem..."
-              value={condition.values[0] || ""}
-              onChange={(e) =>
-                updateCondition(condition.id, { values: [e.target.value] })
-              }
-            />
-            {selectedSessionUnavailable ? (
-              <p className="rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-                A conexão salva não está disponível nesta conta. Ela foi
-                preservada; selecione outra para validar o funcionamento.
-              </p>
-            ) : condition.sessionId ? (
-              <p
-                className={cn(
-                  "rounded-md px-3 py-2 text-xs",
-                  selectedSessionConnected
-                    ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                    : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
-                )}
-              >
-                {selectedSessionConnected
-                  ? "Quando esta conexão receber uma mensagem com esse trecho de um contato ainda não cadastrado, o CRM cria o lead automaticamente e o envia para esta fila."
-                  : "Esta conexão não está conectada. Reconecte-a para receber a mensagem, criar o lead e fazer a distribuição automaticamente."}
-              </p>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Selecione a conexão que receberá a mensagem e criará o lead automaticamente.
-              </p>
-            )}
-            <p className="text-xs text-muted-foreground">
-              A atribuição inicial respeita a estratégia, os participantes e as
-              escalas. Com a redistribuição ativa, o lead entra no monitoramento
-              de inatividade da fila.
-            </p>
-          </div>
-        );
-      }
-      case "tag":
-        return (
-          <div className="flex flex-wrap gap-1">
-            {tags.length === 0 && (
-              <span className="rounded-md bg-[var(--app-surface)] px-2 py-1 text-xs text-muted-foreground">
-                Nenhuma tag cadastrada.
-              </span>
-            )}
-            {tags.map((tag) => (
-              <Badge
-                key={tag.id}
-                variant="outline"
-                className={conditionOptionBadgeClass(
-                  condition.values.includes(tag.id),
-                )}
-                style={
-                  condition.values.includes(tag.id)
-                    ? { backgroundColor: tag.color, borderColor: tag.color }
-                    : {}
-                }
-                onClick={() => {
-                  const newValues = condition.values.includes(tag.id)
-                    ? condition.values.filter((v) => v !== tag.id)
-                    : [...condition.values, tag.id];
-                  updateCondition(condition.id, { values: newValues });
-                }}
-              >
-                {tag.name}
-              </Badge>
-            ))}
-          </div>
-        );
-      case "city":
-        return (
-          <Input
-            placeholder="Ex: Sao Paulo, Campinas"
-            value={condition.values.join(", ")}
-            onChange={(e) =>
-              updateCondition(condition.id, {
-                values: e.target.value
-                  .split(",")
-                  .map((v) => v.trim())
-                  .filter(Boolean),
-              })
-            }
-          />
-        );
-      case "interest_property":
-        if (!hasPropertiesModule) {
-          return (
-            <p className="rounded-[8px] border border-[var(--app-border)] bg-[var(--app-surface-solid)] px-3 py-2 text-xs text-[var(--app-text-tertiary)]">
-              O módulo de imóveis não está disponível. O critério existente será
-              preservado até ser removido.
-            </p>
-          );
-        }
-        return (
-          <PropertyPickerDialog
-            properties={properties}
-            selectedPropertyId={condition.values[0]}
-            onSelect={(prop) =>
-              updateCondition(condition.id, { values: [prop.id] })
-            }
-          />
-        );
-      default:
-        return null;
-    }
-  };
-
-  const hasValidCriteria = formData.conditions.some(
-    (condition) =>
-      condition.values.some((value) => value.trim()) &&
-      (condition.type !== "whatsapp_message_contains" ||
-        Boolean(condition.sessionId?.trim())),
+  const hasValidCriteria = hasValidDistributionQueueCriteria(
+    formData.conditions,
   );
   const hasRequiredMembers = !formData.is_active || formData.members.length > 0;
+  const hasUnsavedChanges =
+    buildEditorFingerprint(formData) !== savedFingerprint;
   const canSave =
     !!formData.name.trim() &&
     !!formData.target_pipeline_id &&
     !!formData.target_stage_id &&
     hasValidCriteria &&
     hasRequiredMembers &&
+    hasUnsavedChanges &&
+    !blockingReferenceDataError &&
+    !blockingReferenceDataLoading &&
     !saving;
 
+  const editorTitle = queue
+    ? "Editar fila de distribuição"
+    : "Nova fila de distribuição";
+  const editorBody = (
+    <>
+      {blockingReferenceDataError && (
+        <div
+          role="alert"
+          className="mx-3 mt-3 shrink-0 rounded-[6px] bg-destructive/10 px-3 py-2 text-[11px] text-destructive"
+        >
+          Alguns dados necessários não puderam ser validados. O salvamento foi
+          bloqueado para preservar regras, participantes e configurações já
+          existentes.
+        </div>
+      )}
+      <div
+        className={`px-2.5 py-2.5 sm:px-3 sm:py-3 [&_input]:rounded-[6px] [&_label]:text-[12px] [&_label]:font-light ${
+          presentation === "page"
+            ? "overflow-visible"
+            : "min-h-0 flex-1 overflow-y-auto overscroll-contain"
+        }`}
+      >
+        <div className="grid grid-cols-1 gap-3 2xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]">
+          <div className="min-w-0 space-y-3">
+            <DistributionQueueBasicSection
+              open={openSections.includes("basic")}
+              name={formData.name}
+              strategy={formData.strategy}
+              targetPipelineId={formData.target_pipeline_id}
+              targetStageId={formData.target_stage_id}
+              pipelines={visiblePipelines}
+              stages={stages}
+              onToggle={() => toggleSection("basic")}
+              onNameChange={(name) =>
+                setFormData((previous) => ({ ...previous, name }))
+              }
+              onStrategyChange={(strategy) =>
+                setFormData((previous) => ({ ...previous, strategy }))
+              }
+              onPipelineChange={(targetPipelineId) =>
+                setFormData((previous) => ({
+                  ...previous,
+                  target_pipeline_id: targetPipelineId,
+                  target_stage_id: "",
+                }))
+              }
+              onStageChange={(targetStageId) =>
+                setFormData((previous) => ({
+                  ...previous,
+                  target_stage_id: targetStageId,
+                }))
+              }
+            />
+
+            <DistributionQueueRulesSection
+              open={openSections.includes("rules")}
+              conditions={formData.conditions}
+              availableConditionTypes={availableConditionTypes}
+              hasWhatsAppMessageCondition={hasWhatsAppMessageCondition}
+              hasValidCriteria={hasValidCriteria}
+              ignoreAvailability={formData.settings.ignore_availability}
+              incomingWebhooks={incomingWebhooks}
+              whatsappSessions={whatsappSessions}
+              activeWhatsAppSessions={activeWhatsAppSessions}
+              campaignWhatsAppSessions={campaignWhatsAppSessions}
+              metaForms={metaFormConfigs}
+              metaFormsLoading={metaFormsLoading}
+              metaFormsFetching={metaFormsFetching}
+              metaFormsError={metaFormsError}
+              queueId={queue?.id}
+              tags={tags}
+              properties={properties}
+              hasPropertiesModule={hasPropertiesModule}
+              onToggle={() => toggleSection("rules")}
+              onAddCondition={addCondition}
+              onUpdateCondition={updateCondition}
+              onRemoveCondition={removeCondition}
+              onIgnoreAvailabilityChange={(ignoreAvailability) =>
+                setFormData((previous) => ({
+                  ...previous,
+                  settings: {
+                    ...previous.settings,
+                    ignore_availability: ignoreAvailability,
+                  },
+                }))
+              }
+            />
+
+            <DistributionQueueAutoTagsSection
+              open={openSections.includes("auto-tags")}
+              tags={tags}
+              selectedTagIds={selectedAutoTagIds}
+              tagsLoading={tagsLoading}
+              tagsError={tagsError}
+              onToggle={() => toggleSection("auto-tags")}
+              onToggleTag={toggleAutoTag}
+            />
+          </div>
+
+          <div className="min-w-0 space-y-3">
+            <DistributionQueueMembersSection
+              open={openSections.includes("members")}
+              members={formData.members}
+              strategy={formData.strategy}
+              visibleTeams={visibleTeams}
+              selectableTeams={selectableTeams}
+              selectableUsers={selectableUsers}
+              users={visibleUsers}
+              pendingUserId={pendingUserId}
+              pendingUserTeams={pendingUserTeams}
+              teamSelectMessage={teamSelectMessage}
+              teamsLoading={teamsLoading}
+              usersLoading={usersLoading}
+              totalTeams={teams.length}
+              activeTeams={activeTeams.length}
+              isActive={formData.is_active}
+              ignoreAvailability={formData.settings.ignore_availability}
+              onToggle={() => toggleSection("members")}
+              onDragEnd={handleDragEnd}
+              onAddUser={addDirectUser}
+              onAddTeam={(teamId) => {
+                const team = visibleTeams.find(
+                  (candidate) => candidate.id === teamId,
+                );
+                if (team) {
+                  addMember("team", teamId, team.name);
+                }
+              }}
+              onResolvePendingUserTeam={(teamId) => {
+                const user = visibleUsers.find(
+                  (candidate) => candidate.id === pendingUserId,
+                );
+                if (!user) return;
+                addMember("user", pendingUserId, user.name, teamId);
+                setPendingUserId("");
+              }}
+              onUpdateWeight={updateMemberWeight}
+              onUpdateTeam={updateMemberTeam}
+              onRemove={removeMember}
+            />
+
+            <DistributionQueueRedistributionSection
+              open={openSections.includes("redistribution")}
+              settings={formData.settings}
+              onToggle={() => toggleSection("redistribution")}
+              onEnabledChange={(enableRedistribution) =>
+                setFormData((previous) => ({
+                  ...previous,
+                  settings: {
+                    ...previous.settings,
+                    enable_redistribution: enableRedistribution,
+                    redistribution_timeout_minutes:
+                      previous.settings.redistribution_timeout_minutes ?? 20,
+                    redistribution_warning_minutes:
+                      previous.settings.redistribution_warning_minutes ?? 5,
+                    redistribution_max_attempts:
+                      previous.settings.redistribution_max_attempts ?? 10,
+                  },
+                }))
+              }
+              onTimeoutChange={(redistributionTimeoutMinutes) =>
+                setFormData((previous) => ({
+                  ...previous,
+                  settings: {
+                    ...previous.settings,
+                    redistribution_timeout_minutes:
+                      redistributionTimeoutMinutes,
+                  },
+                }))
+              }
+              onWarningChange={(redistributionWarningMinutes) =>
+                setFormData((previous) => ({
+                  ...previous,
+                  settings: {
+                    ...previous.settings,
+                    redistribution_warning_minutes:
+                      redistributionWarningMinutes,
+                  },
+                }))
+              }
+              onMaxAttemptsChange={(redistributionMaxAttempts) =>
+                setFormData((previous) => ({
+                  ...previous,
+                  settings: {
+                    ...previous.settings,
+                    redistribution_max_attempts: redistributionMaxAttempts,
+                  },
+                }))
+              }
+              onReentryBehaviorChange={(reentryBehavior) =>
+                setFormData((previous) => ({
+                  ...previous,
+                  settings: {
+                    ...previous.settings,
+                    reentry_behavior: reentryBehavior,
+                  },
+                }))
+              }
+            />
+
+            {hasWhatsAppMessageCondition && (
+              <DistributionQueueWhatsAppAutoReplySection
+                open={openSections.includes("whatsapp-auto-reply")}
+                settings={formData.settings}
+                onToggle={() => toggleSection("whatsapp-auto-reply")}
+                onSettingsChange={(updates) =>
+                  setFormData((previous) => ({
+                    ...previous,
+                    settings: { ...previous.settings, ...updates },
+                  }))
+                }
+              />
+            )}
+          </div>
+        </div>
+      </div>
+      <div
+        className={`shrink-0 bg-[var(--app-surface-solid)] p-2 ${
+          presentation === "page" ? "sticky bottom-0 z-10" : ""
+        }`}
+      >
+        <div className="mx-auto flex w-full max-w-[680px] flex-col gap-2 rounded-[8px] bg-[var(--app-surface-solid)] p-2 shadow-[0_-10px_30px_rgba(15,23,42,0.12)] sm:flex-row sm:items-center sm:justify-between">
+          <p
+            className="px-1 text-[10px] text-[var(--app-text-tertiary)]"
+            aria-live="polite"
+          >
+            {saving
+              ? queue
+                ? "Salvando alterações..."
+                : "Criando fila..."
+              : blockingReferenceDataError
+                ? "Recarregue os dados necessários antes de salvar."
+                : blockingReferenceDataLoading
+                  ? "Carregando dados da distribuição..."
+                  : canSave
+                    ? "Tudo pronto para salvar."
+                    : queue && !hasUnsavedChanges
+                      ? "Nenhuma alteração para salvar."
+                      : "Preencha destino, critérios e participantes obrigatórios."}
+          </p>
+          <div className="grid w-full grid-cols-[minmax(0,3fr)_minmax(0,7fr)] gap-2 sm:w-[330px]">
+            <Button
+              variant="outline"
+              className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]"
+              onClick={() => onOpenChange(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              data-tour="distribution-queue-save"
+              className="h-9 rounded-[6px] bg-primary text-[12px] font-light text-white shadow-none hover:bg-primary/90 disabled:bg-primary/50"
+              onClick={handleSave}
+              disabled={!canSave}
+            >
+              {saving ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="mr-2 h-4 w-4" />
+              )}{" "}
+              {queue ? "Salvar alterações" : "Criar fila"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
+  if (presentation === "page") {
+    return (
+      <section
+        data-tour="distribution-queue-editor"
+        className="flex min-w-0 flex-col overflow-visible rounded-[8px] bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]"
+      >
+        {editorBody}
+      </section>
+    );
+  }
+
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(nextOpen) => {
-        if (!nextOpen) {
-          setUserPickerOpen(false);
-          setPendingUserId("");
-          setAutoTagSearch("");
-        }
-        onOpenChange(nextOpen);
-      }}
-    >
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-tour="distribution-queue-editor"
         className="flex max-h-[calc(100dvh-24px)] w-[calc(100vw-24px)] max-w-6xl flex-col gap-0 overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-0 text-[var(--app-text-primary)] shadow-none sm:max-h-[88dvh]"
       >
         <DialogHeader className="shrink-0 border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] px-4 py-3 sm:px-5">
           <DialogTitle className="text-[14px] font-normal">
-            {queue
-              ? "Editar Fila de Distribuicao"
-              : "Nova Fila de Distribuicao"}
+            {editorTitle}
           </DialogTitle>
         </DialogHeader>
-
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-5 sm:py-4 [&_input]:rounded-[6px] [&_label]:text-[12px] [&_label]:font-light">
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <div className="space-y-4">
-              <Collapsible
-                data-tour="distribution-queue-basic"
-                open={openSections.includes("basic")}
-                onOpenChange={() => toggleSection("basic")}
-              >
-                <CollapsibleTrigger className="flex w-full items-center justify-between rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-4 text-left transition-colors hover:bg-[var(--app-surface-hover)]">
-                  <div className="flex items-center gap-2">
-                    <Settings2 className="h-4 w-4 text-primary" />
-                    <span className="font-medium">Informações básicas</span>
-                  </div>
-                  <ChevronDown
-                    className={cn(
-                      "h-4 w-4 transition-transform",
-                      openSections.includes("basic") && "rotate-180",
-                    )}
-                  />
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-4 px-1 pt-4">
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label>Nome da fila *</Label>
-                      <Input
-                        placeholder="Ex: Leads Facebook"
-                        value={formData.name}
-                        onChange={(e) =>
-                          setFormData((prev) => ({
-                            ...prev,
-                            name: e.target.value,
-                          }))
-                        }
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Estrategia</Label>
-                      <Select
-                        value={formData.strategy}
-                        onValueChange={(value) => {
-                          if (isQueueStrategy(value)) {
-                            setFormData((prev) => ({
-                              ...prev,
-                              strategy: value,
-                            }));
-                          }
-                        }}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="simple">Sequencial</SelectItem>
-                          <SelectItem value="weighted">Ponderada</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label>Pipeline de destino *</Label>
-                      <Select
-                        value={formData.target_pipeline_id || ""}
-                        onValueChange={(v) =>
-                          setFormData((prev) => ({
-                            ...prev,
-                            target_pipeline_id: v,
-                            target_stage_id: "",
-                          }))
-                        }
-                      >
-                        <SelectTrigger
-                          className={
-                            !formData.target_pipeline_id
-                              ? "border-destructive"
-                              : ""
-                          }
-                        >
-                          <SelectValue placeholder="Selecione um pipeline..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {visiblePipelines.map((p) => (
-                            <SelectItem key={p.id} value={p.id}>
-                              {p.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Estagio inicial *</Label>
-                      <Select
-                        value={formData.target_stage_id || ""}
-                        onValueChange={(v) =>
-                          setFormData((prev) => ({
-                            ...prev,
-                            target_stage_id: v,
-                          }))
-                        }
-                        disabled={!formData.target_pipeline_id}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Selecione um estágio..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {stages.map((s) => (
-                            <SelectItem key={s.id} value={s.id}>
-                              <div className="flex items-center gap-2">
-                                <div
-                                  className="h-2 w-2 rounded-full"
-                                  style={{
-                                    backgroundColor: s.color ?? undefined,
-                                  }}
-                                />
-                                {s.name}
-                              </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-
-              <Collapsible
-                data-tour="distribution-queue-rules"
-                open={openSections.includes("rules")}
-                onOpenChange={() => toggleSection("rules")}
-              >
-                <CollapsibleTrigger className="flex w-full items-center justify-between rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-4 text-left transition-colors hover:bg-[var(--app-surface-hover)]">
-                  <div className="flex items-center gap-2">
-                    <Filter className="h-4 w-4 text-primary" />
-                    <span className="font-medium">Regras de entrada</span>
-                    {formData.conditions.length > 0 && (
-                      <Badge variant="secondary" className="text-xs">
-                        {formData.conditions.length}
-                      </Badge>
-                    )}
-                  </div>
-                  <ChevronDown
-                    className={cn(
-                      "h-4 w-4 transition-transform",
-                      openSections.includes("rules") && "rotate-180",
-                    )}
-                  />
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-4 px-1 pt-4">
-                  <p className="rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-2 text-xs text-muted-foreground">
-                    Defina quais leads entram nesta fila. Use canal para regras
-                    amplas e os campos específicos quando quiser travar uma
-                    origem exata.
-                  </p>
-                  {formData.conditions.map((condition) => (
-                    <div
-                      key={condition.id}
-                      className="space-y-3 rounded-[6px] border border-[var(--app-border)] bg-[var(--app-surface-soft)] p-3"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <Select
-                          value={condition.type}
-                          onValueChange={(value) => {
-                            if (isRuleConditionType(value)) {
-                              updateCondition(condition.id, {
-                                type: value,
-                                values: [],
-                                sessionId: undefined,
-                              });
-                            }
-                          }}
-                        >
-                          <SelectTrigger className="w-full min-w-0 border border-[var(--app-border)] bg-[var(--app-surface-solid)] shadow-none sm:w-56">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {availableConditionTypes.map((ct) => (
-                              <SelectItem key={ct.value} value={ct.value}>
-                                {ct.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                          onClick={() => removeCondition(condition.id)}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </div>
-                      {renderConditionValueSelector(condition)}
-                    </div>
-                  ))}
-                  {hasWhatsAppMessageCondition && (
-                    <div className="flex items-start justify-between gap-4 rounded-lg bg-[var(--app-surface-soft)] p-3">
-                      <div className="space-y-1">
-                        <Label htmlFor="distribution-ignore-availability">
-                          Ignorar escala dos corretores
-                        </Label>
-                        <p className="text-xs text-muted-foreground">
-                          Deixe desativado para respeitar os horários da equipe.
-                          Corretores adicionados diretamente usam a equipe
-                          vinculada selecionada para avaliar a escala.
-                        </p>
-                      </div>
-                      <Switch
-                        id="distribution-ignore-availability"
-                        checked={queueIgnoresAvailability(
-                          formData.settings.ignore_availability,
-                        )}
-                        onCheckedChange={(checked) =>
-                          setFormData((prev) => ({
-                            ...prev,
-                            settings: {
-                              ...prev.settings,
-                              ignore_availability: checked,
-                            },
-                          }))
-                        }
-                      />
-                    </div>
-                  )}
-                  {!hasValidCriteria && (
-                    <p className="text-xs text-destructive">
-                      Adicione pelo menos um criterio preenchido para salvar a
-                      fila.
-                    </p>
-                  )}
-                  <Button
-                    variant="outline"
-                    onClick={addCondition}
-                    className="w-full gap-2"
-                  >
-                    <Plus className="h-4 w-4" /> Nova condicao
-                  </Button>
-                </CollapsibleContent>
-              </Collapsible>
-
-              <Collapsible data-tour="distribution-queue-auto-tags" open={openSections.includes('auto-tags')} onOpenChange={() => toggleSection('auto-tags')}>
-                <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border-0 bg-[var(--app-surface-soft)] p-4 text-left transition-colors hover:bg-[var(--app-surface-hover)]">
-                  <div className="flex items-center gap-2">
-                    <TagIcon className="h-4 w-4 text-primary" />
-                    <span className="font-medium">Tags automáticas</span>
-                    {selectedAutoTagIDs.length > 0 && (
-                      <Badge variant="secondary" className="text-xs">{selectedAutoTagIDs.length}/{MAX_QUEUE_AUTO_TAGS}</Badge>
-                    )}
-                  </div>
-                  <ChevronDown className={cn('h-4 w-4 transition-transform', openSections.includes('auto-tags') && 'rotate-180')} />
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-3 px-1 pt-4">
-                  <p className="rounded-lg bg-[var(--app-surface-soft)] px-3 py-2 text-xs text-muted-foreground">
-                    Estas tags são adicionadas ao lead quando esta fila for aplicada. O comportamento é aditivo: nenhuma tag que já esteja no lead será removida.
-                  </p>
-                  {!tagsError && (
-                    <div className="flex flex-col gap-2 sm:flex-row">
-                      <Input
-                        value={autoTagSearch}
-                        onChange={(event) => setAutoTagSearch(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (
-                            event.key === "Enter" &&
-                            hasPermission("tag_manage") &&
-                            autoTagSearch.trim() &&
-                            !hasExactAutoTagMatch
-                          ) {
-                            event.preventDefault();
-                            void handleCreateAutoTag();
-                          }
-                        }}
-                        placeholder={
-                          hasPermission("tag_manage")
-                            ? "Buscar ou criar tag..."
-                            : "Buscar tag..."
-                        }
-                        disabled={tagsLoading}
-                        className="flex-1"
-                      />
-                      {hasPermission("tag_manage") &&
-                        autoTagSearch.trim() &&
-                        !hasExactAutoTagMatch && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => void handleCreateAutoTag()}
-                            disabled={
-                              createTag.isPending ||
-                              selectedAutoTagIDs.length >= MAX_QUEUE_AUTO_TAGS
-                            }
-                            className="gap-2"
-                          >
-                            {createTag.isPending ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Plus className="h-4 w-4" />
-                            )}
-                            Criar tag
-                          </Button>
-                        )}
-                    </div>
-                  )}
-                  <div className="flex flex-wrap gap-1 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-soft)] p-3">
-                    {tagsLoading && tags.length === 0 && (
-                      <span className="text-xs text-muted-foreground">Carregando tags...</span>
-                    )}
-                    {tagsError && (
-                      <span className="text-xs text-destructive">Não foi possível carregar as tags. As seleções salvas foram preservadas.</span>
-                    )}
-                    {!tagsLoading && !tagsError && tags.length === 0 && unavailableAutoTagIDs.length === 0 && (
-                      <span className="text-xs text-muted-foreground">Nenhuma tag cadastrada nesta organização.</span>
-                    )}
-                    {!tagsLoading &&
-                      !tagsError &&
-                      visibleAutoTags.length === 0 &&
-                      tags.length > 0 && (
-                        <span className="text-xs text-muted-foreground">
-                          Nenhuma tag encontrada para esta busca.
-                        </span>
-                      )}
-                    {visibleAutoTags.map((tag) => {
-                      const normalizedTagID = normalizeQueueAutoTagIDs([tag.id])[0] || tag.id;
-                      const selected = selectedAutoTagIDs.includes(normalizedTagID);
-                      const toggleTag = () => toggleAutoTag(tag.id);
-                      return (
-                        <Badge
-                          key={tag.id}
-                          variant="outline"
-                          role="button"
-                          aria-pressed={selected}
-                          tabIndex={0}
-                          className={conditionOptionBadgeClass(selected)}
-                          style={selected ? { backgroundColor: tag.color, borderColor: tag.color } : {}}
-                          onClick={toggleTag}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault();
-                              toggleTag();
-                            }
-                          }}
-                        >
-                          {tag.name}
-                        </Badge>
-                      );
-                    })}
-                    {unavailableAutoTagIDs.map((tagID) => (
-                      <Badge
-                        key={tagID}
-                        variant="outline"
-                        role="button"
-                        aria-pressed={true}
-                        tabIndex={0}
-                        title="Esta tag salva não está mais disponível. Clique para removê-la da fila."
-                        className={cn(conditionOptionBadgeClass(true), 'gap-1')}
-                        onClick={() => toggleAutoTag(tagID)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault();
-                            toggleAutoTag(tagID);
-                          }
-                        }}
-                      >
-                        {tagID}
-                        <span className="rounded bg-black/10 px-1 text-[10px] font-normal">Indisponível — remover</span>
-                      </Badge>
-                    ))}
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-            </div>
-
-            <div className="space-y-4">
-              <Collapsible
-                data-tour="distribution-queue-members"
-                open={openSections.includes("members")}
-                onOpenChange={() => toggleSection("members")}
-              >
-                <CollapsibleTrigger className="flex w-full items-center justify-between rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-4 text-left transition-colors hover:bg-[var(--app-surface-hover)]">
-                  <div className="flex items-center gap-2">
-                    <Users className="h-4 w-4 text-primary" />
-                    <span className="font-medium">Ordem de distribuicao</span>
-                    {formData.members.length > 0 && (
-                      <Badge variant="secondary" className="text-xs">
-                        {formData.members.length}
-                      </Badge>
-                    )}
-                  </div>
-                  <ChevronDown
-                    className={cn(
-                      "h-4 w-4 transition-transform",
-                      openSections.includes("members") && "rotate-180",
-                    )}
-                  />
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-4 px-1 pt-4">
-                  {formData.members.length > 0 && (
-                    <div className="overflow-hidden rounded-[6px] border-0 bg-[var(--app-surface)]">
-                      <DndContext
-                        sensors={sensors}
-                        collisionDetection={closestCenter}
-                        onDragEnd={handleDragEnd}
-                        modifiers={[restrictToVerticalAxis]}
-                      >
-                        <Table>
-                          <TableHeader className="[&_tr]:border-0">
-                            <TableRow className="border-0 hover:bg-transparent">
-                              <TableHead className="w-10" />
-                              <TableHead>Participante</TableHead>
-                              <TableHead className="w-32 text-center">
-                                {formData.strategy === "weighted"
-                                  ? "Peso"
-                                  : "Ordem"}
-                              </TableHead>
-                              <TableHead className="w-12" />
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            <SortableContext
-                              items={formData.members.map(queueMemberKey)}
-                              strategy={verticalListSortingStrategy}
-                            >
-                              {formData.members.map((member, idx) => (
-                                <SortableMemberRow
-                                  key={queueMemberKey(member)}
-                                  member={member}
-                                  idx={idx}
-                                  strategy={formData.strategy}
-                                  totalWeight={totalWeight}
-                                  teamOptions={
-                                    member.type === "user"
-                                      ? activeTeamsForUser(
-                                          member.entityId,
-                                          visibleTeams,
-                                        )
-                                      : []
-                                  }
-                                  ignoreAvailability={
-                                    queueIgnoresAvailability(
-                                      formData.settings.ignore_availability,
-                                    )
-                                  }
-                                  onUpdateWeight={updateMemberWeight}
-                                  onUpdateTeam={updateMemberTeam}
-                                  onRemove={removeMember}
-                                />
-                              ))}
-                            </SortableContext>
-                          </TableBody>
-                        </Table>
-                      </DndContext>
-                    </div>
-                  )}
-
-                  <div className="flex flex-col gap-2 sm:flex-row">
-                    <Popover open={userPickerOpen} onOpenChange={setUserPickerOpen}>
-                      <PopoverTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          role="combobox"
-                          aria-expanded={userPickerOpen}
-                          className="flex-1 justify-between font-normal"
-                        >
-                          <span className="truncate">Adicionar corretor...</span>
-                          <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent
-                        align="start"
-                        className="w-[var(--radix-popover-trigger-width)] min-w-[260px] p-0"
-                      >
-                        <Command filter={commandSearchFilter}>
-                          <CommandInput placeholder="Buscar corretor por nome ou e-mail..." />
-                           <CommandList className="max-h-[260px]">
-                             <CommandEmpty>
-                               {selectableUsers.length === 0
-                                 ? "Nenhum corretor ativo disponível."
-                                 : "Nenhum corretor encontrado."}
-                             </CommandEmpty>
-                             <CommandGroup>
-                               {selectableUsers.map((user) => {
-                                 const displayName =
-                                   user.name || user.email || "Usuário";
-                                 const initials = displayName
-                                   .split(/\s+/)
-                                   .filter(Boolean)
-                                   .map((part) => part[0])
-                                   .join("")
-                                   .slice(0, 2)
-                                   .toUpperCase();
-
-                                return (
-                                  <CommandItem
-                                    key={user.id}
-                                     value={`${user.name || ''} ${user.email || ''} ${user.id}`}
-                                     className="cursor-pointer"
-                                     onSelect={() => {
-                                       addDirectUser(user.id);
-                                       setUserPickerOpen(false);
-                                     }}
-                                  >
-                                    <Avatar className="mr-2 h-7 w-7 shrink-0">
-                                      <AvatarFallback className="text-[10px]">
-                                        {initials || 'U'}
-                                      </AvatarFallback>
-                                    </Avatar>
-                                    <span className="min-w-0">
-                                      <span className="block truncate text-sm">{displayName}</span>
-                                      {user.email && (
-                                        <span className="block truncate text-xs text-muted-foreground">
-                                          {user.email}
-                                        </span>
-                                      )}
-                                    </span>
-                                  </CommandItem>
-                                );
-                              })}
-                            </CommandGroup>
-                          </CommandList>
-                        </Command>
-                       </PopoverContent>
-                     </Popover>
-                    <Select
-                      onValueChange={(v) => {
-                        const team = visibleTeams.find((t) => t.id === v);
-                        if (team) addMember("team", v, team.name);
-                      }}
-                    >
-                      <SelectTrigger className="flex-1">
-                        <SelectValue placeholder="Adicionar equipe..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {teamSelectMessage && (
-                          <SelectItem value="__no_teams" disabled>
-                            {teamSelectMessage}
-                          </SelectItem>
-                        )}
-                        {selectableTeams.map((team) => (
-                          <SelectItem key={team.id} value={team.id}>
-                            {team.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {pendingUserId && pendingUserTeams.length > 1 && (
-                    <div className="rounded-[6px] bg-[var(--app-surface-soft)] p-3">
-                      <Label className="mb-2 block">
-                        Equipe usada para os horários
-                      </Label>
-                      <Select
-                        onValueChange={(teamId) => {
-                          const user = visibleUsers.find(
-                            (candidate) => candidate.id === pendingUserId,
-                          );
-                          if (!user) return;
-                          addMember(
-                            "user",
-                            pendingUserId,
-                            user.name,
-                            teamId,
-                          );
-                          setPendingUserId("");
-                        }}
-                      >
-                        <SelectTrigger className="rounded-[6px] border-[var(--app-border)] bg-[var(--app-surface-solid)] shadow-none">
-                          <SelectValue placeholder="Selecione uma equipe ativa..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {pendingUserTeams.map((team) => (
-                            <SelectItem key={team.id} value={team.id}>
-                              {team.name || "Equipe"}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-                  {queueIgnoresAvailability(
-                    formData.settings.ignore_availability,
-                  ) && (
-                    <p className="text-xs text-muted-foreground">
-                      Esta fila está configurada para ignorar disponibilidade.
-                      Corretores sem equipe ativa continuam elegíveis.
-                    </p>
-                  )}
-                  {hasWhatsAppMessageCondition &&
-                    !queueIgnoresAvailability(
-                      formData.settings.ignore_availability,
-                    ) && (
-                    <p className="text-xs text-muted-foreground">
-                      Participantes adicionados como equipe e corretores diretos
-                      respeitam a escala da equipe vinculada nesta fila.
-                    </p>
-                  )}
-                  {teams.length > 0 && activeTeams.length === 0 && (
-                    <p className="text-xs text-muted-foreground">
-                      Ative uma equipe em Gestão &gt; Equipes para usá-la em uma
-                      fila.
-                    </p>
-                  )}
-                  {formData.is_active && formData.members.length === 0 && (
-                    <p className="text-xs text-destructive">
-                      Adicione pelo menos um participante para manter a fila
-                      ativa.
-                    </p>
-                  )}
-                </CollapsibleContent>
-              </Collapsible>
-
-              <Collapsible
-                data-tour="distribution-queue-redistribution"
-                open={openSections.includes("redistribution")}
-                onOpenChange={() => toggleSection("redistribution")}
-              >
-                <CollapsibleTrigger className="flex w-full items-center justify-between rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-4 text-left transition-colors hover:bg-[var(--app-surface-hover)]">
-                  <div className="flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4 text-primary" />
-                    <span className="font-medium">Redistribuicao</span>
-                    {formData.settings.enable_redistribution && (
-                      <Badge variant="secondary" className="text-xs">
-                        Ativa
-                      </Badge>
-                    )}
-                  </div>
-                  <ChevronDown
-                    className={cn(
-                      "h-4 w-4 transition-transform",
-                      openSections.includes("redistribution") && "rotate-180",
-                    )}
-                  />
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-4 px-1 pt-4">
-                  <div className="space-y-4 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-4">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="space-y-1">
-                        <Label>Ativar redistribuicao de lead parado</Label>
-                        <p className="text-xs text-muted-foreground">
-                          Se o responsavel nao fizer contato nem movimentar o
-                          proprio lead no prazo, o sistema envia para o proximo
-                          participante da fila.
-                        </p>
-                      </div>
-                      <Switch
-                        checked={!!formData.settings.enable_redistribution}
-                        onCheckedChange={(checked) => {
-                          setFormData((prev) => ({
-                            ...prev,
-                            settings: {
-                              ...prev.settings,
-                              enable_redistribution: checked,
-                              redistribution_timeout_minutes:
-                                prev.settings.redistribution_timeout_minutes ??
-                                20,
-                              redistribution_warning_minutes:
-                                prev.settings.redistribution_warning_minutes ??
-                                5,
-                              redistribution_max_attempts:
-                                prev.settings.redistribution_max_attempts ?? 10,
-                            },
-                          }));
-                        }}
-                      />
-                    </div>
-
-                    {formData.settings.enable_redistribution && (
-                      <div className="space-y-3">
-                        <p className="rounded-md bg-background px-3 py-2 text-xs text-muted-foreground">
-                          A fila so sera ativada se houver pelo menos dois
-                          corretores elegiveis. Equipes inativas e participantes
-                          sem acesso a organizacao sao ignorados.
-                        </p>
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                          <div className="space-y-2">
-                            <Label>Tempo</Label>
-                            <Input
-                              type="number"
-                              min={1}
-                              value={
-                                formData.settings
-                                  .redistribution_timeout_minutes ?? 20
-                              }
-                              onChange={(e) =>
-                                setFormData((prev) => ({
-                                  ...prev,
-                                  settings: {
-                                    ...prev.settings,
-                                    redistribution_timeout_minutes: Math.max(
-                                      1,
-                                      Number(e.target.value) || 20,
-                                    ),
-                                  },
-                                }))
-                              }
-                            />
-                            <p className="text-[11px] text-muted-foreground">
-                              Minutos.
-                            </p>
-                          </div>
-
-                          <div className="space-y-2">
-                            <Label>Aviso</Label>
-                            <Input
-                              type="number"
-                              min={0}
-                              value={
-                                formData.settings
-                                  .redistribution_warning_minutes ?? 5
-                              }
-                              onChange={(e) =>
-                                setFormData((prev) => ({
-                                  ...prev,
-                                  settings: {
-                                    ...prev.settings,
-                                    redistribution_warning_minutes: Math.max(
-                                      0,
-                                      Number(e.target.value) || 0,
-                                    ),
-                                  },
-                                }))
-                              }
-                            />
-                            <p className="text-[11px] text-muted-foreground">
-                              Minutos antes.
-                            </p>
-                          </div>
-
-                          <div className="space-y-2">
-                            <Label>Tentativas</Label>
-                            <Input
-                              type="number"
-                              min={0}
-                              value={
-                                formData.settings.redistribution_max_attempts ??
-                                10
-                              }
-                              onChange={(e) =>
-                                setFormData((prev) => ({
-                                  ...prev,
-                                  settings: {
-                                    ...prev.settings,
-                                    redistribution_max_attempts: Math.max(
-                                      0,
-                                      Number(e.target.value) || 0,
-                                    ),
-                                  },
-                                }))
-                              }
-                            />
-                            <p className="text-[11px] text-muted-foreground">
-                              0 sem limite.
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-
-              {hasWhatsAppMessageCondition && (
-                <Collapsible
-                  data-tour="distribution-queue-whatsapp-auto-reply"
-                  open={openSections.includes('whatsapp-auto-reply')}
-                  onOpenChange={() => toggleSection('whatsapp-auto-reply')}
-                >
-                  <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border-0 bg-[var(--app-surface-soft)] p-4 text-left transition-colors hover:bg-[var(--app-surface-hover)]">
-                    <div className="flex items-center gap-2">
-                      <MessageSquare className="h-4 w-4 text-primary" />
-                      <span className="font-medium">Resposta ao lead</span>
-                      {formData.settings.whatsapp_distribution_auto_reply_enabled && (
-                        <Badge variant="secondary" className="text-xs">Ativa</Badge>
-                      )}
-                    </div>
-                    <ChevronDown className={cn('h-4 w-4 transition-transform', openSections.includes('whatsapp-auto-reply') && 'rotate-180')} />
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="space-y-4 px-1 pt-4">
-                    <div className="space-y-4 rounded-lg border-0 bg-[var(--app-surface-soft)] p-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="space-y-1">
-                          <Label htmlFor="distribution-whatsapp-auto-reply">Enviar resposta automática após distribuir</Label>
-                          <p className="text-xs text-muted-foreground">
-                            Recurso opcional. Depois que esta fila distribuir o lead, a mesma conexão do WhatsApp enviará a mensagem configurada abaixo.
-                          </p>
-                        </div>
-                        <Switch
-                          id="distribution-whatsapp-auto-reply"
-                          checked={formData.settings.whatsapp_distribution_auto_reply_enabled === true}
-                          onCheckedChange={(checked) => setFormData(prev => {
-                            const currentMessage = typeof prev.settings.whatsapp_distribution_auto_reply_message === 'string'
-                              ? prev.settings.whatsapp_distribution_auto_reply_message.trim()
-                              : '';
-                            const currentDelay = prev.settings.whatsapp_distribution_auto_reply_delay_seconds;
-                            return {
-                              ...prev,
-                              settings: {
-                                ...prev.settings,
-                                whatsapp_distribution_auto_reply_enabled: checked,
-                                whatsapp_distribution_auto_reply_message: currentMessage || DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY,
-                                whatsapp_distribution_auto_reply_delay_seconds: isValidWhatsAppDistributionAutoReplyDelay(currentDelay)
-                                  ? currentDelay
-                                  : DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS,
-                              },
-                            };
-                          })}
-                        />
-                      </div>
-
-                      {formData.settings.whatsapp_distribution_auto_reply_enabled && (
-                        <div className="space-y-4 border-t border-[var(--app-border)] pt-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="distribution-whatsapp-auto-reply-message">Mensagem</Label>
-                            <Textarea
-                              id="distribution-whatsapp-auto-reply-message"
-                              maxLength={MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH}
-                              rows={4}
-                              value={formData.settings.whatsapp_distribution_auto_reply_message ?? DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY}
-                              onChange={(event) => setFormData(prev => ({
-                                ...prev,
-                                settings: {
-                                  ...prev.settings,
-                                  whatsapp_distribution_auto_reply_message: event.target.value,
-                                },
-                              }))}
-                            />
-                            <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
-                              <span>Use uma mensagem curta e genérica para confirmar o atendimento.</span>
-                              <span className="shrink-0">
-                                {Array.from(formData.settings.whatsapp_distribution_auto_reply_message ?? '').length}/{MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_LENGTH}
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="space-y-2 sm:max-w-xs">
-                            <Label htmlFor="distribution-whatsapp-auto-reply-delay">Atraso para envio</Label>
-                            <Input
-                              id="distribution-whatsapp-auto-reply-delay"
-                              type="number"
-                              min={1}
-                              max={MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS}
-                              step={1}
-                              value={formData.settings.whatsapp_distribution_auto_reply_delay_seconds ?? DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS}
-                              onChange={(event) => {
-                                const parsedDelay = Number.parseInt(event.target.value, 10);
-                                const nextDelay = Number.isFinite(parsedDelay)
-                                  ? Math.min(MAX_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS, Math.max(1, parsedDelay))
-                                  : DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS;
-                                setFormData(prev => ({
-                                  ...prev,
-                                  settings: {
-                                    ...prev.settings,
-                                    whatsapp_distribution_auto_reply_delay_seconds: nextDelay,
-                                  },
-                                }));
-                              }}
-                            />
-                            <p className="text-[11px] text-muted-foreground">
-                              Segundos após a distribuição concluída. Padrão: {DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS}s.
-                            </p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </CollapsibleContent>
-                </Collapsible>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="flex shrink-0 justify-end gap-2 border-t border-[var(--app-border)] bg-[var(--app-surface-solid)] px-4 py-3 sm:px-5">
-          <Button
-            variant="outline"
-            className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]"
-            onClick={() => onOpenChange(false)}
-          >
-            Cancelar
-          </Button>
-          <Button
-            data-tour="distribution-queue-save"
-            className="h-9 rounded-[6px] bg-primary/50 text-[12px] font-light text-white shadow-none hover:bg-primary"
-            onClick={handleSave}
-            disabled={!canSave}
-          >
-            {saving ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Save className="mr-2 h-4 w-4" />
-            )}{" "}
-            Salvar
-          </Button>
-        </div>
+        {editorBody}
       </DialogContent>
     </Dialog>
   );

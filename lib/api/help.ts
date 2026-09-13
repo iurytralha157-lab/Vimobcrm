@@ -17,6 +17,7 @@ import {
   type HelpArticle,
   type HelpArticleSummary,
 } from '@/lib/validation'
+import { parseJSONOrNull } from '@/lib/utils/json'
 
 import {
   VimobAPIError,
@@ -63,14 +64,6 @@ function shouldUseRouteFallback(
   return getFallbackDisposition(error, signal, false) === 'fallback'
 }
 
-function parseJSON(value: string) {
-  try {
-    return JSON.parse(value) as unknown
-  } catch {
-    return null
-  }
-}
-
 async function requestAuthenticatedHelpFallback<T>(
   path: string,
   options: AuthenticatedFallbackRequestOptions = {},
@@ -87,7 +80,7 @@ async function requestAuthenticatedHelpFallback<T>(
     signal: options.signal,
   })
   const text = await response.text()
-  const payload = text ? parseJSON(text) : null
+  const payload = text ? parseJSONOrNull(text) : null
 
   if (!response.ok) {
     const apiError = (payload as APIErrorEnvelope | null)?.error

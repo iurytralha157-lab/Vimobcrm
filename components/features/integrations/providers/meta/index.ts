@@ -1,0 +1,1 @@
+export { metaIntegrationProviderManifest } from "./manifest";

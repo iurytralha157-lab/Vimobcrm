@@ -143,22 +143,22 @@ func (repo Repository) GetPipelineBoard(ctx context.Context, tenantContext tenan
 	boardFilter.StageID = ""
 	boardFilter.StageIDs = stageIDs
 	boardFilter.Offset = 0
-	leadsByStage, counts, err := repo.listPipelineBoardLeadsByStage(ctx, tenantContext, boardFilter)
+	leadsByStage, err := repo.listInitialPipelineBoardLeadsByStage(ctx, tenantContext, boardFilter)
 	if err != nil {
 		return nil, err
 	}
-	valueTotals, err := repo.listPipelineBoardStageValueTotals(ctx, tenantContext, boardFilter)
+	metrics, err := repo.listPipelineBoardStageMetrics(ctx, tenantContext, boardFilter)
 	if err != nil {
 		return nil, err
 	}
 
 	allLeads := []*PipelineBoardLead{}
 	for index := range stages {
-		total := counts[stages[index].ID]
+		metric := metrics[stages[index].ID]
 		stages[index].Leads = leadsByStage[stages[index].ID]
-		stages[index].TotalLeadCount = total
-		stages[index].TotalValue = valueTotals[stages[index].ID]
-		stages[index].HasMore = total > int64(len(stages[index].Leads))
+		stages[index].TotalLeadCount = metric.LeadCount
+		stages[index].TotalValue = metric.TotalValue
+		stages[index].HasMore = metric.LeadCount > int64(len(stages[index].Leads))
 		for leadIndex := range stages[index].Leads {
 			allLeads = append(allLeads, &stages[index].Leads[leadIndex])
 		}
@@ -187,7 +187,7 @@ func (repo Repository) ListPipelineStageLeads(ctx context.Context, tenantContext
 	}
 	filter.PipelineID = pipelineID
 
-	leads, _, err := repo.listPipelineBoardLeads(ctx, tenantContext, filter, false)
+	leads, err := repo.listPipelineBoardLeads(ctx, tenantContext, filter)
 	if err != nil {
 		return PipelineStageLeadsResponse{}, err
 	}
@@ -266,61 +266,75 @@ func (repo Repository) CountPipelineStageLeads(ctx context.Context, tenantContex
 }
 
 func (repo Repository) ListLeadMetaFilters(ctx context.Context, tenantContext tenant.Context, filter PipelineBoardFilter) (LeadMetaFilters, error) {
-	where, args, err := buildPipelineLeadWhere(tenantContext, PipelineBoardFilter{
-		PipelineID: filter.PipelineID,
-	})
+	where, args, err := buildPipelineLeadWhere(tenantContext, filter)
 	if err != nil {
 		return LeadMetaFilters{}, err
 	}
 
-	entryDateConditions := []string{}
-	if filter.DateFrom != nil {
-		args = append(args, *filter.DateFrom)
-		entryDateConditions = append(entryDateConditions, fmt.Sprintf("lee.occurred_at >= $%d", len(args)))
-	}
-	if filter.DateTo != nil {
-		args = append(args, *filter.DateTo)
-		entryDateConditions = append(entryDateConditions, fmt.Sprintf("lee.occurred_at <= $%d", len(args)))
-	}
-	entryJoinConditions := []string{
-		"lee.organization_id = l.organization_id",
-		"lee.lead_id = l.id",
-		"lee.is_countable = true",
-	}
-	entryJoinConditions = append(entryJoinConditions, entryDateConditions...)
-	if len(entryDateConditions) > 0 {
-		where = append(where, "lee.id is not null")
-	}
-
 	rows, err := repo.db.Pool().Query(ctx, `
-		select
+		with visible_leads as (
+			select
+				l.id,
+				l.organization_id,
+				l.utm_campaign,
+				l.meta_campaign_id,
+				l.meta_adset_id,
+				l.meta_ad_id
+			from public.leads l
+			where `+strings.Join(where, " and ")+`
+		)
+		select distinct
 			coalesce(
-				nullif(lee.campaign_name, ''),
-				nullif(lm.campaign_name, ''),
+				nullif(raw_attribution.campaign_name, ''),
 				nullif(l.utm_campaign, ''),
-				nullif(lm.raw_payload->>'campaign_name', ''),
-				nullif(lm.raw_payload->>'campaignName', ''),
-				nullif(lm.raw_payload#>>'{campaign,name}', ''),
-				nullif(lm.payload->>'campaign_name', ''),
-				nullif(lm.payload->>'campaignName', ''),
-				nullif(lm.payload#>>'{campaign,name}', ''),
 				nullif(mci.campaign_name, '')
 			),
-			coalesce(nullif(lee.campaign_id, ''), nullif(lm.campaign_id, ''), nullif(l.meta_campaign_id, ''), nullif(lee.campaign_name, ''), nullif(lm.campaign_name, ''), nullif(l.utm_campaign, '')),
-			coalesce(nullif(lee.adset_name, ''), nullif(lm.adset_name, ''), nullif(l.meta_adset_id, '')),
-			coalesce(nullif(lee.adset_id, ''), nullif(lm.adset_id, ''), nullif(l.meta_adset_id, ''), nullif(lee.adset_name, ''), nullif(lm.adset_name, '')),
-			coalesce(nullif(lee.ad_name, ''), nullif(lm.ad_name, ''), nullif(l.meta_ad_id, '')),
-			coalesce(nullif(lee.ad_id, ''), nullif(lm.ad_id, ''), nullif(l.meta_ad_id, ''), nullif(lee.ad_name, ''), nullif(lm.ad_name, ''))
-		from public.leads l
-		left join public.lead_entry_events lee on `+strings.Join(entryJoinConditions, " and ")+`
-		left join public.lead_meta lm on lm.lead_id = l.id and lm.organization_id = l.organization_id
+			coalesce(nullif(raw_attribution.campaign_id, ''), nullif(l.meta_campaign_id, ''), nullif(raw_attribution.campaign_name, ''), nullif(l.utm_campaign, '')),
+			coalesce(nullif(raw_attribution.adset_name, ''), nullif(l.meta_adset_id, '')),
+			coalesce(nullif(raw_attribution.adset_id, ''), nullif(l.meta_adset_id, ''), nullif(raw_attribution.adset_name, '')),
+			coalesce(nullif(raw_attribution.ad_name, ''), nullif(l.meta_ad_id, '')),
+			coalesce(nullif(raw_attribution.ad_id, ''), nullif(l.meta_ad_id, ''), nullif(raw_attribution.ad_name, ''))
+		from visible_leads l
+		left join lateral (
+			select
+				entry.campaign_name,
+				entry.campaign_id,
+				entry.adset_name,
+				entry.adset_id,
+				entry.ad_name,
+				entry.ad_id
+			from public.lead_entry_events entry
+			where entry.organization_id = l.organization_id
+			  and entry.lead_id = l.id
+			  and entry.is_countable = true
+			union all
+			select
+				coalesce(
+					nullif(meta.campaign_name, ''),
+					nullif(meta.raw_payload->>'campaign_name', ''),
+					nullif(meta.raw_payload->>'campaignName', ''),
+					nullif(meta.raw_payload#>>'{campaign,name}', ''),
+					nullif(meta.payload->>'campaign_name', ''),
+					nullif(meta.payload->>'campaignName', ''),
+					nullif(meta.payload#>>'{campaign,name}', '')
+				),
+				meta.campaign_id,
+				meta.adset_name,
+				meta.adset_id,
+				meta.ad_name,
+				meta.ad_id
+			from public.lead_meta meta
+			where meta.organization_id = l.organization_id
+			  and meta.lead_id = l.id
+			union all
+			select null::text, null::text, null::text, null::text, null::text, null::text
+		) raw_attribution on true
 		left join lateral (
 			select max(nullif(mi.campaign_name, '')) as campaign_name
 			from public.meta_campaign_insights mi
 			where mi.organization_id = l.organization_id
-			  and mi.campaign_id = coalesce(nullif(lee.campaign_id, ''), nullif(lm.campaign_id, ''), nullif(l.meta_campaign_id, ''))
+			  and mi.campaign_id = coalesce(nullif(raw_attribution.campaign_id, ''), nullif(l.meta_campaign_id, ''))
 		) mci on true
-		where `+strings.Join(where, " and ")+`
 	`, args...)
 	if err != nil {
 		return LeadMetaFilters{}, err
@@ -331,6 +345,7 @@ func (repo Repository) ListLeadMetaFilters(ctx context.Context, tenantContext te
 		Campaigns: []LeadMetaCampaignOption{},
 		Adsets:    []LeadMetaAdsetOption{},
 		Ads:       []LeadMetaAdOption{},
+		Sources:   []string{},
 	}
 	campaigns := map[string]LeadMetaCampaignOption{}
 	adsets := map[string]LeadMetaAdsetOption{}
@@ -367,6 +382,37 @@ func (repo Repository) ListLeadMetaFilters(ctx context.Context, tenantContext te
 		}
 	}
 	if err := rows.Err(); err != nil {
+		return LeadMetaFilters{}, err
+	}
+	rows.Close()
+
+	sourceArgs := append([]any{}, args...)
+	sourceArgs = append(sourceArgs, maxPipelineBoardSources)
+	sourceLimitIndex := len(sourceArgs)
+	sourceRows, err := repo.db.Pool().Query(ctx, `
+		with visible_leads as (
+			select l.source
+			from public.leads l
+			where `+strings.Join(where, " and ")+`
+		)
+		select distinct nullif(btrim(l.source), '') as source
+		from visible_leads l
+		where nullif(btrim(l.source), '') is not null
+		order by source
+		limit $`+fmt.Sprint(sourceLimitIndex)+`
+	`, sourceArgs...)
+	if err != nil {
+		return LeadMetaFilters{}, err
+	}
+	defer sourceRows.Close()
+	for sourceRows.Next() {
+		var source string
+		if err := sourceRows.Scan(&source); err != nil {
+			return LeadMetaFilters{}, err
+		}
+		filters.Sources = append(filters.Sources, source)
+	}
+	if err := sourceRows.Err(); err != nil {
 		return LeadMetaFilters{}, err
 	}
 
@@ -461,6 +507,7 @@ func (repo Repository) listPipelineBoardStages(ctx context.Context, tenantContex
 		from public.stages as s
 		where s.organization_id = $1::uuid
 		  and s.pipeline_id = $2::uuid
+		  and s.is_active = true
 		order by position asc, created_at asc
 	`, tenantContext.OrganizationID, pipelineID)
 	if err != nil {
@@ -501,145 +548,163 @@ func (repo Repository) listPipelineBoardStages(ctx context.Context, tenantContex
 	return stages, rows.Err()
 }
 
-func (repo Repository) listPipelineBoardLeads(ctx context.Context, tenantContext tenant.Context, filter PipelineBoardFilter, includeTotal bool) ([]PipelineBoardLead, int64, error) {
+func (repo Repository) listPipelineBoardLeads(ctx context.Context, tenantContext tenant.Context, filter PipelineBoardFilter) ([]PipelineBoardLead, error) {
 	where, args, err := buildPipelineLeadWhere(tenantContext, filter)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
+	args, propertyVisibility := appendCanonicalPropertyVisibility(args, tenantContext, "visible_property")
+	boardSortExpression := pipelineBoardSortExpression("l")
 
-	args = append(args, filter.Limit, filter.Offset)
-	limitIndex := len(args) - 1
-	offsetIndex := len(args)
-
-	totalSelect := ""
-	if includeTotal {
-		totalSelect = "count(*) over() as total_count,"
+	paginationSQL := ""
+	if filter.CursorBefore != nil {
+		args = append(args, *filter.CursorBefore, filter.CursorBeforeID)
+		cursorBeforeIndex := len(args) - 1
+		cursorBeforeIDIndex := len(args)
+		where = append(where, fmt.Sprintf(
+			"("+boardSortExpression+", l.id) < ($%d::timestamptz, $%d::uuid)",
+			cursorBeforeIndex,
+			cursorBeforeIDIndex,
+		))
+	}
+	args = append(args, filter.Limit)
+	limitIndex := len(args)
+	if filter.CursorBefore == nil {
+		args = append(args, filter.Offset)
+		paginationSQL = " offset $" + fmt.Sprint(len(args))
 	}
 
 	rows, err := repo.db.Pool().Query(ctx, `
 		select
-			`+totalSelect+`
-			`+pipelineBoardLeadSelectFields()+`
+			`+pipelineBoardLeadSelectFields(propertyVisibility)+`
 		from public.leads l
 		where `+strings.Join(where, " and ")+`
-		order by coalesce(l.board_order_at, l.stage_entered_at, l.created_at) desc, l.id desc
-		limit $`+fmt.Sprint(limitIndex)+`
-		offset $`+fmt.Sprint(offsetIndex)+`
+		order by `+boardSortExpression+` desc, l.id desc
+		limit $`+fmt.Sprint(limitIndex)+paginationSQL+`
 	`, args...)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	defer rows.Close()
 
 	leads := make([]PipelineBoardLead, 0, filter.Limit)
-	var total int64
 	for rows.Next() {
-		lead, rowTotal, err := scanPipelineBoardLead(rows, includeTotal)
+		lead, _, err := scanPipelineBoardLead(rows, false)
 		if err != nil {
-			return nil, 0, err
-		}
-		if includeTotal {
-			total = rowTotal
+			return nil, err
 		}
 		leads = append(leads, lead)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 
-	return leads, total, nil
+	return leads, nil
 }
 
-func (repo Repository) listPipelineBoardLeadsByStage(ctx context.Context, tenantContext tenant.Context, filter PipelineBoardFilter) (map[string][]PipelineBoardLead, map[string]int64, error) {
+func (repo Repository) listInitialPipelineBoardLeadsByStage(ctx context.Context, tenantContext tenant.Context, filter PipelineBoardFilter) (map[string][]PipelineBoardLead, error) {
 	leadsByStage := map[string][]PipelineBoardLead{}
-	counts := map[string]int64{}
 	for _, stageID := range filter.StageIDs {
 		leadsByStage[stageID] = []PipelineBoardLead{}
-		counts[stageID] = 0
 	}
 	if strings.TrimSpace(filter.PipelineID) == "" || len(filter.StageIDs) == 0 {
-		return leadsByStage, counts, nil
+		return leadsByStage, nil
 	}
 
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = defaultPipelineBoardLimit
 	}
-	offset := filter.Offset
-	if offset < 0 {
-		offset = 0
-	}
-
 	where, args, err := buildPipelineLeadWhere(tenantContext, filter)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
+	args, propertyVisibility := appendCanonicalPropertyVisibility(args, tenantContext, "visible_property")
 
-	args = append(args, offset, offset+limit)
-	offsetIndex := len(args) - 1
-	endIndex := len(args)
+	requestedStageValues := make([]string, 0, len(filter.StageIDs))
+	for _, rawStageID := range filter.StageIDs {
+		stageID, ok := normalizeUUID(rawStageID)
+		if !ok {
+			continue
+		}
+		args = append(args, stageID)
+		requestedStageValues = append(requestedStageValues, fmt.Sprintf("($%d::uuid)", len(args)))
+	}
+	if len(requestedStageValues) == 0 {
+		return leadsByStage, nil
+	}
+	args = append(args, limit)
+	limitIndex := len(args)
+	boardSortExpression := pipelineBoardSortExpression("l")
+	outerBoardSortExpression := pipelineBoardSortExpression("stage_lead")
 
 	rows, err := repo.db.Pool().Query(ctx, `
-		with ranked as (
+		with requested_stages(stage_id) as (
+			values `+strings.Join(requestedStageValues, ", ")+`
+		)
+		select stage_lead.*
+		from requested_stages requested_stage
+		cross join lateral (
 			select
-				count(*) over(partition by l.stage_id) as stage_total_count,
-				row_number() over(
-					partition by l.stage_id
-					order by coalesce(l.board_order_at, l.stage_entered_at, l.created_at) desc, l.id desc
-				) as stage_rank,
-				`+pipelineBoardLeadSelectFields()+`
+				`+pipelineBoardLeadSelectFields(propertyVisibility)+`
 			from public.leads l
 			where `+strings.Join(where, " and ")+`
-		)
-		select
-			stage_total_count,
-			`+pipelineBoardLeadColumnFields()+`
-		from ranked
-		where stage_rank > $`+fmt.Sprint(offsetIndex)+`
-		  and stage_rank <= $`+fmt.Sprint(endIndex)+`
-		order by stage_id, stage_rank
+			  and l.stage_id = requested_stage.stage_id
+			order by `+boardSortExpression+` desc, l.id desc
+			limit $`+fmt.Sprint(limitIndex)+`
+		) stage_lead
+		order by stage_lead.stage_id, `+outerBoardSortExpression+` desc, stage_lead.id desc
 	`, args...)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		lead, rowTotal, err := scanPipelineBoardLead(rows, true)
+		lead, _, err := scanPipelineBoardLead(rows, false)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		if lead.StageID == nil || *lead.StageID == "" {
 			continue
 		}
 		stageID := *lead.StageID
 		leadsByStage[stageID] = append(leadsByStage[stageID], lead)
-		counts[stageID] = rowTotal
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	return leadsByStage, counts, nil
+	return leadsByStage, nil
 }
 
-func (repo Repository) listPipelineBoardStageValueTotals(ctx context.Context, tenantContext tenant.Context, filter PipelineBoardFilter) (map[string]float64, error) {
-	totals := map[string]float64{}
+type pipelineBoardStageMetric struct {
+	LeadCount  int64
+	TotalValue float64
+}
+
+// listPipelineBoardStageMetrics deliberately aggregates every matching lead
+// separately from the card preview query. This keeps stage totals exact while
+// allowing the initial board to fetch only the first page from each stage.
+func (repo Repository) listPipelineBoardStageMetrics(ctx context.Context, tenantContext tenant.Context, filter PipelineBoardFilter) (map[string]pipelineBoardStageMetric, error) {
+	metrics := map[string]pipelineBoardStageMetric{}
 	for _, stageID := range filter.StageIDs {
-		totals[stageID] = 0
+		metrics[stageID] = pipelineBoardStageMetric{}
 	}
 	if strings.TrimSpace(filter.PipelineID) == "" || len(filter.StageIDs) == 0 {
-		return totals, nil
+		return metrics, nil
 	}
 
 	where, args, err := buildPipelineLeadWhere(tenantContext, filter)
 	if err != nil {
 		return nil, err
 	}
+	args, propertyVisibility := appendCanonicalPropertyVisibility(args, tenantContext, "p")
 
 	rows, err := repo.db.Pool().Query(ctx, `
 		select
 			l.stage_id::text,
+			count(*)::bigint as lead_count,
 			coalesce(sum(
 				coalesce(
 					nullif(l.valor_interesse::double precision, 0),
@@ -649,8 +714,9 @@ func (repo Repository) listPipelineBoardStageValueTotals(ctx context.Context, te
 			), 0)::double precision as total_value
 		from public.leads l
 		left join public.properties p
-		  on p.id = l.interest_property_id
+		  on p.id = coalesce(l.interest_property_id, l.property_id)
 		 and p.organization_id = l.organization_id
+		 and `+propertyVisibility+`
 		where `+strings.Join(where, " and ")+`
 		group by l.stage_id
 	`, args...)
@@ -661,17 +727,17 @@ func (repo Repository) listPipelineBoardStageValueTotals(ctx context.Context, te
 
 	for rows.Next() {
 		var stageID string
-		var total float64
-		if err := rows.Scan(&stageID, &total); err != nil {
+		var metric pipelineBoardStageMetric
+		if err := rows.Scan(&stageID, &metric.LeadCount, &metric.TotalValue); err != nil {
 			return nil, err
 		}
-		totals[stageID] = total
+		metrics[stageID] = metric
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	return totals, nil
+	return metrics, nil
 }
 
 func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFilter) ([]string, []any, error) {
@@ -756,11 +822,10 @@ func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFi
 	if filter.FilterDealStatus != "" && filter.FilterDealStatus != "all" {
 		add("l.deal_status = $%d", filter.FilterDealStatus)
 	}
-	hasSearch := strings.TrimSpace(filter.Search) != ""
 	if filter.FilterSource != "" && filter.FilterSource != "all" {
 		add("l.source = $%d", filter.FilterSource)
 	}
-	if hasSearch {
+	if strings.TrimSpace(filter.Search) != "" {
 		value := searchtext.Pattern(filter.Search)
 		args = append(args, value)
 		index := len(args)
@@ -780,34 +845,78 @@ func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFi
 		)`, tagID)
 	}
 
-	var occurredFrom any
-	var occurredTo any
-	if !hasSearch && filter.DateFrom != nil {
-		occurredFrom = *filter.DateFrom
-	}
-	if !hasSearch && filter.DateTo != nil {
-		occurredTo = *filter.DateTo
-	}
-	hasAttributionFilter := addLeadAttributionFilterCondition(&args, &where, "l", "lm", leadAttributionFilter{
-		Campaign:     filter.FilterCampaign,
-		AdSet:        filter.FilterAdSet,
-		Ad:           filter.FilterAd,
-		OccurredFrom: occurredFrom,
-		OccurredTo:   occurredTo,
+	addLeadAttributionFilterCondition(&args, &where, "l", "lm", leadAttributionFilter{
+		Campaign: filter.FilterCampaign,
+		AdSet:    filter.FilterAdSet,
+		Ad:       filter.FilterAd,
 	})
-	if !hasSearch && !hasAttributionFilter {
-		if filter.DateFrom != nil {
-			add("l.created_at >= $%d", *filter.DateFrom)
-		}
-		if filter.DateTo != nil {
-			add("l.created_at <= $%d", *filter.DateTo)
+
+	dateMode := filter.DateMode
+	if dateMode == "" {
+		dateMode = PipelineBoardDateModeOperational
+	}
+	if dateMode != PipelineBoardDateModeOperational && dateMode != PipelineBoardDateModeOrigin {
+		return nil, nil, ErrInvalidInput
+	}
+	createdAtClauses := []string{}
+	terminalAtClauses := []string{}
+	if filter.DateFrom != nil {
+		args = append(args, *filter.DateFrom)
+		createdAtClauses = append(createdAtClauses, fmt.Sprintf("l.created_at >= $%d", len(args)))
+		terminalAtClauses = append(terminalAtClauses, fmt.Sprintf("terminal_at >= $%d", len(args)))
+	}
+	if filter.DateTo != nil {
+		args = append(args, *filter.DateTo)
+		createdAtClauses = append(createdAtClauses, fmt.Sprintf("l.created_at <= $%d", len(args)))
+		terminalAtClauses = append(terminalAtClauses, fmt.Sprintf("terminal_at <= $%d", len(args)))
+	}
+	if len(createdAtClauses) > 0 {
+		createdInPeriod := "(" + strings.Join(createdAtClauses, " and ") + ")"
+		if dateMode == PipelineBoardDateModeOperational {
+			terminalInPeriod := strings.ReplaceAll(strings.Join(terminalAtClauses, " and "), "terminal_at", `case
+				when l.deal_status = 'won' then l.won_at
+				when l.deal_status = 'lost' then l.lost_at
+			end`)
+			stageEnteredInPeriod := strings.ReplaceAll(strings.Join(terminalAtClauses, " and "), "terminal_at", "l.stage_entered_at")
+			where = append(where, `(
+				coalesce(l.deal_status, 'open') = 'open'
+				or `+createdInPeriod+`
+				or (l.deal_status in ('won', 'lost') and (`+terminalInPeriod+`))
+				or (
+					l.deal_status in ('won', 'lost')
+					and (`+stageEnteredInPeriod+`)
+					and exists (
+						select 1
+						from public.stages terminal_stage
+						where terminal_stage.id = l.stage_id
+						  and terminal_stage.organization_id = l.organization_id
+						  and terminal_stage.is_active = true
+						  and (
+							(l.deal_status = 'won' and terminal_stage.is_won = true)
+							or (l.deal_status = 'lost' and terminal_stage.is_lost = true)
+						  )
+					)
+				)
+			)`)
+		} else {
+			where = append(where, createdInPeriod)
 		}
 	}
 
 	return where, args, nil
 }
 
-func pipelineBoardLeadSelectFields() string {
+func pipelineBoardSortExpression(alias string) string {
+	// The lead clock trigger initializes board_order_at for every lead attached
+	// to a stage, and operational mutations advance it. Keeping this expression
+	// to the bare column lets Postgres use idx_leads_board_order for both the
+	// initial page and the keyset continuation.
+	return alias + ".board_order_at"
+}
+
+func pipelineBoardLeadSelectFields(propertyVisibility string) string {
+	propertyID := pipelineBoardVisiblePropertyIDSQL("property_id", propertyVisibility)
+	interestPropertyID := pipelineBoardVisiblePropertyIDSQL("interest_property_id", propertyVisibility)
 	return `
 		l.id::text,
 		l.name,
@@ -828,14 +937,23 @@ func pipelineBoardLeadSelectFields() string {
 		l.whatsapp_avatar_url,
 		l.deal_status,
 		l.valor_interesse::double precision,
-		l.property_id::text,
+		` + propertyID + ` as property_id,
 		l.lost_reason,
 		l.won_at,
 		l.lost_at,
-		l.interest_property_id::text,
+		` + interestPropertyID + ` as interest_property_id,
 		l.first_response_at,
 		l.first_response_seconds,
 		l.first_response_is_automation`
+}
+
+func pipelineBoardVisiblePropertyIDSQL(column string, propertyVisibility string) string {
+	return `(select visible_property.id::text
+		from public.properties visible_property
+		where visible_property.organization_id = l.organization_id
+		  and visible_property.id = l.` + column + `
+		  and ` + propertyVisibility + `
+		limit 1)`
 }
 
 func pipelineBoardLeadColumnFields() string {
@@ -872,9 +990,9 @@ func pipelineBoardLeadColumnFields() string {
 func scanPipelineBoardLead(row scanner, withTotal bool) (PipelineBoardLead, int64, error) {
 	var lead PipelineBoardLead
 	var total int64
-	var phone, email, stageID, assignedUserID, pipelineID, message, organizationID pgtype.Text
+	var phone, email, source, stageID, assignedUserID, pipelineID, message, organizationID pgtype.Text
 	var lastEntryAt, stageEnteredAt, boardOrderAt, wonAt, lostAt, firstResponseAt pgtype.Timestamptz
-	var whatsappAvatarURL, propertyID, lostReason, interestPropertyID pgtype.Text
+	var whatsappAvatarURL, dealStatus, propertyID, lostReason, interestPropertyID pgtype.Text
 	var interestValue pgtype.Float8
 	var firstResponseSeconds pgtype.Int4
 	var firstResponseIsAutomation pgtype.Bool
@@ -884,7 +1002,7 @@ func scanPipelineBoardLead(row scanner, withTotal bool) (PipelineBoardLead, int6
 		&lead.Name,
 		&phone,
 		&email,
-		&lead.Source,
+		&source,
 		&lead.CreatedAt,
 		&lead.UpdatedAt,
 		&stageID,
@@ -897,7 +1015,7 @@ func scanPipelineBoardLead(row scanner, withTotal bool) (PipelineBoardLead, int6
 		&lastEntryAt,
 		&lead.ReentryCount,
 		&whatsappAvatarURL,
-		&lead.DealStatus,
+		&dealStatus,
 		&interestValue,
 		&propertyID,
 		&lostReason,
@@ -917,6 +1035,7 @@ func scanPipelineBoardLead(row scanner, withTotal bool) (PipelineBoardLead, int6
 
 	lead.Phone = pipelineTextPtr(phone)
 	lead.Email = pipelineTextPtr(email)
+	lead.Source = textValueWithDefault(source, "manual")
 	lead.StageID = pipelineTextPtr(stageID)
 	lead.AssignedUserID = pipelineTextPtr(assignedUserID)
 	lead.PipelineID = pipelineTextPtr(pipelineID)
@@ -926,6 +1045,7 @@ func scanPipelineBoardLead(row scanner, withTotal bool) (PipelineBoardLead, int6
 	lead.BoardOrderAt = pipelineTimePtr(boardOrderAt)
 	lead.LastEntryAt = pipelineTimePtr(lastEntryAt)
 	lead.WhatsAppAvatarURL = pipelineTextPtr(whatsappAvatarURL)
+	lead.DealStatus = textValueWithDefault(dealStatus, "open")
 	lead.PropertyID = pipelineTextPtr(propertyID)
 	lead.LostReason = pipelineTextPtr(lostReason)
 	lead.WonAt = pipelineTimePtr(wonAt)

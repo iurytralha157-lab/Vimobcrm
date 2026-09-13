@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import { getNotificationRoute } from '@/lib/notification-routing';
 import { ProductUpdatesDialog } from '@/components/features/news';
 import { DEFAULT_AUTHENTICATED_ROUTE } from '@/config/constants';
+import { getInitials, getOrganizationMemberRoleLabel } from '@/lib/user-display';
 
 const notificationIcons: Record<string, typeof Bell> = {
   lead: UserPlus,
@@ -105,8 +106,13 @@ export const AppHeader = React.memo(function AppHeader({
       
       await switchOrganization(orgId);
       
-      // Invalidate all queries to refresh data for the new organization
-      await queryClient.invalidateQueries();
+      // A falha pontual ao revalidar uma consulta antiga não desfaz uma troca
+      // de organização que já foi confirmada pelo AuthContext.
+      try {
+        await queryClient.invalidateQueries();
+      } catch (refreshError) {
+        console.error('Error refreshing data after organization switch:', refreshError);
+      }
       
       toast.success("Organização alterada com sucesso");
       
@@ -141,10 +147,6 @@ export const AppHeader = React.memo(function AppHeader({
   const handleOpenAllNotifications = () => {
     setNotificationsOpen(false);
     router.push('/notifications');
-  };
-
-  const getInitials = (name: string) => {
-    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
   };
 
   return (
@@ -213,7 +215,7 @@ export const AppHeader = React.memo(function AppHeader({
                   <div className="flex-1 min-w-0">
                     <p className="truncate text-[14px] font-light">{org.organization_name}</p>
                     <p className="text-[10px] text-muted-foreground">
-                      {org.member_role === 'admin' ? 'Administrador' : 'Usuário'}
+                      {getOrganizationMemberRoleLabel(org.member_role)}
                     </p>
                   </div>
                   {organization?.id === org.organization_id && (

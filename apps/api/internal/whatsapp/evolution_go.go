@@ -20,6 +20,12 @@ import (
 const (
 	evolutionQRCodeFlowTimeout      = 18 * time.Second
 	evolutionQRCodeRecoveryCooldown = 30 * time.Second
+	evolutionMediaRecoveryTimeout   = 100 * time.Second
+
+	// These payload fields are internal lifecycle fences. Public provider-action
+	// requests are rebuilt from an allowlisted DTO and cannot set either key.
+	evolutionLifecycleOperationIDPayloadKey = "__vimob_lifecycle_operation_id"
+	evolutionInstanceKeyOverridePayloadKey  = "__vimob_instance_key_override"
 )
 
 var evolutionQRCodeRecoveryState = struct {
@@ -38,12 +44,15 @@ type evolutionSessionConfig struct {
 }
 
 type evolutionFetchOptions struct {
-	Body             any
-	Query            map[string]any
-	InstanceID       string
-	Token            string
-	UseGlobalAPIKey  bool
-	MaxResponseBytes int64
+	Body                     any
+	Query                    map[string]any
+	InstanceID               string
+	Token                    string
+	UseGlobalAPIKey          bool
+	MutationMayCommit        bool
+	OutcomeMayRemainInFlight bool
+	MaxResponseBytes         int64
+	RequestTimeout           time.Duration
 }
 
 type evolutionFetchResult struct {
@@ -63,6 +72,15 @@ type evolutionEndpoint struct {
 }
 
 func (client functionsClient) invokeEvolutionDirect(ctx context.Context, action string, payload map[string]any) (map[string]any, error) {
+	return client.invokeEvolutionDirectWithResponseLimit(ctx, action, payload, 0)
+}
+
+func (client functionsClient) invokeEvolutionDirectWithResponseLimit(
+	ctx context.Context,
+	action string,
+	payload map[string]any,
+	maxResponseBytes int64,
+) (map[string]any, error) {
 	if client.evolutionGoAPIURL == "" || client.evolutionGoAPIKey == "" {
 		return nil, fmt.Errorf("%w: Evolution Go API configuration missing", ErrProviderFailed)
 	}
@@ -165,13 +183,20 @@ func (client functionsClient) invokeEvolutionDirect(ctx context.Context, action 
 		return map[string]any{"ok": true, "skipped": true, "reason": endpoint.Reason}, nil
 	}
 
+	responseLimit := evolutionResponseMaxBytes(action)
+	if maxResponseBytes > 0 && maxResponseBytes < responseLimit {
+		responseLimit = maxResponseBytes
+	}
 	result, err := client.evolutionFetch(ctx, endpoint.Method, endpoint.Path, evolutionFetchOptions{
-		Body:             endpoint.Body,
-		Query:            endpoint.Query,
-		InstanceID:       evolutionInstanceHeader(action, instanceKey),
-		Token:            token,
-		UseGlobalAPIKey:  evolutionUsesGlobalAPIKey(action),
-		MaxResponseBytes: evolutionResponseMaxBytes(action),
+		Body:                     endpoint.Body,
+		Query:                    endpoint.Query,
+		InstanceID:               evolutionInstanceHeader(action, instanceKey),
+		Token:                    token,
+		UseGlobalAPIKey:          evolutionUsesGlobalAPIKey(action),
+		MutationMayCommit:        evolutionActionMayCommitMutation(action),
+		OutcomeMayRemainInFlight: evolutionActionMayRemainInFlight(action),
+		MaxResponseBytes:         responseLimit,
+		RequestTimeout:           evolutionRequestTimeout(action),
 	})
 	if err != nil {
 		return nil, err
@@ -202,6 +227,17 @@ func (client functionsClient) invokeEvolutionDirect(ctx context.Context, action 
 	}
 	if !ok {
 		response["error"] = evolutionErrorMessage(result.Data, result.RawText)
+	}
+	if !ok && evolutionHTTPOutcomeUnknown(action, result.Status) {
+		client.runtimeStats.providerOutcomeBecameUnknown()
+		return response, fmt.Errorf(
+			"%w: %w: Evolution Go operation %s returned ambiguous HTTP %d: %s",
+			ErrProviderFailed,
+			ErrProviderOutcomeUnknown,
+			action,
+			result.Status,
+			providerErrorMessage(response, "provider response was ambiguous"),
+		)
 	}
 
 	return response, nil
@@ -237,8 +273,9 @@ func (client functionsClient) recoverEvolutionQRCode(
 			http.MethodPost,
 			fmt.Sprintf("/instance/forcereconnect/%s", url.PathEscape(instanceKey)),
 			evolutionFetchOptions{
-				Body:            map[string]any{"number": instanceKey},
-				UseGlobalAPIKey: true,
+				Body:              map[string]any{"number": instanceKey},
+				UseGlobalAPIKey:   true,
+				MutationMayCommit: true,
 			},
 		)
 		if err != nil {
@@ -350,6 +387,49 @@ func evolutionAllowsProviderFailure(action string) bool {
 	)
 }
 
+func evolutionHTTPOutcomeUnknown(action string, status int) bool {
+	if !evolutionActionMayCommitMutation(action) && !evolutionActionMayRemainInFlight(action) {
+		return false
+	}
+	// 408/425 can be emitted after a request reached an intermediary or the
+	// provider. Every 5xx is therefore ambiguous for a mutation or a long-lived
+	// provider download: suppressing a duplicate/overlapping operation is safer
+	// than assuming the upstream stopped work when the gateway answered.
+	// 429 is intentionally excluded because it is an explicit admission-control
+	// rejection and remains eligible for bounded, same-sender retry.
+	return status == http.StatusRequestTimeout || status == http.StatusTooEarly || status >= 500 && status <= 599
+}
+
+func evolutionActionMayCommitMutation(action string) bool {
+	if isEvolutionSendAction(action) {
+		return true
+	}
+	return stringIn(action,
+		"instance.create",
+		"instance.connect",
+		"instance.reconnect",
+		"instance.forceReconnect",
+		"instance.advancedSettings",
+		"instance.delete",
+		"instance.disconnect",
+		"instance.logout",
+		"message.delete",
+		"message.edit",
+		"message.react",
+		"message.markread",
+		"chat.archive",
+		"chat.mute",
+		"chat.pin",
+		"chat.historySync",
+		"label.addChat",
+		"label.removeChat",
+		"group.setName",
+		"group.setDescription",
+		"group.setPhoto",
+		"user.avatar",
+	)
+}
+
 func evolutionAuthScope(action string) string {
 	if evolutionUsesGlobalAPIKey(action) {
 		return "global"
@@ -360,11 +440,32 @@ func evolutionAuthScope(action string) string {
 
 func evolutionResponseMaxBytes(action string) int64 {
 	if stringIn(action, "message.downloadMedia", "message.downloadImage") {
-		// Base64 expands the 26 MiB binary ceiling by roughly 4/3. The extra
-		// MiB accounts for the provider's small JSON envelope.
-		return int64(whatsappMediaMaxBytes*4/3 + 1<<20)
+		return evolutionMediaResponseMaxBytes(whatsappMediaMaxBytes)
 	}
 	return 1 << 20
+}
+
+func evolutionMediaResponseMaxBytes(maxDecodedBytes int64) int64 {
+	if maxDecodedBytes <= 0 || maxDecodedBytes > whatsappMediaMaxBytes {
+		maxDecodedBytes = whatsappMediaMaxBytes
+	}
+	// Exact base64 ceiling plus one MiB for the provider's JSON envelope. This
+	// bound is applied while reading the socket, before JSON/string duplication.
+	return ((maxDecodedBytes+2)/3)*4 + 1<<20
+}
+
+func evolutionActionMayRemainInFlight(action string) bool {
+	// A timed-out media recovery is read-only, but the provider may keep doing
+	// expensive decrypt/download work after our transport returns. Surface the
+	// ambiguity so the media worker can quarantine that session's provider lane.
+	return stringIn(action, "message.downloadMedia", "message.downloadImage")
+}
+
+func evolutionRequestTimeout(action string) time.Duration {
+	if stringIn(action, "message.downloadMedia", "message.downloadImage") {
+		return evolutionMediaRecoveryTimeout
+	}
+	return 0
 }
 
 func (client functionsClient) resolveEvolutionSession(ctx context.Context, payload map[string]any) (evolutionSessionConfig, error) {
@@ -400,12 +501,30 @@ func (client functionsClient) resolveEvolutionSession(ctx context.Context, paylo
 
 	session.Settings = map[string]any{}
 	_ = json.Unmarshal([]byte(settingsRaw), &session.Settings)
+	if expectedOperationID := stringFromAny(payload[evolutionLifecycleOperationIDPayloadKey]); expectedOperationID != "" {
+		actualOperationID := stringFromAny(session.Settings["lifecycle_operation_id"])
+		if actualOperationID != expectedOperationID {
+			return evolutionSessionConfig{}, fmt.Errorf(
+				"%w: provider mutation fence changed before dispatch",
+				lifecycleConflictError(),
+			)
+		}
+	}
 
 	return session, nil
 }
 
 func (client functionsClient) evolutionInstanceKey(session evolutionSessionConfig, payload map[string]any, body map[string]any) string {
-	candidates := []any{
+	candidates := make([]any, 0, 11)
+	expectedOperationID := stringFromAny(payload[evolutionLifecycleOperationIDPayloadKey])
+	actualOperationID := stringFromAny(session.Settings["lifecycle_operation_id"])
+	if expectedOperationID != "" && expectedOperationID == actualOperationID {
+		// Recreate persists the newly returned provider identity before connect.
+		// The fenced override makes that connect target the new UUID even when a
+		// stale resolved key was present in the row loaded by an earlier caller.
+		candidates = append(candidates, payload[evolutionInstanceKeyOverridePayloadKey])
+	}
+	candidates = append(candidates,
 		session.Settings["evolution_go_resolved_instance_key"],
 		payload["instance_id"],
 		payload["instanceId"],
@@ -416,7 +535,7 @@ func (client functionsClient) evolutionInstanceKey(session evolutionSessionConfi
 		body["name"],
 		body["instanceName"],
 		session.InstanceName,
-	}
+	)
 
 	for _, candidate := range candidates {
 		if value := stringFromAny(candidate); value != "" {
@@ -458,7 +577,13 @@ func (client functionsClient) evolutionFetch(ctx context.Context, method string,
 		body = bytes.NewReader(raw)
 	}
 
-	request, err := http.NewRequestWithContext(ctx, method, endpoint.String(), body)
+	requestContext := ctx
+	requestCancel := func() {}
+	if options.RequestTimeout > 0 {
+		requestContext, requestCancel = context.WithTimeout(ctx, options.RequestTimeout)
+	}
+	defer requestCancel()
+	request, err := http.NewRequestWithContext(requestContext, method, endpoint.String(), body)
 	if err != nil {
 		return evolutionFetchResult{}, err
 	}
@@ -473,9 +598,24 @@ func (client functionsClient) evolutionFetch(ctx context.Context, method string,
 		request.Header.Set("instanceId", options.InstanceID)
 	}
 
-	response, err := client.httpClient.Do(request)
+	httpClient := client.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	if options.RequestTimeout > 0 {
+		clonedClient := *httpClient
+		clonedClient.Timeout = options.RequestTimeout
+		httpClient = &clonedClient
+	}
+	client.runtimeStats.providerStarted(time.Now())
+	response, err := httpClient.Do(request)
 	if err != nil {
-		return evolutionFetchResult{}, fmt.Errorf("%w: %w: %v", ErrProviderFailed, ErrProviderOutcomeUnknown, err)
+		outcomeUnknown := options.MutationMayCommit || options.OutcomeMayRemainInFlight
+		client.runtimeStats.providerFinished(time.Now(), false, outcomeUnknown)
+		if outcomeUnknown {
+			return evolutionFetchResult{}, fmt.Errorf("%w: %w: %v", ErrProviderFailed, ErrProviderOutcomeUnknown, err)
+		}
+		return evolutionFetchResult{}, fmt.Errorf("%w: %v", ErrProviderFailed, err)
 	}
 	defer response.Body.Close()
 
@@ -485,10 +625,25 @@ func (client functionsClient) evolutionFetch(ctx context.Context, method string,
 	}
 	raw, err := io.ReadAll(io.LimitReader(response.Body, responseLimit+1))
 	if err != nil {
-		return evolutionFetchResult{}, fmt.Errorf("%w: %w: response read failed: %v", ErrProviderFailed, ErrProviderOutcomeUnknown, err)
+		outcomeUnknown := options.MutationMayCommit || options.OutcomeMayRemainInFlight
+		client.runtimeStats.providerFinished(time.Now(), false, outcomeUnknown)
+		if outcomeUnknown {
+			return evolutionFetchResult{}, fmt.Errorf("%w: %w: response read failed: %v", ErrProviderFailed, ErrProviderOutcomeUnknown, err)
+		}
+		return evolutionFetchResult{}, fmt.Errorf("%w: response read failed: %v", ErrProviderFailed, err)
 	}
 	if int64(len(raw)) > responseLimit {
-		return evolutionFetchResult{}, fmt.Errorf("%w: %w: Evolution Go response exceeds the allowed size", ErrProviderFailed, ErrProviderOutcomeUnknown)
+		outcomeUnknown := options.MutationMayCommit || options.OutcomeMayRemainInFlight
+		client.runtimeStats.providerFinished(time.Now(), false, outcomeUnknown)
+		if outcomeUnknown {
+			return evolutionFetchResult{}, fmt.Errorf(
+				"%w: %w: %w: Evolution Go response exceeds the allowed size",
+				ErrProviderFailed,
+				ErrProviderOutcomeUnknown,
+				errWhatsAppMediaTooLarge,
+			)
+		}
+		return evolutionFetchResult{}, fmt.Errorf("%w: %w: Evolution Go response exceeds the allowed size", ErrProviderFailed, errWhatsAppMediaTooLarge)
 	}
 
 	var data any = map[string]any{}
@@ -498,12 +653,43 @@ func (client functionsClient) evolutionFetch(ctx context.Context, method string,
 		}
 	}
 
-	return evolutionFetchResult{
+	result := evolutionFetchResult{
 		OK:      response.StatusCode >= 200 && response.StatusCode < 300,
 		Status:  response.StatusCode,
 		Data:    data,
 		RawText: string(raw),
-	}, nil
+	}
+	client.runtimeStats.providerFinished(time.Now(), result.OK, false)
+	return result, nil
+}
+
+// deleteEvolutionInstanceByKey is reserved for lifecycle compensation. It
+// deliberately bypasses session resolution because the final provider ID may
+// have been returned immediately before the local database write failed.
+func (client functionsClient) deleteEvolutionInstanceByKey(ctx context.Context, instanceKey string) (map[string]any, error) {
+	instanceKey = strings.TrimSpace(instanceKey)
+	if instanceKey == "" {
+		return nil, fmt.Errorf("%w: Evolution Go compensation instance key missing", ErrProviderFailed)
+	}
+	result, err := client.evolutionFetch(
+		ctx,
+		http.MethodDelete,
+		fmt.Sprintf("/instance/delete/%s", url.PathEscape(instanceKey)),
+		evolutionFetchOptions{UseGlobalAPIKey: true, MutationMayCommit: true},
+	)
+	if err != nil {
+		return nil, err
+	}
+	response := map[string]any{
+		"ok":          result.OK,
+		"status":      result.Status,
+		"data":        result.Data,
+		"rawResponse": result.RawText,
+	}
+	if !result.OK {
+		response["error"] = evolutionErrorMessage(result.Data, result.RawText)
+	}
+	return response, nil
 }
 
 func evolutionEndpointFor(action string, body map[string]any, instanceKey string) (evolutionEndpoint, error) {
@@ -523,14 +709,17 @@ func evolutionEndpointFor(action string, body map[string]any, instanceKey string
 				"webhook_url":  firstPresentAny(body["webhook_url"], body["webhookUrl"], body["url"]),
 				"subscribe":    body["subscribe"],
 				"events":       body["events"],
-				"advancedSettings": mergeMaps(map[string]any{
-					"rejectCall":      false,
-					"ignoreGroups":    false,
-					"alwaysOnline":    false,
-					"readMessages":    false,
-					"ignoreStatus":    false,
-					"syncFullHistory": false,
-				}, mapFromAny(body["advancedSettings"])),
+				"advancedSettings": mergeMaps(
+					mergeMaps(map[string]any{
+						"rejectCall":      false,
+						"ignoreGroups":    true,
+						"alwaysOnline":    false,
+						"readMessages":    false,
+						"ignoreStatus":    false,
+						"syncFullHistory": false,
+					}, mapFromAny(body["advancedSettings"])),
+					map[string]any{"ignoreGroups": true, "syncFullHistory": false},
+				),
 			}),
 		}, nil
 	case "instance.connect":
@@ -631,11 +820,12 @@ func evolutionEndpointFor(action string, body map[string]any, instanceKey string
 
 func evolutionNotificationSafeSettingsBody() map[string]any {
 	return map[string]any{
-		"alwaysOnline": false,
-		"readMessages": false,
-		"rejectCall":   false,
-		"ignoreGroups": false,
-		"ignoreStatus": false,
+		"alwaysOnline":    false,
+		"readMessages":    false,
+		"rejectCall":      false,
+		"ignoreGroups":    true,
+		"ignoreStatus":    false,
+		"syncFullHistory": false,
 	}
 }
 

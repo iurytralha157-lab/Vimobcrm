@@ -10,9 +10,12 @@ import {
   matchesLeadMessagesQueryKey,
   matchesWhatsAppMessageRefreshQueryKey,
   matchesWhatsAppMessagesQueryKey,
+  mergeWhatsAppLatestMessagePage,
   mergeWhatsAppMessagesWithLocalState,
   resolveWhatsAppConversationSessionFilter,
   resolveWhatsAppSessionStatus,
+  shouldRebaseWhatsAppMessagePages,
+  WHATSAPP_UNCERTAIN_SEND_TTL_MS,
   whatsappQueryKeys,
   whatsappInboxTopic,
   type WhatsAppQueryScope,
@@ -135,6 +138,28 @@ test('segrega paginas de conversa por tenant e por filtros aplicados no servidor
   assert.equal(isWhatsAppQueryKeyForScope(keyA, scopeB), false)
 })
 
+test('segrega o contador leve pelo tenant e pelos filtros do inbox', () => {
+  const params = {
+    hideGroups: false,
+    showArchived: false,
+    onlyLeads: false,
+    withoutLead: false,
+    pendingReply: false,
+    search: '',
+    accessibleSessionKey: 'all',
+  }
+  const keyA = whatsappQueryKeys.unreadCount(scopeA, params)
+  const keyOtherTenant = whatsappQueryKeys.unreadCount(scopeB, params)
+  const keyOtherSession = whatsappQueryKeys.unreadCount(scopeA, {
+    ...params,
+    accessibleSessionKey: 'session-a',
+  })
+
+  assert.notDeepEqual(keyA, keyOtherTenant)
+  assert.notDeepEqual(keyA, keyOtherSession)
+  assert.deepEqual(keyA.slice(0, 5), whatsappQueryKeys.conversationsScope(scopeA))
+})
+
 test('segrega deep link de lead por tenant ativo', () => {
   const keyA = whatsappQueryKeys.conversationForLead(scopeA, 'lead-a')
   const keyB = whatsappQueryKeys.conversationForLead(scopeB, 'lead-a')
@@ -189,7 +214,8 @@ test('preserva mensagem local ate o servidor devolver a linha canonica', () => {
     content: 'Oi',
   }
 
-  assert.deepEqual(mergeWhatsAppMessagesWithLocalState([], [local]), [local])
+  const beforeTimeout = { nowMs: Date.parse(local.sent_at) + 1 }
+  assert.deepEqual(mergeWhatsAppMessagesWithLocalState([], [local], beforeTimeout), [local])
 
   const canonical = {
     ...local,
@@ -198,7 +224,7 @@ test('preserva mensagem local ate o servidor devolver a linha canonica', () => {
     status: 'sent',
   }
   assert.deepEqual(
-    mergeWhatsAppMessagesWithLocalState([canonical], [local]),
+    mergeWhatsAppMessagesWithLocalState([canonical], [local], beforeTimeout),
     [canonical],
   )
 })
@@ -214,7 +240,9 @@ test('preserva todos os estados locais de entrega durante reconciliacao', () => 
   }))
 
   assert.deepEqual(
-    mergeWhatsAppMessagesWithLocalState([], cached).map((message) => message.status),
+    mergeWhatsAppMessagesWithLocalState([], cached, {
+      nowMs: Date.parse('2026-07-12T12:04:00Z'),
+    }).map((message) => message.status),
     statuses,
   )
 })
@@ -237,8 +265,184 @@ test('ordena paginas antigas antes das novas e elimina sobreposicao de cursor', 
   )
 })
 
+test('atualiza somente a pagina recente e preserva o historico paginado', () => {
+  const cachedPages = [
+    {
+      messages: [
+        { id: 'message-3', message_id: 'provider-3', status: 'sent', sent_at: '2026-07-12T12:03:00Z' },
+        { id: 'local-4', message_id: 'local-4', client_message_id: 'client-4', status: 'confirming', sent_at: '2026-07-12T12:04:00Z' },
+      ],
+      nextCursor: 'cursor-recent-old',
+    },
+    {
+      messages: [
+        { id: 'message-1', message_id: 'provider-1', status: 'received', sent_at: '2026-07-12T12:01:00Z' },
+        { id: 'message-2', message_id: 'provider-2', status: 'received', sent_at: '2026-07-12T12:02:00Z' },
+      ],
+      nextCursor: 'cursor-older',
+    },
+  ]
+  const latestPage = {
+    messages: [
+      { id: 'message-3', message_id: 'provider-3', status: 'delivered', sent_at: '2026-07-12T12:03:00Z' },
+      { id: 'message-4', message_id: 'provider-4', client_message_id: 'client-4', status: 'sent', sent_at: '2026-07-12T12:04:00Z' },
+      { id: 'message-5', message_id: 'provider-5', status: 'received', sent_at: '2026-07-12T12:05:00Z' },
+    ],
+    nextCursor: 'cursor-recent-new',
+  }
+
+  const merged = mergeWhatsAppLatestMessagePage(cachedPages, latestPage)
+
+  assert.equal(merged.length, 2)
+  assert.equal(merged[0].nextCursor, 'cursor-recent-new')
+  assert.deepEqual(merged[0].messages.map((message) => message.id), ['message-3', 'message-4', 'message-5'])
+  assert.deepEqual(merged[1].messages, cachedPages[1].messages)
+  assert.equal(merged[1].nextCursor, cachedPages[1].nextCursor)
+})
+
+test('preserva a ponte entre a cabeca renovada e a proxima pagina antiga', () => {
+  const baseTime = Date.parse('2026-07-12T10:00:00.000Z')
+  const message = (index: number) => ({
+    id: `message-${index}`,
+    message_id: `provider-${index}`,
+    status: 'received',
+    sent_at: new Date(baseTime + index * 60_000).toISOString(),
+  })
+  const cachedPages = [
+    { messages: Array.from({ length: 50 }, (_, index) => message(index + 51)), nextCursor: 'cursor-50' },
+    { messages: Array.from({ length: 50 }, (_, index) => message(index + 1)), nextCursor: null },
+  ]
+  const latestPage = {
+    messages: Array.from({ length: 50 }, (_, index) => message(index + 61)),
+    nextCursor: 'cursor-60',
+  }
+
+  const mergedPages = mergeWhatsAppLatestMessagePage(cachedPages, latestPage)
+  const flattenedIds = flattenWhatsAppMessagePages(mergedPages).map((item) => item.id)
+
+  assert.equal(mergedPages[0].messages.length, 50)
+  assert.equal(mergedPages.every((page) => page.messages.length <= 50), true)
+  assert.deepEqual(flattenedIds, Array.from({ length: 110 }, (_, index) => `message-${index + 1}`))
+  assert.equal(
+    mergedPages[mergedPages.length - 1]?.nextCursor,
+    cachedPages[cachedPages.length - 1]?.nextCursor,
+  )
+})
+
+test('detecta salto sem sobreposicao para rebase controlado', () => {
+  const canonical = (index: number): {
+    id: string
+    message_id: string
+    client_message_id: string | null
+    status: string
+    sent_at: string
+  } => ({
+    id: `database-${index}`,
+    message_id: `provider-${index}`,
+    client_message_id: null,
+    status: 'received',
+    sent_at: `2026-07-12T12:${String(index).padStart(2, '0')}:00Z`,
+  })
+
+  assert.equal(
+    shouldRebaseWhatsAppMessagePages(
+      [canonical(1), canonical(2)],
+      [canonical(3), canonical(4)],
+    ),
+    true,
+  )
+  assert.equal(
+    shouldRebaseWhatsAppMessagePages(
+      [canonical(1), canonical(2)],
+      [canonical(2), canonical(3)],
+    ),
+    false,
+  )
+  assert.equal(
+    shouldRebaseWhatsAppMessagePages(
+      [{ ...canonical(1), id: 'client-1', message_id: 'client-1', client_message_id: 'client-1', status: 'confirming' }],
+      [canonical(2)],
+    ),
+    false,
+  )
+})
+
+test('encerra confirmacao local sem resposta depois do TTL e ainda aceita a linha canonica', () => {
+  const sentAt = '2026-07-12T12:00:00.000Z'
+  const sentAtMs = Date.parse(sentAt)
+  const local: {
+    id: string
+    message_id: string
+    client_message_id: string
+    status: string
+    sent_at: string
+    media_error?: string | null
+    metadata?: Record<string, unknown>
+  } = {
+    id: 'client-timeout',
+    message_id: 'client-timeout',
+    client_message_id: 'client-timeout',
+    status: 'confirming',
+    sent_at: sentAt,
+  }
+
+  const beforeTimeout = mergeWhatsAppMessagesWithLocalState([], [local], {
+    nowMs: sentAtMs + WHATSAPP_UNCERTAIN_SEND_TTL_MS - 1,
+  })
+  assert.equal(beforeTimeout[0]?.status, 'confirming')
+
+  const afterTimeout = mergeWhatsAppMessagesWithLocalState([], [local], {
+    nowMs: sentAtMs + WHATSAPP_UNCERTAIN_SEND_TTL_MS,
+  })
+  assert.equal(afterTimeout[0]?.status, 'failed')
+  assert.equal(afterTimeout[0]?.media_error, 'SEND_CONFIRMATION_TIMEOUT')
+  assert.equal(afterTimeout[0]?.metadata?.local_delivery_state, 'confirmation_timeout')
+
+  const canonical = {
+    ...local,
+    id: 'message-timeout',
+    message_id: 'provider-timeout',
+    status: 'delivered',
+  }
+  const reconciled = mergeWhatsAppMessagesWithLocalState([canonical], afterTimeout, {
+    nowMs: sentAtMs + WHATSAPP_UNCERTAIN_SEND_TTL_MS + 1,
+  })
+  assert.deepEqual(reconciled, [canonical])
+})
+
 test('distingue falha definitiva de entrega incerta', () => {
   assert.equal(getWhatsAppSendFailureStatus('WHATSAPP_DISCONNECTED'), 'failed')
+  assert.equal(getWhatsAppSendFailureStatus('WhatsApp selecionado esta desconectado.'), 'failed')
+  assert.equal(
+    getWhatsAppSendFailureStatus({
+      message: 'You do not have permission to perform this action.',
+      code: 'permission_denied',
+      status: 403,
+    }),
+    'failed',
+  )
+  assert.equal(
+    getWhatsAppSendFailureStatus({
+      message: 'Contrato invalido na entrada',
+      code: 'domain_validation_error',
+      name: 'DomainValidationError',
+      direction: 'input',
+    }),
+    'failed',
+  )
+  assert.equal(
+    getWhatsAppSendFailureStatus({ message: 'Request timeout', status: 408 }),
+    'confirming',
+  )
+  assert.equal(
+    getWhatsAppSendFailureStatus({
+      message: 'Resposta inesperada depois do envio',
+      code: 'domain_validation_error',
+      name: 'DomainValidationError',
+      direction: 'response',
+    }),
+    'confirming',
+  )
   assert.equal(getWhatsAppSendFailureStatus('api_timeout'), 'confirming')
   assert.equal(
     getWhatsAppSendFailureStatus('Mensagem enviada no WhatsApp, mas nao foi salva'),

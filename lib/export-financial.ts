@@ -1,5 +1,7 @@
 import ExcelJS from "exceljs";
 
+import { formatLocalizedBRLCurrency } from "./utils/formatting";
+
 interface ExportData {
   [key: string]: string | number | boolean | null | undefined;
 }
@@ -110,10 +112,7 @@ function downloadFile(
 
 export function formatCurrency(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(Number(value))) return "R$ 0,00";
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(Number(value));
+  return formatLocalizedBRLCurrency(Number(value));
 }
 
 export function formatDate(date: string | null | undefined): string {

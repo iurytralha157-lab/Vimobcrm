@@ -1,21 +1,30 @@
-import type { Tables, TablesInsert, TablesUpdate } from '@/integrations/supabase/types'
+import type { z } from 'zod'
+import type { Tables } from '@/lib/supabase/types'
 import {
   apiPropertyHistoryResponseSchema,
+  apiPropertyCreateResponseSchema,
+  apiPropertyManagedTermsSchema,
   apiPropertyListResponseSchema,
   apiPropertyResponseSchema,
   apiPropertyStatsSchema,
   parseDomainInput,
   propertyCreateInputSchema,
+  propertyDeleteInputSchema,
   propertyListQuerySchema,
   propertyUpdateInputSchema,
   validateDomainResponse,
 } from '@/lib/validation'
 import { vimobAPIRequest } from './vimob-client'
 
-type Property = Tables<'properties'>
-type PropertyInsert = TablesInsert<'properties'>
-type PropertyUpdate = TablesUpdate<'properties'>
-type PropertyMetadataInput = { metadata?: Record<string, unknown> }
+export type PropertyRecord = Tables<'properties'>
+export type PropertyManagedTerms = z.output<typeof apiPropertyManagedTermsSchema>
+export type PropertyWithCapabilities = PropertyRecord & {
+  can_edit: boolean
+  managed_terms: PropertyManagedTerms
+}
+export type PropertyCreateInput = z.input<typeof propertyCreateInputSchema>
+export type PropertyUpdateInput = z.input<typeof propertyUpdateInputSchema>
+export type PropertyDeleteInput = z.input<typeof propertyDeleteInputSchema>
 
 type PropertyAPIOptions = {
   limit?: number
@@ -50,7 +59,7 @@ type PropertyAPIOptions = {
 }
 
 type PropertyListResponse = {
-  data: Property[]
+  data: PropertyWithCapabilities[]
   total: number
   limit: number
   offset: number
@@ -60,6 +69,7 @@ export type PropertyStats = {
   total: number
   sale: number
   rental: number
+  launches: number
   available: number
   reserved: number
   sold: number
@@ -68,7 +78,11 @@ export type PropertyStats = {
 }
 
 type PropertyResponse = {
-  data: Property
+  data: PropertyWithCapabilities
+}
+
+type PropertyCreateResponse = {
+  data: PropertyRecord
 }
 
 export type PropertyHistoryEvent = {
@@ -126,14 +140,14 @@ export const propertiesAPI = {
     }
   },
 
-  async createProperty(organizationId: string, data: Partial<PropertyInsert> & PropertyMetadataInput) {
+  async createProperty(organizationId: string, data: PropertyCreateInput) {
     const body = parseDomainInput(propertyCreateInputSchema, data, 'properties.create')
-    const response = await vimobAPIRequest<PropertyResponse>('/v1/properties', {
+    const response = await vimobAPIRequest<PropertyCreateResponse>('/v1/properties', {
       method: 'POST',
       organizationId,
       body,
     })
-    validateDomainResponse(apiPropertyResponseSchema, response, 'properties.create')
+    validateDomainResponse(apiPropertyCreateResponseSchema, response, 'properties.create')
 
     return {
       data: response.data,
@@ -141,7 +155,7 @@ export const propertiesAPI = {
     }
   },
 
-  async updateProperty(propertyId: string, data: PropertyUpdate & PropertyMetadataInput, organizationId: string) {
+  async updateProperty(propertyId: string, data: PropertyUpdateInput, organizationId: string) {
     const body = parseDomainInput(propertyUpdateInputSchema, data, 'properties.update')
     const response = await vimobAPIRequest<PropertyResponse>(`/v1/properties/${propertyId}`, {
       method: 'PATCH',
@@ -168,10 +182,16 @@ export const propertiesAPI = {
     }
   },
 
-  async deleteProperty(propertyId: string, organizationId: string) {
+  async deleteProperty(propertyId: string, expectedUpdatedAt: string, organizationId: string) {
+    const body = parseDomainInput(
+      propertyDeleteInputSchema,
+      { expected_updated_at: expectedUpdatedAt },
+      'properties.delete',
+    )
     await vimobAPIRequest<null>(`/v1/properties/${propertyId}`, {
       method: 'DELETE',
       organizationId,
+      body,
     })
 
     return {

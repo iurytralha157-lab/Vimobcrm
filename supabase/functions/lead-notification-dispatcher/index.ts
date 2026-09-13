@@ -72,6 +72,7 @@ async function dispatchNotification(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      apikey: serviceRoleKey,
       Authorization: `Bearer ${serviceRoleKey}`,
     },
     body: JSON.stringify(body),

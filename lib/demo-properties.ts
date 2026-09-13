@@ -2,7 +2,6 @@ import { propertiesAPI } from '@/lib/api/properties';
 
 const DEMO_PROPERTIES = [
   {
-    code: 'DEMO01',
     title: 'Apartamento Garden com Varanda Gourmet',
     tipo_de_imovel: 'Apartamento',
     tipo_de_negocio: 'Venda',
@@ -30,7 +29,6 @@ const DEMO_PROPERTIES = [
     is_demo: true,
   },
   {
-    code: 'DEMO02',
     title: 'Casa Moderna com Piscina e Churrasqueira',
     tipo_de_imovel: 'Casa',
     tipo_de_negocio: 'Venda',
@@ -58,7 +56,6 @@ const DEMO_PROPERTIES = [
     is_demo: true,
   },
   {
-    code: 'DEMO03',
     title: 'Cobertura Duplex com Vista Panoramica',
     tipo_de_imovel: 'Cobertura',
     tipo_de_negocio: 'Venda',
@@ -111,7 +108,11 @@ export async function removeDemoProperties(organizationId: string) {
   }
 
   for (const property of properties.filter((item) => item.is_demo)) {
-    const { error: deleteError } = await propertiesAPI.deleteProperty(property.id, organizationId);
+    const { error: deleteError } = await propertiesAPI.deleteProperty(
+      property.id,
+      property.updated_at,
+      organizationId,
+    );
 
     if (deleteError) {
       console.error('Erro ao remover imovel de demonstracao:', deleteError);

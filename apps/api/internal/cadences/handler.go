@@ -1,7 +1,6 @@
 package cadences
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -18,7 +17,7 @@ func NewHandler(repo Repository) Handler {
 }
 
 func (handler Handler) ListTemplates(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -31,7 +30,7 @@ func (handler Handler) ListTemplates(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) GetOperationalRules(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -44,12 +43,12 @@ func (handler Handler) GetOperationalRules(w http.ResponseWriter, r *http.Reques
 }
 
 func (handler Handler) UpsertOperationalRules(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request OperationalRulesRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	rules, err := handler.repo.UpsertOperationalRules(r.Context(), tenantContext, r.PathValue("id"), request)
@@ -61,7 +60,7 @@ func (handler Handler) UpsertOperationalRules(w http.ResponseWriter, r *http.Req
 }
 
 func (handler Handler) GetLeadCadenceState(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -74,12 +73,12 @@ func (handler Handler) GetLeadCadenceState(w http.ResponseWriter, r *http.Reques
 }
 
 func (handler Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request TaskRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	task, err := handler.repo.CreateTask(r.Context(), tenantContext, request)
@@ -91,12 +90,12 @@ func (handler Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request UpdateTaskRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	task, err := handler.repo.UpdateTask(r.Context(), tenantContext, r.PathValue("id"), request)
@@ -108,7 +107,7 @@ func (handler Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) DeleteTask(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -120,12 +119,12 @@ func (handler Handler) DeleteTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) SwitchLeadCadence(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	var request SwitchCadenceRequest
-	if !decodeJSON(w, r, &request) {
+	if err := httpserver.DecodeJSON(w, r, &request, 1<<20); err != nil {
 		return
 	}
 	result, err := handler.repo.SwitchLeadCadence(r.Context(), tenantContext, r.PathValue("id"), request)
@@ -134,26 +133,6 @@ func (handler Handler) SwitchLeadCadence(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[SwitchCadenceResult]{Data: result})
-}
-
-func organizationContext(w http.ResponseWriter, r *http.Request) (tenant.Context, bool) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.OrganizationID == "" {
-		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
-		return tenant.Context{}, false
-	}
-	return tenantContext, true
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
-	defer r.Body.Close()
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
-		return false
-	}
-	return true
 }
 
 func writeCadenceError(w http.ResponseWriter, r *http.Request, err error) {

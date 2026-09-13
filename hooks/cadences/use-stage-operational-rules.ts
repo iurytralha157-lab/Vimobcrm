@@ -3,28 +3,18 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
-import { useAuth } from '@/contexts/AuthContext'
+import { useOptionalActiveOrganizationId as useOrganizationId } from '@/hooks/use-active-organization'
 import {
   cadencesAPI,
   type UpdateStageOperationalRulesInput,
 } from '@/lib/api/cadences'
 import { VimobAPIError } from '@/lib/api/vimob-client'
+import { getNonEmptyErrorMessageOrFallback } from '@/lib/api/vimob-error'
 
 export const stageOperationalRulesQueryKey = (
   organizationId: string | undefined,
   stageId: string | undefined,
 ) => ['cadences', 'stage-operational-rules', organizationId, stageId] as const
-
-function useOrganizationId() {
-  const { organization, profile } = useAuth()
-  return organization?.id || profile?.organization_id || undefined
-}
-
-function getErrorMessage(error: unknown) {
-  return error instanceof Error && error.message
-    ? error.message
-    : 'Não foi possível salvar as regras desta etapa.'
-}
 
 export function useStageOperationalRules(stageId?: string) {
   const organizationId = useOrganizationId()
@@ -70,7 +60,10 @@ export function useUpdateStageOperationalRules(stageId?: string) {
         toast.error('Outra pessoa alterou esta etapa. Recarregamos a versão mais recente.')
         return
       }
-      toast.error(getErrorMessage(error))
+      toast.error(getNonEmptyErrorMessageOrFallback(
+        error,
+        'Não foi possível salvar as regras desta etapa.',
+      ))
     },
   })
 }

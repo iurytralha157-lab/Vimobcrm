@@ -388,6 +388,38 @@ type UpdateUnitInput struct {
 	ExpectedUpdatedAt *string `json:"expected_updated_at"`
 }
 
+type LinkUnitPropertyInput struct {
+	PropertyID                string `json:"property_id"`
+	ExpectedUnitUpdatedAt     string `json:"expected_unit_updated_at"`
+	ExpectedPropertyUpdatedAt string `json:"expected_property_updated_at"`
+}
+
+type PromoteUnitPropertyInput struct {
+	ExpectedUnitUpdatedAt string  `json:"expected_unit_updated_at"`
+	Title                 *string `json:"title"`
+	PropertyType          *string `json:"property_type"`
+	Purpose               *string `json:"purpose"`
+	ResponsibleUserID     *string `json:"responsible_user_id"`
+}
+
+type UnlinkUnitPropertyInput struct {
+	ExpectedUnitUpdatedAt string `json:"expected_unit_updated_at"`
+}
+
+type LinkedProperty struct {
+	ID        string  `json:"id"`
+	Code      string  `json:"code"`
+	Title     *string `json:"title,omitempty"`
+	Status    *string `json:"status,omitempty"`
+	UpdatedAt string  `json:"updated_at"`
+}
+
+type UnitPropertyLinkResult struct {
+	Unit     Unit            `json:"unit"`
+	Property *LinkedProperty `json:"property"`
+	Replayed bool            `json:"replayed"`
+}
+
 type ActivatePriceTableInput struct {
 	ExpectedUpdatedAt *string `json:"expected_updated_at"`
 }
@@ -762,6 +794,52 @@ func (input *UpdateUnitInput) Validate() error {
 	return nil
 }
 
+func (input *LinkUnitPropertyInput) Validate() error {
+	input.PropertyID = strings.ToLower(strings.TrimSpace(input.PropertyID))
+	if !uuidPattern.MatchString(input.PropertyID) {
+		return fmt.Errorf("%w: property_id is invalid", ErrInvalidInput)
+	}
+	unitTimestamp, err := requiredTimestamp(input.ExpectedUnitUpdatedAt)
+	if err != nil {
+		return fmt.Errorf("%w: expected_unit_updated_at is invalid", ErrInvalidInput)
+	}
+	propertyTimestamp, err := requiredTimestamp(input.ExpectedPropertyUpdatedAt)
+	if err != nil {
+		return fmt.Errorf("%w: expected_property_updated_at is invalid", ErrInvalidInput)
+	}
+	input.ExpectedUnitUpdatedAt = unitTimestamp
+	input.ExpectedPropertyUpdatedAt = propertyTimestamp
+	return nil
+}
+
+func (input *PromoteUnitPropertyInput) Validate() error {
+	unitTimestamp, err := requiredTimestamp(input.ExpectedUnitUpdatedAt)
+	if err != nil {
+		return fmt.Errorf("%w: expected_unit_updated_at is invalid", ErrInvalidInput)
+	}
+	input.ExpectedUnitUpdatedAt = unitTimestamp
+	input.Title = optionalText(input.Title, 240)
+	input.PropertyType = optionalText(input.PropertyType, 120)
+	input.Purpose = optionalText(input.Purpose, 80)
+	input.ResponsibleUserID = optionalUUID(input.ResponsibleUserID)
+	if input.ResponsibleUserID != nil {
+		*input.ResponsibleUserID = strings.ToLower(*input.ResponsibleUserID)
+		if !uuidPattern.MatchString(*input.ResponsibleUserID) {
+			return fmt.Errorf("%w: responsible_user_id is invalid", ErrInvalidInput)
+		}
+	}
+	return nil
+}
+
+func (input *UnlinkUnitPropertyInput) Validate() error {
+	unitTimestamp, err := requiredTimestamp(input.ExpectedUnitUpdatedAt)
+	if err != nil {
+		return fmt.Errorf("%w: expected_unit_updated_at is invalid", ErrInvalidInput)
+	}
+	input.ExpectedUnitUpdatedAt = unitTimestamp
+	return nil
+}
+
 func (input *ActivatePriceTableInput) Validate() error {
 	if _, err := parseTimestamp(input.ExpectedUpdatedAt); err != nil {
 		return fmt.Errorf("%w: expected_updated_at is invalid", ErrInvalidInput)
@@ -958,6 +1036,14 @@ func parseTimestamp(value *string) (*time.Time, error) {
 	}
 	parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(*value))
 	return &parsed, err
+}
+
+func requiredTimestamp(value string) (string, error) {
+	parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value))
+	if err != nil {
+		return "", err
+	}
+	return parsed.UTC().Format(time.RFC3339Nano), nil
 }
 
 func validateMetadata(metadata map[string]any, maximumBytes int) error {

@@ -3,7 +3,6 @@ package portals
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -36,7 +35,7 @@ func (handler Handler) WithPublicClientIPResolver(resolver publicingress.ClientI
 }
 
 func (handler Handler) GetGrupoOLX(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -53,13 +52,13 @@ func (handler Handler) GetGrupoOLX(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) SaveGrupoOLX(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	defer r.Body.Close()
 	var request GrupoOLXSettingsRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, maxPortalWebhookBody); err != nil {
 		return
 	}
 	item, err := handler.repo.SaveGrupoOLX(r.Context(), tenantContext, request)
@@ -71,7 +70,7 @@ func (handler Handler) SaveGrupoOLX(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) ActivateGrupoOLX(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -84,7 +83,7 @@ func (handler Handler) ActivateGrupoOLX(w http.ResponseWriter, r *http.Request) 
 }
 
 func (handler Handler) PauseGrupoOLX(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -97,7 +96,7 @@ func (handler Handler) PauseGrupoOLX(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler Handler) RegenerateGrupoOLXFeedToken(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -110,7 +109,7 @@ func (handler Handler) RegenerateGrupoOLXFeedToken(w http.ResponseWriter, r *htt
 }
 
 func (handler Handler) RegenerateGrupoOLXWebhookToken(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -123,7 +122,7 @@ func (handler Handler) RegenerateGrupoOLXWebhookToken(w http.ResponseWriter, r *
 }
 
 func (handler Handler) ListGrupoOLXPublications(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -136,13 +135,13 @@ func (handler Handler) ListGrupoOLXPublications(w http.ResponseWriter, r *http.R
 }
 
 func (handler Handler) UpsertGrupoOLXPublications(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
 	defer r.Body.Close()
 	var request UpsertPublicationsRequest
-	if err := decodeJSON(w, r, &request); err != nil {
+	if err := httpserver.DecodeJSON(w, r, &request, maxPortalWebhookBody); err != nil {
 		return
 	}
 	items, err := handler.repo.UpsertPublications(r.Context(), tenantContext, request)
@@ -154,7 +153,7 @@ func (handler Handler) UpsertGrupoOLXPublications(w http.ResponseWriter, r *http
 }
 
 func (handler Handler) ListGrupoOLXImportReports(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -167,7 +166,7 @@ func (handler Handler) ListGrupoOLXImportReports(w http.ResponseWriter, r *http.
 }
 
 func (handler Handler) ReplayGrupoOLXImportReport(w http.ResponseWriter, r *http.Request) {
-	tenantContext, ok := organizationContext(w, r)
+	tenantContext, ok := tenant.RequireOrganizationContext(w, r)
 	if !ok {
 		return
 	}
@@ -264,40 +263,6 @@ func (handler Handler) GrupoOLXImportReportWebhook(w http.ResponseWriter, r *htt
 	httpserver.WriteJSON(w, http.StatusOK, Envelope[map[string]any]{Data: item})
 }
 
-func organizationContext(w http.ResponseWriter, r *http.Request) (tenant.Context, bool) {
-	tenantContext, ok := tenant.FromContext(r.Context())
-	if !ok || tenantContext.OrganizationID == "" {
-		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
-		return tenant.Context{}, false
-	}
-	return tenantContext, true
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
-	decoder := json.NewDecoder(io.LimitReader(r.Body, maxPortalWebhookBody))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
-		return err
-	}
-	if err := ensureJSONEOF(decoder); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
-		return err
-	}
-	return nil
-}
-
-func ensureJSONEOF(decoder *json.Decoder) error {
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return errors.New("request body must contain a single JSON value")
-		}
-		return err
-	}
-	return nil
-}
-
 func readLimitedBody(w http.ResponseWriter, r *http.Request, maximum int64) ([]byte, bool) {
 	defer r.Body.Close()
 	if maximum < 1 {
@@ -325,6 +290,8 @@ func cleanPathToken(token string) string {
 
 func writePortalError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, tenant.ErrOrganizationAccessDenied):
+		httpserver.WriteError(w, r, http.StatusForbidden, "portal_property_access_denied", "Sem permissao para acessar os imoveis desta publicacao.")
 	case errors.Is(err, ErrInvalidInput):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_portal_input", "Dados da integracao de portais invalidos.")
 	case errors.Is(err, ErrUnauthorized):
@@ -345,6 +312,12 @@ func writePortalError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, "portal_listing_id_duplicate", "Este ListingID ja pertence a outro imovel nesta conta.")
 	case errors.Is(err, ErrFeedListingLimit):
 		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "portal_feed_listing_limit_exceeded", "O feed excede o limite seguro e nao foi publicado parcialmente.")
+	case errors.Is(err, ErrChavesNaMaoListingLimit):
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "chaves_na_mao_feed_listing_limit_exceeded", "O feed Chaves na Mao excede o limite seguro e nao foi publicado parcialmente.")
+	case errors.Is(err, ErrChavesNaMaoFeedSize):
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "chaves_na_mao_feed_size_exceeded", "O feed Chaves na Mao excede o limite seguro de tamanho.")
+	case errors.Is(err, ErrChavesNaMaoHomologation):
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "chaves_na_mao_homologation_required", "A integracao Chaves na Mao permanece bloqueada ate a homologacao oficial desta conta.")
 	case errors.Is(err, ErrWebhookSecretUnavailable):
 		httpserver.WriteError(w, r, http.StatusServiceUnavailable, "portal_webhook_secret_unavailable", "A credencial global de webhooks do Grupo OLX ainda nao foi configurada no CRM.")
 	case errors.Is(err, ErrRateLimited):

@@ -72,6 +72,53 @@ paths:
       responses:
         "200":
           description: Current user and resolved context.
+  /v1/me/profile:
+    get:
+      summary: Current authenticated profile and organization
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Current profile with the active organization revision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionProfileResponse"
+        "401":
+          $ref: "#/components/responses/APIError"
+  /v1/settings/properties:
+    patch:
+      summary: Partially update property-domain settings for the current organization
+      description: >-
+        Requires organization-settings management permission. Omitted fields are
+        preserved; explicit null, an empty object, unknown fields and unsupported
+        enum values are rejected. The current organization revision is required
+        and stale writes return a specific conflict.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePropertySettingsRequest"
+      responses:
+        "200":
+          description: Property settings updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertySettingsUpdateResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "409":
+          description: The organization settings revision is stale.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertySettingsConflictErrorEnvelope"
   /v1/lead-enrichments:
     get:
       summary: List card enrichments for visible leads
@@ -253,6 +300,7 @@ paths:
         - $ref: "#/components/parameters/DashboardTagId"
         - $ref: "#/components/parameters/DashboardDealStatus"
         - $ref: "#/components/parameters/DashboardSearchQuery"
+        - $ref: "#/components/parameters/DashboardIncludeDetails"
       responses:
         "200":
           description: Dashboard KPI stats.
@@ -373,6 +421,131 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DashboardDealsEvolutionResponse"
+  /v1/analytics/campaign-insights:
+    get:
+      summary: Get consolidated Meta Ads and CRM campaign performance
+      description: >-
+        Returns daily paid-media facts joined to the last Meta attribution for each
+        lead in the requested cohort. Both dates are required and the inclusive
+        range cannot exceed 366 calendar days.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/MarketingAnalyticsDateFrom"
+        - $ref: "#/components/parameters/MarketingAnalyticsDateTo"
+        - $ref: "#/components/parameters/MarketingAccountId"
+        - $ref: "#/components/parameters/MarketingObjective"
+        - $ref: "#/components/parameters/AnalyticsCampaignId"
+        - $ref: "#/components/parameters/AnalyticsAdSetId"
+        - $ref: "#/components/parameters/AnalyticsAdId"
+        - $ref: "#/components/parameters/AnalyticsTeamId"
+        - $ref: "#/components/parameters/AnalyticsUserId"
+        - $ref: "#/components/parameters/AnalyticsSource"
+        - $ref: "#/components/parameters/AnalyticsTagId"
+        - $ref: "#/components/parameters/AnalyticsDealStatus"
+      responses:
+        "200":
+          description: Consolidated paid-media, CRM attribution and Meta connection analytics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingCampaignInsightsResponse"
+        "400":
+          description: Dates or UUID filters are invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIErrorEnvelope"
+        "503":
+          description: Marketing schema, database capacity or query processing is temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIErrorEnvelope"
+        default:
+          $ref: "#/components/responses/APIError"
+  /v1/analytics/lead:
+    get:
+      summary: Get public-site visitor journeys and lead conversion analytics
+      description: >-
+        Returns up to 100 recent visitor journeys plus funnel, page, device and
+        geolocation aggregates. Without dates the backend uses the current seven-day
+        period. Explicit dates must be supplied together and the inclusive range
+        cannot exceed 366 calendar days.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/SiteAnalyticsDateFrom"
+        - $ref: "#/components/parameters/SiteAnalyticsDateTo"
+      responses:
+        "200":
+          description: Visitor journey and conversion analytics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeadAnalyticsResponse"
+        "400":
+          description: Date filters are invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIErrorEnvelope"
+        default:
+          $ref: "#/components/responses/APIError"
+  /v1/analytics/site-summary:
+    get:
+      summary: Get public-site analytics summary
+      description: >-
+        Returns page, session, duration, device, acquisition and conversion totals
+        for the requested period and its immediately preceding comparison period.
+        Without dates the backend uses the current seven-day period.
+        Supplying only one date is invalid; explicit ranges are inclusive and limited
+        to 366 calendar days.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/SiteAnalyticsDateFrom"
+        - $ref: "#/components/parameters/SiteAnalyticsDateTo"
+      responses:
+        "200":
+          description: Current and previous public-site KPI summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteAnalyticsSummaryResponse"
+        "400":
+          description: Date filters are invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIErrorEnvelope"
+        default:
+          $ref: "#/components/responses/APIError"
+  /v1/analytics/site-detailed:
+    get:
+      summary: Get detailed public-site content and acquisition analytics
+      description: >-
+        Returns property, page, campaign, search and daily traffic aggregates with
+        session quality and lead totals. Deployments without the extended tracking
+        columns return the same closed contract with empty property and search lists.
+        Without dates the backend uses the current seven-day period; explicit dates
+        must be supplied together and cannot span more than 366 calendar days.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/SiteAnalyticsDateFrom"
+        - $ref: "#/components/parameters/SiteAnalyticsDateTo"
+      responses:
+        "200":
+          description: Detailed public-site analytics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteAnalyticsDetailedResponse"
+        "400":
+          description: Date filters are invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIErrorEnvelope"
+        default:
+          $ref: "#/components/responses/APIError"
   /v1/contacts:
     get:
       summary: List visible contacts for CRM screens or exports
@@ -781,6 +954,7 @@ paths:
   /v1/property-developments:
     get:
       summary: List property developments in the current organization
+      description: Requires property management permission because the legacy catalog includes organizational, commercial, and inventory management data.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - name: search
@@ -850,6 +1024,7 @@ paths:
   /v1/property-developments/{developmentId}/workspace:
     get:
       summary: Get the management workspace for a property development
+      description: Requires property management permission.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/DevelopmentId"
@@ -867,6 +1042,7 @@ paths:
   /v1/property-developments/{developmentId}/units:
     get:
       summary: List units of a property development
+      description: Requires property management permission because unit inventory includes operational and commercial management data.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/DevelopmentId"
@@ -918,7 +1094,7 @@ paths:
   /v1/property-developments/{developmentId}/reservations:
     get:
       summary: List reservations of a property development
-      description: Reader-facing projection omits internal metadata, notes, payment snapshots, and idempotency keys.
+      description: Requires property management permission. The response still applies lead-scope redaction to reservations linked to leads outside the caller's own/team/all visibility.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/DevelopmentId"
@@ -1354,6 +1530,11 @@ paths:
       responses:
         "200":
           description: Paginated property list.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/PropertyWorkspaceCacheControl"
+            Vary:
+              $ref: "#/components/headers/PropertyWorkspaceVary"
           content:
             application/json:
               schema:
@@ -1374,7 +1555,36 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PropertyResponse"
+                $ref: "#/components/schemas/PropertyCreateResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+  /v1/properties/stats:
+    get:
+      summary: Get property KPIs for the current organization
+      description: >-
+        Applies the same validated filters as the property list. Launches have
+        their own counter and are not included in the sale counter.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: tipo_de_negocio
+          in: query
+          schema:
+            type: string
+            maxLength: 80
+        - name: owner_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Property KPI counters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyStatsResponse"
         "400":
           $ref: "#/components/responses/APIError"
         "403":
@@ -1388,6 +1598,11 @@ paths:
       responses:
         "200":
           description: Property detail.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/PropertyWorkspaceCacheControl"
+            Vary:
+              $ref: "#/components/headers/PropertyWorkspaceVary"
           content:
             application/json:
               schema:
@@ -1396,6 +1611,10 @@ paths:
           $ref: "#/components/responses/APIError"
     patch:
       summary: Update a property in the current organization
+      description: >-
+        Requires optimistic concurrency through expected_updated_at. A missing
+        or stale version is rejected so one editor cannot silently overwrite a
+        newer property change.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/PathId"
@@ -1404,7 +1623,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/PropertyMutationRequest"
+              $ref: "#/components/schemas/PropertyUpdateRequest"
       responses:
         "200":
           description: Property updated.
@@ -1418,17 +1637,28 @@ paths:
           $ref: "#/components/responses/APIError"
         "404":
           $ref: "#/components/responses/APIError"
+        "409":
+          $ref: "#/components/responses/APIError"
     delete:
       summary: Delete a property in the current organization
+      description: Requires the last observed property revision to prevent deletion of a newer concurrent edit.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PropertyDeleteRequest"
       responses:
         "204":
           description: Property deleted.
         "403":
           $ref: "#/components/responses/APIError"
         "404":
+          $ref: "#/components/responses/APIError"
+        "409":
           $ref: "#/components/responses/APIError"
   /v1/properties/{id}/workspace:
     get:
@@ -1835,6 +2065,290 @@ paths:
                 $ref: "#/components/schemas/GrupoOLXImportReportEnvelope"
         "404":
           $ref: "#/components/responses/APIError"
+        "409":
+          $ref: "#/components/responses/APIError"
+  /v1/integrations/portals/chaves-na-mao:
+    get:
+      summary: Get the organization Chaves na Mão feed integration
+      description: >-
+        Returns the dedicated Chaves na Mão publication channel. This endpoint
+        does not expose or imply a lead webhook contract and fails closed until
+        the organization is officially homologated.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Current integration or a null data value before setup.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChavesNaMaoIntegrationEnvelope"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "503":
+          $ref: "#/components/responses/ChavesNaMaoHomologationRequired"
+    put:
+      summary: Save Chaves na Mão public feed contact configuration
+      description: >-
+        Configuration-only command. Activation and pause are separate operations;
+        routing, webhook credentials, secrets and unknown settings are rejected.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChavesNaMaoSettingsRequest"
+      responses:
+        "200":
+          description: Feed configuration saved without changing activation state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChavesNaMaoIntegrationEnvelope"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "503":
+          $ref: "#/components/responses/ChavesNaMaoHomologationRequired"
+  /v1/integrations/portals/chaves-na-mao/activate:
+    post:
+      summary: Activate the homologated Chaves na Mão XML feed
+      description: >-
+        Remains unavailable while the server-side homologation feature gate is
+        closed. Activation never enables lead ingestion.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Feed activated or kept active for portal homologation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChavesNaMaoIntegrationEnvelope"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "503":
+          $ref: "#/components/responses/ChavesNaMaoHomologationRequired"
+  /v1/integrations/portals/chaves-na-mao/pause:
+    post:
+      summary: Pause Chaves na Mão while preserving the feed token for drain
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Integration paused; its existing token serves an empty XML feed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChavesNaMaoIntegrationEnvelope"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+        "503":
+          $ref: "#/components/responses/ChavesNaMaoHomologationRequired"
+  /v1/integrations/portals/chaves-na-mao/regenerate-feed-token:
+    post:
+      summary: Rotate the private Chaves na Mão XML feed token
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Feed token rotated; the prior URL is invalidated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChavesNaMaoIntegrationEnvelope"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+        "503":
+          $ref: "#/components/responses/ChavesNaMaoHomologationRequired"
+  /v1/integrations/portals/chaves-na-mao/publications:
+    get:
+      summary: List Chaves na Mão XML publication configuration
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Organization- and visibility-scoped publication list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChavesNaMaoPublicationListEnvelope"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "503":
+          $ref: "#/components/responses/ChavesNaMaoHomologationRequired"
+    put:
+      summary: Configure Chaves na Mão XML listings and enabled state
+      description: >-
+        Manager-only command for the dedicated Chaves na Mão channel. It does not
+        create webhook routing or lead-distribution configuration.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChavesNaMaoPublicationSettingsRequest"
+      responses:
+        "200":
+          description: Publication selection saved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChavesNaMaoPublicationListEnvelope"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "409":
+          $ref: "#/components/responses/APIError"
+        "422":
+          $ref: "#/components/responses/APIError"
+        "503":
+          $ref: "#/components/responses/ChavesNaMaoHomologationRequired"
+  /v1/public/api/leads:
+    post:
+      summary: Create or re-enter a lead through the tenant-scoped public API
+      description: >-
+        The API key derives the organization. Idempotent requests use the same
+        transactional lead intake and canonical distribution path as incoming webhooks.
+      security:
+        - vimobAPIKeyBearer: []
+        - vimobAPIKeyHeader: []
+      parameters:
+        - $ref: "#/components/parameters/PublicAPIIdempotencyKeyHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublicAPILeadRequest"
+      responses:
+        "200":
+          description: An identical idempotent replay returned the original lead.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicAPILeadResponse"
+        "201":
+          description: Lead created or re-entry recorded and distributed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicAPILeadResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "402":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "409":
+          $ref: "#/components/responses/APIError"
+        "429":
+          $ref: "#/components/responses/APIError"
+  /v1/public/webhooks/generic:
+    post:
+      summary: Receive a lead through a configured incoming webhook
+      description: >-
+        The token derives the active organization and configured defaults. event_id,
+        submission_id, leadgen_id or external_id makes retries idempotent.
+      security:
+        - vimobWebhookBearer: []
+        - vimobWebhookHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Lead accepted or returned as an identical idempotent replay.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IncomingWebhookLeadResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "409":
+          $ref: "#/components/responses/APIError"
+        "413":
+          $ref: "#/components/responses/APIError"
+        "429":
+          $ref: "#/components/responses/APIError"
+  /v1/public/site/contact:
+    post:
+      summary: Submit a public-site contact request
+      description: >-
+        Creates or re-enters the organization-scoped lead. submission_id makes
+        retries idempotent; the honeypot may return a filtered success without a lead.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublicSiteContactRequest"
+      responses:
+        "200":
+          description: Idempotent replay or filtered honeypot submission accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicSiteContactResponse"
+        "201":
+          description: Contact accepted and lead created or re-entered.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicSiteContactResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+        "429":
+          $ref: "#/components/responses/APIError"
+  /v1/public/tracking/events:
+    post:
+      summary: Record a public-site analytics event
+      description: >-
+        Accepts only the declared non-authoritative event types. form_submit is
+        emitted exclusively by the contact transaction, and clients cannot attach lead_id.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublicTrackingRequest"
+      responses:
+        "201":
+          description: Event accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicTrackingResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+        "429":
+          $ref: "#/components/responses/APIError"
   /v1/public/integrations/portals/grupo-olx/leads/{token}:
     post:
       summary: Receive an authenticated Grupo OLX lead
@@ -1957,6 +2471,62 @@ paths:
           $ref: "#/components/responses/APIError"
         "503":
           $ref: "#/components/responses/APIError"
+  /v1/public/integrations/portals/chaves-na-mao/feed/{token}:
+    get:
+      summary: Fetch the dedicated Chaves na Mão XML feed
+      description: >-
+        Returns only listings configured for the Chaves na Mão channel. A valid
+        token serves an empty drain feed while paused; draft integrations return a
+        conflict. The endpoint remains fail-closed until official homologation is
+        explicitly enabled and does not expose a lead-ingestion endpoint.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ChavesNaMaoFeedToken"
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deterministic Chaves na Mão XML representation for the current feed state.
+          headers:
+            ETag:
+              description: Strong validator derived from the complete deterministic XML body.
+              schema:
+                type: string
+            Cache-Control:
+              description: Private revalidation policy because the path token is a bearer credential.
+              schema:
+                type: string
+                example: private, no-cache
+          content:
+            application/xml:
+              schema:
+                type: string
+        "304":
+          description: The If-None-Match validator matches the current feed representation.
+          headers:
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        "404":
+          $ref: "#/components/responses/APIError"
+        "409":
+          $ref: "#/components/responses/APIError"
+        "500":
+          $ref: "#/components/responses/APIError"
+        "503":
+          description: >-
+            Homologation is closed (`chaves_na_mao_homologation_required`) or a
+            safe feed size/listing limit was reached.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIErrorEnvelope"
   /v1/public/property-publications/{publicationId}/versions/{version}/assets/{assetId}:
     get:
       summary: Resolve a currently published property asset to a short-lived signed URL
@@ -2204,7 +2774,10 @@ paths:
       description: >-
         The binary is uploaded directly to Supabase Storage. The API authorizes the
         property, allocates the future asset UUID in the canonical object path and
-        returns a one-use signed upload token. Videos and virtual tours remain URL-based.
+        returns a signed upload token. Because the Storage token can be replayed until
+        it expires, the API retains the reservation and object path as a tombstone
+        through expiry plus a five-minute safety margin. Videos and virtual tours
+        remain URL-based.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/PathId"
@@ -2226,6 +2799,41 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PropertyAssetUploadIntentResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+    delete:
+      summary: Discard an unattached private property upload
+      description: >-
+        Marks the upload reservation for cleanup. Physical object removal is deferred
+        until the signed token has expired plus a five-minute safety margin, so a
+        replay cannot recreate an orphan at a newly freed path. Repeating the request
+        for an already-discarded path is safe. A path that is already attached to a
+        canonical asset must be removed through the asset endpoint instead.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DiscardPropertyAssetUploadRequest"
+      responses:
+        "200":
+          description: The private upload was scheduled for safe discard or was already absent.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/PropertyWorkspaceCacheControl"
+            Vary:
+              $ref: "#/components/headers/PropertyWorkspaceVary"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyAssetUploadDiscardResponse"
         "400":
           $ref: "#/components/responses/APIError"
         "403":
@@ -2437,38 +3045,17 @@ paths:
           $ref: "#/components/responses/APIError"
   /v1/property-images:
     post:
-      summary: Upload a property image through the backend
+      deprecated: true
+      summary: Retired legacy property image upload endpoint
+      description: >-
+        Always returns 410 after authorization. Use the private upload-intent and
+        canonical property asset endpoints under /v1/properties/{id}/assets.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [file]
-              properties:
-                file:
-                  type: string
-                  format: binary
-                  description: JPEG, PNG, WebP or GIF image up to 10MB.
-                propertyId:
-                  type: string
-                  format: uuid
-                  description: Optional property id. Omit while creating a new property.
       responses:
-        "201":
-          description: Image uploaded.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PropertyImageUploadResponse"
-        "400":
-          $ref: "#/components/responses/APIError"
         "403":
           $ref: "#/components/responses/APIError"
-        "404":
+        "410":
           $ref: "#/components/responses/APIError"
   /v1/property-captors/{id}:
     get:
@@ -2548,6 +3135,39 @@ paths:
         "400":
           $ref: "#/components/responses/APIError"
         "403":
+          $ref: "#/components/responses/APIError"
+  /v1/user-presence:
+    get:
+      summary: List presence for active organization members
+      description: >-
+        Requires `users_presence_view`. Returns one privacy-minimized row per active,
+        non-platform member in the caller's presence scope. Owners, administrators,
+        and non-leader roles with an explicit administrative grant see the full
+        organization; team leaders see only active members of the teams they lead,
+        including themselves. A session is fresh for three minutes; online takes
+        precedence over idle when a user has multiple sessions. Idle duration is
+        returned only when every relevant fresh idle session has a server-recorded
+        transition timestamp.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      responses:
+        "200":
+          description: Current permitted roster with aggregated presence, last-seen and idle-since timestamps.
+          headers:
+            Cache-Control:
+              description: Presence responses are private and must not be stored.
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPresenceResponse"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        default:
           $ref: "#/components/responses/APIError"
   /v1/user-summaries:
     get:
@@ -2752,14 +3372,46 @@ paths:
               schema:
                 $ref: "#/components/schemas/PropertyCityResponse"
   /v1/property-cities/{id}:
+    patch:
+      summary: Partially update a property city
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePropertyCityRequest"
+      responses:
+        "200":
+          description: City updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyCityResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "409":
+          $ref: "#/components/responses/APIError"
     delete:
       summary: Delete a property city
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PropertyCatalogDeleteRequest"
       responses:
         "204":
           description: City deleted.
+        "400":
+          $ref: "#/components/responses/APIError"
+        "409":
+          $ref: "#/components/responses/APIError"
   /v1/property-neighborhoods:
     get:
       summary: List property neighborhoods
@@ -2795,14 +3447,46 @@ paths:
               schema:
                 $ref: "#/components/schemas/PropertyNeighborhoodResponse"
   /v1/property-neighborhoods/{id}:
+    patch:
+      summary: Partially update a property neighborhood
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePropertyNeighborhoodRequest"
+      responses:
+        "200":
+          description: Neighborhood updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyNeighborhoodResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "409":
+          $ref: "#/components/responses/APIError"
     delete:
       summary: Delete a property neighborhood
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PropertyCatalogDeleteRequest"
       responses:
         "204":
           description: Neighborhood deleted.
+        "400":
+          $ref: "#/components/responses/APIError"
+        "409":
+          $ref: "#/components/responses/APIError"
   /v1/property-condominiums:
     get:
       summary: List property condominiums
@@ -2838,14 +3522,684 @@ paths:
               schema:
                 $ref: "#/components/schemas/PropertyCondominiumResponse"
   /v1/property-condominiums/{id}:
+    patch:
+      summary: Partially update a property condominium
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePropertyCondominiumRequest"
+      responses:
+        "200":
+          description: Condominium updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyCondominiumResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "409":
+          $ref: "#/components/responses/APIError"
     delete:
       summary: Delete a property condominium
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PropertyCatalogDeleteRequest"
       responses:
         "204":
           description: Condominium deleted.
+        "400":
+          $ref: "#/components/responses/APIError"
+        "409":
+          $ref: "#/components/responses/APIError"
+  /v1/property-owners:
+    get:
+      summary: List property owners visible to the current user
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: search
+          in: query
+          description: Search by owner name and, when authorized, contact fields.
+          schema:
+            type: string
+            maxLength: 120
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: cursor
+          in: query
+          description: Opaque cursor returned by the previous page.
+          schema:
+            type: string
+            maxLength: 2048
+      responses:
+        "200":
+          description: Visibility-scoped owner page with contact fields redacted when required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyOwnerPageResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+    post:
+      summary: Create or resolve a property owner
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePropertyOwnerRequest"
+      responses:
+        "201":
+          description: Owner created or an exact existing identity returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyOwnerResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "409":
+          $ref: "#/components/responses/APIError"
+  /v1/property-owners/{id}:
+    patch:
+      summary: Update a property owner with optimistic concurrency control
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePropertyOwnerRequest"
+      responses:
+        "200":
+          description: Owner updated and its linked property projections refreshed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PropertyOwnerResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+        "409":
+          $ref: "#/components/responses/APIError"
+    delete:
+      summary: Deactivate an unused property owner with optimistic concurrency control
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PropertyCatalogDeleteRequest"
+      responses:
+        "204":
+          description: Owner deactivated.
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+        "409":
+          $ref: "#/components/responses/APIError"
+  /v1/teams:
+    get:
+      summary: List teams visible to the current user
+      description: >-
+        Requires `team_view`. Users with organization-wide team management see all
+        matching teams; team leaders receive only teams they lead.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: includeInactive
+          in: query
+          description: Include inactive teams. Defaults to false.
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Visible teams in the active organization.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamListResponse"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "402":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
+    post:
+      summary: Create a team with members and their schedules
+      description: Requires `team_manage`. New members must include a complete seven-day availability schedule.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTeamRequest"
+      responses:
+        "201":
+          description: Team created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "402":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
+  /v1/teams/logo:
+    post:
+      summary: Upload a team logo through the backend
+      description: >-
+        Requires `team_manage`. The backend detects the file content and accepts
+        JPEG, PNG, WebP or GIF images up to 5 MiB; SVG and MIME-only claims are rejected.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: JPEG, PNG, WebP or GIF image up to 5 MiB.
+      responses:
+        "201":
+          description: Team logo uploaded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamLogoUploadResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "402":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "500":
+          $ref: "#/components/responses/APIError"
+        "502":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
+  /v1/teams/{id}:
+    get:
+      summary: Get a visible team
+      description: Requires `team_view` and visibility over the requested team.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: Team details with active members.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "402":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
+    patch:
+      summary: Update a team and its member schedules
+      description: >-
+        Requires `team_manage`. Member replacements are atomic with their supplied
+        schedules. `preserveLeadership` prevents removal or demotion of current leaders.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTeamRequest"
+      responses:
+        "200":
+          description: Team updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "402":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
+    delete:
+      summary: Delete a team not used by a distribution queue
+      description: Requires `team_manage`. A referenced team returns `409 team_in_use`.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "204":
+          description: Team deleted.
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "402":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+        "409":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
+  /v1/teams/{id}/history:
+    get:
+      summary: List audited changes for a visible team
+      description: >-
+        Requires `team_view` and visibility over the team. Results include team,
+        membership, availability and pipeline-link events in reverse chronological order.
+        Within the initial creation batch, events are grouped deterministically as
+        team, members and availability; all other events keep chronological ordering.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+        - name: limit
+          in: query
+          description: Maximum number of history events.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: Team audit history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamHistoryListResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "402":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
+  /v1/teams/{teamId}/distribution-stats:
+    get:
+      summary: Get durable distribution metrics for a visible team
+      description: >-
+        Requires `team_view`. Organization admins may inspect every team in their
+        organization; non-leaders also need `team_manage`, while team leaders may
+        inspect only teams they lead. Counts come from immutable successful-assignment
+        snapshots. `coverage` is complete for teams created at or after `completeSince`;
+        older teams retain conservative partial historical coverage.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: teamId
+          in: path
+          required: true
+          description: Team whose distribution event metrics will be returned.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Tenant-scoped team distribution event metrics and coverage boundary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamDistributionStatsResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "402":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
+  /v1/teams/{id}/status:
+    patch:
+      summary: Activate or deactivate a team
+      description: Requires `team_manage`. `is_active` must be an explicitly supplied boolean.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTeamStatusRequest"
+      responses:
+        "200":
+          description: Team status updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "402":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
+  /v1/team-pipelines:
+    get:
+      summary: List team and pipeline links visible to the current user
+      description: Requires `team_view`. Team leaders receive links only for teams they lead.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: teamId
+          in: query
+          description: Restrict links to one team.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Visible team-pipeline links.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamPipelineListResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "402":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
+    post:
+      summary: Link a pipeline to a team
+      description: Requires `team_manage`. Repeating an existing pair is idempotent.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamPipelineMutationRequest"
+      responses:
+        "201":
+          description: Team-pipeline link created or returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamPipelineResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "402":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
+    delete:
+      summary: Remove a pipeline link from a team
+      description: Requires `team_manage`.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: teamId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: pipelineId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Team-pipeline link removed. The operation is idempotent.
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "402":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
+  /v1/team-members/leader:
+    patch:
+      summary: Grant or remove leadership for a team member
+      description: Requires `team_manage`. The user must already be a member of the requested team.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetTeamLeaderRequest"
+      responses:
+        "204":
+          description: Team member leadership updated.
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "402":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
+  /v1/member-availability:
+    get:
+      summary: List member availability visible in the active organization
+      description: >-
+        Requires an authenticated organization. Team managers see all matching rows;
+        leaders see rows only for teams they lead, and other users receive an empty list.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - name: teamMemberId
+          in: query
+          description: Restrict results to one team-member record.
+          schema:
+            type: string
+            format: uuid
+        - name: teamMemberIds
+          in: query
+          description: Comma-separated team-member UUIDs. Duplicates are ignored.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Visible member-availability rows.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemberAvailabilityListResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "402":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
+    patch:
+      summary: Upsert one availability day for a team member
+      description: >-
+        Requires an authenticated organization. Users with `team_manage` may update
+        any member; team leaders may update members only in teams they lead.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemberAvailabilityMutationRequest"
+      responses:
+        "200":
+          description: Availability day created or updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemberAvailabilityResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "402":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
+  /v1/team-members/{id}/availability:
+    get:
+      summary: List the availability week for one team member
+      description: >-
+        Requires an authenticated organization and applies the same manager or led-team
+        visibility rules as the member-availability list.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: Visible availability rows for the team member.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemberAvailabilityListResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "402":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
+    put:
+      summary: Replace a team member's complete availability week
+      description: >-
+        Requires an authenticated organization. Users with `team_manage` may replace
+        any schedule; team leaders may replace schedules only in teams they lead.
+        The payload must contain each day from zero through six exactly once and at
+        least one active day.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplaceMemberAvailabilityRequest"
+      responses:
+        "200":
+          description: Complete replacement availability week.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemberAvailabilityListResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "402":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
   /v1/pipelines:
     get:
       summary: List pipelines in the current organization
@@ -3124,6 +4478,32 @@ paths:
         "201":
           description: Round-robin queue created.
   /v1/round-robins/{id}:
+    get:
+      summary: Get a visible round-robin queue
+      description: >-
+        Returns the complete queue used by the dedicated distribution editor,
+        including its rules and members. Leaders can only read queues within
+        their leadership scope.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: Round-robin queue detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoundRobinResponse"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "402":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
     patch:
       summary: Update a round-robin queue
       parameters:
@@ -3146,6 +4526,44 @@ paths:
       responses:
         "204":
           description: Round-robin queue deleted.
+  /v1/round-robins/{id}/history:
+    get:
+      summary: List audited changes for a visible distribution queue
+      description: >-
+        Requires `distribution_manage` and visibility over the queue. Results include
+        queue, rule and member events in reverse chronological order. Within the
+        initial creation batch, tied events are grouped deterministically as queue,
+        rules and members; all later events keep chronological ordering.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+        - name: limit
+          in: query
+          description: Maximum number of history events.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: Distribution queue audit history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DistributionQueueHistoryListResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "402":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
   /v1/round-robins/{id}/rules:
     get:
       summary: List rules for a round-robin queue
@@ -3748,7 +5166,7 @@ paths:
           required: true
           schema:
             type: string
-            pattern: '^sha256=[0-9a-fA-F]{64}$'
+            pattern: "^sha256=[0-9a-fA-F]{64}$"
       requestBody:
         required: true
         content:
@@ -3819,7 +5237,15 @@ paths:
               properties:
                 action:
                   type: string
-                  enum: [get_auth_url, connect_page, update_page, disconnect_page, toggle_page, update_ad_accounts]
+                  enum:
+                    [
+                      get_auth_url,
+                      connect_page,
+                      update_page,
+                      disconnect_page,
+                      toggle_page,
+                      update_ad_accounts,
+                    ]
                 return_url:
                   type: string
                   format: uri
@@ -3921,7 +5347,7 @@ paths:
   /v1/integrations/meta/marketing/sync:
     post:
       summary: Synchronize Meta Ads and Instagram facts
-      description: Owner/admin only. Organization and user are always derived from the authenticated tenant context. Meta credentials are loaded by the Go backend from Vault.
+      description: Owner/admin only. Organization and user are always derived from the authenticated tenant context. Meta credentials are loaded by the Go backend from Vault. A concurrent synchronization for the same organization returns `409 marketing_sync_in_progress`.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
       requestBody:
@@ -3941,7 +5367,7 @@ paths:
                   format: date
       responses:
         "200":
-          description: Synchronous bounded synchronization result.
+          description: Synchronous bounded synchronization result. Provider-level partial warnings remain in `errors`; fatal non-2xx responses always use the standard API error envelope.
           content:
             application/json:
               schema:
@@ -3961,6 +5387,8 @@ paths:
                     type: array
                     items:
                       type: string
+        "409":
+          $ref: "#/components/responses/APIError"
         default:
           $ref: "#/components/responses/APIError"
   /v1/integrations/meta/pages/{pageId}/forms:
@@ -4049,6 +5477,39 @@ paths:
                     additionalProperties: true
         default:
           $ref: "#/components/responses/APIError"
+  /v1/invitations/{id}:
+    patch:
+      summary: Change the role of a pending invitation
+      description: >-
+        Requires users_manage in the active organization. Only an unaccepted,
+        unexpired invitation can be changed. The operation changes only the
+        persisted role and preserves the invitation token and expiry. Reading
+        or assigning the privileged admin and manager roles requires the same
+        privileged-invitation authority used when creating invitations.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvitationRoleUpdateRequest"
+      responses:
+        "200":
+          description: Invitation role changed without rotating its token or expiry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationInvitationEnvelope"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+        "404":
+          $ref: "#/components/responses/APIError"
+        default:
+          $ref: "#/components/responses/APIError"
 components:
   securitySchemes:
     bearerAuth:
@@ -4059,6 +5520,24 @@ components:
       type: http
       scheme: basic
       description: CRM-wide Grupo OLX SECRET_KEY provisioned by the provider; never stored per tenant.
+    vimobAPIKeyBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: Vimob API key
+      description: Organization-scoped key with the `vimob_` prefix.
+    vimobAPIKeyHeader:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Alternative carrier for the same organization-scoped Vimob API key.
+    vimobWebhookBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: Vimob webhook token
+    vimobWebhookHeader:
+      type: apiKey
+      in: header
+      name: X-Webhook-Token
   headers:
     HealthCacheControl:
       description: Prevents caches from retaining health, readiness or release identity state.
@@ -4080,6 +5559,16 @@ components:
         type: string
       example: Authorization, X-Organization-ID
   parameters:
+    PublicAPIIdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Stable key for one external lead event; reuse only for retries of the identical body.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+        pattern: "^[\\x21-\\x7E]+$"
     GrupoOLXWebhookToken:
       name: token
       in: path
@@ -4089,6 +5578,15 @@ components:
         type: string
         minLength: 32
         maxLength: 128
+    ChavesNaMaoFeedToken:
+      name: token
+      in: path
+      required: true
+      description: Private Chaves na Mão feed credential. It must never be logged or shared outside the homologated portal channel.
+      schema:
+        type: string
+        minLength: 32
+        maxLength: 256
     OrganizationIdHeader:
       name: X-Organization-ID
       in: header
@@ -4177,15 +5675,24 @@ components:
     DashboardDateFrom:
       name: dateFrom
       in: query
+      description: Optional inclusive lower bound. Omit both dashboard dates to query all visible history.
       schema:
         type: string
         format: date-time
     DashboardDateTo:
       name: dateTo
       in: query
+      description: Optional inclusive upper bound. Must be supplied together with dateFrom.
       schema:
         type: string
         format: date-time
+    DashboardIncludeDetails:
+      name: includeDetails
+      in: query
+      description: Opt in to at most 100 recent won and 100 recent lost lead details. Aggregate totals are always exact.
+      schema:
+        type: boolean
+        default: false
     DashboardPipelineId:
       name: pipelineId
       in: query
@@ -4241,6 +5748,105 @@ components:
       in: query
       schema:
         type: string
+    MarketingAnalyticsDateFrom:
+      name: dateFrom
+      in: query
+      required: true
+      description: Inclusive first calendar day of the attribution cohort.
+      schema:
+        type: string
+        format: date
+    MarketingAnalyticsDateTo:
+      name: dateTo
+      in: query
+      required: true
+      description: Inclusive last calendar day of the attribution cohort.
+      schema:
+        type: string
+        format: date
+    SiteAnalyticsDateFrom:
+      name: dateFrom
+      in: query
+      description: Inclusive first calendar day. May be omitted only when dateTo is also omitted.
+      schema:
+        type: string
+        format: date
+    SiteAnalyticsDateTo:
+      name: dateTo
+      in: query
+      description: Inclusive last calendar day. May be omitted only when dateFrom is also omitted.
+      schema:
+        type: string
+        format: date
+    AnalyticsCampaignId:
+      name: campaignId
+      in: query
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+    MarketingAccountId:
+      name: accountId
+      in: query
+      description: Meta ad account identifier. The tenant boundary is always taken from the authenticated organization header.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+    MarketingObjective:
+      name: objective
+      in: query
+      description: Exact Meta campaign objective stored in the daily Marketing facts.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+    AnalyticsAdSetId:
+      name: adSetId
+      in: query
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+    AnalyticsAdId:
+      name: adId
+      in: query
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+    AnalyticsTeamId:
+      name: teamId
+      in: query
+      schema:
+        type: string
+        format: uuid
+    AnalyticsUserId:
+      name: userId
+      in: query
+      schema:
+        type: string
+        format: uuid
+    AnalyticsSource:
+      name: source
+      in: query
+      description: CRM acquisition source. Meta aliases are `meta`, `meta_ads`, `facebook` and `instagram`.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 120
+    AnalyticsTagId:
+      name: tagId
+      in: query
+      schema:
+        type: string
+        format: uuid
+    AnalyticsDealStatus:
+      name: dealStatus
+      in: query
+      schema:
+        type: string
+        enum: [open, won, lost]
   responses:
     APIError:
       description: Standard API error.
@@ -4248,6 +5854,15 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/APIErrorEnvelope"
+    ChavesNaMaoHomologationRequired:
+      description: >-
+        The Chaves na Mão channel is intentionally fail-closed until official
+        homologation is enabled. The error code is
+        `chaves_na_mao_homologation_required`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ChavesNaMaoHomologationRequiredErrorEnvelope"
   schemas:
     VimobReleaseSha:
       type: string
@@ -4279,6 +5894,525 @@ components:
               type: string
             requestId:
               type: string
+    SessionProfileResponse:
+      type: object
+      additionalProperties: false
+      required: [user, context, profile, organization]
+      properties:
+        user:
+          type: object
+          additionalProperties: true
+        context:
+          type: object
+          additionalProperties: true
+        profile:
+          type: object
+          additionalProperties: true
+        organization:
+          oneOf:
+            - $ref: "#/components/schemas/PropertySettingsOrganization"
+            - type: "null"
+    PropertySettingsOrganization:
+      type: object
+      additionalProperties: true
+      required:
+        [id, property_edit_policy, property_owner_contact_visibility, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        property_edit_policy:
+          type: string
+          enum: [everyone, responsible_or_admin]
+        property_owner_contact_visibility:
+          type: string
+          enum: [visible, hidden]
+        updated_at:
+          type: string
+          format: date-time
+    PropertySettingsConflictErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              const: property_settings_conflict
+            message:
+              type: string
+            requestId:
+              type: string
+    ChavesNaMaoHomologationRequiredErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              const: chaves_na_mao_homologation_required
+            message:
+              type: string
+            requestId:
+              type: string
+    UpdatePropertySettingsRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 2
+      required: [expected_updated_at]
+      properties:
+        expected_updated_at:
+          type: string
+          format: date-time
+        property_edit_policy:
+          type: string
+          enum: [everyone, responsible_or_admin]
+        property_owner_contact_visibility:
+          type: string
+          enum: [visible, hidden]
+    PropertySettingsUpdateResponse:
+      type: object
+      additionalProperties: false
+      required: [ok, updated_at]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        updated_at:
+          type: string
+          format: date-time
+    PublicAPILeadRequest:
+      type: object
+      additionalProperties: false
+      required: [name, phone]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 180
+        phone:
+          type: string
+          maxLength: 32
+          description: Must contain from 10 to 15 decimal digits.
+        email:
+          type: string
+          format: email
+          maxLength: 320
+        message:
+          type: string
+          maxLength: 10000
+        property_id:
+          type: string
+          format: uuid
+        property_code:
+          type: string
+          maxLength: 120
+        source_detail:
+          type: string
+          maxLength: 240
+        campaign_id:
+          type: string
+          maxLength: 240
+        campaign_name:
+          type: string
+          maxLength: 500
+        adset_id:
+          type: string
+          maxLength: 240
+        adset_name:
+          type: string
+          maxLength: 500
+        ad_id:
+          type: string
+          maxLength: 240
+        ad_name:
+          type: string
+          maxLength: 500
+        form_id:
+          type: string
+          maxLength: 240
+        form_name:
+          type: string
+          maxLength: 500
+        utm_source:
+          type: string
+          maxLength: 500
+        utm_medium:
+          type: string
+          maxLength: 500
+        utm_campaign:
+          type: string
+          maxLength: 500
+        utm_content:
+          type: string
+          maxLength: 500
+        utm_term:
+          type: string
+          maxLength: 500
+        occurred_at:
+          type: string
+          format: date-time
+        custom_fields:
+          type: object
+          maxProperties: 50
+          additionalProperties:
+            type: string
+            maxLength: 1000
+    PublicAPILeadResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [id, reentry, idempotent]
+          properties:
+            id:
+              type: string
+              format: uuid
+            reentry:
+              type: boolean
+            idempotent:
+              type: boolean
+    IncomingWebhookLeadResponse:
+      type: object
+      additionalProperties: false
+      required: [ok, leadId, reentry, message]
+      properties:
+        ok:
+          type: boolean
+        leadId:
+          type: string
+          format: uuid
+        reentry:
+          type: boolean
+        idempotent:
+          type: boolean
+        message:
+          type: string
+    PublicSiteContactRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [organization_id, name, phone, message, privacy_accepted, submission_id]
+      properties:
+        organization_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+        email:
+          anyOf:
+            - type: string
+              format: email
+              maxLength: 254
+            - const: ""
+        phone:
+          type: string
+          minLength: 8
+          maxLength: 30
+          description: Must contain at least eight decimal digits.
+        message:
+          type: string
+          minLength: 2
+          maxLength: 1000
+        best_time:
+          type: string
+          maxLength: 80
+        privacy_accepted:
+          type: boolean
+          const: true
+        privacy_url:
+          type: string
+          maxLength: 300
+        property_id:
+          type: string
+          format: uuid
+        property_code:
+          type: string
+          maxLength: 80
+        session_id:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 160
+          pattern: "^(?!\\s*$)(?!\\s*site-contact:).+"
+        submission_id:
+          type: string
+          minLength: 8
+          maxLength: 120
+        website:
+          type: string
+          maxLength: 200
+          description: Honeypot; real users leave it empty.
+        landing_page:
+          type: string
+          maxLength: 500
+        referrer:
+          type: [string, "null"]
+          maxLength: 1000
+        utm_source:
+          type: [string, "null"]
+          maxLength: 300
+        utm_medium:
+          type: [string, "null"]
+          maxLength: 300
+        utm_campaign:
+          type: [string, "null"]
+          maxLength: 300
+        utm_term:
+          type: [string, "null"]
+          maxLength: 300
+        utm_content:
+          type: [string, "null"]
+          maxLength: 300
+        gclid:
+          type: [string, "null"]
+          maxLength: 300
+        fbclid:
+          type: [string, "null"]
+          maxLength: 300
+    PublicSiteContactResponse:
+      type: object
+      additionalProperties: false
+      required: [success]
+      properties:
+        success:
+          type: boolean
+          const: true
+        lead_id:
+          type: string
+          format: uuid
+        reentry:
+          type: boolean
+        idempotent:
+          type: boolean
+        filtered:
+          type: boolean
+    PublicTrackingRequest:
+      type: object
+      additionalProperties: false
+      required: [organization_id, event_type, page_path, session_id]
+      properties:
+        organization_id:
+          type: string
+          format: uuid
+        event_type:
+          type: string
+          enum:
+            [
+              pageview,
+              page_view,
+              session_start,
+              page_duration,
+              property_search,
+              property_view,
+              favorite,
+              whatsapp_click,
+              cta_click,
+            ]
+        page_path:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        page_title:
+          type: [string, "null"]
+          maxLength: 300
+        referrer:
+          type: [string, "null"]
+          maxLength: 2000
+        session_id:
+          type: string
+          minLength: 1
+          maxLength: 160
+          pattern: "^(?!\\s*$)(?!\\s*site-contact:).+"
+        property_id:
+          type: [string, "null"]
+          format: uuid
+        device_type:
+          type: [string, "null"]
+          enum: [desktop, mobile, tablet, null]
+        browser:
+          type: [string, "null"]
+          enum: [chrome, firefox, safari, edge, other, null]
+        screen_width:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 100000
+        screen_height:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 100000
+        utm_source:
+          type: [string, "null"]
+          maxLength: 300
+        utm_medium:
+          type: [string, "null"]
+          maxLength: 300
+        utm_campaign:
+          type: [string, "null"]
+          maxLength: 300
+        gclid:
+          type: [string, "null"]
+          maxLength: 300
+        fbclid:
+          type: [string, "null"]
+          maxLength: 300
+        metadata:
+          $ref: "#/components/schemas/PublicTrackingMetadata"
+      allOf:
+        - if:
+            properties:
+              event_type:
+                const: page_duration
+            required: [event_type]
+          then:
+            required: [metadata]
+            properties:
+              metadata:
+                allOf:
+                  - $ref: "#/components/schemas/PublicTrackingMetadata"
+                  - type: object
+                    required: [duration_seconds]
+          else:
+            properties:
+              metadata:
+                not:
+                  required: [duration_seconds]
+        - if:
+            properties:
+              event_type:
+                const: property_search
+            required: [event_type]
+          else:
+            properties:
+              metadata:
+                not:
+                  required: [filters]
+        - if:
+            properties:
+              event_type:
+                enum: [cta_click, whatsapp_click]
+            required: [event_type]
+          else:
+            properties:
+              metadata:
+                not:
+                  anyOf:
+                    - required: [action]
+                    - required: [placement]
+    PublicTrackingMetadata:
+      type: object
+      additionalProperties: false
+      description: Serialized metadata is limited to 16 KiB by the API.
+      properties:
+        duration_seconds:
+          type: integer
+          minimum: 1
+          maximum: 86400
+        filters:
+          $ref: "#/components/schemas/PublicTrackingFilters"
+        action:
+          type: string
+          minLength: 1
+          maxLength: 120
+        placement:
+          type: string
+          minLength: 1
+          maxLength: 80
+        os:
+          type: string
+          minLength: 1
+          maxLength: 80
+        timezone:
+          type: string
+          minLength: 1
+          maxLength: 100
+    PublicTrackingFilters:
+      type: object
+      additionalProperties: false
+      properties:
+        search: &PublicTrackingFilterValue
+          type: string
+          minLength: 1
+          maxLength: 300
+        cidade: *PublicTrackingFilterValue
+        bairro: *PublicTrackingFilterValue
+        tipo: *PublicTrackingFilterValue
+        finalidade: *PublicTrackingFilterValue
+        min_price: *PublicTrackingFilterValue
+        max_price: *PublicTrackingFilterValue
+        quartos: *PublicTrackingFilterValue
+        suites: *PublicTrackingFilterValue
+        banheiros: *PublicTrackingFilterValue
+        vagas: *PublicTrackingFilterValue
+    PublicTrackingResponse:
+      type: object
+      additionalProperties: false
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          const: true
+    InvitationRole:
+      type: string
+      enum: [user, manager, admin]
+    InvitationRoleUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [role]
+      properties:
+        role:
+          $ref: "#/components/schemas/InvitationRole"
+    OrganizationInvitation:
+      type: object
+      additionalProperties: false
+      required: [id, organization_id, role, expires_at, used_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        email:
+          type: [string, "null"]
+          format: email
+        created_by:
+          type: [string, "null"]
+          format: uuid
+        expires_at:
+          type: string
+          format: date-time
+        used_at:
+          type: [string, "null"]
+          format: date-time
+        created_at:
+          type: [string, "null"]
+          format: date-time
+        role:
+          $ref: "#/components/schemas/InvitationRole"
+        updated_at:
+          type: string
+          format: date-time
+    OrganizationInvitationEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/OrganizationInvitation"
     HomeFocusItem:
       type: object
       additionalProperties: false
@@ -5476,7 +7610,8 @@ components:
     Contact:
       type: object
       additionalProperties: true
-      required: [id, name, source, status, created_at, updated_at, tags, total_count]
+      required:
+        [id, name, source, status, created_at, updated_at, tags, total_count]
       properties:
         id:
           type: string
@@ -5553,20 +7688,50 @@ components:
       enum: [vertical, horizontal, mixed_use, land_subdivision, commercial]
     PropertyDevelopmentStatus:
       type: string
-      enum: [planning, pre_launch, launched, under_construction, ready, delivered, suspended, cancelled, archived]
+      enum:
+        [
+          planning,
+          pre_launch,
+          launched,
+          under_construction,
+          ready,
+          delivered,
+          suspended,
+          cancelled,
+          archived,
+        ]
     PropertyDevelopmentCommercialStatus:
       type: string
       enum: [draft, active, paused, sold_out, closed]
     PropertyDevelopmentUnitStatus:
       type: string
-      enum: [available, negotiation, reserved, sold, blocked, unavailable, withdrawn]
+      enum:
+        [
+          available,
+          negotiation,
+          reserved,
+          sold,
+          blocked,
+          unavailable,
+          withdrawn,
+        ]
     PropertyDevelopmentReservationStatus:
       type: string
       enum: [active, converted, cancelled, expired]
     PropertyDevelopmentInventoryCounts:
       type: object
       additionalProperties: false
-      required: [total, available, negotiation, reserved, sold, blocked, unavailable, withdrawn]
+      required:
+        [
+          total,
+          available,
+          negotiation,
+          reserved,
+          sold,
+          blocked,
+          unavailable,
+          withdrawn,
+        ]
       properties:
         total:
           type: integer
@@ -5750,7 +7915,17 @@ components:
         meta:
           type: object
           additionalProperties: false
-          required: [total, limit, offset, inventory_total, inventory_available, commercial_active, under_construction, can_manage]
+          required:
+            [
+              total,
+              limit,
+              offset,
+              inventory_total,
+              inventory_available,
+              commercial_active,
+              under_construction,
+              can_manage,
+            ]
           properties:
             total:
               type: integer
@@ -5771,7 +7946,19 @@ components:
     PropertyDevelopmentPhase:
       type: object
       additionalProperties: false
-      required: [id, organization_id, development_id, code, name, sort_order, status, metadata, created_at, updated_at]
+      required:
+        [
+          id,
+          organization_id,
+          development_id,
+          code,
+          name,
+          sort_order,
+          status,
+          metadata,
+          created_at,
+          updated_at,
+        ]
       properties:
         id:
           type: string
@@ -5790,7 +7977,16 @@ components:
           type: integer
         status:
           type: string
-          enum: [planned, pre_launch, launched, under_construction, delivered, suspended, cancelled]
+          enum:
+            [
+              planned,
+              pre_launch,
+              launched,
+              under_construction,
+              delivered,
+              suspended,
+              cancelled,
+            ]
         launch_date:
           type: [string, "null"]
           format: date
@@ -5815,7 +8011,22 @@ components:
     PropertyDevelopmentBuilding:
       type: object
       additionalProperties: false
-      required: [id, organization_id, development_id, phase_id, code, name, building_type, sort_order, status, unit_count, metadata, created_at, updated_at]
+      required:
+        [
+          id,
+          organization_id,
+          development_id,
+          phase_id,
+          code,
+          name,
+          building_type,
+          sort_order,
+          status,
+          unit_count,
+          metadata,
+          created_at,
+          updated_at,
+        ]
       properties:
         id:
           type: string
@@ -5857,7 +8068,19 @@ components:
     PropertyDevelopmentFloorPlan:
       type: object
       additionalProperties: false
-      required: [id, organization_id, development_id, code, name, status, unit_count, metadata, created_at, updated_at]
+      required:
+        [
+          id,
+          organization_id,
+          development_id,
+          code,
+          name,
+          status,
+          unit_count,
+          metadata,
+          created_at,
+          updated_at,
+        ]
       properties:
         id:
           type: string
@@ -5912,7 +8135,20 @@ components:
     PropertyDevelopmentUnit:
       type: object
       additionalProperties: false
-      required: [id, organization_id, development_id, building_id, code, unit_number, status, published, metadata, created_at, updated_at]
+      required:
+        [
+          id,
+          organization_id,
+          development_id,
+          building_id,
+          code,
+          unit_number,
+          status,
+          published,
+          metadata,
+          created_at,
+          updated_at,
+        ]
       properties:
         id:
           type: string
@@ -6002,7 +8238,20 @@ components:
     PropertyDevelopmentPriceTable:
       type: object
       additionalProperties: false
-      required: [id, organization_id, development_id, name, version, status, currency, priced_unit_count, metadata, created_at, updated_at]
+      required:
+        [
+          id,
+          organization_id,
+          development_id,
+          name,
+          version,
+          status,
+          currency,
+          priced_unit_count,
+          metadata,
+          created_at,
+          updated_at,
+        ]
       properties:
         id:
           type: string
@@ -6054,7 +8303,16 @@ components:
     PropertyDevelopmentUnitEvent:
       type: object
       additionalProperties: false
-      required: [id, organization_id, development_id, unit_id, event_type, metadata, created_at]
+      required:
+        [
+          id,
+          organization_id,
+          development_id,
+          unit_id,
+          event_type,
+          metadata,
+          created_at,
+        ]
       properties:
         id:
           type: string
@@ -6070,7 +8328,21 @@ components:
           format: uuid
         event_type:
           type: string
-          enum: [created, updated, status_changed, price_changed, property_linked, reservation_created, reservation_extended, reservation_cancelled, reservation_converted, reservation_expired, reservation_released, imported]
+          enum:
+            [
+              created,
+              updated,
+              status_changed,
+              price_changed,
+              property_linked,
+              reservation_created,
+              reservation_extended,
+              reservation_cancelled,
+              reservation_converted,
+              reservation_expired,
+              reservation_released,
+              imported,
+            ]
         before_data:
           type: object
           additionalProperties: true
@@ -6089,7 +8361,17 @@ components:
     PropertyDevelopmentWorkspaceSummary:
       type: object
       additionalProperties: false
-      required: [phases, buildings, floor_plans, inventory, price_range, completeness_score, publication_ready, checklist]
+      required:
+        [
+          phases,
+          buildings,
+          floor_plans,
+          inventory,
+          price_range,
+          completeness_score,
+          publication_ready,
+          checklist,
+        ]
       properties:
         phases:
           type: integer
@@ -6128,7 +8410,17 @@ components:
         data:
           type: object
           additionalProperties: false
-          required: [development, phases, buildings, floor_plans, units, price_tables, recent_unit_events, summary]
+          required:
+            [
+              development,
+              phases,
+              buildings,
+              floor_plans,
+              units,
+              price_tables,
+              recent_unit_events,
+              summary,
+            ]
           properties:
             development:
               $ref: "#/components/schemas/PropertyDevelopment"
@@ -6191,7 +8483,19 @@ components:
     PropertyDevelopmentReservation:
       type: object
       additionalProperties: false
-      required: [id, organization_id, development_id, unit_id, status, reserved_by, expires_at, currency, created_at, updated_at]
+      required:
+        [
+          id,
+          organization_id,
+          development_id,
+          unit_id,
+          status,
+          reserved_by,
+          expires_at,
+          currency,
+          created_at,
+          updated_at,
+        ]
       properties:
         id:
           type: string
@@ -6485,7 +8789,16 @@ components:
           minimum: 0
         status:
           type: string
-          enum: [planned, pre_launch, launched, under_construction, delivered, suspended, cancelled]
+          enum:
+            [
+              planned,
+              pre_launch,
+              launched,
+              under_construction,
+              delivered,
+              suspended,
+              cancelled,
+            ]
         launch_date:
           type: [string, "null"]
           format: date
@@ -6593,7 +8906,16 @@ components:
     BulkCreatePropertyDevelopmentUnitsRequest:
       type: object
       additionalProperties: false
-      required: [building_id, start_number, count, start_floor, units_per_floor, number_padding, initial_list_price]
+      required:
+        [
+          building_id,
+          start_number,
+          count,
+          start_floor,
+          units_per_floor,
+          number_padding,
+          initial_list_price,
+        ]
       properties:
         building_id:
           type: string
@@ -6711,6 +9033,7 @@ components:
     Property:
       type: object
       additionalProperties: true
+      required: [id, organization_id, updated_at]
       properties:
         id:
           type: string
@@ -6747,6 +9070,30 @@ components:
         updated_at:
           type: string
           format: date-time
+    PropertyWithCapabilities:
+      allOf:
+        - $ref: "#/components/schemas/Property"
+        - type: object
+          required: [can_edit, managed_terms]
+          properties:
+            can_edit:
+              type: boolean
+              description: Server-derived capability for editing this property without exposing internal owner or creator identifiers.
+            managed_terms:
+              $ref: "#/components/schemas/PropertyManagedTerms"
+    PropertyManagedTerms:
+      type: object
+      additionalProperties: false
+      required: [condominium_exempt, property_tax_exempt, financing_mode]
+      description: Safe derived value rules exposed without returning internal property metadata.
+      properties:
+        condominium_exempt:
+          type: boolean
+        property_tax_exempt:
+          type: boolean
+        financing_mode:
+          type: string
+          enum: [sim, nao, mcmv]
     PropertyListResponse:
       type: object
       required: [data, total, limit, offset]
@@ -6754,7 +9101,7 @@ components:
         data:
           type: array
           items:
-            $ref: "#/components/schemas/Property"
+            $ref: "#/components/schemas/PropertyWithCapabilities"
         total:
           type: integer
           format: int64
@@ -6762,7 +9109,54 @@ components:
           type: integer
         offset:
           type: integer
+    PropertyStatsResponse:
+      type: object
+      additionalProperties: false
+      required: [total, sale, rental, launches, available, reserved, sold, rented, private]
+      properties:
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+        sale:
+          type: integer
+          format: int64
+          minimum: 0
+        rental:
+          type: integer
+          format: int64
+          minimum: 0
+        launches:
+          type: integer
+          format: int64
+          minimum: 0
+        available:
+          type: integer
+          format: int64
+          minimum: 0
+        reserved:
+          type: integer
+          format: int64
+          minimum: 0
+        sold:
+          type: integer
+          format: int64
+          minimum: 0
+        rented:
+          type: integer
+          format: int64
+          minimum: 0
+        private:
+          type: integer
+          format: int64
+          minimum: 0
     PropertyResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/PropertyWithCapabilities"
+    PropertyCreateResponse:
       type: object
       required: [data]
       properties:
@@ -6902,7 +9296,8 @@ components:
           maxLength: 50
         publicationType:
           type: string
-          enum: [STANDARD, PREMIUM, SUPER_PREMIUM, PREMIERE_1, PREMIERE_2, TRIPLE]
+          enum:
+            [STANDARD, PREMIUM, SUPER_PREMIUM, PREMIERE_1, PREMIERE_2, TRIPLE]
     GrupoOLXPublicationSettingsRequest:
       type: object
       additionalProperties: false
@@ -6964,13 +9359,37 @@ components:
           enum: [published, paused, unpublished, null]
         observed_state:
           type: [string, "null"]
-          enum: [draft, queued, publishing, published, pausing, paused, unpublishing, unpublished, error, null]
+          enum:
+            [
+              draft,
+              queued,
+              publishing,
+              published,
+              pausing,
+              paused,
+              unpublishing,
+              unpublished,
+              error,
+              null,
+            ]
         canonical_desired_state:
           type: [string, "null"]
           enum: [published, paused, unpublished, null]
         canonical_observed_state:
           type: [string, "null"]
-          enum: [draft, queued, publishing, published, pausing, paused, unpublishing, unpublished, error, null]
+          enum:
+            [
+              draft,
+              queued,
+              publishing,
+              published,
+              pausing,
+              paused,
+              unpublishing,
+              unpublished,
+              error,
+              null,
+            ]
         canonical_published_version:
           description: Last-good canonical version currently eligible for the feed, including while an update is queued.
           type: [integer, "null"]
@@ -6981,7 +9400,8 @@ components:
           maxLength: 50
         publication_type:
           type: string
-          enum: [STANDARD, PREMIUM, SUPER_PREMIUM, PREMIERE_1, PREMIERE_2, TRIPLE]
+          enum:
+            [STANDARD, PREMIUM, SUPER_PREMIUM, PREMIERE_1, PREMIERE_2, TRIPLE]
         is_enabled:
           type: boolean
         status:
@@ -7013,7 +9433,20 @@ components:
     GrupoOLXPublicationProperty:
       type: object
       additionalProperties: false
-      required: [id, code, title, status, tipo_de_negocio, tipo_de_imovel, cidade, bairro, preco, valor_locacao, imagem_principal]
+      required:
+        [
+          id,
+          code,
+          title,
+          status,
+          tipo_de_negocio,
+          tipo_de_imovel,
+          cidade,
+          bairro,
+          preco,
+          valor_locacao,
+          imagem_principal,
+        ]
       properties:
         id:
           type: string
@@ -7039,10 +9472,212 @@ components:
         imagem_principal:
           type: [string, "null"]
           format: uri
+    ChavesNaMaoPublicSettings:
+      type: object
+      additionalProperties: false
+      properties:
+        contact_name:
+          type: string
+          maxLength: 200
+        contact_email:
+          type: string
+          format: email
+          maxLength: 320
+        contact_phone:
+          type: string
+          maxLength: 80
+        detail_base_url:
+          type: string
+          format: uri
+          pattern: "^https://"
+          maxLength: 2048
+    ChavesNaMaoSettingsRequest:
+      type: object
+      additionalProperties: false
+      description: Feed-only settings. Lead routing and webhook fields are intentionally unsupported.
+      properties:
+        settings:
+          $ref: "#/components/schemas/ChavesNaMaoPublicSettings"
+    ChavesNaMaoIntegration:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - organization_id
+        - portal
+        - status
+        - is_active
+        - feed_token
+        - settings
+        - last_feed_accessed_at
+        - last_sync_status
+        - last_error
+        - lead_webhook_available
+        - lead_webhook_blocker
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        portal:
+          type: string
+          const: chaves_na_mao
+        status:
+          type: string
+          enum: [draft, pending_setup, connected, paused, error]
+        is_active:
+          type: boolean
+        feed_token:
+          type: [string, "null"]
+          minLength: 32
+          maxLength: 256
+        settings:
+          $ref: "#/components/schemas/ChavesNaMaoPublicSettings"
+        last_feed_accessed_at:
+          type: [string, "null"]
+          format: date-time
+        last_sync_status:
+          type: [string, "null"]
+          maxLength: 64
+        last_error:
+          type: [string, "null"]
+          maxLength: 4000
+        lead_webhook_available:
+          type: boolean
+          const: false
+        lead_webhook_blocker:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ChavesNaMaoIntegrationEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          oneOf:
+            - $ref: "#/components/schemas/ChavesNaMaoIntegration"
+            - type: "null"
+    ChavesNaMaoPublicationSetting:
+      type: object
+      additionalProperties: false
+      required: [propertyId, publicationType]
+      properties:
+        propertyId:
+          type: string
+          format: uuid
+        clientListingId:
+          type: string
+          minLength: 1
+          maxLength: 50
+        publicationType:
+          type: string
+          enum: [STANDARD, FEATURED]
+        isEnabled:
+          type: boolean
+    ChavesNaMaoPublicationSettingsRequest:
+      type: object
+      additionalProperties: false
+      required: [publications]
+      properties:
+        publications:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: "#/components/schemas/ChavesNaMaoPublicationSetting"
+    ChavesNaMaoPublicationListEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          maxItems: 50000
+          items:
+            $ref: "#/components/schemas/ChavesNaMaoPublicationListItem"
+    ChavesNaMaoPublicationListItem:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - integration_id
+        - property_id
+        - client_listing_id
+        - publication_type
+        - is_enabled
+        - status
+        - validation_errors
+        - last_exported_at
+        - last_seen_in_feed_at
+        - last_error
+        - created_at
+        - updated_at
+        - property
+      properties:
+        id:
+          type: string
+          format: uuid
+        integration_id:
+          type: string
+          format: uuid
+        property_id:
+          type: string
+          format: uuid
+        client_listing_id:
+          type: string
+          minLength: 1
+          maxLength: 50
+        publication_type:
+          type: string
+          enum: [STANDARD, FEATURED]
+        is_enabled:
+          type: boolean
+        status:
+          type: [string, "null"]
+          maxLength: 64
+        validation_errors:
+          type: array
+          maxItems: 1000
+          items: {}
+        last_exported_at:
+          type: [string, "null"]
+          format: date-time
+        last_seen_in_feed_at:
+          type: [string, "null"]
+          format: date-time
+        last_error:
+          type: [string, "null"]
+          maxLength: 4000
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        property:
+          $ref: "#/components/schemas/GrupoOLXPublicationProperty"
     GrupoOLXImportReport:
       type: object
       additionalProperties: false
-      required: [id, report_id, status, annotation_status, annotation_attempts, created_at]
+      required:
+        [
+          id,
+          report_id,
+          status,
+          annotation_status,
+          annotation_attempts,
+          created_at,
+        ]
       properties:
         id:
           type: string
@@ -7195,7 +9830,18 @@ components:
           enum: [published, paused, unpublished]
         observed_state:
           type: string
-          enum: [draft, queued, publishing, published, pausing, paused, unpublishing, unpublished, error]
+          enum:
+            [
+              draft,
+              queued,
+              publishing,
+              published,
+              pausing,
+              paused,
+              unpublishing,
+              unpublished,
+              error,
+            ]
         readiness_state:
           type: string
           enum: [unknown, ready, blocked]
@@ -7317,7 +9963,17 @@ components:
     GrupoOLXProviderFeedback:
       type: object
       additionalProperties: false
-      required: [scope, version_bound, listing_id, report_id, severity, messages, provider_occurred_at, received_at]
+      required:
+        [
+          scope,
+          version_bound,
+          listing_id,
+          report_id,
+          severity,
+          messages,
+          provider_occurred_at,
+          received_at,
+        ]
       properties:
         scope:
           type: string
@@ -7351,7 +10007,8 @@ components:
     PropertyPublicationJob:
       type: object
       additionalProperties: false
-      required: [id, action, status, version, attempts, max_attempts, created_at]
+      required:
+        [id, action, status, version, attempts, max_attempts, created_at]
       properties:
         id:
           type: string
@@ -7413,10 +10070,23 @@ components:
     PropertyWorkspace:
       type: object
       additionalProperties: false
-      required: [property, offers, ownerships, assets, keys, recent_key_movements, summary]
+      required:
+        [
+          property,
+          development_link,
+          offers,
+          ownerships,
+          assets,
+          keys,
+          recent_key_movements,
+          summary,
+        ]
       properties:
         property:
           $ref: "#/components/schemas/PropertyWorkspaceProperty"
+        development_link:
+          type: [object, "null"]
+          additionalProperties: true
         offers:
           type: array
           items:
@@ -7445,7 +10115,14 @@ components:
     PropertyWorkspaceMeta:
       type: object
       additionalProperties: false
-      required: [can_manage, can_view_owner_contacts, can_view_confidential]
+      required:
+        [
+          can_manage,
+          can_view_owner_contacts,
+          can_view_confidential,
+          has_asset_photos,
+          development_link_available,
+        ]
       properties:
         can_manage:
           type: boolean
@@ -7453,6 +10130,17 @@ components:
           type: boolean
         can_view_confidential:
           type: boolean
+        has_asset_photos:
+          type: boolean
+        development_link_available:
+          type: boolean
+        normalized_resources_available:
+          type: boolean
+        unavailable_resources:
+          type: array
+          items:
+            type: string
+            enum: [offers, ownerships, assets, keys, key_history]
     PropertyWorkspaceSummary:
       type: object
       additionalProperties: false
@@ -7526,6 +10214,7 @@ components:
         tipo_de_imovel: {}
         tipo_de_negocio: {}
         finalidade: {}
+        finalidade_uso: {}
         descricao: {}
         descricao_site: {}
         endereco: {}
@@ -7553,6 +10242,18 @@ components:
         mobilia: {}
         mobiliado: {}
         regra_pet: {}
+        detalhes_extras: {}
+        latitude: {}
+        longitude: {}
+        marcadores: {}
+        padrao: {}
+        pais: {}
+        posicao_localizacao: {}
+        proximidades: {}
+        usou_fgts: {}
+        valor_itr: {}
+        valor_seguro_fianca: {}
+        zoneamento: {}
         imagem_principal: {}
         fotos: {}
         image_urls: {}
@@ -7580,12 +10281,16 @@ components:
         exclusividade: {}
         created_at: {}
         updated_at: {}
+        can_edit: {}
+        managed_terms:
+          $ref: "#/components/schemas/PropertyManagedTerms"
         owner_phone_residential: {}
         owner_phone_commercial: {}
         owner_cellphone: {}
         owner_email: {}
         owner_notify_email: {}
         owner_media_source: {}
+        origin_media: {}
         commission_percentage: {}
         comissao_venda: {}
         comissao_locacao: {}
@@ -7614,6 +10319,12 @@ components:
         imoview_codigo: {}
         vista_codigo: {}
         created_by: {}
+        aprovacao_ambiental: {}
+        projeto_aprovado: {}
+        status_descritivo: {}
+        faixa_valor_imovel: {}
+        renda_familiar: {}
+        is_demo: {}
     PropertyOffer:
       type: object
       additionalProperties: false
@@ -7827,7 +10538,8 @@ components:
     UpdatePropertyOwnershipRequest:
       type: object
       additionalProperties: false
-      required: [ownership_percentage, is_primary, valid_from, expected_updated_at]
+      required:
+        [ownership_percentage, is_primary, valid_from, expected_updated_at]
       properties:
         ownership_percentage:
           type: number
@@ -7995,6 +10707,7 @@ components:
     ReorderPropertyAssetsRequest:
       type: object
       additionalProperties: false
+      description: Complete ordered collection for exactly one asset type. Partial or stale collections return a conflict.
       required: [items]
       properties:
         items:
@@ -8043,7 +10756,7 @@ components:
         file_name:
           type: string
           minLength: 1
-          maxLength: 255
+          maxLength: 240
         mime_type:
           type: string
           enum: [image/jpeg, image/png, image/webp, image/gif, application/pdf]
@@ -8052,6 +10765,15 @@ components:
           format: int64
           minimum: 1
           maximum: 10485760
+    DiscardPropertyAssetUploadRequest:
+      type: object
+      additionalProperties: false
+      required: [storage_path]
+      properties:
+        storage_path:
+          type: string
+          minLength: 1
+          maxLength: 2000
     PropertyAssetUploadIntent:
       type: object
       additionalProperties: false
@@ -8080,10 +10802,38 @@ components:
       properties:
         data:
           $ref: "#/components/schemas/PropertyAssetUploadIntent"
+    PropertyAssetUploadDiscardResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [storage_path]
+          properties:
+            storage_path:
+              type: string
+              minLength: 1
+              maxLength: 2000
     PropertyOwnership:
       type: object
       additionalProperties: false
-      required: [id, organization_id, property_id, owner_id, ownership_percentage, is_primary, valid_from, valid_to, notes, owner, created_at, updated_at]
+      required:
+        [
+          id,
+          organization_id,
+          property_id,
+          owner_id,
+          ownership_percentage,
+          is_primary,
+          valid_from,
+          valid_to,
+          notes,
+          owner,
+          created_at,
+          updated_at,
+        ]
       properties:
         id:
           type: string
@@ -8156,7 +10906,28 @@ components:
     PropertyAsset:
       type: object
       additionalProperties: false
-      required: [id, organization_id, property_id, asset_type, visibility, storage_path, external_url, title, description, file_name, mime_type, file_size_bytes, sort_order, is_primary, document_category, expires_at, metadata, created_at, updated_at]
+      required:
+        [
+          id,
+          organization_id,
+          property_id,
+          asset_type,
+          visibility,
+          storage_path,
+          external_url,
+          title,
+          description,
+          file_name,
+          mime_type,
+          file_size_bytes,
+          sort_order,
+          is_primary,
+          document_category,
+          expires_at,
+          metadata,
+          created_at,
+          updated_at,
+        ]
       properties:
         id:
           type: string
@@ -8218,7 +10989,24 @@ components:
     PropertyKey:
       type: object
       additionalProperties: false
-      required: [id, organization_id, property_id, label, key_code, status, current_location, holder_user_id, holder_name, checked_out_at, expected_return_at, notes, metadata, created_at, updated_at]
+      required:
+        [
+          id,
+          organization_id,
+          property_id,
+          label,
+          key_code,
+          status,
+          current_location,
+          holder_user_id,
+          holder_name,
+          checked_out_at,
+          expected_return_at,
+          notes,
+          metadata,
+          created_at,
+          updated_at,
+        ]
       properties:
         id:
           type: string
@@ -8291,7 +11079,23 @@ components:
     PropertyKeyMovement:
       type: object
       additionalProperties: false
-      required: [id, organization_id, property_key_id, movement_type, holder_user_id, holder_name, from_location, to_location, occurred_at, expected_return_at, idempotency_key, notes, metadata, created_at]
+      required:
+        [
+          id,
+          organization_id,
+          property_key_id,
+          movement_type,
+          holder_user_id,
+          holder_name,
+          from_location,
+          to_location,
+          occurred_at,
+          expected_return_at,
+          idempotency_key,
+          notes,
+          metadata,
+          created_at,
+        ]
       properties:
         id:
           type: string
@@ -8304,7 +11108,18 @@ components:
           format: uuid
         movement_type:
           type: string
-          enum: [registration, checkout, transfer, return, location_change, mark_lost, mark_found, deactivate, reactivate]
+          enum:
+            [
+              registration,
+              checkout,
+              transfer,
+              return,
+              location_change,
+              mark_lost,
+              mark_found,
+              deactivate,
+              reactivate,
+            ]
         holder_user_id:
           type: [string, "null"]
           format: uuid
@@ -8338,7 +11153,17 @@ components:
       properties:
         movement_type:
           type: string
-          enum: [checkout, transfer, return, location_change, mark_lost, mark_found, deactivate, reactivate]
+          enum:
+            [
+              checkout,
+              transfer,
+              return,
+              location_change,
+              mark_lost,
+              mark_found,
+              deactivate,
+              reactivate,
+            ]
         holder_user_id:
           type: [string, "null"]
           format: uuid
@@ -8452,6 +11277,82 @@ components:
         avatar_url:
           type: [string, "null"]
           format: uri
+    UserPresenceResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/UserPresenceData"
+    UserPresenceData:
+      type: object
+      additionalProperties: false
+      required: [users, counts, generated_at]
+      properties:
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserPresenceUser"
+        counts:
+          $ref: "#/components/schemas/UserPresenceCounts"
+        generated_at:
+          type: string
+          format: date-time
+    UserPresenceUser:
+      type: object
+      additionalProperties: false
+      required:
+        - user_id
+        - name
+        - avatar_url
+        - member_role
+        - is_team_leader
+        - presence_status
+        - last_seen_at
+        - idle_since_at
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        avatar_url:
+          type: [string, "null"]
+          format: uri
+        member_role:
+          type: string
+        is_team_leader:
+          type: boolean
+        presence_status:
+          type: string
+          enum: [online, idle, offline]
+        last_seen_at:
+          type: [string, "null"]
+          format: date-time
+        idle_since_at:
+          type: [string, "null"]
+          format: date-time
+          description: >-
+            Start of the user's current aggregated idle period. Null unless the
+            user is idle and every relevant fresh idle session has a trusted
+            transition timestamp.
+    UserPresenceCounts:
+      type: object
+      additionalProperties: false
+      required: [total, online, idle, offline]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        online:
+          type: integer
+          minimum: 0
+        idle:
+          type: integer
+          minimum: 0
+        offline:
+          type: integer
+          minimum: 0
     PropertyMutationRequest:
       type: object
       minProperties: 1
@@ -8487,6 +11388,25 @@ components:
           type: [string, number, "null"]
         valor_locacao:
           type: [string, number, "null"]
+    PropertyUpdateRequest:
+      allOf:
+        - $ref: "#/components/schemas/PropertyMutationRequest"
+        - type: object
+          required: [expected_updated_at]
+          properties:
+            expected_updated_at:
+              type: string
+              format: date-time
+              description: Version returned by the last property read.
+    PropertyDeleteRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_updated_at]
+      properties:
+        expected_updated_at:
+          type: string
+          format: date-time
+          description: Version returned by the last property read.
     PropertyCatalogItem:
       type: object
       required: [id, organization_id, name]
@@ -8542,9 +11462,17 @@ components:
             type: string
             minLength: 1
             maxLength: 120
+    PropertyCatalogDeleteRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_updated_at]
+      properties:
+        expected_updated_at:
+          type: string
+          format: date-time
     PropertyCity:
       type: object
-      required: [id, organization_id, name]
+      required: [id, organization_id, name, updated_at]
       properties:
         id:
           type: string
@@ -8560,9 +11488,12 @@ components:
           type: boolean
         created_at:
           type: string
+        updated_at:
+          type: string
+          format: date-time
     PropertyNeighborhood:
       type: object
-      required: [id, organization_id, name]
+      required: [id, organization_id, name, updated_at]
       properties:
         id:
           type: string
@@ -8579,11 +11510,14 @@ components:
           type: boolean
         created_at:
           type: string
+        updated_at:
+          type: string
+          format: date-time
         city:
           $ref: "#/components/schemas/PropertyCity"
     PropertyCondominium:
       type: object
-      required: [id, organization_id, name]
+      required: [id, organization_id, name, updated_at]
       properties:
         id:
           type: string
@@ -8609,6 +11543,9 @@ components:
           type: boolean
         created_at:
           type: string
+        updated_at:
+          type: string
+          format: date-time
         city:
           $ref: "#/components/schemas/PropertyCity"
         neighborhood:
@@ -8679,6 +11616,39 @@ components:
         city_id:
           type: string
           format: uuid
+    UpdatePropertyCityRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 2
+      required: [expected_updated_at]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        uf:
+          type: [string, "null"]
+          minLength: 2
+          maxLength: 2
+        expected_updated_at:
+          type: string
+          format: date-time
+    UpdatePropertyNeighborhoodRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 2
+      required: [expected_updated_at]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        city_id:
+          type: string
+          format: uuid
+        expected_updated_at:
+          type: string
+          format: date-time
     CreatePropertyCondominiumRequest:
       type: object
       additionalProperties: false
@@ -8701,9 +11671,713 @@ components:
           type: number
         longitude:
           type: number
+    UpdatePropertyCondominiumRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 2
+      required: [expected_updated_at]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        city_id:
+          type: [string, "null"]
+          format: uuid
+        neighborhood_id:
+          type: [string, "null"]
+          format: uuid
+        address:
+          type: [string, "null"]
+          maxLength: 300
+        photo_url:
+          type: [string, "null"]
+          format: uri
+          maxLength: 1000
+        cep:
+          type: [string, "null"]
+          maxLength: 20
+        number:
+          type: [string, "null"]
+          maxLength: 40
+        complement:
+          type: [string, "null"]
+          maxLength: 160
+        default_condominium_fee:
+          type: [number, "null"]
+          minimum: 0
+        has_concierge:
+          type: boolean
+        concierge_type:
+          type: [string, "null"]
+          maxLength: 80
+        notes:
+          type: [string, "null"]
+          maxLength: 1200
+        latitude:
+          type: [number, "null"]
+          minimum: -90
+          maximum: 90
+        longitude:
+          type: [number, "null"]
+          minimum: -180
+          maximum: 180
+        expected_updated_at:
+          type: string
+          format: date-time
+    PropertyOwnerPropertyPreview:
+      type: object
+      additionalProperties: false
+      required: [id, code, title, tipo_de_negocio, bairro, cidade]
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: [string, "null"]
+        title:
+          type: [string, "null"]
+        tipo_de_negocio:
+          type: [string, "null"]
+        bairro:
+          type: [string, "null"]
+        cidade:
+          type: [string, "null"]
+    PropertyOwner:
+      type: object
+      additionalProperties: false
+      required: [id, organization_id, name, is_active, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        phone_residential:
+          type: [string, "null"]
+        phone_commercial:
+          type: [string, "null"]
+        cellphone:
+          type: [string, "null"]
+        email:
+          type: [string, "null"]
+          format: email
+        media_source:
+          type: [string, "null"]
+        notify_email:
+          type: [boolean, "null"]
+        notes:
+          type: [string, "null"]
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        property_count:
+          type: integer
+          minimum: 0
+        properties:
+          type: array
+          items:
+            $ref: "#/components/schemas/PropertyOwnerPropertyPreview"
+    PropertyOwnerResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/PropertyOwner"
+    PropertyOwnerPageResponse:
+      type: object
+      additionalProperties: false
+      required: [data, next_cursor, total_count]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/PropertyOwner"
+        next_cursor:
+          type: [string, "null"]
+        total_count:
+          type: integer
+          minimum: 0
+    CreatePropertyOwnerRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 160
+        phone_residential:
+          type: string
+          maxLength: 40
+        phone_commercial:
+          type: string
+          maxLength: 40
+        cellphone:
+          type: string
+          maxLength: 40
+        email:
+          oneOf:
+            - type: string
+              format: email
+              maxLength: 160
+            - const: ""
+        media_source:
+          type: string
+          maxLength: 80
+        notify_email:
+          type: boolean
+          default: false
+        notes:
+          type: string
+          maxLength: 1200
+    UpdatePropertyOwnerRequest:
+      type: object
+      additionalProperties: false
+      required: [name, expected_updated_at]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 160
+        phone_residential:
+          type: string
+          maxLength: 40
+        phone_commercial:
+          type: string
+          maxLength: 40
+        cellphone:
+          type: string
+          maxLength: 40
+        email:
+          oneOf:
+            - type: string
+              format: email
+              maxLength: 160
+            - const: ""
+        media_source:
+          type: string
+          maxLength: 80
+        notify_email:
+          type: boolean
+        notes:
+          type: string
+          maxLength: 1200
+        expected_updated_at:
+          type: string
+          format: date-time
+    TeamUser:
+      type: object
+      additionalProperties: false
+      required: [id, name, email, avatar_url]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: [string, "null"]
+        email:
+          type: [string, "null"]
+        avatar_url:
+          type: [string, "null"]
+    TeamMember:
+      type: object
+      additionalProperties: false
+      required: [id, team_id, user_id, created_at, is_leader, user]
+      properties:
+        id:
+          type: string
+          format: uuid
+        team_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        is_leader:
+          type: boolean
+        user:
+          oneOf:
+            - $ref: "#/components/schemas/TeamUser"
+            - type: "null"
+    Team:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - organization_id
+        - created_at
+        - is_active
+        - logo_url
+        - created_by
+        - created_by_user
+        - members
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        organization_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        is_active:
+          type: boolean
+        logo_url:
+          type: [string, "null"]
+        created_by:
+          type: [string, "null"]
+          format: uuid
+        created_by_user:
+          oneOf:
+            - $ref: "#/components/schemas/TeamUser"
+            - type: "null"
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamMember"
+    TeamResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/Team"
+    TeamListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Team"
+    TeamDistributionStats:
+      type: object
+      additionalProperties: false
+      required:
+        - totalEvents
+        - uniqueLeads
+        - redistributionEvents
+        - coverage
+        - completeSince
+      properties:
+        totalEvents:
+          type: integer
+          format: int64
+          minimum: 0
+        uniqueLeads:
+          type: integer
+          format: int64
+          minimum: 0
+        redistributionEvents:
+          type: integer
+          format: int64
+          minimum: 0
+        coverage:
+          type: string
+          enum: [partial, complete]
+        completeSince:
+          type: string
+          format: date-time
+    TeamDistributionStatsResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/TeamDistributionStats"
+    TeamHistoryEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - action
+        - entity_type
+        - entity_id
+        - old_data
+        - new_data
+        - diff
+        - created_at
+        - user
+        - subject_user
+      properties:
+        id:
+          type: string
+          format: uuid
+        action:
+          type: string
+        entity_type:
+          type: string
+        entity_id:
+          type: string
+          format: uuid
+        old_data:
+          type: [object, "null"]
+          additionalProperties: true
+        new_data:
+          type: [object, "null"]
+          additionalProperties: true
+        diff:
+          type: [object, "null"]
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        user:
+          oneOf:
+            - $ref: "#/components/schemas/TeamUser"
+            - type: "null"
+        subject_user:
+          oneOf:
+            - $ref: "#/components/schemas/TeamUser"
+            - type: "null"
+    TeamHistoryListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamHistoryEvent"
+    TeamEntityRef:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+    TeamPipelineRelation:
+      type: object
+      additionalProperties: false
+      required: [id, team_id, pipeline_id, created_at, pipeline]
+      properties:
+        id:
+          type: string
+          format: uuid
+        team_id:
+          type: string
+          format: uuid
+        pipeline_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        pipeline:
+          oneOf:
+            - $ref: "#/components/schemas/TeamEntityRef"
+            - type: "null"
+        team:
+          oneOf:
+            - $ref: "#/components/schemas/TeamEntityRef"
+            - type: "null"
+    TeamPipelineResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/TeamPipelineRelation"
+    TeamPipelineListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/TeamPipelineRelation"
+    TeamPipelineMutationRequest:
+      type: object
+      additionalProperties: false
+      required: [teamId, pipelineId]
+      properties:
+        teamId:
+          type: string
+          format: uuid
+        pipelineId:
+          type: string
+          format: uuid
+    SetTeamLeaderRequest:
+      type: object
+      additionalProperties: false
+      required: [teamId, userId, isLeader]
+      properties:
+        teamId:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        isLeader:
+          type: boolean
+    MemberAvailabilityDayMutation:
+      type: object
+      additionalProperties: false
+      description: Active non-all-day entries require start_time before end_time.
+      required: [day_of_week]
+      properties:
+        day_of_week:
+          type: integer
+          minimum: 0
+          maximum: 6
+        start_time:
+          type: [string, "null"]
+          pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?$"
+        end_time:
+          type: [string, "null"]
+          pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?$"
+        is_all_day:
+          type: boolean
+          default: false
+        is_active:
+          type: boolean
+          default: true
+    TeamMemberMutation:
+      type: object
+      additionalProperties: false
+      required: [userId]
+      properties:
+        userId:
+          type: string
+          format: uuid
+        isLeader:
+          type: boolean
+          default: false
+        availability:
+          type: array
+          minItems: 7
+          maxItems: 7
+          description: Each day from zero through six must appear exactly once, with at least one active day.
+          items:
+            $ref: "#/components/schemas/MemberAvailabilityDayMutation"
+    CreateTeamRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        memberIds:
+          type: array
+          maxItems: 0
+          deprecated: true
+          description: Legacy field retained for decoding only. Use members so every selected member has an explicit schedule.
+          items:
+            type: string
+            format: uuid
+        members:
+          type: array
+          maxItems: 500
+          items:
+            allOf:
+              - $ref: "#/components/schemas/TeamMemberMutation"
+              - type: object
+                required: [availability]
+        logo_url:
+          type: [string, "null"]
+          maxLength: 2000
+        is_active:
+          type: boolean
+          default: true
+    UpdateTeamRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      anyOf:
+        - required: [name]
+        - required: [memberIds]
+        - required: [members]
+        - required: [logo_url]
+        - required: [is_active]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        memberIds:
+          type: array
+          maxItems: 500
+          deprecated: true
+          description: Legacy member list without schedule details. Prefer members.
+          items:
+            type: string
+            format: uuid
+        members:
+          type: array
+          maxItems: 500
+          description: New members require availability; existing members may omit it to preserve their schedule.
+          items:
+            $ref: "#/components/schemas/TeamMemberMutation"
+        logo_url:
+          type: [string, "null"]
+          maxLength: 2000
+        is_active:
+          type: boolean
+        preserveLeadership:
+          type: boolean
+          default: false
+    UpdateTeamStatusRequest:
+      type: object
+      additionalProperties: false
+      required: [is_active]
+      properties:
+        is_active:
+          type: boolean
+    TeamLogoAsset:
+      type: object
+      additionalProperties: false
+      required: [url, path, bucket, contentType, size]
+      properties:
+        url:
+          type: string
+        path:
+          type: string
+        bucket:
+          type: string
+          const: logos
+        contentType:
+          type: string
+          enum: [image/jpeg, image/png, image/webp, image/gif]
+        size:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 5242880
+    TeamLogoUploadResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/TeamLogoAsset"
+    MemberAvailability:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - team_member_id
+        - day_of_week
+        - start_time
+        - end_time
+        - is_all_day
+        - is_active
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        team_member_id:
+          type: string
+          format: uuid
+        day_of_week:
+          type: integer
+          minimum: 0
+          maximum: 6
+        start_time:
+          type: [string, "null"]
+        end_time:
+          type: [string, "null"]
+        is_all_day:
+          type: boolean
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    MemberAvailabilityResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/MemberAvailability"
+    MemberAvailabilityListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemberAvailability"
+    MemberAvailabilityMutationRequest:
+      type: object
+      additionalProperties: false
+      description: Active non-all-day entries require start_time before end_time.
+      required: [team_member_id, day_of_week]
+      properties:
+        team_member_id:
+          type: string
+          format: uuid
+        day_of_week:
+          type: integer
+          minimum: 0
+          maximum: 6
+        start_time:
+          type: [string, "null"]
+          pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?$"
+        end_time:
+          type: [string, "null"]
+          pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?$"
+        is_all_day:
+          type: boolean
+          default: false
+        is_active:
+          type: boolean
+          default: true
+    ReplaceMemberAvailabilityRequest:
+      type: object
+      additionalProperties: false
+      required: [availability]
+      properties:
+        availability:
+          type: array
+          minItems: 7
+          maxItems: 7
+          description: Each day from zero through six must appear exactly once, with at least one active day.
+          items:
+            $ref: "#/components/schemas/MemberAvailabilityDayMutation"
     Pipeline:
       type: object
-      required: [id, organizationId, name, isDefault, isActive, position, createdAt, updatedAt]
+      required:
+        [
+          id,
+          organizationId,
+          name,
+          isDefault,
+          isActive,
+          position,
+          createdAt,
+          updatedAt,
+        ]
       properties:
         id:
           type: string
@@ -8752,7 +12426,20 @@ components:
           type: boolean
     Stage:
       type: object
-      required: [id, organizationId, pipelineId, name, position, isWon, isLost, isQualified, isActive, createdAt, updatedAt]
+      required:
+        [
+          id,
+          organizationId,
+          pipelineId,
+          name,
+          position,
+          isWon,
+          isLost,
+          isQualified,
+          isActive,
+          createdAt,
+          updatedAt,
+        ]
       properties:
         id:
           type: string
@@ -8847,7 +12534,21 @@ components:
                 type: string
     RoundRobin:
       type: object
-      required: [id, organizationId, name, isActive, strategy, leadsDistributed, rules, members, createdAt, updatedAt]
+      additionalProperties: false
+      required:
+        [
+          id,
+          organizationId,
+          name,
+          isActive,
+          lastAssignedIndex,
+          strategy,
+          leadsDistributed,
+          rules,
+          members,
+          createdAt,
+          updatedAt,
+        ]
       properties:
         id:
           type: string
@@ -8861,6 +12562,11 @@ components:
           type: boolean
         lastAssignedIndex:
           type: integer
+        createdBy:
+          type: string
+          format: uuid
+        createdByUser:
+          $ref: "#/components/schemas/RoundRobinUserSummary"
         strategy:
           type: string
           enum: [simple, weighted]
@@ -8879,6 +12585,10 @@ components:
         reentryBehavior:
           type: string
           enum: [redistribute, keep_assignee]
+        targetPipeline:
+          $ref: "#/components/schemas/RoundRobinPipelineSummary"
+        targetStage:
+          $ref: "#/components/schemas/RoundRobinStageSummary"
         rules:
           type: array
           items:
@@ -8893,6 +12603,124 @@ components:
         updatedAt:
           type: string
           format: date-time
+    RoundRobinUserSummary:
+      type: object
+      additionalProperties: false
+      required: [id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        avatarUrl:
+          type: string
+          format: uri
+    RoundRobinPipelineSummary:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+    RoundRobinStageSummary:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        color:
+          type: string
+    RoundRobinResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/RoundRobin"
+    DistributionQueueHistoryUser:
+      type: object
+      additionalProperties: false
+      required: [id, name, email, avatar_url]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: [string, "null"]
+        email:
+          type: [string, "null"]
+        avatar_url:
+          type: [string, "null"]
+    DistributionQueueHistoryEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - action
+        - entity_type
+        - entity_id
+        - old_data
+        - new_data
+        - diff
+        - created_at
+        - user
+        - subject_user
+      properties:
+        id:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum: [create, update, delete]
+        entity_type:
+          type: string
+          enum:
+            - distribution_queue
+            - distribution_queue_rule
+            - distribution_queue_member
+        entity_id:
+          type: string
+          format: uuid
+        old_data:
+          type: [object, "null"]
+          additionalProperties: true
+        new_data:
+          type: [object, "null"]
+          additionalProperties: true
+        diff:
+          type: [object, "null"]
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        user:
+          oneOf:
+            - $ref: "#/components/schemas/DistributionQueueHistoryUser"
+            - type: "null"
+        subject_user:
+          oneOf:
+            - $ref: "#/components/schemas/DistributionQueueHistoryUser"
+            - type: "null"
+    DistributionQueueHistoryListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/DistributionQueueHistoryEvent"
     RoundRobinWhatsAppSessionOption:
       type: object
       additionalProperties: false
@@ -8939,7 +12767,9 @@ components:
           type: boolean
     RoundRobinRule:
       type: object
-      required: [id, roundRobinId, matchType, matchValue, priority, isActive]
+      additionalProperties: false
+      required:
+        [id, roundRobinId, matchType, matchValue, priority, isActive, createdAt, updatedAt]
       properties:
         id:
           type: string
@@ -8958,9 +12788,19 @@ components:
           type: integer
         isActive:
           type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
     RoundRobinMember:
       type: object
-      required: [id, roundRobinId, userId, position, weight, isActive]
+      additionalProperties: false
+      required: [id, roundRobinId, position, weight, isActive, leadsCount]
+      anyOf:
+        - required: [userId]
+        - required: [teamId]
       properties:
         id:
           type: string
@@ -8980,6 +12820,8 @@ components:
           type: integer
         isActive:
           type: boolean
+        user:
+          $ref: "#/components/schemas/RoundRobinUserSummary"
         leadsCount:
           type: integer
           format: int64
@@ -9126,6 +12968,20 @@ components:
         assignedUserId:
           type: string
           format: uuid
+        teamId:
+          type: string
+          format: uuid
+          description: Optional team stored on the lead before assignment.
+        importMode:
+          type: boolean
+          description: When true, the row requires lead_import instead of the regular lead creation permission.
+        autoDistribute:
+          type: boolean
+          description: Controls the canonical distribution call. When omitted, existing creation behavior is preserved; false skips distribution and true executes it.
+        roundRobinId:
+          type: string
+          format: uuid
+          description: Active distribution queue in the current organization. Requires autoDistribute=true and distribution_manage permission.
         interestValue:
           type: string
           description: Decimal string, mirrors Postgres numeric precision.
@@ -9173,15 +13029,19 @@ components:
           type: string
     CreateLeadResponse:
       type: object
-      required: [data, reentry]
+      required: [data, reentry, distributionOutcome]
       properties:
         data:
           $ref: "#/components/schemas/Lead"
         reentry:
           type: boolean
-          description: True when the phone matched an existing lead and a reentry was registered.
+          description: True when the phone matched an existing lead. The prior owner is preserved and the reentry is not redistributed.
         assignedUserName:
           type: string
+        distributionOutcome:
+          type: string
+          enum: [assigned, already_assigned, no_matching_queue, no_available_members, skipped, reentry_preserved]
+          description: Exact canonical distribution result. no_matching_queue and no_available_members mean the lead was created but remains without an automatic assignment; reentry_preserved means the prior owner was kept.
     LeadTagRequest:
       type: object
       required: [tagId]
@@ -9431,6 +13291,1339 @@ components:
           type: string
         avatarUrl:
           type: string
+    AnalyticsCount:
+      type: integer
+      format: int64
+      minimum: 0
+    AnalyticsNonNegativeNumber:
+      type: number
+      minimum: 0
+    AnalyticsPercentage:
+      type: number
+      minimum: 0
+      maximum: 100
+    SiteAnalyticsSummaryResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/SiteAnalyticsSummary"
+    SiteAnalyticsSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - lastCollectedAt
+        - totalViews
+        - totalPages
+        - uniquePages
+        - uniqueSessions
+        - measuredSessions
+        - avgDuration
+        - desktopPct
+        - mobilePct
+        - tabletPct
+        - directPct
+        - searchPct
+        - socialPct
+        - campaignPct
+        - referralPct
+        - conversions
+        - prevSessions
+        - prevViews
+        - prevPages
+        - prevUniquePages
+        - prevAvgDuration
+        - prevDesktopPct
+        - prevMobilePct
+        - prevConversions
+        - prevConversionRate
+      properties:
+        lastCollectedAt:
+          type: [string, "null"]
+          format: date-time
+        totalViews:
+          $ref: "#/components/schemas/AnalyticsCount"
+        totalPages:
+          $ref: "#/components/schemas/AnalyticsCount"
+        uniquePages:
+          $ref: "#/components/schemas/AnalyticsCount"
+        uniqueSessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        measuredSessions:
+          description: Sessions that reported at least one page-duration heartbeat.
+          $ref: "#/components/schemas/AnalyticsCount"
+        avgDuration:
+          $ref: "#/components/schemas/AnalyticsNonNegativeNumber"
+        desktopPct:
+          $ref: "#/components/schemas/AnalyticsPercentage"
+        mobilePct:
+          $ref: "#/components/schemas/AnalyticsPercentage"
+        tabletPct:
+          $ref: "#/components/schemas/AnalyticsPercentage"
+        otherDevicePct:
+          description: Share of sessions whose device is missing or outside desktop, mobile and tablet.
+          $ref: "#/components/schemas/AnalyticsPercentage"
+        directPct:
+          $ref: "#/components/schemas/AnalyticsPercentage"
+        searchPct:
+          $ref: "#/components/schemas/AnalyticsPercentage"
+        socialPct:
+          $ref: "#/components/schemas/AnalyticsPercentage"
+        campaignPct:
+          $ref: "#/components/schemas/AnalyticsPercentage"
+        referralPct:
+          $ref: "#/components/schemas/AnalyticsPercentage"
+        conversions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        prevSessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        prevViews:
+          $ref: "#/components/schemas/AnalyticsCount"
+        prevPages:
+          $ref: "#/components/schemas/AnalyticsCount"
+        prevUniquePages:
+          $ref: "#/components/schemas/AnalyticsCount"
+        prevAvgDuration:
+          $ref: "#/components/schemas/AnalyticsNonNegativeNumber"
+        prevDesktopPct:
+          $ref: "#/components/schemas/AnalyticsPercentage"
+        prevMobilePct:
+          $ref: "#/components/schemas/AnalyticsPercentage"
+        prevConversions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        prevConversionRate:
+          $ref: "#/components/schemas/AnalyticsPercentage"
+    SiteAnalyticsDetailedResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/SiteAnalyticsDetailed"
+    SiteAnalyticsDetailed:
+      type: object
+      additionalProperties: false
+      required:
+        - topProperties
+        - topPages
+        - dailyViews
+        - campaigns
+        - searchTerms
+        - conversionRate
+        - totalSessions
+        - totalConversions
+        - siteLeads
+        - pagesPerSession
+        - bounceRate
+        - liveVisitors
+      properties:
+        topProperties:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/SiteAnalyticsTopProperty"
+        topPages:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/SiteAnalyticsTopPage"
+        dailyViews:
+          type: array
+          items:
+            $ref: "#/components/schemas/SiteAnalyticsDailyView"
+        campaigns:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/SiteAnalyticsCampaign"
+        searchTerms:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/SiteAnalyticsSearchTerm"
+        conversionRate:
+          $ref: "#/components/schemas/AnalyticsPercentage"
+        totalSessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        totalConversions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        siteLeads:
+          $ref: "#/components/schemas/AnalyticsCount"
+        pagesPerSession:
+          $ref: "#/components/schemas/AnalyticsNonNegativeNumber"
+        bounceRate:
+          $ref: "#/components/schemas/AnalyticsPercentage"
+        liveVisitors:
+          $ref: "#/components/schemas/AnalyticsCount"
+    SiteAnalyticsTopProperty:
+      type: object
+      additionalProperties: false
+      required: [property_id, title, code, views, favorites]
+      properties:
+        property_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        code:
+          type: string
+        views:
+          $ref: "#/components/schemas/AnalyticsCount"
+        favorites:
+          $ref: "#/components/schemas/AnalyticsCount"
+    SiteAnalyticsTopPage:
+      type: object
+      additionalProperties: false
+      required: [page_path, views]
+      properties:
+        page_path:
+          type: [string, "null"]
+        views:
+          $ref: "#/components/schemas/AnalyticsCount"
+    SiteAnalyticsDailyView:
+      type: object
+      additionalProperties: false
+      required: [date, views]
+      properties:
+        date:
+          type: string
+          format: date
+        views:
+          $ref: "#/components/schemas/AnalyticsCount"
+    SiteAnalyticsCampaign:
+      type: object
+      additionalProperties: false
+      required: [source, campaign, sessions, conversions]
+      properties:
+        source:
+          type: string
+        campaign:
+          type: string
+        source_type:
+          type: string
+          enum: [direct, search, social, campaign, referral]
+          description: Canonical first-touch acquisition channel; paid markers take precedence over social and organic search.
+        sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        conversions:
+          $ref: "#/components/schemas/AnalyticsCount"
+    SiteAnalyticsSearchTerm:
+      type: object
+      additionalProperties: false
+      required: [term, searches]
+      properties:
+        term:
+          type: string
+        searches:
+          $ref: "#/components/schemas/AnalyticsCount"
+    LeadAnalyticsResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/LeadAnalytics"
+    LeadAnalytics:
+      type: object
+      additionalProperties: false
+      required:
+        - journeys
+        - funnel
+        - top_pages
+        - daily_views
+        - total_sessions
+        - total_conversions
+        - total_converted_sessions
+        - total_interactions
+        - device_breakdown
+        - locations
+      properties:
+        journeys:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/LeadAnalyticsJourney"
+        funnel:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeadAnalyticsFunnelStep"
+        top_pages:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/SiteAnalyticsTopPage"
+        daily_views:
+          type: array
+          items:
+            $ref: "#/components/schemas/SiteAnalyticsDailyView"
+        total_sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        total_conversions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        total_converted_sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        total_interactions:
+          description: Raw interaction events excluding session markers and duration heartbeats.
+          $ref: "#/components/schemas/AnalyticsCount"
+        device_breakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeadAnalyticsDeviceBreakdown"
+        locations:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/LeadAnalyticsLocation"
+    LeadAnalyticsJourney:
+      type: object
+      additionalProperties: false
+      required:
+        - session_id
+        - path_sequence
+        - event_sequence
+        - first_event
+        - last_event
+        - total_events
+        - converted
+        - device_type
+        - browser
+        - os
+        - city
+        - region
+        - country
+        - utm_source
+        - referrer
+      properties:
+        session_id:
+          type: string
+        path_sequence:
+          type: array
+          items:
+            type: [string, "null"]
+        event_sequence:
+          type: array
+          items:
+            type: string
+        first_event:
+          type: string
+          format: date-time
+        last_event:
+          type: string
+          format: date-time
+        total_events:
+          $ref: "#/components/schemas/AnalyticsCount"
+        converted:
+          type: boolean
+        device_type:
+          type: [string, "null"]
+        browser:
+          type: [string, "null"]
+        os:
+          type: [string, "null"]
+        city:
+          type: [string, "null"]
+        region:
+          type: [string, "null"]
+        country:
+          type: [string, "null"]
+        utm_source:
+          type: [string, "null"]
+        referrer:
+          type: [string, "null"]
+    LeadAnalyticsFunnelStep:
+      type: object
+      additionalProperties: false
+      required: [event_type, total]
+      properties:
+        event_type:
+          type: string
+        total:
+          $ref: "#/components/schemas/AnalyticsCount"
+    LeadAnalyticsDeviceBreakdown:
+      type: object
+      additionalProperties: false
+      required: [device_type, total]
+      properties:
+        device_type:
+          type: string
+          enum: [desktop, mobile, tablet, other]
+        total:
+          $ref: "#/components/schemas/AnalyticsCount"
+    LeadAnalyticsLocation:
+      type: object
+      additionalProperties: false
+      required: [city, region, country, lat, lng, sessions]
+      properties:
+        city:
+          type: string
+        region:
+          type: [string, "null"]
+        country:
+          type: [string, "null"]
+        lat:
+          type: [number, "null"]
+          minimum: -90
+          maximum: 90
+        lng:
+          type: [number, "null"]
+          minimum: -180
+          maximum: 180
+        sessions:
+          $ref: "#/components/schemas/AnalyticsCount"
+    MarketingNullableMetric:
+      type: [number, "null"]
+      minimum: 0
+    MarketingNullableText:
+      type: [string, "null"]
+    MarketingCampaignInsightsResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/MarketingCampaignInsights"
+    MarketingCampaignInsights:
+      type: object
+      additionalProperties: false
+      required:
+        - filterOptions
+        - campaigns
+        - topCreatives
+        - dailyData
+        - media
+        - social
+        - summary
+        - connection
+        - dataQuality
+        - lastSync
+        - hasSpendData
+      properties:
+        filterOptions:
+          $ref: "#/components/schemas/MarketingFilterOptions"
+        campaigns:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketingCampaign"
+        topCreatives:
+          type: array
+          maxItems: 24
+          items:
+            $ref: "#/components/schemas/MarketingTopCreative"
+        dailyData:
+          type: array
+          maxItems: 366
+          items:
+            $ref: "#/components/schemas/MarketingDailyPerformance"
+        media:
+          type: array
+          maxItems: 240
+          items:
+            $ref: "#/components/schemas/MarketingMediaAsset"
+        social:
+          $ref: "#/components/schemas/MarketingSocial"
+        summary:
+          $ref: "#/components/schemas/MarketingSummary"
+        connection:
+          $ref: "#/components/schemas/MarketingConnection"
+        dataQuality:
+          $ref: "#/components/schemas/MarketingDataQuality"
+        lastSync:
+          type: [string, "null"]
+          format: date-time
+        hasSpendData:
+          type: boolean
+    MarketingFilterOptions:
+      type: object
+      additionalProperties: false
+      required: [accounts, objectives]
+      properties:
+        accounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketingAccountOption"
+        objectives:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketingObjectiveOption"
+    MarketingAccountOption:
+      type: object
+      additionalProperties: false
+      required: [id, name, currency]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        currency:
+          type: [string, "null"]
+    MarketingObjectiveOption:
+      type: object
+      additionalProperties: false
+      required: [value, label]
+      properties:
+        value:
+          type: string
+        label:
+          type: string
+    MarketingCampaign:
+      type: object
+      additionalProperties: false
+      required:
+        - campaign_id
+        - campaign_name
+        - spend
+        - impressions
+        - reach
+        - clicks
+        - link_clicks
+        - leads_reported
+        - leads_count
+        - meta_reported_leads
+        - meta_reported_conversations
+        - reported_results
+        - crm_attributed_leads
+        - capture_gap
+        - capture_rate
+        - contacted_count
+        - responded_count
+        - qualified_count
+        - won_count
+        - lost_count
+        - open_count
+        - revenue
+        - conversations_count
+        - conversions_reported
+        - cpl
+        - cpql
+        - cac
+        - reported_cpl
+        - ctr
+        - cpc
+        - cpm
+        - frequency
+        - hook_rate
+        - status
+        - budget
+        - budget_type
+        - objective
+        - currency
+        - adsets
+      properties:
+        campaign_id:
+          type: string
+        campaign_name:
+          type: string
+        spend:
+          $ref: "#/components/schemas/AnalyticsNonNegativeNumber"
+        impressions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        reach:
+          $ref: "#/components/schemas/AnalyticsCount"
+        clicks:
+          $ref: "#/components/schemas/AnalyticsCount"
+        link_clicks:
+          $ref: "#/components/schemas/AnalyticsCount"
+        leads_reported:
+          $ref: "#/components/schemas/AnalyticsCount"
+        leads_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        meta_reported_leads:
+          $ref: "#/components/schemas/AnalyticsCount"
+        meta_reported_conversations:
+          $ref: "#/components/schemas/AnalyticsCount"
+        reported_results:
+          $ref: "#/components/schemas/AnalyticsCount"
+        crm_attributed_leads:
+          $ref: "#/components/schemas/AnalyticsCount"
+        capture_gap:
+          type: integer
+          format: int64
+        capture_rate:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        contacted_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        responded_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        qualified_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        won_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        lost_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        open_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        revenue:
+          type: number
+        conversations_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        conversions_reported:
+          $ref: "#/components/schemas/AnalyticsCount"
+        cpl:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        cpql:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        cac:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        reported_cpl:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        ctr:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        cpc:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        cpm:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        frequency:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        hook_rate:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        status:
+          $ref: "#/components/schemas/MarketingNullableText"
+        budget:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        budget_type:
+          $ref: "#/components/schemas/MarketingNullableText"
+        objective:
+          $ref: "#/components/schemas/MarketingNullableText"
+        currency:
+          $ref: "#/components/schemas/MarketingNullableText"
+        adsets:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketingAdSet"
+    MarketingAdSet:
+      type: object
+      additionalProperties: false
+      required:
+        - adset_id
+        - adset_name
+        - spend
+        - impressions
+        - reach
+        - clicks
+        - link_clicks
+        - leads_reported
+        - leads_count
+        - contacted_count
+        - responded_count
+        - qualified_count
+        - won_count
+        - lost_count
+        - open_count
+        - revenue
+        - conversations_count
+        - cpl
+        - ctr
+        - cpc
+        - hook_rate
+        - status
+        - budget
+        - budget_type
+        - optimization_goal
+        - currency
+        - ads
+      properties:
+        adset_id:
+          type: string
+        adset_name:
+          type: string
+        spend:
+          $ref: "#/components/schemas/AnalyticsNonNegativeNumber"
+        impressions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        reach:
+          $ref: "#/components/schemas/AnalyticsCount"
+        clicks:
+          $ref: "#/components/schemas/AnalyticsCount"
+        link_clicks:
+          $ref: "#/components/schemas/AnalyticsCount"
+        leads_reported:
+          $ref: "#/components/schemas/AnalyticsCount"
+        leads_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        contacted_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        responded_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        qualified_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        won_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        lost_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        open_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        revenue:
+          type: number
+        conversations_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        cpl:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        ctr:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        cpc:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        hook_rate:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        status:
+          $ref: "#/components/schemas/MarketingNullableText"
+        budget:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        budget_type:
+          $ref: "#/components/schemas/MarketingNullableText"
+        optimization_goal:
+          $ref: "#/components/schemas/MarketingNullableText"
+        currency:
+          $ref: "#/components/schemas/MarketingNullableText"
+        ads:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketingAd"
+    MarketingAd:
+      type: object
+      additionalProperties: false
+      required:
+        - ad_id
+        - ad_name
+        - spend
+        - impressions
+        - reach
+        - clicks
+        - link_clicks
+        - leads_reported
+        - leads_count
+        - contacted_count
+        - responded_count
+        - qualified_count
+        - won_count
+        - lost_count
+        - open_count
+        - revenue
+        - conversations_count
+        - cpl
+        - ctr
+        - cpc
+        - hook_rate
+        - status
+        - creative_id
+        - creative_url
+        - creative_video_url
+        - creative_permalink_url
+        - thumbnail_url
+        - currency
+      properties:
+        ad_id:
+          type: string
+        ad_name:
+          type: string
+        spend:
+          $ref: "#/components/schemas/AnalyticsNonNegativeNumber"
+        impressions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        reach:
+          $ref: "#/components/schemas/AnalyticsCount"
+        clicks:
+          $ref: "#/components/schemas/AnalyticsCount"
+        link_clicks:
+          $ref: "#/components/schemas/AnalyticsCount"
+        leads_reported:
+          $ref: "#/components/schemas/AnalyticsCount"
+        leads_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        contacted_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        responded_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        qualified_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        won_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        lost_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        open_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        revenue:
+          type: number
+        conversations_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        cpl:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        ctr:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        cpc:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        hook_rate:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        status:
+          $ref: "#/components/schemas/MarketingNullableText"
+        creative_id:
+          $ref: "#/components/schemas/MarketingNullableText"
+        creative_url:
+          $ref: "#/components/schemas/MarketingNullableText"
+        creative_video_url:
+          $ref: "#/components/schemas/MarketingNullableText"
+        creative_permalink_url:
+          $ref: "#/components/schemas/MarketingNullableText"
+        thumbnail_url:
+          $ref: "#/components/schemas/MarketingNullableText"
+        currency:
+          $ref: "#/components/schemas/MarketingNullableText"
+    MarketingTopCreative:
+      type: object
+      additionalProperties: false
+      required:
+        - ad_id
+        - ad_name
+        - campaign_name
+        - leads_reported
+        - leads_count
+        - contacted_count
+        - responded_count
+        - qualified_count
+        - won_count
+        - lost_count
+        - revenue
+        - score
+        - creative_url
+        - creative_video_url
+        - creative_permalink_url
+        - thumbnail_url
+        - spend
+        - cpl
+        - ctr
+        - cpc
+        - hook_rate
+        - currency
+      properties:
+        ad_id:
+          type: string
+        ad_name:
+          type: [string, "null"]
+        campaign_name:
+          type: [string, "null"]
+        leads_reported:
+          $ref: "#/components/schemas/AnalyticsCount"
+        leads_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        contacted_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        responded_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        qualified_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        won_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        lost_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        revenue:
+          type: number
+        score:
+          type: integer
+          format: int64
+          minimum: 0
+        creative_url:
+          $ref: "#/components/schemas/MarketingNullableText"
+        creative_video_url:
+          $ref: "#/components/schemas/MarketingNullableText"
+        creative_permalink_url:
+          $ref: "#/components/schemas/MarketingNullableText"
+        thumbnail_url:
+          $ref: "#/components/schemas/MarketingNullableText"
+        spend:
+          $ref: "#/components/schemas/AnalyticsNonNegativeNumber"
+        cpl:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        ctr:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        cpc:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        hook_rate:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        currency:
+          $ref: "#/components/schemas/MarketingNullableText"
+    MarketingDailyPerformance:
+      type: object
+      additionalProperties: false
+      required:
+        - date
+        - spend
+        - impressions
+        - reach
+        - clicks
+        - linkClicks
+        - leadsReported
+        - leads
+        - metaReportedLeads
+        - metaReportedConversations
+        - reportedResults
+        - crmAttributedLeads
+        - captureGap
+        - captureRate
+        - contacted
+        - responded
+        - qualified
+        - won
+        - lost
+        - revenue
+        - conversations
+        - total
+      properties:
+        date:
+          type: string
+          format: date
+        spend:
+          $ref: "#/components/schemas/AnalyticsNonNegativeNumber"
+        impressions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        reach:
+          $ref: "#/components/schemas/AnalyticsCount"
+        clicks:
+          $ref: "#/components/schemas/AnalyticsCount"
+        linkClicks:
+          $ref: "#/components/schemas/AnalyticsCount"
+        leadsReported:
+          $ref: "#/components/schemas/AnalyticsCount"
+        leads:
+          $ref: "#/components/schemas/AnalyticsCount"
+        metaReportedLeads:
+          $ref: "#/components/schemas/AnalyticsCount"
+        metaReportedConversations:
+          $ref: "#/components/schemas/AnalyticsCount"
+        reportedResults:
+          $ref: "#/components/schemas/AnalyticsCount"
+          description: Sum of Meta lead actions and messaging-conversation actions; it is not a unique-person count.
+        crmAttributedLeads:
+          $ref: "#/components/schemas/AnalyticsCount"
+        captureGap:
+          type: integer
+          format: int64
+        captureRate:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        contacted:
+          $ref: "#/components/schemas/AnalyticsCount"
+        responded:
+          $ref: "#/components/schemas/AnalyticsCount"
+        qualified:
+          $ref: "#/components/schemas/AnalyticsCount"
+        won:
+          $ref: "#/components/schemas/AnalyticsCount"
+        lost:
+          $ref: "#/components/schemas/AnalyticsCount"
+        revenue:
+          type: number
+        conversations:
+          $ref: "#/components/schemas/AnalyticsCount"
+        total:
+          $ref: "#/components/schemas/AnalyticsCount"
+    MarketingMediaAsset:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - provider
+        - source_kind
+        - external_media_id
+        - media_type
+        - title
+        - caption
+        - campaign_id
+        - campaign_name
+        - adset_id
+        - adset_name
+        - ad_id
+        - ad_name
+        - creative_id
+        - thumbnail_url
+        - media_url
+        - video_url
+        - permalink_url
+        - published_at
+        - metrics
+        - last_synced_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        provider:
+          type: string
+        source_kind:
+          type: string
+          enum: [paid, organic]
+        external_media_id:
+          type: string
+        media_type:
+          $ref: "#/components/schemas/MarketingNullableText"
+        title:
+          $ref: "#/components/schemas/MarketingNullableText"
+        caption:
+          $ref: "#/components/schemas/MarketingNullableText"
+        campaign_id:
+          $ref: "#/components/schemas/MarketingNullableText"
+        campaign_name:
+          $ref: "#/components/schemas/MarketingNullableText"
+        adset_id:
+          $ref: "#/components/schemas/MarketingNullableText"
+        adset_name:
+          $ref: "#/components/schemas/MarketingNullableText"
+        ad_id:
+          $ref: "#/components/schemas/MarketingNullableText"
+        ad_name:
+          $ref: "#/components/schemas/MarketingNullableText"
+        creative_id:
+          $ref: "#/components/schemas/MarketingNullableText"
+        thumbnail_url:
+          $ref: "#/components/schemas/MarketingNullableText"
+        media_url:
+          $ref: "#/components/schemas/MarketingNullableText"
+        video_url:
+          $ref: "#/components/schemas/MarketingNullableText"
+        permalink_url:
+          $ref: "#/components/schemas/MarketingNullableText"
+        published_at:
+          type: [string, "null"]
+          format: date-time
+        metrics:
+          $ref: "#/components/schemas/MarketingMediaMetrics"
+        last_synced_at:
+          type: string
+          format: date-time
+    MarketingMediaMetrics:
+      type: object
+      additionalProperties: false
+      properties:
+        spend:
+          $ref: "#/components/schemas/AnalyticsNonNegativeNumber"
+        impressions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        reach:
+          $ref: "#/components/schemas/AnalyticsCount"
+        clicks:
+          $ref: "#/components/schemas/AnalyticsCount"
+        link_clicks:
+          $ref: "#/components/schemas/AnalyticsCount"
+        leads:
+          $ref: "#/components/schemas/AnalyticsCount"
+        conversations:
+          $ref: "#/components/schemas/AnalyticsCount"
+        conversions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        video_views:
+          $ref: "#/components/schemas/AnalyticsCount"
+        currency:
+          $ref: "#/components/schemas/MarketingNullableText"
+        interactions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        likes:
+          $ref: "#/components/schemas/AnalyticsCount"
+        comments:
+          $ref: "#/components/schemas/AnalyticsCount"
+        saves:
+          $ref: "#/components/schemas/AnalyticsCount"
+        shares:
+          $ref: "#/components/schemas/AnalyticsCount"
+        views:
+          $ref: "#/components/schemas/AnalyticsCount"
+    MarketingSocial:
+      type: object
+      additionalProperties: false
+      required:
+        - provider
+        - profileName
+        - profileCount
+        - followers
+        - followerGrowth
+        - posts
+        - impressions
+        - reach
+        - interactions
+        - likes
+        - comments
+        - saves
+        - shares
+        - profileViews
+        - websiteClicks
+        - videoViews
+        - lastSync
+      properties:
+        provider:
+          $ref: "#/components/schemas/MarketingNullableText"
+        profileName:
+          $ref: "#/components/schemas/MarketingNullableText"
+        profileCount:
+          $ref: "#/components/schemas/AnalyticsCount"
+        followers:
+          type: [integer, "null"]
+          format: int64
+          minimum: 0
+        followerGrowth:
+          type: integer
+          format: int64
+        posts:
+          $ref: "#/components/schemas/AnalyticsCount"
+        impressions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        reach:
+          $ref: "#/components/schemas/AnalyticsCount"
+        interactions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        likes:
+          $ref: "#/components/schemas/AnalyticsCount"
+        comments:
+          $ref: "#/components/schemas/AnalyticsCount"
+        saves:
+          $ref: "#/components/schemas/AnalyticsCount"
+        shares:
+          $ref: "#/components/schemas/AnalyticsCount"
+        profileViews:
+          $ref: "#/components/schemas/AnalyticsCount"
+        websiteClicks:
+          $ref: "#/components/schemas/AnalyticsCount"
+        videoViews:
+          $ref: "#/components/schemas/AnalyticsCount"
+        lastSync:
+          type: [string, "null"]
+          format: date-time
+    MarketingCurrencyBreakdownItem:
+      type: object
+      additionalProperties: false
+      required: [currency, spend]
+      properties:
+        currency:
+          type: string
+        spend:
+          $ref: "#/components/schemas/AnalyticsNonNegativeNumber"
+    MarketingSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - totalLeads
+        - reportedLeads
+        - metaReportedLeads
+        - metaReportedConversations
+        - reportedResults
+        - crmAttributedLeads
+        - captureGap
+        - captureRate
+        - totalContacted
+        - totalResponded
+        - totalQualified
+        - totalWon
+        - totalLost
+        - totalOpen
+        - totalRevenue
+        - totalCampaigns
+        - totalAdsets
+        - totalAds
+        - totalSpend
+        - currency
+        - currencyBreakdown
+        - totalImpressions
+        - totalReach
+        - totalClicks
+        - totalLinkClicks
+        - conversations_count
+        - avgCpl
+        - reportedCpl
+        - cpql
+        - cac
+        - ctr
+        - cpc
+        - cpm
+        - responseRate
+        - qualificationRate
+        - conversionRate
+        - roas
+      properties:
+        totalLeads:
+          $ref: "#/components/schemas/AnalyticsCount"
+        reportedLeads:
+          $ref: "#/components/schemas/AnalyticsCount"
+        metaReportedLeads:
+          $ref: "#/components/schemas/AnalyticsCount"
+        metaReportedConversations:
+          $ref: "#/components/schemas/AnalyticsCount"
+        reportedResults:
+          $ref: "#/components/schemas/AnalyticsCount"
+          description: Sum of Meta lead actions and messaging-conversation actions; action categories may overlap and this is not a unique-person count.
+        crmAttributedLeads:
+          $ref: "#/components/schemas/AnalyticsCount"
+        captureGap:
+          type: integer
+          format: int64
+        captureRate:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        totalContacted:
+          $ref: "#/components/schemas/AnalyticsCount"
+        totalResponded:
+          $ref: "#/components/schemas/AnalyticsCount"
+        totalQualified:
+          $ref: "#/components/schemas/AnalyticsCount"
+        totalWon:
+          $ref: "#/components/schemas/AnalyticsCount"
+        totalLost:
+          $ref: "#/components/schemas/AnalyticsCount"
+        totalOpen:
+          $ref: "#/components/schemas/AnalyticsCount"
+        totalRevenue:
+          type: number
+        totalCampaigns:
+          $ref: "#/components/schemas/AnalyticsCount"
+        totalAdsets:
+          $ref: "#/components/schemas/AnalyticsCount"
+        totalAds:
+          $ref: "#/components/schemas/AnalyticsCount"
+        totalSpend:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        currency:
+          $ref: "#/components/schemas/MarketingNullableText"
+        currencyBreakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketingCurrencyBreakdownItem"
+        totalImpressions:
+          $ref: "#/components/schemas/AnalyticsCount"
+        totalReach:
+          $ref: "#/components/schemas/AnalyticsCount"
+        totalClicks:
+          $ref: "#/components/schemas/AnalyticsCount"
+        totalLinkClicks:
+          $ref: "#/components/schemas/AnalyticsCount"
+        conversations_count:
+          $ref: "#/components/schemas/AnalyticsCount"
+        avgCpl:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        reportedCpl:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        cpql:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        cac:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        ctr:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        cpc:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        cpm:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        responseRate:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        qualificationRate:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        conversionRate:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+        roas:
+          $ref: "#/components/schemas/MarketingNullableMetric"
+    MarketingConnection:
+      type: object
+      additionalProperties: false
+      required:
+        - isConnected
+        - connectedPages
+        - adAccounts
+        - instagramAccounts
+        - marketingTokenAvailable
+        - instagramInsightsAvailable
+        - lastIntegrationSync
+      properties:
+        isConnected:
+          type: boolean
+        connectedPages:
+          $ref: "#/components/schemas/AnalyticsCount"
+        adAccounts:
+          $ref: "#/components/schemas/AnalyticsCount"
+        instagramAccounts:
+          $ref: "#/components/schemas/AnalyticsCount"
+        marketingTokenAvailable:
+          type: boolean
+        instagramInsightsAvailable:
+          type: boolean
+        lastIntegrationSync:
+          type: [string, "null"]
+          format: date-time
+    MarketingDataQuality:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - attribution
+        - qualification
+        - reportedResultsRule
+        - reportedResultsMayOverlap
+        - hasDailyFacts
+        - hasAccountFacts
+        - hasCRMAttribution
+        - hasCRMEvents
+        - hasCRMScopedFilters
+        - coverageFrom
+        - coverageTo
+        - reportTimezone
+        - socialProfileCount
+        - reachAggregation
+        - reachIsUniqueAcrossPeriod
+        - multipleCurrencies
+        - currencyBreakdown
+        - summaryLevel
+        - legacyRowsIgnored
+      properties:
+        model:
+          type: string
+          const: daily_facts_v1
+        attribution:
+          type: string
+          const: last_meta_touch_in_entry_cohort
+        qualification:
+          type: string
+          const: qualified_stage_history
+        reportedResultsRule:
+          type: string
+          const: meta_leads_plus_messaging_conversations_non_unique
+        reportedResultsMayOverlap:
+          type: boolean
+          const: true
+        hasDailyFacts:
+          type: boolean
+        hasAccountFacts:
+          type: boolean
+        hasCRMAttribution:
+          type: boolean
+        hasCRMEvents:
+          type: boolean
+        hasCRMScopedFilters:
+          type: boolean
+        coverageFrom:
+          type: [string, "null"]
+          format: date
+        coverageTo:
+          type: [string, "null"]
+          format: date
+        reportTimezone:
+          type: string
+        socialProfileCount:
+          $ref: "#/components/schemas/AnalyticsCount"
+        reachAggregation:
+          type: string
+          const: sum_of_daily_scope_reach
+        reachIsUniqueAcrossPeriod:
+          type: boolean
+          const: false
+        multipleCurrencies:
+          type: boolean
+        currencyBreakdown:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketingCurrencyBreakdownItem"
+        summaryLevel:
+          type: string
+          enum:
+            - ad
+            - adset
+            - campaign
+            - account_with_campaign_fallback
+            - account
+            - campaign_fallback
+            - adset_fallback
+            - ad_fallback
+        legacyRowsIgnored:
+          $ref: "#/components/schemas/AnalyticsCount"
     DashboardStatsResponse:
       type: object
       required: [data]
@@ -9451,8 +14644,10 @@ components:
         - wonAverageConversionDays
         - wonConversionBuckets
         - wonDeals
+        - wonDealsTruncated
         - lostReasonBuckets
         - lostDeals
+        - lostDealsTruncated
         - avgResponseTime
         - totalSalesValue
         - pendingCommissions
@@ -9498,16 +14693,24 @@ components:
             $ref: "#/components/schemas/WonConversionBucket"
         wonDeals:
           type: array
+          description: Empty unless includeDetails=true; then limited to the 100 most recent won leads.
           items:
             $ref: "#/components/schemas/WonDealDetail"
+        wonDealsTruncated:
+          type: boolean
+          description: True when wonDeals omits one or more leads from the exact closedLeads total.
         lostReasonBuckets:
           type: array
           items:
             $ref: "#/components/schemas/LostReasonBucket"
         lostDeals:
           type: array
+          description: Empty unless includeDetails=true; then limited to the 100 most recent lost leads.
           items:
             $ref: "#/components/schemas/LostDealDetail"
+        lostDealsTruncated:
+          type: boolean
+          description: True when lostDeals omits one or more leads from the exact lostLeads total.
         avgResponseTime:
           type: string
         totalSalesValue:
@@ -9808,7 +15011,8 @@ components:
           type: [string, "null"]
     PipelineBoardStage:
       type: object
-      required: [id, pipeline_id, name, is_qualified, leads, total_lead_count, has_more]
+      required:
+        [id, pipeline_id, name, is_qualified, leads, total_lead_count, has_more]
       additionalProperties: true
       properties:
         id:

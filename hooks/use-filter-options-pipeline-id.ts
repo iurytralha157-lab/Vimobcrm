@@ -5,8 +5,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { usePipelines } from "@/hooks/use-stages";
 
 export function useFilterOptionsPipelineId(selectedPipelineId?: string | null) {
-  const { organization, profile } = useAuth();
-  const activeOrganizationId = organization?.id ?? profile?.organization_id;
+  const { activeOrganization, organization, profile } = useAuth();
+  const activeOrganizationId = activeOrganization.organizationId;
   const [fallbackPipelineId, setFallbackPipelineId] = useState<string | null>(null);
   const { data: pipelines = [] } = usePipelines();
 

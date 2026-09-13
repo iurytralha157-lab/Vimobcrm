@@ -24,6 +24,7 @@ type publicationSource struct {
 	ResponsiblePresent      bool
 	Offers                  []sourceOffer
 	Assets                  []sourceAsset
+	HasAssetPhotos          bool
 	SiteActive              bool
 	SiteModuleActive        bool
 	SitePublicURL           string
@@ -85,7 +86,7 @@ func evaluateSiteReadiness(source publicationSource) ([]Check, int, string) {
 	}
 	compatiblePurpose := hasCompatiblePurpose(property, source.Offers)
 	publicPhoto := len(publicAssetPhotos(source.Assets)) > 0
-	if !hasPropertyAssetPhoto(source.Assets) {
+	if !sourceHasPropertyAssetPhoto(source) {
 		publicPhoto = len(stringSlice(property["fotos"])) > 0 || text(property["imagem_principal"]) != ""
 	}
 
@@ -311,7 +312,7 @@ func buildSnapshotProjection(
 			ServerVerified: strings.TrimSpace(asset.StoragePath) != "",
 		})
 	}
-	if !hasPropertyAssetPhoto(source.Assets) {
+	if !sourceHasPropertyAssetPhoto(source) {
 		for _, legacyURL := range legacyPropertyImages(property) {
 			if seen[legacyURL] {
 				continue
@@ -376,7 +377,7 @@ func sanitizePublicProperty(source map[string]any) map[string]any {
 	allowed := map[string]struct{}{
 		"id": {}, "codigo": {}, "titulo": {}, "descricao": {}, "tipo_imovel": {}, "finalidade": {},
 		"valor_venda": {}, "valor_aluguel": {}, "valor_condominio": {}, "iptu": {}, "iptu_period": {}, "taxa_de_servico": {},
-		"valor_itr": {}, "seguro_incendio": {}, "valor_venda_avaliado": {}, "valor_locacao_avaliado": {},
+		"valor_itr": {}, "seguro_incendio": {},
 		"quartos": {}, "suites": {}, "banheiros": {}, "vagas": {}, "area_total": {}, "area_construida": {},
 		"andar": {}, "bairro": {}, "cidade": {}, "estado": {}, "imagem_principal": {}, "fotos": {},
 		"detalhes_extras": {}, "proximidades": {}, "video_imovel": {}, "tour_virtual": {},
@@ -407,7 +408,7 @@ func sanitizePublicProperty(source map[string]any) map[string]any {
 		delete(result, "bairro")
 	}
 	if visibility == "completo" {
-		for _, key := range []string{"pais", "endereco", "numero", "complemento", "cep", "latitude", "longitude"} {
+		for _, key := range []string{"pais", "endereco", "numero", "complemento", "cep", "latitude", "longitude", "condominio_nome"} {
 			if value, exists := source[key]; exists {
 				result[key] = value
 			}
@@ -594,6 +595,10 @@ func hasPropertyAssetPhoto(assets []sourceAsset) bool {
 	return false
 }
 
+func sourceHasPropertyAssetPhoto(source publicationSource) bool {
+	return source.HasAssetPhotos || hasPropertyAssetPhoto(source.Assets)
+}
+
 func stableMediaURL(baseURL string, publicationID string, version int64, assetID string) string {
 	publicationID, publicationOK := normalizeUUID(publicationID)
 	assetID, assetOK := normalizeUUID(assetID)
@@ -650,8 +655,6 @@ func sitePublicPropertySQL(alias string) string {
 		'taxa_de_servico', ` + alias + `.taxa_de_servico,
 		'valor_itr', ` + alias + `.valor_itr,
 		'seguro_incendio', ` + alias + `.seguro_incendio,
-		'valor_venda_avaliado', ` + alias + `.valor_venda_avaliado,
-		'valor_locacao_avaliado', ` + alias + `.valor_locacao_avaliado,
 		'quartos', ` + alias + `.quartos,
 		'suites', ` + alias + `.suites,
 		'banheiros', ` + alias + `.banheiros,
@@ -669,6 +672,13 @@ func sitePublicPropertySQL(alias string) string {
 		'cep', ` + alias + `.cep,
 		'latitude', ` + alias + `.latitude,
 		'longitude', ` + alias + `.longitude,
+		'condominio_nome', (
+			select nullif(trim(condominium.name), '')
+			from public.property_condominiums as condominium
+			where condominium.organization_id = ` + alias + `.organization_id
+			  and condominium.id = ` + alias + `.condominium_id
+			limit 1
+		),
 		'public_address_visibility', case lower(trim(coalesce(
 			nullif(` + alias + `.address_visibility, ''),
 			nullif(` + alias + `.public_address_visibility, ''),

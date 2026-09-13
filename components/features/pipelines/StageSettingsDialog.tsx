@@ -19,6 +19,7 @@ import { AutomationForm } from '@/components/features/automations/AutomationForm
 import { AutomationsList } from '@/components/features/automations/AutomationsList';
 import { StageOperationalRules } from '@/components/features/cadences';
 import { StageAutomation } from '@/hooks/use-stage-automations';
+import { getStructuredErrorMessage } from '@/lib/api/vimob-error';
 import { StageColorPicker } from './StageColorPicker';
 import { PIPELINE_STAGE_COLOR_FALLBACK } from '@/config/pipeline-stage-colors';
 
@@ -37,17 +38,6 @@ interface StageSettingsDialogProps {
     is_active?: boolean;
   } | null;
   onStageUpdate: () => void;
-}
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (typeof error === 'object' && error !== null) {
-    const payload = error as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown };
-    return [payload.message, payload.details, payload.hint, payload.code]
-      .filter((value): value is string => typeof value === 'string' && value.length > 0)
-      .join(' ') || JSON.stringify(error);
-  }
-  return String(error);
 }
 
 export function StageSettingsDialog({
@@ -103,7 +93,10 @@ export function StageSettingsDialog({
       toast.success('Configurações salvas!');
       onStageUpdate();
     } catch (error: unknown) {
-      toast.error('Erro ao salvar: ' + getErrorMessage(error));
+      toast.error('Erro ao salvar: ' + getStructuredErrorMessage(error, {
+        fields: ['message', 'details', 'hint', 'code'],
+        includeArrays: true,
+      }));
     } finally {
       saveInFlightRef.current = false;
       setIsSaving(false);

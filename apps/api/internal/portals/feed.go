@@ -175,7 +175,7 @@ func buildVRSyncFeed(integration publicIntegration, items []feedListing) ([]byte
 func mapToVRSyncListing(integration publicIntegration, item feedListing) (vrSyncListing, bool) {
 	property := item.Property
 	title := trimMax(firstPropertyText(property, "title", "titulo"), 100)
-	description := firstPropertyText(property, "descricao_site", "status_descritivo", "descricao")
+	description := firstPropertyText(property, "descricao_site", "descricao")
 	if description == "" {
 		description = title
 	}
@@ -280,7 +280,7 @@ func validateFeedListing(integration publicIntegration, item feedListing) []stri
 	if isUnavailablePortalPropertyStatus(status) {
 		errors = append(errors, "Imovel nao esta ativo para publicacao.")
 	}
-	description := firstPropertyText(property, "descricao_site", "status_descritivo", "descricao")
+	description := firstPropertyText(property, "descricao_site", "descricao")
 	if len([]rune(strings.TrimSpace(description))) < 50 || len([]rune(strings.TrimSpace(description))) > 3000 {
 		errors = append(errors, "Descricao precisa ter entre 50 e 3000 caracteres.")
 	}

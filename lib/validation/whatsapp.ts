@@ -88,6 +88,27 @@ export const whatsAppSessionAccessSchema = z.object({
   }).passthrough().optional(),
 }).passthrough()
 
+// Intentionally strict: this is the only session DTO exposed to scoped
+// administrators/leaders. Any accidental provider secret, owner e-mail,
+// organization identifier or conversation field must fail validation.
+export const whatsAppSessionStatusSummarySchema = z.object({
+  id: uuidSchema,
+  display_name: z.string().min(1).max(180),
+  status: z.string().min(1).max(80),
+  phone_number: z.string().max(40).nullable(),
+  profile_name: z.string().max(180).nullable(),
+  last_connected_at: timestampSchema.nullable(),
+  updated_at: timestampSchema,
+  owner: z.object({
+    id: uuidSchema,
+    name: z.string().min(1).max(180),
+  }).strict(),
+  capabilities: z.object({
+    can_manage: z.boolean(),
+    can_set_notification_sender: z.boolean(),
+  }).strict(),
+}).strict()
+
 const whatsAppConversationLeadSchema = z.object({
   id: uuidSchema,
   name: z.string(),
@@ -177,6 +198,13 @@ export const whatsAppSessionsResponseSchema = z.object({
   }).passthrough().optional(),
 }).passthrough()
 
+export const whatsAppSessionStatusesResponseSchema = z.object({
+  data: z.array(whatsAppSessionStatusSummarySchema),
+  meta: z.object({
+    scope: z.enum(['organization', 'team', 'self']),
+  }).strict(),
+}).strict()
+
 export const whatsAppSessionResponseSchema = apiEnvelopeSchema(whatsAppSessionSchema)
 export const whatsAppSessionOperationResponseSchema = z.object({
   session: whatsAppSessionSchema,
@@ -184,6 +212,9 @@ export const whatsAppSessionOperationResponseSchema = z.object({
 }).passthrough()
 export const whatsAppSessionAccessResponseSchema = apiEnvelopeSchema(z.array(whatsAppSessionAccessSchema))
 export const whatsAppConversationsResponseSchema = apiEnvelopeSchema(z.array(whatsAppConversationSchema))
+export const whatsAppUnreadCountResponseSchema = z.object({
+  count: nonNegativeIntegerSchema,
+}).passthrough()
 export const whatsAppConversationResponseSchema = apiEnvelopeSchema(whatsAppConversationSchema)
 export const whatsAppOptionalConversationResponseSchema = apiEnvelopeSchema(whatsAppConversationSchema.nullable())
 const whatsAppMessageCursorSchema = z.string().refine((cursor) => {
@@ -196,6 +227,11 @@ export const whatsAppMessagesPageSchema = z.object({
   nextCursor: whatsAppMessageCursorSchema.nullable(),
 }).passthrough()
 export const whatsAppMessagesResponseSchema = apiEnvelopeSchema(whatsAppMessagesPageSchema)
+export const whatsAppMessageMediaURLResponseSchema = apiEnvelopeSchema(z.object({
+  messageId: uuidSchema,
+  url: z.string().url(),
+  expiresIn: z.number().int().positive(),
+}).passthrough())
 export const whatsAppHistoryResponseSchema = apiEnvelopeSchema(z.object({
   conversation: whatsAppConversationSchema.optional(),
   conversations: z.array(whatsAppConversationSchema).optional(),

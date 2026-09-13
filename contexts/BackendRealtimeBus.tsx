@@ -1,10 +1,22 @@
 "use client";
 
 import { useEffect, useRef, type MutableRefObject } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { connectBackendRealtime, type BackendRealtimeEvent } from "@/lib/api/realtime";
+import {
+  connectBackendRealtime,
+  type BackendRealtimeEvent,
+} from "@/lib/api/realtime";
 import { useAuth } from "@/contexts/AuthContext";
 import { notifyLeadRealtimeChange } from "@/contexts/LeadRealtimeBus";
+import { DEFAULT_AUTHENTICATED_ROUTE } from "@/config/constants";
+import {
+  getTargetedMembershipAccessChange,
+  reconcileMembershipAccessChange,
+  type MembershipAccessChange,
+} from "@/lib/auth/membership-realtime";
+import { getBackendRealtimeResetDelay } from "@/lib/pipeline-reliability";
+import { invalidateScheduleDashboardCaches } from "@/hooks/schedule/invalidate-schedule-dashboard";
 
 const WHATSAPP_MESSAGE_EVENTS = new Set([
   "whatsapp.message.sent",
@@ -31,57 +43,247 @@ const DASHBOARD_REALTIME_QUERY_KEYS = [
   "site-analytics-detailed",
 ] as const;
 
+type AccessRefreshCoordinatorOptions = {
+  isCurrentScope: () => boolean;
+  refresh: () => Promise<unknown>;
+};
+
+type AccessRefreshCoordinator = {
+  request: (onFailure?: () => void) => Promise<void>;
+  dispose: () => void;
+};
+
+export function createCoalescedAccessRefresh({
+  isCurrentScope,
+  refresh,
+}: AccessRefreshCoordinatorOptions): AccessRefreshCoordinator {
+  let active = true;
+  let refreshRequested = false;
+  let inFlight: Promise<void> | null = null;
+  const pendingFailureHandlers = new Set<() => void>();
+
+  const drain = async () => {
+    while (active && isCurrentScope() && refreshRequested) {
+      refreshRequested = false;
+      const failureHandlers = [...pendingFailureHandlers];
+      pendingFailureHandlers.clear();
+
+      try {
+        await refresh();
+      } catch {
+        if (!active || !isCurrentScope()) return;
+        failureHandlers.forEach((handleFailure) => {
+          try {
+            handleFailure();
+          } catch {
+            // A fallback must not stop a pending trailing refresh.
+          }
+        });
+      }
+    }
+  };
+
+  const request = (onFailure?: () => void) => {
+    if (!active || !isCurrentScope()) return Promise.resolve();
+
+    refreshRequested = true;
+    if (onFailure) pendingFailureHandlers.add(onFailure);
+    if (!inFlight) {
+      inFlight = drain().finally(() => {
+        inFlight = null;
+      });
+    }
+
+    return inFlight;
+  };
+
+  return {
+    request,
+    dispose: () => {
+      active = false;
+      refreshRequested = false;
+      pendingFailureHandlers.clear();
+    },
+  };
+}
+
 export function BackendRealtimeBus() {
   const queryClient = useQueryClient();
-  const { profile, refreshProfile } = useAuth();
-  const scheduleDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const router = useRouter();
+  const pathname = usePathname();
+  const { activeOrganization, profile, refreshProfile, refreshOrganizations } =
+    useAuth();
+  const scheduleDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const realtimeResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const realtimeResetDueAtRef = useRef<number | null>(null);
+  const lastRealtimeResetAtRef = useRef<number | null>(null);
   const refreshProfileRef = useRef(refreshProfile);
+  const refreshOrganizationsRef = useRef(refreshOrganizations);
   const queryClientRef = useRef(queryClient);
-  const accessRefreshQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const routerRef = useRef(router);
+  const pathnameRef = useRef(pathname);
+  const accessScopeGenerationRef = useRef(0);
 
   useEffect(() => {
     refreshProfileRef.current = refreshProfile;
   }, [refreshProfile]);
 
   useEffect(() => {
+    refreshOrganizationsRef.current = refreshOrganizations;
+  }, [refreshOrganizations]);
+
+  useEffect(() => {
     queryClientRef.current = queryClient;
   }, [queryClient]);
 
   useEffect(() => {
-    if (!profile?.organization_id) return;
+    routerRef.current = router;
+    pathnameRef.current = pathname;
+  }, [pathname, router]);
 
-    const organizationId = profile.organization_id;
-    const enqueueAccessRefresh = (onFailure?: () => void) => {
-      accessRefreshQueueRef.current = accessRefreshQueueRef.current
-        .catch(() => undefined)
-        .then(() => refreshCurrentUserAccess(refreshProfileRef))
-        .catch(() => {
-          onFailure?.();
+  useEffect(() => {
+    if (!profile?.id || !activeOrganization.organizationId) return;
+
+    const organizationId = activeOrganization.organizationId;
+    const userId = profile.id;
+    const scopeGeneration = ++accessScopeGenerationRef.current;
+    const isCurrentScope = () =>
+      accessScopeGenerationRef.current === scopeGeneration;
+    const accessRefresh = createCoalescedAccessRefresh({
+      isCurrentScope,
+      refresh: () => refreshCurrentUserAccess(refreshProfileRef),
+    });
+    const requestAccessRefresh = (onFailure?: () => void) => {
+      void accessRefresh.request(onFailure);
+    };
+    const redirectToOrganizationSelection = () => {
+      if (!isCurrentScope()) return;
+
+      const params = new URLSearchParams({
+        redirectTo: pathnameRef.current || DEFAULT_AUTHENTICATED_ROUTE,
+      });
+      routerRef.current.replace(`/select-organization?${params.toString()}`);
+    };
+    const invalidateOrganizations = async () => {
+      if (!isCurrentScope()) return;
+      await queryClientRef.current.invalidateQueries({
+        queryKey: ["user-organizations", userId],
+        refetchType: "active",
+      });
+    };
+    const refreshOrganizationsForCurrentScope = async () => {
+      if (!isCurrentScope()) return;
+      await refreshOrganizationsRef.current();
+    };
+    const handleMembershipAccessRefresh = (change: MembershipAccessChange) => {
+      if (!isCurrentScope()) return;
+
+      if (change.revoked) {
+        // Access revocation is safety-critical: leave this tenant before any
+        // previously running profile refresh can delay the navigation.
+        redirectToOrganizationSelection();
+        void Promise.allSettled([
+          invalidateOrganizations(),
+          refreshOrganizationsForCurrentScope(),
+        ]);
+        return;
+      }
+
+      void reconcileMembershipAccessChange(change, {
+        invalidateOrganizations,
+        refreshOrganizations: refreshOrganizationsForCurrentScope,
+        refreshAccess: () => accessRefresh.request(),
+        redirectToOrganizationSelection,
+      }).catch(() => undefined);
+    };
+    const scheduleRealtimeReset = () => {
+      const nowMs = Date.now();
+      const delayMs = getBackendRealtimeResetDelay(
+        nowMs,
+        lastRealtimeResetAtRef.current,
+      );
+      const dueAtMs = nowMs + delayMs;
+
+      // Keep the earliest pending reconciliation. Repeated reset notices often
+      // describe the same replay gap and must not fan out into request storms.
+      if (
+        realtimeResetRef.current &&
+        realtimeResetDueAtRef.current !== null &&
+        realtimeResetDueAtRef.current <= dueAtMs
+      ) {
+        return;
+      }
+      if (realtimeResetRef.current) clearTimeout(realtimeResetRef.current);
+
+      realtimeResetDueAtRef.current = dueAtMs;
+      realtimeResetRef.current = setTimeout(() => {
+        realtimeResetRef.current = null;
+        realtimeResetDueAtRef.current = null;
+        lastRealtimeResetAtRef.current = Date.now();
+
+        requestAccessRefresh();
+        const activeQueryClient = queryClientRef.current;
+        void activeQueryClient.invalidateQueries(
+          {
+            predicate: (query) => query.queryKey[0] !== "stages-with-leads",
+            refetchType: "active",
+          },
+          { cancelRefetch: false },
+        );
+        notifyLeadRealtimeChange({
+          organizationId,
+          reason: "realtime.reset",
         });
+      }, delayMs);
     };
 
     const disconnect = connectBackendRealtime({
       organizationId,
       onEvent: (event) => {
         const activeQueryClient = queryClientRef.current;
-        if (event.organizationId !== organizationId) return;
+        if (!isCurrentScope() || event.organizationId !== organizationId)
+          return;
         if (event.type === "realtime.connected") {
-          enqueueAccessRefresh();
+          requestAccessRefresh();
           return;
         }
         if (event.type === "realtime.ping") return;
         if (event.type === "realtime.reset") {
-          enqueueAccessRefresh();
-          void activeQueryClient.invalidateQueries({ refetchType: "active" });
+          scheduleRealtimeReset();
+          return;
+        }
+
+        if (event.type === "organization.users.changed") {
+          void activeQueryClient.invalidateQueries({
+            queryKey: ["organization-users", organizationId],
+            refetchType: "active",
+          });
+          void activeQueryClient.invalidateQueries({
+            queryKey: ["invitations", organizationId],
+            refetchType: "active",
+          });
+          return;
+        }
+
+        const membershipChange = getTargetedMembershipAccessChange(
+          event,
+          userId,
+          organizationId,
+        );
+        if (membershipChange) {
+          handleMembershipAccessRefresh(membershipChange);
           return;
         }
 
         if (event.type === "access.permissions.changed") {
-          const targetUserId = getString(event.data, "targetUserId") || event.userId;
-          if (targetUserId === profile.id) {
-            enqueueAccessRefresh(() => {
+          const targetUserId =
+            getString(event.data, "targetUserId") || event.userId;
+          if (targetUserId === userId) {
+            requestAccessRefresh(() => {
               void queryClientRef.current.invalidateQueries({
-                queryKey: ["user-permissions", profile.id, organizationId],
+                queryKey: ["user-permissions", userId, organizationId],
                 refetchType: "active",
               });
             });
@@ -110,15 +312,19 @@ export function BackendRealtimeBus() {
         }
 
         if (event.type.startsWith("webhook.")) {
-          void activeQueryClient.invalidateQueries({ queryKey: ["webhooks"], refetchType: "active" });
+          void activeQueryClient.invalidateQueries({
+            queryKey: ["webhooks"],
+            refetchType: "active",
+          });
           return;
         }
 
         if (event.type.startsWith("notification.")) {
-          const targetUserId = getString(event.data, "targetUserId")
-            || getString(event.data, "userId")
-            || event.userId;
-          if (targetUserId && targetUserId !== profile.id) return;
+          const targetUserId =
+            getString(event.data, "targetUserId") ||
+            getString(event.data, "userId") ||
+            event.userId;
+          if (targetUserId && targetUserId !== userId) return;
 
           invalidateNotificationQueries(activeQueryClient);
           return;
@@ -130,19 +336,29 @@ export function BackendRealtimeBus() {
     });
 
     return () => {
+      if (accessScopeGenerationRef.current === scopeGeneration) {
+        accessScopeGenerationRef.current += 1;
+      }
+      accessRefresh.dispose();
       if (scheduleDebounceRef.current) {
         clearTimeout(scheduleDebounceRef.current);
         scheduleDebounceRef.current = null;
       }
+      if (realtimeResetRef.current) {
+        clearTimeout(realtimeResetRef.current);
+        realtimeResetRef.current = null;
+      }
+      realtimeResetDueAtRef.current = null;
+      lastRealtimeResetAtRef.current = null;
       disconnect();
     };
-  }, [profile?.id, profile?.organization_id]);
+  }, [profile?.id, activeOrganization.organizationId]);
 
   return null;
 }
 
 async function refreshCurrentUserAccess(
-  refreshProfileRef: MutableRefObject<() => Promise<void>>,
+  refreshProfileRef: MutableRefObject<() => Promise<unknown>>,
 ) {
   await refreshProfileRef.current();
 }
@@ -163,7 +379,11 @@ function handleScheduleEvent(
   if (debounceRef.current) clearTimeout(debounceRef.current);
 
   debounceRef.current = setTimeout(() => {
-    void queryClient.invalidateQueries({ queryKey: ["schedule-events"], refetchType: "active" });
+    void queryClient.invalidateQueries({
+      queryKey: ["schedule-events"],
+      refetchType: "active",
+    });
+    invalidateScheduleDashboardCaches(queryClient);
     invalidateDashboardRealtimeQueries(queryClient);
 
     const eventId = getString(event.data, "eventId");
@@ -191,7 +411,10 @@ function handleScheduleEvent(
   }, 150);
 }
 
-function handleWhatsAppEvent(event: BackendRealtimeEvent, queryClient: QueryClient) {
+function handleWhatsAppEvent(
+  event: BackendRealtimeEvent,
+  queryClient: QueryClient,
+) {
   const conversationId = getString(event.data, "conversationId");
   const sessionId = getString(event.data, "sessionId");
   const leadId = getString(event.data, "leadId");
@@ -202,14 +425,21 @@ function handleWhatsAppEvent(event: BackendRealtimeEvent, queryClient: QueryClie
         detail: {
           conversation_id: conversationId,
           lead_id: leadId || null,
-          id: getString(event.data, "messageId") || getString(event.data, "clientMessageId"),
+          organization_id: event.organizationId,
+          id:
+            getString(event.data, "messageId") ||
+            getString(event.data, "clientMessageId"),
         },
       }),
     );
   } else {
     window.dispatchEvent(
       new CustomEvent("vimob:whatsapp-conversation-change", {
-        detail: { conversation_id: conversationId, lead_id: leadId || null },
+        detail: {
+          conversation_id: conversationId,
+          lead_id: leadId || null,
+          organization_id: event.organizationId,
+        },
       }),
     );
   }
@@ -223,25 +453,52 @@ function handleWhatsAppEvent(event: BackendRealtimeEvent, queryClient: QueryClie
   }
 
   if (event.type.startsWith("whatsapp.session")) {
-    void queryClient.invalidateQueries({ queryKey: ["whatsapp-sessions"], refetchType: "active" });
-    void queryClient.invalidateQueries({ queryKey: ["accessible-sessions"], refetchType: "active" });
+    void queryClient.invalidateQueries({
+      queryKey: ["whatsapp-sessions"],
+      refetchType: "active",
+    });
+    void queryClient.invalidateQueries({
+      queryKey: ["accessible-sessions"],
+      refetchType: "active",
+    });
   }
 
   if (event.type === "whatsapp.session_access.changed") {
-    void queryClient.invalidateQueries({ queryKey: ["whatsapp-session-access"], refetchType: "active" });
+    void queryClient.invalidateQueries({
+      queryKey: ["whatsapp-session-access"],
+      refetchType: "active",
+    });
   }
 
   if (event.type.startsWith("whatsapp.template")) {
-    void queryClient.invalidateQueries({ queryKey: ["message-templates"], refetchType: "active" });
+    void queryClient.invalidateQueries({
+      queryKey: ["message-templates"],
+      refetchType: "active",
+    });
   }
 
-  if (event.type.startsWith("whatsapp.labels") || event.type === "whatsapp.groups.synced") {
+  if (
+    event.type.startsWith("whatsapp.labels") ||
+    event.type === "whatsapp.groups.synced"
+  ) {
     if (sessionId) {
-      void queryClient.invalidateQueries({ queryKey: ["whatsapp-labels", sessionId], refetchType: "active" });
-      void queryClient.invalidateQueries({ queryKey: ["whatsapp-groups", sessionId], refetchType: "active" });
+      void queryClient.invalidateQueries({
+        queryKey: ["whatsapp-labels", sessionId],
+        refetchType: "active",
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["whatsapp-groups", sessionId],
+        refetchType: "active",
+      });
     } else {
-      void queryClient.invalidateQueries({ queryKey: ["whatsapp-labels"], refetchType: "active" });
-      void queryClient.invalidateQueries({ queryKey: ["whatsapp-groups"], refetchType: "active" });
+      void queryClient.invalidateQueries({
+        queryKey: ["whatsapp-labels"],
+        refetchType: "active",
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["whatsapp-groups"],
+        refetchType: "active",
+      });
     }
     if (conversationId) {
       void queryClient.invalidateQueries({
@@ -253,8 +510,14 @@ function handleWhatsAppEvent(event: BackendRealtimeEvent, queryClient: QueryClie
 }
 
 function invalidateNotificationQueries(queryClient: QueryClient) {
-  void queryClient.invalidateQueries({ queryKey: ["notifications"], refetchType: "active" });
-  void queryClient.invalidateQueries({ queryKey: ["unread-notifications-count"], refetchType: "active" });
+  void queryClient.invalidateQueries({
+    queryKey: ["notifications"],
+    refetchType: "active",
+  });
+  void queryClient.invalidateQueries({
+    queryKey: ["unread-notifications-count"],
+    refetchType: "active",
+  });
 }
 
 function invalidateDashboardRealtimeQueries(queryClient: QueryClient) {

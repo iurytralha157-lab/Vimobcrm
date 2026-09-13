@@ -272,7 +272,7 @@ func (repo Repository) PublicOnboardingSignup(ctx context.Context, request Onboa
 			$4,
 			$5,
 			$12,
-			$3,
+			$14,
 			$5,
 			$4,
 			case when $7 = 'trial' then $6::uuid else null end,
@@ -291,7 +291,7 @@ func (repo Repository) PublicOnboardingSignup(ctx context.Context, request Onboa
 	`,
 		companyName,
 		organizationSlug,
-		nullableText(onlyDigitsAdmin(request.DocumentNumber)),
+		nullableText(onboardingOrganizationCNPJ(canonicalDocument)),
 		nullableText(fullPhone),
 		email,
 		stringValue(plan["id"]),
@@ -302,6 +302,7 @@ func (repo Repository) PublicOnboardingSignup(ctx context.Context, request Onboa
 		createdUserID,
 		billingLegalName,
 		request.AttemptID,
+		nullableText(canonicalDocument),
 	).Scan(&createdOrganizationID)
 	if err != nil {
 		return nil, err
@@ -343,7 +344,7 @@ func (repo Repository) PublicOnboardingSignup(ctx context.Context, request Onboa
 			whatsapp = excluded.whatsapp,
 			cpf = excluded.cpf,
 			updated_at = now()
-	`, createdUserID, createdOrganizationID, adminName, email, nullableText(fullPhone), nullableText(onlyDigitsAdmin(request.DocumentNumber))); err != nil {
+	`, createdUserID, createdOrganizationID, adminName, email, nullableText(fullPhone), nullableText(request.AdminCPF)); err != nil {
 		return nil, err
 	}
 

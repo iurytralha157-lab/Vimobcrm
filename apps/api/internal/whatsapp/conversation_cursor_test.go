@@ -74,3 +74,13 @@ func TestConversationListFilterRejectsInvalidCursorAndConflictingLeadFilters(t *
 		t.Fatal("ParseConversationListFilter() expected conflicting filters error")
 	}
 }
+
+func TestConversationListFilterTreatsExplicitEmptySessionSetAsFailClosed(t *testing.T) {
+	filter, err := ParseConversationListFilter(url.Values{"sessionIds": {""}})
+	if err != nil {
+		t.Fatalf("ParseConversationListFilter() error = %v", err)
+	}
+	if !filter.AccessibleProvided || len(filter.SessionIDs) != 0 {
+		t.Fatalf("explicit empty session scope = %#v", filter)
+	}
+}

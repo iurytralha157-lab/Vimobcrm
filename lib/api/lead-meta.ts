@@ -1,5 +1,5 @@
 import { vimobAPIRequest } from './vimob-client'
-import type { Json } from '@/integrations/supabase/types'
+import type { Json } from '@/lib/supabase/types'
 import { apiLeadMetaResponseSchema, entityIdSchema, parseDomainInput, validateDomainResponse } from '@/lib/validation'
 
 export interface LeadMeta {

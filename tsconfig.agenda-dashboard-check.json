@@ -1,0 +1,24 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false,
+    "noEmit": true,
+    "plugins": []
+  },
+  "include": [
+    "next-env.d.ts",
+    "components/features/schedule/dashboard/**/*.ts",
+    "components/features/schedule/dashboard/**/*.tsx",
+    "hooks/schedule/use-schedule-dashboard.ts",
+    "hooks/schedule/use-schedule-dashboard-events.ts",
+    "lib/api/schedule-dashboard.ts",
+    "lib/validation/schedule-dashboard.ts",
+    "lib/validation/schedule-dashboard.test.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    ".next*/**/*",
+    ".validation-tests/**/*",
+    "supabase/functions"
+  ]
+}

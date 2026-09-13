@@ -9,10 +9,12 @@ import { ROUTES } from "@/config/constants";
 import { useToast } from "@/hooks/use-toast";
 import { usePasswordStrength, type PasswordStrength } from "@/hooks/use-password-strength";
 import { VimobLoader } from "@/components/shared/loading";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase/client";
 import { getFriendlyErrorMessage } from "@/lib/error-handler";
 import { settingsAPI } from "@/lib/api/settings";
 import { setVimobAPIAccessToken } from "@/lib/api/vimob-client";
+import { PASSWORD_POLICY, strongPasswordSchema } from "@/lib/validation/password";
+import { runBestEffortAuthOperation } from "@/lib/auth/frontend-auth-reliability";
 import {
   capturePasswordRecoveryIntent,
   clearPasswordRecoveryEvidence,
@@ -24,6 +26,10 @@ import {
 } from "@/lib/auth/password-recovery";
 
 type RecoveryState = "checking" | "ready" | "invalid" | "success";
+
+const RECOVERY_SIGN_OUT_WAIT_MS = 2_000;
+const RECOVERY_LOCAL_SIGN_OUT_WAIT_MS = 750;
+const RECOVERY_SUCCESS_MESSAGE_WAIT_MS = 1_600;
 
 const STRENGTH_COLORS: Record<PasswordStrength["level"], string> = {
   "very-weak": "bg-red-500",
@@ -43,7 +49,7 @@ const STRENGTH_LABELS: Record<PasswordStrength["level"], string> = {
 
 const resetSchema = z
   .object({
-    password: z.string().min(8, "Senha deve ter pelo menos 8 caracteres"),
+    password: strongPasswordSchema,
     confirmPassword: z.string(),
   })
   .refine((data) => data.password === data.confirmPassword, {
@@ -69,21 +75,61 @@ function getRecoveryExitPath(next: string | null) {
   return next === ROUTES.SIGNUP ? ROUTES.SIGNUP : ROUTES.LOGIN;
 }
 
+function waitFor(milliseconds: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, milliseconds);
+  });
+}
+
+async function signOutPasswordRecoverySession(
+  scope: "global" | "local",
+  timeoutMs: number,
+) {
+  return runBestEffortAuthOperation(async () => {
+    const { error } = await supabase.auth.signOut({ scope });
+    if (error) throw error;
+  }, timeoutMs);
+}
+
 async function leavePasswordRecovery(destination: string) {
   if (typeof window === "undefined") return;
 
   clearPasswordRecoveryEvidence(window.sessionStorage);
   setVimobAPIAccessToken(null, null);
+  cleanRecoveryUrl();
 
   try {
-    const { data } = await supabase.auth.getSession();
-    if (isPasswordRecoveryAccessToken(data.session?.access_token)) {
-      await supabase.auth.signOut({ scope: "local" });
-    }
+    await runBestEffortAuthOperation(async () => {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) throw error;
+      if (isPasswordRecoveryAccessToken(data.session?.access_token)) {
+        const { error: signOutError } = await supabase.auth.signOut({ scope: "local" });
+        if (signOutError) throw signOutError;
+      }
+    }, RECOVERY_SIGN_OUT_WAIT_MS);
   } finally {
     window.location.replace(destination);
   }
 }
+
+async function finishPasswordRecovery() {
+  if (typeof window === "undefined") return;
+
+  try {
+    const [globalSignOutStatus] = await Promise.all([
+      signOutPasswordRecoverySession("global", RECOVERY_SIGN_OUT_WAIT_MS),
+      waitFor(RECOVERY_SUCCESS_MESSAGE_WAIT_MS),
+    ]);
+
+    if (globalSignOutStatus !== "completed") {
+      await signOutPasswordRecoverySession("local", RECOVERY_LOCAL_SIGN_OUT_WAIT_MS);
+    }
+  } finally {
+    setVimobAPIAccessToken(null, null);
+    window.location.replace(`${ROUTES.LOGIN}?passwordReset=success`);
+  }
+}
+
 function passwordErrorMessage(error: unknown) {
   return getFriendlyErrorMessage(error);
 }
@@ -130,6 +176,8 @@ export default function ResetPasswordScreen() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [emailNotificationSent, setEmailNotificationSent] = useState<boolean | null>(null);
   const recoveryUserIdRef = useRef<string | null>(null);
+  const recoveryHeadingRef = useRef<HTMLHeadingElement>(null);
+  const successHeadingRef = useRef<HTMLHeadingElement>(null);
 
   const passwordStrength = usePasswordStrength(password);
   const passwordMismatch = Boolean(confirmPassword && password !== confirmPassword);
@@ -143,6 +191,25 @@ export default function ResetPasswordScreen() {
       password !== confirmPassword,
     [confirmPassword, loading, password, passwordStrength.isValid],
   );
+
+  const recoveryAnnouncement = recoveryState === "checking"
+    ? "Validando o link de recuperação."
+    : recoveryState === "ready"
+      ? "Link validado. Defina sua nova senha."
+      : recoveryState === "invalid"
+        ? validationMessage || "Não foi possível validar o link de recuperação."
+        : "Senha alterada com sucesso. Redirecionando para o login.";
+
+  useEffect(() => {
+    const animationFrame = window.requestAnimationFrame(() => {
+      const heading = recoveryState === "success"
+        ? successHeadingRef.current
+        : recoveryHeadingRef.current;
+      heading?.focus();
+    });
+
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [recoveryState]);
 
   useEffect(() => {
     let mounted = true;
@@ -208,12 +275,16 @@ export default function ResetPasswordScreen() {
       const evidence = readPasswordRecoveryUrlEvidence(recoveryUrl);
       capturePasswordRecoveryIntent(window.sessionStorage, recoveryUrl);
       const hashParams = readRecoveryHash();
-      const hashError = hashParams?.get("error_description") || hashParams?.get("error");
+      const hasExternalAuthError = Boolean(
+        hashParams?.has("error_description") || hashParams?.has("error"),
+      );
 
-      if (hashError) {
+      if (hasExternalAuthError) {
         clearPasswordRecoveryEvidence(window.sessionStorage);
         cleanRecoveryUrl();
-        markInvalid(hashError);
+        markInvalid(
+          "Este link de recuperação expirou ou não é válido. Solicite um novo link para redefinir sua senha.",
+        );
         return;
       }
 
@@ -338,7 +409,7 @@ export default function ResetPasswordScreen() {
           variant: "destructive",
         });
         if (isPasswordRecoveryAccessToken(sessionData.session?.access_token)) {
-          void supabase.auth.signOut({ scope: "local" });
+          void signOutPasswordRecoverySession("local", RECOVERY_LOCAL_SIGN_OUT_WAIT_MS);
         }
         return;
       }
@@ -376,24 +447,7 @@ export default function ResetPasswordScreen() {
             : "A senha foi alterada, mas não conseguimos confirmar o envio do aviso por e-mail.",
       });
 
-      try {
-        const { error: globalSignOutError } = await supabase.auth.signOut({ scope: "global" });
-        if (globalSignOutError) {
-          console.error("Error revoking sessions after password reset:", globalSignOutError);
-          await supabase.auth.signOut({ scope: "local" });
-        }
-      } catch (signOutError) {
-        console.error("Error signing out after password reset:", signOutError);
-        try {
-          await supabase.auth.signOut({ scope: "local" });
-        } catch (localSignOutError) {
-          console.error("Error clearing the local recovery session:", localSignOutError);
-        }
-      } finally {
-        setVimobAPIAccessToken(null, null);
-      }
-
-      setTimeout(() => window.location.replace(`${ROUTES.LOGIN}?passwordReset=success`), 1600);
+      await finishPasswordRecovery();
     } catch (error) {
       const message = passwordErrorMessage(error);
       toast({
@@ -409,10 +463,23 @@ export default function ResetPasswordScreen() {
 
   return (
     <div className="w-full max-w-[400px]">
+      <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {recoveryAnnouncement}
+      </p>
+
       {recoveryState !== "success" ? (
         <header className="mb-8 text-left lg:mb-10">
-          <h1 className="text-[20px] font-normal text-[var(--app-text-primary)]">
-            {recoveryState === "ready" ? "Defina sua nova senha" : "Recuperar senha"}
+          <h1
+            id="password-recovery-heading"
+            ref={recoveryHeadingRef}
+            tabIndex={-1}
+            className="text-[20px] font-normal text-[var(--app-text-primary)] focus:outline-none"
+          >
+            {recoveryState === "ready"
+              ? "Defina sua nova senha"
+              : recoveryState === "invalid"
+                ? "Link inválido ou expirado"
+                : "Recuperar senha"}
           </h1>
           <p className="mt-1.5 text-[12px] font-light text-[var(--app-text-tertiary)]">
             {recoveryState === "ready" ? "Defina sua nova senha de acesso" : "Recuperação de senha"}
@@ -421,13 +488,16 @@ export default function ResetPasswordScreen() {
       ) : null}
 
       {recoveryState === "checking" ? (
-        <div className="flex min-h-[260px] items-center justify-center">
+        <div
+          className="flex min-h-[260px] items-center justify-center"
+          aria-labelledby="password-recovery-heading"
+        >
           <VimobLoader size="lg" label="Validando acesso..." />
         </div>
       ) : null}
 
       {recoveryState === "invalid" ? (
-        <div className="space-y-6">
+        <div className="space-y-6" aria-labelledby="password-recovery-heading">
           <div className="rounded-[6px] bg-primary/10 p-4 text-[var(--app-text-primary)]">
             <div className="flex items-start gap-3">
               <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
@@ -452,13 +522,21 @@ export default function ResetPasswordScreen() {
       ) : null}
 
       {recoveryState === "success" ? (
-        <div className="space-y-6 text-center">
+        <div
+          className="space-y-6 text-center"
+          aria-labelledby="password-recovery-success-heading"
+        >
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[6px] bg-primary/60 text-white">
             <Check className="h-6 w-6" />
           </div>
 
           <div className="space-y-3">
-            <h1 className="text-[20px] font-normal text-[var(--app-text-primary)]">
+            <h1
+              id="password-recovery-success-heading"
+              ref={successHeadingRef}
+              tabIndex={-1}
+              className="text-[20px] font-normal text-[var(--app-text-primary)] focus:outline-none"
+            >
               Senha alterada com sucesso
             </h1>
             <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
@@ -487,7 +565,13 @@ export default function ResetPasswordScreen() {
       ) : null}
 
       {recoveryState === "ready" ? (
-        <form method="post" onSubmit={handleSubmit} className="space-y-5" aria-busy={loading}>
+        <form
+          method="post"
+          onSubmit={handleSubmit}
+          className="space-y-5"
+          aria-busy={loading}
+          aria-labelledby="password-recovery-heading"
+        >
           <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
             Escolha uma senha forte e diferente das que você usa em outros serviços.
           </p>
@@ -512,9 +596,14 @@ export default function ResetPasswordScreen() {
                 onChange={(event) => setPassword(event.target.value)}
                 required
                 disabled={loading}
-                placeholder="Mínimo 8 caracteres"
+                minLength={PASSWORD_POLICY.minLength}
+                maxLength={PASSWORD_POLICY.maxLength}
+                placeholder={`Mínimo ${PASSWORD_POLICY.minLength} caracteres`}
                 aria-invalid={Boolean(errors.password)}
-                aria-describedby={errors.password ? "password-error" : undefined}
+                aria-describedby={[
+                  "password-requirements",
+                  errors.password ? "password-error" : null,
+                ].filter(Boolean).join(" ")}
                 className="auth-login-field h-12 w-full rounded-[6px] border-0 bg-[var(--app-surface-solid)] px-4 pl-11 pr-12 text-base text-[var(--app-text-primary)] shadow-none outline-none ring-0 transition-colors placeholder:text-[var(--app-text-secondary)] focus:bg-[var(--app-surface-solid)] focus:ring-1 focus:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-60 sm:text-sm"
               />
               <button
@@ -529,7 +618,7 @@ export default function ResetPasswordScreen() {
             </div>
 
             {password ? (
-              <div className="space-y-2">
+              <div id="password-requirements" className="space-y-2">
                 <div className="flex gap-1">
                   {[1, 2, 3, 4, 5].map((item) => (
                     <div
@@ -589,6 +678,8 @@ export default function ResetPasswordScreen() {
                 onChange={(event) => setConfirmPassword(event.target.value)}
                 required
                 disabled={loading}
+                minLength={PASSWORD_POLICY.minLength}
+                maxLength={PASSWORD_POLICY.maxLength}
                 placeholder="Repita a senha"
                 aria-invalid={Boolean(errors.confirmPassword || passwordMismatch)}
                 aria-describedby={

@@ -45,6 +45,7 @@ import { canManageOrganization } from "@/lib/access/organization";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { getCloudflareWorkerCode } from "@/lib/site/cloudflare-worker";
 import { getSitePublicUrl } from "@/lib/site/site-publication";
+import { getOptionalErrorObjectMessage as getErrorMessage } from "@/lib/api/vimob-error";
 import {
   SITE_THEME_COLOR_DEFAULTS,
   SITE_THEME_COLOR_PRESETS,
@@ -121,6 +122,15 @@ type ExtendedOrganizationSite = OrganizationSite & {
 
 type OrganizationSiteSaveData = Partial<ExtendedOrganizationSite>;
 
+function omitGoogleIntegrationFields(
+  formData: SiteFormData,
+): Omit<SiteFormData, 'google_analytics_id' | 'gtm_id'> {
+  const editableFields = { ...formData };
+  delete (editableFields as Partial<SiteFormData>).google_analytics_id;
+  delete (editableFields as Partial<SiteFormData>).gtm_id;
+  return editableFields;
+}
+
 const siteSections = [
   {
     value: 'general',
@@ -178,19 +188,10 @@ function normalizeGeneralView(value: string | null) {
   return value === 'domain-guide' ? 'domain-guide' : 'dashboard';
 }
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "object" && error && "message" in error) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === "string") return message;
-  }
-  return "";
-}
-
 export default function SiteSettings() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { profile, isSuperAdmin, organization, userOrganizations } = useAuth();
+  const { activeOrganization, isSuperAdmin, userOrganizations } = useAuth();
   const { hasPermission } = useUserPermissions();
   const {
     data: site,
@@ -200,7 +201,7 @@ export default function SiteSettings() {
   } = useOrganizationSite();
   const createSite = useCreateOrganizationSite();
   const updateSite = useUpdateOrganizationSite();
-  const activeOrganizationId = organization?.id || profile?.organization_id;
+  const activeOrganizationId = activeOrganization.organizationId;
   const activeMemberRole = userOrganizations.find((org) => org.organization_id === activeOrganizationId)?.member_role;
   const isAdmin =
     canManageOrganization({ isSuperAdmin, memberRole: activeMemberRole }) ||
@@ -358,11 +359,11 @@ export default function SiteSettings() {
     setIsSaving(true);
     try {
       // Convert empty strings to null for unique-constrained fields
+      const editableFormData = omitGoogleIntegrationFields(formData);
       const dataToSave: OrganizationSiteSaveData = {
-        ...formData,
+        ...editableFormData,
         subdomain: formData.subdomain?.trim() || null,
         custom_domain: formData.custom_domain?.trim() || null,
-        gtm_id: formData.gtm_id?.trim() || null,
         meta_pixel_id: formData.meta_pixel_id?.trim() || null,
         google_ads_id: formData.google_ads_id?.trim() || null,
         head_scripts: formData.head_scripts?.trim() || null,
@@ -380,8 +381,11 @@ export default function SiteSettings() {
       const errMsg = getErrorMessage(error);
       if (errMsg.includes('head_scripts') || errMsg.includes('body_scripts') || errMsg.includes('column')) {
         try {
-          const rest: Omit<SiteFormData, 'head_scripts' | 'body_scripts'> = {
-            ...formData,
+          const rest: Omit<
+            SiteFormData,
+            'google_analytics_id' | 'gtm_id' | 'head_scripts' | 'body_scripts'
+          > = {
+            ...omitGoogleIntegrationFields(formData),
           };
           delete (rest as Partial<SiteFormData>).head_scripts;
           delete (rest as Partial<SiteFormData>).body_scripts;
@@ -389,7 +393,6 @@ export default function SiteSettings() {
             ...rest,
             subdomain: formData.subdomain?.trim() || null,
             custom_domain: formData.custom_domain?.trim() || null,
-            gtm_id: formData.gtm_id?.trim() || null,
             meta_pixel_id: formData.meta_pixel_id?.trim() || null,
             google_ads_id: formData.google_ads_id?.trim() || null,
           };
@@ -1145,25 +1148,40 @@ export default function SiteSettings() {
 
                   <div className="app-card-soft border-0 p-4">
                     <h3 className="mb-4 text-sm font-medium">Rastreamento</h3>
+                    <div className="mb-4 grid gap-3 lg:grid-cols-3">
+                      {[
+                        {
+                          detail: formData.google_analytics_id || 'Não configurado',
+                          integration: 'google-analytics',
+                          title: 'Google Analytics',
+                        },
+                        {
+                          detail: formData.gtm_id || 'Não configurado',
+                          integration: 'google-tag-manager',
+                          title: 'Google Tag Manager',
+                        },
+                        {
+                          detail: 'Verificação e instruções',
+                          integration: 'google-search-console',
+                          title: 'Google Search Console',
+                        },
+                      ].map((item) => (
+                        <div className="rounded-[8px] bg-[var(--app-surface-solid)] p-3" key={item.integration}>
+                          <p className="text-xs font-medium">{item.title}</p>
+                          <p className="mt-1 truncate text-xs text-muted-foreground">{item.detail}</p>
+                          <Button
+                            className="mt-3 w-full"
+                            onClick={() => router.push(`/settings?tab=integrations&integration=${item.integration}`)}
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                          >
+                            Abrir integração
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
                     <div className="grid gap-4 lg:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label>Google Analytics ID</Label>
-                        <Input
-                          placeholder="G-XXXXXXXXXX"
-                          value={formData.google_analytics_id}
-                          onChange={(e) => setFormData({ ...formData, google_analytics_id: e.target.value })}
-                          disabled={!isAdmin}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Google Tag Manager (GTM) ID</Label>
-                        <Input
-                          placeholder="GTM-XXXXXXXX"
-                          value={formData.gtm_id}
-                          onChange={(e) => setFormData({ ...formData, gtm_id: e.target.value })}
-                          disabled={!isAdmin}
-                        />
-                      </div>
                       <div className="space-y-2">
                         <Label>Meta Pixel ID</Label>
                         <Input

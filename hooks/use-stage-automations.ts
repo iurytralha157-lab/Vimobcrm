@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { stageConfigAPI, type StageAutomationRow } from "@/lib/api/stage-config";
+import { getStructuredErrorMessage } from "@/lib/api/vimob-error";
 import {
   getTenantEnabledModules,
   getTenantPermissions,
@@ -62,17 +63,6 @@ function asNumber(value: unknown) {
   return null;
 }
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (isRecord(error)) {
-    const message = asString(error.message);
-    const details = asString(error.details);
-    const hint = asString(error.hint);
-    return [message, details, hint].filter(Boolean).join(" ") || JSON.stringify(error);
-  }
-  return String(error);
-}
-
 function normalizeAutomation(row: StageAutomationRow): StageAutomation {
   const config = isRecord(row.config) ? row.config : {};
   const actionConfig = isRecord(config.action_config) ? config.action_config : config;
@@ -98,8 +88,8 @@ function normalizeAutomation(row: StageAutomationRow): StageAutomation {
 }
 
 export function useStageAutomations(stageId?: string) {
-  const { organization, profile, tenantContext } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization, tenantContext } = useAuth();
+  const organizationId = activeOrganization.organizationId;
   const hasCurrentTenantContext = isTenantContextForOrganization(organizationId, tenantContext);
   const enabledModules = hasCurrentTenantContext && tenantContext
     ? getTenantEnabledModules(tenantContext)
@@ -129,12 +119,12 @@ export function useStageAutomations(stageId?: string) {
 
 export function useCreateStageAutomation() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: async (data: CreateAutomationData) => {
-      if (!profile?.organization_id) throw new Error("Organização não encontrada");
-      const result = await stageConfigAPI.createStageAutomation(data, profile.organization_id);
+      if (!activeOrganization.organizationId) throw new Error("Organização não encontrada");
+      const result = await stageConfigAPI.createStageAutomation(data, activeOrganization.organizationId);
       return normalizeAutomation(result);
     },
     onSuccess: (_, variables) => {
@@ -144,18 +134,18 @@ export function useCreateStageAutomation() {
     },
     onError: (error) => {
       console.error("Error creating automation:", error);
-      toast.error("Erro ao criar Automação: " + getErrorMessage(error));
+      toast.error("Erro ao criar Automação: " + getStructuredErrorMessage(error));
     },
   });
 }
 
 export function useUpdateStageAutomation() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: async ({ id, ...data }: Partial<CreateAutomationData> & { id: string }) => {
-      const result = await stageConfigAPI.updateStageAutomation(id, data, profile?.organization_id);
+      const result = await stageConfigAPI.updateStageAutomation(id, data, activeOrganization.organizationId);
       return normalizeAutomation(result);
     },
     onSuccess: () => {
@@ -164,18 +154,18 @@ export function useUpdateStageAutomation() {
     },
     onError: (error) => {
       console.error("Error updating automation:", error);
-      toast.error("Erro ao atualizar Automação: " + getErrorMessage(error));
+      toast.error("Erro ao atualizar Automação: " + getStructuredErrorMessage(error));
     },
   });
 }
 
 export function useDeleteStageAutomation() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: async (id: string) => {
-      await stageConfigAPI.deleteStageAutomation(id, profile?.organization_id);
+      await stageConfigAPI.deleteStageAutomation(id, activeOrganization.organizationId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["stage-automations"] });
@@ -190,11 +180,11 @@ export function useDeleteStageAutomation() {
 
 export function useToggleStageAutomation() {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { activeOrganization } = useAuth();
 
   return useMutation({
     mutationFn: async ({ id, is_active }: { id: string; is_active: boolean }) => {
-      return stageConfigAPI.toggleStageAutomation(id, is_active, profile?.organization_id);
+      return stageConfigAPI.toggleStageAutomation(id, is_active, activeOrganization.organizationId);
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["stage-automations"] });

@@ -55,12 +55,13 @@ func TestMarketingSyncRepositoryAgainstPostgres(t *testing.T) {
 		insert into public.meta_integrations (
 		  organization_id, page_id, page_name, access_token,
 		  user_access_token, is_connected, token_status,
-		  ad_account_id, selected_ad_accounts
+		  ad_account_id, selected_ad_accounts, granted_scopes
 		)
 		values (
 		  $1::uuid, 'marketing-sync-pgx-test-' || gen_random_uuid()::text,
 		  'Marketing sync pgx test', 'test-page-token',
-		  'test-user-token', true, 'active', 'act_123', '["act_123"]'::jsonb
+		  'test-user-token', true, 'active', 'act_123', '["act_123"]'::jsonb,
+		  array['ads_read']::text[]
 		)
 		returning id::text
 	`, organizationID).Scan(&integrationID)

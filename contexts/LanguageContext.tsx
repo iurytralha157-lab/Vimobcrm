@@ -16,7 +16,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const profile = auth?.profile ?? null;
   const user = auth?.user ?? null;
   const userId = user?.id;
-  const organizationId = profile?.organization_id;
+  const organizationId = auth?.activeOrganization.organizationId ?? null;
   const [language, setLanguageState] = useState<Language>('pt-BR');
 
   // Initialize language from profile or localStorage

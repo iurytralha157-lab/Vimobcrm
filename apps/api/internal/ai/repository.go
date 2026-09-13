@@ -9,7 +9,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/leadscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/propertyscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/searchtext"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
@@ -17,6 +20,11 @@ import (
 
 type Repository struct {
 	db *dbpkg.Postgres
+}
+
+type leadContextQueryer interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
 func NewRepository(db *dbpkg.Postgres) Repository {
@@ -571,24 +579,29 @@ func (repo Repository) ListRunnableAgents(ctx context.Context, organizationID st
 func (repo Repository) LoadLeadContext(ctx context.Context, tenantContext tenant.Context, leadID string, message string) (LeadContext, error) {
 	context := LeadContext{}
 	if leadID != "" {
-		lead, err := repo.loadLead(ctx, tenantContext.OrganizationID, leadID)
+		if !leadscope.CanRead(tenantContext) {
+			return context, ErrPermission
+		}
+		lead, err := repo.loadLead(ctx, tenantContext, leadID)
 		if err != nil {
 			return context, err
 		}
 		context.Lead = lead
 
-		activities, err := repo.loadLeadActivities(ctx, tenantContext.OrganizationID, leadID)
+		activities, err := repo.loadLeadActivities(ctx, tenantContext, leadID)
 		if err != nil {
 			return context, err
 		}
 		context.Activities = activities
 	}
 
-	properties, err := repo.searchProperties(ctx, tenantContext.OrganizationID, message, context.Lead)
-	if err != nil {
-		return context, err
+	if propertyscope.CanRead(tenantContext) {
+		properties, err := repo.searchProperties(ctx, tenantContext, message, context.Lead)
+		if err != nil {
+			return context, err
+		}
+		context.Properties = properties
 	}
-	context.Properties = properties
 	return context, nil
 }
 
@@ -1034,9 +1047,18 @@ func (repo Repository) SaveConversationState(ctx context.Context, tenantContext 
 	`, tenantContext.OrganizationID, conversationID, responseID, jsonb(memory), leadID, activeAgentID, triageStatus, jsonb(handoffHistory))
 }
 
-func (repo Repository) loadLead(ctx context.Context, organizationID string, leadID string) (map[string]any, error) {
+func (repo Repository) loadLead(ctx context.Context, tenantContext tenant.Context, leadID string) (map[string]any, error) {
+	return repo.loadLeadWithQueryer(ctx, repo.db.Pool(), tenantContext, leadID)
+}
+
+func (repo Repository) loadLeadWithQueryer(ctx context.Context, queryer leadContextQueryer, tenantContext tenant.Context, leadID string) (map[string]any, error) {
+	if !leadscope.CanRead(tenantContext) {
+		return nil, ErrPermission
+	}
+	propertyCanViewAll, propertyViewerID, propertyCanViewTeam := scopedPropertyVisibilityBindings(tenantContext)
+	propertyVisibility := propertyscope.VisibilitySQL("lead_property", "$6", "$7", "$8")
 	var payload []byte
-	err := repo.db.Pool().QueryRow(ctx, `
+	err := queryer.QueryRow(ctx, `
 		select to_jsonb(row) from (
 			select
 				l.id::text,
@@ -1046,7 +1068,10 @@ func (repo Repository) loadLead(ctx context.Context, organizationID string, lead
 				l.source,
 				l.status,
 				l.deal_status,
-				l.property_code,
+				case
+					when coalesce(l.interest_property_id, l.property_id) is null or lead_property.id is not null then l.property_code
+					else null
+				end as property_code,
 				l.valor_interesse::text as interest_value,
 				l.faixa_valor_imovel,
 				l.renda_familiar,
@@ -1061,11 +1086,25 @@ func (repo Repository) loadLead(ctx context.Context, organizationID string, lead
 			left join public.stages s on s.id = l.stage_id
 			left join public.pipelines p on p.id = l.pipeline_id
 			left join public.users u on u.id = l.assigned_user_id
+			left join public.properties lead_property
+			  on lead_property.organization_id = l.organization_id
+			 and lead_property.id = coalesce(l.interest_property_id, l.property_id)
+			 and `+propertyVisibility+`
 			where l.organization_id = $1::uuid
 			  and l.id = $2::uuid
+			  and `+leadscope.VisibilitySQL("l", "$3", "$4", "$5", leadscope.CanViewOwn(tenantContext))+`
 			limit 1
 		) row
-	`, organizationID, leadID).Scan(&payload)
+	`,
+		tenantContext.OrganizationID,
+		leadID,
+		leadscope.CanViewAll(tenantContext),
+		pgvalue.NullableString(tenantContext.UserID),
+		leadscope.CanViewTeam(tenantContext),
+		propertyCanViewAll,
+		propertyViewerID,
+		propertyCanViewTeam,
+	).Scan(&payload)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrInvalidInput
 	}
@@ -1077,18 +1116,50 @@ func (repo Repository) loadLead(ctx context.Context, organizationID string, lead
 	return out, nil
 }
 
-func (repo Repository) loadLeadActivities(ctx context.Context, organizationID string, leadID string) ([]map[string]any, error) {
-	rows, err := repo.db.Pool().Query(ctx, `
+func (repo Repository) loadLeadActivities(ctx context.Context, tenantContext tenant.Context, leadID string) ([]map[string]any, error) {
+	return repo.loadLeadActivitiesWithQueryer(ctx, repo.db.Pool(), tenantContext, leadID)
+}
+
+func (repo Repository) loadLeadActivitiesWithQueryer(ctx context.Context, queryer leadContextQueryer, tenantContext tenant.Context, leadID string) ([]map[string]any, error) {
+	if !leadscope.CanRead(tenantContext) {
+		return nil, ErrPermission
+	}
+	propertyCanViewAll, propertyViewerID, propertyCanViewTeam := scopedPropertyVisibilityBindings(tenantContext)
+	propertyVisibility := propertyscope.VisibilitySQL("activity_property", "$6", "$7", "$8")
+	propertyVisibleSQL := "activity_property.id is not null"
+	rows, err := queryer.Query(ctx, `
 		select to_jsonb(row) from (
-			select a.type, a.content, a.metadata, a.created_at, u.name as user_name
+			select
+				a.type,
+				`+aiActivityContentSQL(propertyVisibleSQL)+` as content,
+				`+aiActivityMetadataSQL(tenantContext, propertyVisibleSQL)+` as metadata,
+				a.created_at,
+				u.name as user_name
 			from public.activities a
+			join public.leads l
+			  on l.organization_id = a.organization_id
+			 and l.id = a.lead_id
 			left join public.users u on u.id = a.user_id
+			left join public.properties activity_property
+			  on activity_property.organization_id = a.organization_id
+			 and activity_property.id::text = `+aiActivityPropertyReferenceSQL()+`
+			 and `+propertyVisibility+`
 			where a.organization_id = $1::uuid
 			  and a.lead_id = $2::uuid
+			  and `+leadscope.VisibilitySQL("l", "$3", "$4", "$5", leadscope.CanViewOwn(tenantContext))+`
 			order by a.created_at desc
 			limit 12
 		) row
-	`, organizationID, leadID)
+	`,
+		tenantContext.OrganizationID,
+		leadID,
+		leadscope.CanViewAll(tenantContext),
+		pgvalue.NullableString(tenantContext.UserID),
+		leadscope.CanViewTeam(tenantContext),
+		propertyCanViewAll,
+		propertyViewerID,
+		propertyCanViewTeam,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1107,7 +1178,73 @@ func (repo Repository) loadLeadActivities(ctx context.Context, organizationID st
 	return items, rows.Err()
 }
 
-func (repo Repository) searchProperties(ctx context.Context, organizationID string, message string, lead map[string]any) ([]map[string]any, error) {
+func scopedPropertyVisibilityBindings(tenantContext tenant.Context) (bool, any, bool) {
+	if !propertyscope.CanRead(tenantContext) {
+		return false, nil, false
+	}
+	return propertyscope.CanViewAll(tenantContext), pgvalue.NullableString(tenantContext.UserID), propertyscope.CanViewTeam(tenantContext)
+}
+
+func aiActivityMetadataSQL(tenantContext tenant.Context, propertyVisibleSQL string) string {
+	metadataSQL := "coalesce(a.metadata, '{}'::jsonb)"
+	if !propertyscope.CanViewAll(tenantContext) {
+		metadataSQL += " - 'commission_percentage' - 'commissionPercentage'"
+	}
+
+	return `case
+		when ` + aiHiddenActivityPropertySQL(propertyVisibleSQL) + ` then
+			` + metadataSQL + `
+				- 'property_id' - 'propertyId'
+				- 'interest_property_id' - 'interestPropertyId'
+				- 'property_title' - 'propertyTitle'
+				- 'property_code' - 'propertyCode'
+				- 'property_price' - 'propertyPrice'
+				- 'property_image' - 'propertyImage'
+				- 'property_images' - 'propertyImages'
+				- 'property_media' - 'propertyMedia'
+				- 'commission_percentage' - 'commissionPercentage'
+		else ` + metadataSQL + `
+	end`
+}
+
+func aiActivityContentSQL(propertyVisibleSQL string) string {
+	return `case
+		when ` + aiHiddenActivityPropertySQL(propertyVisibleSQL) + ` then
+			case a.type
+				when 'property_selected' then 'Imovel selecionado'
+				when 'property_interest_reserved' then 'Imovel de interesse reservado. Revise este atendimento.'
+				else 'Atualizacao de imovel registrada'
+			end
+		else a.content
+	end`
+}
+
+func aiHiddenActivityPropertySQL(propertyVisibleSQL string) string {
+	return `(not (` + propertyVisibleSQL + `) and (
+		` + aiActivityPropertyReferenceSQL() + ` is not null
+		or a.type in ('property_selected', 'property_interest_reserved')
+		or coalesce(a.metadata, '{}'::jsonb) ?| array[
+			'property_title', 'propertyTitle',
+			'property_code', 'propertyCode',
+			'property_price', 'propertyPrice',
+			'property_image', 'propertyImage',
+			'property_images', 'propertyImages',
+			'property_media', 'propertyMedia',
+			'commission_percentage', 'commissionPercentage'
+		]
+	))`
+}
+
+func aiActivityPropertyReferenceSQL() string {
+	return `coalesce(
+		nullif(btrim(coalesce(a.metadata->>'property_id', '')), ''),
+		nullif(btrim(coalesce(a.metadata->>'propertyId', '')), ''),
+		nullif(btrim(coalesce(a.metadata->>'interest_property_id', '')), ''),
+		nullif(btrim(coalesce(a.metadata->>'interestPropertyId', '')), '')
+	)`
+}
+
+func (repo Repository) searchProperties(ctx context.Context, tenantContext tenant.Context, message string, lead map[string]any) ([]map[string]any, error) {
 	propertyCode := ""
 	if lead != nil {
 		if value, ok := lead["property_code"].(string); ok {
@@ -1119,33 +1256,41 @@ func (repo Repository) searchProperties(ctx context.Context, organizationID stri
 	rows, err := repo.db.Pool().Query(ctx, `
 		select to_jsonb(row) from (
 			select
-				id::text,
-				code,
-				title,
-				tipo_de_imovel as property_type,
-				coalesce(finalidade, tipo_de_negocio) as modality,
-				preco::text as sale_price,
-				cidade as city,
-				bairro as neighborhood,
-				quartos as bedrooms,
-				suites,
-				vagas as parking_spaces
-			from public.properties
-			where organization_id = $1::uuid
-			  and coalesce(is_demo, false) = false
-			  and lower(coalesce(status, 'ativo')) in ('ativo', 'active')
+				p.id::text,
+				p.code,
+				p.title,
+				p.tipo_de_imovel as property_type,
+				coalesce(p.finalidade, p.tipo_de_negocio) as modality,
+				p.preco::text as sale_price,
+				p.cidade as city,
+				p.bairro as neighborhood,
+				p.quartos as bedrooms,
+				p.suites,
+				p.vagas as parking_spaces
+			from public.properties p
+			where p.organization_id = $1::uuid
+			  and coalesce(p.is_demo, false) = false
+			  and lower(coalesce(p.status, 'ativo')) in ('ativo', 'active')
+			  and `+propertyscope.VisibilitySQL("p", "$4", "$5", "$6")+`
 			  and (
-				($2 <> '%%' and `+searchtext.SQL("code")+` like $2)
+				($2 <> '%%' and `+searchtext.SQL("p.code")+` like $2)
 				or exists (
 					select 1
 					from unnest($3::text[]) term
-					where `+searchtext.SQL("concat_ws(' ', title, cidade, bairro, tipo_de_imovel, tipo_de_negocio, finalidade)")+` like '%' || term || '%'
+					where `+searchtext.SQL("concat_ws(' ', p.title, p.cidade, p.bairro, p.tipo_de_imovel, p.tipo_de_negocio, p.finalidade)")+` like '%' || term || '%'
 				)
 			  )
-			order by updated_at desc nulls last, created_at desc
+			order by p.updated_at desc nulls last, p.created_at desc
 			limit 5
 		) row
-	`, organizationID, propertyCodePattern, searchTerms)
+	`,
+		tenantContext.OrganizationID,
+		propertyCodePattern,
+		searchTerms,
+		propertyscope.CanViewAll(tenantContext),
+		tenantContext.UserID,
+		propertyscope.CanViewTeam(tenantContext),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1288,14 +1433,7 @@ func textValue(value pgtype.Text) string {
 }
 
 func normalizeUUID(value string) (string, bool) {
-	var uuid pgtype.UUID
-	if err := uuid.Scan(strings.TrimSpace(value)); err != nil {
-		return "", false
-	}
-	if !uuid.Valid {
-		return "", false
-	}
-	return uuid.String(), true
+	return pgvalue.NormalizeUUID(value)
 }
 
 func firstNonEmpty(values ...string) string {

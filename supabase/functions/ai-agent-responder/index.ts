@@ -19,6 +19,7 @@ import {
   buildAIResponseClaimId,
 } from "./response-idempotency.ts";
 import { canonicalAIPauseReason } from "./canonical-ai-pause.ts";
+import { filterPublicSiteEligibleProperties } from "./public-property-eligibility.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1135,7 +1136,9 @@ async function buildLeadContext(
     lead.procura_financiamento ? "Busca financiamento: sim" : "",
     line("Finalidade", lead.finalidade_compra),
     line("Mensagem inicial", truncate(String(lead.message || lead.initial_message || ""), 180)),
-    line("Imovel de interesse", currentProperty ? propertyLine(currentProperty) : lead.property_code),
+    // A legacy property_code is not proof that the property is still public.
+    // Only the publication-gated record may enter the external lead context.
+    line("Imovel de interesse", currentProperty ? propertyLine(currentProperty) : ""),
   ].filter(Boolean);
 
   const metaLines = formatLeadMeta(leadMeta || []);
@@ -1163,7 +1166,7 @@ async function buildOrganizationContext(supabase: any, organizationId: string, m
 
   const { data: properties, error } = await supabase
     .from("properties")
-    .select("organization_id, bairro, cidade, uf, tipo_de_imovel, tipo_de_negocio, status, destaque, preco, valor_locacao")
+    .select("id, organization_id, bairro, cidade, uf, tipo_de_imovel, tipo_de_negocio, status, destaque, preco, valor_locacao, published_on_site")
     .eq("organization_id", organizationId)
     .order("destaque", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false })
@@ -1173,9 +1176,13 @@ async function buildOrganizationContext(supabase: any, organizationId: string, m
     console.error("[ai-agent-responder] organization inventory context error:", error);
   }
 
-  const offerable = (properties || [])
-    .filter((property: any) => property.organization_id === organizationId)
-    .filter(isOfferableProperty);
+  const offerable = error
+    ? []
+    : await filterPublicSiteEligibleProperties(
+      supabase,
+      organizationId,
+      Array.isArray(properties) ? properties : [],
+    );
   const inventory = summarizeInventory(offerable, message);
   const displayName = organization?.nome_fantasia || organization?.name || site?.site_title || "a imobiliaria";
   const baseCity = joinParts([organization?.bairro, organization?.cidade, organization?.uf]);
@@ -1339,13 +1346,22 @@ async function fetchPropertyById(
   organizationId: string,
   propertyId: string,
 ) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("properties")
     .select(propertySelect())
     .eq("id", propertyId)
     .eq("organization_id", organizationId)
     .maybeSingle();
-  return data || null;
+  if (error) {
+    console.error("[ai-agent-responder] property lookup error:", error);
+    return null;
+  }
+  const eligible = await filterPublicSiteEligibleProperties(
+    supabase,
+    organizationId,
+    data ? [data] : [],
+  );
+  return eligible[0] || null;
 }
 
 async function findMentionedProperties(
@@ -1370,7 +1386,12 @@ async function findMentionedProperties(
     return [];
   }
 
-  return (data || [])
+  const eligible = await filterPublicSiteEligibleProperties(
+    supabase,
+    organizationId,
+    Array.isArray(data) ? data : [],
+  );
+  return eligible
     .filter((property: any) => property.organization_id === organizationId)
     .map((property: any) => ({
       ...property,
@@ -1401,10 +1422,14 @@ async function searchBestProperties(
     return mentionedProperties.slice(0, 3);
   }
 
+  const eligible = await filterPublicSiteEligibleProperties(
+    supabase,
+    organizationId,
+    Array.isArray(data) ? data : [],
+  );
   const mentionedIds = new Set(mentionedProperties.map((property) => property.id));
-  const scored = (data || [])
+  const scored = eligible
     .filter((property: any) => property.organization_id === organizationId)
-    .filter(isOfferableProperty)
     .map((property: any) => ({
       ...property,
       score: scoreProperty(property, lead, message, mentionedIds.has(property.id)),
@@ -1440,16 +1465,9 @@ function propertySelect() {
     "preco",
     "valor_locacao",
     "imagem_principal",
+    "published_on_site",
     "created_at",
   ].join(", ");
-}
-
-function isOfferableProperty(property: any) {
-  const status = normalizeText(property.status || "");
-  if (!status) return true;
-  return !["inativo", "vendido", "locado", "indisponivel", "arquivado", "excluido"].some((blocked) =>
-    status.includes(blocked)
-  );
 }
 
 function scoreProperty(property: any, lead: any, message: string, mentioned: boolean) {
@@ -1624,6 +1642,7 @@ function buildSystemPrompt(input: {
       "- Nunca revele nome/telefone do proprietario, endereco completo, numero, complemento, documentos, codigos internos sensiveis ou observacoes privadas.",
       "- Pode falar bairro, cidade e UF. Nao fale rua/numero/complemento, mesmo que apareca em algum dado interno.",
       "- Quando o lead citar um codigo como CA1050 ou 1050, priorize o bloco IMOVEL CITADO.",
+      "- Considere ofertaveis agora somente os imoveis presentes nos blocos IMOVEL CITADO, MELHORES OPCOES PARA OFERECER ou no campo Imovel de interesse do CONTEXTO DO LEAD. Nao repita codigo, preco ou link que apareca apenas no historico ou na memoria curta.",
       "- Ao sugerir imoveis, envie no maximo 3 opcoes. Link e opcional, nao o centro da conversa.",
       "- Para agendar visita, colete dia e horario se faltarem. Se a acao ja foi executada, apenas confirme.",
       "- Use apenas corretor ou especialista para se referir a uma pessoa de atendimento.",
@@ -1681,7 +1700,12 @@ function buildMemorySummary(input: {
     `Ultima mensagem do lead: ${truncate(input.message, 160)}`,
   ].filter(Boolean);
 
-  const previous = input.previous ? `${truncate(input.previous, 300)}\n` : "";
+  const safePrevious = String(input.previous || "")
+    .split("\n")
+    .filter((value) => !normalizeText(value).startsWith("ultimo imovel relevante:"))
+    .join("\n")
+    .trim();
+  const previous = safePrevious ? `${truncate(safePrevious, 300)}\n` : "";
   return truncate(`${previous}${facts.join("\n")}`, 650);
 }
 

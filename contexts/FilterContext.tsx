@@ -19,6 +19,7 @@ interface PersistedFilterState {
 }
 
 interface FilterContextType {
+  isHydrated: boolean;
   datePreset: DatePreset;
   customDateRange: { from: Date; to: Date } | null;
   setDatePreset: (preset: DatePreset) => void;
@@ -101,18 +102,24 @@ function parsePersistedState(raw: string | null): PersistedFilterState {
 
 function parseCustomDateRange(range: PersistedFilterState['customDateRange']) {
   if (!range) return null;
-  return {
-    from: new Date(range.from),
-    to: new Date(range.to),
-  };
+  const from = new Date(range.from);
+  const to = new Date(range.to);
+  if (
+    Number.isNaN(from.getTime()) ||
+    Number.isNaN(to.getTime()) ||
+    from.getTime() > to.getTime()
+  ) {
+    return null;
+  }
+  return { from, to };
 }
 
 export function FilterProvider({ children }: { children: React.ReactNode }) {
-  const { user, organization } = useAuth();
+  const { activeOrganization, user } = useAuth();
   const storageKey = useMemo(() => {
-    if (!user?.id || !organization?.id) return null;
-    return `vimob_period_filter_${user.id}_${organization.id}`;
-  }, [user?.id, organization?.id]);
+    if (!user?.id || !activeOrganization.organizationId) return null;
+    return `vimob_period_filter_${user.id}_${activeOrganization.organizationId}`;
+  }, [user?.id, activeOrganization.organizationId]);
 
   const [datePreset, setDatePresetInternal] = useState<DatePreset>(DEFAULT_FILTER_STATE.datePreset);
   const [customDateRange, setCustomDateRangeInternal] = useState<{ from: Date; to: Date } | null>(null);
@@ -125,13 +132,18 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
   const [tagId, setTagIdInternal] = useState<NullableFilter>(null);
   const [dealStatus, setDealStatusInternal] = useState<NullableFilter>(null);
   const [searchQuery, setSearchQueryInternal] = useState('');
+  const [hydratedStorageKey, setHydratedStorageKey] = useState<string | null | undefined>(undefined);
 
   const persist = useCallback(
     (patch: Partial<PersistedFilterState>) => {
       if (!storageKey) return;
 
-      const current = parsePersistedState(sessionStorage.getItem(storageKey));
-      sessionStorage.setItem(storageKey, JSON.stringify({ ...current, ...patch }));
+      try {
+        const current = parsePersistedState(sessionStorage.getItem(storageKey));
+        sessionStorage.setItem(storageKey, JSON.stringify({ ...current, ...patch }));
+      } catch {
+        // Restricted browser contexts can make sessionStorage unavailable.
+      }
     },
     [storageKey],
   );
@@ -157,10 +169,16 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
       if (cancelled) return;
       if (!storageKey) {
         applyState(DEFAULT_FILTER_STATE);
+        setHydratedStorageKey(null);
         return;
       }
 
-      applyState(parsePersistedState(sessionStorage.getItem(storageKey)));
+      try {
+        applyState(parsePersistedState(sessionStorage.getItem(storageKey)));
+      } catch {
+        applyState(DEFAULT_FILTER_STATE);
+      }
+      setHydratedStorageKey(storageKey);
     });
 
     return () => {
@@ -265,7 +283,11 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
   const clearFilters = useCallback(() => {
     applyState(DEFAULT_FILTER_STATE);
     if (storageKey) {
-      sessionStorage.setItem(storageKey, JSON.stringify(DEFAULT_FILTER_STATE));
+      try {
+        sessionStorage.setItem(storageKey, JSON.stringify(DEFAULT_FILTER_STATE));
+      } catch {
+        // State is still cleared in memory when persistence is unavailable.
+      }
     }
   }, [applyState, storageKey]);
 
@@ -283,6 +305,7 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo(
     () => ({
+      isHydrated: hydratedStorageKey === storageKey,
       datePreset,
       customDateRange,
       setDatePreset,
@@ -319,6 +342,7 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
       customDateRange,
       datePreset,
       dealStatus,
+      hydratedStorageKey,
       searchQuery,
       setAdId,
       setAdSetId,
@@ -335,6 +359,7 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
       tagId,
       teamId,
       userId,
+      storageKey,
     ],
   );
 

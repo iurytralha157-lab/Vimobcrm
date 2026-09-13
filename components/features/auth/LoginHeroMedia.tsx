@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import Image from "next/image";
+import { useEffect, useRef, useState } from "react";
 
 const VIDEO_SOURCE = "/videos/login-hero.mp4";
 const POSTER_SOURCE = "/images/login-hero-poster.jpg";
@@ -16,6 +17,7 @@ type NavigatorWithConnection = Navigator & {
 
 export function LoginHeroMedia() {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [isVideoReady, setIsVideoReady] = useState(false);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -28,6 +30,7 @@ export function LoginHeroMedia() {
 
     const syncPlayback = () => {
       if (!desktop.matches) {
+        setIsVideoReady(false);
         video.pause();
         video.removeAttribute("poster");
         if (video.hasAttribute("src")) {
@@ -45,6 +48,7 @@ export function LoginHeroMedia() {
         !reducedMotion.matches && !reducedData.matches && !connection?.saveData;
 
       if (!canLoadVideo) {
+        setIsVideoReady(false);
         video.pause();
         if (video.hasAttribute("src")) {
           video.removeAttribute("src");
@@ -90,26 +94,43 @@ export function LoginHeroMedia() {
   }, []);
 
   return (
-    <video
-      ref={videoRef}
-      preload="none"
-      autoPlay
-      muted
-      loop
-      playsInline
-      onEnded={(event) => {
-        const video = event.currentTarget;
-        video.currentTime = 0;
+    <>
+      <Image
+        src={POSTER_SOURCE}
+        alt=""
+        fill
+        sizes="(min-width: 1024px) 58vw, 1px"
+        loading="eager"
+        className="object-cover object-center"
+      />
+      <video
+        ref={videoRef}
+        preload="none"
+        autoPlay
+        muted
+        loop
+        playsInline
+        onTimeUpdate={(event) => {
+          if (!isVideoReady && event.currentTarget.currentTime >= 0.2) {
+            setIsVideoReady(true);
+          }
+        }}
+        onEnded={(event) => {
+          const video = event.currentTarget;
+          video.currentTime = 0;
 
-        if (document.visibilityState !== "hidden") {
-          void video.play().catch(() => {
-            // The poster remains visible when a browser blocks replay.
-          });
-        }
-      }}
-      aria-hidden="true"
-      tabIndex={-1}
-      className="absolute inset-0 h-full w-full rounded-[inherit] object-cover object-center"
-    />
+          if (document.visibilityState !== "hidden") {
+            void video.play().catch(() => {
+              // The poster remains visible when a browser blocks replay.
+            });
+          }
+        }}
+        aria-hidden="true"
+        tabIndex={-1}
+        className={`absolute inset-0 h-full w-full rounded-[inherit] object-cover object-center transition-opacity duration-300 ${
+          isVideoReady ? "opacity-100" : "opacity-0"
+        }`}
+      />
+    </>
   );
 }

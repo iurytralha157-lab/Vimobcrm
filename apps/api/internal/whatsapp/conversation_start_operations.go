@@ -391,18 +391,37 @@ func (repo Repository) resolveStartSession(ctx context.Context, tenantContext te
 }
 
 func (repo Repository) FindConversation(ctx context.Context, tenantContext tenant.Context, filter FindConversationFilter) (*Conversation, error) {
-	if filter.LeadID != "" && filter.SessionID != "" {
-		if conversation, err := repo.findConversationByLeadAndSession(ctx, tenantContext, filter.LeadID, filter.SessionID); err != nil {
-			return nil, err
-		} else if conversation != nil {
-			return conversation, nil
-		}
-	}
+	return resolveConversationFind(
+		filter,
+		func(leadID string) (*Conversation, error) {
+			return repo.findConversationForLead(ctx, tenantContext, leadID)
+		},
+		func(phone string, sessionID string) (*Conversation, error) {
+			identity := newWhatsAppContactIdentity(phone, phone, false)
+			return repo.findConversationByPhoneVariants(ctx, tenantContext, identity.ConversationMatchValues(), sessionID)
+		},
+	)
+}
 
-	if filter.LeadID != "" && filter.SessionID == "" {
-		if conversation, err := repo.findConversationForLead(ctx, tenantContext, filter.LeadID); err != nil {
+type conversationLeadFinder func(leadID string) (*Conversation, error)
+type conversationPhoneFinder func(phone string, sessionID string) (*Conversation, error)
+
+// resolveConversationFind keeps the start-chat lookup deterministic while the
+// repository callbacks retain the existing tenant and lead-visibility checks.
+// A linked lead conversation always wins, even when it belongs to another
+// accessible session. Phone matching is only the fallback and remains scoped
+// to the explicitly selected session when one is provided.
+func resolveConversationFind(
+	filter FindConversationFilter,
+	findByLead conversationLeadFinder,
+	findByPhone conversationPhoneFinder,
+) (*Conversation, error) {
+	if filter.LeadID != "" {
+		conversation, err := findByLead(filter.LeadID)
+		if err != nil {
 			return nil, err
-		} else if conversation != nil {
+		}
+		if conversation != nil {
 			return conversation, nil
 		}
 	}
@@ -414,8 +433,7 @@ func (repo Repository) FindConversation(ctx context.Context, tenantContext tenan
 		return nil, fmt.Errorf("%w: Telefone invalido para WhatsApp", ErrInvalidInput)
 	}
 
-	identity := newWhatsAppContactIdentity(filter.Phone, filter.Phone, false)
-	return repo.findConversationByPhoneVariants(ctx, tenantContext, identity.ConversationMatchValues(), filter.SessionID)
+	return findByPhone(filter.Phone, filter.SessionID)
 }
 
 func (repo Repository) findConversationByExactSessionJID(ctx context.Context, tenantContext tenant.Context, sessionID string, remoteJID string) (*Conversation, error) {

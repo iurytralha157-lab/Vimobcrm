@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -68,6 +69,22 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		return Pipeline{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := repo.lockOrganizationForPipelineMutation(ctx, tx, tenantContext.OrganizationID); err != nil {
+		return Pipeline{}, err
+	}
+
+	var pipelineCount int
+	if err := tx.QueryRow(ctx, `
+		select count(*)
+		from public.pipelines
+		where organization_id = $1::uuid
+		  and coalesce(is_active, true) = true
+	`, tenantContext.OrganizationID).Scan(&pipelineCount); err != nil {
+		return Pipeline{}, err
+	}
+	if pipelineCount == 0 {
+		input.IsDefault = true
+	}
 
 	if input.IsDefault {
 		if _, err := tx.Exec(ctx, `
@@ -159,9 +176,26 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		return Pipeline{}, err
 	}
 	defer tx.Rollback(ctx)
+	if err := repo.lockOrganizationForPipelineMutation(ctx, tx, tenantContext.OrganizationID); err != nil {
+		return Pipeline{}, err
+	}
 
 	if err := repo.ensurePipeline(ctx, tx, tenantContext.OrganizationID, pipelineID); err != nil {
 		return Pipeline{}, err
+	}
+	if input.IsDefault.IsFalse() {
+		var isDefault bool
+		if err := tx.QueryRow(ctx, `
+			select coalesce(is_default, false)
+			from public.pipelines
+			where organization_id = $1::uuid
+			  and id = $2::uuid
+		`, tenantContext.OrganizationID, pipelineID).Scan(&isDefault); err != nil {
+			return Pipeline{}, err
+		}
+		if isDefault {
+			return Pipeline{}, fmt.Errorf("%w: set another pipeline as default before unsetting the current default", ErrInvalidInput)
+		}
 	}
 
 	if input.IsDefault.Set && input.IsDefault.Value != nil && *input.IsDefault.Value {
@@ -218,8 +252,20 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if err := repo.lockOrganizationForPipelineMutation(ctx, tx, tenantContext.OrganizationID); err != nil {
+		return err
+	}
 
 	if err := repo.ensurePipeline(ctx, tx, tenantContext.OrganizationID, pipelineID); err != nil {
+		return err
+	}
+	var wasDefault bool
+	if err := tx.QueryRow(ctx, `
+		select coalesce(is_default, false)
+		from public.pipelines
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+	`, tenantContext.OrganizationID, pipelineID).Scan(&wasDefault); err != nil {
 		return err
 	}
 
@@ -235,12 +281,44 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 		delete from public.pipelines
 		where organization_id = $1::uuid
 		  and id = $2::uuid
+		  and not exists (
+			select 1
+			from public.leads lead
+			left join public.stages lead_stage
+			  on lead_stage.organization_id = lead.organization_id
+			 and lead_stage.id = lead.stage_id
+			where lead.organization_id = $1::uuid
+			  and (lead.pipeline_id = $2::uuid or lead_stage.pipeline_id = $2::uuid)
+		  )
 	`, tenantContext.OrganizationID, pipelineID)
 	if err != nil {
+		if isForeignKeyViolation(err) {
+			return ErrHasLeads
+		}
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrPipelineNotFound
+		return ErrHasLeads
+	}
+	if wasDefault {
+		if _, err := tx.Exec(ctx, `
+			with replacement as (
+				select id
+				from public.pipelines
+				where organization_id = $1::uuid
+				  and coalesce(is_active, true) = true
+				order by coalesce(position, 0), created_at, id
+				limit 1
+			)
+			update public.pipelines pipeline
+			set is_default = true,
+			    updated_at = now()
+			from replacement
+			where pipeline.organization_id = $1::uuid
+			  and pipeline.id = replacement.id
+		`, tenantContext.OrganizationID); err != nil {
+			return err
+		}
 	}
 
 	return tx.Commit(ctx)
@@ -416,18 +494,19 @@ func (repo Repository) UpdateStage(ctx context.Context, tenantContext tenant.Con
 	if err != nil {
 		return Stage{}, err
 	}
+	if err := repo.ensureStageCanBeQualified(
+		ctx,
+		tx,
+		tenantContext.OrganizationID,
+		pipelineID,
+		stageID,
+		input,
+		qualifiedPatch,
+	); err != nil {
+		return Stage{}, err
+	}
 
 	if input.IsQualified.IsTrue() {
-		if err := repo.ensureStageCanBeQualified(
-			ctx,
-			tx,
-			tenantContext.OrganizationID,
-			pipelineID,
-			stageID,
-			input,
-		); err != nil {
-			return Stage{}, err
-		}
 		if _, err := tx.Exec(ctx, `
 			update public.stages
 			set is_qualified = false,
@@ -497,36 +576,65 @@ func (repo Repository) ReorderStages(ctx context.Context, tenantContext tenant.C
 	// diretamente faria a primeira colidir com a posicao ainda ocupada pela
 	// segunda. As posicoes temporarias sao exclusivas e ficam acima do maior
 	// valor atual; qualquer falha continua protegida pelo rollback da transacao.
-	for index, item := range input.Stages {
+	type existingStageOrder struct {
+		ID       string
+		Position int
+	}
+	existingStages := []existingStageOrder{}
+	existingRows, err := tx.Query(ctx, `
+		select id::text, coalesce(position, 0)
+		from public.stages
+		where organization_id = $1::uuid
+		  and pipeline_id = $2::uuid
+		order by coalesce(position, 0), created_at, id
+		for update
+	`, tenantContext.OrganizationID, pipelineID)
+	if err != nil {
+		return nil, err
+	}
+	for existingRows.Next() {
+		var existing existingStageOrder
+		if err := existingRows.Scan(&existing.ID, &existing.Position); err != nil {
+			existingRows.Close()
+			return nil, err
+		}
+		existingStages = append(existingStages, existing)
+	}
+	if err := existingRows.Err(); err != nil {
+		existingRows.Close()
+		return nil, err
+	}
+	existingRows.Close()
+
+	if _, err := tx.Exec(ctx, `
+		update public.stages
+		set position = position + $3,
+		    updated_at = now()
+		where organization_id = $1::uuid
+		  and pipeline_id = $2::uuid
+	`, tenantContext.OrganizationID, pipelineID, temporaryPositionBase); err != nil {
+		return nil, err
+	}
+
+	for _, item := range input.Stages {
 		var existingPipelineID pgtype.Text
 		err := tx.QueryRow(ctx, `
 			select pipeline_id::text
 			from public.stages
-			where id = $1::uuid
+			where organization_id = $1::uuid
+			  and id = $2::uuid
 			limit 1
-		`, item.ID).Scan(&existingPipelineID)
+		`, tenantContext.OrganizationID, item.ID).Scan(&existingPipelineID)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, err
 		}
 		if existingPipelineID.Valid && existingPipelineID.String != pipelineID {
 			return nil, ErrInvalidReference
 		}
-		if existingPipelineID.Valid {
-			if _, err := tx.Exec(ctx, `
-				update public.stages
-				set position = $4,
-				    updated_at = now()
-				where organization_id = $1::uuid
-				  and pipeline_id = $2::uuid
-				  and id = $3::uuid
-			`, tenantContext.OrganizationID, pipelineID, item.ID, temporaryPositionBase+index); err != nil {
-				return nil, err
-			}
-		}
 	}
 
 	for _, item := range input.Stages {
-		_, err = tx.Exec(ctx, `
+		tag, err := tx.Exec(ctx, `
 			insert into public.stages (
 				id,
 				organization_id,
@@ -559,6 +667,31 @@ func (repo Repository) ReorderStages(ctx context.Context, tenantContext tenant.C
 		if err != nil {
 			return nil, err
 		}
+		if tag.RowsAffected() != 1 {
+			return nil, ErrInvalidReference
+		}
+	}
+
+	requestedStageIDs := map[string]struct{}{}
+	for _, item := range input.Stages {
+		requestedStageIDs[item.ID] = struct{}{}
+	}
+	nextPosition := len(input.Stages)
+	for _, existing := range existingStages {
+		if _, requested := requestedStageIDs[existing.ID]; requested {
+			continue
+		}
+		if _, err := tx.Exec(ctx, `
+			update public.stages
+			set position = $4,
+			    updated_at = now()
+			where organization_id = $1::uuid
+			  and pipeline_id = $2::uuid
+			  and id = $3::uuid
+		`, tenantContext.OrganizationID, pipelineID, existing.ID, nextPosition); err != nil {
+			return nil, err
+		}
+		nextPosition++
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -583,7 +716,7 @@ func (repo Repository) DeleteStage(ctx context.Context, tenantContext tenant.Con
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := repo.getStagePipelineID(ctx, tx, tenantContext.OrganizationID, stageID); err != nil {
+	if _, err := repo.lockStagePipelineForUpdate(ctx, tx, tenantContext.OrganizationID, stageID); err != nil {
 		return err
 	}
 
@@ -604,12 +737,21 @@ func (repo Repository) DeleteStage(ctx context.Context, tenantContext tenant.Con
 		delete from public.stages
 		where organization_id = $1::uuid
 		  and id = $2::uuid
+		  and not exists (
+			select 1
+			from public.leads lead
+			where lead.organization_id = $1::uuid
+			  and lead.stage_id = $2::uuid
+		  )
 	`, tenantContext.OrganizationID, stageID)
 	if err != nil {
+		if isForeignKeyViolation(err) {
+			return ErrHasLeads
+		}
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrStageNotFound
+		return ErrHasLeads
 	}
 
 	return tx.Commit(ctx)
@@ -707,19 +849,34 @@ func (repo Repository) createDefaultStages(ctx context.Context, tx pgx.Tx, organ
 }
 
 func (repo Repository) ensurePipeline(ctx context.Context, tx pgx.Tx, organizationID string, pipelineID string) error {
-	var exists bool
+	var lockedID string
 	if err := tx.QueryRow(ctx, `
-		select exists (
-			select 1
-			from public.pipelines
-			where organization_id = $1::uuid
-			  and id = $2::uuid
-		)
-	`, organizationID, pipelineID).Scan(&exists); err != nil {
+		select id::text
+		from public.pipelines
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		for update
+	`, organizationID, pipelineID).Scan(&lockedID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrPipelineNotFound
+		}
 		return err
 	}
-	if !exists {
-		return ErrPipelineNotFound
+	return nil
+}
+
+func (repo Repository) lockOrganizationForPipelineMutation(ctx context.Context, tx pgx.Tx, organizationID string) error {
+	var lockedID string
+	if err := tx.QueryRow(ctx, `
+		select id::text
+		from public.organizations
+		where id = $1::uuid
+		for update
+	`, organizationID).Scan(&lockedID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrInvalidReference
+		}
+		return err
 	}
 	return nil
 }
@@ -753,20 +910,39 @@ func (repo Repository) getStagePipelineID(ctx context.Context, tx pgx.Tx, organi
 func (repo Repository) lockStagePipelineForUpdate(ctx context.Context, tx pgx.Tx, organizationID string, stageID string) (string, error) {
 	var pipelineID string
 	err := tx.QueryRow(ctx, `
-		select p.id::text
-		from public.pipelines as p
-		join public.stages as s
-		  on s.organization_id = p.organization_id
-		 and s.pipeline_id = p.id
-		where p.organization_id = $1::uuid
-		  and s.organization_id = $1::uuid
-		  and s.id = $2::uuid
-		for update of p
+		select pipeline_id::text
+		from public.stages
+		where organization_id = $1::uuid
+		  and id = $2::uuid
 	`, organizationID, stageID).Scan(&pipelineID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrStageNotFound
 	}
-	return pipelineID, err
+	if err != nil {
+		return "", err
+	}
+	if err := repo.ensurePipeline(ctx, tx, organizationID, pipelineID); err != nil {
+		if errors.Is(err, ErrPipelineNotFound) {
+			return "", ErrStageNotFound
+		}
+		return "", err
+	}
+	var recheckedPipelineID string
+	err = tx.QueryRow(ctx, `
+		select pipeline_id::text
+		from public.stages
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		  and pipeline_id = $3::uuid
+		for update
+	`, organizationID, stageID, pipelineID).Scan(&recheckedPipelineID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrStageNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	return recheckedPipelineID, nil
 }
 
 func (repo Repository) ensureStageCanBeQualified(
@@ -776,18 +952,20 @@ func (repo Repository) ensureStageCanBeQualified(
 	pipelineID string,
 	stageID string,
 	input updateStageInput,
+	qualifiedPatch patchBool,
 ) error {
-	var isWon, isLost, isActive bool
+	var isWon, isLost, isQualified, isActive bool
 	err := tx.QueryRow(ctx, `
 		select
 			coalesce(is_won, false),
 			coalesce(is_lost, false),
+			coalesce(is_qualified, false),
 			coalesce(is_active, true)
 		from public.stages
 		where organization_id = $1::uuid
 		  and pipeline_id = $2::uuid
 		  and id = $3::uuid
-	`, organizationID, pipelineID, stageID).Scan(&isWon, &isLost, &isActive)
+	`, organizationID, pipelineID, stageID).Scan(&isWon, &isLost, &isQualified, &isActive)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrStageNotFound
 	}
@@ -795,13 +973,39 @@ func (repo Repository) ensureStageCanBeQualified(
 		return err
 	}
 
-	if input.IsWon.Resolve(isWon) || input.IsLost.Resolve(isLost) || !input.IsActive.Resolve(isActive) {
+	nextIsWon := input.IsWon.Resolve(isWon)
+	nextIsLost := input.IsLost.Resolve(isLost)
+	nextIsQualified := qualifiedPatch.Resolve(isQualified)
+	nextIsActive := input.IsActive.Resolve(isActive)
+	if nextIsWon && nextIsLost {
+		return fmt.Errorf("%w: a stage cannot be both won and lost", ErrInvalidInput)
+	}
+	if nextIsQualified && (nextIsWon || nextIsLost || !nextIsActive) {
 		return fmt.Errorf(
 			"%w: a qualified stage must be active and non-terminal",
 			ErrInvalidInput,
 		)
 	}
+	if isActive && !nextIsActive {
+		var leadCount int64
+		if err := tx.QueryRow(ctx, `
+			select count(*)
+			from public.leads
+			where organization_id = $1::uuid
+			  and stage_id = $2::uuid
+		`, organizationID, stageID).Scan(&leadCount); err != nil {
+			return err
+		}
+		if leadCount > 0 {
+			return ErrHasLeads
+		}
+	}
 	return nil
+}
+
+func isForeignKeyViolation(err error) bool {
+	var databaseError *pgconn.PgError
+	return errors.As(err, &databaseError) && databaseError.Code == "23503"
 }
 
 func (repo Repository) uniqueStageKey(ctx context.Context, tx pgx.Tx, organizationID string, pipelineID string, name string) (string, error) {

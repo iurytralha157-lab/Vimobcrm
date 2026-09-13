@@ -1,25 +1,27 @@
-'use client';
+"use client";
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
-import { useAuth } from '@/contexts/AuthContext';
-import { webhooksAPI } from '@/lib/api';
-import type { CreateWebhookInput, UpdateWebhookInput, WebhookIntegration } from '@/lib/api';
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { useActiveOrganizationId } from "@/hooks/use-active-organization";
+import { webhooksAPI } from "@/lib/api";
+import type {
+  CreateWebhookInput,
+  UpdateWebhookInput,
+  WebhookIntegration,
+} from "@/lib/api";
+import { shouldRetryIntegrationQuery } from "@/lib/api/integration-query";
 
 export type { WebhookIntegration };
 
-function useActiveOrganizationId() {
-  const { profile, organization } = useAuth();
-  return organization?.id || profile?.organization_id || null;
-}
-
-export function useWebhooks() {
+export function useWebhooks(options: { enabled?: boolean } = {}) {
   const organizationId = useActiveOrganizationId();
 
   return useQuery({
-    queryKey: ['webhooks', organizationId],
+    queryKey: ["webhooks", organizationId],
     queryFn: () => webhooksAPI.list(organizationId),
-    enabled: !!organizationId,
+    enabled: !!organizationId && (options.enabled ?? true),
+    refetchOnMount: "always",
+    retry: shouldRetryIntegrationQuery,
   });
 }
 
@@ -28,10 +30,11 @@ export function useCreateWebhook() {
   const organizationId = useActiveOrganizationId();
 
   return useMutation({
-    mutationFn: (webhook: CreateWebhookInput) => webhooksAPI.create(webhook, organizationId),
+    mutationFn: (webhook: CreateWebhookInput) =>
+      webhooksAPI.create(webhook, organizationId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['webhooks', organizationId] });
-      toast.success('Webhook criado com sucesso!');
+      queryClient.invalidateQueries({ queryKey: ["webhooks", organizationId] });
+      toast.success("Webhook criado com sucesso!");
     },
     onError: (error) => {
       toast.error(`Erro ao criar webhook: ${error.message}`);
@@ -44,10 +47,11 @@ export function useUpdateWebhook() {
   const organizationId = useActiveOrganizationId();
 
   return useMutation({
-    mutationFn: (updates: UpdateWebhookInput) => webhooksAPI.update(updates, organizationId),
+    mutationFn: (updates: UpdateWebhookInput) =>
+      webhooksAPI.update(updates, organizationId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['webhooks', organizationId] });
-      toast.success('Webhook atualizado!');
+      queryClient.invalidateQueries({ queryKey: ["webhooks", organizationId] });
+      toast.success("Webhook atualizado!");
     },
     onError: (error) => {
       toast.error(`Erro ao atualizar webhook: ${error.message}`);
@@ -62,8 +66,8 @@ export function useDeleteWebhook() {
   return useMutation({
     mutationFn: (id: string) => webhooksAPI.delete(id, organizationId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['webhooks', organizationId] });
-      toast.success('Webhook removido!');
+      queryClient.invalidateQueries({ queryKey: ["webhooks", organizationId] });
+      toast.success("Webhook removido!");
     },
     onError: (error) => {
       toast.error(`Erro ao remover webhook: ${error.message}`);
@@ -79,8 +83,10 @@ export function useToggleWebhook() {
     mutationFn: ({ id, is_active }: { id: string; is_active: boolean }) =>
       webhooksAPI.update({ id, is_active }, organizationId),
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['webhooks', organizationId] });
-      toast.success(variables.is_active ? 'Webhook ativado!' : 'Webhook desativado!');
+      queryClient.invalidateQueries({ queryKey: ["webhooks", organizationId] });
+      toast.success(
+        variables.is_active ? "Webhook ativado!" : "Webhook desativado!",
+      );
     },
     onError: (error) => {
       toast.error(`Erro ao alterar webhook: ${error.message}`);
@@ -95,8 +101,8 @@ export function useRegenerateToken() {
   return useMutation({
     mutationFn: (id: string) => webhooksAPI.regenerateToken(id, organizationId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['webhooks', organizationId] });
-      toast.success('Token regenerado!');
+      queryClient.invalidateQueries({ queryKey: ["webhooks", organizationId] });
+      toast.success("Token regenerado!");
     },
     onError: (error) => {
       toast.error(`Erro ao regenerar token: ${error.message}`);

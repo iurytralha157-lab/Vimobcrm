@@ -27,7 +27,13 @@ const (
 	notificationDispatchDrainTimeout = 45 * time.Second
 	notificationDispatchMaxAttempts  = 24
 	notificationDispatchClaimTimeout = 15 * time.Minute
+	normalizedNotificationLease      = 2 * time.Minute
 	scheduleReminderLockKey          = int64(860421706)
+	scheduleNotificationEnqueueLimit = 50
+	scheduleReminderDueLookAhead     = 30 * time.Second
+	scheduleReminderMaximumMinutes   = 120
+	scheduleOutcomeMinimumDelay      = 5 * time.Minute
+	scheduleOutcomeCatchUpWindow     = 24 * time.Hour
 )
 
 var billingNotificationDispatchAuthorizationQuery = "select " + billingNotificationAuthorizationSQL("$1", "$2")
@@ -116,11 +122,11 @@ func (repo Repository) StartNotificationDispatchWorker(ctx context.Context, logg
 			case <-ctx.Done():
 				return
 			case <-timer.C:
-				created, err := repo.createDueScheduleReminderNotifications(ctx)
+				created, err := repo.createDueScheduleNotifications(ctx)
 				if err != nil && !errors.Is(err, context.Canceled) {
-					logger.Error("schedule reminder notification worker failed", "error", err)
+					logger.Error("schedule notification producer failed", "error", err)
 				} else if created > 0 {
-					logger.Info("schedule reminder notifications enqueued", "count", created)
+					logger.Info("schedule notifications enqueued", "count", created)
 				}
 				if err := repo.processNotificationDeliveries(ctx, logger); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("notification delivery worker failed", "error", err)
@@ -139,12 +145,35 @@ func (repo Repository) ProcessNotificationDeliveries(ctx context.Context) error 
 	return repo.processNotificationDeliveries(ctx, nil)
 }
 
-func (repo Repository) processNotificationDeliveries(ctx context.Context, logger *slog.Logger) error {
+func (repo Repository) processNotificationDeliveries(ctx context.Context, logger *slog.Logger) (returnErr error) {
+	defer func() {
+		if repo.notificationStats == nil {
+			return
+		}
+		repo.notificationStats.lastCycleUnixMillis.Store(time.Now().UTC().UnixMilli())
+		if returnErr != nil {
+			repo.notificationStats.errors.Add(1)
+		}
+	}()
 	if err := repo.processPendingPropertyReservationNotificationJobs(ctx); err != nil {
 		if logger == nil {
 			return err
 		}
+		repo.recordNotificationDispatchError()
 		logger.Error("property reservation notification outbox recovery failed", "error", err)
+	}
+	swept, sweepErr := repo.sweepNormalizedNotificationDeliveries(ctx)
+	if sweepErr != nil {
+		if logger == nil {
+			return sweepErr
+		}
+		repo.recordNotificationDispatchError()
+		logger.Error("notification delivery sweep failed", "error", sweepErr)
+	} else if swept > 0 && logger != nil {
+		logger.Info("stale notification deliveries swept", "count", swept)
+	}
+	if swept > 0 && repo.notificationStats != nil {
+		repo.notificationStats.swept.Add(uint64(swept))
 	}
 
 	// Drain a bounded burst immediately. Each worker claims exactly one row in
@@ -166,7 +195,7 @@ func (repo Repository) processNotificationDeliveries(ctx context.Context, logger
 				if started.Add(1) > notificationDispatchDrainLimit {
 					return
 				}
-				processed, err := repo.processOneNotificationDelivery(ctx, logger)
+				processed, err := repo.processOneNormalizedNotificationDelivery(ctx, logger)
 				if err != nil {
 					select {
 					case errorChannel <- err:
@@ -414,6 +443,7 @@ func (repo Repository) dispatchPendingNotification(ctx context.Context, notifica
 	if stringFromMap(notification.Metadata, "event_key") == "billing_payment_receipt" {
 		return repo.dispatchPendingBillingReceiptNotification(ctx, notification, channels)
 	}
+	notification = repo.scopePendingNotificationProperty(ctx, notification)
 	return repo.dispatchPendingNotificationUnchecked(ctx, notification, channels)
 }
 
@@ -778,9 +808,9 @@ func (repo Repository) recordPushDelivery(ctx context.Context, notification pend
 		with token_health as (
 			update public.push_tokens
 			set last_success_at = case when $5 then now() else last_success_at end,
-			    last_failure_at = case when $5 then last_failure_at else now() end,
-			    last_failure_reason = case when $5 then null else nullif($6, '') end,
-			    failure_count = case when $5 then 0 else coalesce(failure_count, 0) + 1 end,
+			    last_failure_at = case when $5 or $12 then last_failure_at else now() end,
+			    last_failure_reason = case when $5 then null when $12 then last_failure_reason else nullif($6, '') end,
+			    failure_count = case when $5 then 0 when $12 then failure_count else coalesce(failure_count, 0) + 1 end,
 			    updated_at = now()
 			where id = $3::uuid and user_id = $2::uuid
 			returning id
@@ -795,7 +825,7 @@ func (repo Repository) recordPushDelivery(ctx context.Context, notification pend
 		from token_health
 	`, notification.OrganizationID, notification.UserID, subscription.ID, notification.ID,
 		result.Attempted && result.OK, errorCode, subscription.Platform, result.Provider,
-		result.Attempted, permanent, result.Status)
+		result.Attempted, permanent, result.Status, result.OutcomeUnknown)
 	if isUndefinedTableError(err) || isUndefinedColumnError(err) {
 		return nil
 	}
@@ -1055,7 +1085,7 @@ func (repo Repository) markNotificationDelivery(ctx context.Context, tx pgx.Tx, 
 
 func (repo Repository) recordNotificationEmailDelivery(ctx context.Context, tx pgx.Tx, notification pendingNotification, result DispatchChannelResult) error {
 	status := "blocked"
-	if result.OK {
+	if result.OK || result.OutcomeUnknown {
 		status = "accepted"
 	} else if result.Attempted {
 		status = "failed"
@@ -1441,11 +1471,11 @@ func (repo Repository) listActivePushSubscriptions(ctx context.Context, userID s
 }
 
 func (repo Repository) CreateDueScheduleReminderNotifications(ctx context.Context) error {
-	_, err := repo.createDueScheduleReminderNotifications(ctx)
+	_, err := repo.createDueScheduleNotifications(ctx)
 	return err
 }
 
-func (repo Repository) createDueScheduleReminderNotifications(ctx context.Context) (int64, error) {
+func (repo Repository) createDueScheduleNotifications(ctx context.Context) (int64, error) {
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return 0, err
@@ -1460,142 +1490,371 @@ func (repo Repository) createDueScheduleReminderNotifications(ctx context.Contex
 		return 0, nil
 	}
 
-	tag, err := tx.Exec(ctx, `
-		with due_events as (
-			select
-				se.id,
-				se.organization_id,
-				se.user_id,
-				se.lead_id,
-				se.property_id,
-				se.title,
-				se.event_type,
-				coalesce(se.reminder_minutes, 5) as reminder_minutes,
-				se.start_time,
-				se.start_time - make_interval(mins => greatest(coalesce(se.reminder_minutes, 5), 0)) as reminder_due_at,
-				l.name as lead_name,
-				p.title as property_title,
-				p.code as property_code
-			from public.schedule_events se
-			left join public.leads l
-			  on l.organization_id = se.organization_id
-			 and l.id = se.lead_id
-			left join public.properties p
-			  on p.organization_id = se.organization_id
-			 and p.id = se.property_id
-			where coalesce(se.status, 'scheduled') = 'scheduled'
-			  and se.start_time > now()
-			  and se.start_time - make_interval(mins => greatest(coalesce(se.reminder_minutes, 5), 0)) <= now() + interval '30 seconds'
-		),
-		recipients as (
-			select distinct
-				due_events.id,
-				due_events.organization_id,
-				due_events.user_id,
-				due_events.lead_id,
-				due_events.property_id,
-				due_events.title,
-				due_events.event_type,
-				due_events.reminder_minutes,
-				due_events.start_time,
-				due_events.reminder_due_at,
-				due_events.lead_name,
-				due_events.property_title,
-				due_events.property_code
-			from due_events
-			union
-			select distinct
-				due_events.id,
-				due_events.organization_id,
-				sea.user_id,
-				due_events.lead_id,
-				due_events.property_id,
-				due_events.title,
-				due_events.event_type,
-				due_events.reminder_minutes,
-				due_events.start_time,
-				due_events.reminder_due_at,
-				due_events.lead_name,
-				due_events.property_title,
-				due_events.property_code
-			from due_events
-			join public.schedule_event_assignees sea
-			  on sea.event_id = due_events.id
-			 and sea.organization_id = due_events.organization_id
-		),
-		pending_recipients as (
-			select recipients.*
-			from recipients
-			where user_id is not null
-			  and not exists (
-			    select 1
-			    from public.notifications n
-			    where n.organization_id = recipients.organization_id
-			      and n.user_id = recipients.user_id
-			      and n.metadata->>'dedupe_key' = 'schedule_reminder:' || recipients.id::text || ':' || recipients.user_id::text
-			  )
-			order by reminder_due_at asc, start_time asc, id asc, user_id asc
-			limit 50
-		)
-		insert into public.notifications (
-			organization_id,
-			user_id,
-			title,
-			content,
-			body,
-			type,
-			channel,
-			lead_id,
-			target_url,
-			metadata
-		)
-		select
-			organization_id,
-			user_id,
-			'Lembrete de agenda',
-			'A atividade "' || title || '" comeca em instantes.',
-			'A atividade "' || title || '" comeca em instantes.',
-			'schedule',
-			'in_app',
-			lead_id,
-			'/agenda',
-			jsonb_build_object(
-				'event_key', 'schedule_reminder',
-				'dedupe_key', 'schedule_reminder:' || id::text || ':' || user_id::text,
-				'schedule_event_id', id::text,
-				'schedule_title', title,
-				'schedule_event_type', event_type,
-				'reminder_minutes', reminder_minutes,
-				'start_time', start_time,
-				'reminder_due_at', reminder_due_at,
-				'lead_id', lead_id,
-				'lead_name', nullif(lead_name, ''),
-				'property_id', property_id,
-				'property_title', nullif(property_title, ''),
-				'property_code', nullif(property_code, ''),
-				'dispatch', jsonb_build_object(
-					'push', jsonb_build_object('required', true, 'status', 'pending'),
-					'whatsapp', jsonb_build_object('required', true, 'status', 'pending')
-				),
-				'whatsapp_dispatch_required', true,
-				'whatsapp_dispatch', jsonb_build_object('status', 'pending')
-			)
-		from pending_recipients
-		on conflict do nothing
-	`)
-	if isUndefinedTableError(err) || isUndefinedColumnError(err) {
-		return 0, nil
+	reminderCount, err := repo.enqueueDueScheduleReminderNotifications(ctx, tx)
+	if err != nil {
+		return 0, err
 	}
+	outcomeCount, err := repo.enqueueDueScheduleOutcomeNotifications(ctx, tx)
 	if err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, err
 	}
+	return reminderCount + outcomeCount, nil
+}
+
+const dueScheduleReminderNotificationsSQL = `
+	with due_events as (
+		select
+			se.id,
+			se.organization_id,
+			se.user_id,
+			se.lead_id,
+			se.title,
+			se.event_type,
+			case se.event_type
+				when 'call' then 'Ligacao'
+				when 'email' then 'E-mail'
+				when 'meeting' then 'Reuniao'
+				when 'message' then 'Mensagem'
+				when 'visit' then 'Visita ao imovel'
+				else 'Compromisso'
+			end as event_type_label,
+			se.reminder_minutes,
+			se.start_time,
+			se.start_time - make_interval(mins => se.reminder_minutes) as reminder_due_at,
+			case
+				when se.start_time > statement_timestamp() + interval '90 seconds' then
+					'comeca em ' || ceil(extract(epoch from (se.start_time - statement_timestamp())) / 60)::integer::text || ' minutos'
+				when se.start_time > statement_timestamp() + interval '30 seconds' then 'comeca em 1 minuto'
+				else 'comeca agora'
+			end as reminder_when,
+			l.name as lead_name
+		from public.schedule_events se
+		join public.organization_modules agenda_module
+		  on agenda_module.organization_id = se.organization_id
+		 and lower(btrim(agenda_module.module_name)) = 'agenda'
+		 and coalesce(agenda_module.is_enabled, false) = true
+		left join public.leads l
+		  on l.organization_id = se.organization_id
+		 and l.id = se.lead_id
+		where coalesce(se.status, 'scheduled') = 'scheduled'
+		  and se.reminder_minutes between 0 and $2::integer
+		  and se.start_time > statement_timestamp()
+		  and (
+		    (
+		      se.reminder_minutes = 0
+		      and se.start_time <= statement_timestamp() + ($1::bigint * interval '1 second')
+		    )
+		    or (
+		      se.reminder_minutes > 0
+		      and se.start_time - make_interval(mins => se.reminder_minutes) <= statement_timestamp()
+		    )
+		  )
+	),
+	recipients as (
+		select due_events.* from due_events
+		union
+		select
+			due_events.id,
+			due_events.organization_id,
+			sea.user_id,
+			due_events.lead_id,
+			due_events.title,
+			due_events.event_type,
+			due_events.event_type_label,
+			due_events.reminder_minutes,
+			due_events.start_time,
+			due_events.reminder_due_at,
+			due_events.reminder_when,
+			due_events.lead_name
+		from due_events
+		join public.schedule_event_assignees sea
+		  on sea.event_id = due_events.id
+		 and sea.organization_id = due_events.organization_id
+	),
+	pending_recipients as (
+		select
+			recipients.*,
+			'appointment_reminder:' || recipients.id::text || ':' ||
+			floor(extract(epoch from recipients.start_time) * 1000)::bigint::text || ':' ||
+			recipients.reminder_minutes::text || ':' || recipients.user_id::text as dedupe_key
+		from recipients
+		join public.users recipient_user
+		  on recipient_user.organization_id = recipients.organization_id
+		 and recipient_user.id = recipients.user_id
+		 and coalesce(recipient_user.is_active, true) = true
+		join public.organization_members recipient_membership
+		  on recipient_membership.organization_id = recipients.organization_id
+		 and recipient_membership.user_id = recipients.user_id
+		 and recipient_membership.is_active = true
+		where recipients.user_id is not null
+		  and not exists (
+		    select 1
+		    from public.notifications notification
+		    where notification.organization_id = recipients.organization_id
+		      and notification.user_id = recipients.user_id
+		      and (
+		        notification.metadata->>'dedupe_key' =
+		          'appointment_reminder:' || recipients.id::text || ':' ||
+		          floor(extract(epoch from recipients.start_time) * 1000)::bigint::text || ':' ||
+		          recipients.reminder_minutes::text || ':' || recipients.user_id::text
+		        or (
+		          lower(coalesce(notification.metadata->>'event_key', '')) in ('schedule_reminder', 'appointment_reminder')
+		          and coalesce(
+		            notification.metadata->>'schedule_event_id',
+		            notification.metadata#>>'{variables,schedule_event_id}'
+		          ) = recipients.id::text
+		          and replace(left(coalesce(
+		            notification.metadata->>'start_time',
+		            notification.metadata#>>'{variables,start_time}',
+		            ''
+		          ), 19), ' ', 'T') = to_char(
+		            recipients.start_time at time zone 'UTC',
+		            'YYYY-MM-DD"T"HH24:MI:SS'
+		          )
+		        )
+		      )
+		  )
+		order by reminder_due_at asc, start_time asc, id asc, user_id asc
+		limit $3
+	)
+	insert into public.notifications (
+		organization_id,
+		user_id,
+		title,
+		content,
+		body,
+		type,
+		channel,
+		lead_id,
+		target_url,
+		metadata
+	)
+	select
+		organization_id,
+		user_id,
+		'Lembrete: ' || title,
+		event_type_label || ': "' || title || '" ' || reminder_when || '.',
+		event_type_label || ': "' || title || '" ' || reminder_when || '.',
+		'schedule',
+		'in_app',
+		lead_id,
+		'/agenda?event=' || id::text,
+		jsonb_strip_nulls(jsonb_build_object(
+			'event_key', 'appointment_reminder',
+			'dedupe_key', dedupe_key,
+			'schedule_event_id', id::text,
+			'schedule_title', title,
+			'schedule_event_type', event_type,
+			'reminder_minutes', reminder_minutes,
+			'start_time', start_time,
+			'reminder_due_at', reminder_due_at,
+			'lead_id', lead_id,
+			'lead_name', nullif(lead_name, ''),
+			'variables', jsonb_strip_nulls(jsonb_build_object(
+				'titulo', title,
+				'tipo', event_type_label,
+				'horario', start_time,
+				'minutos', reminder_minutes,
+				'quando', reminder_when,
+				'nome_lead', nullif(lead_name, ''),
+				'schedule_event_id', id::text,
+				'schedule_title', title,
+				'schedule_event_type', event_type,
+				'start_time', start_time,
+				'reminder_due_at', reminder_due_at,
+				'lead_id', lead_id,
+				'lead_name', nullif(lead_name, '')
+			)),
+			'dispatch', jsonb_build_object(
+				'push', jsonb_build_object('required', true, 'status', 'pending'),
+				'whatsapp', jsonb_build_object('required', true, 'status', 'pending')
+			),
+			'whatsapp_dispatch_required', true,
+			'whatsapp_dispatch', jsonb_build_object('status', 'pending')
+		))
+	from pending_recipients
+	on conflict do nothing
+`
+
+func (repo Repository) enqueueDueScheduleReminderNotifications(ctx context.Context, tx pgx.Tx) (int64, error) {
+	tag, err := tx.Exec(
+		ctx,
+		dueScheduleReminderNotificationsSQL,
+		int64(scheduleReminderDueLookAhead/time.Second),
+		scheduleReminderMaximumMinutes,
+		scheduleNotificationEnqueueLimit,
+	)
+	if isUndefinedTableError(err) || isUndefinedColumnError(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+const dueScheduleOutcomeNotificationsSQL = `
+	with due_events as (
+		select
+			se.id,
+			se.organization_id,
+			se.user_id,
+			se.lead_id,
+			se.title,
+			se.event_type,
+			case se.event_type
+				when 'meeting' then 'Reuniao'
+				when 'visit' then 'Visita ao imovel'
+			end as event_type_label,
+			se.start_time,
+			se.end_time,
+			l.name as lead_name
+		from public.schedule_events se
+		join public.organization_modules agenda_module
+		  on agenda_module.organization_id = se.organization_id
+		 and lower(btrim(agenda_module.module_name)) = 'agenda'
+		 and coalesce(agenda_module.is_enabled, false) = true
+		left join public.leads l
+		  on l.organization_id = se.organization_id
+		 and l.id = se.lead_id
+		where coalesce(se.status, 'scheduled') = 'scheduled'
+		  and se.event_type in ('visit', 'meeting')
+		  and se.end_time <= statement_timestamp() - ($1::bigint * interval '1 second')
+		  and se.end_time >= statement_timestamp() - ($2::bigint * interval '1 second')
+	),
+	recipients as (
+		select due_events.* from due_events
+		union
+		select
+			due_events.id,
+			due_events.organization_id,
+			sea.user_id,
+			due_events.lead_id,
+			due_events.title,
+			due_events.event_type,
+			due_events.event_type_label,
+			due_events.start_time,
+			due_events.end_time,
+			due_events.lead_name
+		from due_events
+		join public.schedule_event_assignees sea
+		  on sea.event_id = due_events.id
+		 and sea.organization_id = due_events.organization_id
+	),
+	pending_recipients as (
+		select
+			recipients.*,
+			'appointment_outcome_pending:' || recipients.id::text || ':' || recipients.user_id::text as dedupe_key
+		from recipients
+		join public.users recipient_user
+		  on recipient_user.organization_id = recipients.organization_id
+		 and recipient_user.id = recipients.user_id
+		 and coalesce(recipient_user.is_active, true) = true
+		join public.organization_members recipient_membership
+		  on recipient_membership.organization_id = recipients.organization_id
+		 and recipient_membership.user_id = recipients.user_id
+		 and recipient_membership.is_active = true
+		where recipients.user_id is not null
+		  and not exists (
+		    select 1
+		    from public.notifications notification
+		    where notification.organization_id = recipients.organization_id
+		      and notification.user_id = recipients.user_id
+		      and notification.metadata->>'dedupe_key' =
+		        'appointment_outcome_pending:' || recipients.id::text || ':' || recipients.user_id::text
+		  )
+		order by end_time asc, id asc, user_id asc
+		limit $3
+	)
+	insert into public.notifications (
+		organization_id,
+		user_id,
+		title,
+		content,
+		body,
+		type,
+		channel,
+		lead_id,
+		target_url,
+		metadata
+	)
+	select
+		organization_id,
+		user_id,
+		'Como foi: ' || title || '?',
+		'O compromisso "' || title || '" terminou. Registre se foi realizado ou se houve no-show.',
+		'O compromisso "' || title || '" terminou. Registre se foi realizado ou se houve no-show.',
+		'schedule',
+		'in_app',
+		lead_id,
+		'/agenda?event=' || id::text,
+		jsonb_strip_nulls(jsonb_build_object(
+			'event_key', 'appointment_outcome_pending',
+			'dedupe_key', dedupe_key,
+			'schedule_event_id', id::text,
+			'schedule_title', title,
+			'schedule_event_type', event_type,
+			'start_time', start_time,
+			'end_time', end_time,
+			'lead_id', lead_id,
+			'lead_name', nullif(lead_name, ''),
+			'expires_at', statement_timestamp() + interval '2 hours',
+			'variables', jsonb_strip_nulls(jsonb_build_object(
+				'titulo', title,
+				'tipo', event_type_label,
+				'horario', start_time,
+				'nome_lead', nullif(lead_name, ''),
+				'schedule_event_id', id::text,
+				'schedule_title', title,
+				'schedule_event_type', event_type,
+				'start_time', start_time,
+				'end_time', end_time,
+				'lead_id', lead_id,
+				'lead_name', nullif(lead_name, '')
+			)),
+			'dispatch', jsonb_build_object(
+				'push', jsonb_build_object('required', true, 'status', 'pending'),
+				'whatsapp', jsonb_build_object('required', false, 'status', 'skipped')
+			),
+			'whatsapp_dispatch_required', false,
+			'whatsapp_dispatch', jsonb_build_object('status', 'skipped')
+		))
+	from pending_recipients
+	on conflict do nothing
+`
+
+func (repo Repository) enqueueDueScheduleOutcomeNotifications(ctx context.Context, tx pgx.Tx) (int64, error) {
+	tag, err := tx.Exec(
+		ctx,
+		dueScheduleOutcomeNotificationsSQL,
+		int64(scheduleOutcomeMinimumDelay/time.Second),
+		int64(scheduleOutcomeCatchUpWindow/time.Second),
+		scheduleNotificationEnqueueLimit,
+	)
+	if isUndefinedTableError(err) || isUndefinedColumnError(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
 	return tag.RowsAffected(), nil
 }
 
 func notificationTargetURL(notification pendingNotification) string {
+	eventKey := strings.ToLower(strings.TrimSpace(stringFromMap(notification.Metadata, "event_key")))
+	if eventKey == "appointment_reminder" || eventKey == "appointment_outcome_pending" || eventKey == "schedule_reminder" {
+		variables := notificationVariables(notification.Metadata)
+		eventID := firstNotificationText(
+			stringFromMap(notification.Metadata, "schedule_event_id"),
+			stringFromMap(variables, "schedule_event_id"),
+		)
+		if normalizedEventID, ok := normalizeUUID(eventID); ok {
+			return "/agenda?event=" + normalizedEventID
+		}
+	}
 	if notification.LeadID != nil && strings.TrimSpace(*notification.LeadID) != "" {
 		return "/crm/pipelines?lead=" + strings.TrimSpace(*notification.LeadID)
 	}

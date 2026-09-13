@@ -1,5 +1,11 @@
+import {
+  resolvePipelineDateModeForRange,
+  type PipelineDateMode,
+} from './pipeline-date-mode';
+
 export interface PipelineQueryKeyFilters {
   dateRange?: { from: Date; to: Date } | null;
+  dateMode?: PipelineDateMode;
   filterTag?: string | null;
   filterDealStatus?: string | null;
   searchQuery?: string | null;
@@ -15,7 +21,8 @@ function normalizePipelineQueryFilter(value?: string | null) {
 }
 
 function normalizePipelineQueryUserIds(userIds?: string[]) {
-  if (!userIds?.length) return undefined;
+  if (!Array.isArray(userIds)) return undefined;
+  if (userIds.length === 0) return '__none__';
   return [...new Set(userIds)].sort().join(',');
 }
 
@@ -42,5 +49,6 @@ export function stageWithLeadsQueryKey(params: {
     normalizePipelineQueryFilter(filters?.filterAd),
     normalizePipelineQueryFilter(filters?.filterSource),
     normalizePipelineQueryUserIds(filters?.filterUserIds),
+    resolvePipelineDateModeForRange(filters?.dateRange, filters?.dateMode),
   ] as const;
 }

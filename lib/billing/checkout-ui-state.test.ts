@@ -174,7 +174,7 @@ test("troca de organizacao remonta o faturamento antes de exibir dados da nova c
 
   assert.match(
     subscriptionSource,
-    /<SubscriptionTabContent key=\{organization\?\.id \?\? ['"]sem-organizacao['"]\} \/>/,
+    /<SubscriptionTabContent key=\{activeOrganization\.organizationId \?\? ['"]sem-organizacao['"]\} \/>/,
   );
 });
 
@@ -184,6 +184,10 @@ test("troca de cartao reutiliza uma chave por tentativa e confirma somente o job
       process.cwd(),
       "components/features/auth/screens/CheckoutScreen.tsx",
     ),
+    "utf8",
+  );
+  const domainSource = readFileSync(
+    resolve(process.cwd(), "lib/billing/checkout-domain.ts"),
     "utf8",
   );
 
@@ -205,7 +209,7 @@ test("troca de cartao reutiliza uma chave por tentativa e confirma somente o job
     /(?:localStorage|sessionStorage)[\s\S]{0,120}(?:cardRequest|idempotency)/,
   );
   assert.match(
-    screenSource,
+    domainSource,
     /cardUpdateSessionStorageKey[\s\S]*checkoutCardRequestFingerprint[\s\S]*vimob:billing-card-update:\$\{digest\}/,
   );
   assert.match(screenSource, /parsePersistedCardUpdateJob/);
@@ -252,14 +256,21 @@ test("job saved_only restaurado exibe progresso e repete somente a consulta do m
     ),
     "utf8",
   );
-
-  const savedOnlyBanner = screenSource.indexOf(
-    'directCardUpdateMode === "saved_only"',
-    screenSource.indexOf("<Tabs"),
+  const paymentSectionSource = readFileSync(
+    resolve(
+      process.cwd(),
+      "components/features/auth/checkout/CheckoutPaymentSection.tsx",
+    ),
+    "utf8",
   );
-  const tabsList = screenSource.indexOf("<TabsList", savedOnlyBanner);
+
+  const savedOnlyBanner = paymentSectionSource.indexOf(
+    'directCardUpdateMode === "saved_only"',
+    paymentSectionSource.indexOf("<Tabs"),
+  );
+  const tabsList = paymentSectionSource.indexOf("<TabsList", savedOnlyBanner);
   assert.ok(savedOnlyBanner >= 0 && tabsList > savedOnlyBanner);
-  const bannerScope = screenSource.slice(savedOnlyBanner, tabsList);
+  const bannerScope = paymentSectionSource.slice(savedOnlyBanner, tabsList);
   assert.match(bannerScope, /role="status"/);
   assert.match(bannerScope, /aria-live="polite"/);
   assert.match(bannerScope, /recoveryMessage/);

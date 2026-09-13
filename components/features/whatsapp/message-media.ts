@@ -1,11 +1,126 @@
 export type MessageMediaKind = "image" | "video" | "audio" | "document" | "sticker";
 
+export type MessageMediaPolicyPresentation = {
+  title: string;
+  description: string;
+  canRequestDownload: boolean;
+  isQueued: boolean;
+};
+
 const MAX_MEDIA_URL_LENGTH = 8_192;
 const MAX_DATA_MEDIA_URL_LENGTH = 24 * 1024 * 1024;
 const MAX_BUFFERED_DOWNLOAD_BYTES = 64 * 1024 * 1024;
 export const MAX_OUTBOUND_MESSAGE_MEDIA_BYTES = 5 * 1024 * 1024;
+export const MAX_MANUAL_MESSAGE_MEDIA_BYTES = 25 * 1024 * 1024;
 const CONTROL_OR_BIDI_CHARACTER = /[\u0000-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/g;
 const INVALID_FILENAME_CHARACTER = /[<>:"/\\|?*]/g;
+
+const AUTOMATIC_MEDIA_LIMIT_MIB: Partial<Record<MessageMediaKind, number>> = {
+  audio: 25,
+  image: 10,
+  sticker: 5,
+};
+
+const MEDIA_KIND_LABEL: Record<MessageMediaKind, string> = {
+  audio: "áudio",
+  document: "documento",
+  image: "imagem",
+  sticker: "figurinha",
+  video: "vídeo",
+};
+
+const formatMediaSize = (sizeBytes: number) => {
+  const sizeMiB = sizeBytes / (1024 * 1024);
+  const formatted = sizeMiB.toFixed(1).replace(".", ",").replace(",0", "");
+  return `${formatted} MB`;
+};
+
+const hasMediaPolicyError = (error: string, code: string) =>
+  error.toLowerCase().includes(code);
+
+export function getMessageMediaPolicyPresentation({
+  error,
+  kind,
+  sizeBytes,
+}: {
+  error: string | null | undefined;
+  kind: MessageMediaKind;
+  sizeBytes?: number | null;
+}): MessageMediaPolicyPresentation | null {
+  const normalizedError = String(error || "").trim();
+  if (!normalizedError) return null;
+
+  const hasKnownSize = typeof sizeBytes === "number" && Number.isFinite(sizeBytes) && sizeBytes > 0;
+  const withinManualLimit = hasKnownSize && sizeBytes <= MAX_MANUAL_MESSAGE_MEDIA_BYTES;
+  const mediaLabel = kind === "document" ? "documento" : `arquivo de ${MEDIA_KIND_LABEL[kind]}`;
+  const sizeLabel = hasKnownSize ? formatMediaSize(sizeBytes) : null;
+
+  if (
+    hasMediaPolicyError(normalizedError, "media_manual_download_queued")
+    || hasMediaPolicyError(normalizedError, "media_download_retry_scheduled")
+  ) {
+    return {
+      title: "Download na fila",
+      description: "O arquivo aparecerá aqui assim que o processamento terminar.",
+      canRequestDownload: false,
+      isQueued: true,
+    };
+  }
+
+  if (hasMediaPolicyError(normalizedError, "media_policy_unknown_size")) {
+    return {
+      title: "Tamanho do arquivo não informado",
+      description: `O WhatsApp não informou o tamanho deste ${mediaLabel}. Por segurança, o CRM não pode baixá-lo agora.`,
+      canRequestDownload: false,
+      isQueued: false,
+    };
+  }
+
+  if (hasMediaPolicyError(normalizedError, "media_policy_too_large")) {
+    if (!withinManualLimit) {
+      return {
+        title: "Arquivo acima do limite",
+        description: sizeLabel
+          ? `Este ${mediaLabel} tem ${sizeLabel} e ultrapassa o limite máximo de 25 MB do CRM.`
+          : `Este ${mediaLabel} ultrapassa o limite máximo de 25 MB do CRM.`,
+        canRequestDownload: false,
+        isQueued: false,
+      };
+    }
+
+    const automaticLimitMiB = AUTOMATIC_MEDIA_LIMIT_MIB[kind];
+    return {
+      title: "Arquivo não baixado automaticamente",
+      description: automaticLimitMiB
+        ? `Este ${mediaLabel} tem ${sizeLabel}. O download automático é limitado a ${automaticLimitMiB} MB.`
+        : `Este ${mediaLabel} tem ${sizeLabel} e precisa ser solicitado manualmente.`,
+      canRequestDownload: true,
+      isQueued: false,
+    };
+  }
+
+  if (hasMediaPolicyError(normalizedError, "media_policy_manual_only_type")) {
+    if (!withinManualLimit) {
+      return {
+        title: hasKnownSize ? "Arquivo acima do limite" : "Tamanho do arquivo não informado",
+        description: sizeLabel
+          ? `Este ${mediaLabel} tem ${sizeLabel} e ultrapassa o limite máximo de 25 MB do CRM.`
+          : `O WhatsApp não informou o tamanho deste ${mediaLabel}. Por segurança, o CRM não pode baixá-lo agora.`,
+        canRequestDownload: false,
+        isQueued: false,
+      };
+    }
+
+    return {
+      title: "Arquivo disponível para download",
+      description: `Para proteger as conexões do WhatsApp, este ${mediaLabel} de ${sizeLabel} não foi baixado automaticamente.`,
+      canRequestDownload: true,
+      isQueued: false,
+    };
+  }
+
+  return null;
+}
 
 const MIME_EXTENSION: Record<string, string> = {
   "application/msword": "doc",
@@ -35,6 +150,169 @@ const MIME_EXTENSION: Record<string, string> = {
   "text/csv": "csv",
   "text/plain": "txt",
 };
+
+export function getMessageMediaExtension(mimeType: string, fallback = "bin"): string {
+  const normalizedMimeType = String(mimeType || "").split(";")[0]?.trim().toLowerCase();
+  return (normalizedMimeType && MIME_EXTENSION[normalizedMimeType]) || fallback;
+}
+
+type BlobDataUrlReader = {
+  result: string | ArrayBuffer | null;
+  onload: ((event?: unknown) => void) | null;
+  onerror: ((reason?: unknown) => void) | null;
+  readAsDataURL(blob: Blob): void;
+};
+
+export function blobToBase64(blob: Blob, reader?: BlobDataUrlReader): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const activeReader = reader || new FileReader();
+    activeReader.onload = () => {
+      const dataUrl = typeof activeReader.result === "string" ? activeReader.result : "";
+      resolve(dataUrl.split(",")[1] || "");
+    };
+    activeReader.onerror = reject;
+    activeReader.readAsDataURL(blob);
+  });
+}
+
+export type OutboundMessageMediaKind = Exclude<MessageMediaKind, "sticker">;
+
+export function getOutboundMessageMediaKind(mimeType: string): OutboundMessageMediaKind {
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("video/")) return "video";
+  if (mimeType.startsWith("audio/")) return "audio";
+  return "document";
+}
+
+export type OutboundImageCompressionOptions = {
+  maxDimension: number;
+  minimumSizeBytes: number;
+  quality: number;
+  pngOutput: "png" | "webp";
+  otherImageOutput: "source" | "webp";
+  onlyIfSmaller: boolean;
+  recoverOnError: boolean;
+  fallbackBaseName: string;
+};
+
+type LoadedOutboundImage = {
+  width: number;
+  height: number;
+  source: unknown;
+};
+
+export type OutboundImageCompressionRuntime = {
+  createObjectUrl(blob: Blob): string;
+  revokeObjectUrl(url: string): void;
+  loadImage(url: string): Promise<LoadedOutboundImage>;
+  encodeImage(
+    image: LoadedOutboundImage,
+    width: number,
+    height: number,
+    mimeType: string,
+    quality: number,
+  ): Promise<Blob | null>;
+  createFile(blob: Blob, filename: string, mimeType: string): File;
+};
+
+const browserOutboundImageRuntime: OutboundImageCompressionRuntime = {
+  createObjectUrl: (blob) => URL.createObjectURL(blob),
+  revokeObjectUrl: (url) => URL.revokeObjectURL(url),
+  async loadImage(url) {
+    const image = new Image();
+    image.decoding = "async";
+    const loaded = new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = reject;
+    });
+    image.src = url;
+    await loaded;
+    return { width: image.width, height: image.height, source: image };
+  },
+  async encodeImage(image, width, height, mimeType, quality) {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.drawImage(image.source as CanvasImageSource, 0, 0, width, height);
+    return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mimeType, quality));
+  },
+  createFile: (blob, filename, mimeType) => new File([blob], filename, { type: mimeType }),
+};
+
+export const OUTBOUND_IMAGE_COMPRESSION_PROFILES = {
+  preservePngEncoding: {
+    maxDimension: 1600,
+    minimumSizeBytes: 900_000,
+    quality: 0.82,
+    pngOutput: "png",
+    otherImageOutput: "webp",
+    onlyIfSmaller: false,
+    recoverOnError: false,
+    fallbackBaseName: "imagem",
+  },
+  preferSmallerFile: {
+    maxDimension: 1600,
+    minimumSizeBytes: 900_000,
+    quality: 0.82,
+    pngOutput: "webp",
+    otherImageOutput: "source",
+    onlyIfSmaller: true,
+    recoverOnError: true,
+    fallbackBaseName: "",
+  },
+} as const satisfies Record<string, OutboundImageCompressionOptions>;
+
+const resolveOutboundImageMimeType = (
+  sourceMimeType: string,
+  options: OutboundImageCompressionOptions,
+) => {
+  if (sourceMimeType === "image/png") {
+    return options.pngOutput === "webp" ? "image/webp" : "image/png";
+  }
+  return options.otherImageOutput === "webp" ? "image/webp" : sourceMimeType;
+};
+
+export async function compressOutboundImageFile(
+  file: File,
+  options: OutboundImageCompressionOptions,
+  runtime: OutboundImageCompressionRuntime = browserOutboundImageRuntime,
+): Promise<File> {
+  if (!file.type.startsWith("image/") || file.type === "image/gif") return file;
+
+  // Object URL creation intentionally remains outside the recovery boundary,
+  // matching the previous composers: failure here means the browser cannot
+  // safely start processing the selected file.
+  const imageUrl = runtime.createObjectUrl(file);
+  try {
+    const image = await runtime.loadImage(imageUrl);
+    const scale = Math.min(1, options.maxDimension / Math.max(image.width, image.height));
+    if (scale >= 1 && file.size < options.minimumSizeBytes) return file;
+
+    const width = Math.max(1, Math.round(image.width * scale));
+    const height = Math.max(1, Math.round(image.height * scale));
+    const targetMimeType = resolveOutboundImageMimeType(file.type, options);
+    const blob = await runtime.encodeImage(
+      image,
+      width,
+      height,
+      targetMimeType,
+      options.quality,
+    );
+    if (!blob || (options.onlyIfSmaller && blob.size >= file.size)) return file;
+
+    const sourceBaseName = file.name.replace(/\.[^.]+$/, "");
+    const baseName = sourceBaseName || options.fallbackBaseName;
+    const extension = getMessageMediaExtension(targetMimeType, "webp");
+    return runtime.createFile(blob, `${baseName}.${extension}`, targetMimeType);
+  } catch (error) {
+    if (options.recoverOnError) return file;
+    throw error;
+  } finally {
+    runtime.revokeObjectUrl(imageUrl);
+  }
+}
 
 const DEFAULT_FILENAME: Record<MessageMediaKind, string> = {
   image: "Imagem",

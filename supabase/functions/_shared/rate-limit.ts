@@ -8,10 +8,12 @@ export type RateLimitRule = {
 
 export type RateLimitResult = {
   response: Response | null;
+  error: unknown | null;
 };
 
 type RateLimitOptions = {
   identifier?: string;
+  failClosed?: boolean;
 };
 
 async function sha256Hex(input: string): Promise<string> {
@@ -52,6 +54,7 @@ export async function enforceRateLimit(
 
     if (error) {
       console.error('[rate-limit] Failed to check limit:', error);
+      if (options.failClosed) return { response: null, error };
       continue;
     }
 
@@ -75,9 +78,10 @@ export async function enforceRateLimit(
             },
           },
         ),
+        error: null,
       };
     }
   }
 
-  return { response: null };
+  return { response: null, error: null };
 }

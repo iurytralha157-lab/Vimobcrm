@@ -203,18 +203,14 @@ test('multi-tenant worker returns only aggregate counters and scopes message pro
   }
 })
 
-test('both existing internal callers keep their POST legacy-service-role contract', async () => {
-  const callers = await Promise.all([
-    readRepositoryFile('supabase/functions/ai-agent-responder/index.ts'),
-    readRepositoryFile('supabase/functions/generic-webhook/index.ts'),
-  ])
-
-  for (const caller of callers) {
-    const callStart = caller.indexOf('/functions/v1/message-sender')
-    assert.ok(callStart >= 0)
-    const call = caller.slice(callStart, callStart + 500)
-    assert.match(call, /method:\s*["']POST["']/)
-    assert.match(call, /Authorization:\s*`Bearer \$\{[^}]+\}`/)
-    assert.match(call, /body:\s*JSON\.stringify\(/)
-  }
+test('the remaining internal caller keeps its POST legacy-service-role contract', async () => {
+  const caller = await readRepositoryFile(
+    'supabase/functions/ai-agent-responder/index.ts',
+  )
+  const callStart = caller.indexOf('/functions/v1/message-sender')
+  assert.ok(callStart >= 0)
+  const call = caller.slice(callStart, callStart + 500)
+  assert.match(call, /method:\s*["']POST["']/)
+  assert.match(call, /Authorization:\s*`Bearer \$\{[^}]+\}`/)
+  assert.match(call, /body:\s*JSON\.stringify\(/)
 })

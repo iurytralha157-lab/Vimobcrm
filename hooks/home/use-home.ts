@@ -3,7 +3,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
-import { useAuth } from '@/contexts/AuthContext'
+import { useOptionalActiveOrganizationId as useOrganizationId } from '@/hooks/use-active-organization'
+import { getNonEmptyErrorMessageOrFallback as getErrorMessage } from '@/lib/api/vimob-error'
 import {
   homeAPI,
   type CreateHomePublicationInput,
@@ -21,15 +22,6 @@ export const homeQueryKeys = {
   ),
   allPublications: () => ['home', 'publications'] as const,
   adminPublications: () => ['home', 'admin-publications'] as const,
-}
-
-function useOrganizationId() {
-  const { organization, profile } = useAuth()
-  return organization?.id ?? profile?.organization_id ?? undefined
-}
-
-function getErrorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback
 }
 
 function useInvalidateHomePublications() {

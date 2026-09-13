@@ -9,6 +9,7 @@ import { createTenantQueryAccessSignature } from '@/lib/access/tenant-query-cach
 import {
   propertyDevelopmentsAPI,
 } from '@/lib/api/property-developments'
+import { VimobAPIError, stringifyErrorMessage as getErrorMessage } from '@/lib/api/vimob-error'
 import type {
   PropertyDevelopmentBuildingCreateInput,
   PropertyDevelopmentBulkUnitsInput,
@@ -23,6 +24,9 @@ import type {
 	PropertyDevelopmentReservationExtendInput,
 	PropertyDevelopmentReservationListFilters,
   PropertyDevelopmentUnitPatchInput,
+	PropertyDevelopmentUnitLinkInput,
+	PropertyDevelopmentUnitPromoteInput,
+	PropertyDevelopmentUnitUnlinkInput,
 	PropertyDevelopmentUnitListFilters,
 	PropertyDevelopmentUnitPriceInput,
 } from '@/lib/validation'
@@ -97,17 +101,14 @@ export const propertyDevelopmentKeys = {
 
 function useDevelopmentQueryScope() {
   const {
+    activeOrganization,
     user,
     profile,
-    organization,
-    organizationsLoaded,
-    isInitializingOrg,
     tenantContext,
     isSuperAdmin,
     impersonating,
   } = useAuth()
-  const organizationId = organization?.id
-    ?? ((!organizationsLoaded || isInitializingOrg) ? undefined : profile?.organization_id || undefined)
+  const organizationId = activeOrganization.organizationId || undefined
 
   return {
     organizationId,
@@ -131,15 +132,26 @@ function useDevelopmentOrganizationId() {
   return useDevelopmentQueryScope().organizationId
 }
 
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error)
+function getUnitPropertyErrorMessage(error: unknown) {
+	if (error instanceof VimobAPIError) {
+		if (error.code === 'development_conflict') {
+			return 'A unidade ou o imóvel mudou, já possui outro vínculo ou não está em condição segura. Atualize a ficha e tente novamente.'
+		}
+		if (error.code === 'invalid_development_input') {
+			return 'Os dados do vínculo não são mais válidos. Atualize a ficha e revise a operação.'
+		}
+		if (error.code === 'permission_denied') {
+			return 'Seu perfil não tem permissão para alterar o vínculo desta unidade.'
+		}
+	}
+	return getErrorMessage(error)
 }
 
 function createUUIDv4() {
 	const webCrypto = globalThis.crypto
 	if (typeof webCrypto?.randomUUID === 'function') return webCrypto.randomUUID()
 	if (typeof webCrypto?.getRandomValues !== 'function') {
-		throw new Error('O navegador não oferece geração segura para a chave da reserva')
+		throw new Error('O navegador não oferece geração segura para esta operação')
 	}
 
 	const bytes = webCrypto.getRandomValues(new Uint8Array(16))
@@ -147,6 +159,35 @@ function createUUIDv4() {
 	bytes[8] = (bytes[8] & 0x3f) | 0x80
 	const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
 	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+function useIdempotencyAttemptKeys() {
+	const keys = useRef(new Map<string, string>())
+
+	return {
+		resolve(fingerprint: string, explicitKey?: string) {
+			let key = explicitKey || keys.current.get(fingerprint)
+			if (key) return key
+			key = createUUIDv4()
+			if (keys.current.size >= 20) {
+				const oldestFingerprint = keys.current.keys().next().value
+				if (oldestFingerprint) keys.current.delete(oldestFingerprint)
+			}
+			keys.current.set(fingerprint, key)
+			return key
+		},
+		release(fingerprint: string) {
+			keys.current.delete(fingerprint)
+		},
+	}
+}
+
+function unitPropertyAttemptFingerprint(
+	action: 'link' | 'promote' | 'unlink',
+	unitId: string,
+	input: PropertyDevelopmentUnitLinkInput | PropertyDevelopmentUnitPromoteInput | PropertyDevelopmentUnitUnlinkInput,
+) {
+	return JSON.stringify([action, unitId, input])
 }
 
 function reservationAttemptFingerprint(variables: {
@@ -187,6 +228,31 @@ function useInvalidatePropertyDevelopments() {
 
     await Promise.all(invalidations)
   }
+}
+
+function useInvalidateUnitPropertyLink() {
+	const queryClient = useQueryClient()
+	const { organizationId } = useDevelopmentQueryScope()
+	const invalidateDevelopments = useInvalidatePropertyDevelopments()
+
+	return async (developmentId: string | null, propertyIds: Array<string | null | undefined>) => {
+		const uniquePropertyIds = Array.from(new Set(propertyIds.filter((id): id is string => Boolean(id))))
+		const invalidations: Array<Promise<unknown>> = [
+			invalidateDevelopments(developmentId),
+			queryClient.invalidateQueries({ queryKey: ['properties', organizationId] }),
+			queryClient.invalidateQueries({ queryKey: ['properties-infinite', organizationId] }),
+			queryClient.invalidateQueries({ queryKey: ['property-workspace', organizationId] }),
+		]
+		for (const propertyId of uniquePropertyIds) {
+			invalidations.push(queryClient.invalidateQueries({
+				queryKey: ['property', organizationId, propertyId],
+			}))
+			invalidations.push(queryClient.invalidateQueries({
+				queryKey: ['property-history', organizationId, propertyId],
+			}))
+		}
+		await Promise.all(invalidations)
+	}
 }
 
 export function usePropertyDevelopments(filters: PropertyDevelopmentListFilters = {}) {
@@ -386,6 +452,118 @@ export function useUpdatePropertyDevelopmentUnit(developmentId: string | null) {
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   })
+}
+
+export function useLinkPropertyDevelopmentUnit(developmentId: string | null) {
+	const organizationId = useDevelopmentOrganizationId()
+	const invalidate = useInvalidateUnitPropertyLink()
+	const idempotencyKeys = useIdempotencyAttemptKeys()
+
+	return useMutation({
+		mutationFn: async ({
+			unitId,
+			input,
+			idempotencyKey,
+		}: {
+			unitId: string
+			input: PropertyDevelopmentUnitLinkInput
+			idempotencyKey?: string
+		}) => {
+			if (!organizationId || !developmentId) throw new Error('Organizacao ou empreendimento nao identificado')
+			const fingerprint = unitPropertyAttemptFingerprint('link', unitId, input)
+			return propertyDevelopmentsAPI.linkUnitProperty(
+				organizationId,
+				developmentId,
+				unitId,
+				input,
+				idempotencyKeys.resolve(fingerprint, idempotencyKey),
+			)
+		},
+		onSuccess: async (result, variables) => {
+			idempotencyKeys.release(unitPropertyAttemptFingerprint('link', variables.unitId, variables.input))
+			await invalidate(developmentId, [variables.input.property_id, result.property?.id])
+			toast.success(result.replayed ? 'Vínculo confirmado novamente' : 'Imóvel vinculado à unidade')
+		},
+		onError: async (error) => {
+			await invalidate(developmentId, [])
+			toast.error(getUnitPropertyErrorMessage(error))
+		},
+	})
+}
+
+export function usePromotePropertyDevelopmentUnit(developmentId: string | null) {
+	const organizationId = useDevelopmentOrganizationId()
+	const invalidate = useInvalidateUnitPropertyLink()
+	const idempotencyKeys = useIdempotencyAttemptKeys()
+
+	return useMutation({
+		mutationFn: async ({
+			unitId,
+			input,
+			idempotencyKey,
+		}: {
+			unitId: string
+			input: PropertyDevelopmentUnitPromoteInput
+			idempotencyKey?: string
+		}) => {
+			if (!organizationId || !developmentId) throw new Error('Organizacao ou empreendimento nao identificado')
+			const fingerprint = unitPropertyAttemptFingerprint('promote', unitId, input)
+			return propertyDevelopmentsAPI.promoteUnitProperty(
+				organizationId,
+				developmentId,
+				unitId,
+				input,
+				idempotencyKeys.resolve(fingerprint, idempotencyKey),
+			)
+		},
+		onSuccess: async (result, variables) => {
+			idempotencyKeys.release(unitPropertyAttemptFingerprint('promote', variables.unitId, variables.input))
+			await invalidate(developmentId, [result.property?.id])
+			toast.success(result.replayed ? 'Ficha confirmada novamente' : 'Ficha do imóvel criada e vinculada')
+		},
+		onError: async (error) => {
+			await invalidate(developmentId, [])
+			toast.error(getUnitPropertyErrorMessage(error))
+		},
+	})
+}
+
+export function useUnlinkPropertyDevelopmentUnit(developmentId: string | null) {
+	const organizationId = useDevelopmentOrganizationId()
+	const invalidate = useInvalidateUnitPropertyLink()
+	const idempotencyKeys = useIdempotencyAttemptKeys()
+
+	return useMutation({
+		mutationFn: async ({
+			unitId,
+			input,
+			idempotencyKey,
+		}: {
+			unitId: string
+			propertyId: string
+			input: PropertyDevelopmentUnitUnlinkInput
+			idempotencyKey?: string
+		}) => {
+			if (!organizationId || !developmentId) throw new Error('Organizacao ou empreendimento nao identificado')
+			const fingerprint = unitPropertyAttemptFingerprint('unlink', unitId, input)
+			return propertyDevelopmentsAPI.unlinkUnitProperty(
+				organizationId,
+				developmentId,
+				unitId,
+				input,
+				idempotencyKeys.resolve(fingerprint, idempotencyKey),
+			)
+		},
+		onSuccess: async (result, variables) => {
+			idempotencyKeys.release(unitPropertyAttemptFingerprint('unlink', variables.unitId, variables.input))
+			await invalidate(developmentId, [variables.propertyId, result.property?.id])
+			toast.success(result.replayed ? 'Desvínculo confirmado novamente' : 'Ficha desvinculada da unidade')
+		},
+		onError: async (error, variables) => {
+			await invalidate(developmentId, [variables.propertyId])
+			toast.error(getUnitPropertyErrorMessage(error))
+		},
+	})
 }
 
 export function useActivatePropertyDevelopmentPriceTable(developmentId: string | null) {

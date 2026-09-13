@@ -1,85 +1,128 @@
-import { createClient } from 'npm:@supabase/supabase-js@2';
+import {
+  normalizeGoogleSiteVerification,
+  normalizePublicHTTPSAssetURL,
+  normalizePublicSiteDomain,
+  PublicSiteRequestError,
+  readBoundedJSONObject,
+} from "../_shared/public-site-edge.ts";
+import {
+  fetchPublicSiteConfiguration,
+  resolvePublicSiteAPIBaseURL,
+} from "../_shared/public-site-api.ts";
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Origin": "*",
 };
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
+const jsonHeaders = {
+  ...corsHeaders,
+  "Cache-Control": "no-store",
+  "Content-Type": "application/json; charset=utf-8",
+  "X-Content-Type-Options": "nosniff",
+};
+
+const publicSiteOrigin = "https://app.vimobcrm.com.br";
+
+Deno.serve(async (request) => {
+  if (request.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
+  }
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, {
+      Allow: "POST, OPTIONS",
+    });
   }
 
   try {
-    const { domain } = await req.json();
-
-    if (!domain) {
-      return new Response(
-        JSON.stringify({ error: 'Domain is required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    const contentType = request.headers.get("content-type") || "";
+    if (!contentType.toLowerCase().startsWith("application/json")) {
+      return jsonResponse({ error: "Content-Type must be application/json" }, 415);
     }
 
-    const cleanDomain = domain.toLowerCase().trim().replace(/^www\./, '');
-
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-    // Try exact match first, then without www
-    const { data, error } = await supabase
-      .from('organization_sites')
-      .select('subdomain, custom_domain')
-      .or(`custom_domain.eq.${domain.toLowerCase().trim()},custom_domain.eq.${cleanDomain},custom_domain.eq.www.${cleanDomain}`)
-      .eq('is_active', true)
-      .limit(1)
-      .maybeSingle();
-
-    if (error) {
-      console.error('Error looking up domain:', error);
-      return new Response(
-        JSON.stringify({ error: 'Lookup failed' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    const payload = await readBoundedJSONObject(request);
+    if (Object.keys(payload).some((key) => key !== "domain")) {
+      return jsonResponse({ error: "Unexpected request field" }, 400);
     }
 
-    if (!data || !data.subdomain) {
-      return new Response(
-        JSON.stringify({ error: 'Domain not found' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    const domain = normalizePublicSiteDomain(payload.domain);
+    if (!domain || !domain.includes(".")) {
+      return jsonResponse({ error: "Invalid domain" }, 400);
     }
 
-    // Also fetch site meta info for OG tags
-    const { data: siteData } = await supabase
-      .from('organization_sites')
-      .select('site_title, site_description, seo_title, seo_description, seo_keywords, logo_url, favicon_url, hero_image_url, about_image_url, gtm_id, meta_pixel_id, head_scripts, body_scripts, organizations(name)')
-      .eq('subdomain', data.subdomain)
-      .eq('is_active', true)
-      .maybeSingle();
-
-    const orgName = (siteData?.organizations as any)?.name || '';
-    const meta = siteData ? {
-      title: siteData.seo_title || siteData.site_title || orgName || 'Site Imobiliário',
-      description: siteData.seo_description || siteData.site_description || '',
-      image: siteData.logo_url || siteData.favicon_url || siteData.about_image_url || siteData.hero_image_url || '',
-      favicon: siteData.favicon_url || siteData.logo_url || '',
-    } : null;
-
-    return new Response(
-      JSON.stringify({
-        slug: data.subdomain,
-        target: 'vimobe.lovable.app',
-        meta,
-        ssr_url: `${Deno.env.get('SUPABASE_URL')}/functions/v1/public-site-ssr`,
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    const apiBaseURL = resolvePublicSiteAPIBaseURL(
+      Deno.env.get("VIMOB_API_URL") || Deno.env.get("PUBLIC_SITE_API_URL"),
+      Deno.env.get("SUPABASE_URL"),
     );
+    const data = await fetchPublicSiteConfiguration(apiBaseURL, domain);
+    const subdomain = readText(data?.subdomain);
+    if (!data || !subdomain) {
+      return jsonResponse({ error: "Domain not found" }, 404);
+    }
+
+    const image = firstSafeHTTPSURL(
+      data.logo_url,
+      data.favicon_url,
+      data.about_image_url,
+      data.hero_image_url,
+    );
+    const favicon = firstSafeHTTPSURL(data.favicon_url, data.logo_url);
+    const verification = normalizeGoogleSiteVerification(
+      data.google_search_console_verification,
+    );
+
+    return jsonResponse({
+      cache_version:
+        typeof data.updated_at === "string" ? data.updated_at : null,
+      meta: {
+        description:
+          readText(data.seo_description) || readText(data.site_description),
+        favicon,
+        google_site_verification: verification,
+        image,
+        title:
+          readText(data.seo_title) ||
+          readText(data.site_title) ||
+          readText(data.organization_name) ||
+          "Site Imobiliário",
+      },
+      slug: subdomain,
+      ssr_url: `${new URL(Deno.env.get("SUPABASE_URL") || request.url).origin}/functions/v1/public-site-ssr`,
+      target: new URL(publicSiteOrigin).host,
+    });
   } catch (error) {
-    console.error('Error:', error);
-    return new Response(
-      JSON.stringify({ error: 'Internal server error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    if (error instanceof PublicSiteRequestError) {
+      return jsonResponse({ error: error.message }, error.status);
+    }
+    console.error(
+      "Worker config lookup failed:",
+      error instanceof Error ? error.message : "unknown error",
     );
+    return jsonResponse({ error: "Internal server error" }, 500);
   }
 });
+
+function jsonResponse(
+  payload: Record<string, unknown>,
+  status = 200,
+  additionalHeaders: Record<string, string> = {},
+) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...jsonHeaders, ...additionalHeaders },
+  });
+}
+
+function firstSafeHTTPSURL(...values: unknown[]): string | null {
+  for (const value of values) {
+    const normalized = normalizePublicHTTPSAssetURL(value);
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function readText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}

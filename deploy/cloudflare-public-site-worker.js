@@ -1,7 +1,5 @@
 const SITE_ORIGIN = "https://app.vimobcrm.com.br";
 const DOMAIN_VERIFICATION_TOKEN = "__VIMOB_DOMAIN_VERIFICATION_TOKEN__";
-const HTML_CACHE_SECONDS = 300;
-const STALE_SECONDS = 86400;
 
 function isHtmlRequest(request) {
   if (request.method !== "GET" && request.method !== "HEAD") return false;
@@ -37,13 +35,10 @@ function buildOriginRequest(request) {
   });
 }
 
-function withPublicCacheHeaders(response) {
+function withSafeHtmlHeaders(response) {
   const headers = new Headers(response.headers);
   headers.delete("set-cookie");
-  headers.set(
-    "Cache-Control",
-    "public, max-age=60, s-maxage=" + HTML_CACHE_SECONDS + ", stale-while-revalidate=" + STALE_SECONDS + ", stale-if-error=" + STALE_SECONDS,
-  );
+  headers.set("Cache-Control", "no-store");
   headers.set("X-Vimob-Public-Proxy", "cloudflare-worker");
 
   return new Response(response.body, {
@@ -53,19 +48,13 @@ function withPublicCacheHeaders(response) {
   });
 }
 
-async function fetchAndCache(request, cacheKey, cache) {
+async function fetchOrigin(request) {
   const response = await fetch(buildOriginRequest(request));
-  const publicResponse = withPublicCacheHeaders(response);
-
-  if (publicResponse.ok && isHtmlRequest(request)) {
-    await cache.put(cacheKey, publicResponse.clone());
-  }
-
-  return publicResponse;
+  return isHtmlRequest(request) ? withSafeHtmlHeaders(response) : response;
 }
 
 const publicSiteWorker = {
-  async fetch(request, env, ctx) {
+  async fetch(request) {
     if (isVerificationRequest(request)) {
       return new Response(DOMAIN_VERIFICATION_TOKEN, {
         headers: {
@@ -75,30 +64,9 @@ const publicSiteWorker = {
       });
     }
 
-    const cache = caches.default;
-    const cacheable = isHtmlRequest(request);
-    const cacheKey = cacheable ? new Request(request.url, { headers: request.headers }) : null;
-
-    if (cacheable && cacheKey) {
-      const cached = await cache.match(cacheKey);
-      if (cached) {
-        ctx.waitUntil(fetchAndCache(request, cacheKey, cache).catch(() => undefined));
-        return cached;
-      }
-    }
-
     try {
-      if (!cacheable || !cacheKey) {
-        return fetch(buildOriginRequest(request));
-      }
-
-      return await fetchAndCache(request, cacheKey, cache);
+      return await fetchOrigin(request);
     } catch {
-      if (cacheable && cacheKey) {
-        const cached = await cache.match(cacheKey);
-        if (cached) return cached;
-      }
-
       return new Response("Site temporariamente indisponivel. Tente novamente em instantes.", {
         status: 503,
         headers: {

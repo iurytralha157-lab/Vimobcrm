@@ -1,0 +1,1 @@
+export { GoogleSearchConsoleIntegrationSettings } from './GoogleSearchConsoleIntegrationSettings'

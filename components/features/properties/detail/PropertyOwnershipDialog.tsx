@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from 'react'
 import { Loader2 } from 'lucide-react'
 
+import { PropertyOwnerCombobox } from '@/components/features/properties/PropertyOwnerCombobox'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -18,7 +19,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import type {
-  PropertyOwnerOption,
   PropertyOwnershipCreateInput,
   PropertyOwnershipUpdateInput,
   PropertyWorkspaceOwnership,
@@ -32,8 +32,6 @@ interface PropertyOwnershipDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   ownership?: PropertyWorkspaceOwnership | null
-  ownerOptions: PropertyOwnerOption[]
-  ownerOptionsLoading?: boolean
   canViewOwnerContacts: boolean
   pending?: boolean
   onSubmit: (command: OwnershipSubmitInput) => Promise<void>
@@ -53,8 +51,6 @@ export function PropertyOwnershipDialog({
   open,
   onOpenChange,
   ownership,
-  ownerOptions,
-  ownerOptionsLoading = false,
   canViewOwnerContacts,
   pending = false,
   onSubmit,
@@ -147,16 +143,14 @@ export function PropertyOwnershipDialog({
                 {ownerMode === 'existing' && (
                   <div className="space-y-2">
                     <Label htmlFor="ownership-owner">Proprietário</Label>
-                    <Select value={ownerId} onValueChange={setOwnerId} disabled={ownerOptionsLoading}>
-                      <SelectTrigger id="ownership-owner">
-                        <SelectValue placeholder={ownerOptionsLoading ? 'Carregando...' : 'Selecione'} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {ownerOptions.map((owner) => (
-                          <SelectItem key={owner.id} value={owner.id}>{owner.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <PropertyOwnerCombobox
+                      id="ownership-owner"
+                      value={ownerId}
+                      emptyLabel="Selecione"
+                      ariaLabel="Selecionar proprietário existente"
+                      disabled={pending}
+                      onSelect={(owner) => setOwnerId(owner?.id ?? '')}
+                    />
                   </div>
                 )}
               </div>

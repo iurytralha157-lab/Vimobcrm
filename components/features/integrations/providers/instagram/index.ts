@@ -1,0 +1,1 @@
+export { instagramIntegrationProviderManifest } from "./manifest";

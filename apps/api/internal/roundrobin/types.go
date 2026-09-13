@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 )
 
 var (
@@ -76,6 +76,26 @@ type UserSummary struct {
 	Name      string `json:"name,omitempty"`
 	Email     string `json:"email,omitempty"`
 	AvatarURL string `json:"avatarUrl,omitempty"`
+}
+
+type HistoryUser struct {
+	ID        string  `json:"id"`
+	Name      *string `json:"name"`
+	Email     *string `json:"email"`
+	AvatarURL *string `json:"avatar_url"`
+}
+
+type HistoryEvent struct {
+	ID          string         `json:"id"`
+	Action      string         `json:"action"`
+	EntityType  string         `json:"entity_type"`
+	EntityID    string         `json:"entity_id"`
+	OldData     map[string]any `json:"old_data"`
+	NewData     map[string]any `json:"new_data"`
+	Diff        map[string]any `json:"diff"`
+	CreatedAt   time.Time      `json:"created_at"`
+	User        *HistoryUser   `json:"user"`
+	SubjectUser *HistoryUser   `json:"subject_user"`
 }
 
 type PipelineSummary struct {
@@ -263,19 +283,24 @@ type updateInput struct {
 }
 
 type ruleInput struct {
-	MatchType  string
-	MatchValue string
-	Match      map[string]any
-	Priority   int
-	IsActive   bool
+	ID          string
+	MatchType   string
+	MatchValue  string
+	Match       map[string]any
+	Priority    int
+	PrioritySet bool
+	IsActive    bool
+	IsActiveSet bool
 }
 
 type memberInput struct {
-	Type     string
-	EntityID string
-	UserID   *string
-	TeamID   *string
-	Weight   int
+	ID        string
+	Type      string
+	EntityID  string
+	UserID    *string
+	TeamID    *string
+	Weight    int
+	WeightSet bool
 }
 
 type ruleMutationInput struct {
@@ -694,7 +719,9 @@ func (condition ConditionInput) toRuleInput(index int) (ruleInput, error) {
 		match[whatsappSessionMatchKey] = sessionID
 	}
 
+	persistedID, _ := normalizeUUID(condition.ID)
 	return ruleInput{
+		ID:         persistedID,
 		MatchType:  matchType,
 		MatchValue: strings.Join(values, ","),
 		Match:      match,
@@ -735,12 +762,16 @@ func normalizeRuleInput(input RuleInput, index int) (ruleInput, error) {
 		match[whatsappSessionMatchKey] = sessionID
 	}
 
+	persistedID, _ := normalizeUUID(input.ID)
 	return ruleInput{
-		MatchType:  matchType,
-		MatchValue: matchValue,
-		Match:      match,
-		Priority:   priority,
-		IsActive:   isActive,
+		ID:          persistedID,
+		MatchType:   matchType,
+		MatchValue:  matchValue,
+		Match:       match,
+		Priority:    priority,
+		PrioritySet: input.Priority != nil,
+		IsActive:    isActive,
+		IsActiveSet: input.IsActive != nil,
 	}, nil
 }
 
@@ -781,10 +812,21 @@ func normalizeMemberInputs(members []MemberInput) ([]memberInput, error) {
 			return nil, fmt.Errorf("%w: member entity id is invalid", ErrInvalidInput)
 		}
 
+		persistedID := ""
+		if strings.TrimSpace(member.ID) != "" {
+			var valid bool
+			persistedID, valid = normalizeUUID(member.ID)
+			if !valid {
+				return nil, fmt.Errorf("%w: member id is invalid", ErrInvalidInput)
+			}
+		}
+
 		item := memberInput{
-			Type:     memberType,
-			EntityID: entityID,
-			Weight:   weight,
+			ID:        persistedID,
+			Type:      memberType,
+			EntityID:  entityID,
+			Weight:    weight,
+			WeightSet: member.Weight != nil,
 		}
 		switch memberType {
 		case "user":
@@ -1130,12 +1172,5 @@ func trimMax(value string, maxLength int) string {
 }
 
 func normalizeUUID(value string) (string, bool) {
-	var uuid pgtype.UUID
-	if err := uuid.Scan(strings.TrimSpace(value)); err != nil {
-		return "", false
-	}
-	if !uuid.Valid {
-		return "", false
-	}
-	return uuid.String(), true
+	return pgvalue.NormalizeUUID(value)
 }

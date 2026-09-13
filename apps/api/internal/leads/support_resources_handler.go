@@ -1,9 +1,9 @@
 package leads
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/httpserver"
@@ -18,7 +18,8 @@ func (handler Handler) ListContacts(w http.ResponseWriter, r *http.Request) {
 		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
 		return
 	}
-	if r.URL.Query().Get("mode") == "export" && !tenantContext.HasPermission(permissions.LeadExport) {
+	requestedMode := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("mode")))
+	if (requestedMode == "export" || requestedMode == "full") && !tenantContext.HasPermission(permissions.LeadExport) {
 		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to export leads.")
 		return
 	}
@@ -61,7 +62,7 @@ func (handler Handler) CreateTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	request, ok := decodeJSON[TagMutationRequest](w, r, 1<<16)
+	request, ok := httpserver.DecodeJSONValue[TagMutationRequest](w, r, 1<<16)
 	if !ok {
 		return
 	}
@@ -85,7 +86,7 @@ func (handler Handler) UpdateTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	request, ok := decodeJSON[TagMutationRequest](w, r, 1<<16)
+	request, ok := httpserver.DecodeJSONValue[TagMutationRequest](w, r, 1<<16)
 	if !ok {
 		return
 	}
@@ -139,7 +140,7 @@ func (handler Handler) CreateActivity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	request, ok := decodeJSON[ActivityCreateRequest](w, r, 1<<18)
+	request, ok := httpserver.DecodeJSONValue[ActivityCreateRequest](w, r, 1<<18)
 	if !ok {
 		return
 	}
@@ -193,7 +194,7 @@ func (handler Handler) CreateLeadAttachment(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	request, ok := decodeJSON[LeadAttachmentCreateRequest](w, r, 1<<20)
+	request, ok := httpserver.DecodeJSONValue[LeadAttachmentCreateRequest](w, r, 1<<20)
 	if !ok {
 		return
 	}
@@ -232,7 +233,7 @@ func (handler Handler) CreateLeadTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	request, ok := decodeJSON[LeadTaskCreateRequest](w, r, 1<<18)
+	request, ok := httpserver.DecodeJSONValue[LeadTaskCreateRequest](w, r, 1<<18)
 	if !ok {
 		return
 	}
@@ -256,7 +257,7 @@ func (handler Handler) PatchLeadTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	request, ok := decodeJSON[LeadTaskPatchRequest](w, r, 1<<18)
+	request, ok := httpserver.DecodeJSONValue[LeadTaskPatchRequest](w, r, 1<<18)
 	if !ok {
 		return
 	}
@@ -275,7 +276,7 @@ func (handler Handler) CompleteCadenceTask(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	request, ok := decodeJSON[CompleteCadenceTaskRequest](w, r, 1<<18)
+	request, ok := httpserver.DecodeJSONValue[CompleteCadenceTaskRequest](w, r, 1<<18)
 	if !ok {
 		return
 	}
@@ -369,7 +370,7 @@ func (handler Handler) CreateNotification(w http.ResponseWriter, r *http.Request
 		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
 		return
 	}
-	request, ok := decodeJSON[CreateNotificationRequest](w, r, 1<<18)
+	request, ok := httpserver.DecodeJSONValue[CreateNotificationRequest](w, r, 1<<18)
 	if !ok {
 		return
 	}
@@ -388,7 +389,7 @@ func (handler Handler) DispatchNotification(w http.ResponseWriter, r *http.Reque
 		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
 		return
 	}
-	request, ok := decodeJSON[DispatchNotificationRequest](w, r, 1<<18)
+	request, ok := httpserver.DecodeJSONValue[DispatchNotificationRequest](w, r, 1<<18)
 	if !ok {
 		return
 	}
@@ -429,16 +430,4 @@ func (handler Handler) ShowLeadVisibility(w http.ResponseWriter, r *http.Request
 		return
 	}
 	httpserver.WriteJSON(w, http.StatusOK, map[string]LeadVisibility{"data": visibility})
-}
-
-func decodeJSON[T any](w http.ResponseWriter, r *http.Request, maxBytes int64) (T, bool) {
-	defer r.Body.Close()
-	var request T
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBytes))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
-		return request, false
-	}
-	return request, true
 }

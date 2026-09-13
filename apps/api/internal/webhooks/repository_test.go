@@ -1,6 +1,10 @@
 package webhooks
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+)
 
 func TestWebhookFormAnswersExtractsFormFields(t *testing.T) {
 	payload := map[string]any{
@@ -46,5 +50,36 @@ func TestWebhookFormAnswersExtractsFormFields(t *testing.T) {
 		if _, ok := byQuestion[hiddenQuestion]; ok {
 			t.Fatalf("did not expect technical/contact field %q in %#v", hiddenQuestion, answers)
 		}
+	}
+}
+
+func TestGenericWebhookReentryAdvancesBoardOrderWithoutResettingStageClock(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatalf("read webhook repository: %v", err)
+	}
+	source := string(raw)
+	start := strings.Index(source, `reentry := existingLeadID != ""`)
+	if start < 0 {
+		t.Fatal("generic webhook reentry branch was not found")
+	}
+	flow := source[start:]
+	end := strings.Index(flow, "\t} else {")
+	if end < 0 {
+		t.Fatal("generic webhook insert branch was not found")
+	}
+	update := flow[:end]
+
+	if !strings.Contains(update, "stage_entered_at = case") ||
+		!strings.Contains(update, "then stage_entered_at") {
+		t.Fatal("generic webhook reentry must preserve stage_entered_at in the same stage")
+	}
+	if !strings.Contains(update, "board_order_at = now(),") {
+		t.Fatal("generic webhook reentry must promote the card even in the same stage")
+	}
+	if strings.Contains(update, "board_order_at = case") {
+		t.Fatal("generic webhook board ordering must not depend on a stage change")
 	}
 }

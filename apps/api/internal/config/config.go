@@ -62,6 +62,7 @@ type StorageConfig struct {
 type EvolutionGoConfig struct {
 	APIURL                   string
 	APIKey                   string
+	ImageDigest              string
 	WebhookURL               string
 	BackendWebhookURL        string
 	WebhookProcessorMode     string
@@ -98,6 +99,7 @@ type PortalConfig struct {
 	ImportReportWorkerEnabled  bool
 	ImportReportWorkerInterval time.Duration
 	ImportReportWorkerBatch    int
+	ChavesNaMaoEnabled         bool
 }
 
 type MetaConfig struct {
@@ -168,10 +170,15 @@ type WhatsAppConfig struct {
 	OutboxWorkerEnabled           bool
 	OutboxWorkerInterval          time.Duration
 	OutboxWorkerBatch             int
+	OutboxWorkerConcurrency       int
 	WebhookWorkerEnabled          bool
 	WebhookWorkerInterval         time.Duration
 	WebhookWorkerBatch            int
 	WebhookWorkerConcurrency      int
+	MediaWorkerEnabled            bool
+	MediaWorkerInterval           time.Duration
+	MediaWorkerLease              time.Duration
+	MediaWorkerConcurrency        int
 	SessionSupervisorEnabled      bool
 	SessionSupervisorInitialDelay time.Duration
 	SessionSupervisorInterval     time.Duration
@@ -211,8 +218,9 @@ func Load() (Config, error) {
 		},
 		Database: dbpkg.Config{
 			URL:                  os.Getenv("DATABASE_URL"),
-			MaxConns:             parseInt("DATABASE_MAX_CONNS", 16),
+			MaxConns:             parseInt("DATABASE_MAX_CONNS", 8),
 			MinConns:             parseInt("DATABASE_MIN_CONNS", 0),
+			ForceReadOnly:        parseBool("DATABASE_FORCE_READ_ONLY", false),
 			MaxConnLifetime:      parseDuration("DATABASE_MAX_CONN_LIFETIME", 30*time.Minute),
 			MaxConnIdleTime:      parseDuration("DATABASE_MAX_CONN_IDLE_TIME", 2*time.Minute),
 			HealthTimeout:        parseDuration("DATABASE_HEALTH_TIMEOUT", 10*time.Second),
@@ -247,6 +255,7 @@ func Load() (Config, error) {
 			ImportReportWorkerEnabled:  parseBool("GRUPO_OLX_IMPORT_REPORT_WORKER_ENABLED", true),
 			ImportReportWorkerInterval: parseDuration("GRUPO_OLX_IMPORT_REPORT_WORKER_INTERVAL", 2*time.Second),
 			ImportReportWorkerBatch:    int(parseInt("GRUPO_OLX_IMPORT_REPORT_WORKER_BATCH", 25)),
+			ChavesNaMaoEnabled:         parseBool("CHAVES_NA_MAO_INTEGRATION_ENABLED", false),
 		},
 		Storage: StorageConfig{
 			ProjectURL:                getEnv("SUPABASE_PROJECT_URL", getEnv("NEXT_PUBLIC_SUPABASE_URL", getEnv("SUPABASE_URL", ""))),
@@ -289,20 +298,26 @@ func Load() (Config, error) {
 			AIFollowUpWorkerInterval:      parseDuration("WHATSAPP_AI_FOLLOW_UP_WORKER_INTERVAL", 10*time.Minute),
 			OutboxWorkerEnabled:           parseBool("WHATSAPP_OUTBOX_WORKER_ENABLED", true),
 			OutboxWorkerInterval:          parseDuration("WHATSAPP_OUTBOX_WORKER_INTERVAL", time.Second),
-			OutboxWorkerBatch:             int(parseInt("WHATSAPP_OUTBOX_WORKER_BATCH", 5)),
+			OutboxWorkerBatch:             int(parseInt("WHATSAPP_OUTBOX_WORKER_BATCH", 10)),
+			OutboxWorkerConcurrency:       int(parseInt("WHATSAPP_OUTBOX_WORKER_CONCURRENCY", 4)),
 			WebhookWorkerEnabled:          parseBool("WHATSAPP_WEBHOOK_WORKER_ENABLED", true),
 			WebhookWorkerInterval:         parseDuration("WHATSAPP_WEBHOOK_WORKER_INTERVAL", time.Second),
-			WebhookWorkerBatch:            int(parseInt("WHATSAPP_WEBHOOK_WORKER_BATCH", 5)),
+			WebhookWorkerBatch:            int(parseInt("WHATSAPP_WEBHOOK_WORKER_BATCH", 10)),
 			WebhookWorkerConcurrency:      int(parseInt("WHATSAPP_WEBHOOK_WORKER_CONCURRENCY", 4)),
+			MediaWorkerEnabled:            parseBool("WHATSAPP_MEDIA_WORKER_ENABLED", false),
+			MediaWorkerInterval:           parseDuration("WHATSAPP_MEDIA_WORKER_INTERVAL", 2*time.Second),
+			MediaWorkerLease:              parseDuration("WHATSAPP_MEDIA_WORKER_LEASE", 5*time.Minute),
+			MediaWorkerConcurrency:        int(parseInt("WHATSAPP_MEDIA_WORKER_CONCURRENCY", 4)),
 			SessionSupervisorEnabled:      parseBool("WHATSAPP_SESSION_SUPERVISOR_ENABLED", true),
 			SessionSupervisorInitialDelay: parseDuration("WHATSAPP_SESSION_SUPERVISOR_INITIAL_DELAY", 30*time.Second),
 			SessionSupervisorInterval:     parseDuration("WHATSAPP_SESSION_SUPERVISOR_INTERVAL", time.Minute),
-			SessionSupervisorBatch:        int(parseInt("WHATSAPP_SESSION_SUPERVISOR_BATCH", 10)),
+			SessionSupervisorBatch:        int(parseInt("WHATSAPP_SESSION_SUPERVISOR_BATCH", 50)),
 			SessionSupervisorRecoveryIDs:  parseCSV(getEnv("WHATSAPP_SESSION_SUPERVISOR_RECOVERY_SESSION_IDS", "")),
 		},
 		EvolutionGo: EvolutionGoConfig{
 			APIURL:                   strings.TrimRight(getEnv("EVOLUTION_GO_API_URL", ""), "/"),
 			APIKey:                   os.Getenv("EVOLUTION_GO_API_KEY"),
+			ImageDigest:              strings.ToLower(strings.TrimSpace(getEnv("EVOLUTION_GO_IMAGE_DIGEST", ""))),
 			WebhookURL:               strings.TrimRight(getEnv("EVOLUTION_GO_WEBHOOK_URL", ""), "/"),
 			BackendWebhookURL:        strings.TrimRight(getEnv("EVOLUTION_GO_BACKEND_WEBHOOK_URL", ""), "/"),
 			WebhookProcessorMode:     strings.ToLower(getEnv("WHATSAPP_WEBHOOK_PROCESSOR_MODE", "edge")),
@@ -335,6 +350,12 @@ func Load() (Config, error) {
 			ConversionFeedbackAppSecretProofEnabled: parseBool("META_CONVERSION_FEEDBACK_APPSECRET_PROOF_ENABLED", false),
 		},
 	}
+
+	// Canonical UUID text is part of the worker ownership contract: PostgreSQL
+	// renders uuid::text in lowercase, so retaining an accepted uppercase input
+	// would make a canary silently own zero sessions.
+	cfg.EvolutionGo.WebhookRolloutSessionIDs = canonicalizeSessionIDAllowlist(cfg.EvolutionGo.WebhookRolloutSessionIDs)
+	cfg.WhatsApp.SessionSupervisorRecoveryIDs = canonicalizeSessionIDAllowlist(cfg.WhatsApp.SessionSupervisorRecoveryIDs)
 
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -500,6 +521,9 @@ func (cfg Config) Validate() error {
 			validationErrors = append(validationErrors, fmt.Errorf("EVOLUTION_GO_API_URL is invalid: %w", err))
 		}
 	}
+	if digest := strings.TrimSpace(cfg.EvolutionGo.ImageDigest); digest != "" && !validSHA256ImageDigest(digest) {
+		validationErrors = append(validationErrors, errors.New("EVOLUTION_GO_IMAGE_DIGEST must use the immutable sha256:<64 lowercase hex> format"))
+	}
 	if cfg.EvolutionGo.WebhookURL != "" {
 		if err := validateEvolutionWebhookURL("EVOLUTION_GO_WEBHOOK_URL", cfg.EvolutionGo.WebhookURL, cfg.Environment == "production"); err != nil {
 			validationErrors = append(validationErrors, err)
@@ -521,8 +545,32 @@ func (cfg Config) Validate() error {
 	if cfg.WhatsApp.WebhookWorkerEnabled && (cfg.WhatsApp.WebhookWorkerConcurrency < 1 || cfg.WhatsApp.WebhookWorkerConcurrency > 16) {
 		validationErrors = append(validationErrors, errors.New("WHATSAPP_WEBHOOK_WORKER_CONCURRENCY must be between 1 and 16"))
 	}
+	if cfg.WhatsApp.OutboxWorkerEnabled && (cfg.WhatsApp.OutboxWorkerConcurrency < 1 || cfg.WhatsApp.OutboxWorkerConcurrency > 16) {
+		validationErrors = append(validationErrors, errors.New("WHATSAPP_OUTBOX_WORKER_CONCURRENCY must be between 1 and 16"))
+	}
+	if cfg.WhatsApp.MediaWorkerEnabled {
+		if cfg.WhatsApp.MediaWorkerInterval < 250*time.Millisecond || cfg.WhatsApp.MediaWorkerInterval > time.Minute {
+			validationErrors = append(validationErrors, errors.New("WHATSAPP_MEDIA_WORKER_INTERVAL must be between 250ms and 1m"))
+		}
+		if cfg.WhatsApp.MediaWorkerLease < 30*time.Second || cfg.WhatsApp.MediaWorkerLease > 30*time.Minute {
+			validationErrors = append(validationErrors, errors.New("WHATSAPP_MEDIA_WORKER_LEASE must be between 30s and 30m"))
+		}
+		if cfg.WhatsApp.MediaWorkerConcurrency < 1 || cfg.WhatsApp.MediaWorkerConcurrency > 16 {
+			validationErrors = append(validationErrors, errors.New("WHATSAPP_MEDIA_WORKER_CONCURRENCY must be between 1 and 16"))
+		}
+		if cfg.EvolutionGo.WebhookProcessorMode == "edge" || len(cfg.EvolutionGo.WebhookRolloutSessionIDs) == 0 {
+			validationErrors = append(validationErrors, errors.New("WHATSAPP_MEDIA_WORKER_ENABLED requires a native webhook processor and a non-empty WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS scope"))
+		}
+	}
 	if err := validateSessionIDAllowlist("WHATSAPP_SESSION_SUPERVISOR_RECOVERY_SESSION_IDS", cfg.WhatsApp.SessionSupervisorRecoveryIDs); err != nil {
 		validationErrors = append(validationErrors, err)
+	}
+	if cfg.WhatsApp.SessionSupervisorEnabled && (cfg.WhatsApp.SessionSupervisorBatch < 1 || cfg.WhatsApp.SessionSupervisorBatch > 100) {
+		validationErrors = append(validationErrors, errors.New("WHATSAPP_SESSION_SUPERVISOR_BATCH must be between 1 and 100"))
+	}
+	providerSupervisorMutationsEnabled := len(cfg.WhatsApp.SessionSupervisorRecoveryIDs) > 0 || len(cfg.EvolutionGo.WebhookRolloutSessionIDs) > 0
+	if providerSupervisorMutationsEnabled && !validSHA256ImageDigest(strings.TrimSpace(cfg.EvolutionGo.ImageDigest)) {
+		validationErrors = append(validationErrors, errors.New("EVOLUTION_GO_IMAGE_DIGEST with an immutable sha256 digest is required when a WhatsApp supervisor/provider rollout allowlist enables mutations"))
 	}
 	if (strings.TrimSpace(cfg.EvolutionGo.APIURL) != "" || strings.TrimSpace(cfg.EvolutionGo.APIKey) != "" || len(cfg.EvolutionGo.WebhookRolloutSessionIDs) > 0) &&
 		strings.TrimSpace(cfg.EvolutionGo.BackendWebhookURL) == "" {
@@ -709,6 +757,19 @@ func validateMetaGraphBaseURL(value string, production bool) error {
 	return nil
 }
 
+func validSHA256ImageDigest(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	for _, character := range strings.TrimPrefix(value, "sha256:") {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 func isDecimalIdentifier(value string, maximum int) bool {
 	value = strings.TrimSpace(value)
 	if value == "" || len(value) > maximum {
@@ -829,6 +890,33 @@ func validateSessionIDAllowlist(name string, values []string) error {
 	}
 
 	return nil
+}
+
+func canonicalizeSessionIDAllowlist(values []string) []string {
+	canonical := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if value == "*" {
+			canonical = append(canonical, value)
+			continue
+		}
+		var uuid pgtype.UUID
+		if err := uuid.Scan(value); err == nil && uuid.Valid {
+			canonical = append(canonical, uuid.String())
+			continue
+		}
+		// Preserve invalid input so Validate reports it instead of silently
+		// weakening or emptying an explicit ownership scope.
+		canonical = append(canonical, value)
+	}
+	return canonical
+}
+
+func sessionIDAllowlistIsGlobal(values []string) bool {
+	return len(values) == 1 && strings.TrimSpace(values[0]) == "*"
 }
 
 func getEnv(key string, fallback string) string {

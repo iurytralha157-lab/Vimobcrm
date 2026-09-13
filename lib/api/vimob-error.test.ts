@@ -4,8 +4,15 @@ import test from 'node:test'
 import {
   DEFAULT_PUBLIC_ERROR_MESSAGE,
   VimobAPIError,
+  getErrorMessageOrFallback,
+  getNonBlankErrorMessageOrFallback,
+  getNonEmptyErrorMessageOrFallback,
+  getErrorObjectMessage,
+  getOptionalErrorObjectMessage,
   getPublicErrorMessage,
+  getStructuredErrorMessage,
   getTechnicalErrorMessage,
+  stringifyErrorMessage,
 } from './vimob-error'
 
 const TECHNICAL_COPY =
@@ -80,5 +87,44 @@ test('telemetria usa a mensagem normal quando não existe detalhe técnico', () 
   assert.equal(
     getTechnicalErrorMessage(new Error('Falha comum')),
     'Falha comum',
+  )
+})
+
+test('preserva as tres politicas legadas de exibicao sem misturar semanticas', () => {
+  assert.equal(stringifyErrorMessage(new Error('Falha')), 'Falha')
+  assert.equal(stringifyErrorMessage({ code: 42 }), '[object Object]')
+  assert.equal(stringifyErrorMessage(null), 'null')
+
+  assert.equal(getErrorMessageOrFallback(new Error('Falha'), 'Padrao'), 'Falha')
+  assert.equal(getErrorMessageOrFallback(new Error(''), 'Padrao'), '')
+  assert.equal(getErrorMessageOrFallback({ message: 'Falha' }, 'Padrao'), 'Padrao')
+  assert.equal(getErrorMessageOrFallback(null), 'Erro desconhecido')
+  assert.equal(getNonEmptyErrorMessageOrFallback(new Error(''), 'Padrao'), 'Padrao')
+  assert.equal(getNonEmptyErrorMessageOrFallback(new Error('Falha'), 'Padrao'), 'Falha')
+  assert.equal(getNonBlankErrorMessageOrFallback(new Error('   '), 'Padrao'), 'Padrao')
+  assert.equal(getNonBlankErrorMessageOrFallback(new Error(' Falha '), 'Padrao'), ' Falha ')
+
+  assert.equal(getErrorObjectMessage(new Error('Falha'), 'Padrao'), 'Falha')
+  assert.equal(getErrorObjectMessage({ message: 'Falha' }, 'Padrao'), 'Falha')
+  assert.equal(getErrorObjectMessage('Falha', 'Padrao'), 'Padrao')
+  assert.equal(getErrorObjectMessage({ message: 42 }, 'Padrao'), 'Padrao')
+  assert.equal(getOptionalErrorObjectMessage({ message: 42 }), '')
+
+  assert.equal(
+    getStructuredErrorMessage({ message: 'Falha', details: 'Detalhe', hint: 'Dica' }),
+    'Falha Detalhe Dica',
+  )
+  assert.equal(getStructuredErrorMessage({ code: 'PGRST' }), '{"code":"PGRST"}')
+  assert.equal(getStructuredErrorMessage(['Falha']), 'Falha')
+  assert.equal(
+    getStructuredErrorMessage(['Falha'], { includeArrays: true }),
+    '["Falha"]',
+  )
+  assert.equal(
+    getStructuredErrorMessage(
+      { message: 'Falha', code: 'PGRST' },
+      { fields: ['message', 'details', 'hint', 'code'] },
+    ),
+    'Falha PGRST',
   )
 })

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
@@ -39,12 +40,8 @@ import { useTeams } from "@/hooks/use-teams";
 import { useTags } from "@/hooks/use-tags";
 import { useProperties } from "@/hooks/use-properties";
 import { useWebhooks } from "@/hooks/use-webhooks";
-import {
-  useCreateQueueAdvanced,
-  useUpdateQueueAdvanced,
-} from "@/hooks/use-create-queue-advanced";
-import { DistributionQueueEditor } from "@/components/features/round-robin/DistributionQueueEditor";
 import { toast } from "sonner";
+import { getInitials } from "@/lib/user-display";
 import { useUserAccessScope } from "@/hooks/use-user-access-scope";
 import { getPropertySummaries } from "@/lib/api/property-support";
 import { useAuth } from "@/contexts/AuthContext";
@@ -111,10 +108,12 @@ const getWhatsAppSessionIdFromMatch = (match: unknown) => {
 
 const EMPTY_ROUND_ROBINS: RoundRobinType[] = [];
 const EMPTY_LIST: never[] = [];
+const NEW_DISTRIBUTION_QUEUE_URL = "/crm/management/distribution/new";
 
 export function DistributionTab() {
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const router = useRouter();
+  const { activeOrganization, profile } = useAuth();
+  const organizationId = activeOrganization.organizationId;
   const { data: roundRobins = EMPTY_ROUND_ROBINS, isLoading } =
     useRoundRobins();
   const { data: teams = EMPTY_LIST, isLoading: teamsLoading } = useTeams();
@@ -125,18 +124,16 @@ export function DistributionTab() {
   const { data: metaFormConfigs = EMPTY_LIST } = useRoundRobinMetaForms();
   const updateRoundRobin = useUpdateRoundRobin();
   const deleteRoundRobin = useDeleteRoundRobin();
-  const createQueue = useCreateQueueAdvanced();
-  const updateQueue = useUpdateQueueAdvanced();
   const accessScope = useUserAccessScope();
+  const canManageAllDistribution =
+    accessScope.isAdmin || !accessScope.isTeamLeader;
 
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [editingQueue, setEditingQueue] = useState<RoundRobinType | null>(null);
   const [queueToDelete, setQueueToDelete] = useState<RoundRobinType | null>(
     null,
   );
   const [ruleProperties, setRuleProperties] = useState<RulePropertyLabel[]>([]);
   const visibleRoundRobins = useMemo(() => {
-    if (accessScope.isAdmin) return roundRobins;
+    if (canManageAllDistribution) return roundRobins;
     const ledTeamIds = new Set(accessScope.ledTeamIds);
     const ledUserIds = new Set(accessScope.ledUserIds);
     const currentUserId = profile?.id;
@@ -152,25 +149,12 @@ export function DistributionTab() {
         ),
     );
   }, [
-    accessScope.isAdmin,
+    canManageAllDistribution,
     accessScope.ledTeamIds,
     accessScope.ledUserIds,
     profile?.id,
     roundRobins,
   ]);
-
-  const effectiveAllowedPipelineIds = useMemo(() => {
-    if (accessScope.isAdmin) return undefined;
-
-    return Array.from(
-      new Set([
-        ...accessScope.ledPipelineIds,
-        ...visibleRoundRobins
-          .map((queue) => queue.target_pipeline_id)
-          .filter((pipelineId): pipelineId is string => Boolean(pipelineId)),
-      ]),
-    );
-  }, [accessScope.isAdmin, accessScope.ledPipelineIds, visibleRoundRobins]);
 
   const propertyRuleIds = useMemo(() => {
     const ids = visibleRoundRobins
@@ -245,20 +229,12 @@ export function DistributionTab() {
     setQueueToDelete(null);
   };
 
-  const handleSaveQueue = async (
-    data: Parameters<typeof createQueue.mutateAsync>[0],
-  ) => {
-    if (editingQueue) {
-      await updateQueue.mutateAsync({ id: editingQueue.id, ...data });
-    } else {
-      await createQueue.mutateAsync(data);
-    }
-    setEditingQueue(null);
+  const openEditor = () => {
+    router.push(NEW_DISTRIBUTION_QUEUE_URL);
   };
 
-  const openEditor = (queue?: RoundRobinType) => {
-    setEditingQueue(queue || null);
-    setEditorOpen(true);
+  const openQueuePage = (queue: RoundRobinType) => {
+    router.push(`/crm/management/distribution/${queue.id}/edit`);
   };
 
   const formatRule = (rule: RoundRobinType["rules"][number]) => {
@@ -325,17 +301,9 @@ export function DistributionTab() {
       : member.user?.name || member.user?.email || "Usuário";
   };
 
-  const getInitials = (name: string) =>
-    name
-      .split(" ")
-      .map((part) => part[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase();
-
   if (isLoading || teamsLoading) {
     return (
-      <>
+      <div className="flex h-full min-h-0 flex-col">
         <ManagementToolbarPortal>
           <Button
             data-tour="distribution-new-queue"
@@ -346,16 +314,16 @@ export function DistributionTab() {
             Nova fila
           </Button>
         </ManagementToolbarPortal>
-        <div className="flex h-64 items-center justify-center rounded-[8px] bg-[var(--app-surface-solid)]">
+        <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto overscroll-contain rounded-[8px] bg-[var(--app-surface-solid)]">
           <Loader2 className="h-6 w-6 animate-spin text-[var(--app-text-tertiary)]" />
         </div>
-      </>
+      </div>
     );
   }
 
   return (
     <TooltipProvider>
-      <div className="space-y-3">
+      <div className="flex h-full min-h-0 flex-col gap-3">
         <ManagementToolbarPortal>
           <Button
             data-tour="distribution-new-queue"
@@ -368,7 +336,7 @@ export function DistributionTab() {
         </ManagementToolbarPortal>
 
         {visibleRoundRobins.length === 0 ? (
-          <div className="flex min-h-[260px] flex-col items-center justify-center rounded-[8px] bg-[var(--app-surface-solid)] px-4 py-10 text-center shadow-none">
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto overscroll-contain rounded-[8px] bg-[var(--app-surface-solid)] px-4 py-10 text-center shadow-none">
             <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-[6px] bg-primary/50 text-white">
               <Shuffle className="h-5 w-5" />
             </div>
@@ -380,9 +348,12 @@ export function DistributionTab() {
             </p>
           </div>
         ) : (
-          <div className="overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
+          <div
+            data-management-scroll-region="distribution"
+            className="min-h-0 flex-1 overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none [&>div]:h-full [&>div]:overflow-auto [&>div]:overscroll-contain"
+          >
             <Table className="crm-management-table table-fixed">
-              <TableHeader>
+              <TableHeader className="crm-management-sticky-header sticky top-0 z-20">
                 <TableRow className="border-b border-[var(--app-border-strong)] bg-[var(--app-surface-soft)] hover:bg-[var(--app-surface-soft)]">
                   <TableHead className="w-[62px] px-3 md:w-[72px] md:px-4">
                     Status
@@ -399,8 +370,8 @@ export function DistributionTab() {
                   <TableHead className="hidden xl:table-cell xl:w-[28%]">
                     Usuários ou equipes
                   </TableHead>
-                  <TableHead className="hidden w-[72px] text-right md:table-cell">
-                    Leads
+                  <TableHead className="hidden w-[104px] text-right md:table-cell">
+                    Eventos
                   </TableHead>
                   <TableHead className="hidden w-[190px] 2xl:table-cell">
                     Criada por
@@ -442,12 +413,12 @@ export function DistributionTab() {
                       tabIndex={0}
                       aria-label={`Editar fila ${queue.name}`}
                       className="cursor-pointer border-b border-[var(--app-border)] bg-[var(--app-surface-solid)] outline-none hover:bg-[var(--app-surface-hover)] focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/30 last:border-b-0"
-                      onClick={() => openEditor(queue)}
+                      onClick={() => openQueuePage(queue)}
                       onKeyDown={(event) => {
                         if (event.target !== event.currentTarget) return;
                         if (event.key === "Enter" || event.key === " ") {
                           event.preventDefault();
-                          openEditor(queue);
+                          openQueuePage(queue);
                         }
                       }}
                     >
@@ -594,11 +565,11 @@ export function DistributionTab() {
                             size="icon"
                             className="hidden h-8 w-8 rounded-[6px] bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] shadow-none hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] md:inline-flex"
                             aria-label={`Editar fila ${queue.name}`}
-                            onClick={() => openEditor(queue)}
+                            onClick={() => openQueuePage(queue)}
                           >
                             <Pencil className="h-4 w-4" />
                           </Button>
-                          {accessScope.isAdmin && (
+                          {canManageAllDistribution && (
                             <Button
                               variant="ghost"
                               size="icon"
@@ -651,22 +622,6 @@ export function DistributionTab() {
           </AlertDialogContent>
         </AlertDialog>
 
-        <DistributionQueueEditor
-          open={editorOpen}
-          onOpenChange={(open) => {
-            setEditorOpen(open);
-            if (!open) setEditingQueue(null);
-          }}
-          queue={editingQueue}
-          onSave={handleSaveQueue}
-          allowedTeamIds={
-            accessScope.isAdmin ? undefined : accessScope.ledTeamIds
-          }
-          allowedUserIds={
-            accessScope.isAdmin ? undefined : accessScope.ledUserIds
-          }
-          allowedPipelineIds={effectiveAllowedPipelineIds}
-        />
       </div>
     </TooltipProvider>
   );

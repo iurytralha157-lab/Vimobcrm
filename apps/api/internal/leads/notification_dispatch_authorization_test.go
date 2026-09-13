@@ -65,6 +65,9 @@ func TestPlatformTransactionalNotificationsAreBackendOnly(t *testing.T) {
 		"onboarding_email_confirmation",
 		"billing_payment_receipt",
 		" BILLING_due_today ",
+		"schedule_reminder",
+		"appointment_reminder",
+		"appointment_outcome_pending",
 	} {
 		eventKey := eventKey
 		t.Run(eventKey, func(t *testing.T) {
@@ -151,9 +154,9 @@ func TestPublicNotificationDispatchKeepsSelfSystemAndPushChannels(t *testing.T) 
 func TestCreateNotificationValidatesActiveRecipientMembershipBeforeInsert(t *testing.T) {
 	t.Parallel()
 
-	source, err := os.ReadFile("support_resources.go")
+	source, err := os.ReadFile("support_notifications.go")
 	if err != nil {
-		t.Fatalf("read support_resources.go: %v", err)
+		t.Fatalf("read support_notifications.go: %v", err)
 	}
 	all := string(source)
 	start := strings.Index(all, "func (repo Repository) CreateNotification(")

@@ -23,6 +23,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { formatPropertyCurrency } from '@/lib/property-display-utils'
 import type { PropertyChannelPublication } from '@/lib/validation'
 
 type PropertyPublicationPreviewProps = {
@@ -32,11 +33,7 @@ type PropertyPublicationPreviewProps = {
 function formatPreviewPrice(price: number | string | null | undefined, label?: string) {
   let formattedPrice = 'Preço sob consulta'
   if (typeof price === 'number') {
-    formattedPrice = new Intl.NumberFormat('pt-BR', {
-      style: 'currency',
-      currency: 'BRL',
-      maximumFractionDigits: 2,
-    }).format(price)
+    formattedPrice = formatPropertyCurrency(price)
   } else if (typeof price === 'string' && price.trim()) {
     formattedPrice = price
   }

@@ -89,19 +89,29 @@ function toRoundRobinInput(input: CreateQueueInput) {
 
 export function useCreateQueueAdvanced() {
   const queryClient = useQueryClient();
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useMutation({
     mutationFn: async (input: CreateQueueInput) => {
       if (!organizationId) throw new Error('Organização não identificada');
       return roundRobinsAPI.createRoundRobin(toRoundRobinInput(input), organizationId);
     },
-    onSuccess: () => {
+    onSuccess: (queue) => {
+      queryClient.setQueryData(
+        ['round-robin', organizationId, queue.id],
+        queue,
+      );
       queryClient.invalidateQueries({ queryKey: ['round-robins', organizationId] });
+      queryClient.invalidateQueries({
+        queryKey: ['round-robin', organizationId, queue.id],
+      });
       queryClient.invalidateQueries({ queryKey: ['round-robin-rules', organizationId] });
       queryClient.invalidateQueries({ queryKey: ['round-robin-meta-forms', organizationId] });
-      toast.success('Fila de distribuicao criada!');
+      queryClient.invalidateQueries({
+        queryKey: ['round-robin-history', organizationId, queue.id],
+      });
+      toast.success('Fila de distribuição criada!');
     },
     onError: (error) => {
       toast.error('Erro ao criar fila: ' + error.message);
@@ -111,18 +121,28 @@ export function useCreateQueueAdvanced() {
 
 export function useUpdateQueueAdvanced() {
   const queryClient = useQueryClient();
-  const { organization, profile } = useAuth();
-  const organizationId = organization?.id || profile?.organization_id;
+  const { activeOrganization } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useMutation({
     mutationFn: async ({ id, ...input }: CreateQueueInput & { id: string }) => {
       if (!organizationId) throw new Error('Organização não identificada');
       return roundRobinsAPI.updateRoundRobin(id, toRoundRobinInput(input), organizationId);
     },
-    onSuccess: () => {
+    onSuccess: (queue, variables) => {
+      queryClient.setQueryData(
+        ['round-robin', organizationId, variables.id],
+        queue,
+      );
       queryClient.invalidateQueries({ queryKey: ['round-robins', organizationId] });
+      queryClient.invalidateQueries({
+        queryKey: ['round-robin', organizationId, variables.id],
+      });
       queryClient.invalidateQueries({ queryKey: ['round-robin-rules', organizationId] });
       queryClient.invalidateQueries({ queryKey: ['round-robin-meta-forms', organizationId] });
+      queryClient.invalidateQueries({
+        queryKey: ['round-robin-history', organizationId, variables.id],
+      });
       toast.success('Fila atualizada!');
     },
     onError: (error) => {

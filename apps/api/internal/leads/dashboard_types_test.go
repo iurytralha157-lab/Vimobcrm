@@ -12,20 +12,21 @@ const dashboardTestUUID = "11111111-1111-4111-8111-111111111111"
 
 func TestParseDashboardFilterValidatesAndCanonicalizesInput(t *testing.T) {
 	values := url.Values{
-		"dateFrom":    {"2026-08-01T00:00:00Z"},
-		"dateTo":      {"2026-08-01T23:59:59Z"},
-		"granularity": {"hour"},
-		"teamId":      {"  " + dashboardTestUUID + "  "},
-		"userId":      {dashboardTestUUID},
-		"source":      {" meta "},
-		"campaignId":  {" campaign-123 "},
-		"adSetId":     {" adset-123 "},
-		"adId":        {" ad-123 "},
-		"tagId":       {dashboardTestUUID},
-		"dealStatus":  {"won"},
-		"search":      {"  Maria  "},
-		"pipelineId":  {dashboardTestUUID},
-		"limit":       {"50"},
+		"dateFrom":       {"2026-08-01T00:00:00Z"},
+		"dateTo":         {"2026-08-01T23:59:59Z"},
+		"granularity":    {"hour"},
+		"teamId":         {"  " + dashboardTestUUID + "  "},
+		"userId":         {dashboardTestUUID},
+		"source":         {" meta "},
+		"campaignId":     {" campaign-123 "},
+		"adSetId":        {" adset-123 "},
+		"adId":           {" ad-123 "},
+		"tagId":          {dashboardTestUUID},
+		"dealStatus":     {"won"},
+		"search":         {"  Maria  "},
+		"pipelineId":     {dashboardTestUUID},
+		"limit":          {"50"},
+		"includeDetails": {"true"},
 	}
 
 	filter, err := ParseDashboardFilter(values)
@@ -44,7 +45,7 @@ func TestParseDashboardFilterValidatesAndCanonicalizesInput(t *testing.T) {
 	if filter.SearchQuery != "Maria" {
 		t.Fatalf("legacy search fallback was not preserved: %q", filter.SearchQuery)
 	}
-	if filter.Granularity != "hour" || filter.DealStatus != "won" || filter.Limit != 50 {
+	if filter.Granularity != "hour" || filter.DealStatus != "won" || filter.Limit != 50 || !filter.IncludeDetails {
 		t.Fatalf("bounded filters were not preserved: %#v", filter)
 	}
 }
@@ -59,13 +60,16 @@ func TestParseDashboardFilterPreservesDefaultsAndAllCompatibility(t *testing.T) 
 		t.Fatalf("ParseDashboardFilter() error = %v", err)
 	}
 	if filter.DateFrom != nil || filter.DateTo != nil {
-		t.Fatal("omitted dates must keep the repository default range")
+		t.Fatal("omitted dates must preserve the all-time dashboard contract")
 	}
 	if filter.TeamID != "all" || filter.Source != "all" || filter.DealStatus != "all" {
 		t.Fatalf("legacy all filters were not canonicalized: %#v", filter)
 	}
 	if filter.Limit != defaultDashboardTaskLimit {
 		t.Fatalf("default limit = %d, want %d", filter.Limit, defaultDashboardTaskLimit)
+	}
+	if filter.IncludeDetails {
+		t.Fatal("dashboard details must remain opt-in")
 	}
 }
 
@@ -113,6 +117,9 @@ func TestParseDashboardFilterRejectsUnsafeOrAmbiguousInput(t *testing.T) {
 		"malformed limit": {
 			"limit": {"five"},
 		},
+		"malformed include details": {
+			"includeDetails": {"sometimes"},
+		},
 	}
 
 	for name, values := range testCases {
@@ -156,7 +163,7 @@ func TestDashboardStatsJSONKeepsTheTypedDetailContract(t *testing.T) {
 	}
 	for _, field := range []string{
 		"openLeads", "lostLeads", "closedLeads", "wonAverageConversionDays",
-		"wonConversionBuckets", "wonDeals", "lostReasonBuckets", "lostDeals",
+		"wonConversionBuckets", "wonDeals", "wonDealsTruncated", "lostReasonBuckets", "lostDeals", "lostDealsTruncated",
 		"avgResponseTime", "pendingCommissions", "totalReceivables", "paidCommissions",
 	} {
 		if _, exists := data[field]; !exists {

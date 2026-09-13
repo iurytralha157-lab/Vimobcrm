@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Recuperar senha | Vimob CRM</title>
+  </head>
+  <body style="margin: 0; background: #f6f6f6; color: #202020; font-family: Arial, sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background: #f6f6f6; padding: 32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 520px; background: #ffffff; border: 1px solid #e8e8e8; border-radius: 8px;">
+            <tr>
+              <td style="padding: 32px;">
+                <h1 style="margin: 0 0 16px; color: #202020; font-size: 22px; line-height: 1.3; font-weight: 600;">
+                  Redefina sua senha
+                </h1>
+                <p style="margin: 0 0 24px; color: #555555; font-size: 15px; line-height: 1.6;">
+                  Recebemos uma solicitação para redefinir a senha da sua conta no Vimob CRM.
+                </p>
+                <p style="margin: 0 0 24px;">
+                  <a
+                    href="{{ .RedirectTo }}?token_hash={{ .TokenHash }}&amp;type=recovery"
+                    style="display: inline-block; border-radius: 6px; background: #c9361f; color: #ffffff; padding: 13px 20px; font-size: 14px; font-weight: 600; text-decoration: none;"
+                  >
+                    Redefinir minha senha
+                  </a>
+                </p>
+                <p style="margin: 0; color: #777777; font-size: 13px; line-height: 1.6;">
+                  Se você não solicitou esta alteração, ignore este e-mail. Sua senha continuará a mesma.
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

@@ -3,7 +3,31 @@ package db
 import (
 	"errors"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestConfigureReadOnlySessionsIsExplicitAndFailClosed(t *testing.T) {
+	t.Parallel()
+
+	readWriteConfig, err := pgxpool.ParseConfig("postgres://test:test@127.0.0.1:5432/test?sslmode=disable")
+	if err != nil {
+		t.Fatalf("parse read-write pool config: %v", err)
+	}
+	configureReadOnlySessions(readWriteConfig, false)
+	if readWriteConfig.AfterConnect != nil {
+		t.Fatal("read-write pool must remain unchanged when read-only mode is disabled")
+	}
+
+	readOnlyConfig, err := pgxpool.ParseConfig("postgres://test:test@127.0.0.1:5432/test?sslmode=disable")
+	if err != nil {
+		t.Fatalf("parse read-only pool config: %v", err)
+	}
+	configureReadOnlySessions(readOnlyConfig, true)
+	if readOnlyConfig.AfterConnect == nil {
+		t.Fatal("read-only pool must enforce the session guard on every connection")
+	}
+}
 
 func TestIsRetriableStartupPingError(t *testing.T) {
 	t.Parallel()

@@ -2,6 +2,7 @@ package whatsapp
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -12,6 +13,17 @@ func TestEvolutionWebhookConnectBodySubscribesOnlyToCRMEvents(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected string subscriptions, got %#v", body["subscribe"])
 	}
+	events, ok := body["events"].([]string)
+	if !ok {
+		t.Fatalf("expected string events, got %#v", body["events"])
+	}
+	expected := []string{"MESSAGE", "SEND_MESSAGE", "READ_RECEIPT", "CONNECTION", "QRCODE"}
+	if !reflect.DeepEqual(subscriptions, expected) {
+		t.Fatalf("unexpected live subscriptions\nwant: %#v\n got: %#v", expected, subscriptions)
+	}
+	if !reflect.DeepEqual(events, expected) {
+		t.Fatalf("unexpected live events\nwant: %#v\n got: %#v", expected, events)
+	}
 
 	for _, subscription := range subscriptions {
 		if subscription == "ALL" || subscription == "HISTORY_SYNC" || subscription == "PRESENCE" ||
@@ -20,14 +32,19 @@ func TestEvolutionWebhookConnectBodySubscribesOnlyToCRMEvents(t *testing.T) {
 		}
 	}
 
-	for _, required := range []string{"MESSAGE", "SEND_MESSAGE", "READ_RECEIPT", "CONNECTION"} {
-		if !containsString(subscriptions, required) {
-			t.Fatalf("expected subscription %q in %#v", required, subscriptions)
-		}
+	advanced, ok := body["advancedSettings"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected advancedSettings map, got %#v", body["advancedSettings"])
+	}
+	if advanced["syncFullHistory"] != false {
+		t.Fatalf("expected syncFullHistory=false, got %#v", advanced["syncFullHistory"])
+	}
+	if advanced["ignoreGroups"] != true {
+		t.Fatalf("expected ignoreGroups=true, got %#v", advanced["ignoreGroups"])
 	}
 }
 
-func TestEvolutionWebhookConnectBodyPreservesMobileNotifications(t *testing.T) {
+func TestEvolutionWebhookConnectBodyKeepsPhoneNotificationsAndIgnoresGroups(t *testing.T) {
 	body := evolutionWebhookConnectBody("https://example.com/webhook")
 	advanced, ok := body["advancedSettings"].(map[string]any)
 	if !ok {
@@ -42,8 +59,8 @@ func TestEvolutionWebhookConnectBodyPreservesMobileNotifications(t *testing.T) {
 	if advanced["ignoreStatus"] != false {
 		t.Fatalf("expected ignoreStatus=false, got %#v", advanced["ignoreStatus"])
 	}
-	if advanced["ignoreGroups"] != false {
-		t.Fatalf("expected ignoreGroups=false, got %#v", advanced["ignoreGroups"])
+	if advanced["ignoreGroups"] != true {
+		t.Fatalf("expected ignoreGroups=true, got %#v", advanced["ignoreGroups"])
 	}
 }
 
@@ -61,13 +78,13 @@ func TestWebhookConfigurationDueOnlyForURLOrVersionChanges(t *testing.T) {
 		t.Fatal("expected a webhook URL change to require configuration")
 	}
 
-	settings["webhook_subscription_version"] = "legacy"
+	settings["webhook_subscription_version"] = "lead-message-events-v2"
 	if !webhookConfigurationDue(settings, "https://example.com/webhook") {
-		t.Fatal("expected a subscription version change to require configuration")
+		t.Fatal("expected the pre-ignore-groups subscription to require configuration")
 	}
 }
 
-func TestWebhookConfigurationAllowedIsIndependentFromNativeProcessorRollout(t *testing.T) {
+func TestWebhookConfigurationAllowedRequiresExplicitProviderMutationCanary(t *testing.T) {
 	const (
 		sessionID  = "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"
 		webhookURL = "https://api.vimobcrm.com.br/v1/whatsapp/webhook/evolution-go"
@@ -78,11 +95,14 @@ func TestWebhookConfigurationAllowedIsIndependentFromNativeProcessorRollout(t *t
 		"webhook_subscription_version": "legacy",
 	}
 
-	if !webhookConfigurationAllowed(nil, sessionID, settings, webhookURL, "connected") {
-		t.Fatal("expected a due tokenless backend URL to be configured without a native processor rollout")
+	if webhookConfigurationAllowed(nil, sessionID, settings, webhookURL, "connected") {
+		t.Fatal("expected no provider mutation without an explicit session canary")
 	}
-	if !webhookConfigurationAllowed([]string{"c15fe784-741b-4764-a60c-c60ffc50d606"}, sessionID, settings, webhookURL, "connected") {
-		t.Fatal("expected a native processor allowlist not to control callback URL security")
+	if webhookConfigurationAllowed([]string{"c15fe784-741b-4764-a60c-c60ffc50d606"}, sessionID, settings, webhookURL, "connected") {
+		t.Fatal("expected a different session canary not to mutate this provider instance")
+	}
+	if !webhookConfigurationAllowed([]string{sessionID}, sessionID, settings, webhookURL, "connected") {
+		t.Fatal("expected the explicitly allowlisted session to reconcile its callback")
 	}
 }
 
@@ -102,6 +122,9 @@ func TestWebhookConfigurationAllowedDoesNotUseConnectAsSessionRecovery(t *testin
 	}
 	if webhookConfigurationAllowed([]string{canarySession}, canarySession, settings, webhookURL, "disconnected") {
 		t.Fatal("expected reconnect to use the provider recovery endpoint instead of instance.connect")
+	}
+	if webhookConfigurationAllowed([]string{canarySession}, canarySession, settings, webhookURL, "qr_ready") {
+		t.Fatal("expected QR pairing not to be disturbed by a callback reconfiguration")
 	}
 }
 
@@ -124,9 +147,10 @@ func TestEvolutionSupervisorConnectPlanDoesNotUseWebhookMigrationAsRecovery(t *t
 }
 
 func TestEvolutionSupervisorConnectPlanMigratesConnectedSessionWithLegacyURL(t *testing.T) {
+	const sessionID = "c15fe784-741b-4764-a60c-c60ffc50d606"
 	body, shouldConnect, appliesWebhook := evolutionSupervisorConnectPlan(
-		nil,
-		"c15fe784-741b-4764-a60c-c60ffc50d606",
+		[]string{sessionID},
+		sessionID,
 		map[string]any{
 			"webhook_url":                  "https://project.supabase.co/functions/v1/evolution-go-webhook?webhook_token=legacy",
 			"webhook_subscription_version": whatsappWebhookSubscriptionVersion,
@@ -179,6 +203,11 @@ func TestNotificationSafeSettingsPlanRequiresExplicitRolloutAndCurrentVersion(t 
 	settings := map[string]any{"notification_safe_settings_version": whatsappNotificationSafeVersion}
 	if notificationSafeSettingsDue([]string{sessionID}, sessionID, settings) {
 		t.Fatal("expected current advanced-settings version not to repeat")
+	}
+	if !notificationSafeSettingsDue([]string{sessionID}, sessionID, map[string]any{
+		"notification_safe_settings_version": "evolution-advanced-settings-v2",
+	}) {
+		t.Fatal("expected the pre-ignore-groups advanced-settings version to be reconciled")
 	}
 }
 
@@ -469,5 +498,86 @@ func TestEvolutionRecoveryPhoneUsesOnlyProviderJID(t *testing.T) {
 	}}}
 	if got := evolutionRecoveryPhone(Session{}, opaque); got != "" {
 		t.Fatalf("opaque provider identity must not be used as a phone, got %q", got)
+	}
+}
+
+func TestSupervisorWorkerCountKeepsProviderAndDatabasePressureBounded(t *testing.T) {
+	tests := []struct {
+		sessions int
+		want     int
+	}{
+		{sessions: 0, want: 0},
+		{sessions: 1, want: 1},
+		{sessions: 2, want: 2},
+		{sessions: 200, want: whatsappSessionSupervisorConcurrency},
+	}
+	for _, tt := range tests {
+		if got := supervisorWorkerCount(tt.sessions); got != tt.want {
+			t.Fatalf("supervisorWorkerCount(%d) = %d, want %d", tt.sessions, got, tt.want)
+		}
+	}
+}
+
+func TestSupervisorProbeBackoffIsDeterministicJitteredAndCapped(t *testing.T) {
+	const sessionID = "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9"
+	first := supervisorProbeBackoff(sessionID, 1)
+	if first < 48*time.Second || first > 72*time.Second {
+		t.Fatalf("first probe backoff = %s, want 1 minute with 20%% jitter", first)
+	}
+	if repeated := supervisorProbeBackoff(sessionID, 1); repeated != first {
+		t.Fatalf("probe jitter must be stable per session/attempt: first=%s repeated=%s", first, repeated)
+	}
+
+	late := supervisorProbeBackoff(sessionID, 100)
+	if late <= 0 || late > whatsappSessionSupervisorMaxProbeBackoff {
+		t.Fatalf("late probe backoff = %s, want a hard 30 minute ceiling", late)
+	}
+
+	values := map[time.Duration]struct{}{}
+	for _, otherID := range []string{
+		"13eea7e8-a74f-4bfb-bb36-024e3d26ccc9",
+		"c15fe784-741b-4764-a60c-c60ffc50d606",
+		"61ddf861-6fbb-490c-9e4c-d595ae08731f",
+		"d91f0e8c-f3c3-4918-b8d1-f96736b2197f",
+	} {
+		values[supervisorProbeBackoff(otherID, 2)] = struct{}{}
+	}
+	if len(values) < 2 {
+		t.Fatalf("expected jitter to smear different sessions, got %#v", values)
+	}
+}
+
+func TestRecoveryBackoffJitterSmearsReconnectStorms(t *testing.T) {
+	base := 5 * time.Minute
+	first := deterministicJitteredDelay(base, "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9", 1, "provider-recovery", 20)
+	if first < 4*time.Minute || first > 6*time.Minute {
+		t.Fatalf("recovery delay = %s, want 5 minutes with 20%% jitter", first)
+	}
+	if repeated := deterministicJitteredDelay(base, "13eea7e8-a74f-4bfb-bb36-024e3d26ccc9", 1, "provider-recovery", 20); repeated != first {
+		t.Fatalf("recovery jitter changed between calls: %s != %s", repeated, first)
+	}
+}
+
+func TestSupervisorScheduleJitterNeverRunsEarlierThanConfigured(t *testing.T) {
+	base := time.Minute
+	for cycle := uint64(0); cycle < 100; cycle++ {
+		delay := jitteredSupervisorScheduleDelay(base, "replica-seed", cycle)
+		if delay < base || delay > base*120/100 {
+			t.Fatalf("cycle %d schedule delay = %s, want [%s,%s]", cycle, delay, base, base*120/100)
+		}
+	}
+}
+
+func TestAutoReconnectBlocksAmbiguousAndMissingProviderState(t *testing.T) {
+	for _, reason := range []string{
+		"provider_outcome_unknown",
+		"provider_instance_missing",
+		"provider_identity_missing",
+		"provider_credentials_missing",
+		"lifecycle_reconciliation_required",
+	} {
+		if !autoReconnectRecoveryBlocked(map[string]any{"auto_reconnect_blocked_reason": reason}) {
+			t.Fatalf("expected %q to block another automatic provider mutation", reason)
+		}
 	}
 }

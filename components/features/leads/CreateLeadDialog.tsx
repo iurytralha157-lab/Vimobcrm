@@ -4,6 +4,7 @@ import { isValidE164Phone } from '@/lib/phone-utils';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { leadAttachmentsAPI } from '@/lib/api/lead-attachments';
+import { formatPropertyCurrency } from '@/lib/property-display-utils';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -26,11 +27,21 @@ import { useProperties } from '@/hooks/use-properties';
 import { useCreateLead, useLead, useLeadSensitiveProfile, useUpdateLead, type Lead } from '@/hooks/use-leads';
 import { useTeams } from '@/hooks/use-teams';
 import { getPipelineStageColorStyle } from '@/config/pipeline-stage-colors';
+import { LeadSourceSelect } from '@/components/features/leads/LeadSourceSelect';
 
 type EditableLead = Omit<Partial<Lead>, 'tags' | 'stage' | 'assignee'> & {
   id: string;
   tags?: Array<{ id?: string; name?: string | null; color?: string | null }>;
 };
+
+function removeLeadDraft(key: string | null) {
+  if (!key) return;
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Storage can be unavailable in restricted browser contexts.
+  }
+}
 
 interface CreateLeadDialogProps {
   open: boolean;
@@ -55,11 +66,11 @@ const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 function formatCurrencyInput(value: string | number) {
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) return '';
-    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+    return formatPropertyCurrency(value);
   }
   const digits = value.replace(/\D/g, '').slice(0, 15);
   if (!digits) return '';
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(digits) / 100);
+  return formatPropertyCurrency(Number(digits) / 100);
 }
 
 function parseCurrencyInput(value: string) {
@@ -104,7 +115,7 @@ export function CreateLeadDialog({
   lead: leadSummary,
   onSaved,
 }: CreateLeadDialogProps) {
-  const { profile, organization } = useAuth();
+  const { activeOrganization, profile } = useAuth();
   const fieldIdPrefix = useId();
   const { hasPermission } = useUserPermissions();
   const { hasModule } = useOrganizationModules();
@@ -142,7 +153,9 @@ export function CreateLeadDialog({
   const [activeTab, setActiveTab] = useState('basic');
   const [draftRestored, setDraftRestored] = useState(false);
 
-  const draftKey = !isEditMode && organization?.id ? `lead-draft-${organization.id}` : null;
+  const draftKey = !isEditMode && activeOrganization.organizationId
+    ? `lead-draft-${activeOrganization.organizationId}-${defaultPipelineId || 'default'}-${defaultStageId || 'any-stage'}`
+    : null;
 
   const getEmptyFormData = useCallback(() => {
     const metadata = asRecord(editableLead?.metadata);
@@ -276,7 +289,7 @@ export function CreateLeadDialog({
     if (!open || !draftKey) return;
 
     if (isFormEmpty(formData)) {
-      localStorage.removeItem(draftKey);
+      removeLeadDraft(draftKey);
       return;
     }
 
@@ -351,7 +364,7 @@ export function CreateLeadDialog({
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const discardDraft = useCallback(() => {
-    if (draftKey) localStorage.removeItem(draftKey);
+    removeLeadDraft(draftKey);
     setPendingAttachments([]);
     setDraftRestored(false);
     setActiveTab('basic');
@@ -563,7 +576,7 @@ export function CreateLeadDialog({
           await leadAttachmentsAPI.upload(
             savedLead.id,
             file,
-            organization?.id || profile?.organization_id,
+            activeOrganization.organizationId,
           );
         } catch {
           failedAttachments += 1;
@@ -577,7 +590,7 @@ export function CreateLeadDialog({
       }
 
       // Clear draft on success
-      if (draftKey) localStorage.removeItem(draftKey);
+      removeLeadDraft(draftKey);
       setPendingAttachments([]);
       setDraftRestored(false);
       setErrors({});
@@ -940,32 +953,12 @@ export function CreateLeadDialog({
 
                       <div className="space-y-1.5">
                         <Label className="text-sm font-medium">Origem</Label>
-                        <Select
-                          value={formData.source || "__none__"}
-                          onValueChange={(v) => updateField('source', v === "__none__" ? '' : v)}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Como conheceu?" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">Não informado</SelectItem>
-                            <SelectItem value="manual">Manual</SelectItem>
-                            <SelectItem value="site">Site</SelectItem>
-                            <SelectItem value="indicacao">Indicação</SelectItem>
-                            <SelectItem value="portais">Portais</SelectItem>
-                            <SelectItem value="whatsapp">WhatsApp</SelectItem>
-                            <SelectItem value="facebook">Facebook</SelectItem>
-                            <SelectItem value="instagram">Instagram</SelectItem>
-                            <SelectItem value="google">Google</SelectItem>
-                            <SelectItem value="google_ads">Google Ads</SelectItem>
-                            <SelectItem value="meta">Meta Ads</SelectItem>
-                            <SelectItem value="meta_ads">Meta Ads</SelectItem>
-                            <SelectItem value="import">Importação</SelectItem>
-                            <SelectItem value="webhook">Webhook</SelectItem>
-                            <SelectItem value="outros">Outros</SelectItem>
-                            <SelectItem value="outro">Outro</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        <LeadSourceSelect
+                          key={`${editableLead?.id || 'new'}-${open ? 'open' : 'closed'}`}
+                          value={formData.source}
+                          disabled={isSubmitting}
+                          onValueChange={(value) => updateField('source', value)}
+                        />
                       </div>
 
                       <div className="space-y-1.5">

@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -71,7 +72,11 @@ func TestFinancialReferenceValidationRejectsMalformedUUID(t *testing.T) {
 	err := validateContractReferences(
 		context.Background(),
 		exec,
-		"11111111-1111-4111-8111-111111111111",
+		tenant.Context{
+			OrganizationID: "11111111-1111-4111-8111-111111111111",
+			UserID:         "33333333-3333-4333-8333-333333333333",
+			Permissions:    []string{permissions.PropertyView},
+		},
 		map[string]any{"property_id": "not-a-uuid"},
 	)
 	if !errors.Is(err, ErrInvalidInput) {
@@ -90,7 +95,11 @@ func TestFinancialReferenceValidationScopesRelationToOrganization(t *testing.T) 
 	err := validateContractReferences(
 		context.Background(),
 		exec,
-		organizationID,
+		tenant.Context{
+			OrganizationID: organizationID,
+			UserID:         "33333333-3333-4333-8333-333333333333",
+			Permissions:    []string{permissions.PropertyView},
+		},
 		map[string]any{"property_id": propertyID},
 	)
 	if err != nil {
@@ -102,8 +111,27 @@ func TestFinancialReferenceValidationScopesRelationToOrganization(t *testing.T) 
 	if !strings.Contains(exec.queries[0], "organization_id = $1::uuid") {
 		t.Fatalf("query does not scope the property by organization: %s", exec.queries[0])
 	}
-	if len(exec.args[0]) != 2 || exec.args[0][0] != organizationID || exec.args[0][1] != propertyID {
-		t.Fatalf("query args = %#v, want organization and property IDs", exec.args[0])
+	if len(exec.args[0]) != 5 || exec.args[0][0] != organizationID || exec.args[0][1] != propertyID {
+		t.Fatalf("query args = %#v, want organization, property and canonical scope", exec.args[0])
+	}
+}
+
+func TestFinancialPropertyReferenceRequiresPropertyPermission(t *testing.T) {
+	exec := &financialReferenceValidationExec{exists: true}
+	err := validateContractReferences(
+		context.Background(),
+		exec,
+		tenant.Context{
+			OrganizationID: "11111111-1111-4111-8111-111111111111",
+			UserID:         "33333333-3333-4333-8333-333333333333",
+		},
+		map[string]any{"property_id": "22222222-2222-4222-8222-222222222222"},
+	)
+	if !errors.Is(err, tenant.ErrOrganizationAccessDenied) {
+		t.Fatalf("error = %v, want tenant access denied", err)
+	}
+	if len(exec.queries) != 0 {
+		t.Fatalf("queries = %d, want 0 before property permission", len(exec.queries))
 	}
 }
 

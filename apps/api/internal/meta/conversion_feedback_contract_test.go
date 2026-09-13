@@ -146,3 +146,34 @@ func TestMetaReentryPersistsNewEntryBeforeMovingExistingLead(t *testing.T) {
 		t.Fatal("new Meta reentry must exist before a stage move can emit funnel feedback")
 	}
 }
+
+func TestMetaReentryAdvancesBoardOrderWithoutResettingStageClock(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatalf("read Meta repository source: %v", err)
+	}
+	source := string(raw)
+	start := strings.Index(source, "entryInserted := false")
+	if start < 0 {
+		t.Fatal("Meta reentry branch was not found")
+	}
+	flow := source[start:]
+	end := strings.Index(flow, "\t} else {")
+	if end < 0 {
+		t.Fatal("Meta lead insert branch was not found")
+	}
+	update := flow[:end]
+
+	if !strings.Contains(update, "stage_entered_at = case") ||
+		!strings.Contains(update, "then stage_entered_at") {
+		t.Fatal("Meta reentry must preserve stage_entered_at in the same stage")
+	}
+	if !strings.Contains(update, "board_order_at = now(),") {
+		t.Fatal("Meta reentry must promote the card even in the same stage")
+	}
+	if strings.Contains(update, "board_order_at = case") {
+		t.Fatal("Meta board ordering must not depend on a stage change")
+	}
+}

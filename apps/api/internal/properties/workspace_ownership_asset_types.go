@@ -10,13 +10,18 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
-	propertyPrivateBucket       = "property-private"
-	propertyAssetMaxFileBytes   = int64(10 << 20)
-	propertyAssetAccessTTL      = 90 * time.Second
-	propertyAssetUploadTokenTTL = 2 * time.Hour
+	propertyPrivateBucket          = "property-private"
+	propertyAssetMaxFileBytes      = int64(10 << 20)
+	propertyAssetAccessTTL         = 90 * time.Second
+	propertyAssetUploadTokenTTL    = 2 * time.Hour
+	propertyAssetMaxPhotos         = 20
+	propertyAssetMaxPendingUploads = 20
+	propertyAssetCleanupBatchSize  = 20
+	propertyAssetMaxUploadFileName = 240
 )
 
 var validPropertyAssetTypes = map[string]struct{}{
@@ -168,6 +173,13 @@ type SetPrimaryPropertyAssetInput struct {
 	ExpectedUpdatedAt string `json:"expected_updated_at"`
 }
 
+var reservedPropertyAssetMetadataKeys = map[string]struct{}{
+	"integration_managed":   {},
+	"integration_provider":  {},
+	"integration_providers": {},
+	"integration_retired":   {},
+}
+
 type CreatePropertyAssetUploadIntentInput struct {
 	AssetType     string `json:"asset_type"`
 	FileName      string `json:"file_name"`
@@ -184,16 +196,36 @@ type PropertyAssetUploadIntent struct {
 }
 
 func (input *PropertyOwnerDetailsInput) Validate() error {
-	input.Name = trimMax(input.Name, 160)
-	if input.Name == "" {
-		return fmt.Errorf("%w: owner name is required", ErrInvalidInput)
+	name, err := validateBoundedOwnerText(input.Name, "name", 160, true)
+	if err != nil {
+		return err
 	}
-	input.PhoneResidential = trimWorkspaceNullable(input.PhoneResidential, 40)
-	input.PhoneCommercial = trimWorkspaceNullable(input.PhoneCommercial, 40)
-	input.Cellphone = trimWorkspaceNullable(input.Cellphone, 40)
-	input.Email = trimWorkspaceNullable(input.Email, 160)
-	input.MediaSource = trimWorkspaceNullable(input.MediaSource, 80)
-	input.Notes = trimWorkspaceNullable(input.Notes, 1200)
+	input.Name = name
+	for _, field := range []struct {
+		name  string
+		value **string
+		limit int
+	}{
+		{name: "phone_residential", value: &input.PhoneResidential, limit: 40},
+		{name: "phone_commercial", value: &input.PhoneCommercial, limit: 40},
+		{name: "cellphone", value: &input.Cellphone, limit: 40},
+		{name: "email", value: &input.Email, limit: 160},
+		{name: "media_source", value: &input.MediaSource, limit: 80},
+		{name: "notes", value: &input.Notes, limit: 1200},
+	} {
+		if *field.value == nil {
+			continue
+		}
+		value, err := validateBoundedOwnerText(**field.value, field.name, field.limit, false)
+		if err != nil {
+			return err
+		}
+		if value == "" {
+			*field.value = nil
+			continue
+		}
+		*field.value = &value
+	}
 	if input.Email != nil {
 		address, err := mail.ParseAddress(*input.Email)
 		if err != nil || !strings.EqualFold(address.Address, *input.Email) {
@@ -202,7 +234,14 @@ func (input *PropertyOwnerDetailsInput) Validate() error {
 		email := strings.ToLower(address.Address)
 		input.Email = &email
 	}
+	if input.NotifyEmail && input.Email == nil {
+		return fmt.Errorf("%w: owner email is required when notify_email is enabled", ErrInvalidInput)
+	}
 	return nil
+}
+
+type DiscardPropertyAssetUploadInput struct {
+	StoragePath string `json:"storage_path"`
 }
 
 func (input *CreatePropertyOwnershipInput) Validate() error {
@@ -276,14 +315,26 @@ func (input *CreatePropertyAssetInput) Validate(organizationID string, propertyI
 	if input.Visibility == "" {
 		input.Visibility = "internal"
 	}
-	input.StoragePath = trimWorkspaceNullable(input.StoragePath, 2000)
-	input.ExternalURL = trimWorkspaceNullable(input.ExternalURL, 2000)
-	input.Title = trimWorkspaceNullable(input.Title, 240)
-	input.Description = trimWorkspaceNullable(input.Description, 2000)
-	input.FileName = trimWorkspaceNullable(input.FileName, 255)
-	input.MIMEType = trimWorkspaceNullable(input.MIMEType, 160)
-	input.DocumentCategory = trimWorkspaceNullable(input.DocumentCategory, 120)
-	input.ExpiresAt = trimWorkspaceNullable(input.ExpiresAt, 10)
+	for _, field := range []struct {
+		name  string
+		value **string
+		max   int
+	}{
+		{"storage_path", &input.StoragePath, 2000},
+		{"external_url", &input.ExternalURL, 2000},
+		{"title", &input.Title, 240},
+		{"description", &input.Description, 2000},
+		{"file_name", &input.FileName, 255},
+		{"mime_type", &input.MIMEType, 160},
+		{"document_category", &input.DocumentCategory, 120},
+		{"expires_at", &input.ExpiresAt, 10},
+	} {
+		normalized, err := normalizePropertyAssetNullable(*field.value, field.name, field.max)
+		if err != nil {
+			return err
+		}
+		*field.value = normalized
+	}
 	if (input.StoragePath == nil) == (input.ExternalURL == nil) {
 		return fmt.Errorf("%w: exactly one of storage_path or external_url is required", ErrInvalidInput)
 	}
@@ -292,6 +343,9 @@ func (input *CreatePropertyAssetInput) Validate(organizationID string, propertyI
 	}
 	if input.Metadata == nil {
 		input.Metadata = map[string]any{}
+	}
+	if err := validatePropertyAssetMetadata(input.Metadata); err != nil {
+		return err
 	}
 	return nil
 }
@@ -306,15 +360,25 @@ func (input *UpdatePropertyAssetInput) Validate() error {
 		return fmt.Errorf("%w: visibility is invalid", ErrInvalidInput)
 	}
 	for _, field := range []struct {
+		name  string
 		value *workspaceOptionalString
 		max   int
 	}{
-		{&input.StoragePath, 2000}, {&input.ExternalURL, 2000}, {&input.Title, 240},
-		{&input.Description, 2000}, {&input.FileName, 255}, {&input.MIMEType, 160},
-		{&input.DocumentCategory, 120}, {&input.ExpiresAt, 10},
+		{"storage_path", &input.StoragePath, 2000},
+		{"external_url", &input.ExternalURL, 2000},
+		{"title", &input.Title, 240},
+		{"description", &input.Description, 2000},
+		{"file_name", &input.FileName, 255},
+		{"mime_type", &input.MIMEType, 160},
+		{"document_category", &input.DocumentCategory, 120},
+		{"expires_at", &input.ExpiresAt, 10},
 	} {
 		if field.value.Set {
-			field.value.Value = trimWorkspaceNullable(field.value.Value, field.max)
+			normalized, err := normalizePropertyAssetNullable(field.value.Value, field.name, field.max)
+			if err != nil {
+				return err
+			}
+			field.value.Value = normalized
 		}
 	}
 	if input.FileSizeBytes.Set && input.FileSizeBytes.Value != nil && *input.FileSizeBytes.Value < 0 {
@@ -323,7 +387,20 @@ func (input *UpdatePropertyAssetInput) Validate() error {
 	if input.Metadata == nil {
 		input.Metadata = map[string]any{}
 	}
+	if err := validatePropertyAssetMetadata(input.Metadata); err != nil {
+		return err
+	}
 	return validateRequiredWorkspaceTimestamp(input.ExpectedUpdatedAt, "expected_updated_at")
+}
+
+func validatePropertyAssetMetadata(metadata map[string]any) error {
+	for key := range metadata {
+		normalizedKey := strings.ToLower(strings.TrimSpace(key))
+		if _, reserved := reservedPropertyAssetMetadataKeys[normalizedKey]; reserved {
+			return fmt.Errorf("%w: metadata.%s is reserved for integration lifecycle management", ErrInvalidInput, normalizedKey)
+		}
+	}
+	return nil
 }
 
 func (input *DeletePropertyAssetInput) Validate() error {
@@ -335,6 +412,7 @@ func (input *ReorderPropertyAssetsInput) Validate() error {
 		return fmt.Errorf("%w: items must contain between 1 and 200 assets", ErrInvalidInput)
 	}
 	seen := make(map[string]struct{}, len(input.Items))
+	seenSortOrders := make(map[int]struct{}, len(input.Items))
 	for index := range input.Items {
 		item := &input.Items[index]
 		id, ok := normalizeUUID(item.ID)
@@ -349,6 +427,10 @@ func (input *ReorderPropertyAssetsInput) Validate() error {
 		if item.SortOrder < 0 {
 			return fmt.Errorf("%w: sort_order cannot be negative", ErrInvalidInput)
 		}
+		if _, duplicate := seenSortOrders[item.SortOrder]; duplicate {
+			return fmt.Errorf("%w: asset order cannot contain duplicate sort_order values", ErrInvalidInput)
+		}
+		seenSortOrders[item.SortOrder] = struct{}{}
 		if err := validateRequiredWorkspaceTimestamp(item.ExpectedUpdatedAt, "items.expected_updated_at"); err != nil {
 			return err
 		}
@@ -362,7 +444,11 @@ func (input *SetPrimaryPropertyAssetInput) Validate() error {
 
 func (input *CreatePropertyAssetUploadIntentInput) Validate() error {
 	input.AssetType = strings.ToLower(strings.TrimSpace(input.AssetType))
-	input.FileName = sanitizePropertyAssetFileName(input.FileName)
+	originalFileName := strings.TrimSpace(input.FileName)
+	if utf8.RuneCountInString(originalFileName) > propertyAssetMaxUploadFileName {
+		return fmt.Errorf("%w: file_name must contain at most %d characters", ErrInvalidInput, propertyAssetMaxUploadFileName)
+	}
+	input.FileName = sanitizePropertyAssetFileName(originalFileName)
 	input.MIMEType = strings.ToLower(strings.TrimSpace(input.MIMEType))
 	if _, ok := validPropertyUploadAssetTypes[input.AssetType]; !ok {
 		return fmt.Errorf("%w: upload asset_type is invalid", ErrInvalidInput)
@@ -381,6 +467,14 @@ func (input *CreatePropertyAssetUploadIntentInput) Validate() error {
 	}
 	if input.FileSizeBytes <= 0 || input.FileSizeBytes > propertyAssetMaxFileBytes {
 		return fmt.Errorf("%w: file_size_bytes must be between 1 and 10485760", ErrInvalidInput)
+	}
+	return nil
+}
+
+func (input *DiscardPropertyAssetUploadInput) Validate(organizationID string, propertyID string) error {
+	input.StoragePath = strings.TrimSpace(input.StoragePath)
+	if !isCanonicalPropertyStoragePath(input.StoragePath, organizationID, propertyID) {
+		return fmt.Errorf("%w: storage_path is outside the property namespace", ErrInvalidInput)
 	}
 	return nil
 }
@@ -422,6 +516,9 @@ func validatePropertyAssetState(input CreatePropertyAssetInput, organizationID s
 	if input.IsPrimary && input.AssetType != "photo" {
 		return fmt.Errorf("%w: only photos can be primary", ErrInvalidInput)
 	}
+	if input.IsPrimary && input.Visibility != "public" {
+		return fmt.Errorf("%w: primary photos must be public", ErrInvalidInput)
+	}
 	if input.AssetType != "document" && (input.DocumentCategory != nil || input.ExpiresAt != nil) {
 		return fmt.Errorf("%w: document_category and expires_at require a document", ErrInvalidInput)
 	}
@@ -456,6 +553,20 @@ func trimWorkspaceNullable(value *string, maxLength int) *string {
 		return nil
 	}
 	return &trimmed
+}
+
+func normalizePropertyAssetNullable(value *string, field string, maxLength int) (*string, error) {
+	if value == nil {
+		return nil, nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if utf8.RuneCountInString(trimmed) > maxLength {
+		return nil, fmt.Errorf("%w: %s must contain at most %d characters", ErrInvalidInput, field, maxLength)
+	}
+	if trimmed == "" {
+		return nil, nil
+	}
+	return &trimmed, nil
 }
 
 func isCanonicalPropertyStoragePath(value string, organizationID string, propertyID string) bool {
@@ -515,8 +626,5 @@ func sanitizePropertyAssetFileName(value string) string {
 		}
 	}
 	result := strings.Trim(builder.String(), ".-_")
-	if len(result) > 180 {
-		result = result[:180]
-	}
 	return result
 }

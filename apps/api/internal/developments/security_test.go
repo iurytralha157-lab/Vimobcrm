@@ -153,6 +153,7 @@ func TestRedactWorkspaceCommercialFieldsRemovesDraftsAndPricePayloads(t *testing
 			{EventType: "price_changed", BeforeData: map[string]any{"minimum_price": 1}, AfterData: map[string]any{"payment_terms": "secret"}, Metadata: map[string]any{"secret": true}},
 			{EventType: "reservation_cancelled", Metadata: map[string]any{"reservation_id": "reservation", "reason": "private"}},
 			{EventType: "status_changed", BeforeData: map[string]any{"status": "available"}, Metadata: map[string]any{}},
+			{EventType: "property_linked", Metadata: map[string]any{"operation": "promote_property", "idempotency_key_hash": "private", "request_fingerprint": "private"}},
 		},
 	}
 
@@ -173,5 +174,15 @@ func TestRedactWorkspaceCommercialFieldsRemovesDraftsAndPricePayloads(t *testing
 	}
 	if workspace.RecentUnitEvents[2].BeforeData == nil {
 		t.Fatal("non-commercial unit event was unexpectedly redacted")
+	}
+	linkEvent := workspace.RecentUnitEvents[3]
+	if _, exists := linkEvent.Metadata["idempotency_key_hash"]; exists {
+		t.Fatalf("property link event leaked idempotency internals: %#v", linkEvent)
+	}
+	if _, exists := linkEvent.Metadata["request_fingerprint"]; exists {
+		t.Fatalf("property link event leaked request fingerprint: %#v", linkEvent)
+	}
+	if linkEvent.Metadata["operation"] != "promote_property" {
+		t.Fatalf("property link operation was unexpectedly removed: %#v", linkEvent)
 	}
 }

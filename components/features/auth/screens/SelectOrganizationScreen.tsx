@@ -19,6 +19,11 @@ import {
   runBestEffortAuthOperation,
   shouldShowOrganizationSelectionLoader,
 } from '@/lib/auth/frontend-auth-reliability';
+import {
+  getInitials,
+  getOrganizationMemberRoleLabel,
+  isAdministrativeOrganizationRole,
+} from '@/lib/user-display';
 
 const defaultOrganizationRedirectPath = DEFAULT_AUTHENTICATED_ROUTE;
 
@@ -29,13 +34,6 @@ function getCurrentRedirectPath() {
 
   const params = new URLSearchParams(window.location.search);
   return getPostLoginPathFromSearchParams(params, defaultOrganizationRedirectPath);
-}
-
-function getInitials(name?: string | null) {
-  const parts = (name || 'OR').trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return 'OR';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
 function formatLastAccess(iso: string | null) {
@@ -371,7 +369,8 @@ export default function SelectOrganization() {
             {organizations.map((org) => {
               const name = org.organization_name || 'Organização';
               const lastAccess = formatLastAccess(org.last_accessed_at);
-              const isAdmin = org.member_role === 'admin' || org.member_role === 'super_admin';
+              const isAdmin = isAdministrativeOrganizationRole(org.member_role);
+              const memberRoleLabel = getOrganizationMemberRoleLabel(org.member_role);
               const isPending = pendingOrgId === org.organization_id;
 
               return (
@@ -389,7 +388,7 @@ export default function SelectOrganization() {
                         <AvatarImage src={org.organization_logo} alt="" className="object-contain" />
                       ) : null}
                       <AvatarFallback className="rounded-[8px] bg-primary/50 text-[12px] font-light text-primary-foreground transition-colors group-hover:bg-primary group-focus-visible:bg-primary">
-                        {getInitials(name)}
+                        {getInitials(name, { fallback: 'OR', singleWordCharacters: 2 })}
                       </AvatarFallback>
                     </Avatar>
 
@@ -407,11 +406,11 @@ export default function SelectOrganization() {
                     <span className="inline-flex h-7 items-center gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 text-[12px] font-light text-[var(--app-text-secondary)]">
                       {isAdmin ? (
                         <>
-                          <Shield className="h-3.5 w-3.5 text-primary" strokeWidth={1.35} /> Administrador
+                          <Shield className="h-3.5 w-3.5 text-primary" strokeWidth={1.35} /> {memberRoleLabel}
                         </>
                       ) : (
                         <>
-                          <User className="h-3.5 w-3.5 text-primary" strokeWidth={1.35} /> Usuário
+                          <User className="h-3.5 w-3.5 text-primary" strokeWidth={1.35} /> {memberRoleLabel}
                         </>
                       )}
                     </span>

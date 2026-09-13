@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 )
 
 const (
@@ -1125,10 +1126,7 @@ func (repo Repository) markInstanceError(ctx context.Context, tx pgx.Tx, instanc
 }
 
 func nullableString(value *string) any {
-	if value == nil || strings.TrimSpace(*value) == "" {
-		return nil
-	}
-	return strings.TrimSpace(*value)
+	return pgvalue.NullableTrimmedStringPointer(value)
 }
 
 func nullableTime(value *time.Time) any {

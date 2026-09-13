@@ -9,3 +9,10 @@ export type {
   MarketingTab,
   MarketingTabHrefs,
 } from "./marketing-tabs";
+export { MarketingCampaignDetailTable } from "./MarketingCampaignDetailTable";
+export type { MarketingCampaignDetailTableProps } from "./MarketingCampaignDetailTable";
+export { MarketingScopeFilters } from "./MarketingScopeFilters";
+export type {
+  MarketingScopeFilterOption,
+  MarketingScopeFiltersProps,
+} from "./MarketingScopeFilters";

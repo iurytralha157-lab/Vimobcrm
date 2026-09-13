@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 import { Heart } from "lucide-react";
 
+import { trackFavorite } from "@/hooks/useTracking";
 import { cn } from "@/lib/utils";
 
 function getStorageKey(organizationId: string) {
@@ -61,10 +62,12 @@ export function FavoriteButton({
         event.preventDefault();
         event.stopPropagation();
         const current = readFavorites(organizationId);
-        const next = current.includes(propertyId)
+        const isAdding = !current.includes(propertyId);
+        const next = !isAdding
           ? current.filter((id) => id !== propertyId)
           : [...current, propertyId];
         writeFavorites(organizationId, next);
+        if (isAdding) void trackFavorite(organizationId, propertyId);
       }}
       className={cn(
         "inline-flex h-9 w-9 items-center justify-center rounded-[6px] bg-[var(--site-card)] text-[var(--site-card-fg)] outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-[var(--site-primary)]",

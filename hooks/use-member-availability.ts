@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import { useAuth } from "@/contexts/AuthContext";
+import { useActiveOrganizationId } from "@/hooks/use-active-organization";
 import {
   teamsAPI,
   type AvailabilityInput,
@@ -20,11 +20,6 @@ const DAYS_OF_WEEK = [
   "Sábado",
 ];
 const DAYS_SHORT = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
-
-function useActiveOrganizationId() {
-  const { organization, profile } = useAuth();
-  return organization?.id || profile?.organization_id || null;
-}
 
 export function getDayName(dayOfWeek: number, short = false): string {
   return short ? DAYS_SHORT[dayOfWeek] : DAYS_OF_WEEK[dayOfWeek];
@@ -136,7 +131,7 @@ export function useBulkUpdateMemberAvailability() {
 export function formatAvailabilitySummary(
   availability: MemberAvailability[],
 ): string {
-  if (!availability.length) return "Recebe leads 24h (sem escala)";
+  if (!availability.length) return "Escala não configurada";
 
   const activeDays = availability.filter((entry) => entry.is_active);
   if (!activeDays.length) return "Indisponível";

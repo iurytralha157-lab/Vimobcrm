@@ -758,8 +758,6 @@ function buildPropertyValueItems(property: PublicProperty) {
     { label: "ITR", value: property.valor_itr },
     { label: "Seguro incêndio", value: property.seguro_incendio },
     { label: "Taxa de serviço", value: property.taxa_de_servico },
-    { label: "Venda avaliada", value: property.valor_venda_avaliado },
-    { label: "Locação avaliada", value: property.valor_locacao_avaliado },
   ];
 
   return items

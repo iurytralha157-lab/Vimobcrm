@@ -79,8 +79,8 @@ function toMetaFormConfigRow(value: Record<string, unknown>): MetaFormConfigRow 
 }
 
 function useAllMetaFormConfigs() {
-  const { profile } = useAuth();
-  const organizationId = profile?.organization_id;
+  const { activeOrganization, profile } = useAuth();
+  const organizationId = activeOrganization.organizationId;
 
   return useQuery({
     queryKey: ['meta-form-configs-all', organizationId],

@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.validation-tests.json",
+  "compilerOptions": {
+    "outDir": "../../.validation-tests/lead-history"
+  },
+  "include": [
+    "./activity-deduplication.ts",
+    "./audit.ts",
+    "./build-history.test.ts",
+    "./build-history.ts",
+    "./forms.ts",
+    "./metadata.ts",
+    "./presentation.ts",
+    "./types.ts"
+  ]
+}

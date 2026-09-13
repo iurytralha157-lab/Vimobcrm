@@ -78,6 +78,10 @@ type InvitationRequest struct {
 	ExpiresAt      *string `json:"expires_at"`
 }
 
+type InvitationRoleUpdateRequest struct {
+	Role string `json:"role"`
+}
+
 type AcceptInvitationRequest struct {
 	Name            string  `json:"name"`
 	Password        string  `json:"password"`
@@ -98,6 +102,8 @@ type AcceptInvitationResult struct {
 	OrganizationID   string `json:"organizationId"`
 	OrganizationName string `json:"organizationName"`
 	Message          string `json:"message,omitempty"`
+	TargetUserID     string `json:"-"`
+	AcceptedNow      bool   `json:"-"`
 }
 
 type OnboardingSignupRequest struct {
@@ -106,6 +112,7 @@ type OnboardingSignupRequest struct {
 	DocumentNumber   string `json:"documentNumber"`
 	BrokersCount     int    `json:"brokersCount"`
 	AdminName        string `json:"adminName"`
+	AdminCPF         string `json:"adminCpf"`
 	PhoneCountryCode string `json:"phoneCountryCode"`
 	Phone            string `json:"phone"`
 	Email            string `json:"email"`

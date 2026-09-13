@@ -1,221 +1,119 @@
-# 📐 Arquitetura Frontend - Estrutura Nova Implementada
+# Arquitetura do Vimob CRM
 
-## ✅ Implementação Completa
+## Princípio
 
-### Fase 1: Setup Base ✓
-- [x] Removido React Router (reduziu bundle em ~180KB)
-- [x] Instalado Zustand para state management
-- [x] Criada estrutura de pastas profissional
+O sistema é separado por domínio e aplica segurança em camadas. Uma feature
+deve manter UI, estado assíncrono, transporte e validação reconhecíveis sem
+duplicar contratos ou acesso privilegiado.
 
-### Fase 2: Supabase + Config ✓
-- [x] `lib/supabase/types.ts` - Tipos do Supabase
-- [x] `lib/supabase/client.ts` - Cliente browser
-- [x] `lib/supabase/server.ts` - Cliente server components
-- [x] `config/env.ts` - Validação de env vars com Zod
-- [x] `config/constants.ts` - Constantes e feature flags
-
-### Fase 3: Middleware + Stores ✓
-- [x] `middleware.ts` - Proteção de rotas no servidor
-- [x] `stores/auth.store.ts` - Zustand auth store
-- [x] `stores/ui.store.ts` - Zustand UI store (sidebar, modals)
-- [x] `stores/language.store.ts` - Zustand language store
-
-### Fase 4: Validação + API ✓
-- [x] `lib/validation/schemas.ts` - Zod schemas (Login, Signup, Profile, Organization)
-- [x] `lib/api/auth.ts` - Auth API functions
-- [x] `lib/api/leads.ts` - Leads API functions
-- [x] `lib/api/properties.ts` - Properties API functions
-
-### Fase 5: Providers ✓
-- [x] `components/providers/root-provider.tsx` - Wrapper centralizado
-- [x] `components/providers/query-provider.tsx` - React Query otimizado
-- [x] `components/providers/theme-provider.tsx` - Next Themes
-- [x] `components/providers/auth-provider-wrapper.tsx` - Auth Context
-- [x] `app/layout.tsx` - Atualizado para usar RootProvider
-
----
-
-## 📁 Estrutura Final
-
-```
-vimob-crm/
-├── app/
-│   ├── (auth)/              ← Auth routes (públicas)
-│   ├── (protected)/         ← Rotas protegidas (middleware.ts)
-│   ├── api/                 ← API routes
-│   ├── layout.tsx           ← RootProvider integrado
-│   └── globals.css
-│
-├── components/
-│   ├── ui/                  ← Radix + shadcn (nunca editar)
-│   ├── features/            ← Componentes por domínio
-│   ├── shared/              ← Componentes reutilizáveis
-│   ├── layout/              ← Layout components
-│   └── providers/           ← 4 providers centralizados
-│
-├── lib/
-│   ├── supabase/            ← Client/server/types
-│   ├── api/                 ← Funções API centralizadas
-│   ├── validation/          ← Zod schemas
-│   └── utils/
-│
-├── stores/                  ← Zustand stores
-│   ├── auth.store.ts
-│   ├── ui.store.ts
-│   └── language.store.ts
-│
-├── config/                  ← Configurações
-│   ├── env.ts
-│   └── constants.ts
-│
-├── middleware.ts            ← Proteção de rotas (servidor)
-├── package.json
-└── tsconfig.json
+```text
+App Router
+  -> components/features/{dominio}
+     -> hooks/{dominio}
+        -> lib/api/{dominio}.ts
+           -> API Go /v1
+              -> autorização + tenant
+                 -> Postgres, Storage e provedores
 ```
 
----
+Supabase Auth inicia a identidade. A API Go resolve usuário, organização,
+papéis e permissões antes de executar regras de negócio. O browser usa o cliente
+Supabase canônico apenas nas capacidades que pertencem ao cliente, como Auth e
+Realtime; segredos e service role nunca chegam ao frontend.
 
-## 🔒 Segurança
+## Frontend
 
-### Middleware (`proxy.ts`)
-- Protege rotas `/dashboard` - requer autenticação
-- Redireciona usuários não-autenticados para `/login`
-- Valida session no **servidor** (mais seguro)
-- Impede acesso a rotas de auth se já logado
+- `app/` contém somente composição de rotas, layouts, boundaries e redirects.
+- `components/features/` contém componentes específicos de domínio.
+- `components/shared/` contém componentes realmente usados por dois ou mais
+  domínios; `components/ui/` é a camada de primitivas shadcn/Radix.
+- `hooks/` coordena React Query, estado e efeitos.
+- `lib/api/` concentra transporte HTTP e normalização de erros.
+- `lib/validation/` é a fonte de tipos de contrato derivados de Zod.
+- `contexts/AuthContext.tsx` é a fonte de autenticação e tenant no browser.
+- Não existe store Zustand ativo. Estado de UI permanece local ou no contexto
+  proprietário; autenticação não possui um segundo store paralelo.
 
-### Supabase
-- **Client**: `lib/supabase/client.ts` - Usa no browser (ações do usuário)
-- **Server**: `lib/supabase/server.ts` - Usa em Server Components/Actions (dados sensíveis)
-- **Secrets**: Armazenados em `process.env` (não expostos ao cliente)
+Componentes de cliente são usados somente quando precisam de hooks, eventos ou
+APIs do browser. Layouts e páginas permanecem Server Components por padrão.
 
-### Validação
-- Zod schemas em `lib/validation/schemas.ts`
-- Valida dados antes de enviar para API
-- Type-safe com TypeScript
+## Organização ativa
 
----
+`lib/auth/active-organization.ts` define um contrato discriminado:
 
-## 📊 Performance
+- `resolving`: autenticação, memberships ou troca de organização em andamento;
+- `ready`: `organizationId` estável e autorizado;
+- `missing`: usuário sem tenant utilizável ou falha de carregamento.
 
-### React Query (`components/providers/query-provider.tsx`)
-- `gcTime`: 5 minutos
-- `staleTime`: 1 minuto
-- `retry`: 1 tentativa (tráfego controlado)
-- `refetchOnWindowFocus`: false (não recarrega ao voltar)
+Queries, mutations, Realtime e cache keys só podem usar o ID no estado `ready`.
+Durante login, impersonação ou troca de organização, o contrato não reaproveita
+um ID antigo.
 
-### Stores (Zustand)
-- Persistência automática (localStorage)
-- Atualizações otimizadas (não re-render global)
-- Suporta múltiplos stores simultaneamente
+## API Go
 
----
+- `apps/api/internal/app/app.go` constrói dependências e ciclo de vida.
+- `apps/api/internal/app/routes.go` registra rotas e middleware.
+- Cada pacote em `apps/api/internal/{dominio}` contém handlers, regras e
+  repositório do domínio.
+- `apps/api/internal/tenant` resolve e exige o contexto de organização.
+- `apps/api/internal/httpserver` contém envelopes, erros e decoder HTTP canônico.
+- `apps/api/internal/pgvalue` concentra conversões repetidas de valores pgx com
+  políticas explícitas para vazio, branco e trim.
+- `apps/api/internal/jsonvalue` concentra JSON de banco, preservando a política
+  legada explícita para payload vazio onde ela é necessária.
 
-## 🎯 Próximos Passos
+O catálogo gerado em `docs/catalogo-contratos-backend.md` é a visão auditável
+das rotas. O contrato público versionado fica em
+`packages/contracts/openapi/v1.yaml`.
 
-### 1. Reorganizar Componentes (Optional)
-```bash
-# Mover components para features/
-mkdir components/features/{crm,leads,properties,automation,schedule,financial}
-# Mover componentes por domínio
-```
+## Supabase
 
-### 2. Integrar AuthContext com Zustand (Opcional)
-- Atualmente usa Context + Zustand em paralelo
-- Futuro: migrar tudo para Zustand
+- `lib/supabase/client.ts`: singleton browser canônico, incluindo a proteção
+  read-only local e o fluxo de recuperação de senha.
+- `lib/supabase/server.ts`: cliente por request para Server Components/Actions.
+- `integrations/supabase/types.ts`: única saída gerada pelo CLI.
+- `lib/supabase/types.ts`: fachada estável usada pelo restante da aplicação.
+- `supabase/migrations/`: cadeia append-only verificada contra o lock de origem.
+- `supabase/functions/`: funções com estado `LIVE`, `TOMBSTONE` ou `RETIRED` no
+  manifesto; o roteador self-hosted falha fechado para slug não declarado.
 
-### 3. Adicionar Error Boundaries
-```tsx
-// app/error.tsx
-// app/(protected)/error.tsx
-export default function Error({ error, reset }) { ... }
-```
+Uma migração que já foi aplicada não deve ser editada. Mudanças entram em um
+novo arquivo e precisam passar por `scripts/supabase/verify-migrations.mjs`.
 
-### 4. Implementar Data Validation
-```ts
-// Em cada API call
-const result = loginSchema.parse(data)
-```
+## Providers
 
-### 5. Setup Analytics (Mixpanel/PostHog)
-```ts
-// analytics/tracking.ts
-export const trackEvent = (name: string, props?: Record<string, any>) => { ... }
-```
+`RootProvider` monta infraestrutura global. O grupo protegido adiciona Auth,
+queries privadas, filtros e o chat flutuante; por isso rotas públicas não
+instanciam listeners ou superfícies que dependem de tenant.
 
----
+## Estado e cache
 
-## 🚀 Como Usar
+- Estado de servidor: React Query.
+- Auth e organização ativa: `AuthContext`.
+- Estado global visual: contexto proprietário somente quando realmente
+  compartilhado; não há store genérico ativo.
+- Estado local e efêmero: `useState`/`useReducer`.
 
-### Autenticação
-```tsx
-import { useAuth } from '@/components/providers'
+Toda query multi-tenant inclui organização na chave e deve ficar desabilitada
+fora de `activeOrganization.status === 'ready'`.
 
-export function LoginPage() {
-  const { signIn, loading } = useAuth()
-  
-  const handleLogin = async (email: string, password: string) => {
-    const { error } = await signIn(email, password)
-    if (error) console.error(error)
-  }
-}
-```
+## Gates de release
 
-### Estado Global (UI)
-```tsx
-import { useUIStore } from '@/stores'
+Antes de construir e publicar imagens, a CI exige:
 
-export function Sidebar() {
-  const { sidebarOpen, toggleSidebar } = useUIStore()
-  
-  return <button onClick={toggleSidebar}>{sidebarOpen ? 'Close' : 'Open'}</button>
-}
-```
+1. instalação determinística com `npm ci` e audit de dependências;
+2. inventários gerados e contratos de validação;
+3. typecheck, lint e testes frontend;
+4. integridade das migrações e manifesto das Edge Functions;
+5. testes da API Go e pacotes compartilhados.
 
-### API Calls
-```tsx
-import { leadsAPI } from '@/lib/api'
-import { useQuery } from '@tanstack/react-query'
+Esses gates provam o estado do código. Deploy, migração remota, dados reais,
+integrações externas e capacidade continuam sendo evidências separadas.
 
-export function LeadsList() {
-  const { data, isLoading } = useQuery({
-    queryKey: ['leads', orgId],
-    queryFn: () => leadsAPI.getLeads(orgId)
-  })
-}
-```
+## Estado da reorganização
 
-### Validação
-```tsx
-import { loginSchema } from '@/lib/validation'
-
-const handleSubmit = (formData) => {
-  const validated = loginSchema.parse(formData)
-  // formData é garantidamente válido aqui
-}
-```
-
----
-
-## ⚡ Benefícios da Nova Arquitetura
-
-| Aspecto | Antes | Depois |
-|--------|-------|--------|
-| **Bundle Size** | +180KB (React Router) | Reduzido |
-| **State Management** | 7 Contexts (caótico) | 3 Zustand stores (organizado) |
-| **Type Safety** | Parcial | Total (Zod + TypeScript) |
-| **API Calls** | Espalhadas | Centralizadas em `lib/api/` |
-| **Segurança** | Client-side auth | Middleware no servidor |
-| **Escalabilidade** | Difícil | Fácil (domínios isolados) |
-| **Performance** | React Query default | Otimizado (cache, stale time) |
-
----
-
-## 📞 Suporte
-
-**Status**: ✅ Implementação concluída e testada
-**Versão Next.js**: 16.2.9
-**Versão React**: 19.2.4
-**Versão Supabase**: 2.108.1
-**Versão Zustand**: Última (instalada)
-
-Estrutura pronta para **5-6k usuários** com facilidade! 🚀
+A separação de domínio está implantada, mas não é considerada “finalizada”. Os
+arquivos monolíticos estão sendo recortados de forma incremental, com testes e
+sem redesign. Barrels só devem exportar consumidores reais; código morto e
+utilitários duplicados são removidos em lotes pequenos depois de confirmar o
+grafo de imports e as diferenças de comportamento.

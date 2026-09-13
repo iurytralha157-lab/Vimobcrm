@@ -1,9 +1,11 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizePrivateWorkerRequest } from "../_shared/private-worker-auth.ts";
+import { buildDistributionIdempotencyKey } from "../_shared/distribution-idempotency.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
 };
 
 interface LeadToRedistribute {
@@ -21,8 +23,10 @@ interface LeadToRedistribute {
   last_contact_at: string | null;
   owner_last_activity_at: string | null;
   redistribution_warning_sent_at: string | null;
-  redistribution_count: number;
+  redistribution_count: number | null;
   pipeline_id: string;
+  distribution_round_robin_id?: string | null;
+  distribution_assignment_at?: string | null;
 }
 
 interface DistributionAssignment {
@@ -37,7 +41,14 @@ interface DistributionAssignment {
 const LEAD_SELECT =
   "id, name, organization_id, assigned_user_id, assigned_at, created_at, stage_id, stage_entered_at, deal_status, first_response_at, first_touch_at, last_contact_at, owner_last_activity_at, redistribution_warning_sent_at, redistribution_count, pipeline_id";
 
-const CLOSED_DEAL_STATUSES = new Set(["won", "ganho", "lost", "perdido", "closed", "fechado"]);
+const CLOSED_DEAL_STATUSES = new Set([
+  "won",
+  "ganho",
+  "lost",
+  "perdido",
+  "closed",
+  "fechado",
+]);
 const HUMAN_ACTIVITY_EVENT_TYPES = new Set([
   "whatsapp_message_sent",
   "first_response",
@@ -53,7 +64,9 @@ const HUMAN_ACTIVITY_EVENT_TYPES = new Set([
 ]);
 
 function isClosedDealStatus(status: string | null | undefined) {
-  return CLOSED_DEAL_STATUSES.has(String(status || "open").trim().toLowerCase());
+  return CLOSED_DEAL_STATUSES.has(
+    String(status || "open").trim().toLowerCase(),
+  );
 }
 
 function toDate(value: string | null | undefined) {
@@ -77,14 +90,13 @@ async function getClosedStageIds(supabase: any, pipelineId: string) {
     .eq("pipeline_id", pipelineId);
 
   if (error) {
-    console.error(`Error fetching stages for pipeline ${pipelineId}:`, error);
-    return new Set<string>();
+    throw new Error(`pool_closed_stage_lookup_failed:${error.message}`);
   }
 
-  return new Set(
+  return new Set<string>(
     (data || [])
       .filter((stage: any) => Boolean(stage.is_won) || Boolean(stage.is_lost))
-      .map((stage: any) => stage.id)
+      .map((stage: any) => stage.id),
   );
 }
 
@@ -92,17 +104,23 @@ async function filterRedistributableLeads(
   supabase: any,
   leads: LeadToRedistribute[],
   poolActivationDate: string,
-  closedStageIds: Set<string>
+  closedStageIds: Set<string>,
 ) {
   const baseFiltered = leads.filter((lead) => {
     if (!lead.assigned_user_id || !lead.assigned_at) return false;
     if (isClosedDealStatus(lead.deal_status)) return false;
     if (lead.stage_id && closedStageIds.has(lead.stage_id)) return false;
-    if (lead.first_response_at || lead.first_touch_at || lead.owner_last_activity_at || lead.last_contact_at) return false;
+    if (
+      lead.first_response_at || lead.first_touch_at ||
+      lead.owner_last_activity_at || lead.last_contact_at
+    ) return false;
 
     const assignedAt = toDate(lead.assigned_at);
     const stageEnteredAt = toDate(lead.stage_entered_at);
-    if (assignedAt && stageEnteredAt && stageEnteredAt > tenSecondsAfter(assignedAt)) return false;
+    if (
+      assignedAt && stageEnteredAt &&
+      stageEnteredAt > tenSecondsAfter(assignedAt)
+    ) return false;
 
     return true;
   });
@@ -114,15 +132,18 @@ async function filterRedistributableLeads(
 
   const { data: assignments, error: assignmentError } = await supabase
     .from("assignments_log")
-    .select("lead_id, assigned_user_id, round_robin_id, reason, created_at, assigned_at")
+    .select(
+      "lead_id, assigned_user_id, round_robin_id, reason, created_at, assigned_at",
+    )
     .in("lead_id", leadIds)
-    .in("reason", ["round_robin_auto", "round_robin"])
+    .in("reason", ["round_robin_auto", "round_robin", "canonical_round_robin"])
     .not("round_robin_id", "is", null)
     .order("created_at", { ascending: false });
 
   if (assignmentError) {
-    console.error("Error fetching distribution assignments:", assignmentError);
-    return [];
+    throw new Error(
+      `pool_distribution_assignment_lookup_failed:${assignmentError.message}`,
+    );
   }
 
   const assignmentByLead = new Map<string, DistributionAssignment>();
@@ -140,7 +161,9 @@ async function filterRedistributableLeads(
     const assignment = assignmentByLead.get(lead.id);
     if (!assignment) return false;
 
-    const assignmentAt = toDate(assignment.assigned_at) || toDate(assignment.created_at) || toDate(lead.assigned_at) || toDate(lead.created_at);
+    const assignmentAt = toDate(assignment.assigned_at) ||
+      toDate(assignment.created_at) || toDate(lead.assigned_at) ||
+      toDate(lead.created_at);
     if (!assignmentAt) return false;
     if (activationAt && assignmentAt < activationAt) return false;
 
@@ -152,13 +175,22 @@ async function filterRedistributableLeads(
   const assignmentTimes = queueLeads
     .map((lead) => {
       const assignment = assignmentByLead.get(lead.id);
-      return toDate(assignment?.assigned_at) || toDate(assignment?.created_at) || toDate(lead.assigned_at) || toDate(lead.created_at);
+      return toDate(assignment?.assigned_at) ||
+        toDate(assignment?.created_at) || toDate(lead.assigned_at) ||
+        toDate(lead.created_at);
     })
     .filter(Boolean) as Date[];
-  const earliestActivityBoundary = new Date(Math.min(...assignmentTimes.map((date) => fiveSecondsBefore(date).getTime()))).toISOString();
+  const earliestActivityBoundary = new Date(
+    Math.min(
+      ...assignmentTimes.map((date) => fiveSecondsBefore(date).getTime()),
+    ),
+  ).toISOString();
   const queueLeadIds = queueLeads.map((lead) => lead.id);
 
-  const [{ data: timelineEvents, error: timelineError }, { data: whatsappMessages, error: whatsappError }] = await Promise.all([
+  const [
+    { data: timelineEvents, error: timelineError },
+    { data: whatsappMessages, error: whatsappError },
+  ] = await Promise.all([
     supabase
       .from("lead_timeline_events")
       .select("lead_id, event_type, created_at")
@@ -172,16 +204,21 @@ async function filterRedistributableLeads(
   ]);
 
   if (timelineError) {
-    console.error("Error fetching lead timeline activity:", timelineError);
-    return [];
+    throw new Error(
+      `pool_timeline_activity_lookup_failed:${timelineError.message}`,
+    );
   }
 
   if (whatsappError) {
-    console.error("Error fetching WhatsApp activity:", whatsappError);
-    return [];
+    throw new Error(
+      `pool_whatsapp_activity_lookup_failed:${whatsappError.message}`,
+    );
   }
 
-  const timelineByLead = new Map<string, Array<{ event_type: string; created_at: string }>>();
+  const timelineByLead = new Map<
+    string,
+    Array<{ event_type: string; created_at: string }>
+  >();
   for (const event of timelineEvents || []) {
     if (!HUMAN_ACTIVITY_EVENT_TYPES.has(event.event_type)) continue;
     const events = timelineByLead.get(event.lead_id) || [];
@@ -189,7 +226,12 @@ async function filterRedistributableLeads(
     timelineByLead.set(event.lead_id, events);
   }
 
-  const whatsappByLead = new Map<string, Array<{ created_at: string; from_me: boolean; sender_user_id: string | null }>>();
+  const whatsappByLead = new Map<
+    string,
+    Array<
+      { created_at: string; from_me: boolean; sender_user_id: string | null }
+    >
+  >();
   for (const message of whatsappMessages || []) {
     if (!message.from_me && !message.sender_user_id) continue;
     const messages = whatsappByLead.get(message.lead_id) || [];
@@ -199,23 +241,37 @@ async function filterRedistributableLeads(
 
   return queueLeads.filter((lead) => {
     const assignment = assignmentByLead.get(lead.id);
-    const assignmentAt = toDate(assignment?.assigned_at) || toDate(assignment?.created_at) || toDate(lead.assigned_at) || toDate(lead.created_at);
+    const assignmentAt = toDate(assignment?.assigned_at) ||
+      toDate(assignment?.created_at) || toDate(lead.assigned_at) ||
+      toDate(lead.created_at);
     if (!assignmentAt) return false;
 
     const activityBoundary = fiveSecondsBefore(assignmentAt);
-    const hasTimelineActivity = (timelineByLead.get(lead.id) || []).some((event) => {
-      const eventAt = toDate(event.created_at);
-      return Boolean(eventAt && eventAt >= activityBoundary);
-    });
+    const hasTimelineActivity = (timelineByLead.get(lead.id) || []).some(
+      (event) => {
+        const eventAt = toDate(event.created_at);
+        return Boolean(eventAt && eventAt >= activityBoundary);
+      },
+    );
     if (hasTimelineActivity) return false;
 
-    const hasWhatsAppActivity = (whatsappByLead.get(lead.id) || []).some((message) => {
-      const messageAt = toDate(message.created_at);
-      return Boolean(messageAt && messageAt >= activityBoundary);
-    });
+    const hasWhatsAppActivity = (whatsappByLead.get(lead.id) || []).some(
+      (message) => {
+        const messageAt = toDate(message.created_at);
+        return Boolean(messageAt && messageAt >= activityBoundary);
+      },
+    );
     if (hasWhatsAppActivity) return false;
 
     return true;
+  }).map((lead) => {
+    const assignment = assignmentByLead.get(lead.id);
+    return {
+      ...lead,
+      distribution_round_robin_id: assignment?.round_robin_id ?? null,
+      distribution_assignment_at: assignment?.assigned_at ||
+        assignment?.created_at || lead.assigned_at || lead.created_at,
+    };
   });
 }
 
@@ -225,19 +281,27 @@ Deno.serve(async (req) => {
   }
 
   if (req.method !== "POST") {
-    return new Response("Method not allowed", { status: 405, headers: corsHeaders });
+    return new Response("Method not allowed", {
+      status: 405,
+      headers: corsHeaders,
+    });
   }
 
   if (!authorizePrivateWorkerRequest(req)) {
     return new Response(
       JSON.stringify({ error: "Unauthorized" }),
-      { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
     );
   }
 
   try {
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get(
+      "SUPABASE_SERVICE_ROLE_KEY",
+    )!;
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -246,41 +310,70 @@ Deno.serve(async (req) => {
     // Get all pipelines with pool enabled
     const { data: pipelines, error: pipelineError } = await supabase
       .from("pipelines")
-      .select("id, organization_id, pool_enabled, pool_timeout_minutes, pool_warning_minutes, pool_max_redistributions, pool_enabled_at")
+      .select(
+        "id, organization_id, pool_enabled, pool_timeout_minutes, pool_warning_minutes, pool_max_redistributions, pool_enabled_at",
+      )
       .eq("pool_enabled", true);
 
     if (pipelineError) {
       console.error("Error fetching pipelines:", pipelineError);
       return new Response(
         JSON.stringify({ success: false, error: pipelineError.message }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
       );
     }
 
     if (!pipelines || pipelines.length === 0) {
       console.log("No pipelines with pool enabled");
       return new Response(
-        JSON.stringify({ success: true, message: "No pipelines with pool enabled", redistributed: 0 }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({
+          success: true,
+          message: "No pipelines with pool enabled",
+          redistributed: 0,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
     console.log(`Found ${pipelines.length} pipelines with pool enabled`);
 
-    const results: Array<{ leadId: string; success: boolean; error?: string }> = [];
+    const results: Array<{
+      leadId: string;
+      success: boolean;
+      skipped?: boolean;
+      error?: string;
+    }> = [];
+    const warningResults: Array<{
+      leadId: string;
+      success: boolean;
+      skipped?: boolean;
+      error?: string;
+    }> = [];
 
     for (const pipeline of pipelines) {
       const timeoutMinutes = pipeline.pool_timeout_minutes || 10;
-      const warningMinutes = Math.max(0, Math.min(pipeline.pool_warning_minutes ?? 2, timeoutMinutes - 1));
+      const warningMinutes = Math.max(
+        0,
+        Math.min(pipeline.pool_warning_minutes ?? 2, timeoutMinutes - 1),
+      );
       const maxRedistributions = pipeline.pool_max_redistributions ?? 3;
-      const cutoffTime = new Date(Date.now() - timeoutMinutes * 60 * 1000).toISOString();
-      const warningCutoffTime = new Date(Date.now() - Math.max(1, timeoutMinutes - warningMinutes) * 60 * 1000).toISOString();
+      const cutoffTime = new Date(Date.now() - timeoutMinutes * 60 * 1000)
+        .toISOString();
+      const warningCutoffTime = new Date(
+        Date.now() - Math.max(1, timeoutMinutes - warningMinutes) * 60 * 1000,
+      ).toISOString();
 
       // Only process leads assigned after redistribution was enabled.
-      const poolActivationDate = pipeline.pool_enabled_at || new Date().toISOString();
+      const poolActivationDate = pipeline.pool_enabled_at ||
+        new Date().toISOString();
       const closedStageIds = await getClosedStageIds(supabase, pipeline.id);
 
-      console.log(`Checking pipeline ${pipeline.id}: timeout=${timeoutMinutes}min, warning=${warningMinutes}min, max=${maxRedistributions}, activation=${poolActivationDate}`);
+      console.log(
+        `Checking pipeline ${pipeline.id}: timeout=${timeoutMinutes}min, warning=${warningMinutes}min, max=${maxRedistributions}, activation=${poolActivationDate}`,
+      );
 
       if (warningMinutes > 0) {
         let warningQuery = supabase
@@ -300,37 +393,71 @@ Deno.serve(async (req) => {
           .gte("assigned_at", cutoffTime);
 
         if (maxRedistributions > 0) {
-          warningQuery = warningQuery.lt("redistribution_count", maxRedistributions);
+          warningQuery = warningQuery.or(
+            `redistribution_count.is.null,redistribution_count.lt.${maxRedistributions}`,
+          );
         }
 
         const { data: warningLeads, error: warningError } = await warningQuery;
 
         if (warningError) {
-          console.error(`Error fetching warning leads for pipeline ${pipeline.id}:`, warningError);
+          throw new Error(
+            `pool_warning_candidate_query_failed:${warningError.message}`,
+          );
         } else {
           const eligibleWarningLeads = await filterRedistributableLeads(
             supabase,
             (warningLeads || []) as LeadToRedistribute[],
             poolActivationDate,
-            closedStageIds
+            closedStageIds,
           );
 
           for (const lead of eligibleWarningLeads) {
-            await supabase.from("notifications").insert({
-              organization_id: lead.organization_id,
-              user_id: lead.assigned_user_id,
-              lead_id: lead.id,
-              type: "lead_redistribution_warning",
-              title: "Lead aguardando atendimento",
-              content: `O lead "${lead.name || "Sem nome"}" ainda não teve contato nem movimentação sua. Ele será redistribuído em aproximadamente ${warningMinutes} min se continuar parado.`,
-              is_read: false,
-            });
+            const warningAttemptedAt = new Date().toISOString();
+            const { data: warningResult, error: warningRpcError } =
+              await supabase.rpc(
+                "send_pool_redistribution_warning_from_backend",
+                {
+                  p_organization_id: lead.organization_id,
+                  p_lead_id: lead.id,
+                  p_round_robin_id: lead.distribution_round_robin_id,
+                  p_expected_assigned_user_id: lead.assigned_user_id,
+                  p_expected_lead_assigned_at: lead.assigned_at,
+                  p_expected_distribution_assignment_at:
+                    lead.distribution_assignment_at,
+                  p_expected_redistribution_count: Number(
+                    lead.redistribution_count || 0,
+                  ),
+                  p_now: warningAttemptedAt,
+                },
+              );
 
-            await supabase
-              .from("leads")
-              .update({ redistribution_warning_sent_at: new Date().toISOString() })
-              .eq("id", lead.id)
-              .is("redistribution_warning_sent_at", null);
+            if (warningRpcError) {
+              console.error(
+                `Error sending pool warning for lead ${lead.id}:`,
+                warningRpcError,
+              );
+              warningResults.push({
+                leadId: lead.id,
+                success: false,
+                error: warningRpcError.message,
+              });
+            } else if (warningResult?.success) {
+              warningResults.push({
+                leadId: lead.id,
+                success: true,
+                skipped: Boolean(warningResult?.skipped),
+                error: warningResult?.skipped
+                  ? String(warningResult?.reason || "skipped")
+                  : undefined,
+              });
+            } else {
+              warningResults.push({
+                leadId: lead.id,
+                success: false,
+                error: String(warningResult?.reason || "warning_failed"),
+              });
+            }
           }
         }
       }
@@ -357,21 +484,26 @@ Deno.serve(async (req) => {
         .lt("assigned_at", cutoffTime);
 
       if (maxRedistributions > 0) {
-        leadsQuery = leadsQuery.lt("redistribution_count", maxRedistributions);
+        // Legacy rows may still have a NULL counter; the database aggregate
+        // treats that state as zero, so discovery must not silently exclude it.
+        leadsQuery = leadsQuery.or(
+          `redistribution_count.is.null,redistribution_count.lt.${maxRedistributions}`,
+        );
       }
 
       const { data: leads, error: leadsError } = await leadsQuery;
 
       if (leadsError) {
-        console.error(`Error fetching leads for pipeline ${pipeline.id}:`, leadsError);
-        continue;
+        throw new Error(
+          `pool_redistribution_candidate_query_failed:${leadsError.message}`,
+        );
       }
 
       const redistributableLeads = await filterRedistributableLeads(
         supabase,
         (leads || []) as LeadToRedistribute[],
         poolActivationDate,
-        closedStageIds
+        closedStageIds,
       );
 
       if (!redistributableLeads || redistributableLeads.length === 0) {
@@ -379,59 +511,126 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      console.log(`Found ${redistributableLeads.length} leads to redistribute in pipeline ${pipeline.id}`);
+      console.log(
+        `Found ${redistributableLeads.length} leads to redistribute in pipeline ${pipeline.id}`,
+      );
 
       for (const lead of redistributableLeads) {
         try {
           console.log(`Redistributing lead ${lead.id} (${lead.name})`);
 
-          // Call the redistribute function
-          const { data, error } = await supabase.rpc("redistribute_lead_from_pool", {
-            p_lead_id: lead.id,
-            p_reason: "timeout"
-          });
+          const distributionIdempotencyKey =
+            await buildDistributionIdempotencyKey(
+              "pool-timeout",
+              {
+                leadId: lead.id,
+                assignedUserId: lead.assigned_user_id,
+                assignmentAt: lead.distribution_assignment_at ||
+                  lead.assigned_at,
+                roundRobinId: lead.distribution_round_robin_id || null,
+                redistributionCount: lead.redistribution_count,
+              },
+            );
+          const attemptedAt = new Date().toISOString();
+
+          if (!lead.distribution_round_robin_id) {
+            throw new Error("pool_distribution_queue_missing");
+          }
+
+          // The database wrapper revalidates the stale-candidate snapshot and
+          // commits canonical assignment, counter, history and notification in
+          // one transaction. There is no crash window after assignment.
+          const { data, error } = await supabase.rpc(
+            "redistribute_lead_from_pool_backend",
+            {
+              p_organization_id: lead.organization_id,
+              p_lead_id: lead.id,
+              p_idempotency_key: distributionIdempotencyKey,
+              p_round_robin_id: lead.distribution_round_robin_id,
+              p_expected_assigned_user_id: lead.assigned_user_id,
+              p_expected_assigned_at: lead.assigned_at,
+              p_expected_redistribution_count: Number(
+                lead.redistribution_count || 0,
+              ),
+              p_now: attemptedAt,
+            },
+          );
 
           if (error) {
             console.error(`Error redistributing lead ${lead.id}:`, error);
-            results.push({ leadId: lead.id, success: false, error: (error as any)?.message });
+            results.push({
+              leadId: lead.id,
+              success: false,
+              error: (error as any)?.message,
+            });
           } else if ((data as any)?.success) {
+            const assignedUserId = String((data as any)?.assigned_user_id || "")
+              .trim();
+            if (!assignedUserId) {
+              throw new Error("canonical_distribution_missing_assignee");
+            }
+
+            if (!(data as any)?.pool_finalized) {
+              throw new Error("pool_distribution_not_finalized");
+            }
+
             console.log(`Successfully redistributed lead ${lead.id}:`, data);
             results.push({ leadId: lead.id, success: true });
           } else {
             console.log(`Skipped lead ${lead.id}:`, data);
-            results.push({ leadId: lead.id, success: false, error: (data as any)?.reason || "skipped" });
+            results.push({
+              leadId: lead.id,
+              success: false,
+              skipped: Boolean((data as any)?.skipped),
+              error: (data as any)?.reason || "skipped",
+            });
           }
         } catch (error) {
           console.error(`Exception redistributing lead ${lead.id}:`, error);
-          results.push({ 
-            leadId: lead.id, 
-            success: false, 
-            error: error instanceof Error ? error.message : "Unknown error" 
+          results.push({
+            leadId: lead.id,
+            success: false,
+            error: error instanceof Error ? error.message : "Unknown error",
           });
         }
       }
     }
 
-    const successCount = results.filter(r => r.success).length;
-    const failCount = results.filter(r => !r.success).length;
+    const successCount = results.filter((r) => r.success).length;
+    const skippedCount = results.filter((r) => r.skipped).length +
+      warningResults.filter((r) => r.skipped).length;
+    const failCount = results.filter((r) => !r.success && !r.skipped).length +
+      warningResults.filter((r) => !r.success && !r.skipped).length;
 
-    console.log(`Pool checker completed: ${successCount} redistributed, ${failCount} failed`);
-
-    return new Response(
-      JSON.stringify({ 
-        success: true, 
-        redistributed: successCount,
-        failed: failCount,
-        results 
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    console.log(
+      `Pool checker completed: ${successCount} redistributed, ${skippedCount} skipped, ${failCount} failed`,
     );
 
+    return new Response(
+      JSON.stringify({
+        success: failCount === 0,
+        redistributed: successCount,
+        skipped: skippedCount,
+        failed: failCount,
+        warnings: warningResults,
+        results,
+      }),
+      {
+        status: failCount > 0 ? 500 : 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
   } catch (error) {
     console.error("Pool checker error:", error);
     return new Response(
-      JSON.stringify({ success: false, error: error instanceof Error ? error.message : "Unknown error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
     );
   }
 });

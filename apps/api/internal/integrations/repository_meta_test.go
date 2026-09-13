@@ -56,7 +56,7 @@ func TestMetaOAuthFlowProjectionIncludesSafeInstagramAssetOnly(t *testing.T) {
 	}
 }
 
-func TestMetaMarketingCapabilityRequiresTokenAndGrantedScopes(t *testing.T) {
+func TestMetaMarketingCapabilitySeparatesPaidAndInstagramScopes(t *testing.T) {
 	raw, err := os.ReadFile("repository.go")
 	if err != nil {
 		t.Fatal(err)
@@ -74,14 +74,37 @@ func TestMetaMarketingCapabilityRequiresTokenAndGrantedScopes(t *testing.T) {
 	for _, required := range []string{
 		"user_access_token_secret_ref",
 		"credentials.granted_scopes",
+		"credentials.token_expires_at > now() + interval '5 minutes'",
 		"'ads_read'",
-		"'read_insights'",
+		"'instagram_insights_available'",
+		"nullif(btrim(mi.instagram_business_account_id), '') is not null",
 		"'instagram_basic'",
 		"'instagram_manage_insights'",
+		"'pages_read_engagement'",
 		"'marketing_token_available', false",
+		"'instagram_insights_available', false",
 	} {
 		if !strings.Contains(projection, required) {
 			t.Fatalf("marketing capability projection is missing %q", required)
+		}
+	}
+	if strings.Contains(projection, "'read_insights'") {
+		t.Fatal("marketing capability projection requires the obsolete read_insights scope")
+	}
+	paidStart := strings.Index(projection, "'marketing_token_available'")
+	organicStart := strings.Index(projection, "'instagram_insights_available'")
+	if paidStart < 0 || organicStart <= paidStart {
+		t.Fatal("paid and Instagram capability projections are not independently ordered")
+	}
+	paidProjection := projection[paidStart:organicStart]
+	for _, forbidden := range []string{
+		"instagram_business_account_id",
+		"'instagram_basic'",
+		"'instagram_manage_insights'",
+		"'pages_read_engagement'",
+	} {
+		if strings.Contains(paidProjection, forbidden) {
+			t.Fatalf("paid Marketing capability is incorrectly coupled to %q", forbidden)
 		}
 	}
 }
@@ -116,6 +139,31 @@ func TestCanManageMetaIntegrationsRejectsRegularUser(t *testing.T) {
 
 	if canManageMetaIntegrations(tenantContext) {
 		t.Fatal("expected regular organization user to be rejected")
+	}
+}
+
+func TestCanonicalMetaFormPropertyIDRejectsHiddenReferenceBypassShapes(t *testing.T) {
+	first := "11111111-1111-4111-8111-111111111111"
+	second := "22222222-2222-4222-8222-222222222222"
+
+	resolved, err := canonicalMetaFormPropertyID(MetaFormConfigRequest{
+		DefaultValues: map[string]any{"interest_property_id": first},
+	})
+	if err != nil || resolved == nil || *resolved != first {
+		t.Fatalf("default interest property resolution = %v, %v", resolved, err)
+	}
+
+	if _, err := canonicalMetaFormPropertyID(MetaFormConfigRequest{
+		PropertyID:    &first,
+		DefaultValues: map[string]any{"property_id": second},
+	}); err != ErrInvalidInput {
+		t.Fatalf("conflicting property references error = %v, want ErrInvalidInput", err)
+	}
+
+	if _, err := canonicalMetaFormPropertyID(MetaFormConfigRequest{
+		DefaultValues: map[string]any{"property_id": "not-a-uuid"},
+	}); err != ErrInvalidInput {
+		t.Fatalf("malformed default property error = %v, want ErrInvalidInput", err)
 	}
 }
 

@@ -1,8 +1,14 @@
 "use client";
 
 import { useEffect } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 
 import { trackEvent } from "@/hooks/useTracking";
+import { createEngagementDurationTracker } from "@/lib/site/engagement-duration";
+import {
+  PUBLIC_TRACKING_HEARTBEAT_MS,
+  pickPublicSiteSearchFilters,
+} from "@/lib/site/public-tracking";
 
 export function PublicSiteTracker({
   organizationId,
@@ -13,54 +19,68 @@ export function PublicSiteTracker({
   pageTitle: string;
   propertyId?: string;
 }>) {
-  useEffect(() => {
-    const startedAt = Date.now();
-    let lastDurationRecordedAt = startedAt;
-    void trackEvent({ organizationId, eventType: "pageview", pageTitle, propertyId });
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const serializedSearchParams = searchParams.toString();
 
-    const query = Object.fromEntries(new URLSearchParams(window.location.search));
-    const searchKeys = ["search", "cidade", "bairro", "tipo", "finalidade", "min_price", "max_price", "quartos", "suites", "banheiros", "vagas"];
-    if (searchKeys.some((key) => query[key])) {
+  useEffect(() => {
+    const durationTracker = createEngagementDurationTracker(
+      document.visibilityState !== "hidden",
+    );
+    void trackEvent({
+      organizationId,
+      eventType: "pageview",
+      pagePath: pathname,
+      pageTitle,
+      propertyId,
+    });
+
+    const filters = pickPublicSiteSearchFilters(serializedSearchParams);
+    if (Object.keys(filters).length > 0) {
       void trackEvent({
         organizationId,
         eventType: "property_search",
+        pagePath: pathname,
         pageTitle,
-        metadata: { filters: query, search_term: query.search || null },
+        metadata: { filters },
       });
     }
 
-    const sessionMarker = `vimob_session_started:${organizationId}`;
-    if (!window.sessionStorage.getItem(sessionMarker)) {
-      window.sessionStorage.setItem(sessionMarker, "1");
-      void trackEvent({ organizationId, eventType: "session_start", pageTitle, propertyId });
-    }
-
-    const recordDuration = () => {
-      const now = Date.now();
-      const durationSeconds = Math.floor((now - lastDurationRecordedAt) / 1000);
+    const recordDuration = (pause = false) => {
+      const durationSeconds = pause
+        ? durationTracker.pause()
+        : durationTracker.flush();
       if (durationSeconds < 1) return;
-      lastDurationRecordedAt = now;
       void trackEvent({
         organizationId,
         eventType: "page_duration",
+        pagePath: pathname,
         pageTitle,
         propertyId,
         metadata: { duration_seconds: durationSeconds },
       });
     };
-    const heartbeat = window.setInterval(recordDuration, 30_000);
-    const recordWhenHidden = () => {
-      if (document.visibilityState === "hidden") recordDuration();
+    const heartbeat = window.setInterval(
+      () => recordDuration(),
+      PUBLIC_TRACKING_HEARTBEAT_MS,
+    );
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        recordDuration(true);
+        return;
+      }
+      durationTracker.resume();
     };
-    window.addEventListener("pagehide", recordDuration);
-    document.addEventListener("visibilitychange", recordWhenHidden);
+    const handlePageHide = () => recordDuration(true);
+    window.addEventListener("pagehide", handlePageHide);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
       window.clearInterval(heartbeat);
-      window.removeEventListener("pagehide", recordDuration);
-      document.removeEventListener("visibilitychange", recordWhenHidden);
-      recordDuration();
+      window.removeEventListener("pagehide", handlePageHide);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      recordDuration(true);
     };
-  }, [organizationId, pageTitle, propertyId]);
+  }, [organizationId, pageTitle, pathname, propertyId, serializedSearchParams]);
 
   return null;
 }

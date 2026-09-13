@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/phonenumber"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -367,10 +368,10 @@ func (repo Repository) processLeadgenChange(ctx context.Context, webhookPayload 
 		return result
 	}
 
-	integration, err := repo.findIntegrationByPage(ctx, change.PageID)
+	integration, formConfig, err := repo.findLeadgenRoute(ctx, change.PageID, change.FormID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		result.Status = "skipped"
-		result.Error = "connected Meta integration was not found for page"
+		result.Error = "active Meta form route was not found for page and form"
 		return result
 	}
 	if err != nil {
@@ -378,17 +379,6 @@ func (repo Repository) processLeadgenChange(ctx context.Context, webhookPayload 
 		return result
 	}
 	result.OrganizationID = integration.OrganizationID
-
-	formConfig, err := repo.findFormConfig(ctx, integration, change.FormID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		result.Status = "skipped"
-		result.Error = "active Meta form config was not found"
-		return result
-	}
-	if err != nil {
-		result.Error = err.Error()
-		return result
-	}
 
 	if duplicateLeadID, err := repo.findLeadByMetaLeadID(ctx, integration.OrganizationID, change.LeadgenID); err != nil {
 		result.Error = err.Error()
@@ -431,107 +421,143 @@ func (repo Repository) processLeadgenChange(ctx context.Context, webhookPayload 
 	return result
 }
 
-const findIntegrationByPageQuery = `
-		select count(*) over () as matching_integrations,
-		       to_jsonb(mi) || jsonb_build_object(
-		         'access_token',
-		         coalesce(nullif(mi.access_token, ''), secret.decrypted_secret)
-		       )
-		from public.meta_integrations mi
-		left join vault.decrypted_secrets secret
-		  on secret.id = mi.access_token_secret_ref
-		where mi.page_id = $1
-		  and coalesce(mi.is_connected, true) = true
-		order by mi.updated_at desc nulls last, mi.created_at desc nulls last
+// findLeadgenRouteQuery resolves a signed Lead Ads event by the provider
+// identifiers that Meta actually sends: page_id + form_id. The Page alone is
+// intentionally not an ownership key because agencies can connect the same
+// Page to more than one CRM organization while assigning distinct forms.
+//
+// Candidate counting and credential loading happen in one database snapshot.
+// The lateral branch decrypts a Page token only when exactly one active route
+// exists, so an ambiguous provider payload never selects either tenant.
+const findLeadgenRouteQuery = `
+	with route_candidates as (
+		select
+		  integration.id as integration_id,
+		  integration.organization_id,
+		  form_config.id as form_config_id
+		from public.meta_integrations as integration
+		join public.meta_form_configs as form_config
+		  on form_config.organization_id = integration.organization_id
+		 and form_config.integration_id = integration.id
+		where btrim(integration.page_id) = btrim($1)
+		  and btrim(form_config.form_id) = btrim($2)
+		  and coalesce(integration.is_connected, false) = true
+		  and coalesce(form_config.is_active, true) = true
+	), route_decision as (
+		select count(*)::bigint as matching_routes
+		from route_candidates
+	)
+	select
+	  route_decision.matching_routes,
+	  coalesce(route.integration, '{}'::jsonb),
+	  coalesce(route.form_config, '{}'::jsonb)
+	from route_decision
+	left join lateral (
+		select
+		  to_jsonb(integration) || jsonb_build_object(
+		    'access_token',
+		    coalesce(nullif(integration.access_token, ''), secret.decrypted_secret)
+		  ) as integration,
+		  to_jsonb(form_config) as form_config
+		from route_candidates as candidate
+		join public.meta_integrations as integration
+		  on integration.id = candidate.integration_id
+		 and integration.organization_id = candidate.organization_id
+		join public.meta_form_configs as form_config
+		  on form_config.id = candidate.form_config_id
+		 and form_config.organization_id = candidate.organization_id
+		left join vault.decrypted_secrets as secret
+		  on secret.id = integration.access_token_secret_ref
+		where route_decision.matching_routes = 1
 		limit 1
+	) as route on true
 	`
 
-func (repo Repository) findIntegrationByPage(ctx context.Context, pageID string) (metaIntegration, error) {
-	var (
-		matchCount int64
-		raw        []byte
-	)
-	err := repo.db.Pool().QueryRow(ctx, findIntegrationByPageQuery, pageID).Scan(&matchCount, &raw)
-	if err != nil {
-		return metaIntegration{}, err
-	}
-	if err := requireUniquePageIntegration(pageID, matchCount); err != nil {
-		return metaIntegration{}, err
-	}
-
-	var item map[string]any
-	if err := json.Unmarshal(raw, &item); err != nil {
-		return metaIntegration{}, err
-	}
-
-	return metaIntegration{
-		ID:             stringFromMap(item, "id"),
-		OrganizationID: stringFromMap(item, "organization_id"),
-		PageID:         cleanAnyString(item["page_id"]),
-		PageName:       cleanAnyString(item["page_name"]),
-		AccessToken:    cleanAnyString(item["access_token"]),
-		PipelineID:     uuidPointer(item["pipeline_id"]),
-		StageID:        uuidPointer(item["stage_id"]),
-		AssignedUserID: uuidPointer(item["assigned_user_id"]),
-		DefaultStatus:  cleanAnyString(item["default_status"]),
-		FieldMapping:   stringMap(item["field_mapping"]),
-	}, nil
+type leadgenRouteQueryer interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-func requireUniquePageIntegration(pageID string, matchCount int64) error {
+func (repo Repository) findLeadgenRoute(ctx context.Context, pageID string, formID string) (metaIntegration, metaFormConfig, error) {
+	return resolveLeadgenRoute(ctx, repo.db.Pool(), pageID, formID)
+}
+
+func resolveLeadgenRoute(ctx context.Context, queryer leadgenRouteQueryer, pageID string, formID string) (metaIntegration, metaFormConfig, error) {
+	var (
+		matchCount     int64
+		integrationRaw []byte
+		formConfigRaw  []byte
+	)
+	err := queryer.QueryRow(ctx, findLeadgenRouteQuery, pageID, formID).Scan(&matchCount, &integrationRaw, &formConfigRaw)
+	if err != nil {
+		return metaIntegration{}, metaFormConfig{}, err
+	}
+	if matchCount == 0 {
+		return metaIntegration{}, metaFormConfig{}, pgx.ErrNoRows
+	}
+	if err := requireUniqueLeadgenRoute(pageID, formID, matchCount); err != nil {
+		return metaIntegration{}, metaFormConfig{}, err
+	}
+
+	var integrationItem map[string]any
+	if err := json.Unmarshal(integrationRaw, &integrationItem); err != nil {
+		return metaIntegration{}, metaFormConfig{}, err
+	}
+	var formConfigItem map[string]any
+	if err := json.Unmarshal(formConfigRaw, &formConfigItem); err != nil {
+		return metaIntegration{}, metaFormConfig{}, err
+	}
+
+	integration := metaIntegration{
+		ID:             stringFromMap(integrationItem, "id"),
+		OrganizationID: stringFromMap(integrationItem, "organization_id"),
+		PageID:         cleanAnyString(integrationItem["page_id"]),
+		PageName:       cleanAnyString(integrationItem["page_name"]),
+		AccessToken:    cleanAnyString(integrationItem["access_token"]),
+		PipelineID:     uuidPointer(integrationItem["pipeline_id"]),
+		StageID:        uuidPointer(integrationItem["stage_id"]),
+		AssignedUserID: uuidPointer(integrationItem["assigned_user_id"]),
+		DefaultStatus:  cleanAnyString(integrationItem["default_status"]),
+		FieldMapping:   stringMap(integrationItem["field_mapping"]),
+	}
+	formConfig := metaFormConfig{
+		ID:                 stringFromMap(formConfigItem, "id"),
+		OrganizationID:     stringFromMap(formConfigItem, "organization_id"),
+		IntegrationID:      stringFromMap(formConfigItem, "integration_id"),
+		PageID:             cleanAnyString(formConfigItem["page_id"]),
+		FormID:             stringFromMap(formConfigItem, "form_id"),
+		FormName:           cleanAnyString(formConfigItem["form_name"]),
+		PipelineID:         uuidPointer(formConfigItem["pipeline_id"]),
+		StageID:            uuidPointer(formConfigItem["stage_id"]),
+		DefaultStatus:      cleanAnyString(formConfigItem["default_status"]),
+		AssignedUserID:     uuidPointer(formConfigItem["assigned_user_id"]),
+		RoundRobinID:       uuidPointer(formConfigItem["round_robin_id"]),
+		PropertyID:         uuidPointer(formConfigItem["property_id"]),
+		Purpose:            cleanAnyString(formConfigItem["purpose"]),
+		Source:             cleanAnyString(formConfigItem["source"]),
+		SourceDetails:      cleanAnyString(formConfigItem["source_details"]),
+		DefaultValues:      objectMap(formConfigItem["default_values"]),
+		AutoTags:           stringSlice(formConfigItem["auto_tags"]),
+		FieldMapping:       stringMap(formConfigItem["field_mapping"]),
+		CustomFieldsConfig: stringSlice(formConfigItem["custom_fields_config"]),
+	}
+	if integration.ID == "" || integration.OrganizationID == "" || formConfig.ID == "" ||
+		formConfig.OrganizationID != integration.OrganizationID || formConfig.IntegrationID != integration.ID {
+		return metaIntegration{}, metaFormConfig{}, errors.New("resolved Meta leadgen route is incomplete")
+	}
+	return integration, formConfig, nil
+}
+
+func requireUniqueLeadgenRoute(pageID string, formID string, matchCount int64) error {
 	if matchCount <= 1 {
 		return nil
 	}
 	return fmt.Errorf(
-		"%w: page_id %q matches %d active integrations",
-		ErrAmbiguousPageIntegration,
+		"%w: page_id %q and form_id %q match %d active routes",
+		ErrAmbiguousLeadgenRoute,
 		pageID,
+		formID,
 		matchCount,
 	)
-}
-
-func (repo Repository) findFormConfig(ctx context.Context, integration metaIntegration, formID string) (metaFormConfig, error) {
-	var raw []byte
-	err := repo.db.Pool().QueryRow(ctx, `
-		select to_jsonb(mfc)
-		from public.meta_form_configs mfc
-		where mfc.organization_id = $1::uuid
-		  and mfc.form_id = $2
-		  and coalesce(mfc.is_active, true) = true
-		  and (mfc.integration_id = $3::uuid or mfc.integration_id is null)
-		order by (mfc.integration_id = $3::uuid) desc, mfc.updated_at desc nulls last, mfc.created_at desc nulls last
-		limit 1
-	`, integration.OrganizationID, formID, integration.ID).Scan(&raw)
-	if err != nil {
-		return metaFormConfig{}, err
-	}
-
-	var item map[string]any
-	if err := json.Unmarshal(raw, &item); err != nil {
-		return metaFormConfig{}, err
-	}
-
-	return metaFormConfig{
-		ID:                 stringFromMap(item, "id"),
-		OrganizationID:     stringFromMap(item, "organization_id"),
-		IntegrationID:      stringFromMap(item, "integration_id"),
-		PageID:             cleanAnyString(item["page_id"]),
-		FormID:             stringFromMap(item, "form_id"),
-		FormName:           cleanAnyString(item["form_name"]),
-		PipelineID:         uuidPointer(item["pipeline_id"]),
-		StageID:            uuidPointer(item["stage_id"]),
-		DefaultStatus:      cleanAnyString(item["default_status"]),
-		AssignedUserID:     uuidPointer(item["assigned_user_id"]),
-		RoundRobinID:       uuidPointer(item["round_robin_id"]),
-		PropertyID:         uuidPointer(item["property_id"]),
-		Purpose:            cleanAnyString(item["purpose"]),
-		Source:             cleanAnyString(item["source"]),
-		SourceDetails:      cleanAnyString(item["source_details"]),
-		DefaultValues:      objectMap(item["default_values"]),
-		AutoTags:           stringSlice(item["auto_tags"]),
-		FieldMapping:       stringMap(item["field_mapping"]),
-		CustomFieldsConfig: stringSlice(item["custom_fields_config"]),
-	}, nil
 }
 
 func (repo Repository) leadDetails(ctx context.Context, change leadgenChange, integration metaIntegration) (map[string]any, error) {
@@ -956,10 +982,7 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 			      when $21::uuid is null or stage_id is not distinct from $21::uuid then stage_entered_at
 			      else now()
 			    end,
-			    board_order_at = case
-			      when $21::uuid is null or stage_id is not distinct from $21::uuid then coalesce(board_order_at, stage_entered_at, created_at)
-			      else now()
-			    end,
+			    board_order_at = now(),
 			    stage_id = coalesce($21::uuid, stage_id),
 			    property_id = coalesce($22::uuid, property_id),
 			    interest_property_id = coalesce($22::uuid, interest_property_id),
@@ -2727,25 +2750,15 @@ func coalesceText(value *string, fallback string) string {
 }
 
 func nullableString(value string) any {
-	if strings.TrimSpace(value) == "" {
-		return nil
-	}
-	return strings.TrimSpace(value)
+	return pgvalue.NullableTrimmedString(value)
 }
 
 func nullablePointer(value *string) any {
-	if value == nil || strings.TrimSpace(*value) == "" {
-		return nil
-	}
-	return strings.TrimSpace(*value)
+	return pgvalue.NullableTrimmedStringPointer(value)
 }
 
 func textPointer(value pgtype.Text) *string {
-	if !value.Valid || strings.TrimSpace(value.String) == "" {
-		return nil
-	}
-	text := strings.TrimSpace(value.String)
-	return &text
+	return pgvalue.TextPointerTrimmed(value)
 }
 
 func jsonb(value any) string {
@@ -2757,14 +2770,7 @@ func jsonb(value any) string {
 }
 
 func normalizeUUID(value string) (string, bool) {
-	var uuid pgtype.UUID
-	if err := uuid.Scan(strings.TrimSpace(value)); err != nil {
-		return "", false
-	}
-	if !uuid.Valid {
-		return "", false
-	}
-	return uuid.String(), true
+	return pgvalue.NormalizeUUID(value)
 }
 
 func digitsOnly(value *string) string {
