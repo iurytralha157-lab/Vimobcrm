@@ -98,6 +98,22 @@ func TestBackgroundWorkerGlobalGateIsDocumentedEnabledByDefault(t *testing.T) {
 	}
 }
 
+func TestBlockingBackgroundWorkersAreStartedAsynchronously(t *testing.T) {
+	source, err := os.ReadFile("app.go")
+	if err != nil {
+		t.Fatalf("read app.go: %v", err)
+	}
+
+	for _, call := range []string{
+		"go propertiesRepository.StartAssetCleanupWorker(ctx, logger)",
+		"go webhooksRepository.StartDeliveryWorker(ctx, logger)",
+	} {
+		if count := strings.Count(string(source), call); count != 1 {
+			t.Fatalf("app.go contains %q %d times, want exactly once", call, count)
+		}
+	}
+}
+
 func selectorKey(expression ast.Expr) (string, bool) {
 	selector, ok := expression.(*ast.SelectorExpr)
 	if !ok {

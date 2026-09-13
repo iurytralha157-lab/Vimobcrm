@@ -245,7 +245,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		APIKey:     cfg.Storage.APIKey,
 	})
 	backgroundWorkers.Run(func() {
-		propertiesRepository.StartAssetCleanupWorker(ctx, logger)
+		go propertiesRepository.StartAssetCleanupWorker(ctx, logger)
 	})
 	propertiesHandler := properties.NewHandler(propertiesRepository)
 	publicationsRepository := publications.NewRepository(postgres, publications.Config{
@@ -374,7 +374,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	})
 	webhooksRepository := webhooks.NewRepository(postgres)
 	backgroundWorkers.Run(func() {
-		webhooksRepository.StartDeliveryWorker(ctx, logger)
+		go webhooksRepository.StartDeliveryWorker(ctx, logger)
 	})
 	webhooksHandler := webhooks.NewHandler(webhooksRepository, realtimeHub).
 		WithPublicClientIPResolver(publicClientIPResolver)
