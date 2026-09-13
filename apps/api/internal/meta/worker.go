@@ -36,7 +36,11 @@ func (handler Handler) StartWebhookWorker(ctx context.Context, logger *slog.Logg
 				return
 			case <-timer.C:
 				if err := handler.ProcessPendingWebhookEvents(ctx); err != nil && !errors.Is(err, context.Canceled) {
-					logger.Error("meta webhook worker failed", "error", err)
+					if errors.Is(err, errMetaWebhookSubscriptionReconcile) {
+						logger.Warn("meta webhook subscription reconciliation incomplete", "error", err)
+					} else {
+						logger.Error("meta webhook worker failed", "error", err)
+					}
 				}
 				timer.Reset(metaWebhookWorkerInterval)
 			}

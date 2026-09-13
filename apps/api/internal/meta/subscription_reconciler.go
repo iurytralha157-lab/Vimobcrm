@@ -15,7 +15,7 @@ import (
 const (
 	metaWebhookSubscriptionReconcileBatch         = 10
 	metaWebhookSubscriptionReconcileStaleAfter    = "6 hours"
-	metaWebhookSubscriptionReconcileRetryCooldown = "1 minute"
+	metaWebhookSubscriptionReconcileRetryCooldown = "15 minutes"
 
 	metaWebhookSubscriptionReconcileFailed    = "meta_webhook_subscription_reconcile_failed"
 	metaWebhookMessagingAuthorizationRequired = "meta_messaging_authorization_required"

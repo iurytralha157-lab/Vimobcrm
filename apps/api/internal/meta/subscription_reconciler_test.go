@@ -79,6 +79,15 @@ func TestDesiredWebhookSubscribedFieldsFailClosed(t *testing.T) {
 	}
 }
 
+func TestWebhookSubscriptionReconcileRetryCooldownProtectsProvider(t *testing.T) {
+	if metaWebhookSubscriptionReconcileRetryCooldown != "15 minutes" {
+		t.Fatalf(
+			"retry cooldown = %q, want 15 minutes",
+			metaWebhookSubscriptionReconcileRetryCooldown,
+		)
+	}
+}
+
 func TestSubscribeWebhookFieldsUsesBearerProofAndFormBody(t *testing.T) {
 	pageToken := "page-token-must-not-appear-in-url"
 	appSecret := "app-secret"
