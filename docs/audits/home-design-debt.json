@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "1820dfcef15d1f70fe4119acafae0e3a96ca1cc832349b6863db0150f3a7ef0d",
-  "surfaceInventoryDigestSha256": "069e2c7c5ff613af672ea002986bd750999d28fba7d3e7d00ca1e87a4c08560e",
+  "sourceDigestSha256": "3ae42deeb340fdddf1bc0d198962b0972e25795211ef018e4beff57f021920b2",
+  "surfaceInventoryDigestSha256": "ad8c94b605cf13448aff14673fd9c55ca03bfdbf087387b6628c9bae4877db78",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
     "filesScanned": 535,
@@ -9,23 +9,23 @@
   },
   "counts": {
     "filesWithFindings": 41,
-    "findings": 102,
+    "findings": 103,
     "protectedReachableFilesWithFindings": 40,
-    "protectedReachableFindings": 101,
+    "protectedReachableFindings": 102,
     "bySurfaceScope": {
-      "protected-only": 92,
+      "protected-only": 93,
       "protected-and-public": 9,
       "public-only": 1,
       "infrastructure": 0
     },
     "byPriority": {
-      "P1": 48,
+      "P1": 47,
       "P2": 12,
-      "P3": 42
+      "P3": 44
     },
     "byRule": {
       "heavy-shadow": {
-        "count": 16,
+        "count": 15,
         "guidance": "Usar shadow-none ou a sombra sutil dos pop-ups globais.",
         "label": "Sombra forte",
         "priority": "P1"
@@ -67,7 +67,7 @@
         "priority": "P2"
       },
       "uppercase-tracking": {
-        "count": 42,
+        "count": 44,
         "guidance": "Preferir texto natural em 10–12px e peso 300.",
         "label": "Caixa alta/tracking",
         "priority": "P3"
@@ -232,14 +232,6 @@
       }
     },
     {
-      "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-      "count": 1,
-      "score": 4,
-      "rules": {
-        "heavy-shadow": 1
-      }
-    },
-    {
       "file": "components/features/schedule/dashboard/AgendaAdaptiveChart.tsx",
       "count": 1,
       "score": 4,
@@ -335,6 +327,14 @@
       "score": 3,
       "rules": {
         "heavy-font": 1
+      }
+    },
+    {
+      "file": "components/features/round-robin/DistributionQueueEditor.tsx",
+      "count": 2,
+      "score": 2,
+      "rules": {
+        "uppercase-tracking": 2
       }
     },
     {
@@ -570,14 +570,6 @@
       }
     },
     {
-      "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-      "count": 1,
-      "score": 4,
-      "rules": {
-        "heavy-shadow": 1
-      }
-    },
-    {
       "file": "components/features/schedule/dashboard/AgendaAdaptiveChart.tsx",
       "count": 1,
       "score": 4,
@@ -665,6 +657,14 @@
       "score": 3,
       "rules": {
         "heavy-font": 1
+      }
+    },
+    {
+      "file": "components/features/round-robin/DistributionQueueEditor.tsx",
+      "count": 2,
+      "score": 2,
+      "rules": {
+        "uppercase-tracking": 2
       }
     },
     {
@@ -1354,7 +1354,7 @@
     },
     {
       "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
-      "line": 165,
+      "line": 161,
       "match": "shadow-lg",
       "priority": "P1",
       "rule": "heavy-shadow",
@@ -1363,7 +1363,7 @@
     },
     {
       "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
-      "line": 296,
+      "line": 298,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1372,7 +1372,7 @@
     },
     {
       "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
-      "line": 296,
+      "line": 298,
       "match": "tracking-wide",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1381,7 +1381,7 @@
     },
     {
       "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
-      "line": 522,
+      "line": 510,
       "match": "shadow-lg",
       "priority": "P1",
       "rule": "heavy-shadow",
@@ -1390,12 +1390,21 @@
     },
     {
       "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-      "line": 1152,
-      "match": "shadow-[0_-10px_30px_rgba",
-      "priority": "P1",
-      "rule": "heavy-shadow",
+      "line": 933,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
       "surfaceScope": "protected-only",
-      "weight": 4
+      "weight": 1
+    },
+    {
+      "file": "components/features/round-robin/DistributionQueueEditor.tsx",
+      "line": 1012,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
     },
     {
       "file": "components/features/round-robin/DistributionQueueEditorScreen.tsx",
