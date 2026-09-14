@@ -116,3 +116,36 @@ func TestUpdateRequiresAvailabilityOnlyForNewMembers(t *testing.T) {
 		t.Fatalf("new member with availability rejected: %v", err)
 	}
 }
+
+func TestNormalizeMemberAvailabilityInputsBuildsOneCompleteBatch(t *testing.T) {
+	secondUserID := "20000000-0000-4000-8000-000000000002"
+	secondMemberID := "30000000-0000-4000-8000-000000000002"
+	members := []TeamMemberInput{
+		{UserID: testTeamMemberID, Availability: completeAvailabilityWeek()},
+		{UserID: secondUserID, Availability: completeAvailabilityWeek()},
+	}
+
+	inputs, err := normalizeMemberAvailabilityInputs(members, map[string]string{
+		testTeamMemberID: testTeamMemberID,
+		secondUserID:     secondMemberID,
+	})
+	if err != nil {
+		t.Fatalf("normalize availability inputs: %v", err)
+	}
+	if len(inputs) != 14 {
+		t.Fatalf("availability input count = %d, want 14", len(inputs))
+	}
+	if inputs[0].TeamMemberID != testTeamMemberID || inputs[7].TeamMemberID != secondMemberID {
+		t.Fatalf("unexpected member IDs in batch: first=%q second=%q", inputs[0].TeamMemberID, inputs[7].TeamMemberID)
+	}
+}
+
+func TestNormalizeMemberAvailabilityInputsRejectsMissingMember(t *testing.T) {
+	_, err := normalizeMemberAvailabilityInputs(
+		[]TeamMemberInput{{UserID: testTeamMemberID, Availability: completeAvailabilityWeek()}},
+		map[string]string{},
+	)
+	if !errors.Is(err, ErrTeamMemberNotFound) {
+		t.Fatalf("missing member error = %v, want ErrTeamMemberNotFound", err)
+	}
+}

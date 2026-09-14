@@ -260,6 +260,38 @@ export function hasValidDistributionQueueCriteria(
   );
 }
 
+export function getDistributionQueueEligibleUserIds(
+  members: QueueMemberDraft[],
+  teams: QueueTeamSource[],
+  activeUserIds: Iterable<string>,
+): string[] {
+  const activeUsers = new Set(
+    Array.from(activeUserIds, (userId) => userId.trim()).filter(Boolean),
+  );
+  const activeTeams = new Map(
+    teams
+      .filter((team) => team.is_active !== false)
+      .map((team) => [team.id, team] as const),
+  );
+  const eligibleUsers = new Set<string>();
+
+  for (const member of members) {
+    if (member.type === "user") {
+      const userId = member.entityId.trim();
+      if (activeUsers.has(userId)) eligibleUsers.add(userId);
+      continue;
+    }
+
+    const team = activeTeams.get(member.entityId);
+    for (const teamMember of team?.members || []) {
+      const userId = teamMember.user_id.trim();
+      if (activeUsers.has(userId)) eligibleUsers.add(userId);
+    }
+  }
+
+  return Array.from(eligibleUsers);
+}
+
 export function sanitizeDistributionQueueConditions(
   conditions: DistributionQueueCondition[],
   metaForms: RoundRobinMetaFormOption[],

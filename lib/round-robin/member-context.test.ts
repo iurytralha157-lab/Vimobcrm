@@ -52,29 +52,25 @@ test("hidrata membro direto antes da equipe e preserva contexto, peso e ordem", 
   ]);
 });
 
-test("resolve automaticamente uma unica equipe ativa", () => {
-  assert.deepEqual(resolveDirectUserTeamContext([TEAM_A], undefined, false), {
+test("mantem usuario direto sem equipe por padrao", () => {
+  assert.deepEqual(resolveDirectUserTeamContext([TEAM_A], undefined), {
     status: "resolved",
-    teamId: TEAM_A,
   });
 });
 
-test("exige escolha explicita quando o usuario pertence a varias equipes", () => {
+test("permite usuario direto mesmo quando pertence a varias equipes", () => {
   assert.deepEqual(
-    resolveDirectUserTeamContext([TEAM_A, TEAM_B], undefined, false),
-    { status: "requires-team", teamIds: [TEAM_A, TEAM_B] },
+    resolveDirectUserTeamContext([TEAM_A, TEAM_B], undefined),
+    { status: "resolved" },
   );
   assert.deepEqual(
-    resolveDirectUserTeamContext([TEAM_A, TEAM_B], TEAM_B, false),
+    resolveDirectUserTeamContext([TEAM_A, TEAM_B], TEAM_B),
     { status: "resolved", teamId: TEAM_B },
   );
 });
 
-test("sem equipe so permite membro direto com bypass explicito", () => {
-  assert.deepEqual(resolveDirectUserTeamContext([], undefined, false), {
-    status: "unavailable",
-  });
-  assert.deepEqual(resolveDirectUserTeamContext([], undefined, true), {
+test("permite usuario direto que nao pertence a equipe", () => {
+  assert.deepEqual(resolveDirectUserTeamContext([], undefined), {
     status: "resolved",
   });
 });
@@ -88,7 +84,7 @@ test("le o bypass legado com a mesma semantica do backend", () => {
 
 test("rejeita contexto de equipe que nao pertence ao usuario", () => {
   assert.deepEqual(
-    resolveDirectUserTeamContext([TEAM_A], TEAM_B, true),
+    resolveDirectUserTeamContext([TEAM_A], TEAM_B),
     { status: "unavailable" },
   );
 });

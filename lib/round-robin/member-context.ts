@@ -28,7 +28,6 @@ export type QueueTeamSource = {
 
 export type DirectUserTeamResolution =
   | { status: "resolved"; teamId?: string }
-  | { status: "requires-team"; teamIds: string[] }
   | { status: "unavailable" };
 
 export function queueIgnoresAvailability(value: unknown): boolean {
@@ -88,7 +87,6 @@ export function activeTeamsForUser(
 export function resolveDirectUserTeamContext(
   teamIds: string[],
   requestedTeamId: string | undefined,
-  ignoreAvailability: boolean,
 ): DirectUserTeamResolution {
   const uniqueTeamIds = Array.from(new Set(teamIds.filter(Boolean)));
 
@@ -98,14 +96,5 @@ export function resolveDirectUserTeamContext(
       : { status: "unavailable" };
   }
 
-  if (uniqueTeamIds.length === 1) {
-    return { status: "resolved", teamId: uniqueTeamIds[0] };
-  }
-  if (uniqueTeamIds.length > 1) {
-    return { status: "requires-team", teamIds: uniqueTeamIds };
-  }
-  if (ignoreAvailability) {
-    return { status: "resolved" };
-  }
-  return { status: "unavailable" };
+  return { status: "resolved" };
 }

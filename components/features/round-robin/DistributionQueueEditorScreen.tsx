@@ -271,7 +271,7 @@ export default function DistributionQueueEditorScreen(
         <div
           className={`grid min-w-0 items-start gap-3 ${
             isEditing
-              ? "xl:grid-cols-[minmax(0,1fr)_minmax(260px,320px)]"
+              ? "min-[1900px]:grid-cols-[minmax(0,1fr)_minmax(280px,340px)]"
               : "grid-cols-1"
           }`}
         >

@@ -20,6 +20,7 @@ import {
   ChevronDown,
   GripVertical,
   Trash2,
+  UserRound,
   UserPlus,
   Users,
   UsersRound,
@@ -42,7 +43,6 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Popover,
   PopoverContent,
@@ -50,7 +50,6 @@ import {
 } from "@/components/ui/popover";
 import {
   activeTeamsForUser,
-  queueIgnoresAvailability,
   queueMemberKey,
   type QueueMemberDraft,
   type QueueTeamSource,
@@ -74,22 +73,18 @@ interface DistributionQueueMembersSectionProps {
   selectableTeams: QueueTeamSource[];
   selectableUsers: UserOption[];
   users: UserOption[];
-  pendingUserId: string;
-  pendingUserTeams: QueueTeamSource[];
   teamSelectMessage: string | null;
   teamsLoading: boolean;
   usersLoading: boolean;
   totalTeams: number;
   activeTeams: number;
   isActive: boolean;
-  ignoreAvailability: boolean | undefined;
   onToggle: () => void;
   onDragEnd: (event: DragEndEvent) => void;
   onAddUser: (userId: string) => void;
   onAddTeam: (teamId: string) => void;
-  onResolvePendingUserTeam: (teamId: string) => void;
   onUpdateWeight: (memberKey: string, weight: number) => void;
-  onUpdateTeam: (memberKey: string, teamId: string) => void;
+  onUpdateTeam: (memberKey: string, teamId?: string) => void;
   onRemove: (memberKey: string) => void;
 }
 
@@ -100,9 +95,8 @@ interface SortableMemberRowProps {
   strategy: DistributionQueueStrategy;
   totalWeight: number;
   teamOptions: QueueTeamSource[];
-  ignoreAvailability: boolean;
   onUpdateWeight: (memberKey: string, weight: number) => void;
-  onUpdateTeam: (memberKey: string, teamId: string) => void;
+  onUpdateTeam: (memberKey: string, teamId?: string) => void;
   onRemove: (memberKey: string) => void;
 }
 
@@ -121,6 +115,7 @@ function SearchableTeamPicker({
   value,
   placeholder,
   emptyMessage = "Nenhuma equipe encontrada.",
+  clearLabel,
   disabled,
   className,
   onSelect,
@@ -129,6 +124,7 @@ function SearchableTeamPicker({
   value?: string;
   placeholder: string;
   emptyMessage?: string;
+  clearLabel?: string;
   disabled?: boolean;
   className?: string;
   onSelect: (teamId: string) => void;
@@ -174,6 +170,21 @@ function SearchableTeamPicker({
               {emptyMessage}
             </CommandEmpty>
             <CommandGroup>
+              {clearLabel && (
+                <CommandItem
+                  value={`${clearLabel} usuario direto sem equipe`}
+                  className="cursor-pointer gap-2 rounded-[5px] text-[12px]"
+                  onSelect={() => {
+                    onSelect("");
+                    setOpen(false);
+                  }}
+                >
+                  <span className="grid h-7 w-7 shrink-0 place-items-center rounded-[5px] bg-primary/10 text-primary">
+                    <UserRound className="h-3.5 w-3.5" />
+                  </span>
+                  <span className="truncate">{clearLabel}</span>
+                </CommandItem>
+              )}
               {teams.map((team) => (
                 <CommandItem
                   key={team.id}
@@ -205,7 +216,6 @@ function SortableMemberRow({
   strategy,
   totalWeight,
   teamOptions,
-  ignoreAvailability,
   onUpdateWeight,
   onUpdateTeam,
   onRemove,
@@ -227,19 +237,11 @@ function SortableMemberRow({
   };
   const percentage =
     totalWeight > 0 ? Math.round((member.weight / totalWeight) * 100) : 0;
-  const hasValidTeamContext =
-    !member.teamId || teamOptions.some((team) => team.id === member.teamId);
-  const requiresTeamSelector =
-    member.type === "user" &&
-    (teamOptions.length > 1 ||
-      (teamOptions.length === 1 && !hasValidTeamContext));
   const displayName = member.name || user?.name || "Desconhecido";
   const initials = getInitials(displayName) || "?";
   const linkedTeam = member.teamId
     ? teamOptions.find((team) => team.id === member.teamId)
-    : teamOptions.length === 1
-      ? teamOptions[0]
-      : undefined;
+    : undefined;
 
   return (
     <li
@@ -308,7 +310,7 @@ function SortableMemberRow({
           </p>
         )}
 
-        {member.type === "user" && linkedTeam && !requiresTeamSelector && (
+        {member.type === "user" && linkedTeam && (
           <p className="mt-0.5 flex min-w-0 items-center gap-1 text-[10px] text-[var(--app-text-tertiary)]">
             <UsersRound className="h-3 w-3 shrink-0" aria-hidden="true" />
             <span className="truncate">
@@ -317,33 +319,25 @@ function SortableMemberRow({
           </p>
         )}
 
-        {requiresTeamSelector && (
+        {member.type === "user" && teamOptions.length > 0 && (
           <SearchableTeamPicker
             teams={teamOptions}
             value={member.teamId}
-            placeholder="Escolha a equipe"
+            placeholder="Sem equipe (direto)"
+            clearLabel="Sem equipe (direto)"
             className="mt-1.5 h-8 w-full max-w-[250px] bg-[var(--app-surface-solid)] text-[11px]"
-            onSelect={(teamId) => onUpdateTeam(memberKey, teamId)}
+            onSelect={(teamId) =>
+              onUpdateTeam(memberKey, teamId || undefined)
+            }
           />
         )}
 
         {member.type === "user" && teamOptions.length === 0 && (
           <p
-            className={cn(
-              "mt-0.5 truncate text-[10px]",
-              ignoreAvailability
-                ? "text-[var(--app-text-tertiary)]"
-                : "text-destructive",
-            )}
-            title={
-              ignoreAvailability
-                ? "Sem equipe · horários ignorados"
-                : "Sem equipe ativa para aplicar horários"
-            }
+            className="mt-0.5 truncate text-[10px] text-[var(--app-text-tertiary)]"
+            title="Direto · sem escala de equipe"
           >
-            {ignoreAvailability
-              ? "Sem equipe · horários ignorados"
-              : "Sem equipe ativa para aplicar horários"}
+            Direto · sem escala de equipe
           </p>
         )}
       </div>
@@ -400,20 +394,16 @@ export function DistributionQueueMembersSection({
   selectableTeams,
   selectableUsers,
   users,
-  pendingUserId,
-  pendingUserTeams,
   teamSelectMessage,
   teamsLoading,
   usersLoading,
   totalTeams,
   activeTeams,
   isActive,
-  ignoreAvailability,
   onToggle,
   onDragEnd,
   onAddUser,
   onAddTeam,
-  onResolvePendingUserTeam,
   onUpdateWeight,
   onUpdateTeam,
   onRemove,
@@ -426,7 +416,6 @@ export function DistributionQueueMembersSection({
     }),
   );
   const totalWeight = members.reduce((sum, member) => sum + member.weight, 0);
-  const ignoresAvailability = queueIgnoresAvailability(ignoreAvailability);
 
   return (
     <Collapsible
@@ -482,7 +471,6 @@ export function DistributionQueueMembersSection({
                         ? activeTeamsForUser(member.entityId, visibleTeams)
                         : []
                     }
-                    ignoreAvailability={ignoresAvailability}
                     onUpdateWeight={onUpdateWeight}
                     onUpdateTeam={onUpdateTeam}
                     onRemove={onRemove}
@@ -586,22 +574,10 @@ export function DistributionQueueMembersSection({
             onSelect={onAddTeam}
           />
         </div>
-        {pendingUserId && pendingUserTeams.length > 1 && (
-          <div className="rounded-[6px] bg-[var(--app-surface-soft)] p-3">
-            <Label className="mb-2 block">Equipe usada para os horários</Label>
-            <SearchableTeamPicker
-              teams={pendingUserTeams}
-              placeholder="Buscar equipe ativa"
-              onSelect={onResolvePendingUserTeam}
-            />
-          </div>
-        )}
-        {ignoresAvailability && (
-          <p className="text-xs text-muted-foreground">
-            Esta fila está configurada para ignorar disponibilidade. Corretores
-            sem equipe ativa continuam elegíveis.
-          </p>
-        )}
+        <p className="text-xs text-muted-foreground">
+          Corretores podem participar diretamente. Vincule uma equipe somente
+          quando quiser aplicar a escala dela.
+        </p>
         {totalTeams > 0 && activeTeams === 0 && (
           <p className="text-xs text-muted-foreground">
             Ative uma equipe em Gestão &gt; Equipes para usá-la em uma fila.

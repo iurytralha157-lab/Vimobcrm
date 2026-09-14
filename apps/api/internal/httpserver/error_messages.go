@@ -64,6 +64,9 @@ func userFacingErrorMessage(code string, original string, status int) string {
 		return strings.TrimSpace(original)
 	}
 	normalizedOriginal := strings.ToLower(original)
+	if code == "invalid_round_robin_input" && strings.Contains(normalizedOriginal, "automatic redistribution requires at least two active eligible users") {
+		return "A redistribuição automática precisa de pelo menos dois corretores ativos. Adicione outro corretor ou desative a redistribuição."
+	}
 	if code == "invalid_round_robin_input" && strings.Contains(normalizedOriginal, "whatsapp message distribution") && strings.Contains(normalizedOriginal, "required check-in") {
 		return "O check-in obrigatório ainda não é compatível com esta regra do WhatsApp. Desative essa configuração para ativar a fila."
 	}

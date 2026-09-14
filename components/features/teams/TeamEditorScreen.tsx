@@ -68,7 +68,7 @@ interface MemberSelection {
 type ScheduleWarning = "missing" | "incomplete";
 
 const MANAGEMENT_TEAMS_URL = "/crm/management?tab=teams";
-const TEAM_EDITOR_PANEL_HEIGHT_CLASS = "h-[600px] xl:h-full xl:min-h-0";
+const TEAM_EDITOR_PANEL_HEIGHT_CLASS = "h-[600px] 2xl:h-full 2xl:min-h-0";
 const TEAM_EDITOR_LOADING_PANEL_HEIGHT_CLASS = "h-[600px]";
 
 function buildEditorFingerprint({
@@ -577,7 +577,7 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
     <AppLayout title={title} disableMainScroll>
       <div
         data-tour="management-team-editor"
-        className="flex h-full min-h-0 w-full flex-col gap-3 overflow-x-hidden overflow-y-auto pb-8 text-[12px] font-light xl:pb-0"
+        className="flex h-full min-h-0 w-full flex-col gap-3 overflow-x-hidden overflow-y-auto pb-8 text-[12px] font-light 2xl:pb-0"
       >
         <div className="flex shrink-0 items-center">
           <Button
@@ -685,9 +685,9 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
 
         <div
           className={cn(
-            "grid min-w-0 shrink-0 gap-3 lg:grid-cols-[minmax(280px,0.36fr)_minmax(0,0.64fr)] xl:min-h-[360px] xl:max-h-[600px] xl:flex-1",
+            "grid min-w-0 shrink-0 gap-3 lg:grid-cols-[minmax(280px,0.36fr)_minmax(0,0.64fr)] 2xl:min-h-[360px] 2xl:max-h-[600px] 2xl:flex-1",
             isEditing &&
-              "xl:grid-cols-[minmax(280px,340px)_minmax(520px,1fr)_minmax(260px,320px)]",
+              "2xl:grid-cols-[minmax(280px,340px)_minmax(520px,1fr)_minmax(260px,320px)]",
           )}
         >
           <section
@@ -1021,7 +1021,7 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
             <div
               className={cn(
                 TEAM_EDITOR_PANEL_HEIGHT_CLASS,
-                "min-w-0 w-full lg:col-span-2 xl:col-span-1",
+                "min-w-0 w-full lg:col-span-2 2xl:col-span-1",
               )}
             >
               <TeamChangeHistory teamId={team.id} />
@@ -1139,7 +1139,7 @@ function TeamEditorLoading({ isEditing }: { isEditing: boolean }) {
         className={cn(
           "grid min-w-0 gap-3 lg:grid-cols-[minmax(280px,0.36fr)_minmax(0,0.64fr)]",
           isEditing &&
-            "xl:grid-cols-[minmax(280px,340px)_minmax(520px,1fr)_minmax(260px,320px)]",
+            "2xl:grid-cols-[minmax(280px,340px)_minmax(520px,1fr)_minmax(260px,320px)]",
         )}
       >
         {Array.from({ length: isEditing ? 3 : 2 }).map((_, index) => (

@@ -2,6 +2,7 @@ package teams
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -808,41 +809,124 @@ func (repo Repository) replaceMemberAvailabilityWeeks(
 	teamID string,
 	members []TeamMemberInput,
 ) error {
+	userIDs := make([]string, 0, len(members))
+	for _, member := range members {
+		if member.Availability != nil {
+			userIDs = append(userIDs, member.UserID)
+		}
+	}
+	if len(userIDs) == 0 {
+		return nil
+	}
+
+	args := []any{organizationID, teamID}
+	placeholders := make([]string, 0, len(userIDs))
+	for _, userID := range userIDs {
+		args = append(args, userID)
+		placeholders = append(placeholders, fmt.Sprintf("$%d::uuid", len(args)))
+	}
+	rows, err := tx.Query(ctx, `
+		select id::text, user_id::text
+		from public.team_members
+		where organization_id = $1::uuid
+		  and team_id = $2::uuid
+		  and user_id in (`+strings.Join(placeholders, ", ")+`)
+		  and coalesce(is_active, true) = true
+	`, args...)
+	if err != nil {
+		return err
+	}
+	memberIDByUserID := make(map[string]string, len(userIDs))
+	for rows.Next() {
+		var memberID, userID string
+		if err := rows.Scan(&memberID, &userID); err != nil {
+			rows.Close()
+			return err
+		}
+		memberIDByUserID[userID] = memberID
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	inputs, err := normalizeMemberAvailabilityInputs(members, memberIDByUserID)
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(inputs)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(ctx, `
+		insert into public.member_availability as current_availability (
+			organization_id,
+			team_member_id,
+			day_of_week,
+			start_time,
+			end_time,
+			is_all_day,
+			is_active
+		)
+		select
+			$1::uuid,
+			input.team_member_id::uuid,
+			input.day_of_week,
+			nullif(btrim(input.start_time), '')::time,
+			nullif(btrim(input.end_time), '')::time,
+			input.is_all_day,
+			input.is_active
+		from jsonb_to_recordset($2::jsonb) as input (
+			team_member_id text,
+			day_of_week integer,
+			start_time text,
+			end_time text,
+			is_all_day boolean,
+			is_active boolean
+		)
+		on conflict (team_member_id, day_of_week) do update
+		set start_time = excluded.start_time,
+		    end_time = excluded.end_time,
+		    is_all_day = excluded.is_all_day,
+		    is_active = excluded.is_active,
+		    updated_at = now()
+		where (
+			current_availability.start_time,
+			current_availability.end_time,
+			current_availability.is_all_day,
+			current_availability.is_active
+		) is distinct from (
+			excluded.start_time,
+			excluded.end_time,
+			excluded.is_all_day,
+			excluded.is_active
+		)
+	`, organizationID, string(payload))
+	return err
+}
+
+func normalizeMemberAvailabilityInputs(
+	members []TeamMemberInput,
+	memberIDByUserID map[string]string,
+) ([]availabilityInput, error) {
+	inputs := make([]availabilityInput, 0, len(members)*7)
 	for _, member := range members {
 		if member.Availability == nil {
 			continue
 		}
-
-		var teamMemberID string
-		err := tx.QueryRow(ctx, `
-			select id::text
-			from public.team_members
-			where organization_id = $1::uuid
-			  and team_id = $2::uuid
-			  and user_id = $3::uuid
-			  and coalesce(is_active, true) = true
-		`, organizationID, teamID, member.UserID).Scan(&teamMemberID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrTeamMemberNotFound
-		}
-		if err != nil {
-			return err
-		}
-		if err := lockTeamMemberAvailability(ctx, tx, organizationID, teamMemberID); err != nil {
-			return err
+		teamMemberID, ok := memberIDByUserID[member.UserID]
+		if !ok {
+			return nil, ErrTeamMemberNotFound
 		}
 
 		normalized, err := normalizeCompleteAvailabilityWeek(teamMemberID, member.Availability)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		for _, input := range normalized {
-			if _, err := repo.upsertAvailability(ctx, tx, organizationID, input); err != nil {
-				return err
-			}
-		}
+		inputs = append(inputs, normalized...)
 	}
-	return nil
+	return inputs, nil
 }
 
 func (repo Repository) membersByTeam(ctx context.Context, organizationID string) (map[string][]TeamMember, error) {
@@ -1008,25 +1092,48 @@ func replaceMembers(ctx context.Context, tx pgx.Tx, organizationID string, teamI
 		return err
 	}
 
-	for _, member := range normalized {
-		_, err := tx.Exec(ctx, `
-			insert into public.team_members as current_member (organization_id, team_id, user_id, is_leader)
-			values ($1::uuid, $2::uuid, $3::uuid, $4)
-			on conflict (team_id, user_id) do update
-			set is_leader = excluded.is_leader,
-			    is_active = true,
-			    updated_at = now()
-			where current_member.organization_id = excluded.organization_id
-			  and (
-				current_member.is_leader is distinct from excluded.is_leader
-				or current_member.is_active is distinct from true
-			  )
-		`, organizationID, teamID, member.UserID, member.IsLeader)
-		if err != nil {
-			return err
-		}
+	type memberWriteInput struct {
+		UserID   string `json:"user_id"`
+		IsLeader bool   `json:"is_leader"`
 	}
-	return nil
+	payload := make([]memberWriteInput, 0, len(normalized))
+	for _, member := range normalized {
+		payload = append(payload, memberWriteInput{
+			UserID:   member.UserID,
+			IsLeader: member.IsLeader,
+		})
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		insert into public.team_members as current_member (
+			organization_id,
+			team_id,
+			user_id,
+			is_leader
+		)
+		select
+			$1::uuid,
+			$2::uuid,
+			input.user_id::uuid,
+			input.is_leader
+		from jsonb_to_recordset($3::jsonb) as input (
+			user_id text,
+			is_leader boolean
+		)
+		on conflict (team_id, user_id) do update
+		set is_leader = excluded.is_leader,
+		    is_active = true,
+		    updated_at = now()
+		where current_member.organization_id = excluded.organization_id
+		  and (
+			current_member.is_leader is distinct from excluded.is_leader
+			or current_member.is_active is distinct from true
+		  )
+	`, organizationID, teamID, string(encoded))
+	return err
 }
 
 func ensureUsersBelongToOrganization(ctx context.Context, tx pgx.Tx, organizationID string, userIDs []string) error {
@@ -1280,12 +1387,12 @@ func normalizeTeamPipelineRequest(request AssignPipelineRequest) (string, string
 }
 
 type availabilityInput struct {
-	TeamMemberID string
-	DayOfWeek    int
-	StartTime    *string
-	EndTime      *string
-	IsAllDay     bool
-	IsActive     bool
+	TeamMemberID string  `json:"team_member_id"`
+	DayOfWeek    int     `json:"day_of_week"`
+	StartTime    *string `json:"start_time"`
+	EndTime      *string `json:"end_time"`
+	IsAllDay     bool    `json:"is_all_day"`
+	IsActive     bool    `json:"is_active"`
 }
 
 func normalizeAvailabilityRequest(request AvailabilityRequest) (availabilityInput, error) {

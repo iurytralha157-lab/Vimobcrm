@@ -66,6 +66,8 @@ func TestTeamWritesDoNotRecreateUnchangedSchedules(t *testing.T) {
 		"current_availability.start_time",
 		"is distinct from",
 		"on conflict (team_id, user_id) do update",
+		"jsonb_to_recordset($2::jsonb)",
+		"jsonb_to_recordset($3::jsonb)",
 	} {
 		if !strings.Contains(normalized, fragment) {
 			t.Fatalf("no-op write protection must contain %q", fragment)

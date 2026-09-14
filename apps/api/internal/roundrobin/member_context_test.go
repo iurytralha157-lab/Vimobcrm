@@ -7,25 +7,29 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
-func TestResolveDirectUserTeamIDAttachesOnlyActiveTeam(t *testing.T) {
+func TestResolveDirectUserTeamIDKeepsDirectUserWithoutTeam(t *testing.T) {
 	teamID := "11111111-1111-4111-8111-111111111111"
-	resolved, err := resolveDirectUserTeamID([]string{teamID}, nil, false)
+	resolved, err := resolveDirectUserTeamID([]string{teamID}, nil)
 	if err != nil {
 		t.Fatalf("resolveDirectUserTeamID() error = %v", err)
 	}
-	if resolved == nil || *resolved != teamID {
-		t.Fatalf("resolved team = %#v, want %q", resolved, teamID)
+	if resolved != nil {
+		t.Fatalf("resolved team = %#v, want nil", resolved)
 	}
 }
 
-func TestResolveDirectUserTeamIDRequiresExplicitTeamForMultipleMemberships(t *testing.T) {
+func TestResolveDirectUserTeamIDAllowsDirectUserWithMultipleMemberships(t *testing.T) {
 	teamA := "11111111-1111-4111-8111-111111111111"
 	teamB := "22222222-2222-4222-8222-222222222222"
-	if _, err := resolveDirectUserTeamID([]string{teamA, teamB}, nil, true); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("error = %v, want ErrInvalidInput", err)
+	resolved, err := resolveDirectUserTeamID([]string{teamA, teamB}, nil)
+	if err != nil {
+		t.Fatalf("resolve direct user: %v", err)
+	}
+	if resolved != nil {
+		t.Fatalf("resolved team = %#v, want nil", resolved)
 	}
 
-	resolved, err := resolveDirectUserTeamID([]string{teamA, teamB}, &teamB, false)
+	resolved, err = resolveDirectUserTeamID([]string{teamA, teamB}, &teamB)
 	if err != nil {
 		t.Fatalf("resolve explicit team: %v", err)
 	}
@@ -37,19 +41,15 @@ func TestResolveDirectUserTeamIDRequiresExplicitTeamForMultipleMemberships(t *te
 func TestResolveDirectUserTeamIDRejectsForeignOrInactiveContext(t *testing.T) {
 	activeTeamID := "11111111-1111-4111-8111-111111111111"
 	requestedTeamID := "22222222-2222-4222-8222-222222222222"
-	if _, err := resolveDirectUserTeamID([]string{activeTeamID}, &requestedTeamID, true); !errors.Is(err, ErrInvalidReference) {
+	if _, err := resolveDirectUserTeamID([]string{activeTeamID}, &requestedTeamID); !errors.Is(err, ErrInvalidReference) {
 		t.Fatalf("error = %v, want ErrInvalidReference", err)
 	}
 }
 
-func TestResolveDirectUserTeamIDRequiresTeamUnlessBypassIsExplicit(t *testing.T) {
-	if _, err := resolveDirectUserTeamID(nil, nil, false); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("error = %v, want ErrInvalidInput", err)
-	}
-
-	resolved, err := resolveDirectUserTeamID(nil, nil, true)
+func TestResolveDirectUserTeamIDAllowsUserWithoutMembership(t *testing.T) {
+	resolved, err := resolveDirectUserTeamID(nil, nil)
 	if err != nil {
-		t.Fatalf("explicit bypass error = %v", err)
+		t.Fatalf("direct user error = %v", err)
 	}
 	if resolved != nil {
 		t.Fatalf("explicit bypass team = %#v, want nil", resolved)

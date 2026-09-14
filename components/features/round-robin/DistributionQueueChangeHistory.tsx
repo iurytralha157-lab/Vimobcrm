@@ -115,7 +115,7 @@ export function DistributionQueueChangeHistory({
 
       <div
         data-distribution-history-scroll
-        className="-mr-2"
+        className="scrollbar-thin -mr-2 max-h-[420px] overflow-y-auto overscroll-contain pr-2 [scrollbar-gutter:stable]"
         role="region"
         aria-label="Histórico da distribuição"
       >

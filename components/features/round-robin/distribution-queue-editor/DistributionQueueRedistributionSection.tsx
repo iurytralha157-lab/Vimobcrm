@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 interface DistributionQueueRedistributionSectionProps {
   open: boolean;
   settings: DistributionQueueSettings;
+  eligibleUserCount: number;
   onToggle: () => void;
   onEnabledChange: (checked: boolean) => void;
   onTimeoutChange: (minutes: number) => void;
@@ -33,6 +34,7 @@ interface DistributionQueueRedistributionSectionProps {
 export function DistributionQueueRedistributionSection({
   open,
   settings,
+  eligibleUserCount,
   onToggle,
   onEnabledChange,
   onTimeoutChange,
@@ -63,7 +65,7 @@ export function DistributionQueueRedistributionSection({
       <CollapsibleContent className="space-y-3 px-0.5 pt-2.5">
         <div className="space-y-4 rounded-[6px] border-0 bg-[var(--app-surface-soft)] p-4">
           <div className="space-y-2">
-            <Label>Quando um lead já existente retornar</Label>
+            <Label>Quando o mesmo lead retornar</Label>
             <Select
               value={settings.reentry_behavior ?? "redistribute"}
               onValueChange={(value) => {
@@ -85,15 +87,15 @@ export function DistributionQueueRedistributionSection({
               </SelectContent>
             </Select>
             <p className="text-[11px] text-muted-foreground">
-              Controla novas entradas válidas do mesmo lead sem criar um contato
-              duplicado.
+              Manter o responsável conserva o corretor atual. Redistribuir envia
+              a nova entrada pela fila novamente, sem duplicar o contato.
             </p>
           </div>
 
           <div className="border-t border-[var(--app-border)] pt-4">
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-1">
-                <Label>Ativar redistribuicao de lead parado</Label>
+                <Label>Redistribuir lead sem atendimento</Label>
                 <p className="text-xs text-muted-foreground">
                   Se o responsavel nao fizer contato nem movimentar o proprio
                   lead no prazo, o sistema envia para o proximo participante da
@@ -108,10 +110,20 @@ export function DistributionQueueRedistributionSection({
 
             {settings.enable_redistribution && (
               <div className="space-y-3">
-                <p className="rounded-md bg-background px-3 py-2 text-xs text-muted-foreground">
-                  A fila so sera ativada se houver pelo menos dois corretores
-                  elegiveis. Equipes inativas e participantes sem acesso a
-                  organizacao sao ignorados.
+                <p
+                  role={eligibleUserCount < 2 ? "alert" : "status"}
+                  className={cn(
+                    "rounded-[6px] px-3 py-2 text-xs",
+                    eligibleUserCount < 2
+                      ? "bg-destructive/10 text-destructive"
+                      : "bg-background text-muted-foreground",
+                  )}
+                >
+                  {eligibleUserCount < 2
+                    ? `A redistribuição exige pelo menos dois corretores ativos. Atualmente esta fila possui ${eligibleUserCount}.`
+                    : `${eligibleUserCount} corretores ativos estão elegíveis para a redistribuição.`}{" "}
+                  Equipes inativas e participantes sem acesso à organização são
+                  ignorados.
                 </p>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <div className="space-y-2">

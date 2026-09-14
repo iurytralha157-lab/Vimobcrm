@@ -349,12 +349,13 @@ test("editor de fila bloqueia salvamento inseguro e atualiza historico auditado"
     /2xl:grid-cols-\[minmax\(0,1\.08fr\)_minmax\(0,0\.92fr\)\]/,
   );
   assert.match(editor, /presentation === "page"[\s\S]*?"overflow-visible"/);
-  assert.match(editor, /presentation === "page" \? "sticky bottom-0 z-10"/);
-  assert.match(editor, /max-w-\[680px\]/);
-  assert.match(editor, /shadow-\[0_-10px_30px/);
+  assert.match(editor, /presentation === "page" \? "sticky bottom-0 z-20"/);
+  assert.match(editor, /border-t border-\[var\(--app-border\)\]/);
+  assert.doesNotMatch(editor, /max-w-\[680px\]/);
+  assert.doesNotMatch(editor, /shadow-\[0_-10px_30px/);
   assert.match(history, /useRoundRobinHistory\(queueId\)/);
   assert.match(history, /data-distribution-history-scroll/);
-  assert.doesNotMatch(history, /overflow-y-auto/);
+  assert.match(history, /max-h-\[420px\][\s\S]*overflow-y-auto/);
   assert.match(history, /dd\/MM · HH:mm/);
   assert.match(
     hook,
@@ -459,12 +460,12 @@ test("editor de equipe prioriza KPIs, selecao de escala e historico auditado", (
   assert.match(editor, /<TeamChangeHistory teamId=\{team\.id\} \/>/);
   assert.match(
     editor,
-    /TEAM_EDITOR_PANEL_HEIGHT_CLASS = "h-\[600px\] xl:h-full xl:min-h-0"/,
+    /TEAM_EDITOR_PANEL_HEIGHT_CLASS = "h-\[600px\] 2xl:h-full 2xl:min-h-0"/,
   );
   assert.match(editor, /<AppLayout title=\{title\} disableMainScroll>/);
   assert.match(editor, /flex h-full min-h-0 w-full flex-col/);
   assert.match(editor, /overflow-y-auto pb-8/);
-  assert.match(editor, /xl:min-h-\[360px\] xl:max-h-\[600px\] xl:flex-1/);
+  assert.match(editor, /2xl:min-h-\[360px\] 2xl:max-h-\[600px\] 2xl:flex-1/);
   assert.match(editor, /data-team-panel="members"/);
   assert.match(editor, /data-team-panel="schedule"/);
   assert.match(editor, /max-w-\[680px\]/);
@@ -472,7 +473,7 @@ test("editor de equipe prioriza KPIs, selecao de escala e historico auditado", (
   assert.match(editor, /shadow-\[0_-10px_30px/);
   assert.doesNotMatch(editor, /Sem escala configurada: recebe leads 24h/);
   assert.doesNotMatch(editor, /overscroll-contain/);
-  assert.match(editor, /xl:grid-cols-/);
+  assert.match(editor, /2xl:grid-cols-/);
   assert.doesNotMatch(editor, /Clique em outro membro para trocar/);
   assert.match(history, /useTeamHistory\(teamId\)/);
   assert.match(history, /groupHistoryEvents\(historyQuery\.data \|\| \[\]\)/);

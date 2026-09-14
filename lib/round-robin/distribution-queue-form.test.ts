@@ -6,6 +6,7 @@ import {
   DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS,
   createEmptyDistributionQueueFormData,
   findConflictingDistributionQueueMetaForm,
+  getDistributionQueueEligibleUserIds,
   hasValidDistributionQueueCriteria,
   hydrateDistributionQueueFormData,
   normalizeDistributionQueueAutoTagIds,
@@ -147,6 +148,47 @@ test("considera campanha WhatsApp valida somente com mensagem e sessao", () => {
       { ...condition, sessionId: " session-a " },
     ]),
     true,
+  );
+});
+
+test("conta corretores elegiveis diretos e de equipes sem duplicar", () => {
+  assert.deepEqual(
+    getDistributionQueueEligibleUserIds(
+      [
+        { type: "user", entityId: "user-a", weight: 10 },
+        { type: "team", entityId: "team-a", weight: 10 },
+        { type: "team", entityId: "team-inactive", weight: 10 },
+      ],
+      [
+        {
+          id: "team-a",
+          members: [{ user_id: "user-a" }, { user_id: "user-b" }],
+        },
+        {
+          id: "team-inactive",
+          is_active: false,
+          members: [{ user_id: "user-c" }],
+        },
+      ],
+      ["user-a", "user-b", "user-c"],
+    ).sort(),
+    ["user-a", "user-b"],
+  );
+});
+
+test("ignora usuarios inativos ao validar capacidade de redistribuicao", () => {
+  assert.deepEqual(
+    getDistributionQueueEligibleUserIds(
+      [{ type: "team", entityId: "team-a", weight: 10 }],
+      [
+        {
+          id: "team-a",
+          members: [{ user_id: "user-a" }, { user_id: "user-inactive" }],
+        },
+      ],
+      ["user-a"],
+    ),
+    ["user-a"],
   );
 });
 

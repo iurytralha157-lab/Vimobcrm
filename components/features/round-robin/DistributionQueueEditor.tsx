@@ -30,7 +30,6 @@ import {
 } from "@/hooks/use-round-robins";
 import {
   activeTeamsForUser,
-  queueIgnoresAvailability,
   queueMemberKey,
   resolveDirectUserTeamContext,
   type QueueMemberDraft,
@@ -41,6 +40,7 @@ import {
   createEmptyDistributionQueueFormData,
   DISTRIBUTION_QUEUE_CONDITION_TYPES,
   findConflictingDistributionQueueMetaForm,
+  getDistributionQueueEligibleUserIds,
   hasValidDistributionQueueCriteria,
   hydrateDistributionQueueFormData,
   isValidWhatsAppDistributionAutoReplyDelay,
@@ -227,7 +227,6 @@ export function DistributionQueueEditor({
 
   const [saving, setSaving] = useState(false);
   const [openSections, setOpenSections] = useState<string[]>([]);
-  const [pendingUserId, setPendingUserId] = useState("");
 
   const [formData, setFormData] = useState<DistributionQueueFormData>(
     createEmptyDistributionQueueFormData,
@@ -273,10 +272,14 @@ export function DistributionQueueEditor({
       ),
     [formData.members, visibleTeams],
   );
-  const pendingUserTeams = useMemo(
+  const eligibleRedistributionUserCount = useMemo(
     () =>
-      pendingUserId ? activeTeamsForUser(pendingUserId, visibleTeams) : [],
-    [pendingUserId, visibleTeams],
+      getDistributionQueueEligibleUserIds(
+        formData.members,
+        visibleTeams,
+        visibleUsers.map((user) => user.id),
+      ).length,
+    [formData.members, visibleTeams, visibleUsers],
   );
   const teamSelectMessage =
     teams.length === 0
@@ -337,7 +340,6 @@ export function DistributionQueueEditor({
       // This is UI draft hydration when the dialog opens or switches queue.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setOpenSections(presentation === "page" ? DEFAULT_PAGE_SECTION_IDS : []);
-      setPendingUserId("");
     }
   }, [open, presentation, queue?.id]);
 
@@ -498,27 +500,7 @@ export function DistributionQueueEditor({
     const user = visibleUsers.find((candidate) => candidate.id === userId);
     if (!user) return;
 
-    const userTeams = activeTeamsForUser(userId, visibleTeams);
-    const resolution = resolveDirectUserTeamContext(
-      userTeams.map((team) => team.id),
-      undefined,
-      queueIgnoresAvailability(formData.settings.ignore_availability),
-    );
-    if (resolution.status === "resolved") {
-      addMember("user", userId, user.name, resolution.teamId);
-      setPendingUserId("");
-      return;
-    }
-    if (resolution.status === "requires-team") {
-      setPendingUserId(userId);
-      toast.info("Escolha a equipe usada para os horários deste corretor.");
-      return;
-    }
-
-    setPendingUserId("");
-    toast.error(
-      "Este corretor precisa estar em uma equipe ativa com horários configuráveis.",
-    );
+    addMember("user", userId, user.name);
   };
 
   const updateMemberWeight = (memberKey: string, weight: number) => {
@@ -532,12 +514,15 @@ export function DistributionQueueEditor({
     }));
   };
 
-  const updateMemberTeam = (memberKey: string, teamId: string) => {
+  const updateMemberTeam = (memberKey: string, teamId?: string) => {
     setFormData((prev) => ({
       ...prev,
-      members: prev.members.map((member) =>
-        queueMemberKey(member) === memberKey ? { ...member, teamId } : member,
-      ),
+      members: prev.members.map((member) => {
+        if (queueMemberKey(member) !== memberKey || member.teamId === teamId) {
+          return member;
+        }
+        return { ...member, id: undefined, teamId };
+      }),
     }));
   };
 
@@ -663,9 +648,6 @@ export function DistributionQueueEditor({
     }
     const validUserIds = new Set(visibleUsers.map((user) => user.id));
     const validTeamIds = new Set(visibleTeams.map((team) => team.id));
-    const ignoreAvailability = queueIgnoresAvailability(
-      formData.settings.ignore_availability,
-    );
     const validMembers: QueueMemberDraft[] = [];
     for (const member of formData.members) {
       if (!member.entityId?.trim()) continue;
@@ -697,17 +679,10 @@ export function DistributionQueueEditor({
       const resolution = resolveDirectUserTeamContext(
         userTeams.map((team) => team.id),
         member.teamId,
-        ignoreAvailability,
       );
-      if (resolution.status === "requires-team") {
-        toast.error(
-          `Escolha a equipe usada para os horários de ${member.name || "cada corretor"}.`,
-        );
-        return;
-      }
       if (resolution.status === "unavailable") {
         toast.error(
-          `${member.name || "O corretor"} não possui uma equipe ativa válida para esta fila.`,
+          `A equipe escolhida para ${member.name || "o corretor"} não está mais ativa ou vinculada a ele.`,
         );
         return;
       }
@@ -843,15 +818,14 @@ export function DistributionQueueEditor({
         );
         return;
       }
-      const hasTeam = validMembers.some((member) => member.type === "team");
-      const directUsers = new Set(
-        validMembers
-          .filter((member) => member.type === "user")
-          .map((member) => member.entityId),
-      );
-      if (!hasTeam && directUsers.size < 2) {
+      const eligibleUserCount = getDistributionQueueEligibleUserIds(
+        validMembers,
+        visibleTeams,
+        visibleUsers.map((user) => user.id),
+      ).length;
+      if (eligibleUserCount < 2) {
         toast.error(
-          "A redistribuicao automatica precisa de pelo menos dois corretores ativos.",
+          `A redistribuição automática precisa de pelo menos dois corretores ativos. Esta fila possui ${eligibleUserCount}.`,
         );
         return;
       }
@@ -915,6 +889,9 @@ export function DistributionQueueEditor({
     formData.conditions,
   );
   const hasRequiredMembers = !formData.is_active || formData.members.length > 0;
+  const hasRedistributionCapacity =
+    !formData.settings.enable_redistribution ||
+    eligibleRedistributionUserCount >= 2;
   const hasUnsavedChanges =
     buildEditorFingerprint(formData) !== savedFingerprint;
   const canSave =
@@ -923,6 +900,7 @@ export function DistributionQueueEditor({
     !!formData.target_stage_id &&
     hasValidCriteria &&
     hasRequiredMembers &&
+    hasRedistributionCapacity &&
     hasUnsavedChanges &&
     !blockingReferenceDataError &&
     !blockingReferenceDataLoading &&
@@ -944,7 +922,7 @@ export function DistributionQueueEditor({
         </div>
       )}
       <div
-        className={`px-2.5 py-2.5 sm:px-3 sm:py-3 [&_input]:rounded-[6px] [&_label]:text-[12px] [&_label]:font-light ${
+        className={`min-w-0 px-2.5 py-2.5 sm:px-4 sm:py-4 [&_input]:rounded-[6px] [&_label]:text-[12px] [&_label]:font-light ${
           presentation === "page"
             ? "overflow-visible"
             : "min-h-0 flex-1 overflow-y-auto overscroll-contain"
@@ -952,6 +930,9 @@ export function DistributionQueueEditor({
       >
         <div className="grid grid-cols-1 gap-3 2xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]">
           <div className="min-w-0 space-y-3">
+            <p className="px-1 text-[10px] font-medium uppercase text-[var(--app-text-tertiary)]">
+              Entrada e destino
+            </p>
             <DistributionQueueBasicSection
               open={openSections.includes("basic")}
               name={formData.name}
@@ -1028,6 +1009,9 @@ export function DistributionQueueEditor({
           </div>
 
           <div className="min-w-0 space-y-3">
+            <p className="px-1 text-[10px] font-medium uppercase text-[var(--app-text-tertiary)]">
+              Participantes e operação
+            </p>
             <DistributionQueueMembersSection
               open={openSections.includes("members")}
               members={formData.members}
@@ -1036,15 +1020,12 @@ export function DistributionQueueEditor({
               selectableTeams={selectableTeams}
               selectableUsers={selectableUsers}
               users={visibleUsers}
-              pendingUserId={pendingUserId}
-              pendingUserTeams={pendingUserTeams}
               teamSelectMessage={teamSelectMessage}
               teamsLoading={teamsLoading}
               usersLoading={usersLoading}
               totalTeams={teams.length}
               activeTeams={activeTeams.length}
               isActive={formData.is_active}
-              ignoreAvailability={formData.settings.ignore_availability}
               onToggle={() => toggleSection("members")}
               onDragEnd={handleDragEnd}
               onAddUser={addDirectUser}
@@ -1056,14 +1037,6 @@ export function DistributionQueueEditor({
                   addMember("team", teamId, team.name);
                 }
               }}
-              onResolvePendingUserTeam={(teamId) => {
-                const user = visibleUsers.find(
-                  (candidate) => candidate.id === pendingUserId,
-                );
-                if (!user) return;
-                addMember("user", pendingUserId, user.name, teamId);
-                setPendingUserId("");
-              }}
               onUpdateWeight={updateMemberWeight}
               onUpdateTeam={updateMemberTeam}
               onRemove={removeMember}
@@ -1072,6 +1045,7 @@ export function DistributionQueueEditor({
             <DistributionQueueRedistributionSection
               open={openSections.includes("redistribution")}
               settings={formData.settings}
+              eligibleUserCount={eligibleRedistributionUserCount}
               onToggle={() => toggleSection("redistribution")}
               onEnabledChange={(enableRedistribution) =>
                 setFormData((previous) => ({
@@ -1145,11 +1119,11 @@ export function DistributionQueueEditor({
         </div>
       </div>
       <div
-        className={`shrink-0 bg-[var(--app-surface-solid)] p-2 ${
-          presentation === "page" ? "sticky bottom-0 z-10" : ""
+        className={`shrink-0 border-t border-[var(--app-border)] bg-[var(--app-surface-solid)] px-3 py-3 sm:px-4 ${
+          presentation === "page" ? "sticky bottom-0 z-20" : ""
         }`}
       >
-        <div className="mx-auto flex w-full max-w-[680px] flex-col gap-2 rounded-[8px] bg-[var(--app-surface-solid)] p-2 shadow-[0_-10px_30px_rgba(15,23,42,0.12)] sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <p
             className="px-1 text-[10px] text-[var(--app-text-tertiary)]"
             aria-live="polite"
@@ -1160,8 +1134,11 @@ export function DistributionQueueEditor({
                 : "Criando fila..."
               : blockingReferenceDataError
                 ? "Recarregue os dados necessários antes de salvar."
-                : blockingReferenceDataLoading
-                  ? "Carregando dados da distribuição..."
+              : blockingReferenceDataLoading
+                ? "Carregando dados da distribuição..."
+                : formData.settings.enable_redistribution &&
+                    !hasRedistributionCapacity
+                  ? `Adicione pelo menos dois corretores ativos ou desative a redistribuição. Atualmente: ${eligibleRedistributionUserCount}.`
                   : canSave
                     ? "Tudo pronto para salvar."
                     : queue && !hasUnsavedChanges
@@ -1199,7 +1176,7 @@ export function DistributionQueueEditor({
     return (
       <section
         data-tour="distribution-queue-editor"
-        className="flex min-w-0 flex-col overflow-visible rounded-[8px] bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]"
+        className="flex min-w-0 w-full flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]"
       >
         {editorBody}
       </section>

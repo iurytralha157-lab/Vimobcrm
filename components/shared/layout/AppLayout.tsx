@@ -76,7 +76,7 @@ function AppLayoutContent({ children, title, belowHeader, disableMainScroll = fa
       <MaintenanceBanner />
 
       {/* Body: sidebar + content */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex min-w-0 flex-1 overflow-hidden">
         {/* Desktop sidebar fixa */}
         {!isMobile && (
           <div className="flex-shrink-0">
@@ -85,7 +85,7 @@ function AppLayoutContent({ children, title, belowHeader, disableMainScroll = fa
         )}
 
         {/* Main content area */}
-        <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {/* Header com título e ações */}
           <AppHeader title={title} />
 
@@ -93,7 +93,7 @@ function AppLayoutContent({ children, title, belowHeader, disableMainScroll = fa
 
           {/* Conteúdo da página */}
           <main className={cn(
-            "flex-1 min-h-0",
+            "min-h-0 min-w-0 flex-1",
             disableMainScroll ? "overflow-hidden relative px-5 md:px-6 pt-2 md:pt-3 pb-3" : "overflow-y-auto overflow-x-hidden px-5 md:px-6 pt-2 md:pt-3 pb-6",
             isMobile && "pb-20"
           )}>

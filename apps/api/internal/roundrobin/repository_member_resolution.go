@@ -2,7 +2,6 @@ package roundrobin
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -106,7 +105,7 @@ func (repo Repository) resolveMemberEntry(
 	q queryer,
 	organizationID string,
 	member memberInput,
-	ignoreAvailability bool,
+	_ bool,
 ) (string, *string, *string, error) {
 	if member.UserID != nil {
 		if err := repo.validateUser(ctx, q, organizationID, *member.UserID); err != nil {
@@ -116,7 +115,7 @@ func (repo Repository) resolveMemberEntry(
 		if err != nil {
 			return "", nil, nil, err
 		}
-		teamID, err := resolveDirectUserTeamID(activeTeamIDs, member.TeamID, ignoreAvailability)
+		teamID, err := resolveDirectUserTeamID(activeTeamIDs, member.TeamID)
 		if err != nil {
 			return "", nil, nil, err
 		}
@@ -140,7 +139,6 @@ func (repo Repository) resolveMemberEntry(
 func resolveDirectUserTeamID(
 	activeTeamIDs []string,
 	requestedTeamID *string,
-	ignoreAvailability bool,
 ) (*string, error) {
 	uniqueTeamIDs := make([]string, 0, len(activeTeamIDs))
 	seen := map[string]struct{}{}
@@ -166,18 +164,7 @@ func resolveDirectUserTeamID(
 		return nil, ErrInvalidReference
 	}
 
-	switch len(uniqueTeamIDs) {
-	case 1:
-		value := uniqueTeamIDs[0]
-		return &value, nil
-	case 0:
-		if ignoreAvailability {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("%w: direct user must belong to an active team while availability is enforced", ErrInvalidInput)
-	default:
-		return nil, fmt.Errorf("%w: teamId is required when a direct user belongs to multiple active teams", ErrInvalidInput)
-	}
+	return nil, nil
 }
 
 func (repo Repository) activeUserTeamIDs(

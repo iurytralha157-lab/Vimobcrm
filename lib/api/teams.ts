@@ -142,6 +142,8 @@ export interface AvailabilityInput {
   is_active?: boolean;
 }
 
+const TEAM_MUTATION_TIMEOUT_MS = 30_000;
+
 export const teamsAPI = {
   async listTeams(options?: {
     includeInactive?: boolean;
@@ -203,6 +205,7 @@ export const teamsAPI = {
       method: "POST",
       organizationId,
       body,
+      timeoutMs: TEAM_MUTATION_TIMEOUT_MS,
     });
     validateDomainResponse(apiTeamResponseSchema, response, "teams.create");
     return response.data;
@@ -219,6 +222,7 @@ export const teamsAPI = {
       method: "PATCH",
       organizationId,
       body: validatedBody,
+      timeoutMs: TEAM_MUTATION_TIMEOUT_MS,
     });
     validateDomainResponse(apiTeamResponseSchema, response, "teams.update");
     return response.data;

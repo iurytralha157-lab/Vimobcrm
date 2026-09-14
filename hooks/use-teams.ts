@@ -79,9 +79,11 @@ export function useTeamDistributionStats(
       teamsAPI.getTeamDistributionStats(teamId as string, organizationId),
     enabled: Boolean(organizationId && teamId) && (options?.enabled ?? true),
     staleTime: 1000 * 30,
-    refetchInterval: 1000 * 30,
+    retry: false,
+    refetchInterval: (query) =>
+      query.state.status === "error" ? false : 1000 * 30,
     refetchIntervalInBackground: false,
-    refetchOnWindowFocus: "always",
+    refetchOnWindowFocus: false,
   });
 }
 
