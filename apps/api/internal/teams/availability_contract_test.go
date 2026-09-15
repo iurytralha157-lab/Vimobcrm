@@ -56,14 +56,16 @@ func TestNormalizeCompleteAvailabilityWeekRejectsInvalidActiveRange(t *testing.T
 	}
 }
 
-func TestNormalizeCompleteAvailabilityWeekRejectsOvernightRange(t *testing.T) {
+func TestNormalizeCompleteAvailabilityWeekAllowsOvernightRange(t *testing.T) {
+	// start > end means the shift rolls over past midnight into the next
+	// day (e.g. 22:00-06:00); this is valid and must not be rejected.
 	week := completeAvailabilityWeek()
 	start := "22:00"
 	end := "06:00"
 	week[1].StartTime = &start
 	week[1].EndTime = &end
-	if _, err := normalizeCompleteAvailabilityWeek(testTeamMemberID, week); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("overnight range error = %v, want ErrInvalidInput", err)
+	if _, err := normalizeCompleteAvailabilityWeek(testTeamMemberID, week); err != nil {
+		t.Fatalf("overnight range rejected: %v", err)
 	}
 }
 
