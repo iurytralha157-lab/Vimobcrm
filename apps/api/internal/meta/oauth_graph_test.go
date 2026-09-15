@@ -17,11 +17,9 @@ var pinnedLegacyOAuthScopes = []string{
 	"public_profile",
 	"pages_show_list",
 	"pages_read_engagement",
-	"pages_read_user_content",
 	"pages_manage_metadata",
 	"pages_messaging",
 	"leads_retrieval",
-	"read_insights",
 	"ads_read",
 	"business_management",
 	"instagram_basic",
@@ -408,7 +406,7 @@ func TestOAuthMissingScopesUsesActiveLoginProfile(t *testing.T) {
 		t.Fatalf("Business Login incorrectly reports missing permissions: %#v", missing)
 	}
 
-	legacyOnly := []string{"pages_read_user_content", "read_insights", "business_management"}
+	legacyOnly := []string{"business_management"}
 	legacyClient := &oauthGraphClient{}
 	if missing := oauthMissingScopes(pinnedBusinessLoginOAuthScopes, legacyClient.loginScopes()); !slices.Equal(missing, legacyOnly) {
 		t.Fatalf("legacy profile distinction = %#v, want %#v", missing, legacyOnly)
