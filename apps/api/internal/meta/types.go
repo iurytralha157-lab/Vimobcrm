@@ -49,6 +49,7 @@ type LeadgenResult struct {
 	FormID         string `json:"formId,omitempty"`
 	PageID         string `json:"pageId,omitempty"`
 	Reentry        bool   `json:"reentry,omitempty"`
+	DetailsPending bool   `json:"detailsPending,omitempty"`
 	Error          string `json:"error,omitempty"`
 }
 

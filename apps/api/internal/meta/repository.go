@@ -32,6 +32,11 @@ type duplicateLeadgenError struct {
 	leadID string
 }
 
+type metaLeadMatch struct {
+	LeadID         string
+	DetailsPending bool
+}
+
 func (err duplicateLeadgenError) Error() string {
 	return "Meta leadgen event was already processed"
 }
@@ -209,9 +214,12 @@ func (repo Repository) FinishWebhookEvent(ctx context.Context, eventID string, o
 		    status = $3,
 		    error_message = $4,
 		    last_error = $4,
-		    processed_at = now(),
+		    processed_at = case when $3 = 'deferred' then null else now() end,
 		    attempts = coalesce(attempts, 0) + 1,
 		    next_retry_at = case
+		      when $3 = 'deferred'
+		       and coalesce(attempts, 0) + 1 < 29
+		        then now() + interval '6 hours'
 		      when $3 = 'failed'
 		       and $5::boolean
 		       and coalesce(attempts, 0) + 1 < 5
@@ -283,6 +291,62 @@ func (repo Repository) MarkWebhookEventProcessing(ctx context.Context, eventID s
 	return err
 }
 
+const claimPendingWebhookEventsQuery = `
+	with picked as (
+		select id
+		from public.meta_webhook_events
+		where coalesce(signature_valid, true) = true
+		  and (
+		    status = 'received'
+		    or (
+		      status = 'deferred'
+		      and coalesce(attempts, 0) < 29
+		      and coalesce(next_retry_at, received_at, created_at, now()) <= now()
+		    )
+		    or (
+		      status = 'failed'
+		      and coalesce(received_at, created_at, now()) >= now() - interval '7 days'
+		      and (
+		        lower(coalesce(error_message, last_error, '')) like '%apps in dev mode should only access leads%'
+		        or lower(coalesce(error_message, last_error, '')) like '%unsupported get request%'
+		        or lower(coalesce(error_message, last_error, '')) like '%meta page access token is missing%'
+		        or lower(coalesce(error_message, last_error, '')) like '%lead name is invalid%'
+		      )
+		      and exists (
+		        select 1
+		        from public.meta_form_configs as form_config
+		        join public.meta_integrations as integration
+		          on integration.organization_id = form_config.organization_id
+		         and integration.id = form_config.integration_id
+		        where form_config.organization_id = meta_webhook_events.organization_id
+		          and btrim(form_config.form_id) = btrim(meta_webhook_events.form_id)
+		          and btrim(integration.page_id) = btrim(meta_webhook_events.page_id)
+		          and coalesce(form_config.is_active, true) = true
+		          and coalesce(integration.is_connected, false) = true
+		      )
+		    )
+		    or (
+		      status = 'failed'
+		      and coalesce(attempts, 0) < 5
+		      and coalesce(next_retry_at, received_at, created_at, now()) <= now()
+		    )
+		    or (
+		      status = 'processing'
+		      and coalesce(next_retry_at, received_at, created_at, now()) <= now()
+		    )
+		  )
+		order by coalesce(received_at, created_at) asc
+		limit $1
+		for update skip locked
+	)
+	update public.meta_webhook_events event
+	set status = 'processing',
+	    next_retry_at = now() + ($2::int * interval '1 second')
+	from picked
+	where event.id = picked.id
+	returning event.id::text, coalesce(event.raw_payload, '{}'::jsonb)
+`
+
 func (repo Repository) ClaimPendingWebhookEvents(ctx context.Context, limit int, lease time.Duration) ([]webhookEventJob, error) {
 	if limit <= 0 {
 		limit = 10
@@ -292,34 +356,7 @@ func (repo Repository) ClaimPendingWebhookEvents(ctx context.Context, limit int,
 		leaseSeconds = 300
 	}
 
-	rows, err := repo.db.Pool().Query(ctx, `
-		with picked as (
-			select id
-			from public.meta_webhook_events
-			where coalesce(signature_valid, true) = true
-			  and (
-			    status = 'received'
-			    or (
-			      status = 'failed'
-			      and coalesce(attempts, 0) < 5
-			      and coalesce(next_retry_at, received_at, created_at, now()) <= now()
-			    )
-			    or (
-			      status = 'processing'
-			      and coalesce(next_retry_at, received_at, created_at, now()) <= now()
-			    )
-			  )
-			order by coalesce(received_at, created_at) asc
-			limit $1
-			for update skip locked
-		)
-		update public.meta_webhook_events event
-		set status = 'processing',
-		    next_retry_at = now() + ($2::int * interval '1 second')
-		from picked
-		where event.id = picked.id
-		returning event.id::text, coalesce(event.raw_payload, '{}'::jsonb)
-	`, limit, leaseSeconds)
+	rows, err := repo.db.Pool().Query(ctx, claimPendingWebhookEventsQuery, limit, leaseSeconds)
 	if err != nil {
 		if isUndefinedColumn(err) {
 			return nil, nil
@@ -406,28 +443,77 @@ func (repo Repository) processLeadgenChange(ctx context.Context, webhookPayload 
 	}
 	result.OrganizationID = integration.OrganizationID
 
-	if duplicateLeadID, err := repo.findLeadByMetaLeadID(ctx, integration.OrganizationID, change.LeadgenID); err != nil {
+	leadMatch, err := repo.findLeadByMetaLeadID(ctx, integration.OrganizationID, change.LeadgenID)
+	if err != nil {
 		result.Error = err.Error()
 		return result
-	} else if duplicateLeadID != "" {
+	}
+	if leadMatch.LeadID != "" && !leadMatch.DetailsPending {
 		result.Status = "duplicate"
-		result.LeadID = duplicateLeadID
+		result.LeadID = leadMatch.LeadID
 		return result
 	}
 
 	details, err := repo.leadDetails(ctx, change, integration)
 	if err != nil {
 		result.Error = err.Error()
+		result.DetailsPending = true
+		if leadMatch.LeadID != "" {
+			result.Status = "duplicate"
+			result.LeadID = leadMatch.LeadID
+			return result
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return result
+		}
+
+		details = cloneObject(change.Raw)
+		lead := mapLeadData(details, change, integration, formConfig)
+		lead.Name = fallbackMetaLeadName(formConfig)
+		leadID, reentry, persistErr := repo.persistLead(
+			ctx,
+			webhookPayload,
+			details,
+			change,
+			integration,
+			formConfig,
+			lead,
+			err.Error(),
+		)
+		if persistErr != nil {
+			var duplicateErr duplicateLeadgenError
+			if errors.As(persistErr, &duplicateErr) {
+				result.Status = "duplicate"
+				result.LeadID = duplicateErr.leadID
+				return result
+			}
+			result.Status = "failed"
+			result.LeadID = ""
+			result.Error = persistErr.Error()
+			return result
+		}
+		result.Status = "processed"
+		result.LeadID = leadID
+		result.Reentry = reentry
 		return result
 	}
 
 	lead := mapLeadData(details, change, integration, formConfig)
 	if len([]rune(lead.Name)) < 2 {
-		result.Error = "lead name is invalid"
+		lead.Name = fallbackMetaLeadName(formConfig)
+	}
+	if leadMatch.LeadID != "" {
+		if err := repo.enrichPendingMetaLead(ctx, webhookPayload, details, change, integration, formConfig, leadMatch.LeadID, lead); err != nil {
+			result.Error = err.Error()
+			return result
+		}
+		result.Status = "processed"
+		result.LeadID = leadMatch.LeadID
+		result.Error = ""
 		return result
 	}
 
-	leadID, reentry, err := repo.persistLead(ctx, webhookPayload, details, change, integration, formConfig, lead)
+	leadID, reentry, err := repo.persistLead(ctx, webhookPayload, details, change, integration, formConfig, lead, "")
 	if err != nil {
 		var duplicateErr duplicateLeadgenError
 		if errors.As(err, &duplicateErr) {
@@ -914,7 +1000,7 @@ func setFirstURL(target map[string]any, key string, values ...any) {
 	}
 }
 
-func (repo Repository) persistLead(ctx context.Context, webhookPayload map[string]any, details map[string]any, change leadgenChange, integration metaIntegration, formConfig metaFormConfig, lead leadData) (string, bool, error) {
+func (repo Repository) persistLead(ctx context.Context, webhookPayload map[string]any, details map[string]any, change leadgenChange, integration metaIntegration, formConfig metaFormConfig, lead leadData, detailsError string) (string, bool, error) {
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return "", false, err
@@ -964,6 +1050,7 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 	interestValue := interestValue(formConfig.DefaultValues)
 	status := coalesceText(formConfig.DefaultStatus, coalesceText(integration.DefaultStatus, "new"))
 	metadata := buildLeadMetadata(webhookPayload, details, change, integration, formConfig, lead)
+	setMetaLeadDetailsState(metadata, detailsError)
 	metadata["source_detail"] = sourceDetail
 	metadata["distribution_deferred"] = true
 	payloadJSON := jsonb(map[string]any{
@@ -1216,6 +1303,93 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 	}
 
 	return leadID, reentry, nil
+}
+
+func (repo Repository) enrichPendingMetaLead(
+	ctx context.Context,
+	webhookPayload map[string]any,
+	details map[string]any,
+	change leadgenChange,
+	integration metaIntegration,
+	formConfig metaFormConfig,
+	leadID string,
+	lead leadData,
+) error {
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+		select pg_advisory_xact_lock(
+			hashtextextended('lead-entry:meta:' || $1 || ':' || $2, 0)
+		)
+	`, integration.OrganizationID, change.LeadgenID); err != nil {
+		return err
+	}
+
+	var detailsPending bool
+	err = tx.QueryRow(ctx, `
+		select lower(coalesce(metadata->>'meta_details_status', '')) = 'pending'
+		from public.leads
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		for update
+	`, integration.OrganizationID, leadID).Scan(&detailsPending)
+	if err != nil {
+		return err
+	}
+	if !detailsPending {
+		return tx.Commit(ctx)
+	}
+
+	source := coalesceText(formConfig.Source, "meta")
+	metadata := buildLeadMetadata(webhookPayload, details, change, integration, formConfig, lead)
+	setMetaLeadDetailsState(metadata, "")
+	metadata["source_detail"] = sourceDetail(integration, formConfig)
+
+	_, err = tx.Exec(ctx, `
+		update public.leads
+		set name = $3,
+		    email = coalesce($4, email),
+		    phone = coalesce($5, phone),
+		    source = coalesce(nullif(source, ''), $6),
+		    message = coalesce($7, message),
+		    cargo = coalesce($8, cargo),
+		    empresa = coalesce($9, empresa),
+		    cidade = coalesce($10, cidade),
+		    bairro = coalesce($11, bairro),
+		    meta_lead_id = coalesce(meta_lead_id, $12),
+		    meta_form_id = coalesce(meta_form_id, $13),
+		    meta_campaign_id = coalesce($14, meta_campaign_id),
+		    meta_adset_id = coalesce($15, meta_adset_id),
+		    meta_ad_id = coalesce($16, meta_ad_id),
+		    utm_source = coalesce(utm_source, 'facebook'),
+		    utm_medium = coalesce(utm_medium, 'lead_ads'),
+		    utm_campaign = coalesce($17, utm_campaign),
+		    metadata = (coalesce(metadata, '{}'::jsonb) - 'meta_details_error') || $18::jsonb,
+		    updated_at = now()
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+	`, integration.OrganizationID, leadID, lead.Name, nullablePointer(lead.Email), nullablePointer(lead.Phone), source, nullablePointer(lead.Message), nullablePointer(lead.Cargo), nullablePointer(lead.Empresa), nullablePointer(lead.Cidade), nullablePointer(lead.Bairro), change.LeadgenID, change.FormID, nullableString(metaText(details, change.Raw, "campaign_id")), nullableString(metaText(details, change.Raw, "adset_id")), nullableString(metaText(details, change.Raw, "ad_id")), nullableString(metaText(details, change.Raw, "campaign_name")), jsonb(metadata))
+	if err != nil {
+		return err
+	}
+	if err := repo.insertLeadMeta(ctx, tx, integration.OrganizationID, leadID, details, change, formConfig, jsonb(map[string]any{
+		"webhook_payload": webhookPayload,
+		"lead_details":    details,
+		"fields":          lead.RawFields,
+	})); err != nil {
+		return err
+	}
+	if err := repo.insertLeadTags(ctx, tx, integration.OrganizationID, leadID, tagIDs(formConfig)); err != nil {
+		return err
+	}
+	if err := repo.insertLeadEntry(ctx, tx, integration.OrganizationID, leadID, details, change, resolvePropertyID(formConfig), interestValue(formConfig.DefaultValues), metadata, false); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (repo Repository) resolveDestination(ctx context.Context, tx pgx.Tx, integration metaIntegration, formConfig metaFormConfig) (resolvedDestination, error) {
@@ -1532,10 +1706,12 @@ func (repo Repository) selectRoundRobinMember(ctx context.Context, tx pgx.Tx, or
 	return textPointer(memberID), textPointer(userID), textPointer(teamID), nil
 }
 
-func (repo Repository) findLeadByMetaLeadID(ctx context.Context, organizationID string, leadgenID string) (string, error) {
-	var leadID string
+func (repo Repository) findLeadByMetaLeadID(ctx context.Context, organizationID string, leadgenID string) (metaLeadMatch, error) {
+	var match metaLeadMatch
 	err := repo.db.Pool().QueryRow(ctx, `
-		select candidate.lead_id
+		select
+		  candidate.lead_id,
+		  lower(coalesce(lead.metadata->>'meta_details_status', '')) = 'pending'
 		from (
 			select entry.lead_id::text as lead_id, 0 as priority, entry.occurred_at as matched_at
 			from public.lead_entry_events entry
@@ -1549,13 +1725,16 @@ func (repo Repository) findLeadByMetaLeadID(ctx context.Context, organizationID 
 			where lead.organization_id = $1::uuid
 			  and lead.meta_lead_id = $2
 		) candidate
+		join public.leads lead
+		  on lead.organization_id = $1::uuid
+		 and lead.id = candidate.lead_id::uuid
 		order by candidate.priority, candidate.matched_at desc
 		limit 1
-	`, organizationID, leadgenID).Scan(&leadID)
+	`, organizationID, leadgenID).Scan(&match.LeadID, &match.DetailsPending)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
+		return metaLeadMatch{}, nil
 	}
-	return leadID, err
+	return match, err
 }
 
 func findLeadByProviderEventID(ctx context.Context, tx pgx.Tx, organizationID string, provider string, providerEventID string) (string, error) {
@@ -2368,6 +2547,43 @@ func mapLeadData(details map[string]any, change leadgenChange, integration metaI
 	return lead
 }
 
+func fallbackMetaLeadName(formConfig metaFormConfig) string {
+	formName := ""
+	if formConfig.FormName != nil {
+		formName = strings.TrimSpace(*formConfig.FormName)
+	}
+	if formName == "" {
+		return "Lead Meta"
+	}
+	return truncateMetaLeadText("Lead Meta - "+formName, 160)
+}
+
+func setMetaLeadDetailsState(metadata map[string]any, detailsError string) {
+	if metadata == nil {
+		return
+	}
+	detailsError = strings.TrimSpace(detailsError)
+	if detailsError == "" {
+		metadata["meta_details_status"] = "complete"
+		delete(metadata, "meta_details_error")
+		return
+	}
+	metadata["meta_details_status"] = "pending"
+	metadata["meta_details_error"] = truncateMetaLeadText(detailsError, 1000)
+}
+
+func truncateMetaLeadText(value string, maximum int) string {
+	value = strings.TrimSpace(value)
+	if maximum <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= maximum {
+		return value
+	}
+	return string(runes[:maximum])
+}
+
 func extractFieldData(payload map[string]any) []fieldData {
 	raw := payload["field_data"]
 	if raw == nil {
@@ -2414,6 +2630,7 @@ func aggregateResults(results []LeadgenResult) (string, string, string, int) {
 	organizationID := ""
 	errorMessage := ""
 	processed := 0
+	detailsPending := false
 	for _, result := range results {
 		if organizationID == "" {
 			organizationID = result.OrganizationID
@@ -2421,6 +2638,7 @@ func aggregateResults(results []LeadgenResult) (string, string, string, int) {
 		if result.Error != "" && errorMessage == "" {
 			errorMessage = result.Error
 		}
+		detailsPending = detailsPending || result.DetailsPending
 		switch result.Status {
 		case "failed":
 			status = "failed"
@@ -2434,6 +2652,9 @@ func aggregateResults(results []LeadgenResult) (string, string, string, int) {
 				status = "duplicate"
 			}
 		}
+	}
+	if status != "failed" && detailsPending {
+		status = "deferred"
 	}
 	return status, organizationID, errorMessage, processed
 }

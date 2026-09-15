@@ -182,6 +182,21 @@ func TestCanonicalMetaFormPropertyIDAllowsFormWithoutProperty(t *testing.T) {
 	}
 }
 
+func TestCleanStringOrEmptyKeepsOptionalMetaFormReferencesComparable(t *testing.T) {
+	blank := "   "
+	queueID := " 11111111-1111-4111-8111-111111111111 "
+
+	if got := cleanStringOrEmpty(nil); got != "" {
+		t.Fatalf("cleanStringOrEmpty(nil) = %q, want empty string", got)
+	}
+	if got := cleanStringOrEmpty(&blank); got != "" {
+		t.Fatalf("cleanStringOrEmpty(blank) = %q, want empty string", got)
+	}
+	if got := cleanStringOrEmpty(&queueID); got != "11111111-1111-4111-8111-111111111111" {
+		t.Fatalf("cleanStringOrEmpty(queueID) = %q", got)
+	}
+}
+
 func TestFetchMetaLeadFormsUsesGraphResponseShape(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

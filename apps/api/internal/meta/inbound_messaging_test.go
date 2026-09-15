@@ -287,6 +287,25 @@ func TestAggregateWebhookResultsDoesNotAttributeCrossTenantBatch(t *testing.T) {
 	}
 }
 
+func TestAggregateWebhookResultsDefersEnrichmentAfterPersistingLead(t *testing.T) {
+	status, organizationID, errorMessage, processed := aggregateWebhookResults(
+		[]LeadgenResult{{
+			Status:         "processed",
+			OrganizationID: "org-a",
+			LeadID:         "lead-a",
+			DetailsPending: true,
+			Error:          "Meta Graph permission pending",
+		}},
+		nil,
+	)
+	if status != "deferred" || organizationID != "org-a" || processed != 1 {
+		t.Fatalf("aggregate = (%q, %q, %d), want deferred, org-a, 1", status, organizationID, processed)
+	}
+	if errorMessage != "Meta Graph permission pending" {
+		t.Fatalf("error = %q", errorMessage)
+	}
+}
+
 func TestExtractWebhookEventContextUsesMessagingProviderID(t *testing.T) {
 	context := extractWebhookEventContext(map[string]any{
 		"object": "instagram",

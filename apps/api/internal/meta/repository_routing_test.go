@@ -50,6 +50,23 @@ func TestFindLeadgenRouteQueryScopesByPageAndFormBeforeChoosingCandidate(t *test
 	}
 }
 
+func TestLegacyMetaLeadRecoveryRemainsTenantAndRouteScoped(t *testing.T) {
+	normalizedQuery := strings.Join(strings.Fields(claimPendingWebhookEventsQuery), " ")
+	for _, contract := range []string{
+		"coalesce(received_at, created_at, now()) >= now() - interval '7 days'",
+		"form_config.organization_id = meta_webhook_events.organization_id",
+		"btrim(form_config.form_id) = btrim(meta_webhook_events.form_id)",
+		"btrim(integration.page_id) = btrim(meta_webhook_events.page_id)",
+		"coalesce(form_config.is_active, true) = true",
+		"coalesce(integration.is_connected, false) = true",
+		"for update skip locked",
+	} {
+		if !strings.Contains(normalizedQuery, contract) {
+			t.Fatalf("legacy recovery must contain %q; query = %q", contract, normalizedQuery)
+		}
+	}
+}
+
 func TestResolveLeadgenRouteReturnsTheTenantBoundIntegrationAndForm(t *testing.T) {
 	queryer := &stubLeadgenRouteQueryer{
 		count: 1,

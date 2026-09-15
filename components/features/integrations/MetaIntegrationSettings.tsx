@@ -58,7 +58,6 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
-import { MetaWebhookHealthBanner } from "@/components/features/integrations/MetaWebhookHealthBanner";
 import { cn } from "@/lib/utils";
 import { normalizeSearchText } from "@/lib/search-text";
 import { useAuth } from "@/contexts/AuthContext";
@@ -807,8 +806,6 @@ export function MetaIntegrationSettings({
           </AlertDescription>
         </Alert>
       )}
-
-      <MetaWebhookHealthBanner />
 
       <div className="app-toolbar flex shrink-0 flex-col gap-2 p-2 lg:flex-row lg:items-center lg:justify-between">
         <div className="relative w-full min-w-0 sm:max-w-sm lg:w-[360px] lg:flex-none">

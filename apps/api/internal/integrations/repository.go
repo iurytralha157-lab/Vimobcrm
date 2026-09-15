@@ -917,8 +917,8 @@ func (repo Repository) SaveMetaFormConfig(ctx context.Context, tenantContext ten
 	`,
 		tenantContext.OrganizationID,
 		integrationID,
-		cleanString(request.RoundRobinID),
-		cleanString(request.PropertyID),
+		cleanStringOrEmpty(request.RoundRobinID),
+		cleanStringOrEmpty(request.PropertyID),
 		propertyscope.CanViewAll(tenantContext),
 		tenantContext.UserID,
 		propertyscope.CanViewTeam(tenantContext),
@@ -1706,6 +1706,14 @@ func cleanString(value *string) *string {
 		return nil
 	}
 	return &cleaned
+}
+
+func cleanStringOrEmpty(value *string) string {
+	cleaned := cleanString(value)
+	if cleaned == nil {
+		return ""
+	}
+	return *cleaned
 }
 
 func cleanTextFromAny(value any) *string {

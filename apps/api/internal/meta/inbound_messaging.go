@@ -586,6 +586,7 @@ func aggregateWebhookResults(leadResults []LeadgenResult, messagingResults []Mes
 	status := "skipped"
 	errorMessage := ""
 	processed := 0
+	detailsPending := false
 	organizations := map[string]struct{}{}
 
 	apply := func(resultStatus string, organizationID string, resultError string) {
@@ -610,6 +611,7 @@ func aggregateWebhookResults(leadResults []LeadgenResult, messagingResults []Mes
 		}
 	}
 	for _, result := range leadResults {
+		detailsPending = detailsPending || result.DetailsPending
 		apply(result.Status, result.OrganizationID, result.Error)
 	}
 	for _, result := range messagingResults {
@@ -621,6 +623,9 @@ func aggregateWebhookResults(leadResults []LeadgenResult, messagingResults []Mes
 		for id := range organizations {
 			organizationID = id
 		}
+	}
+	if status != "failed" && detailsPending {
+		status = "deferred"
 	}
 	return status, organizationID, errorMessage, processed
 }

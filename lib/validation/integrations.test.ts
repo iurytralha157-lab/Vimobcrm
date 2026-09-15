@@ -1058,7 +1058,7 @@ test("tela Meta preserva autoria compacta e concentra a rolagem na lista", () =>
   );
 
   assert.doesNotMatch(source, /MetaConversionFeedbackPanel/);
-  assert.match(source, /<MetaWebhookHealthBanner \/>/);
+  assert.doesNotMatch(source, /MetaWebhookHealthBanner/);
   assert.match(
     source,
     /aria-label={`Criado por \$\{config\.created_by_name\}`}/,
