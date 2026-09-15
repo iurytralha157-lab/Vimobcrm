@@ -876,27 +876,26 @@ export function CreateLeadDialog({
                 <TabsContent data-tour="lead-form-basic" value="basic" className="space-y-4 mt-0">
                     <div className="space-y-4">
                       {/* Real Estate: Basic Info - Clean Layout */}
-                      <div className="space-y-1.5">
-                        <Label htmlFor={fieldIds.name} className="text-sm font-medium">
-                          {formData.person_type === 'company' ? 'Nome do contato / responsável *' : 'Nome completo *'}
-                        </Label>
-                        <Input
-                          id={fieldIds.name}
-                          value={formData.name}
-                          onChange={(e) => updateField('name', e.target.value)}
-                          placeholder={formData.person_type === 'company' ? 'Pessoa responsável pelo contato' : 'Nome do lead'}
-                          required
-                          aria-invalid={Boolean(errors.name)}
-                          aria-describedby={errors.name ? `${fieldIds.name}-error` : undefined}
-                        />
-                        {errors.name ? (
-                          <p id={`${fieldIds.name}-error`} className="text-xs font-medium text-destructive" role="alert">
-                            {errors.name}
-                          </p>
-                        ) : null}
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <Label htmlFor={fieldIds.name} className="text-sm font-medium">
+                            {formData.person_type === 'company' ? 'Nome do contato / responsável *' : 'Nome completo *'}
+                          </Label>
+                          <Input
+                            id={fieldIds.name}
+                            value={formData.name}
+                            onChange={(e) => updateField('name', e.target.value)}
+                            placeholder={formData.person_type === 'company' ? 'Pessoa responsável pelo contato' : 'Nome do lead'}
+                            required
+                            aria-invalid={Boolean(errors.name)}
+                            aria-describedby={errors.name ? `${fieldIds.name}-error` : undefined}
+                          />
+                          {errors.name ? (
+                            <p id={`${fieldIds.name}-error`} className="text-xs font-medium text-destructive" role="alert">
+                              {errors.name}
+                            </p>
+                          ) : null}
+                        </div>
                         <div className="space-y-1.5">
                           <Label htmlFor={fieldIds.phone} className="text-sm font-medium">Telefone</Label>
                           <InternationalPhoneInput
@@ -915,6 +914,18 @@ export function CreateLeadDialog({
                               {errors.phone}
                             </p>
                           ) : null}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <Label className="text-sm font-medium">Origem</Label>
+                          <LeadSourceSelect
+                            key={`${editableLead?.id || 'new'}-${open ? 'open' : 'closed'}`}
+                            value={formData.source}
+                            disabled={isSubmitting}
+                            onValueChange={(value) => updateField('source', value)}
+                          />
                         </div>
                         <div className="space-y-1.5">
                           <Label htmlFor={fieldIds.email} className="text-sm font-medium">Email</Label>
@@ -944,16 +955,6 @@ export function CreateLeadDialog({
                           {errors.contact}
                         </p>
                       ) : null}
-
-                      <div className="space-y-1.5">
-                        <Label className="text-sm font-medium">Origem</Label>
-                        <LeadSourceSelect
-                          key={`${editableLead?.id || 'new'}-${open ? 'open' : 'closed'}`}
-                          value={formData.source}
-                          disabled={isSubmitting}
-                          onValueChange={(value) => updateField('source', value)}
-                        />
-                      </div>
 
                       <div className="space-y-1.5">
                         <Label className="text-sm font-medium">Observações / feedback inicial</Label>
@@ -1268,9 +1269,7 @@ export function CreateLeadDialog({
                         </div>
                       )}
                     </div>
-                  </div>
 
-                  <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
                       <Label>Pipeline</Label>
                       <Select
@@ -1317,23 +1316,23 @@ export function CreateLeadDialog({
                         </SelectContent>
                       </Select>
                     </div>
-                  </div>
 
-
-                  <div className="space-y-2">
-                    <Label>Tags</Label>
-                    <TagSelector
-                      selectedTagIds={formData.tag_ids}
-                      onSelectTag={(tagId) => {
-                        if (!formData.tag_ids.includes(tagId)) {
-                          updateField('tag_ids', [...formData.tag_ids, tagId]);
-                        }
-                      }}
-                      onRemoveTag={(tagId) => {
-                        updateField('tag_ids', formData.tag_ids.filter(id => id !== tagId));
-                      }}
-                      placeholder="Adicionar tags..."
-                    />
+                    <div className="space-y-2">
+                      <Label>Tags</Label>
+                      <TagSelector
+                        selectedTagIds={formData.tag_ids}
+                        onSelectTag={(tagId) => {
+                          if (!formData.tag_ids.includes(tagId)) {
+                            updateField('tag_ids', [...formData.tag_ids, tagId]);
+                          }
+                        }}
+                        onRemoveTag={(tagId) => {
+                          updateField('tag_ids', formData.tag_ids.filter(id => id !== tagId));
+                        }}
+                        placeholder="Adicionar tags..."
+                        triggerClassName="h-10 w-full justify-start rounded-md border-0 bg-[var(--app-surface-soft)] px-3 text-sm font-normal"
+                      />
+                    </div>
                   </div>
                 </TabsContent>}
               </Tabs>

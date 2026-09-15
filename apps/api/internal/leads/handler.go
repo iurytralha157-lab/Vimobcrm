@@ -405,6 +405,8 @@ func writeLeadError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "no_lead_changes", "No lead changes were provided.")
 	case errors.Is(err, ErrTagAlreadyExists):
 		httpserver.WriteError(w, r, http.StatusConflict, "tag_already_exists", "Tag is already attached to this lead.")
+	case errors.Is(err, ErrLeadSourceAlreadyExists):
+		httpserver.WriteError(w, r, http.StatusConflict, "lead_source_already_exists", "This lead source already exists.")
 	case errors.Is(err, ErrLeadAlreadyExists):
 		httpserver.WriteError(w, r, http.StatusConflict, "lead_already_exists", "Atencao: lead nao criado, pois ja esta cadastrado e atribuido a outro responsavel. Entre em contato com o administrador.")
 	case errors.Is(err, ErrLeadPhoneConflict):

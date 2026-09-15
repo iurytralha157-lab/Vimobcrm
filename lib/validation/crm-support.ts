@@ -56,6 +56,19 @@ export const apiTagSchema = z.object({
 export const apiTagListResponseSchema = apiEnvelopeSchema(z.array(apiTagSchema))
 export const apiTagResponseSchema = apiEnvelopeSchema(apiTagSchema)
 
+const leadSourceMutationShape = {
+  name: z.string().trim().min(1).max(80),
+}
+export const createLeadSourceInputSchema = z.object(leadSourceMutationShape).strict()
+export const apiLeadSourceSchema = z.object({
+  id: uuidSchema,
+  name: z.string(),
+  organization_id: uuidSchema,
+  created_at: timestampSchema,
+}).passthrough()
+export const apiLeadSourceListResponseSchema = apiEnvelopeSchema(z.array(apiLeadSourceSchema))
+export const apiLeadSourceResponseSchema = apiEnvelopeSchema(apiLeadSourceSchema)
+
 export const activityListQuerySchema = z.object({
   leadId: uuidSchema.optional(),
   limit: z.number().int().min(1).max(500).optional(),
@@ -115,11 +128,14 @@ function validateAvailabilityTimeRange(
       message: 'Horario final invalido',
     })
   }
-  if (start && end && clockPattern.test(start) && clockPattern.test(end) && start >= end) {
+  // start === end (a zero-length window) is invalid, but start > end is
+  // allowed: it represents a shift that rolls over past midnight into the
+  // next day (e.g. 22:00 to 06:00).
+  if (start && end && clockPattern.test(start) && clockPattern.test(end) && start === end) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['end_time'],
-      message: 'Horario final deve ser posterior ao horario inicial',
+      message: 'Horario final deve ser diferente do horario inicial',
     })
   }
 }

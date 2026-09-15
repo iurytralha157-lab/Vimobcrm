@@ -30,6 +30,7 @@ var (
 	ErrLeadNotFound            = errors.New("lead not found")
 	ErrNoLeadChanges           = errors.New("no lead changes provided")
 	ErrTagAlreadyExists        = errors.New("tag already exists on lead")
+	ErrLeadSourceAlreadyExists = errors.New("lead source already exists")
 	ErrLostReasonRequired      = fmt.Errorf("%w: lost reason required", ErrInvalidInput)
 )
 

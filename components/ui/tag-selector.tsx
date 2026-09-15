@@ -60,6 +60,10 @@ export function TagSelector({
   const [searchTerm, setSearchTerm] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Ref for the scrollable tag list — lets us attach a native wheel listener
+  // in the capture phase so the Popover's document-level handlers never swallow it
+  // (mirrors InternationalPhoneInput's country list).
+  const scrollListRef = useRef<HTMLDivElement>(null);
 
   // Filter tags based on search
   const filteredTags = allTags.filter(tag =>
@@ -115,6 +119,21 @@ export function TagSelector({
     if (open && inputRef.current) {
       setTimeout(() => inputRef.current?.focus(), 100);
     }
+  }, [open]);
+
+  // Attach a native wheel listener (capture phase, passive) so the scroll works
+  // on Windows even when the Popover has document-level capture listeners.
+  useEffect(() => {
+    if (!open) return;
+    const el = scrollListRef.current;
+    if (!el) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.stopPropagation();
+    };
+
+    el.addEventListener('wheel', handleWheel, { passive: true, capture: false });
+    return () => el.removeEventListener('wheel', handleWheel, { capture: false });
   }, [open]);
 
   return (
@@ -178,79 +197,91 @@ export function TagSelector({
           )}
         </PopoverTrigger>
         <PopoverContent className="w-64 p-0" align="start">
-          {/* Search input */}
-          <div className="p-2 border-b">
+          {/* Search input — same treatment as the DDI search box */}
+          <div className="p-2">
             <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 ref={inputRef}
+                aria-label="Buscar ou criar tag"
                 placeholder="Buscar ou criar tag..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 onKeyDown={handleKeyDown}
-                className="h-8 pl-8 text-sm"
+                className="h-8 py-1 pl-8 text-sm"
               />
             </div>
           </div>
 
-          {/* Tags list */}
-          <ScrollArea className="max-h-48">
+          {/* Tags list — native scroll, same fix as the DDI country list so the
+              wheel works on Windows even inside the Popover */}
+          <div
+            ref={scrollListRef}
+            className="max-h-48 overflow-y-auto overscroll-contain"
+            onWheel={(e) => e.stopPropagation()}
+          >
             <div className="p-2 space-y-1">
               {tagsLoading ? (
                 <div className="flex items-center justify-center py-4">
                   <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                 </div>
+              ) : availableTags.length > 0 ? (
+                availableTags.map(tag => (
+                  <button
+                    key={tag.id}
+                    onClick={() => {
+                      onSelectTag(tag.id);
+                      if (!multiple) setOpen(false);
+                      setSearchTerm('');
+                    }}
+                    className="w-full flex items-center gap-2 rounded-[6px] px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent"
+                  >
+                    <div
+                      className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: tag.color }}
+                    />
+                    <span className="flex-1 truncate">{tag.name}</span>
+                    {selectedTagIds.includes(tag.id) && (
+                      <Check className="h-3.5 w-3.5 text-primary" />
+                    )}
+                  </button>
+                ))
               ) : (
-                <>
-                  {/* Create new tag option */}
-                  {searchTerm.trim() && !exactMatch && (
-                    <button
-                      onClick={handleCreateTag}
-                      disabled={isCreating}
-                      className="w-full flex items-center gap-2 rounded-[6px] bg-primary/10 px-2 py-1.5 text-left text-sm font-medium text-primary transition-colors hover:bg-primary/20"
-                    >
-                      {isCreating ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Plus className="h-3.5 w-3.5" />
-                      )}
-                      Criar &quot;{searchTerm.trim()}&quot;
-                    </button>
-                  )}
-
-                  {/* Existing tags */}
-                  {availableTags.length > 0 ? (
-                    availableTags.map(tag => (
-                      <button
-                        key={tag.id}
-                        onClick={() => {
-                          onSelectTag(tag.id);
-                          if (!multiple) setOpen(false);
-                          setSearchTerm('');
-                        }}
-                        className="w-full flex items-center gap-2 rounded-[6px] px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent"
-                      >
-                        <div
-                          className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: tag.color }}
-                        />
-                        <span className="flex-1 truncate">{tag.name}</span>
-                        {selectedTagIds.includes(tag.id) && (
-                          <Check className="h-3.5 w-3.5 text-primary" />
-                        )}
-                      </button>
-                    ))
-                  ) : (
-                    !searchTerm.trim() && (
-                      <p className="text-sm text-muted-foreground text-center py-3 px-2">
-                        Digite acima para criar uma nova tag
-                      </p>
-                    )
-                  )}
-                </>
+                !searchTerm.trim() && (
+                  <p className="text-sm text-muted-foreground text-center py-3 px-2">
+                    Nenhuma tag ainda
+                  </p>
+                )
               )}
             </div>
-          </ScrollArea>
+          </div>
+
+          {/* Create new tag — fixed footer, same pattern as "Criar nova origem" */}
+          <div className="shrink-0 rounded-b-md border-t border-[var(--app-border)] bg-popover p-1">
+            <button
+              type="button"
+              onClick={() => {
+                if (searchTerm.trim() && !exactMatch) {
+                  handleCreateTag();
+                } else {
+                  inputRef.current?.focus();
+                }
+              }}
+              disabled={isCreating || Boolean(searchTerm.trim() && exactMatch)}
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-primary transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
+            >
+              {isCreating ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              {searchTerm.trim() && !exactMatch ? (
+                <>Criar &quot;{searchTerm.trim()}&quot;</>
+              ) : (
+                'Criar nova tag'
+              )}
+            </button>
+          </div>
         </PopoverContent>
       </Popover>
     </div>
@@ -395,6 +426,11 @@ export function TagSelectorPopoverContent({
   const createTag = useCreateTag();
   const [searchTerm, setSearchTerm] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Ref for the scrollable tag list — same native wheel-listener fix as the
+  // DDI country list and the main TagSelector, so scroll works on Windows
+  // even inside a Popover.
+  const scrollListRef = useRef<HTMLDivElement>(null);
 
   const filteredTags = availableTags.filter(tag =>
     searchTextIncludes(tag.name, searchTerm)
@@ -427,13 +463,28 @@ export function TagSelectorPopoverContent({
     }
   };
 
+  useEffect(() => {
+    const el = scrollListRef.current;
+    if (!el) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.stopPropagation();
+    };
+
+    el.addEventListener('wheel', handleWheel, { passive: true, capture: false });
+    return () => el.removeEventListener('wheel', handleWheel, { capture: false });
+  }, []);
+
   return (
     <div className="p-0">
-      <div className="p-2 border-b">
+      {/* Search input — same treatment as the DDI search box and TagSelector */}
+      <div className="p-2">
         <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Buscar ou criar..."
+            ref={inputRef}
+            aria-label="Buscar ou criar tag"
+            placeholder="Buscar ou criar tag..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             onKeyDown={(e) => {
@@ -442,27 +493,19 @@ export function TagSelectorPopoverContent({
                 handleCreateTag();
               }
             }}
-            className="h-8 pl-8 text-sm"
+            className="h-8 py-1 pl-8 text-sm"
             autoFocus
           />
         </div>
       </div>
-      <ScrollArea className="max-h-48">
+
+      {/* Tags list — native scroll, same fix as the DDI country list */}
+      <div
+        ref={scrollListRef}
+        className="max-h-48 overflow-y-auto overscroll-contain"
+        onWheel={(e) => e.stopPropagation()}
+      >
         <div className="p-2 space-y-1">
-          {searchTerm.trim() && !exactMatch && (
-            <button
-              onClick={handleCreateTag}
-              disabled={isCreating}
-              className="w-full flex items-center gap-2 rounded-[6px] bg-primary/10 px-2 py-1.5 text-left text-sm font-medium text-primary hover:bg-primary/20"
-            >
-              {isCreating ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Plus className="h-3.5 w-3.5" />
-              )}
-              Criar &quot;{searchTerm.trim()}&quot;
-            </button>
-          )}
           {filteredTags.length > 0 ? (
             filteredTags.map(tag => (
               <button
@@ -477,13 +520,42 @@ export function TagSelectorPopoverContent({
                 {tag.name}
               </button>
             ))
-          ) : !searchTerm.trim() ? (
-            <p className="text-sm text-muted-foreground text-center py-3 px-2">
-              Digite acima para criar uma nova tag
-            </p>
-          ) : null}
+          ) : (
+            !searchTerm.trim() && (
+              <p className="text-sm text-muted-foreground text-center py-3 px-2">
+                Nenhuma tag ainda
+              </p>
+            )
+          )}
         </div>
-      </ScrollArea>
+      </div>
+
+      {/* Create new tag — fixed footer, same pattern as "Criar nova origem" */}
+      <div className="shrink-0 rounded-b-md border-t border-[var(--app-border)] bg-popover p-1">
+        <button
+          type="button"
+          onClick={() => {
+            if (searchTerm.trim() && !exactMatch) {
+              handleCreateTag();
+            } else {
+              inputRef.current?.focus();
+            }
+          }}
+          disabled={isCreating || Boolean(searchTerm.trim() && exactMatch)}
+          className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-primary transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
+        >
+          {isCreating ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+          ) : (
+            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+          )}
+          {searchTerm.trim() && !exactMatch ? (
+            <>Criar &quot;{searchTerm.trim()}&quot;</>
+          ) : (
+            'Criar nova tag'
+          )}
+        </button>
+      </div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Search } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -123,6 +123,9 @@ export function InternationalPhoneInput({
   const [phoneText, setPhoneText] = useState(initialView.text);
   const [countryPopoverOpen, setCountryPopoverOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  // Ref for the scrollable country list — lets us attach a native wheel listener
+  // in the capture phase so Radix Popover's document-level handlers never swallow it.
+  const scrollListRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -137,6 +140,23 @@ export function InternationalPhoneInput({
       cancelled = true;
     };
   }, [value]);
+
+  // Attach a native wheel listener (capture phase, passive) so the scroll works
+  // on Windows even when Radix Popover has document-level capture listeners.
+  useEffect(() => {
+    if (!countryPopoverOpen) return;
+    const el = scrollListRef.current;
+    if (!el) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      // Allow the element to scroll natively; stop the event from reaching
+      // Radix's document handler which would try to close/dismiss the popover.
+      e.stopPropagation();
+    };
+
+    el.addEventListener('wheel', handleWheel, { passive: true, capture: false });
+    return () => el.removeEventListener('wheel', handleWheel, { capture: false });
+  }, [countryPopoverOpen]);
 
   const filteredCountries = useMemo(() => {
     if (!searchQuery) return countries;
@@ -211,21 +231,25 @@ export function InternationalPhoneInput({
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-[240px] p-0" align="start">
-          <div className="border-b p-2">
+          <div className="p-2">
             <div className="relative">
-              <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 aria-label="Buscar país ou DDI"
                 placeholder="Buscar país..."
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
-                className="h-8 pl-8"
+                className="h-8 py-1 pl-8 text-sm"
               />
             </div>
           </div>
-          {/* Native scroll div — Radix ScrollArea blocks mouse-wheel on Windows */}
-          <div className="max-h-[200px] overflow-y-auto overscroll-contain">
-            <div className="p-1">
+          {/* Native scroll — ref + native listener prevent Radix from swallowing wheel events on Windows */}
+          <div
+            ref={scrollListRef}
+            className="max-h-[200px] overflow-y-auto overscroll-contain"
+            onWheel={(e) => e.stopPropagation()}
+          >
+            <div className="space-y-0.5 p-1">
               {filteredCountries.map((country) => (
                 <button
                   key={`${country.code}-${country.name}`}

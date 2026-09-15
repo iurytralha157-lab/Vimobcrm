@@ -601,6 +601,8 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 	mux.Handle("POST /v1/tags", withPermission(permissions.TagManage, http.HandlerFunc(leadsHandler.CreateTag)))
 	mux.Handle("PATCH /v1/tags/{id}", withPermission(permissions.TagManage, http.HandlerFunc(leadsHandler.UpdateTag)))
 	mux.Handle("DELETE /v1/tags/{id}", withPermission(permissions.TagManage, http.HandlerFunc(leadsHandler.DeleteTag)))
+	mux.Handle("GET /v1/lead-sources", withOrganization(http.HandlerFunc(leadsHandler.ListLeadSources)))
+	mux.Handle("POST /v1/lead-sources", withPermission(permissions.LeadOperate, http.HandlerFunc(leadsHandler.CreateLeadSource)))
 	mux.Handle("GET /v1/activities", withOrganization(http.HandlerFunc(leadsHandler.ListActivities)))
 	mux.Handle("POST /v1/activities", withPermission(permissions.LeadOperate, http.HandlerFunc(leadsHandler.CreateActivity)))
 	mux.Handle("GET /v1/lead-meta", withOrganization(http.HandlerFunc(leadsHandler.ShowLeadMeta)))

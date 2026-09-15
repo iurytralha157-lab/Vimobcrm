@@ -117,6 +117,46 @@ func (handler Handler) DeleteTag(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (handler Handler) ListLeadSources(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.FromContext(r.Context())
+	if !ok || tenantContext.OrganizationID == "" {
+		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+		return
+	}
+
+	sources, err := handler.repo.ListLeadSources(r.Context(), tenantContext)
+	if err != nil {
+		writeLeadError(w, r, err)
+		return
+	}
+
+	httpserver.WriteJSON(w, http.StatusOK, map[string][]LeadSource{"data": sources})
+}
+
+func (handler Handler) CreateLeadSource(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := tenant.FromContext(r.Context())
+	if !ok || tenantContext.OrganizationID == "" {
+		httpserver.WriteError(w, r, http.StatusForbidden, "organization_required", "Organization context is required.")
+		return
+	}
+
+	request, ok := httpserver.DecodeJSONValue[LeadSourceMutationRequest](w, r, 1<<16)
+	if !ok {
+		return
+	}
+	input, err := request.Validate()
+	if err != nil {
+		writeLeadError(w, r, err)
+		return
+	}
+	source, err := handler.repo.CreateLeadSource(r.Context(), tenantContext, input)
+	if err != nil {
+		writeLeadError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusCreated, map[string]LeadSource{"data": source})
+}
+
 func (handler Handler) ListActivities(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := tenant.FromContext(r.Context())
 	if !ok || tenantContext.OrganizationID == "" {
