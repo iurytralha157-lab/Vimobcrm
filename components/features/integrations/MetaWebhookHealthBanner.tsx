@@ -3,6 +3,7 @@ import { AlertCircle, AlertTriangle } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { integrationsAPI } from "@/lib/api";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { getMetaWebhookFailureGuidance } from "@/components/features/integrations/meta-webhook-health";
 
 const STATUS_LABELS: Record<string, string> = {
   failed: "falhas",
@@ -11,7 +12,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 export function MetaWebhookHealthBanner() {
-  const { activeOrganization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const orgId = activeOrganization.organizationId;
 
   const { data } = useQuery({
@@ -29,6 +30,7 @@ export function MetaWebhookHealthBanner() {
 
   const variant: "destructive" | "default" = failed > 0 ? "destructive" : "default";
   const Icon = failed > 0 ? AlertTriangle : AlertCircle;
+  const guidance = getMetaWebhookFailureGuidance(data.lastError);
 
   const parts: string[] = [];
   if (failed > 0) parts.push(`${failed} ${STATUS_LABELS.failed}`);
@@ -43,6 +45,7 @@ export function MetaWebhookHealthBanner() {
           {parts.join(" e ")} no webhook do Meta.
           {skipped > 0 && " Leads ignorados normalmente significam formulário sem configuração ativa."}
         </p>
+        {guidance && <p className="text-xs font-medium">{guidance}</p>}
         {data.lastError && <p className="text-xs opacity-80">Último motivo: {data.lastError}</p>}
       </AlertDescription>
     </Alert>

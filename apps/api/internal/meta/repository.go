@@ -201,6 +201,7 @@ func (repo Repository) FinishWebhookEvent(ctx context.Context, eventID string, o
 	if strings.TrimSpace(eventID) == "" {
 		return nil
 	}
+	retryableFailure := isRetryableMetaWebhookFailure(status, errorMessage)
 
 	_, err := repo.db.Pool().Exec(ctx, `
 		update public.meta_webhook_events
@@ -212,13 +213,13 @@ func (repo Repository) FinishWebhookEvent(ctx context.Context, eventID string, o
 		    attempts = coalesce(attempts, 0) + 1,
 		    next_retry_at = case
 		      when $3 = 'failed'
+		       and $5::boolean
 		       and coalesce(attempts, 0) + 1 < 5
-		       and coalesce($4, '') not in ('Invalid X-Hub-Signature-256 signature', 'META_APP_SECRET is not configured')
 		        then now() + (least(30, (coalesce(attempts, 0) + 1) * 2) * interval '1 minute')
 		      else null
 		    end
 		where id = $1::uuid
-	`, eventID, nullableString(organizationID), status, nullableString(errorMessage))
+	`, eventID, nullableString(organizationID), status, nullableString(errorMessage), retryableFailure)
 	if err == nil {
 		return nil
 	}
@@ -234,6 +235,31 @@ func (repo Repository) FinishWebhookEvent(ctx context.Context, eventID string, o
 		where id = $1::uuid
 	`, eventID, nullableString(organizationID), nullableString(errorMessage))
 	return err
+}
+
+func isRetryableMetaWebhookFailure(status string, errorMessage string) bool {
+	if !strings.EqualFold(strings.TrimSpace(status), "failed") {
+		return false
+	}
+
+	normalized := strings.ToLower(strings.TrimSpace(errorMessage))
+	if normalized == "" {
+		return true
+	}
+
+	permanentFailures := []string{
+		"invalid x-hub-signature-256 signature",
+		"meta_app_secret is not configured",
+		"apps in dev mode should only access leads",
+		"unsupported get request",
+		"meta page access token is missing",
+	}
+	for _, failure := range permanentFailures {
+		if strings.Contains(normalized, failure) {
+			return false
+		}
+	}
+	return true
 }
 
 func (repo Repository) MarkWebhookEventProcessing(ctx context.Context, eventID string, lease time.Duration) error {

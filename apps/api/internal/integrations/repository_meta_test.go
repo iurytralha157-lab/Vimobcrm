@@ -167,6 +167,21 @@ func TestCanonicalMetaFormPropertyIDRejectsHiddenReferenceBypassShapes(t *testin
 	}
 }
 
+func TestCanonicalMetaFormPropertyIDAllowsFormWithoutProperty(t *testing.T) {
+	resolved, err := canonicalMetaFormPropertyID(MetaFormConfigRequest{
+		DefaultValues: map[string]any{
+			"purpose":   "Venda",
+			"auto_tags": []string{"meta"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("canonicalMetaFormPropertyID() error = %v", err)
+	}
+	if resolved != nil {
+		t.Fatalf("canonicalMetaFormPropertyID() = %v, want nil", *resolved)
+	}
+}
+
 func TestFetchMetaLeadFormsUsesGraphResponseShape(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

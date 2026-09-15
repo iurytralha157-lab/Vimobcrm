@@ -117,7 +117,7 @@ export function useSaveFormConfig() {
       integrationId: string;
       formId: string;
       formName?: string;
-      propertyId?: string;
+      propertyId?: string | null;
       roundRobinId?: string | null;
       purpose?: string | null;
       source?: string | null;

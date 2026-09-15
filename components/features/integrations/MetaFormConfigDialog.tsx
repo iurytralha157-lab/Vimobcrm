@@ -170,20 +170,24 @@ export function MetaFormConfigDialog({
 
   const handleSave = async () => {
     try {
+      const defaultValues: Record<string, unknown> = {
+        purpose,
+        auto_tags: selectedTags,
+      };
+      if (propertyId) {
+        defaultValues.property_id = propertyId;
+      }
+
       await saveConfig.mutateAsync({
         integrationId,
         formId: form.id,
         formName: form.name,
-        propertyId: propertyId || undefined,
+        propertyId: propertyId || null,
         roundRobinId: roundRobinId || null,
         purpose,
         source: null,
         sourceDetails: null,
-        defaultValues: {
-          purpose,
-          property_id: propertyId || null,
-          auto_tags: selectedTags,
-        },
+        defaultValues,
         autoTags: selectedTags,
         fieldMapping,
         customFieldsConfig: customFields,
@@ -284,7 +288,7 @@ export function MetaFormConfigDialog({
                     <div className="flex items-center justify-between gap-2">
                       <Label className="flex items-center gap-2">
                         <Route className="h-3.5 w-3.5 text-primary" />
-                        Fila
+                        Fila (opcional)
                       </Label>
                       <Button
                         type="button"
@@ -327,7 +331,7 @@ export function MetaFormConfigDialog({
                 : "grid grid-cols-1 gap-4"
               }>
                 {canViewProperties && <div className="space-y-2">
-                  <Label>Imóvel</Label>
+                  <Label>Imóvel (opcional)</Label>
                   <div className="flex gap-2">
                     <PropertyPickerDialog
                       properties={properties || []}

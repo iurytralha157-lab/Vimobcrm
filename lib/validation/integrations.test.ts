@@ -38,6 +38,7 @@ import {
   metaAdAccountsActionResponseSchema,
   metaConnectPageActionResponseSchema,
   metaConversionFeedbackInputSchema,
+  metaFormConfigInputSchema,
   metaOAuthFlowResultSchema,
   metaPageFormsActionResponseSchema,
   metaPublicIntegrationSchema,
@@ -414,6 +415,32 @@ test("retorno de formularios Meta valida o contrato antes de chegar a interface"
       ],
     }),
   );
+});
+
+test("configuracao de formulario Meta aceita imovel e fila ausentes", () => {
+  const parsed = metaFormConfigInputSchema.parse({
+    integrationId: "20000000-0000-4000-8000-000000000001",
+    formId: "1110786561386001",
+    formName: "HOLOS MOOD TATUAPE - CC",
+    propertyId: null,
+    roundRobinId: null,
+    purpose: "Venda",
+    defaultValues: {
+      purpose: "Venda",
+      auto_tags: [],
+    },
+    autoTags: [],
+    fieldMapping: {
+      full_name: "name",
+      phone_number: "phone",
+    },
+    customFieldsConfig: [],
+    isActive: true,
+  });
+
+  assert.equal(parsed.propertyId, null);
+  assert.equal(parsed.roundRobinId, null);
+  assert.equal("property_id" in (parsed.defaultValues ?? {}), false);
 });
 
 test("projecoes Meta rejeitam credenciais ou campos inesperados", () => {
@@ -1031,6 +1058,7 @@ test("tela Meta preserva autoria compacta e concentra a rolagem na lista", () =>
   );
 
   assert.doesNotMatch(source, /MetaConversionFeedbackPanel/);
+  assert.match(source, /<MetaWebhookHealthBanner \/>/);
   assert.match(
     source,
     /aria-label={`Criado por \$\{config\.created_by_name\}`}/,
