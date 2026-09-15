@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { AlertTriangle, Clock, Loader2, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, Clock, Copy, Loader2, RefreshCw, X } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -207,6 +207,23 @@ export function MemberAvailabilityDialog({
       ),
     );
     if (!checked) setGlobalAllDay(false);
+  };
+
+  const applyDayToAllDays = (dayOfWeek: number) => {
+    setSchedules((prev) => {
+      const source = prev.find((schedule) => schedule.day_of_week === dayOfWeek);
+      if (!source) return prev;
+      return prev.map((schedule) =>
+        schedule.is_active
+          ? {
+              ...schedule,
+              is_all_day: source.is_all_day,
+              start_time: source.start_time,
+              end_time: source.end_time,
+            }
+          : schedule,
+      );
+    });
   };
 
   const handleSave = async () => {
@@ -463,6 +480,18 @@ export function MemberAvailabilityDialog({
                           Não recebe leads
                         </span>
                       )}
+
+                      {schedule.is_active && !readOnly ? (
+                        <button
+                          type="button"
+                          onClick={() => applyDayToAllDays(schedule.day_of_week)}
+                          className="grid h-7 w-7 shrink-0 place-items-center rounded-[6px] text-[var(--app-text-tertiary)] transition-colors hover:bg-[var(--app-surface-solid)] hover:text-[var(--app-text-primary)]"
+                          title={`Aplicar horário de ${getDayName(schedule.day_of_week, true)} a todos os dias ativos`}
+                          aria-label={`Aplicar horário de ${getDayName(schedule.day_of_week, true)} a todos os dias ativos`}
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </button>
+                      ) : null}
                     </div>
                   ))}
                 </div>

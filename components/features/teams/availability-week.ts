@@ -86,10 +86,13 @@ export function isValidAvailabilityWeek(week: readonly DaySchedule[]) {
   return week.every((entry) => {
     if (entry.day_of_week < 0 || entry.day_of_week > 6) return false;
     if (!entry.is_active || entry.is_all_day) return true;
+    // start_time > end_time is allowed: it represents a shift that starts on
+    // this day and rolls over past midnight into the next day (e.g. 22:00
+    // to 06:00). Only an exact match (zero-length shift) is invalid.
     return (
       clockPattern.test(entry.start_time) &&
       clockPattern.test(entry.end_time) &&
-      entry.start_time < entry.end_time
+      entry.start_time !== entry.end_time
     );
   });
 }

@@ -1447,7 +1447,12 @@ func normalizeCompleteAvailabilityWeek(teamMemberID string, requests []Availabil
 		if input.IsActive && !input.IsAllDay {
 			start, startOK := parseAvailabilityClock(input.StartTime)
 			end, endOK := parseAvailabilityClock(input.EndTime)
-			if !startOK || !endOK || !start.Before(end) {
+			// start.Equal(end) is a zero-length window and always invalid.
+			// start after end is allowed: it represents a shift that rolls
+			// over past midnight into the next day (e.g. 22:00 to 06:00),
+			// which the distribution-availability SQL already interprets
+			// correctly (see internal/distribution/availability.go).
+			if !startOK || !endOK || start.Equal(end) {
 				return nil, ErrInvalidInput
 			}
 		}

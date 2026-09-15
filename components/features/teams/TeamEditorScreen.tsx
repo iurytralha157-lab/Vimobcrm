@@ -9,6 +9,8 @@ import {
   Camera,
   Check,
   Clock3,
+  Copy,
+  CopyCheck,
   Crown,
   Loader2,
   RefreshCw,
@@ -392,6 +394,40 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
     }));
   };
 
+  const applyScheduleToAllDays = (userId: string, sourceDayOfWeek: number) => {
+    setWeeksByUserId((current) => {
+      const week = current[userId] || createDefaultAvailabilityWeek();
+      const source = week.find((entry) => entry.day_of_week === sourceDayOfWeek);
+      if (!source) return current;
+      return {
+        ...current,
+        [userId]: week.map((entry) =>
+          entry.is_active
+            ? {
+                ...entry,
+                is_all_day: source.is_all_day,
+                start_time: source.start_time,
+                end_time: source.end_time,
+              }
+            : entry,
+        ),
+      };
+    });
+  };
+
+  const applyScheduleToAllMembers = (sourceUserId: string) => {
+    setWeeksByUserId((current) => {
+      const sourceWeek = current[sourceUserId];
+      if (!sourceWeek) return current;
+      const next: typeof current = { ...current };
+      selectedMembers.forEach((member) => {
+        if (member.userId === sourceUserId) return;
+        next[member.userId] = sourceWeek.map((entry) => ({ ...entry }));
+      });
+      return next;
+    });
+  };
+
   const confirmScheduleWarning = (userId: string, checked: boolean) => {
     setConfirmedWarnings((current) => {
       const next = new Set(current);
@@ -685,9 +721,9 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
 
         <div
           className={cn(
-            "grid min-w-0 shrink-0 gap-3 lg:grid-cols-[minmax(280px,0.36fr)_minmax(0,0.64fr)] 2xl:min-h-[360px] 2xl:max-h-[600px] 2xl:flex-1",
+            "grid min-w-0 shrink-0 gap-3 lg:grid-cols-[minmax(300px,0.42fr)_minmax(0,0.58fr)] 2xl:min-h-[360px] 2xl:max-h-[600px] 2xl:flex-1",
             isEditing &&
-              "2xl:grid-cols-[minmax(280px,340px)_minmax(520px,1fr)_minmax(260px,320px)]",
+              "2xl:grid-cols-[minmax(340px,420px)_minmax(400px,1fr)_minmax(260px,320px)]",
           )}
         >
           <section
@@ -849,20 +885,33 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
             {activeScheduleUser && activeScheduleSelection && activeWeek ? (
               <div className="flex min-h-0 flex-1 flex-col gap-3">
                 <div className="flex shrink-0 items-center justify-between gap-2 px-1">
-                  <div className="flex items-center gap-2">
-                    <span className="grid h-8 w-8 place-items-center rounded-[6px] bg-primary/50 text-white">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[6px] bg-primary/50 text-white">
                       <Clock3 className="h-4 w-4" />
                     </span>
-                    <h2 className="text-[13px] font-normal">
+                    <h2 className="shrink-0 text-[13px] font-normal">
                       Escala de atendimento
                     </h2>
+                    <span
+                      className="max-w-[140px] truncate rounded-[5px] bg-[var(--app-surface-soft)] px-2 py-1 text-[10px] text-[var(--app-text-secondary)]"
+                      title={activeScheduleUser.name || activeScheduleUser.email}
+                    >
+                      {activeScheduleUser.name || activeScheduleUser.email}
+                    </span>
                   </div>
-                  <span
-                    className="max-w-[45%] truncate rounded-[5px] bg-[var(--app-surface-soft)] px-2 py-1 text-[10px] text-[var(--app-text-secondary)]"
-                    title={activeScheduleUser.name || activeScheduleUser.email}
-                  >
-                    {activeScheduleUser.name || activeScheduleUser.email}
-                  </span>
+                  {selectedMembers.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        applyScheduleToAllMembers(activeScheduleUser.id)
+                      }
+                      className="flex shrink-0 items-center gap-1.5 rounded-[5px] bg-[var(--app-surface-soft)] px-2 py-1 text-[10px] text-[var(--app-text-secondary)] transition-colors hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)]"
+                      title="Aplicar esta escala a todos os membros da equipe"
+                    >
+                      <CopyCheck className="h-3 w-3" />
+                      Aplicar a todos
+                    </button>
+                  )}
                 </div>
 
                 {warningByUserId[activeScheduleUser.id] && (
@@ -901,7 +950,7 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
                     <div
                       key={day.day_of_week}
                       className={cn(
-                        "grid min-w-0 gap-2 rounded-[6px] p-2 transition-colors sm:grid-cols-[132px_minmax(0,1fr)] sm:items-center",
+                        "grid min-w-0 items-center gap-2 rounded-[6px] p-2 transition-colors sm:grid-cols-[132px_minmax(0,1fr)_28px] sm:items-center",
                         day.is_active
                           ? "bg-[var(--app-surface-hover)]"
                           : "bg-[var(--app-surface-soft)] text-[var(--app-text-tertiary)]",
@@ -985,6 +1034,22 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
                           Não recebe leads neste dia
                         </span>
                       )}
+                      {day.is_active ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            applyScheduleToAllDays(
+                              activeScheduleUser.id,
+                              day.day_of_week,
+                            )
+                          }
+                          className="grid h-7 w-7 shrink-0 place-items-center justify-self-end rounded-[6px] text-[var(--app-text-tertiary)] transition-colors hover:bg-[var(--app-surface-solid)] hover:text-[var(--app-text-primary)]"
+                          title={`Aplicar horário de ${DAYS_OF_WEEK[day.day_of_week]} a todos os dias ativos`}
+                          aria-label={`Aplicar horário de ${DAYS_OF_WEEK[day.day_of_week]} a todos os dias ativos`}
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </button>
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -1137,9 +1202,9 @@ function TeamEditorLoading({ isEditing }: { isEditing: boolean }) {
       <Skeleton className="h-16 w-full rounded-[8px]" />
       <div
         className={cn(
-          "grid min-w-0 gap-3 lg:grid-cols-[minmax(280px,0.36fr)_minmax(0,0.64fr)]",
+          "grid min-w-0 gap-3 lg:grid-cols-[minmax(300px,0.42fr)_minmax(0,0.58fr)]",
           isEditing &&
-            "2xl:grid-cols-[minmax(280px,340px)_minmax(520px,1fr)_minmax(260px,320px)]",
+            "2xl:grid-cols-[minmax(340px,420px)_minmax(400px,1fr)_minmax(260px,320px)]",
         )}
       >
         {Array.from({ length: isEditing ? 3 : 2 }).map((_, index) => (
