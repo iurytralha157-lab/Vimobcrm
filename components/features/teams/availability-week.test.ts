@@ -23,10 +23,10 @@ test("availability rejects an entirely inactive week", () => {
   assert.equal(isValidAvailabilityWeek(week), false);
 });
 
-test("availability rejects overnight intervals and equal clocks", () => {
+test("availability allows overnight intervals but rejects equal clocks", () => {
   const overnight = createDefaultAvailabilityWeek();
   overnight[1] = { ...overnight[1], start_time: "22:00", end_time: "06:00" };
-  assert.equal(isValidAvailabilityWeek(overnight), false);
+  assert.equal(isValidAvailabilityWeek(overnight), true);
 
   const equalClocks = createDefaultAvailabilityWeek();
   equalClocks[1] = {

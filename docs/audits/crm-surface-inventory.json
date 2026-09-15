@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "ad8c94b605cf13448aff14673fd9c55ca03bfdbf087387b6628c9bae4877db78",
+  "sourceDigestSha256": "d5ef752e8e994eefdc462c881148b2a0e262f91425c15aeb08dd9c65d4075801",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -1801,6 +1801,60 @@
           "kind": "dialog"
         },
         {
+          "id": "overlay:547186cd7478c0608309",
+          "column": 5,
+          "file": "components/features/leads/LeadSourceSelect.tsx",
+          "line": 144,
+          "owner": "LeadSourceSelect",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/rentals",
+            "/properties/settings",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "popover"
+        },
+        {
           "id": "overlay:f5babc326c1e409fa145",
           "column": 5,
           "file": "components/features/leads/LostReasonDialog.tsx",
@@ -3354,10 +3408,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:ac736cc80db466422036",
+          "id": "overlay:1594cf9627e4ed53b89e",
           "column": 5,
           "file": "components/features/teams/MemberAvailabilityDialog.tsx",
-          "line": 230,
+          "line": 247,
           "owner": "MemberAvailabilityDialog",
           "routes": [
             "/crm/management"
@@ -3863,10 +3917,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:87cad860ca79c7a34549",
+          "id": "overlay:d40155890ce39ff4c8f8",
           "column": 7,
           "file": "components/shared/forms/InternationalPhoneInput.tsx",
-          "line": 193,
+          "line": 213,
           "owner": "InternationalPhoneInput",
           "routes": [
             "/agenda",
@@ -13428,10 +13482,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:84df9977ada43c6e9750",
+          "id": "cta:06267647741d653be6a0",
           "column": 25,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 980,
+          "line": 981,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -13483,10 +13537,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:84f6fefedbbf2c14fd81",
+          "id": "cta:aed45d505d0aee748fe8",
           "column": 25,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1088,
+          "line": 1089,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -13538,10 +13592,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:e4a739597c3b4ecf6d3c",
+          "id": "cta:c21945c8bf4240b5b9be",
           "column": 25,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1135,
+          "line": 1136,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -13593,10 +13647,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:81c51f7b9b522344a456",
+          "id": "cta:bc94335af436bd32087b",
           "column": 25,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1169,
+          "line": 1170,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -13648,10 +13702,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:2da69694fb6d9f507e3d",
+          "id": "cta:06e96c8e2856ba9c3629",
           "column": 13,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1344,
+          "line": 1343,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -13703,10 +13757,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f8415e0d8fff8cb7c51e",
+          "id": "cta:092ee79d6ddf1a96696e",
           "column": 15,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1348,
+          "line": 1347,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -13758,10 +13812,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0b74d08ea7af6e972910",
+          "id": "cta:b78d25da80777474566c",
           "column": 15,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1367,
+          "line": 1366,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -14355,10 +14409,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:965a5890065bac0c9067",
-          "column": 15,
+          "id": "cta:28846f1307d0191854d8",
+          "column": 9,
           "file": "components/features/leads/LeadSourceSelect.tsx",
-          "line": 125,
+          "line": 146,
           "owner": "LeadSourceSelect",
           "routes": [
             "/agenda",
@@ -14410,10 +14464,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:32cd7e5bb5c3f62765e2",
-          "column": 15,
+          "id": "cta:081240bc7479927dde59",
+          "column": 13,
           "file": "components/features/leads/LeadSourceSelect.tsx",
-          "line": 134,
+          "line": 202,
           "owner": "LeadSourceSelect",
           "routes": [
             "/agenda",
@@ -14462,7 +14516,117 @@
             "/suporte/[slug]"
           ],
           "kind": "actionButton",
-          "tag": "Button"
+          "tag": "button"
+        },
+        {
+          "id": "cta:139a0e236b140bd4a473",
+          "column": 15,
+          "file": "components/features/leads/LeadSourceSelect.tsx",
+          "line": 215,
+          "owner": "LeadSourceSelect",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/rentals",
+            "/properties/settings",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "actionButton",
+          "tag": "button"
+        },
+        {
+          "id": "cta:a35804ee120432dffa05",
+          "column": 11,
+          "file": "components/features/leads/LeadSourceSelect.tsx",
+          "line": 239,
+          "owner": "LeadSourceSelect",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/rentals",
+            "/properties/settings",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "actionButton",
+          "tag": "button"
         },
         {
           "id": "cta:28a2946ec5b12fac7c6b",
@@ -23668,10 +23832,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a6e4b7667bf17140da8b",
+          "id": "cta:90798d28b70287dab5fb",
           "column": 13,
           "file": "components/features/teams/MemberAvailabilityDialog.tsx",
-          "line": 260,
+          "line": 277,
           "owner": "MemberAvailabilityDialog",
           "routes": [
             "/crm/management"
@@ -23680,10 +23844,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:118356f4e25c03e95e40",
+          "id": "cta:eebed29baadc3748db42",
           "column": 15,
           "file": "components/features/teams/MemberAvailabilityDialog.tsx",
-          "line": 281,
+          "line": 298,
           "owner": "MemberAvailabilityDialog",
           "routes": [
             "/crm/management"
@@ -23692,10 +23856,22 @@
           "tag": "Button"
         },
         {
-          "id": "cta:fd73a3699598b492787e",
+          "id": "cta:5703a7313b3a44fec355",
+          "column": 25,
+          "file": "components/features/teams/MemberAvailabilityDialog.tsx",
+          "line": 485,
+          "owner": "MemberAvailabilityDialog",
+          "routes": [
+            "/crm/management"
+          ],
+          "kind": "actionButton",
+          "tag": "button"
+        },
+        {
+          "id": "cta:e9b267f6a2043ba692eb",
           "column": 13,
           "file": "components/features/teams/MemberAvailabilityDialog.tsx",
-          "line": 474,
+          "line": 503,
           "owner": "MemberAvailabilityDialog",
           "routes": [
             "/crm/management"
@@ -23704,10 +23880,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:88539496a4a87278ae7e",
+          "id": "cta:d2f86ddf65c1f32f1fdf",
           "column": 15,
           "file": "components/features/teams/MemberAvailabilityDialog.tsx",
-          "line": 481,
+          "line": 510,
           "owner": "MemberAvailabilityDialog",
           "routes": [
             "/crm/management"
@@ -23716,10 +23892,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:48cfd97706c45c327d4f",
+          "id": "cta:bff8298b7e63ca837c6e",
           "column": 13,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 515,
+          "line": 551,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -23729,10 +23905,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c53a7c0d4b3000e6870a",
+          "id": "cta:f2c0a34f24a912093062",
           "column": 13,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 557,
+          "line": 593,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -23742,10 +23918,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c4d621bcb32757d0ca87",
+          "id": "cta:a72b3a375f049fed9241",
           "column": 13,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 588,
+          "line": 624,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -23756,10 +23932,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:60264141dba215d64f1a",
+          "id": "cta:b56614dd43d11bd49337",
           "column": 13,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 609,
+          "line": 645,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -23769,10 +23945,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:60e06c93550076246c5c",
+          "id": "cta:17d8b6825a8f46e3b111",
           "column": 13,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 631,
+          "line": 667,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -23782,10 +23958,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:567cc84a232b393fc326",
+          "id": "cta:b2d561b5570e3e7d3d06",
           "column": 21,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 769,
+          "line": 805,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -23795,10 +23971,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:c2d56fa81030a920504f",
+          "id": "cta:336c9171d4886dbf2699",
           "column": 23,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 820,
+          "line": 856,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -23808,10 +23984,36 @@
           "tag": "button"
         },
         {
-          "id": "cta:738fc4fef52778083bbe",
+          "id": "cta:ea3e8d16c960e6ae38dd",
+          "column": 21,
+          "file": "components/features/teams/TeamEditorScreen.tsx",
+          "line": 903,
+          "owner": "TeamEditorScreen",
+          "routes": [
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new"
+          ],
+          "kind": "actionButton",
+          "tag": "button"
+        },
+        {
+          "id": "cta:d3a3d1539fd760226571",
+          "column": 25,
+          "file": "components/features/teams/TeamEditorScreen.tsx",
+          "line": 1038,
+          "owner": "TeamEditorScreen",
+          "routes": [
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new"
+          ],
+          "kind": "actionButton",
+          "tag": "button"
+        },
+        {
+          "id": "cta:e54f3248c4495af123ba",
           "column": 19,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 1008,
+          "line": 1073,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -23821,10 +24023,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0faed27e95f9294c1dfb",
+          "id": "cta:04d655e37ab11d9be779",
           "column": 15,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 1062,
+          "line": 1127,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -23835,10 +24037,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:b1555ec1c7bf426476e1",
+          "id": "cta:61b38f69d65f3dba5848",
           "column": 13,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 1064,
+          "line": 1129,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -23848,10 +24050,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f469420df74c388e9493",
+          "id": "cta:05bd37b9baf43ca9f793",
           "column": 9,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 1185,
+          "line": 1250,
           "owner": "EditorMessage",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -27159,10 +27361,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:24ff449e30558b9302f0",
+          "id": "cta:7cdaea7fd486d9931e5f",
           "column": 11,
           "file": "components/shared/forms/InternationalPhoneInput.tsx",
-          "line": 195,
+          "line": 215,
           "owner": "InternationalPhoneInput",
           "routes": [
             "/agenda",
@@ -27214,10 +27416,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:6d1644e6e36a0850cb12",
+          "id": "cta:4f4d42c45c0950c3ba60",
           "column": 17,
           "file": "components/shared/forms/InternationalPhoneInput.tsx",
-          "line": 230,
+          "line": 254,
           "owner": "InternationalPhoneInput",
           "routes": [
             "/agenda",
@@ -33355,7 +33557,7 @@
         }
       ]
     },
-    "digestSha256": "1e746b34df90036d2d98ec7e9eebf76344f6d0ee3a5b35df989972f6d25c3de6"
+    "digestSha256": "89bc6ab99f18cc1369ec558a0045a31882c74efd70eaba3899a36f70bf568664"
   },
   "routes": [
     {
@@ -42913,11 +43115,11 @@
     "surfaces": {
       "asChildButtonsExcluded": 41,
       "asChildButtonsWithUnrecognizedChild": 0,
-      "asChildPrimitiveControlsExcluded": 79,
+      "asChildPrimitiveControlsExcluded": 80,
       "asChildPrimitiveControlsWithUnrecognizedChild": 0,
-      "ctasAll": 1356,
+      "ctasAll": 1361,
       "ctasByKind": {
-        "actionButton": 1199,
+        "actionButton": 1204,
         "external": 6,
         "internal": 32,
         "internalDynamic": 75,
@@ -42926,17 +43128,17 @@
       "forms": 49,
       "formsRouteReachable": 49,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1306,
-      "internalCtasRouteReachable": 1270,
-      "overlays": 213,
+      "internalCtas": 1311,
+      "internalCtasRouteReachable": 1275,
+      "overlays": 214,
       "overlaysByKind": {
         "alertDialog": 60,
         "dialog": 79,
         "dropdownMenu": 30,
-        "popover": 31,
+        "popover": 32,
         "sheet": 13
       },
-      "overlaysRouteReachable": 206,
+      "overlaysRouteReachable": 207,
       "supplementalControls": 279,
       "supplementalControlsByKind": {
         "AlertDialogAction": 58,
@@ -42955,8 +43157,8 @@
     "protectedAccessChecksThreePersonas": 204,
     "renderableRouteViewportChecksDesktopAndMobile": 164,
     "routeReachableFormImplementations": 49,
-    "routeReachableInternalCtaImplementations": 1270,
-    "routeReachableOverlayImplementations": 206,
+    "routeReachableInternalCtaImplementations": 1275,
+    "routeReachableOverlayImplementations": 207,
     "routeReachableSupplementalOverlayAndTabControls": 272
   },
   "diagnostics": {

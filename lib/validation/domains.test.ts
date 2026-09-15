@@ -1228,6 +1228,8 @@ test("suporte de CRM valida filtros, disponibilidade e distribuicao", () => {
     }).success,
     false,
   );
+  // An overnight shift (end_time earlier than start_time on the same day)
+  // is valid: it rolls over into the next day (e.g. 18:00-08:00).
   assert.equal(
     createTeamInputSchema.safeParse({
       name: "Equipe QA",
@@ -1242,8 +1244,9 @@ test("suporte de CRM valida filtros, disponibilidade e distribuicao", () => {
         },
       ],
     }).success,
-    false,
+    true,
   );
+  // A zero-length window (start_time === end_time) is still invalid.
   assert.equal(
     createTeamInputSchema.safeParse({
       name: "Equipe QA",

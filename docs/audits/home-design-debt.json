@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "3ae42deeb340fdddf1bc0d198962b0972e25795211ef018e4beff57f021920b2",
-  "surfaceInventoryDigestSha256": "ad8c94b605cf13448aff14673fd9c55ca03bfdbf087387b6628c9bae4877db78",
+  "sourceDigestSha256": "348faae9d9396e1a723fa1ad68ef0b08f24ae1181d9836f7ccc6a9bb1ab54b95",
+  "surfaceInventoryDigestSha256": "d5ef752e8e994eefdc462c881148b2a0e262f91425c15aeb08dd9c65d4075801",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
     "filesScanned": 535,
@@ -1624,7 +1624,7 @@
     },
     {
       "file": "components/features/teams/TeamEditorScreen.tsx",
-      "line": 1039,
+      "line": 1104,
       "match": "shadow-[0_-10px_30px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",
