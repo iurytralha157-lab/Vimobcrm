@@ -238,6 +238,12 @@ const normalizeOAuthPayload = (payload?: OAuthPayload | null): OAuthPayload | nu
   };
 };
 
+const retainPendingOAuthPages = (payload: OAuthPayload | null, connectedPageId: string) => {
+  if (!payload) return null;
+  const pages = payload.pages.filter((page) => page.id !== connectedPageId);
+  return pages.length > 0 ? { ...payload, pages } : null;
+};
+
 const buildConfigForm = (config: MetaFormConfig): MetaForm => ({
   id: config.form_id,
   name: config.form_name || config.form_id,
@@ -689,16 +695,21 @@ export function MetaIntegrationSettings({
 
     const refreshed = await refetchIntegrations();
     const integration = (refreshed.data || []).find((item) => item.page_id === page.id);
+    const pendingOAuth = retainPendingOAuthPages(newOAuth, page.id);
     if (integration) {
-      setNewOAuth(null);
-      setSelectedAccountKey(getIntegrationAccountKey(integration));
+      setNewOAuth(pendingOAuth);
+      setSelectedAccountKey(pendingOAuth ? "new-oauth" : getIntegrationAccountKey(integration));
       setPendingPage(null);
       await loadFormsForIntegration(integration);
     } else if (result?.success) {
-      setNewOAuth(null);
-      setSelectedAccountKey("");
+      setNewOAuth(pendingOAuth);
+      setSelectedAccountKey(pendingOAuth ? "new-oauth" : "");
       setPendingPage(null);
-      toast.success("Página conectada. Reabra o wizard se os formulários não aparecerem agora.");
+      toast.success(
+        pendingOAuth
+          ? "Página conectada. Você pode vincular outra página desta conta."
+          : "Página conectada. Reabra o wizard se os formulários não aparecerem agora.",
+      );
     }
   };
 

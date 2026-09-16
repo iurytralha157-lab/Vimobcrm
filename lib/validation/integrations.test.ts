@@ -1092,9 +1092,10 @@ test("tela Meta preserva autoria compacta e concentra a rolagem na lista", () =>
     source,
     /if \(selectedAccount\?\.isNew\) \{\s*setSelectedIntegration\(null\);\s*setPendingPage\(page\);\s*return;\s*\}/,
   );
+  assert.match(source, /retainPendingOAuthPages\(newOAuth, page\.id\)/);
   assert.match(
     source,
-    /setNewOAuth\(null\);\s*setSelectedAccountKey\(getIntegrationAccountKey\(integration\)\);/,
+    /setSelectedAccountKey\(pendingOAuth \? "new-oauth" : getIntegrationAccountKey\(integration\)\)/,
   );
   assert.match(source, /getAccountPageSummary\(account\)/);
   assert.doesNotMatch(source, />Nova conexão</);

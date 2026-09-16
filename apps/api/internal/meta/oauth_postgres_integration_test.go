@@ -17,7 +17,7 @@ import (
 
 // META_OAUTH_TEST_DATABASE_URL must point to a disposable loopback Supabase
 // database with the Marketing foundation migration applied.
-func TestOAuthPostgresSingleUseAndVaultContract(t *testing.T) {
+func TestOAuthPostgresPageScopedUseAndVaultContract(t *testing.T) {
 	databaseURL := strings.TrimSpace(os.Getenv("META_OAUTH_TEST_DATABASE_URL"))
 	if databaseURL == "" {
 		t.Skip("set META_OAUTH_TEST_DATABASE_URL to run the PostgreSQL/Vault contract test")
@@ -56,6 +56,7 @@ func TestOAuthPostgresSingleUseAndVaultContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	pageID := strconv.FormatInt(time.Now().UTC().UnixNano(), 10)
+	secondPageID := pageID + "1"
 	accountID := "act_" + pageID
 	auth := oauthAuthContext{OrganizationID: organizationID, UserID: userID}
 	flow := oauthFlow{
@@ -74,8 +75,11 @@ func TestOAuthPostgresSingleUseAndVaultContract(t *testing.T) {
 		Success:        true,
 		UserToken:      "integration-user-token-123456789",
 		FacebookUserID: pageID,
-		Pages:          []map[string]any{{"id": pageID, "name": "OAuth integration test"}},
-		AdAccounts:     []oauthAdAccount{{ID: accountID, AccountID: pageID}},
+		Pages: []map[string]any{
+			{"id": pageID, "name": "OAuth integration test"},
+			{"id": secondPageID, "name": "OAuth second Page integration test"},
+		},
+		AdAccounts: []oauthAdAccount{{ID: accountID, AccountID: pageID}},
 	}
 	if err := store.claimCallback(ctx, flow); err != nil {
 		t.Fatal(err)
@@ -123,8 +127,42 @@ func TestOAuthPostgresSingleUseAndVaultContract(t *testing.T) {
 		_ = errors.As(err, &postgresError)
 		t.Fatalf("claim result = %#v, %v (cause: %#v)", claimed, err, postgresError)
 	}
+	if _, err := store.claimConnectFlow(ctx, auth, flowID, secondPageID, []string{accountID}); oauthErrorCode(err) != "oauth_flow_not_available" {
+		t.Fatalf("concurrent claim error = %v", err)
+	}
+	if err := store.finishConnectFlow(ctx, auth, flowID, pageID); err != nil {
+		t.Fatalf("finish first Page: %v", err)
+	}
+	var reusable bool
+	var firstPageConnected bool
+	var transientSecretRemains bool
+	if err := database.Pool().QueryRow(ctx, `
+		select status = 'success' and consumed_at is null,
+		       coalesce(payload->'connected_page_ids', '[]'::jsonb) ? $2,
+		       exists (
+		         select 1 from vault.secrets
+		         where name = 'meta-oauth-flow:' || $1::text
+		       )
+		from public.meta_oauth_flows
+		where id = $1::uuid
+	`, flowID, pageID).Scan(&reusable, &firstPageConnected, &transientSecretRemains); err != nil || !reusable || !firstPageConnected || !transientSecretRemains {
+		t.Fatalf(
+			"flow after first Page = reusable:%v connected:%v secret:%v, %v",
+			reusable,
+			firstPageConnected,
+			transientSecretRemains,
+			err,
+		)
+	}
 	if _, err := store.claimConnectFlow(ctx, auth, flowID, pageID, []string{accountID}); oauthErrorCode(err) != "oauth_flow_not_available" {
-		t.Fatalf("replay error = %v", err)
+		t.Fatalf("same Page replay error = %v", err)
+	}
+	claimed, err = store.claimConnectFlow(ctx, auth, flowID, secondPageID, []string{accountID})
+	if err != nil || claimed.UserToken != payload.UserToken {
+		t.Fatalf("second Page claim result = %#v, %v", claimed, err)
+	}
+	if err := store.finishConnectFlow(ctx, auth, flowID, secondPageID); err != nil {
+		t.Fatalf("finish second Page: %v", err)
 	}
 	var consumed bool
 	var payloadWiped bool
@@ -134,7 +172,7 @@ func TestOAuthPostgresSingleUseAndVaultContract(t *testing.T) {
 	`, flowID).Scan(&consumed, &payloadWiped); err != nil || !consumed || !payloadWiped {
 		t.Fatalf("flow single-use state = (%v, %v), %v", consumed, payloadWiped, err)
 	}
-	var transientSecretRemains bool
+	transientSecretRemains = false
 	if err := database.Pool().QueryRow(ctx, `
 		select exists (
 		  select 1 from vault.secrets

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestOAuthConnectClaimIsTenantBoundPageBoundAndFinalizedOnlyAfterSuccess(t *testing.T) {
+func TestOAuthConnectClaimIsTenantBoundPageScopedAndFinalizedOnlyAfterSuccess(t *testing.T) {
 	source := readOAuthSource(t, "oauth_postgres.go")
 	claim := oauthSourceSection(t, source, "func (store oauthPostgresStore) claimConnectFlow", "func (store oauthPostgresStore) finishConnectFlow")
 	normalized := strings.Join(strings.Fields(claim), " ")
@@ -24,6 +24,8 @@ func TestOAuthConnectClaimIsTenantBoundPageBoundAndFinalizedOnlyAfterSuccess(t *
 		"flow.payload - $6",
 		"not (flow.payload ? 'user_token')",
 		"page->>'id' = $4",
+		"flow.payload->'connected_page_ids'",
+		"connected.page_id = $4",
 		"from jsonb_array_elements_text($5::jsonb) as requested(account_id)",
 		"error_message = 'oauth_connect_processing'",
 		"tx.Commit(ctx)",
@@ -35,6 +37,9 @@ func TestOAuthConnectClaimIsTenantBoundPageBoundAndFinalizedOnlyAfterSuccess(t *
 	finalize := oauthSourceSection(t, source, "func (store oauthPostgresStore) finishConnectFlow", "func (store oauthPostgresStore) releaseConnectFlow")
 	for _, required := range []string{
 		"deleteOAuthFlowTransientSecret",
+		"remainingPages > 0",
+		"'{connected_page_ids}'",
+		"status = 'success'",
 		"set consumed_at = now()",
 		"status = 'consumed'",
 		"payload = jsonb_build_object('consumed', true)",
@@ -47,7 +52,7 @@ func TestOAuthConnectClaimIsTenantBoundPageBoundAndFinalizedOnlyAfterSuccess(t *
 	serviceSource := readOAuthSource(t, "oauth_service.go")
 	connect := oauthSourceSection(t, serviceSource, "func (service *oauthService) connectPage", "func (service *oauthService) updatePage")
 	persist := strings.Index(connect, "persistConnectedIntegration(")
-	finalizeAt := strings.Index(connect, "finishConnectFlow(")
+	finalizeAt := strings.Index(connect, "finishConnectFlow(ctx, auth, flowID, page.ID)")
 	if persist < 0 || finalizeAt < persist {
 		t.Fatal("OAuth flow must be consumed only after the integration is durably persisted")
 	}

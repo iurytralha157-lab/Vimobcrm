@@ -362,6 +362,14 @@ func (store oauthPostgresStore) claimConnectFlow(
 		  )
 		  and not exists (
 			select 1
+			from jsonb_array_elements_text(
+				case when jsonb_typeof(flow.payload->'connected_page_ids') = 'array'
+					then flow.payload->'connected_page_ids' else '[]'::jsonb end
+			) as connected(page_id)
+			where connected.page_id = $4
+		  )
+		  and not exists (
+			select 1
 			from jsonb_array_elements_text($5::jsonb) as requested(account_id)
 			where not exists (
 				select 1
@@ -434,7 +442,12 @@ func (store oauthPostgresStore) claimConnectFlow(
 	return payload, nil
 }
 
-func (store oauthPostgresStore) finishConnectFlow(ctx context.Context, auth oauthAuthContext, flowID string) error {
+func (store oauthPostgresStore) finishConnectFlow(
+	ctx context.Context,
+	auth oauthAuthContext,
+	flowID string,
+	pageID string,
+) error {
 	tx, err := store.db.Pool().Begin(ctx)
 	if err != nil {
 		return newOAuthFailure("oauth_flow_finalize_failed", http.StatusInternalServerError, err)
@@ -442,8 +455,25 @@ func (store oauthPostgresStore) finishConnectFlow(ctx context.Context, auth oaut
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var secretRef string
+	var remainingPages int
 	err = tx.QueryRow(ctx, `
-		select secret.id::text
+		select secret.id::text,
+		       (
+			select count(*)::integer
+			from jsonb_array_elements(
+				case when jsonb_typeof(flow.payload->'pages') = 'array'
+					then flow.payload->'pages' else '[]'::jsonb end
+			) as page
+			where page->>'id' <> $4
+			  and not exists (
+				select 1
+				from jsonb_array_elements_text(
+					case when jsonb_typeof(flow.payload->'connected_page_ids') = 'array'
+						then flow.payload->'connected_page_ids' else '[]'::jsonb end
+				) as connected(page_id)
+				where connected.page_id = page->>'id'
+			  )
+		       )
 		from public.meta_oauth_flows as flow
 		join vault.decrypted_secrets as secret
 		  on secret.id = private.meta_oauth_flow_transient_secret_id(flow.payload)
@@ -455,10 +485,39 @@ func (store oauthPostgresStore) finishConnectFlow(ctx context.Context, auth oaut
 		  and flow.error_message = 'oauth_connect_processing'
 		  and flow.consumed_at is null
 		for update of flow
-	`, flowID, auth.OrganizationID, auth.UserID).Scan(&secretRef)
+	`, flowID, auth.OrganizationID, auth.UserID, pageID).Scan(&secretRef, &remainingPages)
 	if err != nil {
 		return newOAuthFailure("oauth_flow_finalize_failed", http.StatusInternalServerError, err)
 	}
+
+	if remainingPages > 0 {
+		command, updateErr := tx.Exec(ctx, `
+			update public.meta_oauth_flows
+			set status = 'success',
+			    payload = jsonb_set(
+				payload,
+				'{connected_page_ids}',
+				coalesce(payload->'connected_page_ids', '[]'::jsonb) || jsonb_build_array($4::text),
+				true
+			    ),
+			    error_message = null,
+			    updated_at = now()
+			where id = $1::uuid
+			  and organization_id = $2::uuid
+			  and user_id = $3::uuid
+			  and status = 'error'
+			  and error_message = 'oauth_connect_processing'
+			  and consumed_at is null
+		`, flowID, auth.OrganizationID, auth.UserID, pageID)
+		if updateErr != nil || command.RowsAffected() != 1 {
+			return newOAuthFailure("oauth_flow_finalize_failed", http.StatusInternalServerError, updateErr)
+		}
+		if commitErr := tx.Commit(ctx); commitErr != nil {
+			return newOAuthFailure("oauth_flow_finalize_failed", http.StatusInternalServerError, commitErr)
+		}
+		return nil
+	}
+
 	if _, err := deleteOAuthFlowTransientSecret(ctx, tx, flowID, secretRef, true); err != nil {
 		return newOAuthFailure("oauth_flow_finalize_failed", http.StatusInternalServerError, err)
 	}

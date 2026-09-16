@@ -281,7 +281,7 @@ func (service *oauthService) connectPage(ctx context.Context, auth oauthAuthCont
 		}
 		return nil, err
 	}
-	if err := service.store.finishConnectFlow(ctx, auth, flowID); err != nil {
+	if err := service.store.finishConnectFlow(ctx, auth, flowID, page.ID); err != nil {
 		return nil, err
 	}
 	connectClaimed = false
