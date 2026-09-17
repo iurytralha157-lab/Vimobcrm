@@ -1,11 +1,9 @@
 "use client";
 
-import Link from "next/link";
-import { ArrowLeft, LockKeyhole, ShieldCheck, Smartphone } from "lucide-react";
+import { LockKeyhole } from "lucide-react";
 
 import { WhatsAppTab as WhatsAppIntegrationSettings } from "@/components/features/settings/WhatsAppTab";
 import { AppLayout } from "@/components/shared/layout/AppLayout";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
@@ -79,29 +77,7 @@ export default function WhatsAppSettingsScreen() {
   return (
     <AppLayout title="WhatsApp" borderless disableMainScroll>
       <div className="flex h-full min-h-0 w-full min-w-0 flex-col overflow-y-auto sm:pt-2">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 pb-6">
-          <header className="app-card flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 items-start gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[7px] bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-                <Smartphone className="h-5 w-5" aria-hidden="true" />
-              </div>
-              <div className="min-w-0">
-                <h1 className="text-base font-medium text-[var(--app-text-primary)]">
-                  Integração com WhatsApp
-                </h1>
-                <p className="mt-1 text-xs leading-5 text-[var(--app-text-secondary)]">
-                  Acompanhe a conexão dos números no seu escopo e gerencie somente as suas próprias sessões.
-                </p>
-              </div>
-            </div>
-            <Button asChild variant="outline" size="sm" className="h-8 gap-1.5 rounded-[6px]">
-              <Link href="/settings?tab=integrations">
-                <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-                Integrações
-              </Link>
-            </Button>
-          </header>
-
+        <div className="flex w-full flex-col gap-4 pb-6">
           {accessLoading ? (
             <div className="space-y-3" aria-label="Carregando integração WhatsApp">
               <Skeleton className="h-52 w-full rounded-[8px]" />
@@ -119,24 +95,11 @@ export default function WhatsAppSettingsScreen() {
             />
           ) : (
             <>
-              <WhatsAppSessionStatusPanel />
-
               {access.canManageOwnSessions ? (
-                <section className="space-y-3">
-                  <div className="flex items-start gap-2 px-0.5">
-                    <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[var(--app-text-tertiary)]" aria-hidden="true" />
-                    <div>
-                      <h2 className="text-sm font-medium text-[var(--app-text-primary)]">
-                        Minhas conexões
-                      </h2>
-                      <p className="mt-0.5 text-xs text-[var(--app-text-secondary)]">
-                        Criar, reconectar, desconectar e apagar continuam limitados ao responsável pelo número. O remetente de notificações só pode ser escolhido por owner ou administrador.
-                      </p>
-                    </div>
-                  </div>
-                  <WhatsAppIntegrationSettings />
-                </section>
+                <WhatsAppIntegrationSettings />
               ) : null}
+
+              <WhatsAppSessionStatusPanel />
             </>
           )}
         </div>

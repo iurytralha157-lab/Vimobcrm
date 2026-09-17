@@ -61,8 +61,10 @@ export function pipelineLeadMatchesQueryKeyScope(
     }
   }
 
-  const tagId = typeof queryKey[6] === 'string' ? queryKey[6] : undefined;
-  if (tagId && !lead.tags?.some((tag) => tag.id === tagId)) return false;
+  const tagIds = typeof queryKey[6] === 'string'
+    ? new Set(queryKey[6].split(',').map((tagId) => tagId.trim()).filter(Boolean))
+    : undefined;
+  if (tagIds?.size && !lead.tags?.some((tag) => tag.id && tagIds.has(tag.id))) return false;
 
   const search = typeof queryKey[8] === 'string' ? queryKey[8].trim().toLocaleLowerCase('pt-BR') : '';
   if (search) {

@@ -135,7 +135,7 @@ test('aceita apenas o DTO minimo e escopado de status das sessoes', () => {
       profile_name: 'Vimob',
       last_connected_at: '2026-09-12T12:00:00Z',
       updated_at: '2026-09-12T12:00:01Z',
-      owner: { id: USER_ID, name: 'Maria' },
+      owner: { id: USER_ID, name: 'Maria', avatar_url: null },
       capabilities: {
         can_manage: false,
         can_set_notification_sender: false,

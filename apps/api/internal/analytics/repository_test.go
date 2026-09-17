@@ -120,6 +120,23 @@ func TestValidateCampaignInsightsValues(t *testing.T) {
 			},
 		},
 		{
+			name: "accepts multiple tag UUID filters",
+			values: url.Values{
+				"dateFrom": {"2026-07-01"},
+				"dateTo":   {"2026-07-31"},
+				"tagIds":   {"33333333-3333-4333-8333-333333333333,44444444-4444-4444-8444-444444444444"},
+			},
+		},
+		{
+			name: "rejects malformed multi-tag UUID filters",
+			values: url.Values{
+				"dateFrom": {"2026-07-01"},
+				"dateTo":   {"2026-07-31"},
+				"tagIds":   {"33333333-3333-4333-8333-333333333333,not-a-uuid"},
+			},
+			wantErr: true,
+		},
+		{
 			name: "rejects UTC timestamps to prevent local date drift",
 			values: url.Values{
 				"dateFrom": {"2026-07-01T03:00:00.000Z"},
@@ -184,6 +201,18 @@ func TestValidateCampaignInsightsValues(t *testing.T) {
 				t.Fatalf("expected valid filters, got %v", err)
 			}
 		})
+	}
+}
+
+func TestNormalizeCampaignInsightTagIDsTrimsCanonicalizesAndDeduplicates(t *testing.T) {
+	first := "33333333-3333-4333-8333-333333333333"
+	second := "44444444-4444-4444-8444-444444444444"
+	got, err := normalizeCampaignInsightTagIDs("  " + first + ", " + second + "," + first + "  ")
+	if err != nil {
+		t.Fatalf("normalizeCampaignInsightTagIDs() error = %v", err)
+	}
+	if want := first + "," + second; got != want {
+		t.Fatalf("normalizeCampaignInsightTagIDs() = %q, want %q", got, want)
 	}
 }
 

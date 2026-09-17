@@ -376,7 +376,7 @@ export function useFilteredStageCounts({
   pipelineId,
   stageIds,
   filterUser,
-  filterTag,
+  filterTags,
   filterDealStatus,
   searchQuery,
   dateRange,
@@ -391,7 +391,7 @@ export function useFilteredStageCounts({
   const filters = {
     dateRange,
     dateMode,
-    filterTag,
+    filterTags,
     filterDealStatus,
     searchQuery,
     filterCampaign,
@@ -400,6 +400,11 @@ export function useFilteredStageCounts({
     filterSource,
     filterUserIds,
   };
+  const filterTagKey = Array.isArray(filterTags)
+    ? [...new Set(filterTags.map((tagId) => tagId.trim()).filter(Boolean))]
+        .sort()
+        .join(',')
+    : undefined;
 
   return useQuery({
     queryKey: [
@@ -408,7 +413,7 @@ export function useFilteredStageCounts({
       pipelineId,
       stageIds.join(','),
       filterUser,
-      filterTag,
+      filterTagKey,
       filterDealStatus,
       searchQuery,
       dateRange?.from.toISOString(),

@@ -29,8 +29,7 @@ export interface DashboardFilters {
   campaignId: string | null;
   adSetId: string | null;
   adId: string | null;
-  // ✅ Adicionados
-  tagId: string | null;
+  tagIds: string[];
   dealStatus: string | null;
   searchQuery: string;
 }

@@ -55,8 +55,8 @@ type PipelineToolbarProps = {
   onAdSetChange: (id: string | null) => void;
   adId: string | null;
   onAdChange: (id: string | null) => void;
-  tagId: string | null;
-  onTagChange: (tagId: string | null) => void;
+  tagIds: string[];
+  onTagsChange: (tagIds: string[]) => void;
   dealStatus: string | null;
   onDealStatusChange: (status: string | null) => void;
   searchQuery: string;
@@ -73,6 +73,7 @@ type PipelineToolbarProps = {
   isLoadingAdSets: boolean;
   isLoadingAds: boolean;
   isLoadingTags: boolean;
+  hasTagsError: boolean;
   hasDynamicOptionsError: boolean;
   isRetryingDynamicOptions: boolean;
   shouldLoadFilterOptions: boolean;
@@ -115,8 +116,8 @@ export function PipelineToolbar({
   onAdSetChange,
   adId,
   onAdChange,
-  tagId,
-  onTagChange,
+  tagIds,
+  onTagsChange,
   dealStatus,
   onDealStatusChange,
   searchQuery,
@@ -133,6 +134,7 @@ export function PipelineToolbar({
   isLoadingAdSets,
   isLoadingAds,
   isLoadingTags,
+  hasTagsError,
   hasDynamicOptionsError,
   isRetryingDynamicOptions,
   shouldLoadFilterOptions,
@@ -312,8 +314,8 @@ export function PipelineToolbar({
               onAdSetChange={onAdSetChange}
               adId={adId}
               onAdChange={onAdChange}
-              tagId={tagId}
-              onTagChange={onTagChange}
+              tagIds={tagIds}
+              onTagsChange={onTagsChange}
               dealStatus={dealStatus}
               onDealStatusChange={onDealStatusChange}
               searchQuery={searchQuery}
@@ -330,6 +332,7 @@ export function PipelineToolbar({
               isLoadingAdSets={isLoadingAdSets}
               isLoadingAds={isLoadingAds}
               isLoadingTags={isLoadingTags}
+              hasTagsError={hasTagsError}
               hasDynamicOptionsError={hasDynamicOptionsError}
               isRetryingDynamicOptions={isRetryingDynamicOptions}
               onRetryDynamicOptions={onRetryDynamicOptions}

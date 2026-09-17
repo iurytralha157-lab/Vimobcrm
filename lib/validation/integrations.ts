@@ -276,7 +276,7 @@ export const metaFormConfigInputSchema = z.object({
   source: z.string().trim().max(120).nullish(),
   sourceDetails: z.string().trim().max(500).nullish(),
   defaultValues: z.record(z.unknown()).optional(),
-  autoTags: z.array(z.string().trim().min(1).max(120)).max(100).optional(),
+  autoTags: z.array(uuidSchema).max(100).transform((tagIds) => Array.from(new Set(tagIds))).optional(),
   fieldMapping: z.record(z.string()).optional(),
   customFieldsConfig: z.array(z.string()).max(200).optional(),
   isActive: z.boolean().optional(),

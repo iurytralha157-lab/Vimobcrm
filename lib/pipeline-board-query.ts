@@ -6,7 +6,7 @@ import {
 export type PipelineBoardQueryFilters = {
   dateRange?: { from: Date; to: Date } | null;
   dateMode?: PipelineDateMode;
-  filterTag?: string;
+  filterTags?: string[];
   filterDealStatus?: string;
   searchQuery?: string;
   filterCampaign?: string;
@@ -40,7 +40,7 @@ export function buildPipelineBoardQuery(params: {
     dateFrom: filters?.dateRange?.from.toISOString(),
     dateTo: filters?.dateRange?.to.toISOString(),
     dateMode: resolvePipelineDateModeForRange(filters?.dateRange, filters?.dateMode),
-    filterTag: filters?.filterTag,
+    filterTags: serializeSelectedIds(filters?.filterTags),
     filterDealStatus: filters?.filterDealStatus,
     search: filters?.searchQuery,
     filterCampaign: filters?.filterCampaign,
@@ -56,4 +56,10 @@ function serializeOptionalIds(values?: string[]) {
   if (values.length === 0) return '__none__';
 
   return [...new Set(values)].sort().join(',');
+}
+
+function serializeSelectedIds(values?: string[]) {
+  if (!Array.isArray(values)) return undefined;
+  const normalized = [...new Set(values.map((value) => value.trim()).filter(Boolean))].sort();
+  return normalized.length > 0 ? normalized.join(',') : undefined;
 }

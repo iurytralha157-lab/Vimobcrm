@@ -25,6 +25,7 @@ export interface MetaFormConfig {
   default_values?: Record<string, unknown>;
   created_by?: string | null;
   created_by_name?: string | null;
+  created_by_avatar_url?: string | null;
   auto_tags: string[];
   field_mapping: Record<string, string>;
   custom_fields_config: string[];

@@ -1047,10 +1047,12 @@ function IntegrationCard({
       </CardHeader>
 
       <CardContent className="flex flex-1 flex-col gap-3 p-4 pt-2">
-        <IntegrationCardNotice
-          item={item}
-          isAccessLocked={isAccessLocked}
-        />
+        <div className="min-h-[44px]">
+          <IntegrationCardNotice
+            item={item}
+            isAccessLocked={isAccessLocked}
+          />
+        </div>
 
         <div className="mt-auto flex gap-2">
           {item.status === "error" && item.retry ? (
@@ -1096,7 +1098,7 @@ function IntegrationCardNotice({
 }) {
   if (isAccessLocked) {
     return (
-      <p className="flex items-start gap-2 text-[11px] leading-4 text-muted-foreground">
+      <p className="flex items-start gap-2 rounded-[6px] bg-[var(--app-surface-soft)] p-2 text-[11px] leading-4 text-muted-foreground">
         <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         Sua função não permite gerenciar esta integração.
       </p>
@@ -1104,7 +1106,7 @@ function IntegrationCardNotice({
   }
   if (item.missingModule) {
     return (
-      <p className="flex items-start gap-2 text-[11px] leading-4 text-muted-foreground">
+      <p className="flex items-start gap-2 rounded-[6px] bg-[var(--app-surface-soft)] p-2 text-[11px] leading-4 text-muted-foreground">
         <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         O módulo necessário não está liberado para esta organização.
       </p>

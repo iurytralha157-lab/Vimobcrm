@@ -8,6 +8,7 @@ export const contactListQuerySchema = z.object({
   stageId: uuidSchema.optional(),
   assigneeId: uuidSchema.optional(),
   unassigned: z.boolean().optional(),
+  tagIds: z.array(uuidSchema).max(50).transform((tagIds) => Array.from(new Set(tagIds))).optional(),
   tagId: uuidSchema.optional(),
   source: z.string().trim().max(120).optional(),
   campaignId: z.string().trim().max(255).optional(),

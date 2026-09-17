@@ -36,6 +36,7 @@ type PipelineBoardFilter struct {
 	FilterUserIDs    []string
 	FilterUserIDsSet bool
 	FilterTag        string
+	FilterTags       []string
 	FilterDealStatus string
 	FilterCampaign   string
 	FilterAdSet      string
@@ -185,6 +186,17 @@ func ParsePipelineBoardFilter(values url.Values) (PipelineBoardFilter, error) {
 
 	filterUserIDs, filterUserIDsSet := parseOptionalCSV(values, "filterUserIds")
 	stageIDs, _ := parseOptionalCSV(values, "stageIds")
+	legacyFilterTag := strings.TrimSpace(values.Get("filterTag"))
+	if strings.EqualFold(legacyFilterTag, "all") {
+		legacyFilterTag = ""
+	}
+	filterTag, filterTags, err := normalizeLeadTagFilterIDs(
+		legacyFilterTag,
+		splitLeadTagFilterValues(values["filterTags"]),
+	)
+	if err != nil {
+		return PipelineBoardFilter{}, err
+	}
 
 	return PipelineBoardFilter{
 		PipelineID:       strings.TrimSpace(values.Get("pipelineId")),
@@ -196,7 +208,8 @@ func ParsePipelineBoardFilter(values url.Values) (PipelineBoardFilter, error) {
 		FilterUserID:     strings.TrimSpace(values.Get("filterUserId")),
 		FilterUserIDs:    filterUserIDs,
 		FilterUserIDsSet: filterUserIDsSet,
-		FilterTag:        strings.TrimSpace(values.Get("filterTag")),
+		FilterTag:        filterTag,
+		FilterTags:       filterTags,
 		FilterDealStatus: strings.TrimSpace(values.Get("filterDealStatus")),
 		FilterCampaign:   strings.TrimSpace(values.Get("filterCampaign")),
 		FilterAdSet:      strings.TrimSpace(values.Get("filterAdSet")),

@@ -129,8 +129,8 @@ export default function Pipelines() {
     setTeamId,
     userId: filterUser,
     setUserId: setFilterUser,
-    tagId: filterTag,
-    setTagId: setFilterTag,
+    tagIds: filterTags,
+    setTagIds: setFilterTags,
     dealStatus: filterDealStatus,
     setDealStatus: setFilterDealStatus,
     campaignId: filterCampaign,
@@ -180,7 +180,7 @@ export default function Pipelines() {
     (filterAdSet && filterAdSet !== 'all') ||
     (filterAd && filterAd !== 'all'),
   );
-  const hasDynamicTagFilterSelection = Boolean(filterTag && filterTag !== 'all');
+  const hasDynamicTagFilterSelection = filterTags.length > 0;
   const hasHydratedDynamicFilterSelection = isFiltersHydrated && Boolean(
     sharedFilters.teamId || hasDynamicMetaFilterSelection || hasDynamicTagFilterSelection,
   );
@@ -442,7 +442,7 @@ export default function Pipelines() {
   const pipelineBoardFilters = useMemo<PipelineQueryFilters>(() => ({
     dateRange: pipelineDateRange,
     dateMode: pipelineDateRange ? 'origin' : undefined,
-    filterTag: filterTag && filterTag !== 'all' ? filterTag : undefined,
+    filterTags,
     filterDealStatus: filterDealStatus && filterDealStatus !== 'all' ? filterDealStatus : undefined,
     searchQuery: deferredSearchQuery || undefined,
     filterCampaign: filterCampaign && filterCampaign !== 'all' ? filterCampaign : undefined,
@@ -452,7 +452,7 @@ export default function Pipelines() {
     filterUserIds: effectivePipelineFilterUserIds,
   }), [
     pipelineDateRange,
-    filterTag,
+    filterTags,
     filterDealStatus,
     deferredSearchQuery,
     filterCampaign,
@@ -1573,8 +1573,8 @@ export default function Pipelines() {
           onAdSetChange={setFilterAdSet}
           adId={filterAd}
           onAdChange={setFilterAd}
-          tagId={filterTag}
-          onTagChange={setFilterTag}
+          tagIds={filterTags}
+          onTagsChange={setFilterTags}
           dealStatus={filterDealStatus}
           onDealStatusChange={setFilterDealStatus}
           searchQuery={searchQuery}
@@ -1595,6 +1595,7 @@ export default function Pipelines() {
           isLoadingAdSets={isLoadingAdSets}
           isLoadingAds={isLoadingAds}
           isLoadingTags={isLoadingTags}
+          hasTagsError={hasTagsError}
           hasDynamicOptionsError={hasDynamicOptionsError}
           isRetryingDynamicOptions={isRetryingDynamicOptions}
           shouldLoadFilterOptions={shouldLoadFilterOptions}

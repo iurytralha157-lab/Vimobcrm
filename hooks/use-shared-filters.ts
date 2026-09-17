@@ -23,7 +23,7 @@ export interface SharedFilters {
   campaignId: string | null;
   adSetId: string | null;
   adId: string | null;
-  tagId: string | null;
+  tagIds: string[];
   dealStatus: string | null;
   searchQuery: string;
 }
@@ -107,8 +107,8 @@ export function useSharedFilters(options?: {
     setAdSetId,
     adId,
     setAdId,
-    tagId,
-    setTagId,
+    tagIds,
+    setTagIds,
     dealStatus,
     setDealStatus,
     searchQuery,
@@ -389,11 +389,11 @@ export function useSharedFilters(options?: {
       campaignId,
       adSetId,
       adId,
-      tagId,
+      tagIds,
       dealStatus,
       searchQuery,
     }),
-    [datePreset, dateRange, teamId, userId, source, campaignId, adSetId, adId, tagId, dealStatus, searchQuery],
+    [datePreset, dateRange, teamId, userId, source, campaignId, adSetId, adId, tagIds, dealStatus, searchQuery],
   );
 
   const hasActiveFilters =
@@ -403,7 +403,7 @@ export function useSharedFilters(options?: {
     campaignId !== null ||
     adSetId !== null ||
     adId !== null ||
-    tagId !== null ||
+    tagIds.length > 0 ||
     dealStatus !== null ||
     searchQuery !== '' ||
     (hasDateRangeOverride ? Boolean(effectiveDateRange) : datePreset !== 'last30days');
@@ -427,8 +427,8 @@ export function useSharedFilters(options?: {
     setAdSetId,
     adId,
     setAdId,
-    tagId,
-    setTagId,
+    tagIds,
+    setTagIds,
     dealStatus,
     setDealStatus,
     searchQuery,

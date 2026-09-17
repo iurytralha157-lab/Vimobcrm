@@ -80,6 +80,7 @@ export interface WhatsAppSessionStatusSummary {
   owner: {
     id: string
     name: string
+    avatar_url: string | null
   }
   capabilities: {
     can_manage: boolean

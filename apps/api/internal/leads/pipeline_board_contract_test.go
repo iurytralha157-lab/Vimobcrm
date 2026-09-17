@@ -69,9 +69,21 @@ func TestLeadMetaFiltersUseVisibleLeadPeriodAndDistinctHistoricalEntries(t *test
 		"select distinct",
 		"union all",
 		"raw_attribution",
+		"entry.utm_campaign",
 		"entry.campaign_id",
 		"entry.adset_id",
 		"entry.ad_id",
+		"l.utm_campaign",
+		"l.meta_campaign_id",
+		"l.meta_adset_id",
+		"l.meta_ad_id",
+		"from public.marketing_performance_daily performance",
+		"and performance.provider = 'meta'",
+		"performance.ad_id = nullif(btrim(raw_attribution.ad_id), '')",
+		"performance.adset_id = nullif(btrim(raw_attribution.adset_id), '')",
+		"performance.campaign_id = nullif(btrim(raw_attribution.campaign_id), '')",
+		"order by performance.metric_date desc, performance.fetched_at desc",
+		"from public.meta_campaign_insights mi",
 		"select distinct nullif(btrim(l.source), '') as source",
 		"sourceArgs = append(sourceArgs, maxPipelineBoardSources)",
 		"order by source",
@@ -80,10 +92,77 @@ func TestLeadMetaFiltersUseVisibleLeadPeriodAndDistinctHistoricalEntries(t *test
 			t.Fatalf("meta-filter projection must contain %q", contract)
 		}
 	}
-	for _, forbidden := range []string{"lee.occurred_at >=", "lee.occurred_at <=", "lee.id is not null"} {
+	for _, forbidden := range []string{
+		"lee.occurred_at >=",
+		"lee.occurred_at <=",
+		"lee.id is not null",
+		"attribution_keys",
+		"coalesce(nullif(raw_attribution.campaign_id, ''), nullif(l.meta_campaign_id, ''))",
+	} {
 		if strings.Contains(functionSource, forbidden) {
 			t.Fatalf("meta-filter projection must not contain %q", forbidden)
 		}
+	}
+}
+
+func TestCollectLeadMetaFilterOptionsRequiresCompleteParentHierarchy(t *testing.T) {
+	campaigns := map[string]LeadMetaCampaignOption{}
+	adsets := map[string]LeadMetaAdsetOption{}
+	ads := map[string]LeadMetaAdOption{}
+
+	collectLeadMetaFilterOptions(
+		campaigns,
+		adsets,
+		ads,
+		"",
+		"",
+		"Conjunto órfão",
+		"adset-orphan",
+		"Anúncio órfão",
+		"ad-orphan",
+	)
+	if len(campaigns) != 0 || len(adsets) != 0 || len(ads) != 0 {
+		t.Fatalf("orphan attribution leaked into filters: campaigns=%#v adsets=%#v ads=%#v", campaigns, adsets, ads)
+	}
+
+	collectLeadMetaFilterOptions(
+		campaigns,
+		adsets,
+		ads,
+		"Campanha completa",
+		"campaign-1",
+		"",
+		"",
+		"Anúncio sem conjunto",
+		"ad-without-adset",
+	)
+	if len(campaigns) != 1 || len(adsets) != 0 || len(ads) != 0 {
+		t.Fatalf("child without adset leaked into filters: campaigns=%#v adsets=%#v ads=%#v", campaigns, adsets, ads)
+	}
+
+	collectLeadMetaFilterOptions(
+		campaigns,
+		adsets,
+		ads,
+		" Campanha completa ",
+		" campaign-1 ",
+		" Conjunto completo ",
+		" adset-1 ",
+		" Anúncio completo ",
+		" ad-1 ",
+	)
+
+	campaign, ok := campaigns["campaign-1"]
+	if !ok || campaign.Name != "Campanha completa" {
+		t.Fatalf("campaign was not normalized: %#v", campaigns)
+	}
+	adset, ok := adsets["campaign-1-adset-1"]
+	if !ok || adset.CampaignID != "campaign-1" || adset.Name != "Conjunto completo" {
+		t.Fatalf("adset hierarchy is invalid: %#v", adsets)
+	}
+	ad, ok := ads["campaign-1-adset-1-ad-1"]
+	if !ok || ad.CampaignID != "campaign-1" || ad.AdsetID != "adset-1" || ad.Name != "Anúncio completo" {
+		t.Fatalf("ad hierarchy is invalid: %#v", ads)
 	}
 }
 

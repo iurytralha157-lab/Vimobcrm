@@ -40,6 +40,39 @@ function optionalQueryUUID() {
   }, z.string().uuid().optional());
 }
 
+function optionalQueryUUIDList(maxItems = 50) {
+  return z.preprocess((value) => {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value !== "string") return value;
+    const normalized = Array.from(
+      new Set(value.split(",").map((item) => item.trim()).filter(Boolean)),
+    );
+    return normalized.length > 0 ? normalized.join(",") : undefined;
+  }, z.string().max(maxItems * 37).optional().superRefine((value, context) => {
+    if (!value) return;
+    const values = value.split(",");
+    if (values.length > maxItems) {
+      context.addIssue({
+        code: z.ZodIssueCode.too_big,
+        maximum: maxItems,
+        type: "array",
+        inclusive: true,
+        message: `Selecione no máximo ${maxItems} tags`,
+      });
+      return;
+    }
+    values.forEach((item, index) => {
+      if (!z.string().uuid().safeParse(item).success) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index],
+          message: "Tag inválida",
+        });
+      }
+    });
+  }));
+}
+
 export const campaignInsightsQuerySchema = z
   .object({
     dateFrom: calendarDateSchema,
@@ -52,6 +85,7 @@ export const campaignInsightsQuerySchema = z
     campaignId: optionalQueryText(255),
     adSetId: optionalQueryText(255),
     adId: optionalQueryText(255),
+    tagIds: optionalQueryUUIDList(),
     tagId: optionalQueryUUID(),
     dealStatus: z.preprocess(
       (value) => {

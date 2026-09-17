@@ -26,6 +26,16 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 	if err := validateCampaignInsightsValues(values); err != nil {
 		return nil, err
 	}
+	tagIDs, err := normalizeCampaignInsightTagIDs(values.Get("tagIds"))
+	if err != nil {
+		return nil, err
+	}
+	if tagIDs == "" {
+		tagIDs, err = normalizeCampaignInsightTagIDs(values.Get("tagId"))
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return repo.queryJSONObject(ctx, `
 		with params as (
@@ -38,7 +48,10 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 				nullif($7, '')::uuid as team_id,
 				nullif($8, '')::uuid as user_id,
 				lower(nullif($9, '')) as source,
-				nullif($10, '')::uuid as tag_id,
+				case
+					when nullif($10, '') is null then null::uuid[]
+					else string_to_array($10, ',')::uuid[]
+				end as tag_ids,
 				nullif($11, '') as deal_status,
 				nullif($12, '') as account_id,
 				nullif($13, '') as objective,
@@ -362,13 +375,13 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 			  )
 			  and (params.deal_status is null or lead.deal_status = params.deal_status)
 			  and (
-			    params.tag_id is null
+			    params.tag_ids is null
 			    or exists (
 			      select 1
 			      from public.lead_tags as lead_tag
 			      where lead_tag.organization_id = $1::uuid
 			        and lead_tag.lead_id = lead.id
-			        and lead_tag.tag_id = params.tag_id
+			        and lead_tag.tag_id = any(params.tag_ids)
 			    )
 			  )
 		),
@@ -1558,7 +1571,7 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 		values.Get("teamId"),
 		values.Get("userId"),
 		values.Get("source"),
-		values.Get("tagId"),
+		tagIDs,
 		values.Get("dealStatus"),
 		values.Get("accountId"),
 		values.Get("objective"),

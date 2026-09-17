@@ -91,6 +91,9 @@ test("configuracao Meta so consulta e edita filas com permissao de distribuicao"
     metaFormDialog,
     /\{canManageDistribution && \(\s*<DistributionQueueEditor/,
   );
+  assert.match(metaFormDialog, /placeholder="Buscar fila\.\.\."/);
+  assert.match(metaFormDialog, /<SearchableTagPicker/);
+  assert.match(metaFormDialog, /selectedTagIds=\{selectedTags\}/);
 });
 
 test("Meta usa somente o backend e separa visualizacao de administracao", () => {
@@ -405,8 +408,13 @@ test("editor de fila oferece busca e deixa regras e tags mais legiveis", () => {
   );
   assert.match(membersSection, />Participantes<\/span>/);
   assert.match(membersSection, /max-h-\[clamp\(220px,36dvh,360px\)\]/);
-  assert.match(tagsSection, /max-h-\[180px\][\s\S]*overflow-y-auto/);
-  assert.match(tagsSection, /h-8 max-w-\[220px\][\s\S]*text-\[12px\]/);
+  assert.match(tagsSection, /SearchableTagPicker/);
+  assert.match(tagsSection, /loading=\{tagsLoading\}/);
+  assert.match(tagsSection, /error=\{tagsError\}/);
+  assert.match(
+    tagsSection,
+    /maxSelected=\{MAX_DISTRIBUTION_QUEUE_AUTO_TAGS\}/,
+  );
   assert.match(
     rulesSection,
     /sm:grid-cols-\[minmax\(170px,210px\)_minmax\(0,1fr\)_32px\]/,
@@ -415,6 +423,22 @@ test("editor de fila oferece busca e deixa regras e tags mais legiveis", () => {
   assert.match(conditionValueEditor, /max-h-\[232px\]/);
   assert.match(conditionValueEditor, /min\(100%,240px\)/);
   assert.match(conditionValueEditor, /bg-\[var\(--app-surface-soft\)\]/);
+  assert.match(
+    conditionValueEditor,
+    /case "tag":[\s\S]*?<SearchableTagPicker[\s\S]*?selectedTagIds=\{condition\.values\}/,
+  );
+  assert.match(
+    conditionValueEditor,
+    /case "tag":[\s\S]*?allowCreate=\{false\}/,
+  );
+  assert.match(
+    conditionValueEditor,
+    /case "tag":[\s\S]*?const values = selected[\s\S]*?\[\.\.\.condition\.values, tagId\][\s\S]*?onUpdate\(condition\.id, \{ values \}\)/,
+  );
+  assert.match(
+    conditionValueEditor,
+    /case "tag":[\s\S]*?loading=\{tagsLoading\}[\s\S]*?error=\{tagsError\}[\s\S]*?maxSelected=\{100\}/,
+  );
 });
 
 test("editor de equipe prioriza KPIs, selecao de escala e historico auditado", () => {
@@ -717,6 +741,10 @@ test("ajustes visuais do fluxo WhatsApp preservam os dados e escondem codigos in
     resolve(process.cwd(), "components/ui/tag-selector.tsx"),
     "utf8",
   );
+  const searchableTagPickerSource = readFileSync(
+    resolve(process.cwd(), "components/shared/SearchableTagPicker.tsx"),
+    "utf8",
+  );
   const cardSource = readFileSync(
     resolve(process.cwd(), "components/features/leads/LeadCard.tsx"),
     "utf8",
@@ -747,14 +775,15 @@ test("ajustes visuais do fluxo WhatsApp preservam os dados e escondem codigos in
     historySource,
     /'round_robin_auto',[\s\S]*?'canonical_round_robin'/,
   );
+  assert.match(autoTagsSource, /SearchableTagPicker/);
+  assert.match(autoTagsSource, /allowCreate/);
   assert.match(
     autoTagsSource,
-    /import \{ useCreateTag, type Tag \} from ["']@\/hooks\/use-tags["']/,
+    /maxSelected=\{MAX_DISTRIBUTION_QUEUE_AUTO_TAGS\}/,
   );
-  assert.match(autoTagsSource, /const handleCreate = async \(\) => \{/);
-  assert.match(autoTagsSource, /hasPermission\(["']tag_manage["']\)/);
-  assert.match(autoTagsSource, /searchTextIncludes\(tag\.name, search\)/);
-  assert.match(autoTagsSource, /void handleCreate\(\)/);
+  assert.match(searchableTagPickerSource, /hasPermission\("tag_manage"\)/);
+  assert.match(searchableTagPickerSource, /searchTextIncludes\(tag\.name, search\)/);
+  assert.match(searchableTagPickerSource, /const handleCreate = async \(\) => \{/);
   assert.match(membersSource, /<Command filter=\{commandSearchFilter\}>/);
   assert.match(membersSource, /Buscar usuário por nome ou e-mail/);
   assert.doesNotMatch(tagSelectorSource, /allowCreate\?: boolean/);

@@ -285,6 +285,33 @@ test('atualizacao do detalhe respeita usuario, equipe e status da chave do board
   );
 });
 
+test('cache da pipeline preserva lead que tenha qualquer tag selecionada', () => {
+  const queryKeyWithTags = [
+    'stages-with-leads',
+    'org-1',
+    'pipeline-1',
+    undefined,
+    undefined,
+    undefined,
+    'tag-1,tag-2',
+  ] as const;
+
+  assert.equal(
+    pipelineLeadMatchesQueryKeyScope(queryKeyWithTags, {
+      id: 'lead-1',
+      tags: [{ id: 'tag-2' }],
+    }),
+    true,
+  );
+  assert.equal(
+    pipelineLeadMatchesQueryKeyScope(queryKeyWithTags, {
+      id: 'lead-2',
+      tags: [{ id: 'tag-3' }],
+    }),
+    false,
+  );
+});
+
 test('patch na mesma etapa ajusta o total de 100 para 250', () => {
   const board = createBoard();
   board[0].leads[0].valor_interesse = 100;

@@ -467,6 +467,7 @@ export const dashboardFiltersSchema = z.object({
   campaignId: dashboardOptionalTextFilterSchema(255),
   adSetId: dashboardOptionalTextFilterSchema(255),
   adId: dashboardOptionalTextFilterSchema(255),
+  tagIds: z.array(uuidSchema).max(50).transform((tagIds) => Array.from(new Set(tagIds))).optional(),
   tagId: dashboardOptionalUuidFilterSchema,
   dealStatus: dashboardDealStatusSchema,
   searchQuery: dashboardSearchSchema,

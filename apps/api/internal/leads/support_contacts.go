@@ -131,6 +131,7 @@ type ContactListFilter struct {
 	AssigneeID  string
 	Unassigned  bool
 	TagID       string
+	TagIDs      []string
 	Source      string
 	CampaignID  string
 	AdSetID     string
@@ -161,6 +162,13 @@ func ParseContactListFilter(values url.Values) (ContactListFilter, error) {
 	if err != nil {
 		return ContactListFilter{}, err
 	}
+	tagID, tagIDs, err := normalizeLeadTagFilterIDs(
+		cleanContactFilterValue(values.Get("tagId")),
+		splitLeadTagFilterValues(values["tagIds"]),
+	)
+	if err != nil {
+		return ContactListFilter{}, err
+	}
 
 	filter := ContactListFilter{
 		Search:      trimMax(cleanContactFilterValue(values.Get("search")), 100),
@@ -169,7 +177,8 @@ func ParseContactListFilter(values url.Values) (ContactListFilter, error) {
 		StageID:     cleanContactFilterValue(values.Get("stageId")),
 		AssigneeID:  cleanContactFilterValue(values.Get("assigneeId")),
 		Unassigned:  strings.EqualFold(values.Get("unassigned"), "true"),
-		TagID:       cleanContactFilterValue(values.Get("tagId")),
+		TagID:       tagID,
+		TagIDs:      tagIDs,
 		Source:      trimMax(cleanContactFilterValue(values.Get("source")), 80),
 		CampaignID:  trimMax(cleanContactFilterValue(values.Get("campaignId")), 120),
 		AdSetID:     trimMax(cleanContactFilterValue(values.Get("adSetId")), 120),
@@ -192,7 +201,6 @@ func ParseContactListFilter(values url.Values) (ContactListFilter, error) {
 		{name: "pipelineId", value: filter.PipelineID},
 		{name: "stageId", value: filter.StageID},
 		{name: "assigneeId", value: filter.AssigneeID},
-		{name: "tagId", value: filter.TagID},
 	} {
 		if item.value != "" && !isUUID(item.value) {
 			return ContactListFilter{}, fmt.Errorf("%w: %s is invalid", ErrInvalidInput, item.name)
@@ -732,16 +740,17 @@ func buildContactWhere(tenantContext tenant.Context, filter ContactListFilter) (
 		}
 		add("l.assigned_user_id = $%d::uuid", assigneeID)
 	}
-	if strings.TrimSpace(filter.TagID) != "" {
-		tagID, ok := normalizeUUID(filter.TagID)
-		if !ok {
-			return nil, nil, fmt.Errorf("%w: tagId is invalid", ErrInvalidInput)
-		}
+	_, tagIDs, err := normalizeLeadTagFilterIDs(filter.TagID, filter.TagIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(tagIDs) > 0 {
 		add(`exists (
 			select 1 from public.lead_tags lt
-			where lt.lead_id = l.id
-			  and lt.tag_id = $%d::uuid
-		)`, tagID)
+			where lt.organization_id = $1::uuid
+			  and lt.lead_id = l.id
+			  and lt.tag_id = any($%d::uuid[])
+		)`, tagIDs)
 	}
 	if filter.Source != "" {
 		add("l.source = $%d", filter.Source)

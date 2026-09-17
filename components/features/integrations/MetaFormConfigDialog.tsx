@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -19,16 +19,31 @@ import {
 } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Globe, FileText, Home, Plus, RefreshCw, Route, Tag } from "lucide-react";
+import { Check, ChevronsUpDown, Globe, FileText, Home, Plus, RefreshCw, Route, Tag } from "lucide-react";
 import { useProperties } from "@/hooks/use-properties";
 import { MetaForm, MetaFormConfig, useSaveFormConfig } from "@/hooks/use-meta-forms";
 import { useRoundRobins } from "@/hooks/use-round-robins";
-import { InlineTagSelector } from "@/components/ui/tag-selector";
+import { SearchableTagPicker } from "@/components/shared/SearchableTagPicker";
 import { PropertyPickerDialog } from "@/components/features/properties/PropertyPickerDialog";
 import { DistributionQueueEditor } from "@/components/features/round-robin/DistributionQueueEditor";
 import { useCreateQueueAdvanced } from "@/hooks/use-create-queue-advanced";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
+import { useTags } from "@/hooks/use-tags";
+import { searchTextIncludes } from "@/lib/search-text";
+import { cn } from "@/lib/utils";
+import {
+  Command,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 interface MetaFormConfigDialogProps {
   open: boolean;
@@ -86,6 +101,8 @@ export function MetaFormConfigDialog({
   const [fieldMapping, setFieldMapping] = useState<Record<string, string>>({});
   const [customFields, setCustomFields] = useState<string[]>([]);
   const [queueEditorOpen, setQueueEditorOpen] = useState(false);
+  const [queuePickerOpen, setQueuePickerOpen] = useState(false);
+  const [queueSearch, setQueueSearch] = useState("");
 
   const { hasModule } = useOrganizationModules();
   const { hasPermission } = useUserPermissions();
@@ -97,14 +114,35 @@ export function MetaFormConfigDialog({
   const { data: properties } = useProperties(undefined, {}, {
     enabled: open && canViewProperties,
   });
-  const { data: allRoundRobins = [] } = useRoundRobins({
+  const {
+    data: allRoundRobins = [],
+    isLoading: roundRobinsLoading,
+    isFetching: roundRobinsFetching,
+    isError: roundRobinsError,
+  } = useRoundRobins({
     enabled: open && canManageDistribution,
   });
+  const tagsQuery = useTags({ enabled: open });
   const saveConfig = useSaveFormConfig();
   const createQueue = useCreateQueueAdvanced();
-  const roundRobins = open
-    ? allRoundRobins.filter((queue) => queue.is_active).sort((a, b) => a.name.localeCompare(b.name))
-    : [];
+  const roundRobins = useMemo(
+    () => open
+      ? allRoundRobins
+          .filter((queue) => queue.is_active)
+          .sort((a, b) => a.name.localeCompare(b.name))
+      : [],
+    [allRoundRobins, open],
+  );
+  const selectedRoundRobin = useMemo(
+    () => roundRobins.find((queue) => queue.id === roundRobinId),
+    [roundRobinId, roundRobins],
+  );
+  const matchingRoundRobins = useMemo(
+    () => queueSearch.trim()
+      ? roundRobins.filter((queue) => searchTextIncludes(queue.name, queueSearch))
+      : roundRobins,
+    [queueSearch, roundRobins],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -194,14 +232,20 @@ export function MetaFormConfigDialog({
         isActive: true,
       });
 
-      onOpenChange(false);
+      handleOpenChange(false);
     } catch {
       // The mutation owns the error feedback; keep the dialog open for retry.
     }
   };
 
   const handleOpenChange = (nextOpen: boolean) => {
-    if (!saveConfig.isPending) onOpenChange(nextOpen);
+    if (!saveConfig.isPending) {
+      if (!nextOpen) {
+        setQueuePickerOpen(false);
+        setQueueSearch("");
+      }
+      onOpenChange(nextOpen);
+    }
   };
 
   return (
@@ -301,17 +345,83 @@ export function MetaFormConfigDialog({
                         Nova fila
                       </Button>
                     </div>
-                    <Select value={roundRobinId || "_none"} onValueChange={(value) => setRoundRobinId(value === "_none" ? "" : value)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Selecione uma fila" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="_none">Sem fila</SelectItem>
-                        {roundRobins.map((queue) => (
-                          <SelectItem key={queue.id} value={queue.id}>{queue.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Popover
+                      open={queuePickerOpen}
+                      onOpenChange={(nextOpen) => {
+                        setQueuePickerOpen(nextOpen);
+                        if (!nextOpen) setQueueSearch("");
+                      }}
+                    >
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={queuePickerOpen}
+                          aria-busy={roundRobinsLoading || roundRobinsFetching}
+                          disabled={roundRobinsLoading}
+                          className="h-10 w-full justify-between rounded-[6px] px-3 font-normal"
+                        >
+                          <span className="truncate">
+                            {roundRobinsLoading
+                              ? "Carregando filas..."
+                              : selectedRoundRobin?.name || (roundRobinId ? "Fila indisponível" : "Sem fila")}
+                          </span>
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="start"
+                        className="z-[160] w-[var(--radix-popover-trigger-width)] min-w-64 p-1"
+                      >
+                        <Command shouldFilter={false}>
+                          <CommandInput
+                            placeholder="Buscar fila..."
+                            value={queueSearch}
+                            onValueChange={setQueueSearch}
+                          />
+                          <CommandList className="max-h-64">
+                            {roundRobinsError && (
+                              <p className="px-2 py-3 text-center text-sm text-destructive">
+                                Não foi possível carregar as filas.
+                              </p>
+                            )}
+                            {!roundRobinsError && matchingRoundRobins.length === 0 && (
+                              <p className="px-2 py-3 text-center text-sm text-muted-foreground">
+                                Nenhuma fila encontrada.
+                              </p>
+                            )}
+                            <CommandGroup>
+                              <CommandItem
+                                value="sem fila"
+                                onSelect={() => {
+                                  setRoundRobinId("");
+                                  setQueueSearch("");
+                                  setQueuePickerOpen(false);
+                                }}
+                              >
+                                <Check className={cn("mr-2 h-4 w-4", roundRobinId ? "opacity-0" : "opacity-100")} />
+                                Sem fila
+                              </CommandItem>
+                              {matchingRoundRobins.map((queue) => (
+                                <CommandItem
+                                  key={queue.id}
+                                  value={`${queue.name} ${queue.id}`}
+                                  onSelect={() => {
+                                    setRoundRobinId(queue.id);
+                                    setQueueSearch("");
+                                    setQueuePickerOpen(false);
+                                  }}
+                                >
+                                  <Check className={cn("mr-2 h-4 w-4", roundRobinId === queue.id ? "opacity-100" : "opacity-0")} />
+                                  <span className="truncate">{queue.name}</span>
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                   </div>
                 ) : (
                   <div className="rounded-[8px] border border-[var(--app-border)] bg-[var(--app-surface-soft)] px-3 py-2.5">
@@ -351,9 +461,14 @@ export function MetaFormConfigDialog({
                     <Tag className="h-3.5 w-3.5 text-primary" />
                     Tags
                   </Label>
-                  <InlineTagSelector
+                  <SearchableTagPicker
+                    tags={tagsQuery.data || []}
                     selectedTagIds={selectedTags}
                     onToggleTag={toggleTag}
+                    loading={tagsQuery.isLoading || tagsQuery.isFetching}
+                    error={tagsQuery.error}
+                    placeholder="Selecionar tags"
+                    maxSelected={100}
                   />
                 </div>
               </div>
@@ -362,7 +477,7 @@ export function MetaFormConfigDialog({
         </ScrollArea>
 
         <DialogFooter className="flex-row gap-2 border-t border-[var(--app-border)] p-4 sm:justify-end">
-          <Button type="button" variant="outline" className="rounded-[6px]" onClick={() => onOpenChange(false)} disabled={saveConfig.isPending}>
+          <Button type="button" variant="outline" className="rounded-[6px]" onClick={() => handleOpenChange(false)} disabled={saveConfig.isPending}>
             Cancelar
           </Button>
           <Button type="button" className="min-w-[140px] rounded-[6px] bg-primary/50 text-primary-foreground shadow-none hover:bg-primary" onClick={handleSave} disabled={saveConfig.isPending}>

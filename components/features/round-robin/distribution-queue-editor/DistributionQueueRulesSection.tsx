@@ -53,6 +53,8 @@ interface DistributionQueueRulesSectionProps {
   metaFormsError: boolean;
   queueId?: string;
   tags: Tag[];
+  tagsLoading: boolean;
+  tagsError: boolean;
   properties: PropertyPickerProperty[];
   hasPropertiesModule: boolean;
   onToggle: () => void;
@@ -82,6 +84,8 @@ export function DistributionQueueRulesSection({
   metaFormsError,
   queueId,
   tags,
+  tagsLoading,
+  tagsError,
   properties,
   hasPropertiesModule,
   onToggle,
@@ -170,6 +174,8 @@ export function DistributionQueueRulesSection({
                 metaFormsError={metaFormsError}
                 queueId={queueId}
                 tags={tags}
+                tagsLoading={tagsLoading}
+                tagsError={tagsError}
                 properties={properties}
                 hasPropertiesModule={hasPropertiesModule}
                 onUpdate={onUpdateCondition}

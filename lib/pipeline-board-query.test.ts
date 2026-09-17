@@ -35,6 +35,16 @@ test('serializa modo de origem e preserva escopo vazio explicito', () => {
   assert.equal(query.filterUserIds, '__none__');
 });
 
+test('serializa tags selecionadas de forma estavel e omite selecao vazia', () => {
+  const query = buildPipelineBoardQuery({
+    filters: { filterTags: ['tag-2', 'tag-1', 'tag-2'] },
+  });
+  const emptyQuery = buildPipelineBoardQuery({ filters: { filterTags: [] } });
+
+  assert.equal(query.filterTags, 'tag-1,tag-2');
+  assert.equal(emptyQuery.filterTags, undefined);
+});
+
 test('estado inicial omite completamente o recorte temporal e nao transforma escopo ausente', () => {
   const query = buildPipelineBoardQuery({ filters: { dateMode: 'operational' } });
 

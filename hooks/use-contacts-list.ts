@@ -12,6 +12,8 @@ export interface ContactListFilters {
   stageId?: string;
   assigneeId?: string;
   unassigned?: boolean;
+  tagIds?: string[];
+  /** Legacy single-tag query kept for compatibility with older callers. */
   tagId?: string;
   source?: string;
   campaignId?: string;

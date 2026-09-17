@@ -32,6 +32,23 @@ func TestEvolutionWebhookProcessingLaneSeparatesCurrentTrafficFromReplay(t *test
 			wantOccurred: true,
 		},
 		{
+			name: "current outbound message is live",
+			payload: []byte(fmt.Sprintf(`{
+				"event":"messages.upsert",
+				"data":{
+					"Info":{
+						"ID":"outbound-current",
+						"Chat":"5511999991111@s.whatsapp.net",
+						"IsFromMe":true,
+						"Timestamp":%d
+					},
+					"Message":{"conversation":"mensagem enviada agora"}
+				}
+			}`, receivedAt.Add(-5*time.Second).Unix())),
+			wantLane:     evolutionWebhookLaneLive,
+			wantOccurred: true,
+		},
+		{
 			name:         "old provider replay is backlog",
 			payload:      payloadWithTimestamp("messages.upsert", "mensagem do dia 5", receivedAt.Add(-4*24*time.Hour)),
 			wantLane:     evolutionWebhookLaneBacklog,
@@ -49,7 +66,22 @@ func TestEvolutionWebhookProcessingLaneSeparatesCurrentTrafficFromReplay(t *test
 			wantLane: evolutionWebhookLaneBacklog,
 		},
 		{
-			name: "current receipt stays behind lead text",
+			name: "current direct receipt is live",
+			payload: []byte(fmt.Sprintf(`{
+				"event":"Receipt",
+				"state":"Delivered",
+				"data":{
+					"Chat":"123456789012345@lid",
+					"IsGroup":false,
+					"MessageIDs":["outbound-1"],
+					"Timestamp":%d
+				}
+			}`, receivedAt.Add(-5*time.Second).Unix())),
+			wantLane:     evolutionWebhookLaneLive,
+			wantOccurred: true,
+		},
+		{
+			name: "current receipt without direct chat stays in backlog",
 			payload: []byte(fmt.Sprintf(`{
 				"event":"messages.update",
 				"data":{"key":{"id":"outbound-1"},"status":"delivered","timestamp":%d}
@@ -58,10 +90,31 @@ func TestEvolutionWebhookProcessingLaneSeparatesCurrentTrafficFromReplay(t *test
 			wantOccurred: true,
 		},
 		{
+			name: "current broadcast receipt stays in backlog",
+			payload: []byte(fmt.Sprintf(`{
+				"event":"Receipt",
+				"state":"Read",
+				"data":{
+					"Chat":"status@broadcast",
+					"IsGroup":true,
+					"MessageIDs":["status-1"],
+					"Timestamp":%d
+				}
+			}`, receivedAt.Add(-5*time.Second).Unix())),
+			wantLane:     evolutionWebhookLaneBacklog,
+			wantOccurred: true,
+		},
+		{
 			name: "old receipt replay is backlog",
 			payload: []byte(fmt.Sprintf(`{
-				"event":"messages.update",
-				"data":{"key":{"id":"outbound-old"},"status":"read","timestamp":%d}
+				"event":"Receipt",
+				"state":"Read",
+				"data":{
+					"Chat":"123456789012345@lid",
+					"IsGroup":false,
+					"MessageIDs":["outbound-old"],
+					"Timestamp":%d
+				}
 			}`, receivedAt.Add(-24*time.Hour).Unix())),
 			wantLane:     evolutionWebhookLaneBacklog,
 			wantOccurred: true,

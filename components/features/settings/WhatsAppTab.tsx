@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import NextImage from "next/image";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -443,9 +443,6 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
               <Smartphone className="h-4 w-4 sm:h-5 sm:w-5 shrink-0" />
               Conexões WhatsApp
             </CardTitle>
-            <CardDescription className="text-xs sm:text-sm mt-0.5">
-              Gerencie suas conexões via Evolution Go
-            </CardDescription>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {sessionLimitLabel && (

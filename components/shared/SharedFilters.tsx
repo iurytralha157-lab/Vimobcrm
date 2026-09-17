@@ -13,7 +13,6 @@ import {
   X,
   SlidersHorizontal,
   Search,
-  Tag as TagIcon,
   CircleDot,
   Check,
   ChevronsUpDown,
@@ -55,6 +54,7 @@ import { DateFilterPopover } from "@/components/ui/date-filter-popover";
 import { BRAND_COLORS } from "@/config/brand-colors";
 import { normalizeSearchText, searchTextIncludes } from "@/lib/search-text";
 import { getUserFilterLabel } from "@/lib/user-display";
+import { SearchableTagPicker } from "@/components/shared/SearchableTagPicker";
 
 interface SharedFiltersProps {
   datePreset: DatePreset | null;
@@ -95,12 +95,13 @@ interface SharedFiltersProps {
   isLoadingAdSets?: boolean;
   isLoadingAds?: boolean;
   isLoadingTags?: boolean;
+  hasTagsError?: boolean;
   hasDynamicOptionsError?: boolean;
   isRetryingDynamicOptions?: boolean;
   onRetryDynamicOptions?: () => void;
 
-  tagId: string | null;
-  onTagChange: (tagId: string | null) => void;
+  tagIds: string[];
+  onTagsChange: (tagIds: string[]) => void;
   tags?: { id: string; name: string; color: string }[];
 
   dealStatus: string | null;
@@ -149,8 +150,8 @@ export function SharedFilters({
   onAdSetChange,
   adId,
   onAdChange,
-  tagId,
-  onTagChange,
+  tagIds,
+  onTagsChange,
   dealStatus,
   onDealStatusChange,
   searchQuery,
@@ -167,6 +168,7 @@ export function SharedFilters({
   isLoadingAdSets = false,
   isLoadingAds = false,
   isLoadingTags = false,
+  hasTagsError = false,
   hasDynamicOptionsError = false,
   isRetryingDynamicOptions = false,
   onRetryDynamicOptions,
@@ -200,6 +202,8 @@ export function SharedFilters({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [userFilterOpen, setUserFilterOpen] = useState(false);
   const [userSearch, setUserSearch] = useState("");
+  const [campaignFilterOpen, setCampaignFilterOpen] = useState(false);
+  const [campaignSearch, setCampaignSearch] = useState("");
 
   // ✅ FIX: Usamos apenas refs para o input de busca — sem useState controlado
   // Isso evita re-renders a cada keystroke que causavam o "piscar" e perda de foco
@@ -289,6 +293,8 @@ export function SharedFilters({
       if (!open) {
         commitSearch();
         setUserFilterOpen(false);
+        setCampaignFilterOpen(false);
+        setCampaignSearch("");
       }
       setFiltersOpen(open);
       onFiltersOpenChange?.(open);
@@ -385,6 +391,18 @@ export function SharedFilters({
     matchingUsers.length - visibleUserOptions.length,
   );
 
+  const selectedCampaign = useMemo(
+    () => campaigns.find((campaign) => campaign.id === campaignId),
+    [campaignId, campaigns],
+  );
+  const matchingCampaigns = useMemo(() => {
+    const normalizedSearch = normalizeSearchText(campaignSearch);
+    if (!normalizedSearch) return campaigns;
+    return campaigns.filter((campaign) =>
+      searchTextIncludes(campaign.name, normalizedSearch),
+    );
+  }, [campaignSearch, campaigns]);
+
   const hasDefaultExtraFilters =
     teamId !== null ||
     (userId !== null && userId !== "all") ||
@@ -394,7 +412,7 @@ export function SharedFilters({
     campaignId !== null ||
     adSetId !== null ||
     adId !== null ||
-    tagId !== null ||
+    tagIds.length > 0 ||
     dealStatus !== null ||
     searchQuery !== "";
   const hasExtraFilters = advancedContentOnly
@@ -912,41 +930,36 @@ export function SharedFilters({
                     </Select>
 
                     {/* Tag Filter */}
-                    <Select
-                      value={tagId || "all"}
-                      disabled={isLoadingTags}
-                      onOpenChange={markInternalSelectInteraction}
-                      onValueChange={(value) =>
-                        onTagChange(value === "all" ? null : value)
-                      }
-                    >
-                      <SelectTrigger
-                        disabled={isLoadingTags}
-                        aria-busy={isLoadingTags}
-                        onPointerDown={markInternalSelectInteraction}
-                        className={cn(
+                    <div onPointerDownCapture={markInternalSelectInteraction}>
+                      <SearchableTagPicker
+                        tags={tags}
+                        selectedTagIds={tagIds}
+                        onToggleTag={(nextTagId) => {
+                          const normalizedNextTagId = nextTagId.trim().toLowerCase();
+                          const isSelected = tagIds.some(
+                            (selectedTagId) =>
+                              selectedTagId.trim().toLowerCase() === normalizedNextTagId,
+                          );
+                          onTagsChange(
+                            isSelected
+                              ? tagIds.filter(
+                                  (selectedTagId) =>
+                                    selectedTagId.trim().toLowerCase() !== normalizedNextTagId,
+                                )
+                              : [...tagIds, nextTagId],
+                          );
+                        }}
+                        loading={isLoadingTags}
+                        error={hasTagsError}
+                        placeholder="Todas tags"
+                        triggerClassName={cn(
                           filterControlClass,
-                          tagId && "text-primary",
+                          tagIds.length > 0 && "text-primary",
                         )}
-                      >
-                        <TagIcon className="h-3.5 w-3.5 mr-1.5 flex-shrink-0" />
-                        <SelectValue placeholder="Tag" />
-                      </SelectTrigger>
-                      <SelectContent className={filterSelectContentClass}>
-                        <SelectItem value="all">Todas tags</SelectItem>
-                        {tags.map((tag) => (
-                          <SelectItem key={tag.id} value={tag.id}>
-                            <div className="flex items-center gap-2">
-                              <div
-                                className="h-2 w-2 rounded-full"
-                                style={{ backgroundColor: tag.color }}
-                              />
-                              {tag.name}
-                            </div>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                        showSelectedBadges={false}
+                        maxSelected={50}
+                      />
+                    </div>
 
                     {/* Deal Status Filter */}
                     <Select
@@ -989,53 +1002,104 @@ export function SharedFilters({
                       <div className="space-y-2">
                         {/* Campaign */}
                         <div className="space-y-1">
-                          <Select
-                            value={campaignId || "all"}
-                            disabled={isLoadingCampaigns}
-                            onOpenChange={markInternalSelectInteraction}
-                            onValueChange={(value) =>
-                              onCampaignChange(value === "all" ? null : value)
-                            }
+                          <Popover
+                            open={campaignFilterOpen}
+                            onOpenChange={(open) => {
+                              setCampaignFilterOpen(open);
+                              if (!open) setCampaignSearch("");
+                            }}
+                            modal={false}
                           >
-                            <SelectTrigger
-                              disabled={isLoadingCampaigns}
-                              aria-busy={isLoadingCampaigns}
-                              onPointerDown={markInternalSelectInteraction}
-                              className={filterControlClass}
-                            >
-                              <SelectValue
-                                placeholder={
-                                  isLoadingCampaigns
-                                    ? "Carregando campanhas..."
-                                    : "Todas campanhas"
-                                }
-                              />
-                            </SelectTrigger>
-                            <SelectContent className={filterSelectContentClass}>
-                              <SelectItem value="all">
-                                Todas campanhas
-                              </SelectItem>
-                              {isLoadingCampaigns && (
-                                <div className="p-2 text-center text-[12px] font-light text-[var(--app-text-tertiary)]">
-                                  Carregando campanhas...
-                                </div>
-                              )}
-                              {campaigns.map((campaign) => (
-                                <SelectItem
-                                  key={campaign.id}
-                                  value={campaign.id}
-                                >
-                                  {campaign.name}
-                                </SelectItem>
-                              ))}
-                              {!isLoadingCampaigns &&
-                                campaigns.length === 0 && (
-                                  <div className="p-2 text-center text-[12px] font-light text-[var(--app-text-tertiary)]">
-                                    Nenhuma campanha no período
-                                  </div>
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant="outline"
+                                role="combobox"
+                                aria-expanded={campaignFilterOpen}
+                                aria-busy={isLoadingCampaigns}
+                                disabled={isLoadingCampaigns}
+                                onPointerDown={markInternalSelectInteraction}
+                                className={cn(
+                                  filterControlClass,
+                                  "justify-between outline-none ring-0 focus-visible:ring-1 focus-visible:ring-primary/30 focus-visible:ring-offset-0 data-[state=open]:bg-[var(--app-surface-hover)]",
+                                  campaignId && "text-primary",
                                 )}
-                            </SelectContent>
-                          </Select>
+                              >
+                                <span className="truncate">
+                                  {isLoadingCampaigns
+                                    ? "Carregando campanhas..."
+                                    : selectedCampaign?.name || "Todas campanhas"}
+                                </span>
+                                <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent
+                              align="start"
+                              className="app-header-popover z-[140] w-[260px] rounded-[8px] border-0 p-1"
+                              onOpenAutoFocus={(event) => event.preventDefault()}
+                              onPointerDownCapture={markInternalSelectInteraction}
+                              onDoubleClick={(event) => event.stopPropagation()}
+                            >
+                              <Command
+                                shouldFilter={false}
+                                className="rounded-[6px] bg-transparent text-[12px] font-light [&_[cmdk-input-wrapper]]:border-b-0"
+                              >
+                                <CommandInput
+                                  placeholder="Buscar campanha..."
+                                  value={campaignSearch}
+                                  onValueChange={setCampaignSearch}
+                                  className="h-9 text-[12px] font-light"
+                                />
+                                <CommandList className="max-h-[260px]">
+                                  {matchingCampaigns.length === 0 && (
+                                    <p className="px-2 py-3 text-center text-[12px] font-light text-[var(--app-text-tertiary)]">
+                                      Nenhuma campanha encontrada.
+                                    </p>
+                                  )}
+                                  <CommandGroup>
+                                    <CommandItem
+                                      value="all Todas campanhas"
+                                      className="rounded-[6px] border-0 text-[12px] font-light outline-none focus-visible:ring-0 data-[selected=true]:bg-[var(--app-surface-hover)]"
+                                      onSelect={() => {
+                                        onCampaignChange(null);
+                                        setCampaignSearch("");
+                                        setCampaignFilterOpen(false);
+                                      }}
+                                    >
+                                      <Check
+                                        className={cn(
+                                          "mr-2 h-3.5 w-3.5",
+                                          !campaignId ? "opacity-100" : "opacity-0",
+                                        )}
+                                      />
+                                      Todas campanhas
+                                    </CommandItem>
+                                    {matchingCampaigns.map((campaign) => (
+                                      <CommandItem
+                                        key={campaign.id}
+                                        value={`${campaign.name} ${campaign.id}`}
+                                        className="rounded-[6px] border-0 text-[12px] font-light outline-none focus-visible:ring-0 data-[selected=true]:bg-[var(--app-surface-hover)]"
+                                        onSelect={() => {
+                                          onCampaignChange(campaign.id);
+                                          setCampaignSearch("");
+                                          setCampaignFilterOpen(false);
+                                        }}
+                                      >
+                                        <Check
+                                          className={cn(
+                                            "mr-2 h-3.5 w-3.5",
+                                            campaignId === campaign.id
+                                              ? "opacity-100"
+                                              : "opacity-0",
+                                          )}
+                                        />
+                                        <span className="truncate">{campaign.name}</span>
+                                      </CommandItem>
+                                    ))}
+                                  </CommandGroup>
+                                </CommandList>
+                              </Command>
+                            </PopoverContent>
+                          </Popover>
                         </div>
 
                         {/* Ad Set — só aparece se campaign selecionada */}

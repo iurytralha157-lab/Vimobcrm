@@ -70,6 +70,28 @@ test("consulta de Marketing usa datas civis e remove sentinelas antigas", () => 
   );
 });
 
+test("consulta de Marketing aceita múltiplas tags e rejeita UUID inválido", () => {
+  const parsed = campaignInsightsQuerySchema.parse({
+    dateFrom: "2026-07-01",
+    dateTo: "2026-07-31",
+    tagIds:
+      "33333333-3333-4333-8333-333333333333,44444444-4444-4444-8444-444444444444,33333333-3333-4333-8333-333333333333",
+  });
+
+  assert.equal(
+    parsed.tagIds,
+    "33333333-3333-4333-8333-333333333333,44444444-4444-4444-8444-444444444444",
+  );
+  assert.equal(
+    campaignInsightsQuerySchema.safeParse({
+      dateFrom: "2026-07-01",
+      dateTo: "2026-07-31",
+      tagIds: "33333333-3333-4333-8333-333333333333,inválida",
+    }).success,
+    false,
+  );
+});
+
 test("consulta de Marketing rejeita período invertido ou maior que 366 dias", () => {
   assert.equal(
     campaignInsightsQuerySchema.safeParse({

@@ -36,6 +36,8 @@ export type DashboardAPIFilters = {
   campaignId?: string | null
   adSetId?: string | null
   adId?: string | null
+  tagIds?: string[] | null
+  /** Legacy single-tag filter kept for compatibility with older callers. */
   tagId?: string | null
   dealStatus?: string | null
   searchQuery?: string | null
@@ -227,6 +229,7 @@ function normalizeDashboardFilters(filters?: DashboardAPIFilters): DashboardAPIF
     campaignId: normalizeDashboardFilterValue(filters?.campaignId),
     adSetId: normalizeDashboardFilterValue(filters?.adSetId),
     adId: normalizeDashboardFilterValue(filters?.adId),
+    tagIds: normalizeDashboardTagIds(filters?.tagIds),
     tagId: normalizeDashboardFilterValue(filters?.tagId),
     dealStatus: normalizeDashboardFilterValue(filters?.dealStatus),
     searchQuery: normalizeDashboardSearch(filters?.searchQuery),
@@ -245,7 +248,7 @@ export function getDashboardFiltersQueryKey(filters?: DashboardAPIFilters) {
     campaignId: normalized.campaignId ?? null,
     adSetId: normalized.adSetId ?? null,
     adId: normalized.adId ?? null,
-    tagId: normalized.tagId ?? null,
+    tagIds: normalizeDashboardTagQueryKey(normalized.tagIds, normalized.tagId),
     dealStatus: normalized.dealStatus ?? null,
     searchQuery: normalized.searchQuery ?? null,
   }
@@ -265,6 +268,25 @@ function normalizeDashboardSearch(value?: string | null) {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
   return trimmed || null
+}
+
+function normalizeDashboardTagIds(value?: string[] | null) {
+  if (!Array.isArray(value)) return undefined
+  const normalized = [...new Set(value.map((tagId) => tagId.trim()).filter(Boolean))].sort()
+  return normalized.length > 0 ? normalized : undefined
+}
+
+function normalizeDashboardTagQueryKey(
+  tagIds?: string[] | null,
+  legacyTagId?: string | null,
+) {
+  const normalizedLegacyTagId = normalizeDashboardFilterValue(legacyTagId)
+  const normalized = [
+    ...(normalizeDashboardTagIds(tagIds) ?? []),
+    ...(normalizedLegacyTagId ? [normalizedLegacyTagId] : []),
+  ]
+  const unique = [...new Set(normalized)].sort()
+  return unique.length > 0 ? unique.join(',') : null
 }
 
 function dashboardDateQueryKey(value?: Date) {
@@ -289,6 +311,7 @@ function buildDashboardQuery(filters?: DashboardAPIFilters) {
     campaignId: filters?.campaignId,
     adSetId: filters?.adSetId,
     adId: filters?.adId,
+    tagIds: filters?.tagIds?.join(','),
     tagId: filters?.tagId,
     dealStatus: filters?.dealStatus,
     searchQuery: filters?.searchQuery,

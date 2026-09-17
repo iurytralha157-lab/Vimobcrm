@@ -78,8 +78,8 @@ export default function Contacts() {
     setTeamId,
     userId: selectedAssignee,
     setUserId: setSelectedAssignee,
-    tagId: selectedTag,
-    setTagId: setSelectedTag,
+    tagIds: selectedTags,
+    setTagIds: setSelectedTags,
     dealStatus: selectedDealStatus,
     setDealStatus: setSelectedDealStatus,
     source: selectedSource,
@@ -103,6 +103,8 @@ export default function Contacts() {
     isLoadingCampaigns,
     isLoadingAdSets,
     isLoadingAds,
+    isLoadingTags,
+    hasTagsError,
     isFiltersHydrated,
   } = useSharedFilters({
     loadDynamicOptions: shouldLoadFilterOptions,
@@ -180,7 +182,7 @@ export default function Contacts() {
     pipelineId: selectedPipeline,
     stageId: selectedStage,
     assigneeId: selectedAssignee,
-    tagId: selectedTag,
+    tagIds: selectedTags,
     source: selectedSource,
     campaignId,
     adSetId,
@@ -410,8 +412,8 @@ export default function Contacts() {
     onAdSetChange: handleFilterChange(setAdSetId),
     adId: sharedFilters.adId,
     onAdChange: handleFilterChange(setAdId),
-    tagId: selectedTag,
-    onTagChange: handleFilterChange(setSelectedTag),
+    tagIds: selectedTags,
+    onTagsChange: handleFilterChange(setSelectedTags),
     dealStatus: effectiveDealStatus,
     onDealStatusChange: (value) => {
       setLostLeadsView(false);
@@ -433,6 +435,8 @@ export default function Contacts() {
     isLoadingCampaigns,
     isLoadingAdSets,
     isLoadingAds,
+    isLoadingTags,
+    hasTagsError,
     loadDynamicOptions: shouldLoadFilterOptions,
     includeUnassignedUserOption: true,
     onFiltersOpenChange: (open) => {

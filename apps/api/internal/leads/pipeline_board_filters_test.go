@@ -51,6 +51,51 @@ func TestBuildPipelineLeadWhereMetaFiltersMatchIDOrName(t *testing.T) {
 	}
 }
 
+func TestPipelineBoardTagFiltersUseAnySelectedTag(t *testing.T) {
+	firstTagID := "30000000-0000-4000-8000-000000000001"
+	secondTagID := "30000000-0000-4000-8000-000000000002"
+	filter, err := ParsePipelineBoardFilter(map[string][]string{
+		"filterTags": {secondTagID + "," + firstTagID, firstTagID},
+	})
+	if err != nil {
+		t.Fatalf("ParsePipelineBoardFilter() error = %v", err)
+	}
+	if len(filter.FilterTags) != 2 || filter.FilterTags[0] != secondTagID || filter.FilterTags[1] != firstTagID {
+		t.Fatalf("FilterTags = %#v", filter.FilterTags)
+	}
+
+	where, args, err := buildPipelineLeadWhere(tenant.Context{
+		UserID:         "10000000-0000-0000-0000-000000000001",
+		OrganizationID: "20000000-0000-0000-0000-000000000001",
+		MemberRole:     "admin",
+	}, filter)
+	if err != nil {
+		t.Fatalf("buildPipelineLeadWhere() error = %v", err)
+	}
+	joined := strings.Join(where, "\n")
+	if !strings.Contains(joined, "lt.tag_id = any($") || !strings.Contains(joined, "::uuid[])") {
+		t.Fatalf("pipeline tag filter must use OR semantics via ANY(uuid[]):\n%s", joined)
+	}
+	tagIDs, ok := args[len(args)-1].([]string)
+	if !ok || len(tagIDs) != 2 {
+		t.Fatalf("pipeline tag args = %#v", args[len(args)-1])
+	}
+}
+
+func TestPipelineBoardTagFiltersKeepLegacyTagIDAndRejectInvalidLists(t *testing.T) {
+	legacyTagID := "30000000-0000-4000-8000-000000000001"
+	filter, err := ParsePipelineBoardFilter(mapValues("filterTag", legacyTagID))
+	if err != nil {
+		t.Fatalf("ParsePipelineBoardFilter() legacy error = %v", err)
+	}
+	if filter.FilterTag != legacyTagID || len(filter.FilterTags) != 1 || filter.FilterTags[0] != legacyTagID {
+		t.Fatalf("legacy filter was not migrated: %#v", filter)
+	}
+	if _, err := ParsePipelineBoardFilter(mapValues("filterTags", "not-a-uuid")); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("invalid filterTags error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestBuildDashboardLeadWhereMetaFiltersMatchIDOrName(t *testing.T) {
 	tenantContext := tenant.Context{
 		UserID:         "10000000-0000-0000-0000-000000000001",

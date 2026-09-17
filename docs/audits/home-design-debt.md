@@ -6,14 +6,14 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 
 ## Resumo
 
-- Arquivos analisados: 535
+- Arquivos analisados: 536
 - Arquivos com achados: 41
-- Achados: 103
+- Achados: 112
 - Arquivos protegidos/mistos com achados: 40
-- Achados alcançáveis pelo CRM protegido: 102
-- Distribuição por superfície: protected-only 93, protected-and-public 9, public-only 1, infraestrutura 0
-- P1: 47
-- P2: 12
+- Achados alcançáveis pelo CRM protegido: 111
+- Distribuição por superfície: protected-only 102, protected-and-public 9, public-only 1, infraestrutura 0
+- P1: 55
+- P2: 13
 - P3: 44
 
 ## Regras
@@ -24,8 +24,8 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | P2 | Sombra fora do padrão | 6 | Blocos Home não usam sombra; validar se a elevação é realmente necessária. |
 | P1 | Raio acima de 8px | 5 | Blocos usam 8px; controles 6px; microelementos 4px. |
 | P1 | Tipografia pesada | 2 | Texto normal usa 300; títulos usam 400. |
-| P1 | Cor hardcoded | 25 | Usar tokens --app-* ou cores semânticas do domínio. |
-| P2 | Superfície branca/preta fixa | 3 | Usar --app-surface-solid, --app-surface-soft ou --app-surface-hover. |
+| P1 | Cor hardcoded | 33 | Usar tokens --app-* ou cores semânticas do domínio. |
+| P2 | Superfície branca/preta fixa | 4 | Usar --app-surface-solid, --app-surface-soft ou --app-surface-hover. |
 | P2 | Movimento agressivo | 3 | Remover scale/translate decorativo de cards e ações operacionais. |
 | P3 | Caixa alta/tracking | 44 | Preferir texto natural em 10–12px e peso 300. |
 | P2 | Blur no painel | 0 | O overlay pode escurecer; o painel deve usar superfície sólida. |
@@ -37,6 +37,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | Arquivo | Score | Achados | Distribuição |
 | --- | ---: | ---: | --- |
 | `components/features/marketing/MarketingScopeFilters.tsx` | 77 | 20 | oversized-radius: 3, hardcoded-color: 16, heavy-shadow: 1 |
+| `components/shared/SearchableTagPicker.tsx` | 40 | 11 | hardcoded-color: 9, hardcoded-surface: 2 |
 | `components/features/schedule/dashboard/AgendaDashboardPanels.tsx` | 20 | 5 | hardcoded-color: 5 |
 | `components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx` | 10 | 4 | heavy-shadow: 2, uppercase-tracking: 2 |
 | `components/features/properties/detail/PropertyWorkspaceSections.tsx` | 8 | 8 | uppercase-tracking: 8 |
@@ -45,7 +46,6 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/chat/FloatingChat.tsx` | 8 | 2 | heavy-shadow: 2 |
 | `components/features/chat/FloatingChatButton.tsx` | 8 | 2 | heavy-shadow: 2 |
 | `components/features/properties/PropertyWorkspaceScreen.tsx` | 6 | 5 | uppercase-tracking: 4, aggressive-motion: 1 |
-| `components/features/round-robin/distribution-queue-editor/DistributionQueueAutoTagsSection.tsx` | 6 | 2 | hardcoded-color: 1, hardcoded-surface: 1 |
 | `components/features/contacts/ImportContactsDialog.tsx` | 4 | 4 | uppercase-tracking: 4 |
 | `components/features/integrations/MetaIntegrationSettings.tsx` | 4 | 4 | uppercase-tracking: 4 |
 | `components/features/properties/detail/PropertyWorkspaceOverview.tsx` | 4 | 4 | uppercase-tracking: 4 |
@@ -82,6 +82,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | Arquivo | Score | Achados | Distribuição |
 | --- | ---: | ---: | --- |
 | `components/features/marketing/MarketingScopeFilters.tsx` | 77 | 20 | oversized-radius: 3, hardcoded-color: 16, heavy-shadow: 1 |
+| `components/shared/SearchableTagPicker.tsx` | 40 | 11 | hardcoded-color: 9, hardcoded-surface: 2 |
 | `components/features/schedule/dashboard/AgendaDashboardPanels.tsx` | 20 | 5 | hardcoded-color: 5 |
 | `components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx` | 10 | 4 | heavy-shadow: 2, uppercase-tracking: 2 |
 | `components/features/properties/detail/PropertyWorkspaceSections.tsx` | 8 | 8 | uppercase-tracking: 8 |
@@ -90,7 +91,6 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/chat/FloatingChat.tsx` | 8 | 2 | heavy-shadow: 2 |
 | `components/features/chat/FloatingChatButton.tsx` | 8 | 2 | heavy-shadow: 2 |
 | `components/features/properties/PropertyWorkspaceScreen.tsx` | 6 | 5 | uppercase-tracking: 4, aggressive-motion: 1 |
-| `components/features/round-robin/distribution-queue-editor/DistributionQueueAutoTagsSection.tsx` | 6 | 2 | hardcoded-color: 1, hardcoded-surface: 1 |
 | `components/features/contacts/ImportContactsDialog.tsx` | 4 | 4 | uppercase-tracking: 4 |
 | `components/features/integrations/MetaIntegrationSettings.tsx` | 4 | 4 | uppercase-tracking: 4 |
 | `components/features/properties/detail/PropertyWorkspaceOverview.tsx` | 4 | 4 | uppercase-tracking: 4 |

@@ -980,6 +980,8 @@ export function DistributionQueueEditor({
               metaFormsError={metaFormsError}
               queueId={queue?.id}
               tags={tags}
+              tagsLoading={tagsLoading}
+              tagsError={tagsError}
               properties={properties}
               hasPropertiesModule={hasPropertiesModule}
               onToggle={() => toggleSection("rules")}

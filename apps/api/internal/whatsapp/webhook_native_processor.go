@@ -758,6 +758,7 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 		return err
 	}
 
+	allowAutomatedReply := evolutionWebhookAllowsAutomatedReply(item)
 	autoReplyInputs := []autoReplyInput{}
 	leadIDsToPublish := map[string]struct{}{}
 	mediaQueued := false
@@ -834,7 +835,7 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 					return err
 				}
 			}
-			if boolFromObject(session.AdvancedSettings, "ai_auto_reply_enabled") {
+			if allowAutomatedReply && boolFromObject(session.AdvancedSettings, "ai_auto_reply_enabled") {
 				recoveredInput, ok, err := recoverNativeHandledAutoReplyInput(
 					ctx,
 					tx,
@@ -894,7 +895,7 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 					leadIDsToPublish[conversation.LeadID] = struct{}{}
 				}
 			}
-			if applyInboundEffects && conversation.LeadID != "" && boolFromObject(session.AdvancedSettings, "ai_auto_reply_enabled") && strings.TrimSpace(message.Content) != "" {
+			if allowAutomatedReply && applyInboundEffects && conversation.LeadID != "" && boolFromObject(session.AdvancedSettings, "ai_auto_reply_enabled") && strings.TrimSpace(message.Content) != "" {
 				autoReplyInputs = append(autoReplyInputs, autoReplyInput{
 					OrganizationID: session.OrganizationID,
 					SessionID:      session.ID,
@@ -912,12 +913,18 @@ func (repo Repository) processNativeEvolutionMessages(ctx context.Context, item 
 	if mediaQueued {
 		wakeWhatsAppMediaWorker()
 	}
-	for _, input := range autoReplyInputs {
-		if _, err := repo.enqueueAutoReplyJob(ctx, input); err != nil {
-			return err
+	if allowAutomatedReply {
+		for _, input := range autoReplyInputs {
+			if _, err := repo.enqueueAutoReplyJob(ctx, input); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+func evolutionWebhookAllowsAutomatedReply(item pendingEvolutionWebhook) bool {
+	return strings.TrimSpace(item.ProcessingLane) == evolutionWebhookLaneLive
 }
 
 func recoverNativeLegacyNonManagedRetry(

@@ -597,7 +597,7 @@ func annotateEvolutionWebhookRouting(payload []byte) ([]byte, error) {
 func evolutionWebhookPayloadRoutingKey(payload map[string]any) string {
 	messages := withoutNativeEvolutionGroupMessages(extractNativeEvolutionMessages(payload))
 	if len(messages) == 0 {
-		return evolutionWebhookSessionRoute
+		return evolutionWebhookStatusRoutingKey(payload)
 	}
 	route := ""
 	for _, message := range messages {
@@ -620,6 +620,58 @@ func evolutionWebhookPayloadRoutingKey(payload map[string]any) string {
 		if route != candidate {
 			return evolutionWebhookSessionRoute
 		}
+	}
+	return route
+}
+
+func evolutionWebhookStatusRoutingKey(payload map[string]any) string {
+	data := nativeFirstValue(payload, "data", "Data")
+	dataMap := mapFromAny(data)
+	candidates := []any{
+		nativeFirstValue(dataMap, "statuses", "Statuses"),
+		nativeFirstValue(dataMap, "status", "Status"),
+		nativeFirstValue(dataMap, "receipts", "Receipts"),
+		data,
+	}
+	route := ""
+	for _, candidate := range candidates {
+		for _, entry := range nativeObjectList(candidate) {
+			ids := nativeStringList(nativeFirstValue(entry, "MessageIDs", "messageIds", "message_ids"))
+			ids = append(ids, firstString(entry, "messageId", "message_id", "id", "ID", "key.id", "Key.ID"))
+			status := nativeProviderStatus(firstNonEmpty(
+				firstString(entry, "status", "Status", "state", "State", "ack", "Ack", "type", "Type"),
+				firstString(payload, "state", "State", "status", "Status"),
+			))
+			if len(uniqueStrings(ids...)) == 0 || status == "" {
+				continue
+			}
+
+			chat := firstNonEmpty(
+				firstString(entry, "Chat", "chat", "chatId", "chat_id", "key.remoteJid", "Key.RemoteJID"),
+				firstString(entry, "remoteJid", "RemoteJID", "remote_jid"),
+			)
+			isGroup, _ := nativeBool(nativeFirstValue(entry, "IsGroup", "isGroup", "is_group"))
+			normalizedChat := normalizeRemoteAlias(chat)
+			lowerChat := strings.ToLower(normalizedChat)
+			if isGroup || normalizedChat == "" || strings.Contains(lowerChat, "@g.us") || strings.Contains(lowerChat, "@broadcast") {
+				return evolutionWebhookSessionRoute
+			}
+
+			candidateRoute := "receipt:" + normalizedChat
+			if len(candidateRoute) > evolutionWebhookMaxRoutingBytes {
+				return evolutionWebhookSessionRoute
+			}
+			if route == "" {
+				route = candidateRoute
+				continue
+			}
+			if route != candidateRoute {
+				return evolutionWebhookSessionRoute
+			}
+		}
+	}
+	if route == "" {
+		return evolutionWebhookSessionRoute
 	}
 	return route
 }
@@ -676,9 +728,14 @@ func evolutionWebhookProcessingLane(envelope evolutionWebhookEnvelope) (string, 
 			return evolutionWebhookLaneBacklog, nil
 		}
 		providerOccurredAt = providerOccurredAt.UTC()
-		// Delivery receipts are useful, but they must never occupy the lane
-		// reserved for lead text. Their provider timestamp remains persisted for
-		// diagnostics and eventual backlog ordering.
+		// Fresh direct-chat receipts keep delivery state truthful in the CRM. A
+		// contact-scoped routing key prevents them from serializing unrelated
+		// messages in the same WhatsApp session. Broadcast, group, ambiguous and
+		// replayed receipts remain in backlog.
+		if evolutionWebhookStatusRoutingKey(payload) != evolutionWebhookSessionRoute &&
+			evolutionWebhookOccurredInLiveWindow(envelope.ReceivedAt, providerOccurredAt) {
+			return evolutionWebhookLaneLive, &providerOccurredAt
+		}
 		return evolutionWebhookLaneBacklog, &providerOccurredAt
 	}
 

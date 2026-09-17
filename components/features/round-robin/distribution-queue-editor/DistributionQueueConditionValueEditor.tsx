@@ -4,6 +4,7 @@ import {
   PropertyPickerDialog,
   type PropertyPickerProperty,
 } from "@/components/features/properties/PropertyPickerDialog";
+import { SearchableTagPicker } from "@/components/shared/SearchableTagPicker";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -39,6 +40,8 @@ interface DistributionQueueConditionValueEditorProps {
   metaFormsError: boolean;
   queueId?: string;
   tags: Tag[];
+  tagsLoading: boolean;
+  tagsError: boolean;
   properties: PropertyPickerProperty[];
   hasPropertiesModule: boolean;
   onUpdate: (
@@ -82,6 +85,8 @@ export function DistributionQueueConditionValueEditor({
   metaFormsError,
   queueId,
   tags,
+  tagsLoading,
+  tagsError,
   properties,
   hasPropertiesModule,
   onUpdate,
@@ -484,48 +489,28 @@ export function DistributionQueueConditionValueEditor({
     }
     case "tag":
       return (
-        <div className="scrollbar-thin flex max-h-[116px] min-h-9 flex-wrap content-start gap-1 overflow-y-auto rounded-[6px] bg-[var(--app-surface-solid)] p-1.5 [scrollbar-gutter:stable]">
-          {tags.length === 0 && (
-            <span className="rounded-md bg-[var(--app-surface)] px-2 py-1 text-xs text-muted-foreground">
-              Nenhuma tag cadastrada.
-            </span>
-          )}
-          {tags.map((tag) => (
-            <Badge
-              key={tag.id}
-              variant="outline"
-              role="button"
-              aria-pressed={condition.values.includes(tag.id)}
-              tabIndex={0}
-              title={tag.name}
-              className={cn(
-                conditionOptionBadgeClass(condition.values.includes(tag.id)),
-                "h-7 max-w-[160px] py-0",
-              )}
-              style={
-                condition.values.includes(tag.id)
-                  ? { backgroundColor: tag.color, borderColor: tag.color }
-                  : {}
-              }
-              onClick={() => {
-                const values = condition.values.includes(tag.id)
-                  ? condition.values.filter((value) => value !== tag.id)
-                  : [...condition.values, tag.id];
-                onUpdate(condition.id, { values });
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") return;
-                event.preventDefault();
-                const values = condition.values.includes(tag.id)
-                  ? condition.values.filter((value) => value !== tag.id)
-                  : [...condition.values, tag.id];
-                onUpdate(condition.id, { values });
-              }}
-            >
-              <span className="truncate">{tag.name}</span>
-            </Badge>
-          ))}
-        </div>
+        <SearchableTagPicker
+          tags={tags}
+          selectedTagIds={condition.values}
+          onToggleTag={(tagId) => {
+            const normalizedTagId = tagId.trim().toLowerCase();
+            const selected = condition.values.some(
+              (value) => value.trim().toLowerCase() === normalizedTagId,
+            );
+            const values = selected
+              ? condition.values.filter(
+                  (value) => value.trim().toLowerCase() !== normalizedTagId,
+                )
+              : [...condition.values, tagId];
+            onUpdate(condition.id, { values });
+          }}
+          loading={tagsLoading}
+          error={tagsError}
+          placeholder="Selecionar tags..."
+          triggerClassName="h-10 border-0 bg-[var(--app-surface-solid)] text-[12px] shadow-none hover:bg-[var(--app-surface-hover)]"
+          allowCreate={false}
+          maxSelected={100}
+        />
       );
     case "city":
       return (

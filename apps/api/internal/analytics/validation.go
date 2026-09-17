@@ -20,6 +20,34 @@ func dateOnly(values url.Values, key string) string {
 	return value
 }
 
+func normalizeCampaignInsightTagIDs(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+
+	normalized := make([]string, 0, 4)
+	seen := make(map[string]struct{})
+	for _, rawID := range strings.Split(raw, ",") {
+		value := strings.TrimSpace(rawID)
+		var id pgtype.UUID
+		if err := id.Scan(value); err != nil || !id.Valid {
+			return "", fmt.Errorf("%w: tagIds must contain UUIDs", ErrInvalidInput)
+		}
+		canonical := id.String()
+		if _, exists := seen[canonical]; exists {
+			continue
+		}
+		if len(normalized) >= 50 {
+			return "", fmt.Errorf("%w: tagIds cannot exceed 50 values", ErrInvalidInput)
+		}
+		seen[canonical] = struct{}{}
+		normalized = append(normalized, canonical)
+	}
+
+	return strings.Join(normalized, ","), nil
+}
+
 func validateSiteAnalyticsValues(values url.Values) error {
 	const dateLayout = "2006-01-02"
 
@@ -93,6 +121,10 @@ func validateCampaignInsightsValues(values url.Values) error {
 		if err := id.Scan(value); err != nil || !id.Valid {
 			return fmt.Errorf("%w: %s must be a UUID", ErrInvalidInput, key)
 		}
+	}
+
+	if _, err := normalizeCampaignInsightTagIDs(values.Get("tagIds")); err != nil {
+		return err
 	}
 
 	for key, maximumLength := range map[string]int{

@@ -284,20 +284,38 @@ func (repo Repository) ListLeadMetaFilters(ctx context.Context, tenantContext te
 			where `+strings.Join(where, " and ")+`
 		)
 		select distinct
-			coalesce(
-				nullif(raw_attribution.campaign_name, ''),
-				nullif(l.utm_campaign, ''),
-				nullif(mci.campaign_name, '')
-			),
-			coalesce(nullif(raw_attribution.campaign_id, ''), nullif(l.meta_campaign_id, ''), nullif(raw_attribution.campaign_name, ''), nullif(l.utm_campaign, '')),
-			coalesce(nullif(raw_attribution.adset_name, ''), nullif(l.meta_adset_id, '')),
-			coalesce(nullif(raw_attribution.adset_id, ''), nullif(l.meta_adset_id, ''), nullif(raw_attribution.adset_name, '')),
-			coalesce(nullif(raw_attribution.ad_name, ''), nullif(l.meta_ad_id, '')),
-			coalesce(nullif(raw_attribution.ad_id, ''), nullif(l.meta_ad_id, ''), nullif(raw_attribution.ad_name, ''))
+			case
+				when coalesce(nullif(btrim(raw_attribution.campaign_id), ''), nullif(btrim(raw_attribution.campaign_name), '')) is not null
+				then coalesce(
+					nullif(btrim(raw_attribution.campaign_name), ''),
+					nullif(btrim(marketing_attribution.campaign_name), ''),
+					nullif(btrim(mci.campaign_name), ''),
+					nullif(btrim(raw_attribution.campaign_id), '')
+				)
+			end,
+			nullif(btrim(raw_attribution.campaign_id), ''),
+			case
+				when coalesce(nullif(btrim(raw_attribution.adset_id), ''), nullif(btrim(raw_attribution.adset_name), '')) is not null
+				then coalesce(
+					nullif(btrim(raw_attribution.adset_name), ''),
+					nullif(btrim(marketing_attribution.adset_name), ''),
+					nullif(btrim(raw_attribution.adset_id), '')
+				)
+			end,
+			nullif(btrim(raw_attribution.adset_id), ''),
+			case
+				when coalesce(nullif(btrim(raw_attribution.ad_id), ''), nullif(btrim(raw_attribution.ad_name), '')) is not null
+				then coalesce(
+					nullif(btrim(raw_attribution.ad_name), ''),
+					nullif(btrim(marketing_attribution.ad_name), ''),
+					nullif(btrim(raw_attribution.ad_id), '')
+				)
+			end,
+			nullif(btrim(raw_attribution.ad_id), '')
 		from visible_leads l
 		left join lateral (
 			select
-				entry.campaign_name,
+				coalesce(nullif(btrim(entry.campaign_name), ''), nullif(btrim(entry.utm_campaign), '')) as campaign_name,
 				entry.campaign_id,
 				entry.adset_name,
 				entry.adset_id,
@@ -310,13 +328,13 @@ func (repo Repository) ListLeadMetaFilters(ctx context.Context, tenantContext te
 			union all
 			select
 				coalesce(
-					nullif(meta.campaign_name, ''),
-					nullif(meta.raw_payload->>'campaign_name', ''),
-					nullif(meta.raw_payload->>'campaignName', ''),
-					nullif(meta.raw_payload#>>'{campaign,name}', ''),
-					nullif(meta.payload->>'campaign_name', ''),
-					nullif(meta.payload->>'campaignName', ''),
-					nullif(meta.payload#>>'{campaign,name}', '')
+					nullif(btrim(meta.campaign_name), ''),
+					nullif(btrim(meta.raw_payload->>'campaign_name'), ''),
+					nullif(btrim(meta.raw_payload->>'campaignName'), ''),
+					nullif(btrim(meta.raw_payload#>>'{campaign,name}'), ''),
+					nullif(btrim(meta.payload->>'campaign_name'), ''),
+					nullif(btrim(meta.payload->>'campaignName'), ''),
+					nullif(btrim(meta.payload#>>'{campaign,name}'), '')
 				),
 				meta.campaign_id,
 				meta.adset_name,
@@ -327,13 +345,52 @@ func (repo Repository) ListLeadMetaFilters(ctx context.Context, tenantContext te
 			where meta.organization_id = l.organization_id
 			  and meta.lead_id = l.id
 			union all
-			select null::text, null::text, null::text, null::text, null::text, null::text
+			select
+				l.utm_campaign,
+				l.meta_campaign_id,
+				null::text,
+				l.meta_adset_id,
+				null::text,
+				l.meta_ad_id
 		) raw_attribution on true
 		left join lateral (
-			select max(nullif(mi.campaign_name, '')) as campaign_name
+			select
+				performance.campaign_name,
+				performance.adset_name,
+				performance.ad_name
+			from public.marketing_performance_daily performance
+			where performance.organization_id = l.organization_id
+			  and performance.provider = 'meta'
+			  and (
+				(nullif(btrim(raw_attribution.ad_id), '') is not null and performance.ad_id = nullif(btrim(raw_attribution.ad_id), ''))
+				or (
+					nullif(btrim(raw_attribution.ad_id), '') is null
+					and nullif(btrim(raw_attribution.adset_id), '') is not null
+					and performance.adset_id = nullif(btrim(raw_attribution.adset_id), '')
+				)
+				or (
+					nullif(btrim(raw_attribution.ad_id), '') is null
+					and nullif(btrim(raw_attribution.adset_id), '') is null
+					and nullif(btrim(raw_attribution.campaign_id), '') is not null
+					and performance.campaign_id = nullif(btrim(raw_attribution.campaign_id), '')
+				)
+			  )
+			  and (
+				nullif(btrim(raw_attribution.campaign_id), '') is null
+				or performance.campaign_id = nullif(btrim(raw_attribution.campaign_id), '')
+			  )
+			  and (
+				nullif(btrim(raw_attribution.adset_id), '') is null
+				or performance.adset_id = nullif(btrim(raw_attribution.adset_id), '')
+			  )
+			order by performance.metric_date desc, performance.fetched_at desc
+			limit 1
+		) marketing_attribution on true
+		left join lateral (
+			select max(nullif(btrim(mi.campaign_name), '')) as campaign_name
 			from public.meta_campaign_insights mi
 			where mi.organization_id = l.organization_id
-			  and mi.campaign_id = coalesce(nullif(raw_attribution.campaign_id, ''), nullif(l.meta_campaign_id, ''))
+			  and mi.campaign_id = nullif(btrim(raw_attribution.campaign_id), '')
 		) mci on true
 	`, args...)
 	if err != nil {
@@ -357,29 +414,17 @@ func (repo Repository) ListLeadMetaFilters(ctx context.Context, tenantContext te
 			return LeadMetaFilters{}, err
 		}
 
-		campaignKey := firstNonEmpty(textValue(campaignID), textValue(campaignName))
-		if campaignKey != "" && textValue(campaignName) != "" {
-			campaigns[campaignKey] = LeadMetaCampaignOption{ID: campaignKey, Name: textValue(campaignName)}
-		}
-
-		adsetKey := firstNonEmpty(textValue(adsetID), textValue(adsetName))
-		if adsetKey != "" && textValue(adsetName) != "" {
-			adsets[campaignKey+"-"+adsetKey] = LeadMetaAdsetOption{
-				ID:         adsetKey,
-				Name:       textValue(adsetName),
-				CampaignID: campaignKey,
-			}
-		}
-
-		adKey := firstNonEmpty(textValue(adID), textValue(adName))
-		if adKey != "" && textValue(adName) != "" {
-			ads[campaignKey+"-"+adsetKey+"-"+adKey] = LeadMetaAdOption{
-				ID:         adKey,
-				Name:       textValue(adName),
-				AdsetID:    adsetKey,
-				CampaignID: campaignKey,
-			}
-		}
+		collectLeadMetaFilterOptions(
+			campaigns,
+			adsets,
+			ads,
+			textValue(campaignName),
+			textValue(campaignID),
+			textValue(adsetName),
+			textValue(adsetID),
+			textValue(adName),
+			textValue(adID),
+		)
 	}
 	if err := rows.Err(); err != nil {
 		return LeadMetaFilters{}, err
@@ -428,6 +473,47 @@ func (repo Repository) ListLeadMetaFilters(ctx context.Context, tenantContext te
 	sortLeadMetaOptions(&filters)
 
 	return filters, nil
+}
+
+func collectLeadMetaFilterOptions(
+	campaigns map[string]LeadMetaCampaignOption,
+	adsets map[string]LeadMetaAdsetOption,
+	ads map[string]LeadMetaAdOption,
+	campaignName string,
+	campaignID string,
+	adsetName string,
+	adsetID string,
+	adName string,
+	adID string,
+) {
+	campaignName = firstNonEmpty(campaignName)
+	campaignKey := firstNonEmpty(campaignID, campaignName)
+	campaignReady := campaignKey != "" && campaignName != ""
+	if campaignReady {
+		campaigns[campaignKey] = LeadMetaCampaignOption{ID: campaignKey, Name: campaignName}
+	}
+
+	adsetName = firstNonEmpty(adsetName)
+	adsetKey := firstNonEmpty(adsetID, adsetName)
+	adsetReady := campaignReady && adsetKey != "" && adsetName != ""
+	if adsetReady {
+		adsets[campaignKey+"-"+adsetKey] = LeadMetaAdsetOption{
+			ID:         adsetKey,
+			Name:       adsetName,
+			CampaignID: campaignKey,
+		}
+	}
+
+	adName = firstNonEmpty(adName)
+	adKey := firstNonEmpty(adID, adName)
+	if adsetReady && adKey != "" && adName != "" {
+		ads[campaignKey+"-"+adsetKey+"-"+adKey] = LeadMetaAdOption{
+			ID:         adKey,
+			Name:       adName,
+			AdsetID:    adsetKey,
+			CampaignID: campaignKey,
+		}
+	}
 }
 
 func (repo Repository) resolvePipelineBoardPipelineID(ctx context.Context, tenantContext tenant.Context, pipelineID string) (string, error) {
@@ -831,18 +917,22 @@ func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFi
 		index := len(args)
 		where = append(where, searchtext.AnySQL([]string{"l.name", "l.phone", "l.email"}, fmt.Sprintf("$%d", index)))
 	}
-	if filter.FilterTag != "" && filter.FilterTag != "all" {
-		tagID, ok := normalizeUUID(filter.FilterTag)
-		if !ok {
-			return nil, nil, ErrInvalidInput
-		}
+	legacyFilterTag := filter.FilterTag
+	if strings.EqualFold(strings.TrimSpace(legacyFilterTag), "all") {
+		legacyFilterTag = ""
+	}
+	_, filterTags, err := normalizeLeadTagFilterIDs(legacyFilterTag, filter.FilterTags)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(filterTags) > 0 {
 		add(`exists (
 			select 1
 			from public.lead_tags lt
 			where lt.organization_id = $1::uuid
 			  and lt.lead_id = l.id
-			  and lt.tag_id = $%d::uuid
-		)`, tagID)
+			  and lt.tag_id = any($%d::uuid[])
+		)`, filterTags)
 	}
 
 	addLeadAttributionFilterCondition(&args, &where, "l", "lm", leadAttributionFilter{

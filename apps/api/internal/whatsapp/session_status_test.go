@@ -422,7 +422,7 @@ func TestSessionStatusJSONContractIsMinimal(t *testing.T) {
 		"status",
 		"updated_at",
 	})
-	assertSessionStatusJSONKeys(t, item["owner"].(map[string]any), []string{"id", "name"})
+	assertSessionStatusJSONKeys(t, item["owner"].(map[string]any), []string{"avatar_url", "id", "name"})
 	assertSessionStatusJSONKeys(t, item["capabilities"].(map[string]any), []string{
 		"can_manage",
 		"can_set_notification_sender",

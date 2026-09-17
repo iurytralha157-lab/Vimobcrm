@@ -24,8 +24,8 @@ export function MetaCampaignsDashboardScreen() {
     setAdSetId,
     adId,
     setAdId,
-    tagId,
-    setTagId,
+    tagIds,
+    setTagIds,
     dealStatus,
     setDealStatus,
     searchQuery,
@@ -41,6 +41,8 @@ export function MetaCampaignsDashboardScreen() {
     isLoadingCampaigns,
     isLoadingAdSets,
     isLoadingAds,
+    isLoadingTags,
+    hasTagsError,
   } = useSharedFilters();
 
   return (
@@ -63,8 +65,8 @@ export function MetaCampaignsDashboardScreen() {
           onAdSetChange={setAdSetId}
           adId={adId}
           onAdChange={setAdId}
-          tagId={tagId}
-          onTagChange={setTagId}
+          tagIds={tagIds}
+          onTagsChange={setTagIds}
           dealStatus={dealStatus}
           onDealStatusChange={setDealStatus}
           searchQuery={searchQuery}
@@ -81,6 +83,8 @@ export function MetaCampaignsDashboardScreen() {
           isLoadingCampaigns={isLoadingCampaigns}
           isLoadingAdSets={isLoadingAdSets}
           isLoadingAds={isLoadingAds}
+          isLoadingTags={isLoadingTags}
+          hasTagsError={hasTagsError}
           datePosition="start"
         />
 

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -109,6 +110,31 @@ func TestMetaMarketingCapabilitySeparatesPaidAndInstagramScopes(t *testing.T) {
 	}
 }
 
+func TestMetaFormConfigProjectionIncludesCreatorAvatar(t *testing.T) {
+	raw, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	start := strings.Index(source, "func (repo Repository) ListMetaFormConfigs")
+	if start < 0 {
+		t.Fatal("Meta form config projection section was not found")
+	}
+	end := strings.Index(source[start:], "func (repo Repository) SaveMetaFormConfig")
+	if end < 0 {
+		t.Fatal("Meta form config projection section was not found")
+	}
+	projection := source[start : start+end]
+	for _, required := range []string{
+		"'created_by_name', coalesce(u.name, u.email)",
+		"'created_by_avatar_url', nullif(btrim(u.avatar_url), '')",
+	} {
+		if !strings.Contains(projection, required) {
+			t.Fatalf("Meta form creator projection is missing %q", required)
+		}
+	}
+}
+
 func TestMetaMarketingCapabilitySchemaFallbackIsNarrowAndFailClosed(t *testing.T) {
 	for _, databaseError := range []error{
 		&pgconn.PgError{Code: "42703", Message: `column credentials.granted_scopes does not exist`},
@@ -179,6 +205,57 @@ func TestCanonicalMetaFormPropertyIDAllowsFormWithoutProperty(t *testing.T) {
 	}
 	if resolved != nil {
 		t.Fatalf("canonicalMetaFormPropertyID() = %v, want nil", *resolved)
+	}
+}
+
+func TestCanonicalMetaFormAutoTagIDsUnifiesAndValidatesReferences(t *testing.T) {
+	first := "11111111-1111-4111-8111-111111111111"
+	second := "22222222-2222-4222-8222-222222222222"
+
+	resolved, err := canonicalMetaFormAutoTagIDs(MetaFormConfigRequest{
+		AutoTags: []string{"  " + first + "  ", first},
+		DefaultValues: map[string]any{
+			"auto_tags": []any{second, first},
+		},
+	})
+	if err != nil {
+		t.Fatalf("canonicalMetaFormAutoTagIDs() error = %v", err)
+	}
+	if !reflect.DeepEqual(resolved, []string{first, second}) {
+		t.Fatalf("canonicalMetaFormAutoTagIDs() = %#v", resolved)
+	}
+
+	if _, err := canonicalMetaFormAutoTagIDs(MetaFormConfigRequest{
+		AutoTags: []string{"not-a-uuid"},
+	}); err != ErrInvalidInput {
+		t.Fatalf("malformed auto tag error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestMetaFormConfigTagReferencesBelongToOrganization(t *testing.T) {
+	raw, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	start := strings.Index(source, "func (repo Repository) SaveMetaFormConfig")
+	if start < 0 {
+		t.Fatal("SaveMetaFormConfig source was not found")
+	}
+	end := strings.Index(source[start:], "func canonicalMetaFormAutoTagIDs")
+	if end < 0 {
+		t.Fatal("SaveMetaFormConfig source was not found")
+	}
+	saveSource := source[start : start+end]
+	for _, required := range []string{
+		"from unnest($8::uuid[]) as requested_tag(tag_id)",
+		"from public.tags as tag",
+		"tag.organization_id = $1::uuid",
+		"tag.id = requested_tag.tag_id",
+	} {
+		if !strings.Contains(saveSource, required) {
+			t.Fatalf("Meta form tag ownership check is missing %q", required)
+		}
 	}
 }
 

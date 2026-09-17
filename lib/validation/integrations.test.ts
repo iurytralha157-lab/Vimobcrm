@@ -1041,7 +1041,7 @@ test("status do catalogo reflete a conexao real dos provedores", () => {
   assert.match(marketingSource, /filter\(isMetaIntegrationConnected\)/);
 });
 
-test("tela Meta preserva autoria compacta e concentra a rolagem na lista", () => {
+test("tela Meta preserva autoria, métricas e linhas compactas na lista", () => {
   const source = readFileSync(
     resolve(
       process.cwd(),
@@ -1062,6 +1062,22 @@ test("tela Meta preserva autoria compacta e concentra a rolagem na lista", () =>
   assert.match(
     source,
     /aria-label={`Criado por \$\{config\.created_by_name\}`}/,
+  );
+  assert.match(source, /crm-management-sticky-header sticky top-0 z-10/);
+  assert.doesNotMatch(source, /crm-management-table min-h-full/);
+  assert.match(
+    source,
+    /<TableHead>Status<\/TableHead>[\s\S]*<TableHead>Conta Facebook<\/TableHead>[\s\S]*<TableHead>Página Facebook<\/TableHead>[\s\S]*<TableHead>Nome do formulário<\/TableHead>[\s\S]*<TableHead>Leads<\/TableHead>[\s\S]*<TableHead>Criado por<\/TableHead>[\s\S]*<TableHead>Data de configuração<\/TableHead>[\s\S]*<TableHead className="text-right">Ações<\/TableHead>/,
+  );
+  assert.match(source, /colSpan=\{8\}/);
+  assert.match(source, /config\.leads_received \?\? 0/);
+  assert.match(
+    source,
+    /src=\{config\.created_by_avatar_url \|\| undefined\}/,
+  );
+  assert.match(
+    source,
+    /AvatarFallback className="bg-primary text-\[9px\] font-medium text-primary-foreground"/,
   );
   assert.match(source, /max-w-\[1500px\]/);
   assert.match(

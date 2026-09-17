@@ -143,7 +143,9 @@ test('escopo de equipe e filtros persistidos preservam disponibilidade e hierarq
   assert.match(screenSource, /const handleEnableFilterOptions = useCallback/);
   assert.match(sharedFiltersComponentSource, /Algumas opções não foram atualizadas\./);
   assert.match(sharedFiltersComponentSource, /onClick=\{onRetryDynamicOptions\}/);
-  assert.match(sharedFiltersComponentSource, /disabled=\{isLoadingTags\}/);
+  assert.match(sharedFiltersComponentSource, /loading=\{isLoadingTags\}/);
+  assert.match(sharedFiltersComponentSource, /selectedTagIds=\{tagIds\}/);
+  assert.match(sharedFiltersComponentSource, /placeholder="Buscar campanha\.\.\."/);
 });
 
 test('erro inicial bloqueia dados incompletos e falha de atualização preserva o cache', () => {

@@ -26,6 +26,7 @@ type DashboardFilter struct {
 	AdSetID        string
 	AdID           string
 	TagID          string
+	TagIDs         []string
 	DealStatus     string
 	SearchQuery    string
 	PipelineID     string
@@ -234,6 +235,17 @@ func ParseDashboardFilter(values url.Values) (DashboardFilter, error) {
 	if err != nil {
 		return DashboardFilter{}, err
 	}
+	legacyTagID := tagID
+	if legacyTagID == "all" {
+		legacyTagID = ""
+	}
+	_, tagIDs, err := normalizeLeadTagFilterIDs(
+		legacyTagID,
+		splitLeadTagFilterValues(values["tagIds"]),
+	)
+	if err != nil {
+		return DashboardFilter{}, err
+	}
 	pipelineID, err := normalizeDashboardUUIDFilter("pipelineId", values.Get("pipelineId"))
 	if err != nil {
 		return DashboardFilter{}, err
@@ -275,6 +287,7 @@ func ParseDashboardFilter(values url.Values) (DashboardFilter, error) {
 		AdSetID:        adSetID,
 		AdID:           adID,
 		TagID:          tagID,
+		TagIDs:         tagIDs,
 		DealStatus:     dealStatus,
 		SearchQuery:    searchQuery,
 		PipelineID:     pipelineID,

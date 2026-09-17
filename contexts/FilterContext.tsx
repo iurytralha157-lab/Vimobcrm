@@ -4,6 +4,8 @@ import { DatePreset, getDateRangeFromPreset } from '@/hooks/use-dashboard-filter
 
 type NullableFilter = string | null;
 
+const MAX_FILTER_TAGS = 50;
+
 interface PersistedFilterState {
   datePreset: DatePreset;
   customDateRange: { from: string; to: string } | null;
@@ -13,7 +15,9 @@ interface PersistedFilterState {
   campaignId: NullableFilter;
   adSetId: NullableFilter;
   adId: NullableFilter;
-  tagId: NullableFilter;
+  tagIds: string[];
+  /** Legacy persisted key kept only for session-state migration. */
+  tagId?: NullableFilter;
   dealStatus: NullableFilter;
   searchQuery: string;
 }
@@ -38,8 +42,8 @@ interface FilterContextType {
   setAdSetId: (adSetId: NullableFilter) => void;
   adId: NullableFilter;
   setAdId: (adId: NullableFilter) => void;
-  tagId: NullableFilter;
-  setTagId: (tagId: NullableFilter) => void;
+  tagIds: string[];
+  setTagIds: (tagIds: string[]) => void;
   dealStatus: NullableFilter;
   setDealStatus: (dealStatus: NullableFilter) => void;
   searchQuery: string;
@@ -58,7 +62,7 @@ const DEFAULT_FILTER_STATE: PersistedFilterState = {
   campaignId: null,
   adSetId: null,
   adId: null,
-  tagId: null,
+  tagIds: [],
   dealStatus: null,
   searchQuery: '',
 };
@@ -69,6 +73,23 @@ function normalizeNullable(value: unknown): NullableFilter {
 
 function normalizeSearch(value: unknown) {
   return typeof value === 'string' ? value : '';
+}
+
+function normalizeTagIds(value: unknown, legacyValue?: unknown) {
+  const candidates = Array.isArray(value)
+    ? value
+    : typeof legacyValue === 'string'
+      ? [legacyValue]
+      : [];
+
+  return Array.from(
+    new Set(
+      candidates
+        .filter((candidate): candidate is string => typeof candidate === 'string')
+        .map((candidate) => candidate.trim().toLowerCase())
+        .filter((candidate) => candidate !== '' && candidate !== 'all'),
+    ),
+  ).slice(0, MAX_FILTER_TAGS);
 }
 
 function serializeRange(range: { from: Date; to: Date } | null) {
@@ -90,7 +111,7 @@ function parsePersistedState(raw: string | null): PersistedFilterState {
       campaignId: normalizeNullable(parsed.campaignId),
       adSetId: normalizeNullable(parsed.adSetId),
       adId: normalizeNullable(parsed.adId),
-      tagId: normalizeNullable(parsed.tagId),
+      tagIds: normalizeTagIds(parsed.tagIds, parsed.tagId),
       dealStatus: normalizeNullable(parsed.dealStatus),
       searchQuery: normalizeSearch(parsed.searchQuery),
     };
@@ -129,7 +150,7 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
   const [campaignId, setCampaignIdInternal] = useState<NullableFilter>(null);
   const [adSetId, setAdSetIdInternal] = useState<NullableFilter>(null);
   const [adId, setAdIdInternal] = useState<NullableFilter>(null);
-  const [tagId, setTagIdInternal] = useState<NullableFilter>(null);
+  const [tagIds, setTagIdsInternal] = useState<string[]>([]);
   const [dealStatus, setDealStatusInternal] = useState<NullableFilter>(null);
   const [searchQuery, setSearchQueryInternal] = useState('');
   const [hydratedStorageKey, setHydratedStorageKey] = useState<string | null | undefined>(undefined);
@@ -157,7 +178,7 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
     setCampaignIdInternal(nextState.campaignId);
     setAdSetIdInternal(nextState.adSetId);
     setAdIdInternal(nextState.adId);
-    setTagIdInternal(nextState.tagId);
+    setTagIdsInternal(nextState.tagIds);
     setDealStatusInternal(nextState.dealStatus);
     setSearchQueryInternal(nextState.searchQuery);
   }, []);
@@ -256,10 +277,11 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
     [persist],
   );
 
-  const setTagId = useCallback(
-    (value: NullableFilter) => {
-      setTagIdInternal(value);
-      persist({ tagId: value });
+  const setTagIds = useCallback(
+    (value: string[]) => {
+      const normalized = normalizeTagIds(value);
+      setTagIdsInternal(normalized);
+      persist({ tagIds: normalized, tagId: null });
     },
     [persist],
   );
@@ -324,8 +346,8 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
       setAdSetId,
       adId,
       setAdId,
-      tagId,
-      setTagId,
+      tagIds,
+      setTagIds,
       dealStatus,
       setDealStatus,
       searchQuery,
@@ -352,11 +374,11 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
       setDealStatus,
       setSearchQuery,
       setSource,
-      setTagId,
+      setTagIds,
       setTeamId,
       setUserId,
       source,
-      tagId,
+      tagIds,
       teamId,
       userId,
       storageKey,

@@ -1106,6 +1106,22 @@ test("integracoes validam URL e referencias da Meta", () => {
     }).success,
     true,
   );
+  assert.deepEqual(
+    metaFormConfigInputSchema.parse({
+      integrationId: ID,
+      formId: "form-123",
+      autoTags: [ID, ID],
+    }).autoTags,
+    [ID],
+  );
+  assert.equal(
+    metaFormConfigInputSchema.safeParse({
+      integrationId: ID,
+      formId: "form-123",
+      autoTags: ["invalido"],
+    }).success,
+    false,
+  );
   assert.equal(
     sendMetaMessageInputSchema.safeParse({
       text: "Olá",
@@ -1131,6 +1147,14 @@ test("integracoes validam URL e referencias da Meta", () => {
 test("suporte de CRM valida filtros, disponibilidade e distribuicao", () => {
   assert.equal(
     contactListQuerySchema.safeParse({ teamId: "invalido" }).success,
+    false,
+  );
+  assert.deepEqual(
+    contactListQuerySchema.parse({ tagIds: [ID, ID] }).tagIds,
+    [ID],
+  );
+  assert.equal(
+    contactListQuerySchema.safeParse({ tagIds: ["invalido"] }).success,
     false,
   );
   assert.equal(
@@ -1614,6 +1638,10 @@ test("admin e dashboard rejeitam referencias inseguras", () => {
     dashboardFiltersSchema.safeParse({ teamId: "invalido" }).success,
     false,
   );
+  assert.deepEqual(
+    dashboardFiltersSchema.parse({ tagIds: [ID, ID] }).tagIds,
+    [ID],
+  );
   assert.equal(
     dashboardFiltersSchema.safeParse({
       userId: "all",
@@ -1832,6 +1860,10 @@ test("dashboard valida corretores e liga cache, tenant e cancelamento", () => {
     [...dashboardHookSource.matchAll(/getDashboardFiltersQueryKey\(/g)]
       .length >= 5,
   );
+  assert.match(
+    dashboardAPISource,
+    /tagIds: normalizeDashboardTagQueryKey\(normalized\.tagIds, normalized\.tagId\)/,
+  );
   assert.ok(
     [...dashboardAPISource.matchAll(/signal: params\.signal/g)].length >= 9,
   );
@@ -1864,6 +1896,7 @@ test("dashboard valida corretores e liga cache, tenant e cancelamento", () => {
     "campaignId",
     "adSetId",
     "adId",
+    "tagIds",
     "tagId",
     "dealStatus",
     "searchQuery",
@@ -1873,6 +1906,10 @@ test("dashboard valida corretores e liga cache, tenant e cancelamento", () => {
 });
 
 test("OpenAPI declara todos os campos sempre serializados pelo Dashboard", () => {
+  assert.match(
+    dashboardOpenAPISource,
+    /#\/components\/parameters\/DashboardTagIds/,
+  );
   const requiredBlock = dashboardOpenAPISource.match(
     /DashboardStats:\r?\n\s+type: object\r?\n\s+required:\r?\n([\s\S]*?)\s+properties:/,
   )?.[1];

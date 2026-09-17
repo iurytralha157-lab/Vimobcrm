@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -38,6 +39,9 @@ func TestParseDashboardFilterValidatesAndCanonicalizesInput(t *testing.T) {
 	}
 	if filter.TeamID != dashboardTestUUID || filter.UserID != dashboardTestUUID || filter.TagID != dashboardTestUUID || filter.PipelineID != dashboardTestUUID {
 		t.Fatalf("UUID filters were not canonicalized: %#v", filter)
+	}
+	if !reflect.DeepEqual(filter.TagIDs, []string{dashboardTestUUID}) {
+		t.Fatalf("legacy tagId was not preserved in tagIds: %#v", filter.TagIDs)
 	}
 	if filter.Source != "meta" || filter.CampaignID != "campaign-123" || filter.AdSetID != "adset-123" || filter.AdID != "ad-123" {
 		t.Fatalf("text filters were not trimmed: %#v", filter)

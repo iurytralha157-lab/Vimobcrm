@@ -28,6 +28,7 @@ test("counts every non-connected state as requiring attention", () => {
     owner: {
       id: "22222222-2222-4222-8222-222222222222",
       name: "Maria",
+      avatar_url: null,
     },
     capabilities: {
       can_manage: false,

@@ -240,7 +240,7 @@ const normalizeOAuthPayload = (payload?: OAuthPayload | null): OAuthPayload | nu
 
 const retainPendingOAuthPages = (payload: OAuthPayload | null, connectedPageId: string) => {
   if (!payload) return null;
-  const pages = payload.pages.filter((page) => page.id !== connectedPageId);
+  const pages = (payload.pages ?? []).filter((page) => page.id !== connectedPageId);
   return pages.length > 0 ? { ...payload, pages } : null;
 };
 
@@ -851,29 +851,41 @@ export function MetaIntegrationSettings({
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none [&>div]:h-full [&>div]:overflow-auto">
-        <Table className="crm-management-table min-h-full min-w-[840px] table-fixed">
-          <TableHeader className="sticky top-0 z-10 bg-[var(--app-surface-soft)]">
+        <Table className="crm-management-table min-w-[1080px] table-fixed [&_td]:px-3 [&_th]:px-3">
+          <colgroup>
+            <col className="w-[84px]" />
+            <col className="w-[180px]" />
+            <col className="w-[210px]" />
+            <col />
+            <col className="w-[84px]" />
+            <col className="w-[76px]" />
+            <col className="w-[132px]" />
+            <col className="w-[64px]" />
+          </colgroup>
+          <TableHeader className="crm-management-sticky-header sticky top-0 z-10">
             <TableRow className="bg-[var(--app-surface-soft)]">
-              <TableHead className="w-[18%]">Conta Facebook</TableHead>
-              <TableHead className="w-[21%]">Página Facebook</TableHead>
-              <TableHead className="w-[29%]">Nome do formulário</TableHead>
-              <TableHead className="w-[10%]">Criado por</TableHead>
-              <TableHead className="w-[16%]">Data de configuração</TableHead>
-              <TableHead className="w-12 text-right">Ações</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Conta Facebook</TableHead>
+              <TableHead>Página Facebook</TableHead>
+              <TableHead>Nome do formulário</TableHead>
+              <TableHead>Leads</TableHead>
+              <TableHead>Criado por</TableHead>
+              <TableHead>Data de configuração</TableHead>
+              <TableHead className="text-right">Ações</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {integrationsLoading || configsLoading ? (
-              <TableRow><TableCell colSpan={6} className="h-28 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin" /></TableCell></TableRow>
+              <TableRow><TableCell colSpan={8} className="h-28 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin" /></TableCell></TableRow>
             ) : integrationsLoadFailed || configsLoadFailed ? (
               <TableRow>
-                <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
+                <TableCell colSpan={8} className="h-32 text-center text-muted-foreground">
                   Dados temporariamente indisponíveis. Tente novamente acima.
                 </TableCell>
               </TableRow>
             ) : filteredConfiguredForms.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="h-40 text-center text-muted-foreground">
+                <TableCell colSpan={8} className="h-40 text-center text-muted-foreground">
                   {configs.length === 0
                     ? "Nenhum formulário Meta configurado ainda."
                     : "Nenhum formulário corresponde a esta busca."}
@@ -898,6 +910,11 @@ export function MetaIntegrationSettings({
                         }
                       }}
                     >
+                      <TableCell>
+                        <Badge variant={config.is_active ? "default" : "secondary"}>
+                          {config.is_active ? "Ativo" : "Inativo"}
+                        </Badge>
+                      </TableCell>
                       <TableCell className="text-[12px] font-light">{integration?.facebook_user_name || "Conta Facebook"}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
@@ -928,17 +945,29 @@ export function MetaIntegrationSettings({
                           >
                             {config.form_name || config.form_id}
                           </span>
-                          <Badge variant={config.is_active ? "default" : "secondary"}>{config.is_active ? "Ativo" : "Inativo"}</Badge>
                         </div>
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className="text-[12px] font-light tabular-nums"
+                          title={`${config.leads_received ?? 0} entradas recebidas por este formulário`}
+                        >
+                          {(config.leads_received ?? 0).toLocaleString("pt-BR")}
+                        </span>
                       </TableCell>
                       <TableCell>
                         {config.created_by_name ? (
                           <Avatar
-                            className="h-7 w-7 bg-primary/10"
+                            className="h-7 w-7"
                             aria-label={`Criado por ${config.created_by_name}`}
                             title={config.created_by_name}
                           >
-                            <AvatarFallback className="bg-primary/10 text-[9px] font-normal text-primary">
+                            <AvatarImage
+                              src={config.created_by_avatar_url || undefined}
+                              alt={config.created_by_name}
+                              className="object-cover"
+                            />
+                            <AvatarFallback className="bg-primary text-[9px] font-medium text-primary-foreground">
                               {getNameInitials(config.created_by_name)}
                             </AvatarFallback>
                           </Avatar>

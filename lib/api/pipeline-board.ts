@@ -15,6 +15,7 @@ import {
   type PipelineBoardQueryFilters,
 } from '@/lib/pipeline-board-query'
 import { PIPELINE_READ_TIMEOUT_MS } from '@/lib/pipeline-reliability'
+import { sanitizeLeadMetaFiltersEnvelope } from './pipeline-board-meta-filters'
 
 export type PipelineBoardLead = {
   id: string
@@ -142,7 +143,11 @@ export async function getLeadMetaFilters(params: {
     timeoutMs: PIPELINE_READ_TIMEOUT_MS,
     retry: false,
   })
-  validateDomainResponse(leadMetaFiltersResponseSchema, response, 'pipeline-board.meta-filters')
+  const validated = validateDomainResponse(
+    leadMetaFiltersResponseSchema,
+    sanitizeLeadMetaFiltersEnvelope(response),
+    'pipeline-board.meta-filters',
+  )
 
-  return response.data
+  return validated.data
 }

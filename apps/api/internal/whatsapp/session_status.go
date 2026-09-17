@@ -32,8 +32,9 @@ type SessionStatus struct {
 }
 
 type SessionStatusOwner struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	AvatarURL *string `json:"avatar_url"`
 }
 
 type SessionStatusCapabilities struct {
@@ -82,6 +83,7 @@ select
   coalesce(ws.updated_at, ws.created_at, 'epoch'::timestamptz) as updated_at,
   ws.owner_user_id::text,
   coalesce(nullif(btrim(owner.name), ''), 'Usuário') as owner_name,
+  nullif(btrim(owner.avatar_url), '') as owner_avatar_url,
   ws.provider = 'evolution_go' as supports_management
 from public.whatsapp_sessions ws
 join public.users owner
@@ -176,7 +178,8 @@ where ws.organization_id = $1::uuid
       )
     )
   )
-order by lower(coalesce(nullif(btrim(owner.name), ''), 'Usuário')),
+order by (ws.owner_user_id = $2::uuid) desc,
+         lower(coalesce(nullif(btrim(owner.name), ''), 'Usuário')),
          lower(coalesce(nullif(btrim(ws.display_name), ''), nullif(btrim(ws.profile_name), ''), 'Conexão WhatsApp')),
          ws.id
 `
@@ -277,6 +280,7 @@ func (repo Repository) ListSessionStatuses(ctx context.Context, tenantContext te
 		var phoneNumber pgtype.Text
 		var profileName pgtype.Text
 		var lastConnectedAt pgtype.Timestamptz
+		var ownerAvatarURL pgtype.Text
 		var supportsManagement bool
 		if err := rows.Scan(
 			&status.ID,
@@ -288,6 +292,7 @@ func (repo Repository) ListSessionStatuses(ctx context.Context, tenantContext te
 			&status.UpdatedAt,
 			&status.Owner.ID,
 			&status.Owner.Name,
+			&ownerAvatarURL,
 			&supportsManagement,
 		); err != nil {
 			return sessionStatusListResult{}, err
@@ -296,6 +301,7 @@ func (repo Repository) ListSessionStatuses(ctx context.Context, tenantContext te
 		status.PhoneNumber = sessionStatusTextPointer(phoneNumber)
 		status.ProfileName = sessionStatusTextPointer(profileName)
 		status.LastConnectedAt = sessionStatusTimePointer(lastConnectedAt)
+		status.Owner.AvatarURL = sessionStatusTextPointer(ownerAvatarURL)
 		status.UpdatedAt = status.UpdatedAt.UTC()
 		status.Capabilities = sessionStatusCapabilitiesFor(tenantContext, status.Owner.ID, supportsManagement)
 		statuses = append(statuses, status)

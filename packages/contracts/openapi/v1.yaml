@@ -168,6 +168,11 @@ paths:
             minimum: 1
             maximum: 100
             default: 12
+        - name: filterTags
+          in: query
+          description: Comma-separated tag UUIDs. A lead matches when it has any selected tag.
+          schema:
+            type: string
       responses:
         "200":
           description: Pipeline board data.
@@ -211,6 +216,11 @@ paths:
             minimum: 1
             maximum: 100
             default: 12
+        - name: filterTags
+          in: query
+          description: Comma-separated tag UUIDs. A lead matches when it has any selected tag.
+          schema:
+            type: string
       responses:
         "200":
           description: Stage lead page.
@@ -244,6 +254,11 @@ paths:
           schema:
             type: string
           description: Comma-separated stage ids.
+        - name: filterTags
+          in: query
+          description: Comma-separated tag UUIDs. A lead matches when it has any selected tag.
+          schema:
+            type: string
       responses:
         "200":
           description: Counts keyed by stage id.
@@ -298,6 +313,7 @@ paths:
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
         - $ref: "#/components/parameters/DashboardTagId"
+        - $ref: "#/components/parameters/DashboardTagIds"
         - $ref: "#/components/parameters/DashboardDealStatus"
         - $ref: "#/components/parameters/DashboardSearchQuery"
         - $ref: "#/components/parameters/DashboardIncludeDetails"
@@ -323,6 +339,7 @@ paths:
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
         - $ref: "#/components/parameters/DashboardTagId"
+        - $ref: "#/components/parameters/DashboardTagIds"
         - $ref: "#/components/parameters/DashboardDealStatus"
         - $ref: "#/components/parameters/DashboardSearchQuery"
       responses:
@@ -347,6 +364,7 @@ paths:
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
         - $ref: "#/components/parameters/DashboardTagId"
+        - $ref: "#/components/parameters/DashboardTagIds"
         - $ref: "#/components/parameters/DashboardDealStatus"
         - $ref: "#/components/parameters/DashboardSearchQuery"
       responses:
@@ -370,6 +388,7 @@ paths:
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
         - $ref: "#/components/parameters/DashboardTagId"
+        - $ref: "#/components/parameters/DashboardTagIds"
         - $ref: "#/components/parameters/DashboardDealStatus"
         - $ref: "#/components/parameters/DashboardSearchQuery"
       responses:
@@ -412,6 +431,7 @@ paths:
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
         - $ref: "#/components/parameters/DashboardTagId"
+        - $ref: "#/components/parameters/DashboardTagIds"
         - $ref: "#/components/parameters/DashboardDealStatus"
         - $ref: "#/components/parameters/DashboardSearchQuery"
       responses:
@@ -441,6 +461,7 @@ paths:
         - $ref: "#/components/parameters/AnalyticsUserId"
         - $ref: "#/components/parameters/AnalyticsSource"
         - $ref: "#/components/parameters/AnalyticsTagId"
+        - $ref: "#/components/parameters/AnalyticsTagIds"
         - $ref: "#/components/parameters/AnalyticsDealStatus"
       responses:
         "200":
@@ -605,6 +626,11 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: tagIds
+          in: query
+          description: Comma-separated tag UUIDs. A contact matches when it has any selected tag.
+          schema:
+            type: string
         - name: source
           in: query
           schema:
@@ -5737,6 +5763,12 @@ components:
       schema:
         type: string
         format: uuid
+    DashboardTagIds:
+      name: tagIds
+      in: query
+      description: Comma-separated tag UUIDs. A lead matches when it has any selected tag.
+      schema:
+        type: string
     DashboardDealStatus:
       name: dealStatus
       in: query
@@ -5841,6 +5873,12 @@ components:
       schema:
         type: string
         format: uuid
+    AnalyticsTagIds:
+      name: tagIds
+      in: query
+      description: Comma-separated tag UUIDs. A lead matches when it has any selected tag.
+      schema:
+        type: string
     AnalyticsDealStatus:
       name: dealStatus
       in: query

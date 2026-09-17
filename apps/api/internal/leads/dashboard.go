@@ -1281,18 +1281,22 @@ func (repo Repository) buildDashboardLeadWhere(tenantContext tenant.Context, fil
 	if options.ForceDealStatus != "" {
 		add("l.deal_status = $%d", options.ForceDealStatus)
 	}
-	if filter.TagID != "" && filter.TagID != "all" {
-		tagID, ok := normalizeUUID(filter.TagID)
-		if !ok {
-			return nil, nil, ErrInvalidInput
-		}
+	legacyTagID := filter.TagID
+	if strings.EqualFold(strings.TrimSpace(legacyTagID), "all") {
+		legacyTagID = ""
+	}
+	_, tagIDs, err := normalizeLeadTagFilterIDs(legacyTagID, filter.TagIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(tagIDs) > 0 {
 		add(`exists (
 			select 1
 			from public.lead_tags dlt
 			where dlt.organization_id = $1::uuid
 			  and dlt.lead_id = l.id
-			  and dlt.tag_id = $%d::uuid
-		)`, tagID)
+			  and dlt.tag_id = any($%d::uuid[])
+		)`, tagIDs)
 	}
 	if strings.TrimSpace(filter.SearchQuery) != "" {
 		value := searchtext.Pattern(filter.SearchQuery)

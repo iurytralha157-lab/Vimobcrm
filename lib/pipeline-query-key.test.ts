@@ -14,7 +14,7 @@ test('normaliza filtros vazios para uma unica chave canonica da pipeline', () =>
     stageWithLeadsQueryKey({
       ...base,
       filters: {
-        filterTag: 'all',
+        filterTags: [],
         filterDealStatus: null,
         searchQuery: '',
         filterCampaign: 'all',
@@ -33,14 +33,14 @@ test('inclui datas, escopo e filtros efetivos na chave da pipeline', () => {
         from: new Date('2026-07-01T00:00:00.000Z'),
         to: new Date('2026-07-31T23:59:59.000Z'),
       },
-      filterTag: 'tag-1',
+      filterTags: ['tag-2', 'tag-1', 'tag-2'],
       filterUserIds: ['user-1', 'user-2'],
     },
   });
 
   assert.equal(key[4], '2026-07-01T00:00:00.000Z');
   assert.equal(key[5], '2026-07-31T23:59:59.000Z');
-  assert.equal(key[6], 'tag-1');
+  assert.equal(key[6], 'tag-1,tag-2');
   assert.equal(key[13], 'user-1,user-2');
 });
 

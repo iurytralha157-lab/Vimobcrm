@@ -14,6 +14,8 @@ export interface ContactExportFilters {
   stageId?: string;
   assigneeId?: string;
   unassigned?: boolean;
+  tagIds?: string[];
+  /** Legacy single-tag export filter kept for compatibility. */
   tagId?: string;
   source?: string;
   campaignId?: string;

@@ -43,6 +43,9 @@ coverage.out
 .tmp/
 .CLAUDE_SYSTEM_PROMPT.md
 /reports/
+/outputs/
+/Claude outputs/
+supabase/snippets/
 supabase/.temp/
 supabase/.branches/
 

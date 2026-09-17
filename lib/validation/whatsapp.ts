@@ -102,6 +102,7 @@ export const whatsAppSessionStatusSummarySchema = z.object({
   owner: z.object({
     id: uuidSchema,
     name: z.string().min(1).max(180),
+    avatar_url: z.string().max(2048).nullable(),
   }).strict(),
   capabilities: z.object({
     can_manage: z.boolean(),

@@ -168,8 +168,8 @@ export default function Dashboard() {
     setAdSetId,
     adId,
     setAdId,
-    tagId,
-    setTagId,
+    tagIds,
+    setTagIds,
     dealStatus,
     setDealStatus,
     searchQuery,
@@ -185,6 +185,8 @@ export default function Dashboard() {
     isLoadingCampaigns,
     isLoadingAdSets,
     isLoadingAds,
+    isLoadingTags,
+    hasTagsError,
     isFiltersHydrated,
   } = useSharedFilters({
     loadDynamicOptions: shouldLoadFilterOptions,
@@ -205,7 +207,7 @@ export default function Dashboard() {
       campaignId: filters.campaignId,
       adSetId: filters.adSetId,
       adId: filters.adId,
-      tagId: filters.tagId,
+      tagIds: filters.tagIds,
       dealStatus: filters.dealStatus,
       searchQuery: filters.searchQuery,
     }),
@@ -259,7 +261,7 @@ export default function Dashboard() {
       filters.campaignId,
       filters.adSetId,
       filters.adId,
-      filters.tagId,
+      [...filters.tagIds].sort().join(","),
       filters.dealStatus,
       filters.searchQuery,
     ],
@@ -382,8 +384,8 @@ export default function Dashboard() {
             onAdSetChange={setAdSetId}
             adId={adId}
             onAdChange={setAdId}
-            tagId={tagId}
-            onTagChange={setTagId}
+            tagIds={tagIds}
+            onTagsChange={setTagIds}
             dealStatus={dealStatus}
             onDealStatusChange={setDealStatus}
             searchQuery={searchQuery}
@@ -404,6 +406,8 @@ export default function Dashboard() {
             isLoadingCampaigns={isLoadingCampaigns}
             isLoadingAdSets={isLoadingAdSets}
             isLoadingAds={isLoadingAds}
+            isLoadingTags={isLoadingTags}
+            hasTagsError={hasTagsError}
             loadDynamicOptions={shouldLoadFilterOptions}
             onFiltersOpenChange={(open) => {
               if (open) setShouldLoadFilterOptions(true);

@@ -19,7 +19,7 @@ export type ContactFilterModel = {
   pipelineId: string;
   stageId: string;
   assigneeId: string | null;
-  tagId: string | null;
+  tagIds: string[];
   source: string | null;
   campaignId: string | null;
   adSetId: string | null;
@@ -40,7 +40,7 @@ export type ContactExportFilters = Pick<
   | 'stageId'
   | 'assigneeId'
   | 'unassigned'
-  | 'tagId'
+  | 'tagIds'
   | 'source'
   | 'campaignId'
   | 'adSetId'
@@ -56,7 +56,7 @@ export function buildContactListFilters({
   pipelineId,
   stageId,
   assigneeId,
-  tagId,
+  tagIds,
   source,
   campaignId,
   adSetId,
@@ -78,7 +78,10 @@ export function buildContactListFilters({
         ? assigneeId
         : undefined,
     unassigned: assigneeId === 'unassigned',
-    tagId: tagId && tagId !== 'all' ? tagId : undefined,
+    tagIds:
+      tagIds.length > 0
+        ? [...new Set(tagIds.map((tagId) => tagId.trim()).filter(Boolean))].sort()
+        : undefined,
     source: source && source !== 'all' ? source : undefined,
     campaignId: campaignId || undefined,
     adSetId: adSetId || undefined,
@@ -107,7 +110,7 @@ export function buildContactExportFilters(
     stageId,
     assigneeId,
     unassigned,
-    tagId,
+    tagIds,
     source,
     campaignId,
     adSetId,
@@ -124,7 +127,7 @@ export function buildContactExportFilters(
     stageId,
     assigneeId,
     unassigned,
-    tagId,
+    tagIds,
     source,
     campaignId,
     adSetId,

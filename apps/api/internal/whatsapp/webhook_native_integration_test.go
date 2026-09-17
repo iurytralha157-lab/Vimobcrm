@@ -128,6 +128,7 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 			SessionID:      sessionID,
 			EventType:      event,
 			Payload:        readNativeFixture(t, fixture),
+			ProcessingLane: evolutionWebhookLaneLive,
 		}
 	}
 
@@ -802,5 +803,30 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	}
 	if autoReplyJobs != 1 || autoReplyInboundLogs != 1 {
 		t.Fatalf("auto-reply idempotency = jobs:%d inboundLogs:%d", autoReplyJobs, autoReplyInboundLogs)
+	}
+
+	backlogItem := item("messages.upsert", "message_text.json")
+	backlogItem.ProcessingLane = evolutionWebhookLaneBacklog
+	backlogItem.Payload = []byte(strings.ReplaceAll(string(backlogItem.Payload), "provider-inbound-text-1", "provider-inbound-backlog-1"))
+	if handled, err := repo.processEvolutionWebhookNative(ctx, backlogItem); err != nil || !handled {
+		t.Fatalf("native backlog import = handled:%v error:%v", handled, err)
+	}
+	var backlogMessageRowID string
+	var backlogAutoReplyJobs int
+	if err := postgres.Pool().QueryRow(ctx, `
+		select id::text from public.whatsapp_messages
+		where organization_id = $1::uuid and session_id = $2::uuid and message_id = 'provider-inbound-backlog-1'
+	`, organizationID, sessionID).Scan(&backlogMessageRowID); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		select count(*)::integer from public.jobs
+		where organization_id = $1::uuid and job_type = 'whatsapp_ai_autoreply'
+		  and payload->>'messageId' = $2
+	`, organizationID, backlogMessageRowID).Scan(&backlogAutoReplyJobs); err != nil {
+		t.Fatal(err)
+	}
+	if backlogAutoReplyJobs != 0 {
+		t.Fatalf("backlog import queued %d delayed auto-replies, want 0", backlogAutoReplyJobs)
 	}
 }

@@ -256,7 +256,7 @@ export function useCampaignInsights(filters: CampaignInsightsFilters) {
       filters.campaignId,
       filters.adSetId,
       filters.adId,
-      filters.tagId,
+      [...filters.tagIds].sort().join(","),
       filters.dealStatus,
       filters.accountId,
       filters.objective,
@@ -274,7 +274,10 @@ export function useCampaignInsights(filters: CampaignInsightsFilters) {
           campaignId: filters.campaignId,
           adSetId: filters.adSetId,
           adId: filters.adId,
-          tagId: filters.tagId,
+          tagIds:
+            filters.tagIds.length > 0
+              ? [...filters.tagIds].sort().join(",")
+              : undefined,
           dealStatus: filters.dealStatus,
           accountId: filters.accountId,
           objective: filters.objective,

@@ -12,10 +12,14 @@ export const contactsAPI = {
     organizationId?: string | null,
     options?: { signal?: AbortSignal },
   ) {
-    const query = parseDomainInput(contactListQuerySchema, { ...filters, mode: filters.mode || 'compact' }, 'contacts.list')
+    const parsedQuery = parseDomainInput(contactListQuerySchema, { ...filters, mode: filters.mode || 'compact' }, 'contacts.list')
+    const { tagIds, ...query } = parsedQuery
     const response = await vimobAPIRequest<Envelope<Contact[]>>('/v1/contacts', {
       organizationId,
-      query,
+      query: {
+        ...query,
+        tagIds: tagIds?.join(','),
+      },
       signal: options?.signal,
     })
     validateDomainResponse(apiContactListResponseSchema, response, 'contacts.list')

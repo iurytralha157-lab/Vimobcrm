@@ -6,7 +6,7 @@ import {
 export interface PipelineQueryKeyFilters {
   dateRange?: { from: Date; to: Date } | null;
   dateMode?: PipelineDateMode;
-  filterTag?: string | null;
+  filterTags?: string[];
   filterDealStatus?: string | null;
   searchQuery?: string | null;
   filterCampaign?: string | null;
@@ -26,6 +26,12 @@ function normalizePipelineQueryUserIds(userIds?: string[]) {
   return [...new Set(userIds)].sort().join(',');
 }
 
+function normalizePipelineQueryTagIds(tagIds?: string[]) {
+  if (!Array.isArray(tagIds)) return undefined;
+  const normalized = [...new Set(tagIds.map((tagId) => tagId.trim()).filter(Boolean))].sort();
+  return normalized.length > 0 ? normalized.join(',') : undefined;
+}
+
 export function stageWithLeadsQueryKey(params: {
   organizationId?: string;
   pipelineId?: string;
@@ -41,7 +47,7 @@ export function stageWithLeadsQueryKey(params: {
     filterUserId,
     filters?.dateRange?.from?.toISOString(),
     filters?.dateRange?.to?.toISOString(),
-    normalizePipelineQueryFilter(filters?.filterTag),
+    normalizePipelineQueryTagIds(filters?.filterTags),
     normalizePipelineQueryFilter(filters?.filterDealStatus),
     normalizePipelineQueryFilter(filters?.searchQuery),
     normalizePipelineQueryFilter(filters?.filterCampaign),

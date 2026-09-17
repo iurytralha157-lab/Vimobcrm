@@ -839,7 +839,8 @@ func (repo Repository) ListMetaFormConfigs(ctx context.Context, tenantContext te
 				when property.id is null then coalesce(mfc.default_values, '{}'::jsonb) - 'property_id' - 'interest_property_id'
 				else mfc.default_values
 			end,
-			'created_by_name', coalesce(u.name, u.email)
+			'created_by_name', coalesce(u.name, u.email),
+			'created_by_avatar_url', nullif(btrim(u.avatar_url), '')
 		)
 		from public.meta_form_configs mfc
 		left join public.users u on u.id = mfc.created_by
@@ -871,12 +872,19 @@ func (repo Repository) SaveMetaFormConfig(ctx context.Context, tenantContext ten
 	if propertyID != nil && !propertyscope.CanRead(tenantContext) {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
+	autoTagIDs, err := canonicalMetaFormAutoTagIDs(request)
+	if err != nil {
+		return nil, err
+	}
+	request.AutoTags = autoTagIDs
+	request.DefaultValues = nonNilMap(request.DefaultValues)
+	request.DefaultValues["auto_tags"] = autoTagIDs
 	isActive := true
 	if request.IsActive != nil {
 		isActive = *request.IsActive
 	}
 	defaultValuesJSON, _ := json.Marshal(nonNilMap(request.DefaultValues))
-	autoTagsJSON, _ := json.Marshal(nonNilStrings(request.AutoTags))
+	autoTagsJSON, _ := json.Marshal(request.AutoTags)
 	fieldMappingJSON, _ := json.Marshal(nonNilStringMap(request.FieldMapping))
 	customFieldsJSON, _ := json.Marshal(nonNilStrings(request.CustomFieldsConfig))
 
@@ -914,6 +922,16 @@ func (repo Repository) SaveMetaFormConfig(ctx context.Context, tenantContext ten
 					  and `+propertyscope.VisibilitySQL("property", "$5", "$6", "$7")+`
 				)
 			)
+			and not exists (
+				select 1
+				from unnest($8::uuid[]) as requested_tag(tag_id)
+				where not exists (
+					select 1
+					from public.tags as tag
+					where tag.organization_id = $1::uuid
+					  and tag.id = requested_tag.tag_id
+				)
+			)
 	`,
 		tenantContext.OrganizationID,
 		integrationID,
@@ -922,6 +940,7 @@ func (repo Repository) SaveMetaFormConfig(ctx context.Context, tenantContext ten
 		propertyscope.CanViewAll(tenantContext),
 		tenantContext.UserID,
 		propertyscope.CanViewTeam(tenantContext),
+		autoTagIDs,
 	).Scan(&referencesBelongToOrganization); err != nil {
 		return nil, err
 	}
@@ -1010,6 +1029,45 @@ func (repo Repository) SaveMetaFormConfig(ctx context.Context, tenantContext ten
 		return nil, err
 	}
 	return item, nil
+}
+
+func canonicalMetaFormAutoTagIDs(request MetaFormConfigRequest) ([]string, error) {
+	candidates := append([]string{}, request.AutoTags...)
+	if rawDefaultTags, exists := request.DefaultValues["auto_tags"]; exists {
+		switch values := rawDefaultTags.(type) {
+		case nil:
+		case []string:
+			candidates = append(candidates, values...)
+		case []any:
+			for _, rawValue := range values {
+				value, ok := rawValue.(string)
+				if !ok {
+					return nil, ErrInvalidInput
+				}
+				candidates = append(candidates, value)
+			}
+		default:
+			return nil, ErrInvalidInput
+		}
+	}
+
+	normalized := make([]string, 0, len(candidates))
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		value, ok := pgvalue.NormalizeUUID(strings.TrimSpace(candidate))
+		if !ok {
+			return nil, ErrInvalidInput
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		if len(normalized) >= 100 {
+			return nil, ErrInvalidInput
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	return normalized, nil
 }
 
 func canonicalMetaFormPropertyID(request MetaFormConfigRequest) (*string, error) {

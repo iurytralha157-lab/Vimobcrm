@@ -106,7 +106,7 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
         : null,
       adSetId: usesPaidMediaScope ? sharedFilters.filters.adSetId : null,
       adId: usesPaidMediaScope ? sharedFilters.filters.adId : null,
-      tagId: null,
+      tagIds: [],
       dealStatus: null,
       searchQuery: "",
       accountId: usesPaidMediaScope ? marketingScope.accountId : null,
@@ -425,8 +425,8 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
               onAdSetChange={sharedFilters.setAdSetId}
               adId={sharedFilters.adId}
               onAdChange={sharedFilters.setAdId}
-              tagId={sharedFilters.tagId}
-              onTagChange={sharedFilters.setTagId}
+              tagIds={sharedFilters.tagIds}
+              onTagsChange={sharedFilters.setTagIds}
               dealStatus={sharedFilters.dealStatus}
               onDealStatusChange={sharedFilters.setDealStatus}
               searchQuery={sharedFilters.searchQuery}
