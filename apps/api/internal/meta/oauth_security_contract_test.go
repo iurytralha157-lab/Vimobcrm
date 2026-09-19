@@ -58,6 +58,21 @@ func TestOAuthConnectClaimIsTenantBoundPageScopedAndFinalizedOnlyAfterSuccess(t 
 	}
 }
 
+func TestOAuthConnectRejectsTokenWithoutLeadRetrievalBeforeProviderMutation(t *testing.T) {
+	source := readOAuthSource(t, "oauth_service.go")
+	connect := oauthSourceSection(t, source, "func (service *oauthService) connectPage", "func (service *oauthService) updatePage")
+
+	requiredScope := strings.Index(connect, `slices.Contains(debug.Scopes, "leads_retrieval")`)
+	subscribe := strings.Index(connect, "subscribePageWebhook(")
+	persist := strings.Index(connect, "persistConnectedIntegration(")
+	if requiredScope < 0 || subscribe <= requiredScope || persist <= requiredScope {
+		t.Fatal("connect must reject a token without leads_retrieval before subscribing or persisting the Page")
+	}
+	if !strings.Contains(connect, `newOAuthFailure("meta_leads_retrieval_required", http.StatusForbidden)`) {
+		t.Fatal("connect must return the stable meta_leads_retrieval_required error")
+	}
+}
+
 func TestOAuthCallbackStoresTransientUserTokenOnlyInVault(t *testing.T) {
 	postgresSource := readOAuthSource(t, "oauth_postgres.go")
 	finish := oauthSourceSection(t, postgresSource, "func (store oauthPostgresStore) finishCallbackSuccess", "func (store oauthPostgresStore) claimConnectFlow")

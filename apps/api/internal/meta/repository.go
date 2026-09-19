@@ -219,7 +219,15 @@ func (repo Repository) FinishWebhookEvent(ctx context.Context, eventID string, o
 		    next_retry_at = case
 		      when $3 = 'deferred'
 		       and coalesce(attempts, 0) + 1 < 29
-		        then now() + interval '6 hours'
+		        then now() + case coalesce(attempts, 0)
+		          when 0 then interval '30 seconds'
+		          when 1 then interval '1 minute'
+		          when 2 then interval '2 minutes'
+		          when 3 then interval '5 minutes'
+		          when 4 then interval '15 minutes'
+		          when 5 then interval '30 minutes'
+		          else interval '6 hours'
+		        end
 		      when $3 = 'failed'
 		       and $5::boolean
 		       and coalesce(attempts, 0) + 1 < 5
@@ -467,40 +475,39 @@ func (repo Repository) processLeadgenChange(ctx context.Context, webhookPayload 
 			return result
 		}
 
-		details = cloneObject(change.Raw)
-		lead := mapLeadData(details, change, integration, formConfig)
-		lead.Name = fallbackMetaLeadName(formConfig)
-		leadID, reentry, persistErr := repo.persistLead(
-			ctx,
-			webhookPayload,
-			details,
-			change,
-			integration,
-			formConfig,
-			lead,
-			err.Error(),
-		)
-		if persistErr != nil {
-			var duplicateErr duplicateLeadgenError
-			if errors.As(persistErr, &duplicateErr) {
-				result.Status = "duplicate"
-				result.LeadID = duplicateErr.leadID
-				return result
-			}
-			result.Status = "failed"
-			result.LeadID = ""
-			result.Error = persistErr.Error()
-			return result
-		}
-		result.Status = "processed"
-		result.LeadID = leadID
-		result.Reentry = reentry
+		// Keep the signed provider event durable and retryable, but never expose a
+		// synthetic CRM contact while Meta has not returned the real field_data.
+		result.Status = "skipped"
 		return result
 	}
 
 	lead := mapLeadData(details, change, integration, formConfig)
-	if len([]rune(lead.Name)) < 2 {
-		lead.Name = fallbackMetaLeadName(formConfig)
+	switch classifyMetaLeadIntake(details, change.Raw, lead) {
+	case metaLeadIntakeIgnoreTest:
+		result.Status = "skipped"
+		result.Error = ""
+		return result
+	case metaLeadIntakeWaitForIdentity:
+		result.Status = "skipped"
+		result.DetailsPending = true
+		result.Error = "Meta lead details are incomplete: a non-empty provider field mapped to name is required"
+		return result
+	}
+	if leadMatch.LeadID != "" {
+		discarded, err := repo.discardUntouchedPendingMetaLeadForReentry(
+			ctx,
+			integration.OrganizationID,
+			change.LeadgenID,
+			leadMatch.LeadID,
+			lead.Phone,
+		)
+		if err != nil {
+			result.Error = err.Error()
+			return result
+		}
+		if discarded {
+			leadMatch = metaLeadMatch{}
+		}
 	}
 	if leadMatch.LeadID != "" {
 		if err := repo.enrichPendingMetaLead(ctx, webhookPayload, details, change, integration, formConfig, leadMatch.LeadID, lead); err != nil {
@@ -1303,6 +1310,93 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 	}
 
 	return leadID, reentry, nil
+}
+
+func (repo Repository) discardUntouchedPendingMetaLeadForReentry(
+	ctx context.Context,
+	organizationID string,
+	leadgenID string,
+	pendingLeadID string,
+	phone *string,
+) (bool, error) {
+	if digitsOnly(phone) == "" {
+		return false, nil
+	}
+
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+		select pg_advisory_xact_lock(
+			hashtextextended('lead-entry:meta:' || $1 || ':' || $2, 0)
+		)
+	`, organizationID, leadgenID); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx, `
+		select pg_advisory_xact_lock(
+			hashtextextended('lead-phone:' || $1 || ':' || normalize_phone($2), 0)
+		)
+	`, organizationID, *phone); err != nil {
+		return false, err
+	}
+
+	var detailsPending bool
+	var phoneMissing bool
+	var untouched bool
+	err = tx.QueryRow(ctx, `
+		select
+		  lower(coalesce(metadata->>'meta_details_status', '')) = 'pending',
+		  phone is null or normalize_phone(phone) = '',
+		  first_touch_at is null
+		    and first_response_at is null
+		    and owner_last_activity_at is null
+		    and last_contact_at is null
+		from public.leads
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		for update
+	`, organizationID, pendingLeadID).Scan(&detailsPending, &phoneMissing, &untouched)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Another worker may have removed the same legacy placeholder while this
+		// retry waited for the provider-event lock. Continue through canonical
+		// persistence, whose stable key makes that concurrent retry idempotent.
+		return true, tx.Commit(ctx)
+	}
+	if err != nil {
+		return false, err
+	}
+	if !detailsPending || !phoneMissing || !untouched {
+		return false, tx.Commit(ctx)
+	}
+
+	existingLeadID, err := repo.findExistingLeadByPhone(ctx, tx, organizationID, phone)
+	if err != nil {
+		return false, err
+	}
+	if existingLeadID == "" || existingLeadID == pendingLeadID {
+		return false, tx.Commit(ctx)
+	}
+
+	command, err := tx.Exec(ctx, `
+		delete from public.leads
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		  and lower(coalesce(metadata->>'meta_details_status', '')) = 'pending'
+	`, organizationID, pendingLeadID)
+	if err != nil {
+		return false, err
+	}
+	if command.RowsAffected() != 1 {
+		return false, tx.Commit(ctx)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (repo Repository) enrichPendingMetaLead(
@@ -2480,10 +2574,10 @@ func mapLeadData(details map[string]any, change leadgenChange, integration metaI
 
 	mapping := map[string]string{}
 	for key, value := range integration.FieldMapping {
-		mapping[strings.ToLower(strings.TrimSpace(key))] = strings.TrimSpace(value)
+		mapping[strings.ToLower(strings.TrimSpace(key))] = strings.ToLower(strings.TrimSpace(value))
 	}
 	for key, value := range formConfig.FieldMapping {
-		mapping[strings.ToLower(strings.TrimSpace(key))] = strings.TrimSpace(value)
+		mapping[strings.ToLower(strings.TrimSpace(key))] = strings.ToLower(strings.TrimSpace(value))
 	}
 
 	customFields := map[string]struct{}{}
@@ -2503,12 +2597,15 @@ func mapLeadData(details map[string]any, change leadgenChange, integration metaI
 		lowerKey := strings.ToLower(key)
 		lead.RawFields[key] = field.Values
 
-		target := strings.TrimSpace(mapping[lowerKey])
-		if target == "" {
+		target, explicitlyMapped := mapping[lowerKey]
+		if !explicitlyMapped {
 			target = guessLeadTarget(lowerKey)
 		}
-		if _, isCustom := customFields[lowerKey]; isCustom && target == "" {
+		if _, isCustom := customFields[lowerKey]; isCustom && !explicitlyMapped && target == "" {
 			target = "custom"
+		}
+		if explicitlyMapped && target == "" {
+			target = "_ignore"
 		}
 
 		switch target {
@@ -2516,6 +2613,7 @@ func mapLeadData(details map[string]any, change leadgenChange, integration metaI
 			continue
 		case "name":
 			lead.Name = value
+			lead.NameFromProvider = true
 		case "email":
 			lead.Email = &value
 		case "phone":
@@ -2547,15 +2645,44 @@ func mapLeadData(details map[string]any, change leadgenChange, integration metaI
 	return lead
 }
 
-func fallbackMetaLeadName(formConfig metaFormConfig) string {
-	formName := ""
-	if formConfig.FormName != nil {
-		formName = strings.TrimSpace(*formConfig.FormName)
+type metaLeadIntakeDisposition uint8
+
+const (
+	metaLeadIntakeReady metaLeadIntakeDisposition = iota
+	metaLeadIntakeIgnoreTest
+	metaLeadIntakeWaitForIdentity
+)
+
+func classifyMetaLeadIntake(details map[string]any, raw map[string]any, lead leadData) metaLeadIntakeDisposition {
+	detailFields := extractFieldData(details)
+	rawFields := extractFieldData(raw)
+	if isMetaTestLead(detailFields) || isMetaTestLead(rawFields) {
+		return metaLeadIntakeIgnoreTest
 	}
-	if formName == "" {
-		return "Lead Meta"
+	if len(detailFields) == 0 && len(rawFields) == 0 {
+		return metaLeadIntakeWaitForIdentity
 	}
-	return truncateMetaLeadText("Lead Meta - "+formName, 160)
+	if !hasProviderMappedLeadName(lead) {
+		return metaLeadIntakeWaitForIdentity
+	}
+	return metaLeadIntakeReady
+}
+
+func isMetaTestLead(fields []fieldData) bool {
+	for _, field := range fields {
+		for _, value := range field.Values {
+			normalized := strings.ToLower(strings.TrimSpace(value))
+			if strings.HasPrefix(normalized, "<test lead: dummy data") ||
+				strings.HasPrefix(normalized, "test lead: dummy data") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasProviderMappedLeadName(lead leadData) bool {
+	return lead.NameFromProvider && strings.TrimSpace(lead.Name) != ""
 }
 
 func setMetaLeadDetailsState(metadata map[string]any, detailsError string) {
@@ -2831,9 +2958,7 @@ func stringMap(value any) map[string]string {
 	switch typed := value.(type) {
 	case map[string]any:
 		for key, item := range typed {
-			if text := textFromAny(item); text != "" {
-				out[key] = text
-			}
+			out[key] = textFromAny(item)
 		}
 	case map[string]string:
 		return typed

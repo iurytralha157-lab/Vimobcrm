@@ -183,7 +183,9 @@ export function MetaFormConfigDialog({
   if (!open || !form) return null;
 
   const formQuestions = form.questions?.length ? form.questions : FALLBACK_META_FIELDS;
-  const mappedCount = Object.values(fieldMapping).filter(Boolean).length;
+  const mappedCount = Object.values(fieldMapping).filter(
+    (value) => Boolean(value) && value !== "_ignore"
+  ).length;
 
   const updateFieldMapping = (metaField: string, crmField: string) => {
     setFieldMapping((prev) => ({
@@ -284,7 +286,7 @@ export function MetaFormConfigDialog({
                     </div>
                     <Select
                       value={fieldMapping[question.key] || "_ignore"}
-                      onValueChange={(value) => updateFieldMapping(question.key, value === "_ignore" ? "" : value)}
+                      onValueChange={(value) => updateFieldMapping(question.key, value)}
                     >
                       <SelectTrigger className="h-9">
                         <SelectValue placeholder="Selecione" />

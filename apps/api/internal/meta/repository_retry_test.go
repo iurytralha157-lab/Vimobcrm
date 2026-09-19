@@ -1,6 +1,7 @@
 package meta
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -56,16 +57,7 @@ func TestIsRetryableMetaWebhookFailure(t *testing.T) {
 	}
 }
 
-func TestMetaLeadFallbackPreservesTheProviderEventForLaterEnrichment(t *testing.T) {
-	formName := strings.Repeat("Formulário ", 30)
-	name := fallbackMetaLeadName(metaFormConfig{FormName: &formName})
-	if !strings.HasPrefix(name, "Lead Meta - Formulário") {
-		t.Fatalf("fallbackMetaLeadName() = %q", name)
-	}
-	if len([]rune(name)) > 160 {
-		t.Fatalf("fallback name has %d runes, want at most 160", len([]rune(name)))
-	}
-
+func TestMetaLeadDetailsStateCanStillEnrichLegacyPendingRecords(t *testing.T) {
 	metadata := map[string]any{"source": "meta"}
 	setMetaLeadDetailsState(metadata, " Meta Graph temporarily unavailable ")
 	if metadata["meta_details_status"] != "pending" {
@@ -81,5 +73,148 @@ func TestMetaLeadFallbackPreservesTheProviderEventForLaterEnrichment(t *testing.
 	}
 	if _, exists := metadata["meta_details_error"]; exists {
 		t.Fatalf("completed metadata retained the provider error: %#v", metadata)
+	}
+}
+
+func TestClassifyMetaLeadIntake(t *testing.T) {
+	t.Parallel()
+
+	phone := "+5511999999999"
+	email := "lead@example.com"
+	tests := []struct {
+		name    string
+		details map[string]any
+		raw     map[string]any
+		lead    leadData
+		want    metaLeadIntakeDisposition
+	}{
+		{
+			name: "accepts real name and canonical phone",
+			details: map[string]any{"field_data": []any{
+				map[string]any{"name": "full_name", "values": []any{"Maria Silva"}},
+				map[string]any{"name": "phone_number", "values": []any{phone}},
+			}},
+			lead: leadData{Name: "Maria Silva", NameFromProvider: true, Phone: &phone},
+			want: metaLeadIntakeReady,
+		},
+		{
+			name: "accepts email when form has no phone",
+			details: map[string]any{"field_data": []any{
+				map[string]any{"name": "full_name", "values": []any{"Maria Silva"}},
+				map[string]any{"name": "email", "values": []any{email}},
+			}},
+			lead: leadData{Name: "Maria Silva", NameFromProvider: true, Email: &email},
+			want: metaLeadIntakeReady,
+		},
+		{
+			name:    "waits instead of creating a synthetic contact without fields",
+			details: map[string]any{},
+			raw:     map[string]any{"leadgen_id": "lead-123"},
+			lead:    leadData{Name: "Lead Meta - Formulario"},
+			want:    metaLeadIntakeWaitForIdentity,
+		},
+		{
+			name: "accepts a configured provider name without imposing a contact channel",
+			details: map[string]any{"field_data": []any{
+				map[string]any{"name": "full_name", "values": []any{"Maria Silva"}},
+			}},
+			lead: leadData{Name: "Maria Silva", NameFromProvider: true},
+			want: metaLeadIntakeReady,
+		},
+		{
+			name: "waits when a default or fallback name did not come from Meta",
+			details: map[string]any{"field_data": []any{
+				map[string]any{"name": "phone_number", "values": []any{phone}},
+			}},
+			lead: leadData{Name: "Nome padrao", Phone: &phone},
+			want: metaLeadIntakeWaitForIdentity,
+		},
+		{
+			name: "ignores explicit Meta dummy lead",
+			details: map[string]any{"field_data": []any{
+				map[string]any{"name": "full_name", "values": []any{"<test lead: dummy data for full_name>"}},
+				map[string]any{"name": "phone_number", "values": []any{"<test lead: dummy data for phone_number>"}},
+			}},
+			lead: leadData{Name: "<test lead: dummy data for full_name>"},
+			want: metaLeadIntakeIgnoreTest,
+		},
+		{
+			name: "ignores dummy marker retained only in the webhook payload",
+			details: map[string]any{"field_data": []any{
+				map[string]any{"name": "full_name", "values": []any{"Maria Silva"}},
+				map[string]any{"name": "phone_number", "values": []any{phone}},
+			}},
+			raw: map[string]any{"field_data": []any{
+				map[string]any{"name": "full_name", "values": []any{"<test lead: dummy data for full_name>"}},
+			}},
+			lead: leadData{Name: "Maria Silva", NameFromProvider: true, Phone: &phone},
+			want: metaLeadIntakeIgnoreTest,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := classifyMetaLeadIntake(test.details, test.raw, test.lead); got != test.want {
+				t.Fatalf("classifyMetaLeadIntake() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestAggregateResultsDefersIncompleteIdentityWithoutCountingALead(t *testing.T) {
+	t.Parallel()
+
+	status, organizationID, errorMessage, processed := aggregateResults([]LeadgenResult{{
+		Status:         "skipped",
+		OrganizationID: "organization-123",
+		DetailsPending: true,
+		Error:          "Meta lead details are incomplete",
+	}})
+
+	if status != "deferred" || organizationID != "organization-123" || errorMessage == "" || processed != 0 {
+		t.Fatalf(
+			"aggregateResults() = status %q, organization %q, error %q, processed %d",
+			status,
+			organizationID,
+			errorMessage,
+			processed,
+		)
+	}
+}
+
+func TestDeferredMetaLeadRetriesQuicklyBeforeLongBackoff(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	finishStart := strings.Index(source, "func (repo Repository) FinishWebhookEvent")
+	finishEnd := strings.Index(source[finishStart:], "func isRetryableMetaWebhookFailure")
+	if finishStart < 0 || finishEnd < 0 {
+		t.Fatal("FinishWebhookEvent source boundary was not found")
+	}
+	finish := source[finishStart : finishStart+finishEnd]
+
+	previous := -1
+	for _, delay := range []string{
+		"interval '30 seconds'",
+		"interval '1 minute'",
+		"interval '2 minutes'",
+		"interval '5 minutes'",
+		"interval '15 minutes'",
+		"interval '30 minutes'",
+		"interval '6 hours'",
+	} {
+		index := strings.Index(finish, delay)
+		if index < 0 {
+			t.Fatalf("deferred Meta retry schedule is missing %q", delay)
+		}
+		if index <= previous {
+			t.Fatalf("deferred Meta retry schedule is out of order around %q", delay)
+		}
+		previous = index
 	}
 }

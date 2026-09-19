@@ -221,6 +221,9 @@ func (service *oauthService) connectPage(ctx context.Context, auth oauthAuthCont
 	if debug.UserID != identity.ID || (payload.FacebookUserID != "" && payload.FacebookUserID != identity.ID) {
 		return nil, newOAuthFailure("oauth_identity_mismatch", http.StatusForbidden)
 	}
+	if !slices.Contains(debug.Scopes, "leads_retrieval") {
+		return nil, newOAuthFailure("meta_leads_retrieval_required", http.StatusForbidden)
+	}
 	page, found := findOAuthPage(pages, pageID)
 	if !found {
 		return nil, newOAuthFailure("meta_page_not_accessible", http.StatusForbidden)

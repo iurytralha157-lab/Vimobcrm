@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { integrationsAPI } from "@/lib/api";
+import { VimobAPIError } from "@/lib/api/vimob-error";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import {
@@ -20,6 +21,13 @@ export type MetaAdAccount = MetaOAuthAdAccount;
 
 type MetaAuthURLResponse = { auth_url: string };
 export type MetaOAuthFlowResult = ValidatedMetaOAuthFlowResult;
+
+function metaConnectErrorMessage(error: unknown) {
+  if (error instanceof VimobAPIError && error.code === "meta_leads_retrieval_required") {
+    return "A Meta não liberou a leitura dos leads. Autorize leads_retrieval e conecte a página novamente.";
+  }
+  return error instanceof Error ? error.message : "Não foi possível conectar esta página.";
+}
 
 function invokeMeta<T>(body: Record<string, unknown>, organizationId?: string | null) {
   return integrationsAPI.metaOAuthAction<T>(body, organizationId);
@@ -104,8 +112,8 @@ export function useMetaConnectPage() {
         toast.success("Página conectada com sucesso!");
       }
     },
-    onError: (error: Error) => {
-      toast.error(`Erro ao conectar página: ${error.message}`);
+    onError: (error: unknown) => {
+      toast.error(`Erro ao conectar página: ${metaConnectErrorMessage(error)}`);
     },
   });
 }

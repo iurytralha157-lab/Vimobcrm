@@ -137,15 +137,16 @@ type resolvedDestination struct {
 }
 
 type leadData struct {
-	Name      string
-	Email     *string
-	Phone     *string
-	Message   *string
-	Cargo     *string
-	Empresa   *string
-	Cidade    *string
-	Bairro    *string
-	Custom    map[string]any
-	RawFields map[string]any
-	Meta      map[string]any
+	Name             string
+	NameFromProvider bool
+	Email            *string
+	Phone            *string
+	Message          *string
+	Cargo            *string
+	Empresa          *string
+	Cidade           *string
+	Bairro           *string
+	Custom           map[string]any
+	RawFields        map[string]any
+	Meta             map[string]any
 }
