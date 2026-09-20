@@ -25,24 +25,25 @@
 
 \if :{?workers_quiesced}
 \else
-  \echo 'Missing -v workers_quiesced=true'
   \set workers_quiesced false
 \endif
 
-\if :workers_quiesced
+\if :{?online_legacy_freeze}
 \else
-  \echo 'workers_quiesced must be true after ingress/workers are paused and drained'
+  \set online_legacy_freeze false
 \endif
 
 \if :{?intake_quiesced}
 \else
-  \echo 'Missing -v intake_quiesced=true'
   \set intake_quiesced false
 \endif
 
-\if :intake_quiesced
+\if :workers_quiesced
 \else
-  \echo 'intake_quiesced must remain true from before A1 until after B2 smokes'
+  \if :online_legacy_freeze
+  \else
+    \echo 'Use fully quiesced workers/intake or -v online_legacy_freeze=true after the proven online freeze'
+  \endif
 \endif
 
 select pg_catalog.set_config(
@@ -69,14 +70,21 @@ select pg_catalog.set_config(
   false
 );
 
+select pg_catalog.set_config(
+  'vimob.queue_scoped_lead_online_legacy_freeze',
+  :'online_legacy_freeze',
+  false
+);
+
 begin;
 
 set local lock_timeout = '5s';
 set local statement_timeout = '5min';
 
--- A short maintenance window is mandatory. These locks make the operational
--- quiesce provable and close races between the final NULL-snapshot backfill,
--- binding materialization and installation of the strict triggers.
+-- The fully quiesced path uses these locks as its maintenance boundary. The
+-- online path keeps every process running, but takes the same fail-fast locks
+-- for the final tail materialization and strict-trigger installation. If any
+-- lock cannot be acquired in five seconds, the transaction changes nothing.
 lock table
   public.whatsapp_webhook_inbox,
   public.whatsapp_webhook_routing_snapshots,
@@ -115,15 +123,64 @@ declare
     'vimob.queue_scoped_lead_intake_quiesced',
     true
   );
+  v_online_legacy_freeze text := pg_catalog.current_setting(
+    'vimob.queue_scoped_lead_online_legacy_freeze',
+    true
+  );
 begin
   if v_app_ready_release is null
      or v_app_ready_release !~ '^[0-9a-f]{40}$'
      or v_app_smoke_confirmed is distinct from 'true'
-     or v_workers_quiesced is distinct from 'true'
-     or v_intake_quiesced is distinct from 'true' then
+     or not (
+       (
+         v_workers_quiesced = 'true'
+         and v_intake_quiesced = 'true'
+       )
+       or v_online_legacy_freeze = 'true'
+     ) then
     raise exception using
       errcode = '55000',
       message = 'queue_scoped_lead_compatible_app_not_attested';
+  end if;
+
+  if v_online_legacy_freeze = 'true'
+     and (
+       pg_catalog.to_regclass(
+         'private.whatsapp_webhook_legacy_routing_freeze'
+       ) is null
+       or pg_catalog.to_regprocedure(
+         'private.is_frozen_legacy_whatsapp_ingress(uuid,uuid,uuid,text,text)'
+       ) is null
+       or not exists (
+         select 1
+         from pg_catalog.pg_trigger as trigger_state
+         where trigger_state.tgrelid =
+           'public.whatsapp_webhook_inbox'::regclass
+           and trigger_state.tgname =
+             'guard_whatsapp_webhook_legacy_routing_freeze'
+           and not trigger_state.tgisinternal
+           and trigger_state.tgenabled in ('O', 'A')
+       )
+       or exists (
+         select 1
+         from public.whatsapp_webhook_inbox as inbox
+         where inbox.status in ('pending', 'retry', 'processing')
+           and coalesce(
+             inbox.payload #>> '{__vimob_ingress,routing_snapshot,version}',
+             ''
+           ) <> '1'
+           and not private.is_frozen_legacy_whatsapp_ingress(
+             inbox.id,
+             inbox.organization_id,
+             inbox.session_id,
+             inbox.event_key,
+             inbox.processing_lane
+           )
+       )
+     ) then
+    raise exception using
+      errcode = '55000',
+      message = 'queue_scoped_lead_online_legacy_freeze_not_ready';
   end if;
 
   if exists (
@@ -170,7 +227,7 @@ begin
     raise exception using
       errcode = '55000',
       message = 'whatsapp_binding_cutover_delivery_in_flight',
-      hint = 'Keep ingress/workers quiesced, reconcile every processing/sending row, then retry.';
+      hint = 'Do not stop production on the online path. Let the current lease finish and retry the fail-fast transaction.';
   end if;
 
   if not exists (
@@ -299,11 +356,18 @@ begin
     from public.whatsapp_webhook_inbox as inbox
     where inbox.status in ('pending', 'retry', 'processing')
       and coalesce(inbox.payload #>> '{__vimob_ingress,routing_snapshot,version}', '') <> '1'
+      and not private.is_frozen_legacy_whatsapp_ingress(
+        inbox.id,
+        inbox.organization_id,
+        inbox.session_id,
+        inbox.event_key,
+        inbox.processing_lane
+      )
   ) then
     raise exception using
       errcode = '55000',
       message = 'whatsapp_webhook_legacy_provenance_backlog_not_drained',
-      hint = 'Drain each legacy row through the compatible worker or quarantine it as dead with an audited reason before B1. Never let it inherit a later binding.';
+      hint = 'Drain or quarantine the row on the paused path, or freeze its exact identity with the audited online procedure. Never let it inherit a later binding.';
   end if;
 
   if exists (
@@ -325,11 +389,19 @@ begin
        nullif(payload_route.snapshot->>'provider_message_id', '')
      and routing_snapshot.snapshot = payload_route.snapshot
     where inbox.status in ('pending', 'retry', 'processing')
+      and coalesce(
+        inbox.payload #>> '{__vimob_ingress,routing_snapshot,version}',
+        ''
+      ) = '1'
       and routing_snapshot.provider_message_id is null
   ) or exists (
     select 1
     from public.whatsapp_webhook_inbox as inbox
     where inbox.status in ('pending', 'retry', 'processing')
+      and coalesce(
+        inbox.payload #>> '{__vimob_ingress,routing_snapshot,version}',
+        ''
+      ) = '1'
       and lower(coalesce(inbox.event_type, '')) like '%message%'
       and pg_catalog.jsonb_array_length(
         case
@@ -423,9 +495,9 @@ revoke insert, update, delete, truncate
 on table public.whatsapp_messages
 from public, anon, authenticated;
 
--- Once the legacy active backlog is empty, every pending/retry/processing row
--- must carry the ingress-owned v1 envelope. Processed/dead history remains
--- readable without rewriting source bytes.
+-- Every active row must carry the ingress-owned v1 envelope unless its exact
+-- immutable identity is in the online legacy-freeze ledger. Frozen source bytes
+-- remain untouched and cannot be claimed by the compatible worker.
 alter table public.whatsapp_webhook_inbox
   drop constraint if exists whatsapp_webhook_active_routing_snapshot_v1_check;
 
@@ -437,6 +509,13 @@ alter table public.whatsapp_webhook_inbox
       payload #>> '{__vimob_ingress,routing_snapshot,version}',
       ''
     ) = '1'
+    or private.is_frozen_legacy_whatsapp_ingress(
+      id,
+      organization_id,
+      session_id,
+      event_key,
+      processing_lane
+    )
   ) not valid;
 
 alter table public.whatsapp_webhook_inbox
@@ -1216,6 +1295,13 @@ begin
     from public.whatsapp_webhook_inbox as inbox
     where inbox.status in ('pending', 'retry', 'processing')
       and coalesce(inbox.payload #>> '{__vimob_ingress,routing_snapshot,version}', '') <> '1'
+      and not private.is_frozen_legacy_whatsapp_ingress(
+        inbox.id,
+        inbox.organization_id,
+        inbox.session_id,
+        inbox.event_key,
+        inbox.processing_lane
+      )
   ) or not exists (
     select 1
     from pg_catalog.pg_constraint as constraint_state

@@ -44,8 +44,11 @@ func TestClaimEvolutionWebhooksQueryFairlyClaimsOneHeadPerSession(t *testing.T) 
 		"head.id as event_id",
 		"wi.session_id = ws.id",
 		"wi.processing_lane = $4",
+		"wi.payload #>> '{__vimob_ingress,routing_snapshot,version}'",
+		") = '1'",
 		"and ($4 <> 'live' or wi.next_attempt_at <= now())",
 		"older.processing_lane = wi.processing_lane",
+		"older.payload #>> '{__vimob_ingress,routing_snapshot,version}'",
 		"(older.created_at, older.id) < (wi.created_at, wi.id)",
 		"older.status in ('pending', 'retry')",
 		"{__vimob_ingress,routing_key}",
@@ -64,6 +67,7 @@ func TestClaimEvolutionWebhooksQueryFairlyClaimsOneHeadPerSession(t *testing.T) 
 		"active.status = 'processing'",
 		"$4 <> 'backlog' or not exists ( select 1",
 		"live_due.processing_lane = 'live'",
+		"live_due.payload #>> '{__vimob_ingress,routing_snapshot,version}'",
 		"live_due.next_attempt_at <= now()",
 		"order by claimed.session_id",
 	} {
@@ -82,6 +86,9 @@ func TestClaimEvolutionWebhooksQueryFairlyClaimsOneHeadPerSession(t *testing.T) 
 	}
 	if got := strings.Count(normalized, "as same_inbox_route(snapshot)"); got < 3 {
 		t.Fatalf("same-envelope predecessor gates = %d, want every claim pass", got)
+	}
+	if got := strings.Count(normalized, "{__vimob_ingress,routing_snapshot,version}"); got < 5 {
+		t.Fatalf("immutable routing snapshot claim gates = %d, want every candidate/race/claim pass", got)
 	}
 	if strings.Contains(normalized, "wi.processing_lane = 'backlog' or wi.next_attempt_at <= now()") {
 		t.Fatal("backlog must retain strict FIFO and may not bypass a deferred head")

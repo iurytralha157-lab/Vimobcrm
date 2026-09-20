@@ -8,18 +8,31 @@
 
 \if :{?intake_quiesced}
 \else
-  \echo 'Missing -v intake_quiesced=true'
   \set intake_quiesced false
+\endif
+
+\if :{?online_legacy_freeze}
+\else
+  \set online_legacy_freeze false
 \endif
 
 \if :intake_quiesced
 \else
-  \echo 'intake_quiesced must remain true from before A1 until after B2 smokes'
+  \if :online_legacy_freeze
+  \else
+    \echo 'Use -v intake_quiesced=true or the proven online path -v online_legacy_freeze=true'
+  \endif
 \endif
 
 select pg_catalog.set_config(
   'vimob.queue_scoped_lead_intake_quiesced',
   :'intake_quiesced',
+  false
+);
+
+select pg_catalog.set_config(
+  'vimob.queue_scoped_lead_online_legacy_freeze',
+  :'online_legacy_freeze',
   false
 );
 
@@ -36,11 +49,53 @@ declare
     'vimob.queue_scoped_lead_intake_quiesced',
     true
   );
+  v_online_legacy_freeze text := pg_catalog.current_setting(
+    'vimob.queue_scoped_lead_online_legacy_freeze',
+    true
+  );
 begin
-  if v_intake_quiesced is distinct from 'true' then
+  if v_intake_quiesced is distinct from 'true'
+     and v_online_legacy_freeze is distinct from 'true' then
     raise exception using
       errcode = '55000',
-      message = 'queue_scoped_lead_intake_not_quiesced';
+      message = 'queue_scoped_lead_online_safety_not_attested';
+  end if;
+
+  if v_online_legacy_freeze = 'true'
+     and (
+       pg_catalog.to_regclass(
+         'private.whatsapp_webhook_legacy_routing_freeze'
+       ) is null
+       or not exists (
+         select 1
+         from pg_catalog.pg_trigger as trigger_state
+         where trigger_state.tgrelid =
+           'public.whatsapp_webhook_inbox'::regclass
+           and trigger_state.tgname =
+             'guard_whatsapp_webhook_legacy_routing_freeze'
+           and not trigger_state.tgisinternal
+           and trigger_state.tgenabled in ('O', 'A')
+       )
+       or exists (
+         select 1
+         from public.whatsapp_webhook_inbox as inbox
+         where inbox.status in ('pending', 'retry', 'processing')
+           and coalesce(
+             inbox.payload #>> '{__vimob_ingress,routing_snapshot,version}',
+             ''
+           ) <> '1'
+           and not private.is_frozen_legacy_whatsapp_ingress(
+             inbox.id,
+             inbox.organization_id,
+             inbox.session_id,
+             inbox.event_key,
+             inbox.processing_lane
+           )
+       )
+     ) then
+    raise exception using
+      errcode = '55000',
+      message = 'queue_scoped_lead_online_legacy_freeze_not_ready';
   end if;
 
   if pg_catalog.to_regclass('public.leads') is null

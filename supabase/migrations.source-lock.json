@@ -570,6 +570,10 @@
     {
       "file": "20260920022237_harden_canonical_distribution_availability.sql",
       "sha256": "4cb7ff01a8bb180b22b1c83f5a4426544840661aec34554201f069a9120769ed"
+    },
+    {
+      "file": "20260920080434_freeze_legacy_whatsapp_ingress_for_online_cutover.sql",
+      "sha256": "d30156d2115143fa31a566519a0cc40734341abf4d3af6d7420fb8f5e3eeb6b9"
     }
   ]
 }

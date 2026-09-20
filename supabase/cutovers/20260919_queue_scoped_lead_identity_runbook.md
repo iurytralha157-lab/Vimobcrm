@@ -559,6 +559,53 @@ semântica verdadeiros. As quatro linhas de privilégio devem retornar
 `can_execute = false`; o picker continua acessível somente pelo fluxo canônico
 interno. Qualquer divergência é gate de parada.
 
+### Caminho online sem pausar produção
+
+Use este caminho somente com a migration
+`20260920080434_freeze_legacy_whatsapp_ingress_for_online_cutover.sql`
+aplicada e depois de provar que todas as réplicas executam o mesmo SHA cujo
+worker só reivindica inbox com `routing_snapshot.version = 1`. Não pare API,
+intake ou workers e não altere/reenvie o backlog antigo.
+
+Primeiro registre exatamente as linhas legadas ainda ativas. O script não muda
+status, payload, tentativas ou datas da inbox; ele instala uma trava que preserva
+essas linhas e exige snapshot v1 em toda entrada nova:
+
+```powershell
+psql $vimobDatabaseUrl -X `
+  -v "app_ready_release=$vimobReleaseSha" `
+  -v "app_smoke_confirmed=true" `
+  -f supabase/cutovers/20260920_freeze_legacy_whatsapp_ingress_online.sql
+```
+
+Se existir lease legado em `processing`, aguarde-o terminar naturalmente e
+repita. Não pause o worker. Depois execute A2, B1 e B2 com a mesma prova online:
+
+```powershell
+psql $vimobDatabaseUrl -X `
+  -v "online_legacy_freeze=true" `
+  -f supabase/cutovers/20260919_prepare_queue_scoped_lead_online_indexes.sql
+
+psql $vimobDatabaseUrl -X `
+  -v "app_ready_release=$vimobReleaseSha" `
+  -v "app_smoke_confirmed=true" `
+  -v "workers_quiesced=false" `
+  -v "intake_quiesced=false" `
+  -v "online_legacy_freeze=true" `
+  -f supabase/cutovers/20260919_enable_strict_whatsapp_message_binding.sql
+
+psql $vimobDatabaseUrl -X `
+  -v "app_ready_release=$vimobReleaseSha" `
+  -v "app_smoke_confirmed=true" `
+  -v "intake_quiesced=false" `
+  -v "online_legacy_freeze=true" `
+  -f supabase/cutovers/20260919_retire_legacy_global_lead_phone_index.sql
+```
+
+A2 e B2 usam operações `CONCURRENTLY`. B1 toma locks finais com timeout de cinco
+segundos; se houver atividade incompatível em voo, ele aborta a transação inteira
+e deve ser repetido. O intake continua ativo durante todo o processo.
+
 ### 2. A2 índice escopado online
 
 Em uma conexão dedicada do `psql`, com autocommit habilitado:
@@ -640,6 +687,10 @@ $vimobReleaseSha = '<40-character-deployed-git-sha>'
 ```
 
 ### 4. B1 vínculo estrito de mensagens
+
+O bloco abaixo descreve o caminho legado com pausa integral. Para produção sem
+pausa, use os comandos de **Caminho online sem pausar produção** acima; B1 exige
+o ledger exato do legado congelado e ignora somente essas identidades imutáveis.
 
 Pause temporariamente o ingresso e os workers que escrevem mensagens, outboxes,
 IA e automações. Espere ou reconcilie todos os efeitos que já cruzaram a
@@ -916,6 +967,10 @@ evidência de autorização.
 Execute B2 em produção somente se A1, a migration de fences, a migration de
 tombstone, a migration de disponibilidade, A2, deploy, smokes, B1 e o dress rehearsal
 pós-B2 do clone estiverem verdes:
+
+No caminho online, use `intake_quiesced=false` e
+`online_legacy_freeze=true`, conforme o bloco anterior. O comando abaixo é o
+fallback legado com intake pausado.
 
 ```powershell
 psql $vimobDatabaseUrl -X `

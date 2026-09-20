@@ -51,6 +51,10 @@ const claimEvolutionWebhooksQuery = `
 			    and wi.processing_lane = $4
 			    and wi.status in ('pending', 'retry')
 			    and wi.attempts < wi.max_attempts
+			    and coalesce(
+			      wi.payload #>> '{__vimob_ingress,routing_snapshot,version}',
+			      ''
+			    ) = '1'
 			    and ($4 <> 'live' or wi.next_attempt_at <= now())
 			    and not exists (
 			      select 1
@@ -96,6 +100,10 @@ const claimEvolutionWebhooksQuery = `
 			        and older.processing_lane = wi.processing_lane
 			        and older.status in ('pending', 'retry')
 			        and older.attempts < older.max_attempts
+			        and coalesce(
+			          older.payload #>> '{__vimob_ingress,routing_snapshot,version}',
+			          ''
+			        ) = '1'
 			        and (older.created_at, older.id) < (wi.created_at, wi.id)
 			        and (
 			          coalesce(nullif(older.payload #>> '{__vimob_ingress,routing_key}', ''), '__session__') = '__session__'
@@ -131,6 +139,10 @@ const claimEvolutionWebhooksQuery = `
 			        and live_due.processing_lane = 'live'
 			        and live_due.status in ('pending', 'retry')
 			        and live_due.attempts < live_due.max_attempts
+			        and coalesce(
+			          live_due.payload #>> '{__vimob_ingress,routing_snapshot,version}',
+			          ''
+			        ) = '1'
 			        and live_due.next_attempt_at <= now()
 			        and not exists (
 			          select 1
@@ -184,6 +196,10 @@ const claimEvolutionWebhooksQuery = `
 			where wi.processing_lane = $4
 			  and wi.status in ('pending', 'retry')
 			  and wi.attempts < wi.max_attempts
+			  and coalesce(
+			    wi.payload #>> '{__vimob_ingress,routing_snapshot,version}',
+			    ''
+			  ) = '1'
 			  and wi.next_attempt_at <= now()
 			  and not exists (
 			    select 1
@@ -250,6 +266,10 @@ const claimEvolutionWebhooksQuery = `
 			  and wi.processing_lane = $4
 			  and wi.status in ('pending', 'retry')
 			  and wi.attempts < wi.max_attempts
+			  and coalesce(
+			    wi.payload #>> '{__vimob_ingress,routing_snapshot,version}',
+			    ''
+			  ) = '1'
 			  and wi.next_attempt_at <= now()
 			  and not exists (
 			    select 1

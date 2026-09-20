@@ -43,29 +43,31 @@ para `supabase/migrations`, porque o runner poderia atravessar o deploy de
 compatibilidade e retirar a unicidade global cedo demais.
 
 Siga exatamente o roteiro em
-`20260919_queue_scoped_lead_identity_runbook.md`. A ordem é:
+`20260919_queue_scoped_lead_identity_runbook.md`. A ordem original com pausa
+integral continua suportada. Para produção ativa, a ordem online é:
 
-1. quiesce comprovado de todo intake que cria/reentra leads;
-2. migration aditiva A1;
+1. migrations aditivas A1 e de fences já aplicadas;
+2. migration aditiva
+   `20260920012629_preserve_deleted_round_robin_identity.sql`;
 3. migration aditiva
-   `20260919232152_harden_automation_whatsapp_binding_fences.sql`;
-4. migration aditiva
-   `20260920012629_preserve_deleted_round_robin_identity.sql`, que deve estar
-   aplicada antes de qualquer réplica da API que consulte `round_robins.deleted_at`;
-5. migration aditiva
    `20260920022237_harden_canonical_distribution_availability.sql`;
-6. `20260919_prepare_queue_scoped_lead_online_indexes.sql` em autocommit;
-7. deploy API e Web compatíveis no mesmo SHA imutável e, no Edge
-   self-hosted, publicação somente de `evolution-go-webhook`, com readback do
-   allowlist real e sem reativar rotas Edge ausentes/legadas;
-8. `20260919_enable_strict_whatsapp_message_binding.sql`, informando o SHA e a
-   confirmação explícita dos smokes;
+4. migration aditiva
+   `20260920080434_freeze_legacy_whatsapp_ingress_for_online_cutover.sql`;
+5. deploy API e Web compatíveis no mesmo SHA imutável, cujo worker só reivindica
+   inbox com routing snapshot v1 e, no Edge self-hosted, publicação somente de
+   `evolution-go-webhook` com readback do allowlist real;
+6. `20260920_freeze_legacy_whatsapp_ingress_online.sql`, que registra o legado
+   sem alterar, reenviar ou apagar nenhuma linha da inbox;
+7. `20260919_prepare_queue_scoped_lead_online_indexes.sql` em autocommit com
+   `online_legacy_freeze=true`;
+8. `20260919_enable_strict_whatsapp_message_binding.sql`, informando o SHA, os
+   smokes e `online_legacy_freeze=true`;
 9. `20260919_retire_legacy_global_lead_phone_index.sql` em autocommit, com os
    mesmos gates.
 
-O intake só volta depois dos canários posteriores ao último passo; caso
-contrário uma entrada em outra fila durante a convivência com o índice global
-seria registrada como reentrada no card antigo.
+No caminho online o intake nunca é desligado. Os scripts usam locks com timeout
+de cinco segundos: se não conseguirem a fronteira final, abortam sem mudança e
+devem ser repetidos quando a atividade em voo terminar naturalmente.
 
 O passo 9 é o ponto em que duas filas passam a poder manter cards distintos
 para o mesmo telefone. Não o execute se qualquer readback, smoke ou pgTAP não
