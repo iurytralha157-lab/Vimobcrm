@@ -76,17 +76,34 @@ values (
   '5511999900100@s.whatsapp.net', 'Context Contact'
 );
 
--- The cutover test database may already have removed the legacy trigger. Add
--- it transactionally so this migration's compatibility behavior is exercised
--- both before and after the eventual Edge retirement.
+do $$
+begin
+  perform public.activate_whatsapp_conversation_lead_binding(
+    'c8200000-0000-4000-8000-000000000001',
+    'c8500000-0000-4000-8000-000000000001',
+    'c8300000-0000-4000-8000-000000000001',
+    'provider-context-original'
+  );
+  perform public.activate_whatsapp_conversation_lead_binding(
+    'c8200000-0000-4000-8000-000000000001',
+    'c8500000-0000-4000-8000-000000000001',
+    'c8300000-0000-4000-8000-000000000001',
+    'provider-context-explicit'
+  );
+end;
+$$;
+
+-- Keep this test usable both immediately after A1 and after B1. If no trigger
+-- currently invokes the binding-aware context function, add one only for this
+-- rolled-back fixture.
 do $$
 begin
   if not exists (
     select 1
     from pg_trigger
     where tgrelid = 'public.whatsapp_messages'::regclass
-      and tgname = 'set_whatsapp_message_context_before_write'
       and not tgisinternal
+      and tgfoid = 'public.set_whatsapp_message_context()'::regprocedure
   ) then
     create trigger set_whatsapp_message_context_before_write
     before insert or update of conversation_id, session_id, organization_id, lead_id, remote_jid
@@ -122,12 +139,12 @@ select lives_ok(
     set lead_id = 'c8300000-0000-4000-8000-000000000001'
     where id = 'c8600000-0000-4000-8000-000000000001'
   $$,
-  'linking a lead after conversation rebind remains valid'
+  'reasserting an unchanged historical lead after conversation rebind remains valid'
 );
 select is(
   (select session_id from public.whatsapp_messages where id = 'c8600000-0000-4000-8000-000000000001'),
   'c8400000-0000-4000-8000-000000000001'::uuid,
-  'linking a lead does not rewrite historical session provenance'
+  'an unchanged historical lead update does not rewrite session provenance'
 );
 
 select lives_ok(

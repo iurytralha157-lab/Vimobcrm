@@ -55,6 +55,66 @@ func TestUpdateRollsBackWhenRoundRobinTeamSyncFails(t *testing.T) {
 	}
 }
 
+func TestTeamMutationsReadBackBeforeCommit(t *testing.T) {
+	readbackFailure := errors.New("transactional team readback failed")
+	tenantContext := tenant.Context{
+		OrganizationID: transactionTestOrganizationID,
+		UserID:         transactionTestUserID,
+		MemberRole:     "admin",
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(Repository) error
+	}{
+		{
+			name: "create",
+			mutate: func(repo Repository) error {
+				_, err := repo.Create(context.Background(), tenantContext, CreateTeamRequest{
+					Name:    "Equipe transacional",
+					Members: []TeamMemberInput{},
+				})
+				return err
+			},
+		},
+		{
+			name: "update",
+			mutate: func(repo Repository) error {
+				name := "Equipe atualizada"
+				_, err := repo.Update(
+					context.Background(),
+					tenantContext,
+					transactionTestTeamID,
+					UpdateTeamRequest{Name: &name},
+				)
+				return err
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tx := &teamMutationTestTx{readbackErr: readbackFailure}
+			repo := Repository{
+				beginMutationTx: func(context.Context) (pgx.Tx, error) {
+					return tx, nil
+				},
+			}
+
+			err := test.mutate(repo)
+			if !errors.Is(err, readbackFailure) {
+				t.Fatalf("mutation error = %v, want readback failure", err)
+			}
+			if tx.commitCalls != 0 {
+				t.Fatalf("Commit() calls = %d, want 0", tx.commitCalls)
+			}
+			if tx.rollbackCalls != 1 {
+				t.Fatalf("Rollback() calls = %d, want 1", tx.rollbackCalls)
+			}
+		})
+	}
+}
+
 func TestRoundRobinTeamSyncPropagatesLockedTenantQueryFailure(t *testing.T) {
 	queryFailure := errors.New("round-robin lock failed")
 	tx := &teamMutationTestTx{queryErr: queryFailure}
@@ -110,6 +170,7 @@ type teamMutationTestTx struct {
 	queryArgs          [][]any
 	queryErr           error
 	roundRobinQueryErr error
+	readbackErr        error
 }
 
 func (tx *teamMutationTestTx) Begin(context.Context) (pgx.Tx, error) {
@@ -177,7 +238,17 @@ func (tx *teamMutationTestTx) Query(
 }
 
 func (tx *teamMutationTestTx) QueryRow(_ context.Context, sql string, _ ...any) pgx.Row {
-	if strings.Contains(strings.ToLower(sql), "from public.teams") && strings.Contains(strings.ToLower(sql), "for update") {
+	normalizedSQL := strings.ToLower(sql)
+	if tx.readbackErr != nil &&
+		strings.Contains(normalizedSQL, "select") &&
+		strings.Contains(normalizedSQL, "t.id::text") &&
+		strings.Contains(normalizedSQL, "left join public.users") {
+		return teamMutationErrorRow{err: tx.readbackErr}
+	}
+	if strings.Contains(normalizedSQL, "insert into public.teams") {
+		return teamMutationStringRow(transactionTestTeamID)
+	}
+	if strings.Contains(normalizedSQL, "from public.teams") && strings.Contains(normalizedSQL, "for update") {
 		return teamMutationStringRow(transactionTestTeamID)
 	}
 	return teamMutationBooleanRow(true)
@@ -213,6 +284,14 @@ func (row teamMutationStringRow) Scan(dest ...any) error {
 	}
 	*value = string(row)
 	return nil
+}
+
+type teamMutationErrorRow struct {
+	err error
+}
+
+func (row teamMutationErrorRow) Scan(...any) error {
+	return row.err
 }
 
 type teamMutationEmptyRows struct{}

@@ -201,6 +201,7 @@ func (handler Handler) processAIFollowUp(ctx context.Context, candidate aiFollow
 		Text:            output,
 		SendSessionID:   candidate.SessionID,
 		ClientMessageID: clientMessageID,
+		ExpectedLeadID:  candidate.LeadID,
 	})
 	if err != nil {
 		return err
@@ -231,14 +232,31 @@ func (repo Repository) enqueueAutoReplyJob(ctx context.Context, input autoReplyI
 		"sessionId":      input.SessionID,
 		"conversationId": input.ConversationID,
 		"messageId":      input.MessageID,
+		"expectedLeadId": input.ExpectedLeadID,
 		"text":           input.Text,
 	}
 
+	var bindingCurrent bool
 	var queued bool
 	err := repo.db.Pool().QueryRow(ctx, `
-		with inserted as (
+		with bound_context as materialized (
+			select conversation.id
+			from public.whatsapp_conversations as conversation
+			join public.whatsapp_messages as message
+			  on message.organization_id = conversation.organization_id
+			 and message.session_id = conversation.session_id
+			 and message.conversation_id = conversation.id
+			 and message.id = $4::uuid
+			 and message.lead_id = conversation.lead_id
+			where conversation.organization_id = $1::uuid
+			  and conversation.session_id = $5::uuid
+			  and conversation.id = $6::uuid
+			  and conversation.lead_id = $7::uuid
+			for share of conversation, message
+		), inserted as (
 			insert into public.jobs (organization_id, job_type, payload, status, run_at)
 			select $1::uuid, $2, $3::jsonb, 'queued', now()
+			from bound_context
 			where not exists (
 				select 1
 				from public.jobs
@@ -250,8 +268,14 @@ func (repo Repository) enqueueAutoReplyJob(ctx context.Context, input autoReplyI
 			on conflict do nothing
 			returning true
 		)
-		select coalesce((select true from inserted), false)
-	`, input.OrganizationID, autoReplyJobType, jsonb(payload), input.MessageID).Scan(&queued)
+		select
+			exists(select 1 from bound_context),
+			exists(select 1 from inserted)
+	`, input.OrganizationID, autoReplyJobType, jsonb(payload), input.MessageID,
+		input.SessionID, input.ConversationID, input.ExpectedLeadID).Scan(&bindingCurrent, &queued)
+	if err == nil && !bindingCurrent {
+		return false, errAutoReplyBindingStale
+	}
 	return queued, err
 }
 
@@ -569,9 +593,13 @@ func autoReplyInputFromPayload(payload map[string]any) (autoReplyInput, error) {
 		SessionID:      strings.TrimSpace(firstString(payload, "sessionId")),
 		ConversationID: strings.TrimSpace(firstString(payload, "conversationId")),
 		MessageID:      strings.TrimSpace(firstString(payload, "messageId")),
+		ExpectedLeadID: strings.TrimSpace(firstString(payload, "expectedLeadId")),
 		Text:           strings.TrimSpace(firstString(payload, "text")),
 	}
-	if input.OrganizationID == "" || input.SessionID == "" || input.ConversationID == "" || input.MessageID == "" {
+	if input.OrganizationID == "" || input.SessionID == "" || input.ConversationID == "" || input.MessageID == "" || input.ExpectedLeadID == "" {
+		return autoReplyInput{}, ErrInvalidInput
+	}
+	if _, ok := normalizeUUID(input.ExpectedLeadID); !ok {
 		return autoReplyInput{}, ErrInvalidInput
 	}
 	return input, nil

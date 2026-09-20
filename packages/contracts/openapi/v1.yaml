@@ -2288,11 +2288,16 @@ paths:
     post:
       summary: Receive a lead through a configured incoming webhook
       description: >-
-        The token derives the active organization and configured defaults. event_id,
-        submission_id, leadgen_id or external_id makes retries idempotent.
+        The token derives the active organization and configured defaults. An
+        Idempotency-Key header, or event_id, submission_id, leadgen_id or external_id
+        in the body, makes retries idempotent. The header takes precedence. Without an
+        explicit identity, every request is processed as a distinct lead arrival even
+        when its payload is identical.
       security:
         - vimobWebhookBearer: []
         - vimobWebhookHeader: []
+      parameters:
+        - $ref: "#/components/parameters/GenericWebhookIdempotencyKeyHeader"
       requestBody:
         required: true
         content:
@@ -5595,6 +5600,18 @@ components:
         minLength: 8
         maxLength: 128
         pattern: "^[\\x21-\\x7E]+$"
+    GenericWebhookIdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: >-
+        Stable key for one logical webhook arrival. Reuse only when retrying the
+        identical request. When omitted, identical payloads are processed as distinct
+        arrivals.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
     GrupoOLXWebhookToken:
       name: token
       in: path
@@ -12173,7 +12190,7 @@ components:
     MemberAvailabilityDayMutation:
       type: object
       additionalProperties: false
-      description: Active non-all-day entries require start_time before end_time.
+      description: Active non-all-day entries require different start_time and end_time; start_time after end_time crosses midnight.
       required: [day_of_week]
       properties:
         day_of_week:
@@ -12369,7 +12386,7 @@ components:
     MemberAvailabilityMutationRequest:
       type: object
       additionalProperties: false
-      description: Active non-all-day entries require start_time before end_time.
+      description: Active non-all-day entries require different start_time and end_time; start_time after end_time crosses midnight.
       required: [team_member_id, day_of_week]
       properties:
         team_member_id:
@@ -13036,6 +13053,14 @@ components:
         conversationId:
           type: string
           format: uuid
+          description: Physical WhatsApp conversation to bind. When present, expectedPreviousLeadId is required.
+        expectedPreviousLeadId:
+          description: Browser-observed active lead UUID, or unlinked when the conversation had no card. Accepted only with conversationId.
+          oneOf:
+            - type: string
+              format: uuid
+            - type: string
+              enum: [unlinked]
         tagIds:
           type: array
           maxItems: 50

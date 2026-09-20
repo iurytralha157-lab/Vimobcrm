@@ -2,6 +2,8 @@ package integrations
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -60,6 +62,77 @@ func TestFetchMetaLeadFormsKeepsTokenOutOfURLAndRebuildsPaging(t *testing.T) {
 	}
 	if len(forms) != 2 || forms[0]["id"] != "form-1" || forms[1]["id"] != "form-2" {
 		t.Fatalf("forms = %#v", forms)
+	}
+}
+
+func TestFetchMetaLeadFormsRejectsRepeatedPagingCursor(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requestNumber := requests.Add(1)
+		if requestNumber == 1 && request.URL.Query().Get("after") != "" {
+			t.Fatalf("first after = %q", request.URL.Query().Get("after"))
+		}
+		if requestNumber == 2 && request.URL.Query().Get("after") != "repeated-cursor" {
+			t.Fatalf("second after = %q", request.URL.Query().Get("after"))
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{
+			"data":[{"id":"form-1","name":"Form 1","status":"ACTIVE"}],
+			"paging":{"cursors":{"after":"repeated-cursor"},"next":"https://graph.facebook.com/next"}
+		}`))
+	}))
+	defer server.Close()
+
+	repository := NewRepository(nil, ExternalConfig{
+		MetaGraphVersion: "v25.0",
+		MetaGraphBaseURL: server.URL,
+	})
+	repository.client = server.Client()
+	forms, err := repository.fetchMetaLeadForms(context.Background(), "12345", "page-token")
+	if !errors.Is(err, ErrMetaUpstream) {
+		t.Fatalf("error = %v, want ErrMetaUpstream", err)
+	}
+	if forms != nil {
+		t.Fatalf("forms = %#v, want nil on incomplete collection", forms)
+	}
+	if requests.Load() != 2 {
+		t.Fatalf("requests = %d, want 2", requests.Load())
+	}
+}
+
+func TestFetchMetaLeadFormsRejectsContinuationAfterPageLimit(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requestNumber := requests.Add(1)
+		wantAfter := ""
+		if requestNumber > 1 {
+			wantAfter = fmt.Sprintf("cursor-%d", requestNumber-1)
+		}
+		if got := request.URL.Query().Get("after"); got != wantAfter {
+			t.Fatalf("request %d after = %q, want %q", requestNumber, got, wantAfter)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(writer, `{
+			"data":[{"id":"form-%d","name":"Form %d","status":"ACTIVE"}],
+			"paging":{"cursors":{"after":"cursor-%d"},"next":"https://graph.facebook.com/next"}
+		}`, requestNumber, requestNumber, requestNumber)
+	}))
+	defer server.Close()
+
+	repository := NewRepository(nil, ExternalConfig{
+		MetaGraphVersion: "v25.0",
+		MetaGraphBaseURL: server.URL,
+	})
+	repository.client = server.Client()
+	forms, err := repository.fetchMetaLeadForms(context.Background(), "12345", "page-token")
+	if !errors.Is(err, ErrMetaUpstream) {
+		t.Fatalf("error = %v, want ErrMetaUpstream", err)
+	}
+	if forms != nil {
+		t.Fatalf("forms = %#v, want nil on incomplete collection", forms)
+	}
+	if requests.Load() != 10 {
+		t.Fatalf("requests = %d, want 10", requests.Load())
 	}
 }
 

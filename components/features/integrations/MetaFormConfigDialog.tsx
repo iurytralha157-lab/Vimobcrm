@@ -103,6 +103,7 @@ export function MetaFormConfigDialog({
   const [queueEditorOpen, setQueueEditorOpen] = useState(false);
   const [queuePickerOpen, setQueuePickerOpen] = useState(false);
   const [queueSearch, setQueueSearch] = useState("");
+  const [saveInFlightRef] = useState(() => ({ current: false }));
 
   const { hasModule } = useOrganizationModules();
   const { hasPermission } = useUserPermissions();
@@ -209,13 +210,20 @@ export function MetaFormConfigDialog({
   };
 
   const handleSave = async () => {
+    if (saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
+
     try {
       const defaultValues: Record<string, unknown> = {
+        ...(config?.default_values || {}),
         purpose,
         auto_tags: selectedTags,
       };
       if (propertyId) {
         defaultValues.property_id = propertyId;
+      } else {
+        delete defaultValues.property_id;
+        delete defaultValues.interest_property_id;
       }
 
       await saveConfig.mutateAsync({
@@ -225,18 +233,20 @@ export function MetaFormConfigDialog({
         propertyId: propertyId || null,
         roundRobinId: roundRobinId || null,
         purpose,
-        source: null,
-        sourceDetails: null,
+        source: config?.source || null,
+        sourceDetails: config?.source_details || null,
         defaultValues,
         autoTags: selectedTags,
         fieldMapping,
         customFieldsConfig: customFields,
-        isActive: true,
+        isActive: config?.is_active ?? true,
       });
 
       handleOpenChange(false);
     } catch {
       // The mutation owns the error feedback; keep the dialog open for retry.
+    } finally {
+      saveInFlightRef.current = false;
     }
   };
 

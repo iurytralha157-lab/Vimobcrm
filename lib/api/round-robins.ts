@@ -467,6 +467,7 @@ function toLegacyRoundRobin(item: APIRoundRobin): LegacyRoundRobin {
     created_at: item.createdAt,
     created_by: item.createdBy || null,
     current_position: null,
+    deleted_at: null,
     id: item.id,
     is_active: item.isActive,
     last_assigned_index: item.lastAssignedIndex,
@@ -479,6 +480,8 @@ function toLegacyRoundRobin(item: APIRoundRobin): LegacyRoundRobin {
     strategy: item.strategy || 'simple',
     target_pipeline_id: item.targetPipelineId || null,
     target_stage_id: item.targetStageId || null,
+    tombstone_pipeline_id: null,
+    tombstone_stage_id: null,
     updated_at: item.updatedAt,
     created_by_user: item.createdByUser
       ? {

@@ -9,12 +9,16 @@ import (
 	"time"
 )
 
-func TestEvolutionWebhookSchemaCompatibilityRequiresLiveLaneContract(t *testing.T) {
+func TestEvolutionWebhookSchemaCompatibilityRequiresPreB1LiveLaneContract(t *testing.T) {
 	query := strings.ToLower(strings.Join(strings.Fields(evolutionWebhookSchemaCompatibilityQuery), " "))
 	for _, required := range []string{
 		"to_regclass('public.whatsapp_webhook_inbox') is not null",
 		"attname = 'processing_lane'",
 		"attname = 'provider_occurred_at'",
+		"private.capture_whatsapp_webhook_routing_snapshot(uuid,uuid,text,text,text,text,boolean,text[],text,text,text,boolean,boolean,boolean,uuid,uuid,uuid)",
+		"to_regclass('public.whatsapp_webhook_routing_outcomes') is not null",
+		"public.resolve_whatsapp_webhook_inherited_routing_target(uuid,uuid,text)",
+		"private.cleanup_whatsapp_webhook_routing_provenance(integer,timestamp with time zone)",
 		"to_regclass('public.whatsapp_webhook_inbox_lane_session_due_head_idx')",
 		"to_regclass('public.whatsapp_webhook_inbox_session_processing_idx')",
 		"indisready and indisvalid",
@@ -23,6 +27,9 @@ func TestEvolutionWebhookSchemaCompatibilityRequiresLiveLaneContract(t *testing.
 			t.Fatalf("schema compatibility query is missing %q", required)
 		}
 	}
+	if strings.Contains(query, "whatsapp_webhook_active_routing_snapshot_v1_check") {
+		t.Fatal("rolling-deploy schema gate must remain compatible after A1 and before the B1 strict constraint")
+	}
 }
 
 func TestAcceptEvolutionWebhookBatchUsesAtomicOriginalKeyFence(t *testing.T) {
@@ -30,11 +37,19 @@ func TestAcceptEvolutionWebhookBatchUsesAtomicOriginalKeyFence(t *testing.T) {
 	normalized := strings.ToLower(strings.Join(strings.Fields(source), " "))
 	for _, required := range []string{
 		"tx, err := repo.db.pool().begin(ctx)",
+		"parts, err = attachevolutionwebhookroutingsnapshots(ctx, tx, session, parts)",
 		"first := parts[0]",
 		"on conflict (event_key) do nothing",
 		"clock_timestamp()",
+		"payload #> '{__vimob_ingress}' = $5::jsonb #> '{__vimob_ingress}'",
+		"if err == nil && !exactroutingreplay",
+		"event key routing provenance conflict",
 		"if receipt.duplicate",
+		"if err := tx.rollback(ctx)",
 		"jsonb_to_recordset($4::jsonb)",
+		"select count(*)::integer from inserted",
+		"if insertedparts != len(parts)-1",
+		"derived event key conflict",
 		"part.ordinal::double precision * interval '1 microsecond'",
 		"order by part.ordinal",
 		"if err := tx.commit(ctx)",
@@ -47,6 +62,69 @@ func TestAcceptEvolutionWebhookBatchUsesAtomicOriginalKeyFence(t *testing.T) {
 	derivedInsert := strings.Index(normalized, "jsonb_to_recordset($4::jsonb)")
 	if duplicateFence < 0 || derivedInsert < 0 || duplicateFence > derivedInsert {
 		t.Fatalf("the original event key must fence derived inserts during rolling deploys\n%s", source)
+	}
+	capture := strings.Index(normalized, "parts, err = attachevolutionwebhookroutingsnapshots")
+	firstInsert := strings.Index(normalized, "first := parts[0]")
+	if capture < 0 || firstInsert < 0 || capture > firstInsert {
+		t.Fatalf("routing provenance must be captured before any inbox insert\n%s", source)
+	}
+}
+
+func TestAttachEvolutionWebhookRoutingSnapshotsUsesImmutablePerMessageRoutes(t *testing.T) {
+	source := readWhatsAppSourceFunction(t, "webhook_ingress.go", `func attachEvolutionWebhookRoutingSnapshots`)
+	normalized := strings.ToLower(strings.Join(strings.Fields(source), " "))
+	for _, required := range []string{
+		"routingkey := evolutionwebhookmessagebindingroutingkey(message)",
+		"bindingeligible := !message.fromme && !message.isreaction && !message.isdeletion && !message.unsupportedmessage",
+		"select private.capture_whatsapp_webhook_routing_snapshot(",
+		"message.providermessageid",
+		"result[index].eventkey",
+		"result[index].processinglane",
+		"rule.managedmessagedistribution",
+		"rule.managedprovidereventpending",
+		"rule.managedprovidereventhandled",
+		"locknativemanagedinboundruleforsnapshot(",
+		"resolvenativectwaintakedestination(",
+		"rule = nativeinboundrule{canonicalintakeresolved: true}",
+		"canonicalintakeproof = nativecanonicalintakeproofv1 + confirmationmethod",
+		`metadata["routing_snapshot"]`,
+	} {
+		if !strings.Contains(normalized, required) {
+			t.Fatalf("routing snapshot attachment is missing %q\n%s", required, source)
+		}
+	}
+	if strings.Contains(normalized, "routingkey := schedulingroutingkey") {
+		t.Fatalf("mixed-batch scheduling key was reused as binding identity\n%s", source)
+	}
+	resolution := strings.Index(normalized, "resolvenativectwaintakedestination(")
+	managedLock := strings.Index(normalized, "locknativemanagedinboundruleforsnapshot(")
+	capture := strings.Index(normalized, "select private.capture_whatsapp_webhook_routing_snapshot(")
+	if resolution < 0 || capture < 0 || resolution >= capture {
+		t.Fatalf("canonical CTWA intake must be frozen before the immutable routing snapshot\n%s", source)
+	}
+	if managedLock < 0 || capture < 0 || managedLock >= capture {
+		t.Fatalf("managed rule must be reselected under its queue lock before the immutable routing snapshot\n%s", source)
+	}
+}
+
+func TestManagedIngressRuleLockReselectsTheWinningLiveMirror(t *testing.T) {
+	source := readWhatsAppSourceFunction(t, "webhook_ingress.go", `func lockNativeManagedInboundRuleForSnapshot`)
+	normalized := strings.ToLower(strings.Join(strings.Fields(source), " "))
+	for _, required := range []string{
+		"with locked_queue as materialized",
+		"for share",
+		"queue.deleted_at is null",
+		"queue.settings->>'require_checkin'",
+		"join public.whatsapp_inbound_rules",
+		"join public.round_robin_rules",
+		"managed_rule.match->>'whatsapp_session_id'",
+		"position(",
+		"order by inbound_rule.priority desc",
+		"lockedruleid != ruleid",
+	} {
+		if !strings.Contains(normalized, required) {
+			t.Fatalf("managed ingress lock is missing %q\n%s", required, source)
+		}
 	}
 }
 

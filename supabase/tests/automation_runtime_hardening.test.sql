@@ -282,7 +282,7 @@ insert into public.automation_effect_dispatches (
   'b2000000-0000-4000-8000-000000000001',
   'b6000000-0000-4000-8000-000000000004',
   'send', 'automation:b6000000-0000-4000-8000-000000000004:send:send_whatsapp',
-  'send_whatsapp', 'sending', '{"delivery_contract":"canonical_whatsapp_outbox_v1"}'::jsonb
+  'send_whatsapp', 'sending', '{"delivery_contract":"canonical_whatsapp_outbox_v1","session_id":"b9000000-0000-4000-8000-000000000001"}'::jsonb
 );
 
 select ok(

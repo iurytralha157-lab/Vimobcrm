@@ -26,3 +26,19 @@ func TestWebhookTokenUsesHeadersOnlyAndRejectsAmbiguity(t *testing.T) {
 		t.Fatalf("matching credentials rejected: %q", token)
 	}
 }
+
+func TestWebhookIdempotencyKeyIsOptionalAndTrimmed(t *testing.T) {
+	if key := webhookIdempotencyKey(nil); key != "" {
+		t.Fatalf("nil request key = %q", key)
+	}
+
+	request := httptest.NewRequest("POST", "https://api.vimob.test/v1/public/webhooks/generic", nil)
+	if key := webhookIdempotencyKey(request); key != "" {
+		t.Fatalf("missing header key = %q", key)
+	}
+
+	request.Header.Set("Idempotency-Key", "  external-arrival-123  ")
+	if key := webhookIdempotencyKey(request); key != "external-arrival-123" {
+		t.Fatalf("trimmed header key = %q", key)
+	}
+}

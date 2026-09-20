@@ -185,7 +185,7 @@ test('multi-tenant worker returns only aggregate counters and scopes message pro
 
   assert.match(source, /message\.session\?\.organization_id !== message\.organization_id/)
   assert.match(source, /message\.conversation\?\.organization_id !== message\.organization_id/)
-  assert.match(source, /const activityRows = activeExecs\.map[\s\S]*organization_id: messageOrganizationId[\s\S]*lead_id: convData\.lead_id/)
+  assert.match(source, /const deliveredLeadId = bindingSnapshot\.leadId[\s\S]*const activityRows = activeExecs\.map[\s\S]*organization_id: messageOrganizationId[\s\S]*lead_id: deliveredLeadId/)
   assert.match(source, /\.eq\("organization_id", messageOrganizationId\)[\s\S]*\.eq\("session_id", message\.session_id\)[\s\S]*\.eq\("client_message_id", message\.client_message_id\)/)
   assert.ok(aggregateStart >= 0)
   assert.ok(aggregateReturn > aggregateStart)

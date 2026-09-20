@@ -194,14 +194,28 @@ export const whatsappQueryKeys = {
     params.accessibleSessionKey,
     params.limit,
   ] as const,
-  conversation: (scope: WhatsAppQueryScope, conversationId: string | null) => [
+	conversation: (scope: WhatsAppQueryScope, conversationId: string | null, expectedLeadId: string | null) => [
     ...scopedPrefix('whatsapp-conversation', scope),
+    conversationId,
+	expectedLeadId ?? MISSING_SCOPE_VALUE,
+  ] as const,
+  conversationSnapshot: (scope: WhatsAppQueryScope, conversationId: string | null) => [
+    ...scopedPrefix('whatsapp-conversation-snapshot', scope),
     conversationId,
   ] as const,
   conversationForLead: (scope: WhatsAppQueryScope, leadId: string | null) => [
     ...scopedPrefix('whatsapp-conversation', scope),
     'lead',
     leadId,
+  ] as const,
+  conversationHistoryProjection: (
+    scope: WhatsAppQueryScope,
+    conversationId: string | null,
+    leadId: string | null,
+  ) => [
+    ...scopedPrefix('whatsapp-conversation-history', scope),
+    conversationId,
+    leadId ?? MISSING_SCOPE_VALUE,
   ] as const,
   messagesScope: (scope: WhatsAppQueryScope) =>
     scopedPrefix('whatsapp-messages', scope),
@@ -237,10 +251,12 @@ export const whatsappQueryKeys = {
     scope: WhatsAppQueryScope,
     conversationId: string | null,
     pageSize: number,
+    expectedLeadId?: string | null,
   ) => [
     ...scopedPrefix('whatsapp-messages-paginated', scope),
     conversationId,
     pageSize,
+    expectedLeadId ?? MISSING_SCOPE_VALUE,
   ] as const,
   leadMessagesScope: (scope: WhatsAppQueryScope, leadId?: string | null) => [
     ...scopedPrefix('lead-messages', scope),
@@ -264,6 +280,8 @@ const WHATSAPP_QUERY_ROOTS = new Set([
   'accessible-sessions',
   'whatsapp-conversations',
   'whatsapp-conversation',
+  'whatsapp-conversation-snapshot',
+  'whatsapp-conversation-history',
   'whatsapp-messages',
   'whatsapp-messages-paginated',
   'lead-messages',
@@ -295,20 +313,26 @@ export function matchesWhatsAppMessagesQueryKey(
     return false
   }
 
-  return Boolean(
-    (conversationId && queryKey[5] === conversationId)
-      || (leadId && queryKey[6] === leadId),
-  )
+  if (conversationId && leadId) {
+    return queryKey[5] === conversationId && queryKey[6] === leadId
+  }
+  if (conversationId) return queryKey[5] === conversationId
+  if (leadId) return queryKey[6] === leadId
+  return false
 }
 
 export function matchesPaginatedWhatsAppMessagesQueryKey(
   queryKey: QueryKey,
   scope: WhatsAppQueryScope,
   conversationId: string,
+  expectedLeadId?: string | null,
 ): boolean {
-  return queryKey[0] === 'whatsapp-messages-paginated'
+  const matchesConversation = queryKey[0] === 'whatsapp-messages-paginated'
     && isWhatsAppQueryKeyForScope(queryKey, scope)
     && queryKey[5] === conversationId
+  if (!matchesConversation || expectedLeadId === undefined) return matchesConversation
+
+  return queryKey[7] === (expectedLeadId ?? MISSING_SCOPE_VALUE)
 }
 
 export function matchesWhatsAppMessageRefreshQueryKey(
@@ -319,7 +343,7 @@ export function matchesWhatsAppMessageRefreshQueryKey(
 ): boolean {
   return conversationIds.some((conversationId) => (
     matchesWhatsAppMessagesQueryKey(queryKey, scope, conversationId, leadId)
-      || matchesPaginatedWhatsAppMessagesQueryKey(queryKey, scope, conversationId)
+      || matchesPaginatedWhatsAppMessagesQueryKey(queryKey, scope, conversationId, leadId)
   ))
 }
 

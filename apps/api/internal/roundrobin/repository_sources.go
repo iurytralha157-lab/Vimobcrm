@@ -51,6 +51,7 @@ const (
 		join public.round_robins round_robin
 		  on round_robin.organization_id = form_config.organization_id
 		 and round_robin.id = form_config.round_robin_id
+		 and round_robin.deleted_at is null
 		where form_config.organization_id = $1::uuid
 		  and form_config.round_robin_id is not null
 		  and btrim(form_config.form_id) <> ''
@@ -65,6 +66,7 @@ const (
 		left join public.round_robins round_robin
 		  on round_robin.organization_id = form_config.organization_id
 		 and round_robin.id = form_config.round_robin_id
+		 and round_robin.deleted_at is null
 		where form_config.organization_id = $1::uuid
 		  and form_config.form_id = any($2::text[])
 		order by form_config.form_id asc
@@ -177,7 +179,11 @@ func (repo Repository) ListMetaFormOptions(ctx context.Context, tenantContext te
 }
 
 func (repo Repository) listMetaFormLinkRules(ctx context.Context, organizationID string) ([]Rule, error) {
-	rows, err := repo.db.Pool().Query(ctx, listMetaFormLinkRulesQuery, organizationID)
+	return listMetaFormLinkRulesWithQueryer(ctx, repo.db.Pool(), organizationID)
+}
+
+func listMetaFormLinkRulesWithQueryer(ctx context.Context, q queryer, organizationID string) ([]Rule, error) {
+	rows, err := q.Query(ctx, listMetaFormLinkRulesQuery, organizationID)
 	if err != nil {
 		return nil, err
 	}

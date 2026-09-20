@@ -303,7 +303,14 @@ func TestPublicContactReentryKeepsTheLeadLockAtTheTransactionTail(t *testing.T) 
 		"on conflict do nothing",
 		"tag.RowsAffected() != 1",
 		"publicingress.Allow(",
+		"distribution.ResolveIntakeDestination(",
 		"distribution.Distribute(",
+		"RoundRobinID:       intakeDestination.RoundRobinID",
+		"RoundRobinResolved: intakeDestination.Resolved",
+		"distribution.PreserveAssigneeForIntake(reentry, intakeDestination)",
+		"to_regclass('public.leads_org_phone_unique')",
+		"($4::boolean or intake_scope_key=$3)",
+		"origin_round_robin_id",
 	} {
 		if !strings.Contains(createContact, required) {
 			t.Fatalf("public contact is missing concurrency contract %q", required)
@@ -312,13 +319,20 @@ func TestPublicContactReentryKeepsTheLeadLockAtTheTransactionTail(t *testing.T) 
 	if count := strings.Count(createContact, "and btrim(phone) <> ''"); count != 2 {
 		t.Fatalf("normalized-phone lookups matching the partial unique index = %d, want 2", count)
 	}
+	if count := strings.Count(createContact, "($4::boolean or intake_scope_key=$3)"); count != 2 {
+		t.Fatalf("rollout-aware lead identity lookups = %d, want 2", count)
+	}
 
 	analyticsWrite := strings.Index(createContact, "insert into public.site_analytics_events")
 	rateLimit := strings.Index(createContact, "publicingress.Allow(")
+	routingResolution := strings.Index(createContact, "distribution.ResolveIntakeDestination(")
+	legacyProbe := strings.Index(createContact, "to_regclass('public.leads_org_phone_unique')")
+	identityLock := strings.Index(createContact, "lockPublicContactLeadIntakeIdentity(")
+	phoneLookup := strings.Index(createContact, "select id::text from public.leads")
 	reentryUpdate := strings.LastIndex(createContact, "update public.leads set")
 	distributionCall := strings.Index(createContact, "distribution.Distribute(")
 	idempotentReturn := strings.Index(createContact, `"idempotent": true`)
-	if analyticsWrite < 0 || rateLimit < 0 || reentryUpdate < 0 || distributionCall < 0 || idempotentReturn < 0 {
+	if analyticsWrite < 0 || rateLimit < 0 || routingResolution < 0 || legacyProbe < 0 || identityLock < 0 || phoneLookup < 0 || reentryUpdate < 0 || distributionCall < 0 || idempotentReturn < 0 {
 		t.Fatal("could not locate public contact transaction phases")
 	}
 	if idempotentReturn >= rateLimit {
@@ -330,6 +344,15 @@ func TestPublicContactReentryKeepsTheLeadLockAtTheTransactionTail(t *testing.T) 
 			analyticsWrite,
 			reentryUpdate,
 			distributionCall,
+		)
+	}
+	if !(routingResolution < legacyProbe && legacyProbe < identityLock && identityLock < phoneLookup) {
+		t.Fatalf(
+			"queue identity was not frozen before phone identity: routing=%d legacy=%d lock=%d lookup=%d",
+			routingResolution,
+			legacyProbe,
+			identityLock,
+			phoneLookup,
 		)
 	}
 }

@@ -12,13 +12,14 @@ import (
 )
 
 var (
-	ErrInvalidInput       = errors.New("invalid round robin input")
-	ErrInvalidReference   = errors.New("invalid round robin reference")
-	ErrRoundRobinNotFound = errors.New("round robin not found")
-	ErrRuleNotFound       = errors.New("round robin rule not found")
-	ErrMemberNotFound     = errors.New("round robin member not found")
-	ErrNoChanges          = errors.New("no round robin changes provided")
-	ErrConditionConflict  = errors.New("round robin condition conflict")
+	ErrInvalidInput          = errors.New("invalid round robin input")
+	ErrInvalidReference      = errors.New("invalid round robin reference")
+	ErrRoundRobinNotFound    = errors.New("round robin not found")
+	ErrRuleNotFound          = errors.New("round robin rule not found")
+	ErrMemberNotFound        = errors.New("round robin member not found")
+	ErrNoChanges             = errors.New("no round robin changes provided")
+	ErrConditionConflict     = errors.New("round robin condition conflict")
+	ErrPendingWhatsAppIntake = errors.New("round robin has pending WhatsApp intake")
 )
 
 const (

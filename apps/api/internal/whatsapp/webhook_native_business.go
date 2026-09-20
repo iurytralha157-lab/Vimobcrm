@@ -31,6 +31,8 @@ type nativeInboundRule struct {
 	LegacyNonManagedRetry       bool
 	ManagedProviderEventPending bool
 	ManagedProviderEventLeadID  string
+	CanonicalIntakeResolved     bool
+	IngressSnapshotPresent      bool
 	Conditions                  map[string]any
 }
 
@@ -340,7 +342,7 @@ func nativeInboundRuleMatches(rule nativeInboundRule, message nativeEvolutionMes
 	}
 	haystack := strings.ToLower(strings.TrimSpace(source))
 	switch matchType {
-	case "exact":
+	case "exact", "equals":
 		return haystack == value
 	case "starts_with":
 		return strings.HasPrefix(haystack, value)
@@ -524,6 +526,10 @@ func applyNativeInboundBusinessEffects(
 	messageRowID string,
 	rule nativeInboundRule,
 ) error {
+	// A conversation has one current binding, while a replayed provider event
+	// can still belong to an older logical card. All immutable event effects use
+	// the event lead; only chat navigation uses the conversation's active lead.
+	conversation.LeadID = nativeEvolutionMessageLeadID(conversation)
 	if rule.ManagedProviderEventHandled {
 		if rule.ManagedProviderEventLeadID != "" && conversation.LeadID != "" &&
 			conversation.LeadID != rule.ManagedProviderEventLeadID {

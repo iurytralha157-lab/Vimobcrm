@@ -18,6 +18,19 @@ function isLegacyJwtSecret(value: string) {
     segments.every((segment) => segment.length > 0);
 }
 
+/**
+ * Builds credentials for a private worker call without treating opaque hosted
+ * secret keys as JWTs. Every key travels in `apikey`; only the legacy
+ * service-role JWT compatibility path also receives a Bearer header.
+ */
+export function privateWorkerRequestHeaders(secret: string) {
+  const headers: Record<string, string> = { apikey: secret };
+  if (isLegacyJwtSecret(secret)) {
+    headers.Authorization = `Bearer ${secret}`;
+  }
+  return headers;
+}
+
 function matchesAnySecret(candidate: string, secrets: string[]) {
   // Evaluate every configured key so rotation order or the matching key's
   // position cannot create an early-exit timing oracle.

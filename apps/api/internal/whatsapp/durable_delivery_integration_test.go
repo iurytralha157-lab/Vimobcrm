@@ -255,6 +255,33 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 		},
 	})
 	tenantContext := tenant.Context{OrganizationID: organizationID, UserID: userID, MemberRole: "user"}
+
+	// Simulate a browser that still holds card A after the physical conversation
+	// is already bound to card B. The stale snapshot must fail before creating a
+	// message/outbox row (and before any provider side effect).
+	staleClientMessageID := "stale-card-send-" + suffix
+	providerCallsBeforeStaleSend := sendCalls.Load()
+	if _, err := repo.SendMessage(ctx, tenantContext, conversationID, sendMessageInput{
+		Text:            "must not cross the card boundary",
+		ClientMessageID: staleClientMessageID,
+		ExpectedLeadID:  otherLeadID,
+	}); !errors.Is(err, ErrConversationNotFound) {
+		t.Fatalf("stale card SendMessage() error = %v, want ErrConversationNotFound", err)
+	}
+	var staleMessageCount, staleOutboxCount int
+	if err := postgres.Pool().QueryRow(ctx, `
+		select
+		  (select count(*)::integer from public.whatsapp_messages
+		   where organization_id = $1::uuid and client_message_id = $2),
+		  (select count(*)::integer from public.whatsapp_outbox
+		   where organization_id = $1::uuid and client_message_id = $2)
+	`, organizationID, staleClientMessageID).Scan(&staleMessageCount, &staleOutboxCount); err != nil {
+		t.Fatal(err)
+	}
+	if staleMessageCount != 0 || staleOutboxCount != 0 || sendCalls.Load() != providerCallsBeforeStaleSend {
+		t.Fatalf("stale card send effects = messages:%d outbox:%d provider:%d->%d", staleMessageCount, staleOutboxCount, providerCallsBeforeStaleSend, sendCalls.Load())
+	}
+
 	validationItem := pendingWhatsAppOutbox{OrganizationID: organizationID, SessionID: sessionID}
 	if permanent, err := repo.validateWhatsAppOutboxSession(ctx, validationItem); err != nil || permanent {
 		t.Fatalf("connected outbox session validation = permanent:%v error:%v", permanent, err)
@@ -278,13 +305,15 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 		Text:            "must not use fallback",
 		SendSessionID:   legacySessionID,
 		ClientMessageID: "explicit-disconnected-send",
+		ExpectedLeadID:  leadID,
 	}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("explicit disconnected SendMessage() error = %v, want ErrInvalidInput", err)
 	}
 	if _, err := repo.StartConversation(ctx, tenantContext, StartConversationRequest{
-		Phone:     "5511999991111",
-		SessionID: legacySessionID,
-		LeadID:    leadID,
+		Phone:                  "5511999991111",
+		SessionID:              legacySessionID,
+		LeadID:                 leadID,
+		ExpectedPreviousLeadID: leadID,
 	}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("explicit disconnected StartConversation() error = %v, want ErrInvalidInput", err)
 	}
@@ -295,17 +324,19 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 		Mimetype:        "application/pdf",
 		SendSessionID:   sessionID,
 		ClientMessageID: "cross-organization-media",
+		ExpectedLeadID:  leadID,
 	}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("cross-organization media error = %v, want ErrInvalidInput", err)
 	}
 	if _, err := repo.StartConversation(ctx, tenantContext, StartConversationRequest{
-		Phone:     "5511999991111",
-		SessionID: sessionID,
-		LeadID:    otherLeadID,
+		Phone:                  "5511999991111",
+		SessionID:              sessionID,
+		LeadID:                 otherLeadID,
+		ExpectedPreviousLeadID: leadID,
 	}); !errors.Is(err, ErrInvalidReference) {
 		t.Fatalf("StartConversation() mismatched lead error = %v, want ErrInvalidReference", err)
 	}
-	if err := repo.LinkConversationToLead(ctx, tenantContext, conversationID, otherLeadID); !errors.Is(err, ErrInvalidReference) {
+	if err := repo.LinkConversationToLead(ctx, tenantContext, conversationID, otherLeadID, leadID); !errors.Is(err, ErrInvalidReference) {
 		t.Fatalf("LinkConversationToLead() mismatched lead error = %v, want ErrInvalidReference", err)
 	}
 
@@ -422,17 +453,20 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	bolaContext := tenant.Context{OrganizationID: organizationID, UserID: otherUserID, MemberRole: "user"}
 	if _, err := repo.StartConversation(ctx, bolaContext, StartConversationRequest{
 		Phone: "2299922093", SessionID: sessionID, LeadID: canaryLeadID,
+		ExpectedPreviousLeadID: unlinkedConversationLeadSnapshot,
 	}); !errors.Is(err, ErrSessionNotFound) {
 		t.Fatalf("quarantine claim BOLA error = %v, want ErrSessionNotFound", err)
 	}
 	if _, err := repo.StartConversation(ctx, tenantContext, StartConversationRequest{
 		Phone: "2299922093", SessionID: sessionID, LeadID: otherLeadID,
+		ExpectedPreviousLeadID: unlinkedConversationLeadSnapshot,
 	}); !errors.Is(err, ErrInvalidReference) {
 		t.Fatalf("quarantine claim mismatched phone error = %v, want ErrInvalidReference", err)
 	}
 
 	claimedConversation, err := repo.StartConversation(ctx, tenantContext, StartConversationRequest{
 		Phone: "2299922093", SessionID: sessionID, LeadID: canaryLeadID,
+		ExpectedPreviousLeadID: unlinkedConversationLeadSnapshot,
 	})
 	if err != nil {
 		t.Fatalf("StartConversation() quarantine claim error = %v", err)
@@ -504,6 +538,7 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 
 	claimedAgain, err := repo.StartConversation(ctx, tenantContext, StartConversationRequest{
 		Phone: "2299922093", SessionID: sessionID, LeadID: canaryLeadID,
+		ExpectedPreviousLeadID: canaryLeadID,
 	})
 	if err != nil || claimedAgain.ID != quarantineConversationID {
 		t.Fatalf("idempotent quarantine claim = %#v / %v", claimedAgain, err)
@@ -555,6 +590,7 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 		Text:            "must not send through deleted history session",
 		SendSessionID:   deletedSessionID,
 		ClientMessageID: "deleted-history-session-send",
+		ExpectedLeadID:  canaryLeadID,
 	}); !errors.Is(err, ErrSessionNotFound) {
 		t.Fatalf("deleted historical session SendMessage() error = %v, want ErrSessionNotFound", err)
 	}
@@ -563,6 +599,7 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	response, err := repo.SendMessage(ctx, tenantContext, conversationID, sendMessageInput{
 		Text:            "durable outbound",
 		ClientMessageID: clientMessageID,
+		ExpectedLeadID:  leadID,
 	})
 	if err != nil {
 		t.Fatalf("SendMessage() returned error: %v", err)
@@ -652,7 +689,7 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 		t.Fatalf("provider acknowledgement facts = last_contact:%v first_response:%v timeline:%d", lastContactRecorded, firstResponseRecorded, sentTimelineCount)
 	}
 
-	if _, err := repo.SendMessage(ctx, tenantContext, conversationID, sendMessageInput{Text: "durable outbound", ClientMessageID: clientMessageID}); err != nil {
+	if _, err := repo.SendMessage(ctx, tenantContext, conversationID, sendMessageInput{Text: "durable outbound", ClientMessageID: clientMessageID, ExpectedLeadID: leadID}); err != nil {
 		t.Fatalf("idempotent SendMessage() returned error: %v", err)
 	}
 	if err := repo.ProcessWhatsAppOutbox(ctx); err != nil {
@@ -677,6 +714,7 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	reactionResponse, err := repo.ReactToMessage(ctx, tenantContext, conversationID, response.Message.ID, reactToMessageInput{
 		Emoji:            "👍",
 		ClientReactionID: reactionClientID,
+		ExpectedLeadID:   leadID,
 	})
 	if err != nil {
 		t.Fatalf("ReactToMessage() returned error: %v", err)
@@ -690,6 +728,7 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if _, err := repo.ReactToMessage(ctx, tenantContext, conversationID, response.Message.ID, reactToMessageInput{
 		Emoji:            "👍",
 		ClientReactionID: reactionClientID,
+		ExpectedLeadID:   leadID,
 	}); err != nil {
 		t.Fatalf("idempotent ReactToMessage() returned error: %v", err)
 	}
@@ -707,6 +746,7 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if _, err := repo.ReactToMessage(ctx, tenantContext, conversationID, response.Message.ID, reactToMessageInput{
 		Emoji:            "❤️",
 		ClientReactionID: reactionClientID,
+		ExpectedLeadID:   leadID,
 	}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("reused reaction key error = %v, want ErrInvalidInput", err)
 	}
@@ -735,6 +775,7 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if _, err := repo.ReactToMessage(ctx, tenantContext, conversationID, otherMessageID, reactToMessageInput{
 		Emoji:            "👍",
 		ClientReactionID: "reaction-cross-conversation",
+		ExpectedLeadID:   leadID,
 	}); !errors.Is(err, ErrMessageNotFound) {
 		t.Fatalf("cross-conversation reaction error = %v, want ErrMessageNotFound", err)
 	}
@@ -770,6 +811,7 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if _, err := repo.ReactToMessage(ctx, tenantContext, conversationID, response.Message.ID, reactToMessageInput{
 		Emoji:            "",
 		ClientReactionID: removalClientID,
+		ExpectedLeadID:   leadID,
 	}); err != nil {
 		t.Fatalf("reaction removal error = %v", err)
 	}
@@ -894,7 +936,7 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	timeoutClientID := "client-timeout-" + suffix
 	timeoutProviderID = deterministicProviderMessageID(timeoutClientID)
 	repo.functions.httpClient.Timeout = 50 * time.Millisecond
-	if _, err := repo.SendMessage(ctx, tenantContext, conversationID, sendMessageInput{Text: "ambiguous timeout", ClientMessageID: timeoutClientID}); err != nil {
+	if _, err := repo.SendMessage(ctx, tenantContext, conversationID, sendMessageInput{Text: "ambiguous timeout", ClientMessageID: timeoutClientID, ExpectedLeadID: leadID}); err != nil {
 		t.Fatalf("timeout fixture SendMessage() returned error: %v", err)
 	}
 	timeoutEffect := attachAutomationEffect(timeoutClientID, "timeout-terminal")
@@ -1034,6 +1076,7 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	if _, err := repo.SendMessage(ctx, tenantContext, conversationID, sendMessageInput{
 		Text:            "provider receipt failure",
 		ClientMessageID: receiptFailureClientID,
+		ExpectedLeadID:  leadID,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1107,7 +1150,7 @@ func TestWhatsAppDurableIngressAndOutbox(t *testing.T) {
 	// A definitive pre-provider failure may be safely requeued by an automation
 	// manager, and every related state must move atomically with the outbox.
 	knownFailureClientID := "automation-known-failure-" + suffix
-	if _, err := repo.SendMessage(ctx, tenantContext, conversationID, sendMessageInput{Text: "known pre-provider failure", ClientMessageID: knownFailureClientID}); err != nil {
+	if _, err := repo.SendMessage(ctx, tenantContext, conversationID, sendMessageInput{Text: "known pre-provider failure", ClientMessageID: knownFailureClientID, ExpectedLeadID: leadID}); err != nil {
 		t.Fatal(err)
 	}
 	knownFailureEffect := attachAutomationEffect(knownFailureClientID, "known-terminal")

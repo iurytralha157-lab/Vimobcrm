@@ -11039,6 +11039,7 @@ export type Database = {
           created_at: string
           created_by: string | null
           current_position: number | null
+          deleted_at: string | null
           id: string
           is_active: boolean | null
           last_assigned_index: number | null
@@ -11052,6 +11053,8 @@ export type Database = {
           strategy: string | null
           target_pipeline_id: string | null
           target_stage_id: string | null
+          tombstone_pipeline_id: string | null
+          tombstone_stage_id: string | null
           updated_at: string | null
         }
         Insert: {
@@ -11059,6 +11062,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           current_position?: number | null
+          deleted_at?: string | null
           id?: string
           is_active?: boolean | null
           last_assigned_index?: number | null
@@ -11072,6 +11076,8 @@ export type Database = {
           strategy?: string | null
           target_pipeline_id?: string | null
           target_stage_id?: string | null
+          tombstone_pipeline_id?: string | null
+          tombstone_stage_id?: string | null
           updated_at?: string | null
         }
         Update: {
@@ -11079,6 +11085,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           current_position?: number | null
+          deleted_at?: string | null
           id?: string
           is_active?: boolean | null
           last_assigned_index?: number | null
@@ -11092,6 +11099,8 @@ export type Database = {
           strategy?: string | null
           target_pipeline_id?: string | null
           target_stage_id?: string | null
+          tombstone_pipeline_id?: string | null
+          tombstone_stage_id?: string | null
           updated_at?: string | null
         }
         Relationships: [

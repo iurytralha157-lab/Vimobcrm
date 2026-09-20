@@ -32,6 +32,7 @@ import {
   whatsappQueryKeys,
   type WhatsAppQueryScope,
 } from "@/lib/whatsapp-query-cache";
+import { WHATSAPP_UNLINKED_LEAD_SNAPSHOT } from "@/lib/whatsapp-message-input";
 import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
 
 const WHATSAPP_SEND_COOLDOWN_MS = 1000;
@@ -67,6 +68,7 @@ export interface WhatsAppConversation {
   deleted_at: string | null;
   created_at: string;
   updated_at: string;
+	historical_lead_view?: boolean;
   session?: {
     id: string;
     instance_name: string;
@@ -172,6 +174,25 @@ type UseWhatsAppMessagesOptions = {
 
 const getConversationLeadId = (conversation?: WhatsAppConversation | null) =>
   conversation?.lead_id || conversation?.lead?.id || null;
+
+const requireConversationLeadId = (conversation?: WhatsAppConversation | null) => {
+  if (conversation?.historical_lead_view) {
+    throw new Error("WHATSAPP_HISTORICAL_CONVERSATION_READ_ONLY");
+  }
+  const leadId = getConversationLeadId(conversation);
+  if (!leadId) throw new Error("WHATSAPP_CONVERSATION_LEAD_UNAVAILABLE");
+  return leadId;
+};
+
+const requireConversationBindingSnapshot = (conversation?: WhatsAppConversation | null) => {
+  if (!conversation?.id) {
+    throw new Error("WHATSAPP_CONVERSATION_UNAVAILABLE");
+  }
+  if (conversation.historical_lead_view) {
+    throw new Error("WHATSAPP_HISTORICAL_CONVERSATION_READ_ONLY");
+  }
+  return getConversationLeadId(conversation) || WHATSAPP_UNLINKED_LEAD_SNAPSHOT;
+};
 
 const messageIdentityAliases = (message: WhatsAppMessage) => [
   message.id,
@@ -523,26 +544,62 @@ export function useWhatsAppUnreadCount(
   });
 }
 
-export function useWhatsAppConversation(conversationId: string | null) {
+export function useWhatsAppConversation(conversationId: string | null, expectedLeadId: string | null) {
   const scope = useWhatsAppQueryScope();
 
   return useQuery({
-    queryKey: whatsappQueryKeys.conversation(scope, conversationId),
+	queryKey: whatsappQueryKeys.conversation(scope, conversationId, expectedLeadId),
     queryFn: async () => {
-      if (!conversationId) return null;
-      return whatsappAPI.getConversation(conversationId, scope.organizationId) as Promise<WhatsAppConversation>;
+	  if (!conversationId || !expectedLeadId) return null;
+	  return whatsappAPI.getConversation(conversationId, expectedLeadId, scope.organizationId) as Promise<WhatsAppConversation>;
     },
-    enabled: !!conversationId && !!scope.organizationId && !!scope.userId,
+	enabled: !!conversationId && !!expectedLeadId && !!scope.organizationId && !!scope.userId,
   });
 }
 
-export function useWhatsAppConversationForLead(leadId: string | null | undefined) {
+export function useWhatsAppConversationSnapshot(conversationId: string | null) {
   const scope = useWhatsAppQueryScope();
 
   return useQuery({
-    queryKey: whatsappQueryKeys.conversationForLead(scope, leadId ?? null),
+    queryKey: whatsappQueryKeys.conversationSnapshot(scope, conversationId),
+    queryFn: async () => {
+      if (!conversationId) return null;
+      return whatsappAPI.getConversationSnapshot(
+        conversationId,
+        scope.organizationId,
+      ) as Promise<WhatsAppConversation>;
+    },
+    enabled: !!conversationId && !!scope.organizationId && !!scope.userId,
+    retry: false,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useWhatsAppConversationForLead(
+  leadId: string | null | undefined,
+  conversationId?: string | null,
+) {
+  const scope = useWhatsAppQueryScope();
+
+  return useQuery({
+    queryKey: conversationId
+      ? whatsappQueryKeys.conversationHistoryProjection(scope, conversationId, leadId ?? null)
+      : whatsappQueryKeys.conversationForLead(scope, leadId ?? null),
     queryFn: async () => {
       if (!leadId || !scope.organizationId) return null;
+	  if (conversationId) {
+		const history = await whatsappAPI.getHistoryAccess({
+		  conversationId,
+		  leadId,
+		  limit: 1,
+		  organizationId: scope.organizationId,
+		});
+		const conversation = history.conversations?.find((item) => item.id === conversationId)
+		  ?? (history.conversation?.id === conversationId ? history.conversation : null);
+		return conversation as WhatsAppConversation | null;
+	  }
       return whatsappAPI.findConversation({
         leadId,
         phone: "",
@@ -583,10 +640,12 @@ export function useWhatsAppMessages(
       if (!conversationId && !leadId) return [];
 
       if (conversationId && !includeLeadHistory) {
+		if (!leadId) return [];
         const page = await whatsappAPI.getMessages({
           conversationId,
           organizationId: scope.organizationId,
           limit,
+		  expectedLeadId: leadId,
         });
         return mergeWithLocalState(page.messages as WhatsAppMessage[]);
       }
@@ -601,14 +660,16 @@ export function useWhatsAppMessages(
         return mergeWithLocalState((history.messages || []) as WhatsAppMessage[]);
       }
 
-      const page = await whatsappAPI.getMessages({
+	  if (!leadId) return [];
+	  const page = await whatsappAPI.getMessages({
         conversationId: conversationId!,
         organizationId: scope.organizationId,
         limit,
+		expectedLeadId: leadId,
       });
       return mergeWithLocalState(page.messages as WhatsAppMessage[]);
     },
-    enabled: !!scope.organizationId && !!scope.userId && (!!conversationId || !!leadId),
+	enabled: !!scope.organizationId && !!scope.userId && !!leadId,
     refetchInterval,
     refetchIntervalInBackground: false,
     refetchOnReconnect: true,
@@ -652,6 +713,7 @@ export function useSendWhatsAppMessage() {
       if (!conversation.session_id) {
         throw new Error("WHATSAPP_SESSION_UNAVAILABLE");
       }
+	  const expectedLeadId = requireConversationLeadId(conversation);
 
       const rateLimitUserId = profile?.id || "anonymous";
       const now = Date.now();
@@ -667,6 +729,7 @@ export function useSendWhatsAppMessage() {
         conversation.id,
         {
           text,
+		  expectedLeadId,
           mediaUrl,
           mediaType,
           base64,
@@ -684,7 +747,7 @@ export function useSendWhatsAppMessage() {
       }
 
       const conversationId = variables.conversation.id;
-      const leadId = getConversationLeadId(variables.conversation);
+	  const leadId = requireConversationLeadId(variables.conversation);
       const optimisticId = variables.clientMessageId || variables._optimisticId || createClientId('message');
       variables.clientMessageId = optimisticId;
       variables._optimisticId = optimisticId;
@@ -745,7 +808,7 @@ export function useSendWhatsAppMessage() {
       queryClient.setQueriesData<PaginatedWhatsAppMessages>(
         {
           predicate: (query) =>
-            matchesPaginatedWhatsAppMessagesQueryKey(query.queryKey, scope, conversationId),
+            matchesPaginatedWhatsAppMessagesQueryKey(query.queryKey, scope, conversationId, leadId),
         },
         (old) => {
           const firstPage = old?.pages?.[0];
@@ -833,6 +896,7 @@ export function useSendWhatsAppMessage() {
                 query.queryKey,
                 scope,
                 cacheConversationId,
+                leadId,
               ),
             },
             (old) => old
@@ -908,6 +972,7 @@ export function useSendWhatsAppMessage() {
               query.queryKey,
               scope,
               variables.conversation.id,
+              leadId,
             ),
           },
           (old) => old
@@ -1016,6 +1081,7 @@ export function useReactToWhatsAppMessage() {
           query.queryKey,
           scope,
           conversationId,
+          leadId,
         ),
       },
       (old) => {
@@ -1077,6 +1143,7 @@ export function useReactToWhatsAppMessage() {
       if (!canReactToWhatsAppMessage(variables.targetMessage)) {
         throw new Error("WHATSAPP_MESSAGE_NOT_READY_FOR_REACTION");
       }
+	  const expectedLeadId = requireConversationLeadId(variables.conversation);
 
       return whatsappAPI.reactToMessage(
         variables.conversation.id,
@@ -1084,6 +1151,7 @@ export function useReactToWhatsAppMessage() {
         {
           emoji: variables.emoji,
           clientReactionId: variables._clientReactionId || createClientId('reaction'),
+		  expectedLeadId,
         },
         scope.organizationId,
       );
@@ -1097,7 +1165,7 @@ export function useReactToWhatsAppMessage() {
       }
 
       const conversationId = variables.conversation.id;
-      const leadId = getConversationLeadId(variables.conversation);
+	  const leadId = requireConversationLeadId(variables.conversation);
       const clientReactionId = createClientId('reaction');
       variables._clientReactionId = clientReactionId;
       const targetProviderMessageId = variables.targetMessage.message_id || variables.targetMessage.id;
@@ -1200,11 +1268,14 @@ export function useMarkConversationAsRead() {
   return useMutation({
     mutationFn: async (conversation: {
       id: string;
-      session_id: string;
+      session_id: string | null;
       remote_jid: string;
       is_group?: boolean;
+	  lead_id?: string | null;
+	  lead?: { id: string };
     }) => {
-      await whatsappAPI.markConversationAsRead(conversation.id, scope.organizationId);
+	  const expectedLeadId = requireConversationBindingSnapshot(conversation as WhatsAppConversation);
+	  await whatsappAPI.markConversationAsRead(conversation.id, expectedLeadId, scope.organizationId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
@@ -1218,11 +1289,17 @@ export function useMarkAsSeenOnWhatsApp() {
   return useMutation({
     mutationFn: async (conversation: {
       id: string;
-      session_id: string;
+      session_id: string | null;
       remote_jid: string;
       is_group?: boolean;
+	  lead_id?: string | null;
+	  lead?: { id: string };
     }) => {
-      await whatsappAPI.markAsSeenOnWhatsApp(conversation.id, scope.organizationId);
+	  if (!conversation.session_id) {
+		throw new Error("WHATSAPP_SESSION_UNAVAILABLE");
+	  }
+	  const expectedLeadId = requireConversationBindingSnapshot(conversation as WhatsAppConversation);
+	  await whatsappAPI.markAsSeenOnWhatsApp(conversation.id, expectedLeadId, scope.organizationId);
     },
     onError: () => {
       toast({
@@ -1245,8 +1322,9 @@ export function useArchiveConversation() {
   const scope = useWhatsAppQueryScope();
 
   return useMutation({
-    mutationFn: async ({ conversationId, archive }: { conversationId: string; archive: boolean }) => {
-      await whatsappAPI.archiveConversation(conversationId, archive, scope.organizationId);
+	mutationFn: async ({ conversation, archive }: { conversation: WhatsAppConversation; archive: boolean }) => {
+	  const expectedLeadId = requireConversationBindingSnapshot(conversation);
+	  await whatsappAPI.archiveConversation(conversation.id, archive, expectedLeadId, scope.organizationId);
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
@@ -1272,8 +1350,9 @@ export function useDeleteConversation() {
   const scope = useWhatsAppQueryScope();
 
   return useMutation({
-    mutationFn: async (conversationId: string) => {
-      await whatsappAPI.deleteConversation(conversationId, scope.organizationId);
+	mutationFn: async (conversation: WhatsAppConversation) => {
+	  const expectedLeadId = requireConversationBindingSnapshot(conversation);
+	  await whatsappAPI.deleteConversation(conversation.id, expectedLeadId, scope.organizationId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
@@ -1297,17 +1376,30 @@ export function useLinkConversationToLead() {
   const scope = useWhatsAppQueryScope();
 
   return useMutation({
-    mutationFn: async ({ conversationId, leadId }: { conversationId: string; leadId: string }) => {
-      await whatsappAPI.linkConversationToLead(conversationId, leadId, scope.organizationId);
+    mutationFn: async ({ conversation, leadId }: { conversation: WhatsAppConversation; leadId: string }) => {
+      const expectedPreviousLeadId = requireConversationBindingSnapshot(conversation);
+      await whatsappAPI.linkConversationToLead(
+        conversation.id,
+        leadId,
+        expectedPreviousLeadId,
+        scope.organizationId,
+      );
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({
-        queryKey: whatsappQueryKeys.conversation(scope, variables.conversationId),
+		queryKey: whatsappQueryKeys.conversation(scope, variables.conversation.id, variables.leadId),
       });
       queryClient.invalidateQueries({ queryKey: whatsappQueryKeys.conversationsScope(scope) });
       toast({
         title: "Conversa vinculada",
         description: "A conversa foi vinculada ao lead",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "A conversa mudou",
+        description: "Atualize a conversa antes de tentar vinculá-la novamente.",
+        variant: "destructive",
       });
     },
   });

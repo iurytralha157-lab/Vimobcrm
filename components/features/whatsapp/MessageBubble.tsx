@@ -217,6 +217,7 @@ export const MessageBubble = memo(function MessageBubble({
                     fromMe={fromMe}
                     groupJid={isGroup ? conversationRemoteJid : null}
                     sessionId={isGroup ? conversationSessionId : null}
+                    leadId={leadId || null}
                     compact={compact}
                   />
                 )}

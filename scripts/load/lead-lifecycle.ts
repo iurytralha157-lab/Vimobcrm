@@ -2520,7 +2520,13 @@ async function discoverRunArtifacts(pool: Pool, runId: string) {
   const submissionPrefix = `load:${runId}:%`;
   const [queues, automations, executions, tags, leads] = await Promise.all([
     pool.query<{ id: string }>(
-      `select id::text from public.round_robins where organization_id = $1::uuid and name like $2`,
+      `
+        select id::text
+        from public.round_robins
+        where organization_id = $1::uuid
+          and name like $2
+          and deleted_at is null
+      `,
       [E2E_ORGANIZATION_ID, namePrefix],
     ),
     pool.query<{ id: string }>(
@@ -2784,7 +2790,13 @@ async function hardDeleteRunArtifacts(pool: Pool, manifest: RunManifest) {
     deleted.tags = tags.rowCount || 0;
 
     const queueIDs = await client.query<{ id: string }>(
-      `select id::text from public.round_robins where organization_id = $1::uuid and name like $2`,
+      `
+        select id::text
+        from public.round_robins
+        where organization_id = $1::uuid
+          and name like $2
+          and deleted_at is null
+      `,
       [E2E_ORGANIZATION_ID, namePrefix],
     );
     const queueIdValues = queueIDs.rows.map((row) => row.id);
@@ -2796,7 +2808,19 @@ async function hardDeleteRunArtifacts(pool: Pool, manifest: RunManifest) {
         );
       }
       const queues = await client.query(
-        `delete from public.round_robins where organization_id = $1::uuid and id = any($2::uuid[])`,
+        `
+          update public.round_robins
+          set is_active = false,
+              deleted_at = clock_timestamp(),
+              pipeline_id = null,
+              target_pipeline_id = null,
+              target_stage_id = null,
+              ai_agent_id = null,
+              created_by = null
+          where organization_id = $1::uuid
+            and id = any($2::uuid[])
+            and deleted_at is null
+        `,
         [E2E_ORGANIZATION_ID, queueIdValues],
       );
       deleted.queues = queues.rowCount || 0;

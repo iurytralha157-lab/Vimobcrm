@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
@@ -287,10 +288,20 @@ func (repo Repository) RegenerateToken(ctx context.Context, tenantContext tenant
 	return repo.Get(ctx, tenantContext, id)
 }
 
-func (repo Repository) ReceiveLead(ctx context.Context, token string, payload map[string]any) (IncomingLeadResult, error) {
+func (repo Repository) ReceiveLead(
+	ctx context.Context,
+	token string,
+	idempotencyKey string,
+	payload map[string]any,
+) (IncomingLeadResult, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return IncomingLeadResult{}, ErrInvalidToken
+	}
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	var providerEventID *string
+	if idempotencyKey != "" {
+		providerEventID = &idempotencyKey
 	}
 
 	webhook, err := repo.findIncomingWebhookByToken(ctx, token)
@@ -301,6 +312,7 @@ func (repo Repository) ReceiveLead(ctx context.Context, token string, payload ma
 	return repo.receiveLead(ctx, webhook, payload, leadIngressOptions{
 		Source:                "webhook",
 		Provider:              "generic_webhook",
+		ProviderEventID:       providerEventID,
 		SourceWebhookID:       &webhookID,
 		IncrementWebhookStats: true,
 	})
@@ -347,6 +359,22 @@ func (repo Repository) receiveLead(
 	payload map[string]any,
 	options leadIngressOptions,
 ) (IncomingLeadResult, error) {
+	result, err := repo.receiveLeadWithIdentityMode(ctx, webhook, payload, options, nil)
+	constraintName := webhookLeadPhoneUniqueViolationConstraint(err)
+	if constraintName == "" {
+		return result, err
+	}
+	legacyIdentity := constraintName == "leads_org_phone_unique"
+	return repo.receiveLeadWithIdentityMode(ctx, webhook, payload, options, &legacyIdentity)
+}
+
+func (repo Repository) receiveLeadWithIdentityMode(
+	ctx context.Context,
+	webhook incomingWebhook,
+	payload map[string]any,
+	options leadIngressOptions,
+	forceLegacyIdentity *bool,
+) (IncomingLeadResult, error) {
 	if payload == nil {
 		payload = map[string]any{}
 	}
@@ -390,11 +418,6 @@ func (repo Repository) receiveLead(
 			"external_id", "externalId",
 		)
 	}
-	providerEventKey := providerEventID
-	if providerEventID != nil {
-		qualified := webhook.ID + ":" + *providerEventID
-		providerEventKey = &qualified
-	}
 	utmSource := payloadString(payload, "utm_source", "utmSource")
 	utmMedium := payloadString(payload, "utm_medium", "utmMedium")
 	utmCampaign := payloadString(payload, "utm_campaign", "utmCampaign")
@@ -423,6 +446,8 @@ func (repo Repository) receiveLead(
 	); err != nil {
 		return IncomingLeadResult{}, err
 	}
+	payloadJSON, _ := json.Marshal(payload)
+	providerEventKey := webhookProviderEventKey(webhook.ID, providerEventID)
 
 	metadata := map[string]any{
 		"source":                options.Source,
@@ -443,14 +468,6 @@ func (repo Repository) receiveLead(
 	if formAnswers := webhookFormAnswers(payload); len(formAnswers) > 0 {
 		metadata["form_answers"] = formAnswers
 	}
-	metadataJSON, _ := json.Marshal(metadata)
-	payloadJSON, _ := json.Marshal(payload)
-	distributionIdentity := string(payloadJSON)
-	if providerEventKey != nil {
-		distributionIdentity = *providerEventKey
-	}
-	distributionDigest := sha256.Sum256([]byte(webhook.ID + ":" + distributionIdentity))
-	distributionKey := options.Provider + ":" + hex.EncodeToString(distributionDigest[:])
 	occurredAt := webhookOccurredAt(payload)
 
 	tx, err := repo.db.Pool().Begin(ctx)
@@ -518,25 +535,56 @@ func (repo Repository) receiveLead(
 			return IncomingLeadResult{}, err
 		}
 	}
-	if phone != nil {
-		if _, err := tx.Exec(ctx, `
-			select pg_advisory_xact_lock(
-				hashtextextended(
-					'lead-phone:' || $1 || ':' || regexp_replace($2, '[^0-9]', '', 'g'),
-					0
-				)
-			)
-		`, webhook.OrganizationID, *phone); err != nil {
-			return IncomingLeadResult{}, err
-		}
-	}
 
 	pipelineID, stageID, err := repo.resolveWebhookDestination(ctx, tx, webhook)
 	if err != nil {
 		return IncomingLeadResult{}, err
 	}
+	intakeDestination, err := distribution.ResolveIntakeDestination(ctx, tx, distribution.IntakeContext{
+		OrganizationID:       webhook.OrganizationID,
+		PipelineID:           pipelineID,
+		Source:               options.Source,
+		PropertyID:           propertyID,
+		InterestPropertyID:   propertyID,
+		TagIDs:               webhook.TargetTagIDs,
+		FormID:               formID,
+		SourceWebhookID:      options.SourceWebhookID,
+		WebsiteCategory:      sourceDetail,
+		UTMCampaign:          utmCampaign,
+		LeadMetaCampaignName: campaignName,
+		MetaCampaignID:       campaignID,
+	})
+	if err != nil {
+		return IncomingLeadResult{}, err
+	}
+	intakeScopeKey := distribution.IntakeScopeKey(intakeDestination.RoundRobinID)
+	metadata["intake_scope_key"] = intakeScopeKey
+	if intakeDestination.RoundRobinID != nil {
+		metadata["origin_round_robin_id"] = *intakeDestination.RoundRobinID
+	}
+	metadataJSON, _ := json.Marshal(metadata)
 
-	existingLeadID, err := repo.findExistingLeadByPhone(ctx, tx, webhook.OrganizationID, phone)
+	legacyIdentity := false
+	if forceLegacyIdentity != nil {
+		legacyIdentity = *forceLegacyIdentity
+	} else {
+		legacyIdentity, err = legacyWebhookLeadPhoneUniquenessActive(ctx, tx)
+		if err != nil {
+			return IncomingLeadResult{}, err
+		}
+	}
+	if phone != nil {
+		if err := lockWebhookLeadIntakeIdentity(ctx, tx, webhook.OrganizationID, *phone, intakeScopeKey, legacyIdentity); err != nil {
+			return IncomingLeadResult{}, err
+		}
+	}
+
+	var existingLeadID string
+	if legacyIdentity {
+		existingLeadID, err = repo.findExistingLeadByPhoneLegacy(ctx, tx, webhook.OrganizationID, phone)
+	} else {
+		existingLeadID, err = repo.findExistingLeadByPhone(ctx, tx, webhook.OrganizationID, phone, intakeScopeKey)
+	}
 	if err != nil {
 		return IncomingLeadResult{}, err
 	}
@@ -572,7 +620,7 @@ func (repo Repository) receiveLead(
 			      else now()
 			    end,
 			    board_order_at = now(),
-			    metadata = coalesce(metadata, '{}'::jsonb) || $22::jsonb,
+			    metadata = coalesce(metadata, '{}'::jsonb) || ($22::jsonb - 'intake_scope_key' - 'origin_round_robin_id'),
 			    last_entry_at = now(),
 			    reentry_count = coalesce(reentry_count, 0) + 1,
 			    updated_at = now()
@@ -608,7 +656,9 @@ func (repo Repository) receiveLead(
 				team_id,
 				stage_entered_at,
 				board_order_at,
-				last_entry_at
+				last_entry_at,
+				intake_scope_key,
+				origin_round_robin_id
 			)
 			values (
 				$1::uuid,
@@ -637,10 +687,12 @@ func (repo Repository) receiveLead(
 				$22::uuid,
 				case when $3::uuid is null then null else now() end,
 				case when $3::uuid is null then null else now() end,
-				now()
+				now(),
+				$24,
+				$25::uuid
 			)
 			returning id::text
-		`, webhook.OrganizationID, nullableString(pipelineID), nullableString(stageID), nullableString(propertyID), *name, nullableString(email), nullableString(phone), nullableString(sourceDetail), nullableString(options.SourceWebhookID), nullableString(message), nullableString(propertyCode), nullableString(campaignID), nullableString(adsetID), nullableString(adID), nullableString(formID), nullableString(utmSource), nullableString(utmMedium), nullableString(utmCampaign), nullableString(utmTerm), nullableString(utmContent), string(metadataJSON), nullableString(webhook.TargetTeamID), options.Source).Scan(&leadID)
+		`, webhook.OrganizationID, nullableString(pipelineID), nullableString(stageID), nullableString(propertyID), *name, nullableString(email), nullableString(phone), nullableString(sourceDetail), nullableString(options.SourceWebhookID), nullableString(message), nullableString(propertyCode), nullableString(campaignID), nullableString(adsetID), nullableString(adID), nullableString(formID), nullableString(utmSource), nullableString(utmMedium), nullableString(utmCampaign), nullableString(utmTerm), nullableString(utmContent), string(metadataJSON), nullableString(webhook.TargetTeamID), options.Source, intakeScopeKey, nullableString(intakeDestination.RoundRobinID)).Scan(&leadID)
 	}
 	if err != nil {
 		return IncomingLeadResult{}, err
@@ -649,21 +701,24 @@ func (repo Repository) receiveLead(
 	if err := repo.insertLeadMeta(ctx, tx, webhook.OrganizationID, leadID, options.Provider, campaignID, campaignName, adsetID, adsetName, adID, adName, formID, payloadJSON); err != nil {
 		return IncomingLeadResult{}, err
 	}
-	if err := repo.insertLeadTags(ctx, tx, webhook.OrganizationID, leadID, webhook.TargetTagIDs); err != nil {
+	if err := repo.insertLeadTags(ctx, tx, webhook.OrganizationID, leadID, intakeDestination.TagIDs); err != nil {
 		return IncomingLeadResult{}, err
 	}
-	_, err = repo.insertWebhookLeadEntry(ctx, tx, webhook, options.Source, options.Provider, leadID, propertyID, sourceDetail, providerEventKey, campaignID, campaignName, adsetID, adsetName, adID, adName, formID, utmSource, utmMedium, utmCampaign, utmContent, utmTerm, occurredAt, payloadJSON, reentry)
+	leadEntryID, err := repo.insertWebhookLeadEntry(ctx, tx, webhook, options.Source, options.Provider, leadID, propertyID, sourceDetail, providerEventKey, campaignID, campaignName, adsetID, adsetName, adID, adName, formID, utmSource, utmMedium, utmCampaign, utmContent, utmTerm, occurredAt, payloadJSON, reentry)
 	if err != nil {
 		return IncomingLeadResult{}, err
 	}
+	distributionKey := webhookDistributionKey(webhook.ID, options.Provider, providerEventKey, leadEntryID)
 	distributionSource := options.Source
 	if _, err := distribution.Distribute(ctx, tx, distribution.Request{
-		OrganizationID:   webhook.OrganizationID,
-		LeadID:           leadID,
-		IdempotencyKey:   distributionKey,
-		PreserveAssignee: true,
-		Source:           &distributionSource,
-		OccurredAt:       occurredAt,
+		OrganizationID:     webhook.OrganizationID,
+		LeadID:             leadID,
+		IdempotencyKey:     distributionKey,
+		RoundRobinID:       intakeDestination.RoundRobinID,
+		RoundRobinResolved: intakeDestination.Resolved,
+		PreserveAssignee:   distribution.PreserveAssigneeForIntake(reentry, intakeDestination),
+		Source:             &distributionSource,
+		OccurredAt:         occurredAt,
 	}); err != nil {
 		return IncomingLeadResult{}, err
 	}
@@ -828,9 +883,8 @@ func (repo Repository) resolveWebhookDestination(ctx context.Context, tx pgx.Tx,
 	return textPointer(pipelineID), textPointer(stageID), nil
 }
 
-func (repo Repository) findExistingLeadByPhone(ctx context.Context, tx pgx.Tx, organizationID string, phone *string) (string, error) {
-	normalizedPhone := digitsOnly(nullableString(phone))
-	if normalizedPhone == "" {
+func (repo Repository) findExistingLeadByPhone(ctx context.Context, tx pgx.Tx, organizationID string, phone *string, intakeScopeKey string) (string, error) {
+	if digitsOnly(nullableString(phone)) == "" {
 		return "", nil
 	}
 	var leadID string
@@ -838,14 +892,80 @@ func (repo Repository) findExistingLeadByPhone(ctx context.Context, tx pgx.Tx, o
 		select id::text
 		from public.leads
 		where organization_id = $1::uuid
-		  and regexp_replace(coalesce(phone, ''), '[^0-9]', '', 'g') = $2
-		order by created_at desc
+		  and intake_scope_key = $3
+		  and phone is not null
+		  and btrim(phone) <> ''
+		  and normalize_phone(phone) is not null
+		  and normalize_phone(phone) <> ''
+		  and normalize_phone(phone) = normalize_phone($2)
+		order by created_at asc, id asc
 		limit 1
-	`, organizationID, normalizedPhone).Scan(&leadID)
+	`, organizationID, *phone, intakeScopeKey).Scan(&leadID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
 	return leadID, err
+}
+
+func (repo Repository) findExistingLeadByPhoneLegacy(ctx context.Context, tx pgx.Tx, organizationID string, phone *string) (string, error) {
+	if digitsOnly(nullableString(phone)) == "" {
+		return "", nil
+	}
+	var leadID string
+	err := tx.QueryRow(ctx, `
+		select id::text
+		from public.leads
+		where organization_id = $1::uuid
+		  and phone is not null
+		  and btrim(phone) <> ''
+		  and normalize_phone(phone) is not null
+		  and normalize_phone(phone) <> ''
+		  and normalize_phone(phone) = normalize_phone($2)
+		order by created_at asc, id asc
+		limit 1
+	`, organizationID, *phone).Scan(&leadID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return leadID, err
+}
+
+func lockWebhookLeadIntakeIdentity(ctx context.Context, tx pgx.Tx, organizationID string, phone string, intakeScopeKey string, legacyIdentity bool) error {
+	if legacyIdentity {
+		_, err := tx.Exec(ctx, `
+			select pg_advisory_xact_lock(
+				hashtextextended($1 || ':legacy-global:' || normalize_phone($2), 0)
+			)
+		`, organizationID, phone)
+		return err
+	}
+	_, err := tx.Exec(ctx, `
+		select pg_advisory_xact_lock(
+			hashtextextended($1 || ':' || $2 || ':' || normalize_phone($3), 0)
+		)
+	`, organizationID, intakeScopeKey, phone)
+	return err
+}
+
+func legacyWebhookLeadPhoneUniquenessActive(ctx context.Context, tx pgx.Tx) (bool, error) {
+	var active bool
+	err := tx.QueryRow(ctx, `
+		select to_regclass('public.leads_org_phone_unique') is not null
+	`).Scan(&active)
+	return active, err
+}
+
+func webhookLeadPhoneUniqueViolationConstraint(err error) string {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		return ""
+	}
+	switch pgErr.ConstraintName {
+	case "leads_org_phone_unique", "leads_org_scope_phone_unique":
+		return pgErr.ConstraintName
+	default:
+		return ""
+	}
 }
 
 func (repo Repository) insertLeadMeta(ctx context.Context, tx pgx.Tx, organizationID string, leadID string, provider string, campaignID *string, campaignName *string, adsetID *string, adsetName *string, adID *string, adName *string, formID *string, payload []byte) error {
@@ -1120,6 +1240,30 @@ func payloadString(payload map[string]any, keys ...string) *string {
 		}
 	}
 	return nil
+}
+
+// webhookProviderEventKey enables durable retry idempotency only when the
+// producer supplies an explicit event identity. Without one, two identical
+// payloads may be two legitimate lead arrivals and must both be processed.
+func webhookProviderEventKey(webhookID string, providerEventID *string) *string {
+	if providerEventID == nil {
+		return nil
+	}
+	identity := strings.TrimSpace(*providerEventID)
+	if identity == "" {
+		return nil
+	}
+	qualified := strings.TrimSpace(webhookID) + ":" + identity
+	return &qualified
+}
+
+func webhookDistributionKey(webhookID string, provider string, providerEventKey *string, leadEntryID string) string {
+	identity := strings.TrimSpace(leadEntryID)
+	if providerEventKey != nil {
+		identity = strings.TrimSpace(*providerEventKey)
+	}
+	digest := sha256.Sum256([]byte(strings.TrimSpace(webhookID) + ":" + identity))
+	return strings.TrimSpace(provider) + ":" + hex.EncodeToString(digest[:])
 }
 
 func payloadText(value any) *string {

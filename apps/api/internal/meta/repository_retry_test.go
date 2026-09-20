@@ -218,3 +218,47 @@ func TestDeferredMetaLeadRetriesQuicklyBeforeLongBackoff(t *testing.T) {
 		previous = index
 	}
 }
+
+func TestMetaWebhookClaimDoesNotAutomaticallyReopenPermanentFailures(t *testing.T) {
+	t.Parallel()
+
+	query := strings.ToLower(claimPendingWebhookEventsQuery)
+	for _, permanentFailure := range []string{
+		"apps in dev mode should only access leads",
+		"unsupported get request",
+		"meta page access token is missing",
+		"lead name is invalid",
+	} {
+		if strings.Contains(query, permanentFailure) {
+			t.Fatalf("claim query still reopens permanent failure %q", permanentFailure)
+		}
+	}
+
+	for _, required := range []string{
+		"status = 'received'",
+		"status = 'deferred'",
+		"coalesce(attempts, 0) < 29",
+		"status = 'failed'",
+		"coalesce(attempts, 0) < 5",
+		"next_retry_at is not null",
+		"next_retry_at <= now()",
+		"status = 'processing'",
+	} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("claim query is missing %q", required)
+		}
+	}
+
+	failedStart := strings.Index(query, "status = 'failed'")
+	if failedStart < 0 {
+		t.Fatal("failed claim branch was not found")
+	}
+	processingStart := strings.Index(query[failedStart:], "status = 'processing'")
+	if processingStart < 0 {
+		t.Fatal("failed/processing claim branches were not found")
+	}
+	failedBranch := query[failedStart : failedStart+processingStart]
+	if strings.Contains(failedBranch, "coalesce(next_retry_at") {
+		t.Fatal("failed events with a null retry deadline can still fall back to their receive time")
+	}
+}

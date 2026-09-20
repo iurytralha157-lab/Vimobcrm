@@ -7,8 +7,10 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -180,6 +182,53 @@ func TestOAuthGraphBusinessLoginOmitsUnusedAdAccountBusinessField(t *testing.T) 
 	}
 }
 
+func TestOAuthGraphValidatesPageLeadFormsAccess(t *testing.T) {
+	const (
+		pageToken = "page-token-123456789012"
+		appSecret = "test-app-secret-value"
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v25.0/7001/leadgen_forms" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		assertOAuthBearerAndProof(t, r, pageToken, appSecret)
+		if r.URL.Query().Get("fields") != "id" || r.URL.Query().Get("limit") != "1" {
+			t.Fatalf("query = %q", r.URL.RawQuery)
+		}
+		writeOAuthTestJSON(w, map[string]any{"data": []any{}})
+	}))
+	defer server.Close()
+
+	graph := newOAuthTestGraph(t, server.URL, "123456789", appSecret)
+	if err := graph.validatePageLeadFormsAccess(context.Background(), oauthPage{ID: "7001", AccessToken: pageToken}); err != nil {
+		t.Fatalf("validatePageLeadFormsAccess() error = %v", err)
+	}
+}
+
+func TestOAuthGraphRejectsPageWithoutLeadFormsAccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		writeOAuthTestJSON(w, map[string]any{"error": map[string]any{
+			"code":          100,
+			"error_subcode": 33,
+			"message":       "provider detail must stay private",
+		}})
+	}))
+	defer server.Close()
+
+	graph := newOAuthTestGraph(t, server.URL, "123456789", "test-app-secret-value")
+	err := graph.validatePageLeadFormsAccess(context.Background(), oauthPage{
+		ID:          "7001",
+		AccessToken: "page-token-123456789012",
+	})
+	if oauthErrorCode(err) != "meta_lead_forms_access_failed" || oauthErrorStatus(err) != http.StatusUnprocessableEntity {
+		t.Fatalf("error = %v, status = %d", err, oauthErrorStatus(err))
+	}
+	if strings.Contains(err.Error(), "provider detail") {
+		t.Fatalf("provider error leaked: %v", err)
+	}
+}
+
 func TestOAuthGraphWebhookFallsBackToLeadgenAndDisconnects(t *testing.T) {
 	const pageToken = "page-token-123456789012"
 	var subscriptions []string
@@ -262,6 +311,77 @@ func TestOAuthGraphMapsTokenFailuresAndRejectsOversizedResponses(t *testing.T) {
 	_, err = graph.fetchManagedPages(context.Background(), "long-token-123456789012")
 	if oauthErrorCode(err) != "meta_response_too_large" {
 		t.Fatalf("oversized response error = %v", err)
+	}
+}
+
+func TestOAuthGraphManagedPagesRejectsContinuationAtItemLimit(t *testing.T) {
+	const pageToken = "page-token-123456789012"
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestNumber := requests.Add(1)
+		itemCount := 100
+		if requestNumber == 3 {
+			itemCount = 50
+		}
+		data := make([]any, 0, itemCount)
+		for item := 0; item < itemCount; item++ {
+			data = append(data, map[string]any{
+				"id":           strconv.Itoa(int(requestNumber)*1000 + item),
+				"name":         "Page",
+				"access_token": pageToken,
+			})
+		}
+		writeOAuthTestJSON(w, map[string]any{
+			"data": data,
+			"paging": map[string]any{
+				"cursors": map[string]any{"after": "cursor-" + strconv.Itoa(int(requestNumber))},
+				"next":    "https://graph.facebook.com/next",
+			},
+		})
+	}))
+	defer server.Close()
+
+	graph := newOAuthTestGraph(t, server.URL, "123456789", "test-app-secret-value")
+	pages, err := graph.fetchManagedPages(context.Background(), "long-token-123456789012")
+	if oauthErrorCode(err) != "meta_graph_collection_limit_exceeded" {
+		t.Fatalf("error = %v, want meta_graph_collection_limit_exceeded", err)
+	}
+	if pages != nil {
+		t.Fatalf("pages = %#v, want nil on incomplete collection", pages)
+	}
+	if requests.Load() != 3 {
+		t.Fatalf("requests = %d, want 3", requests.Load())
+	}
+}
+
+func TestOAuthGraphManagedPagesRejectsContinuationAtPageLimit(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestNumber := requests.Add(1)
+		writeOAuthTestJSON(w, map[string]any{
+			"data": []any{map[string]any{
+				"id":           strconv.Itoa(int(requestNumber)),
+				"name":         "Page",
+				"access_token": "page-token-123456789012",
+			}},
+			"paging": map[string]any{
+				"cursors": map[string]any{"after": "cursor-" + strconv.Itoa(int(requestNumber))},
+				"next":    "https://graph.facebook.com/next",
+			},
+		})
+	}))
+	defer server.Close()
+
+	graph := newOAuthTestGraph(t, server.URL, "123456789", "test-app-secret-value")
+	pages, err := graph.fetchManagedPages(context.Background(), "long-token-123456789012")
+	if oauthErrorCode(err) != "meta_graph_collection_limit_exceeded" {
+		t.Fatalf("error = %v, want meta_graph_collection_limit_exceeded", err)
+	}
+	if pages != nil {
+		t.Fatalf("pages = %#v, want nil on incomplete collection", pages)
+	}
+	if requests.Load() != int32(oauthMaxGraphPages) {
+		t.Fatalf("requests = %d, want %d", requests.Load(), oauthMaxGraphPages)
 	}
 }
 

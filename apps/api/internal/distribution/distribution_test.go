@@ -59,13 +59,14 @@ func TestDistributeUsesCanonicalFunctionWithAllArguments(t *testing.T) {
 	}`)}
 
 	result, err := Distribute(context.Background(), stub, Request{
-		OrganizationID:   "d1000000-0000-4000-8000-000000000001",
-		LeadID:           "d9000000-0000-4000-8000-000000000001",
-		IdempotencyKey:   "site:submission-1",
-		RoundRobinID:     &queueID,
-		PreserveAssignee: true,
-		Source:           &source,
-		OccurredAt:       occurredAt,
+		OrganizationID:     "d1000000-0000-4000-8000-000000000001",
+		LeadID:             "d9000000-0000-4000-8000-000000000001",
+		IdempotencyKey:     "site:submission-1",
+		RoundRobinID:       &queueID,
+		RoundRobinResolved: true,
+		PreserveAssignee:   true,
+		Source:             &source,
+		OccurredAt:         occurredAt,
 	})
 	if err != nil {
 		t.Fatalf("Distribute() error = %v", err)
@@ -76,15 +77,53 @@ func TestDistributeUsesCanonicalFunctionWithAllArguments(t *testing.T) {
 	if !strings.Contains(stub.call.sql, "private.distribute_lead(") {
 		t.Fatalf("query does not use canonical function: %s", stub.call.sql)
 	}
-	if len(stub.call.args) != 7 {
-		t.Fatalf("argument count = %d, want 7", len(stub.call.args))
+	if len(stub.call.args) != 8 {
+		t.Fatalf("argument count = %d, want 8", len(stub.call.args))
 	}
 	if stub.call.args[2] != "site:submission-1" ||
 		stub.call.args[3] != queueID ||
 		stub.call.args[4] != true ||
 		stub.call.args[5] != source ||
-		stub.call.args[6] != occurredAt {
+		stub.call.args[6] != occurredAt ||
+		stub.call.args[7] != true {
 		t.Fatalf("unexpected arguments: %#v", stub.call.args)
+	}
+}
+
+func TestDistributeFreezesResolvedNoQueueWithoutReopeningCanonicalPicker(t *testing.T) {
+	t.Parallel()
+
+	stub := &stubQueryer{payload: []byte(`{
+		"success": false,
+		"reason": "no_matching_queue",
+		"lead_id": "d9000000-0000-4000-8000-000000000004"
+	}`)}
+	result, err := Distribute(context.Background(), stub, Request{
+		OrganizationID:     "d1000000-0000-4000-8000-000000000001",
+		LeadID:             "d9000000-0000-4000-8000-000000000004",
+		IdempotencyKey:     "site:resolved-without-queue",
+		RoundRobinResolved: true,
+		PreserveAssignee:   true,
+	})
+	if err != nil {
+		t.Fatalf("Distribute() error = %v", err)
+	}
+	if result.Reason != "no_matching_queue" {
+		t.Fatalf("reason = %q, want no_matching_queue", result.Reason)
+	}
+	if stub.call.args[3] != nil || stub.call.args[7] != true {
+		t.Fatalf("frozen no-queue arguments = %#v", stub.call.args)
+	}
+	for _, fragment := range []string{
+		"when $8::boolean and $4::uuid is null",
+		frozenNoQueueRoundRobinID,
+		"where not (",
+		"from public.round_robins as queue",
+		"routing_request.round_robin_id",
+	} {
+		if !strings.Contains(stub.call.sql, fragment) {
+			t.Fatalf("frozen no-queue SQL is missing %q: %s", fragment, stub.call.sql)
+		}
 	}
 }
 
@@ -111,6 +150,9 @@ func TestDistributeSupportsPoolStyleCallWithoutOptionalValues(t *testing.T) {
 	}
 	if stub.call.args[3] != nil || stub.call.args[5] != nil {
 		t.Fatalf("optional values were not passed as NULL: %#v", stub.call.args)
+	}
+	if stub.call.args[7] != false {
+		t.Fatalf("legacy nil queue must retain auto-routing, args = %#v", stub.call.args)
 	}
 	callTime, ok := stub.call.args[6].(time.Time)
 	if !ok || callTime.Before(startedAt) || callTime.Location() != time.UTC {

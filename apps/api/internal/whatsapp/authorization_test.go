@@ -119,10 +119,10 @@ func TestLeadHistoryVisibilityKeepsDeletedSessionEvidence(t *testing.T) {
 }
 
 func TestMessageLeadPredicatesFailClosedOnMismatchedAttribution(t *testing.T) {
-	if got := conversationMessageLeadMatchSQL(); got != "(wm.lead_id is null or wm.lead_id = wc.lead_id)" {
+	if got := conversationMessageLeadMatchSQL(); got != "(wm.lead_id = wc.lead_id or (wm.lead_id is null and wc.lead_id is null))" {
 		t.Fatalf("conversation message predicate = %q", got)
 	}
-	if got := leadHistoryMessageLeadMatchSQL(); got != "(wm.lead_id = $5::uuid or (wm.lead_id is null and wc.lead_id = $5::uuid))" {
+	if got := leadHistoryMessageLeadMatchSQL(); got != "wm.lead_id = $5::uuid" {
 		t.Fatalf("lead history message predicate = %q", got)
 	}
 }

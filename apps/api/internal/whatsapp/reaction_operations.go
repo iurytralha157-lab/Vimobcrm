@@ -46,6 +46,7 @@ func reactionTargetAuthorizationSQL(canViewOwn bool) string {
 		where wm.organization_id = $1::uuid
 		  and wc.id = $5::uuid
 		  and wm.id = $6::uuid
+		  and wc.lead_id = $7::uuid
 		  and wc.deleted_at is null
 		  and ` + conversationMessageLeadMatchSQL() + `
 		  and wm.message_type <> 'reaction'
@@ -55,7 +56,7 @@ func reactionTargetAuthorizationSQL(canViewOwn bool) string {
 		  and ws.status = 'connected'
 		  and ws.owner_user_id = $2::uuid
 		  and ` + leadVisibilitySQL(canViewOwn) + `
-		for update of wm, wc, ws, l`
+		for update of wm, wc, l`
 }
 
 func (repo Repository) ReactToMessage(
@@ -65,6 +66,11 @@ func (repo Repository) ReactToMessage(
 	targetMessageID string,
 	input reactToMessageInput,
 ) (ReactToMessageResponse, error) {
+	expectedLeadID, err := validateExpectedLeadID(input.ExpectedLeadID)
+	if err != nil {
+		return ReactToMessageResponse{}, err
+	}
+	input.ExpectedLeadID = expectedLeadID
 	conversationID, ok := normalizeUUID(conversationID)
 	if !ok {
 		return ReactToMessageResponse{}, ErrConversationNotFound
@@ -85,7 +91,47 @@ func (repo Repository) ReactToMessage(
 	}
 	defer tx.Rollback(ctx)
 
-	args := append(baseConversationArgs(tenantContext), conversationID, targetMessageID)
+	// Cross-resource writes acquire the session read fence before the physical
+	// conversation. Within the chat, preserve conversation -> message/outbox so
+	// provider finalization and binding switches cannot form a reverse cycle.
+	sessionID, err := discoverConversationSessionID(ctx, tx, tenantContext.OrganizationID, conversationID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReactToMessageResponse{}, ErrMessageNotFound
+	}
+	if err != nil {
+		return ReactToMessageResponse{}, err
+	}
+	if err := lockOwnedConnectedEvolutionSession(ctx, tx, tenantContext, sessionID); err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return ReactToMessageResponse{}, ErrMessageNotFound
+		}
+		return ReactToMessageResponse{}, err
+	}
+
+	lockArgs := append(baseConversationArgs(tenantContext), conversationID, input.ExpectedLeadID, sessionID)
+	var lockedConversationID string
+	err = tx.QueryRow(ctx, `
+		select wc.id::text
+		from public.whatsapp_conversations wc
+		join public.leads l
+		  on l.id = wc.lead_id
+		 and l.organization_id = wc.organization_id
+		where wc.organization_id = $1::uuid
+		  and wc.id = $5::uuid
+		  and wc.lead_id = $6::uuid
+		  and wc.session_id = $7::uuid
+		  and wc.deleted_at is null
+		  and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
+		for no key update of wc
+	`, lockArgs...).Scan(&lockedConversationID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReactToMessageResponse{}, ErrMessageNotFound
+	}
+	if err != nil {
+		return ReactToMessageResponse{}, err
+	}
+
+	args := append(baseConversationArgs(tenantContext), conversationID, targetMessageID, input.ExpectedLeadID)
 	target := reactionTarget{}
 	err = tx.QueryRow(ctx, reactionTargetAuthorizationSQL(canViewOwnWhatsAppLeads(tenantContext)), args...).Scan(
 		&target.MessageID,

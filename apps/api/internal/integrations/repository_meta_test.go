@@ -259,6 +259,87 @@ func TestMetaFormConfigTagReferencesBelongToOrganization(t *testing.T) {
 	}
 }
 
+func TestMetaFormConfigRejectsDeletedRoundRobinReferences(t *testing.T) {
+	raw, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	saveStart := strings.Index(source, "func (repo Repository) SaveMetaFormConfig")
+	replaceStart := strings.Index(source, "func (repo Repository) replaceMetaFormRule")
+	if saveStart < 0 || replaceStart < 0 {
+		t.Fatal("Meta form queue validation functions were not found")
+	}
+	saveEnd := strings.Index(source[saveStart:], "func canonicalMetaFormAutoTagIDs")
+	replaceEnd := strings.Index(source[replaceStart:], "func (repo Repository) upsertSecretIntegration")
+	if saveEnd < 0 || replaceEnd < 0 {
+		t.Fatal("Meta form queue validation function boundaries were not found")
+	}
+	if !strings.Contains(source[saveStart:saveStart+saveEnd], "queue.deleted_at is null") {
+		t.Fatal("SaveMetaFormConfig can accept a deleted round-robin queue")
+	}
+	if !strings.Contains(source[replaceStart:replaceStart+replaceEnd], "and deleted_at is null") {
+		t.Fatal("replaceMetaFormRule can recreate a rule for a deleted round-robin queue")
+	}
+}
+
+func TestMetaFormConfigWritersLockParentQueuesBeforeChildren(t *testing.T) {
+	raw, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+
+	saveStart := strings.Index(source, "func (repo Repository) SaveMetaFormConfig")
+	toggleStart := strings.Index(source, "func (repo Repository) ToggleMetaFormConfig")
+	deleteStart := strings.Index(source, "func (repo Repository) DeleteMetaFormConfig")
+	helperStart := strings.Index(source, "func (repo Repository) lockMetaFormRoundRobins")
+	if saveStart < 0 || toggleStart < 0 || deleteStart < 0 || helperStart < 0 {
+		t.Fatal("Meta form parent lock contract functions were not found")
+	}
+	saveEnd := strings.Index(source[saveStart:], "func canonicalMetaFormAutoTagIDs")
+	toggleEnd := strings.Index(source[toggleStart:], "func isMetaFormRouteConflict")
+	deleteEnd := strings.Index(source[deleteStart:], "func (repo Repository) MetaWebhookHealth")
+	helperEnd := strings.Index(source[helperStart:], "func (repo Repository) upsertSecretIntegration")
+	if saveEnd < 0 || toggleEnd < 0 || deleteEnd < 0 || helperEnd < 0 {
+		t.Fatal("Meta form parent lock contract boundaries were not found")
+	}
+
+	saveSource := source[saveStart : saveStart+saveEnd]
+	toggleSource := source[toggleStart : toggleStart+toggleEnd]
+	deleteSource := source[deleteStart : deleteStart+deleteEnd]
+	helperSource := source[helperStart : helperStart+helperEnd]
+	for label, writer := range map[string]string{
+		"save":   saveSource,
+		"toggle": toggleSource,
+		"delete": deleteSource,
+	} {
+		lockAt := strings.Index(writer, "repo.lockMetaFormRoundRobins(")
+		childAt := strings.Index(writer, "public.meta_form_configs")
+		if lockAt < 0 || childAt < 0 || lockAt > childAt {
+			t.Fatalf("%s writer does not lock parent queues before its first child mutation", label)
+		}
+	}
+	for _, required := range []string{
+		"pg_catalog.pg_advisory_xact_lock(",
+		"pg_catalog.hashtextextended(",
+		"from public.meta_form_configs as config",
+		"from public.round_robin_rules as rule",
+		"select nullif($3, '')::uuid as id",
+		"order by queue.organization_id, queue.id",
+		"for update of queue",
+	} {
+		if !strings.Contains(helperSource, required) {
+			t.Fatalf("Meta form parent lock helper is missing %q", required)
+		}
+	}
+	advisoryAt := strings.Index(helperSource, "pg_catalog.pg_advisory_xact_lock(")
+	discoveryAt := strings.Index(helperSource, "with referenced_queue as materialized")
+	if advisoryAt < 0 || discoveryAt < 0 || advisoryAt > discoveryAt {
+		t.Fatal("Meta form advisory lock must commit to the write scope before queue discovery")
+	}
+}
+
 func TestCleanStringOrEmptyKeepsOptionalMetaFormReferencesComparable(t *testing.T) {
 	blank := "   "
 	queueID := " 11111111-1111-4111-8111-111111111111 "

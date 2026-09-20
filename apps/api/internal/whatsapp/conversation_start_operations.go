@@ -7,12 +7,17 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 func (repo Repository) StartConversation(ctx context.Context, tenantContext tenant.Context, request StartConversationRequest) (Conversation, error) {
 	if !isValidWhatsAppPhone(request.Phone) {
 		return Conversation{}, fmt.Errorf("%w: Telefone invalido para WhatsApp", ErrInvalidInput)
+	}
+	expectedPreviousLeadID, err := validateExpectedPreviousConversationLeadID(request.ExpectedPreviousLeadID)
+	if err != nil {
+		return Conversation{}, err
 	}
 
 	session, err := repo.resolveStartSession(ctx, tenantContext, request.SessionID)
@@ -72,6 +77,7 @@ func (repo Repository) StartConversation(ctx context.Context, tenantContext tena
 		session.ID,
 		leadID,
 		requestedIdentity,
+		expectedPreviousLeadID,
 	); err != nil {
 		return Conversation{}, err
 	} else if found {
@@ -85,55 +91,24 @@ func (repo Repository) StartConversation(ctx context.Context, tenantContext tena
 		remoteJID = identity.RemoteJID
 	}
 
-	if conversation, err := repo.findConversationByExactSessionJID(ctx, tenantContext, session.ID, remoteJID); err == nil && conversation != nil {
-		if pointerValue(conversation.LeadID) != leadID {
-			return Conversation{}, fmt.Errorf("%w: a conversa ja pertence a outro lead", ErrInvalidReference)
-		}
-		return *conversation, nil
-	}
-
-	if leadID != "" {
-		if conversation, err := repo.findConversationForLead(ctx, tenantContext, leadID); err != nil {
-			return Conversation{}, err
-		} else if conversation != nil {
-			_, err := repo.db.Pool().Exec(ctx, `
-				update public.whatsapp_conversations
-				set session_id = $3::uuid,
-				    remote_jid = $4,
-				    contact_phone = $5,
-				    assigned_user_id = nullif($6, '')::uuid,
-				    updated_at = now()
-				where organization_id = $1::uuid
-				  and id = $2::uuid
-			`, tenantContext.OrganizationID, conversation.ID, session.ID, remoteJID, cleanPhone, leadContact.AssignedUserID)
-			if err != nil {
-				return Conversation{}, err
-			}
-			return repo.GetConversation(ctx, tenantContext, conversation.ID)
-		}
-	}
-
-	if conversation, err := repo.findConversationByPhoneVariants(ctx, tenantContext, identity.ConversationMatchValues(), session.ID); err != nil {
+	conversation, err := repo.findConversationByExactSessionJID(ctx, tenantContext, session.ID, remoteJID)
+	if err != nil {
 		return Conversation{}, err
-	} else if conversation != nil {
-		if pointerValue(conversation.LeadID) != "" && pointerValue(conversation.LeadID) != leadID {
-			return Conversation{}, fmt.Errorf("%w: a conversa ja pertence a outro lead", ErrInvalidReference)
-		}
-		_, err := repo.db.Pool().Exec(ctx, `
-			update public.whatsapp_conversations
-			set session_id = $3::uuid,
-			    remote_jid = $4,
-			    contact_phone = $5,
-			    lead_id = coalesce(lead_id, nullif($6, '')::uuid),
-			    assigned_user_id = nullif($7, '')::uuid,
-			    updated_at = now()
-			where organization_id = $1::uuid
-			  and id = $2::uuid
-		`, tenantContext.OrganizationID, conversation.ID, session.ID, remoteJID, cleanPhone, leadID, leadContact.AssignedUserID)
-		if err != nil {
+	}
+	if conversation != nil {
+		if err := repo.LinkConversationToLead(
+			ctx,
+			tenantContext,
+			conversation.ID,
+			leadID,
+			expectedPreviousLeadID,
+		); err != nil {
 			return Conversation{}, err
 		}
 		return repo.GetConversation(ctx, tenantContext, conversation.ID)
+	}
+	if expectedPreviousLeadID != unlinkedConversationLeadSnapshot {
+		return Conversation{}, ErrConversationBindingChanged
 	}
 
 	contactName := strings.TrimSpace(request.LeadName)
@@ -144,8 +119,14 @@ func (repo Repository) StartConversation(ctx context.Context, tenantContext tena
 		contactName = cleanPhone
 	}
 
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return Conversation{}, err
+	}
+	defer tx.Rollback(ctx)
+
 	var newID string
-	err = repo.db.Pool().QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		insert into public.whatsapp_conversations (
 			organization_id,
 			session_id,
@@ -163,14 +144,48 @@ func (repo Repository) StartConversation(ctx context.Context, tenantContext tena
 			$3,
 			$4,
 			$5,
-			nullif($6, '')::uuid,
-			nullif($7, '')::uuid,
+			null,
+			null,
 			0,
 			false
 		)
 		returning id::text
-	`, tenantContext.OrganizationID, session.ID, remoteJID, cleanPhone, contactName, leadID, leadContact.AssignedUserID).Scan(&newID)
+	`, tenantContext.OrganizationID, session.ID, remoteJID, cleanPhone, contactName).Scan(&newID)
 	if err != nil {
+		var postgresError *pgconn.PgError
+		if errors.As(err, &postgresError) &&
+			postgresError.Code == "23505" &&
+			postgresError.ConstraintName == "whatsapp_conversations_session_id_remote_jid_key" {
+			return Conversation{}, ErrConversationBindingChanged
+		}
+		return Conversation{}, err
+	}
+	lockedLeadContact, err := resolveAccessibleLeadContact(ctx, tx, tenantContext, leadID, requestedIdentity)
+	if err != nil {
+		return Conversation{}, fmt.Errorf("%w: o telefone informado nao pertence ao lead selecionado", err)
+	}
+	if lockedLeadContact.Identity.RemoteJID != remoteJID || lockedLeadContact.Identity.ContactPhone != cleanPhone {
+		return Conversation{}, ErrConversationBindingChanged
+	}
+	if _, err := tx.Exec(ctx, `
+		update public.whatsapp_conversations
+		set assigned_user_id = nullif($2, '')::uuid,
+		    updated_at = now()
+		where id = $1::uuid
+	`, newID, lockedLeadContact.AssignedUserID); err != nil {
+		return Conversation{}, err
+	}
+	if _, err := activateRepositoryWhatsAppConversationLeadBindingIfExpected(
+		ctx,
+		tx,
+		tenantContext.OrganizationID,
+		newID,
+		leadID,
+		expectedPreviousLeadID,
+	); err != nil {
+		return Conversation{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return Conversation{}, err
 	}
 
@@ -188,6 +203,7 @@ func (repo Repository) claimExactQuarantinedConversationForLead(
 	sessionID string,
 	leadID string,
 	requestedIdentity whatsappContactIdentity,
+	expectedPreviousLeadID string,
 ) (string, accessibleLeadContact, bool, error) {
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
@@ -195,6 +211,9 @@ func (repo Repository) claimExactQuarantinedConversationForLead(
 	}
 	defer tx.Rollback(ctx)
 
+	// The session is the outer lock for every mutation that touches both
+	// resources. Send/reaction/read and native ingress use the same
+	// session -> conversation -> lead/dependent-row order.
 	var sessionExists bool
 	err = tx.QueryRow(ctx, `
 		select true
@@ -214,13 +233,8 @@ func (repo Repository) claimExactQuarantinedConversationForLead(
 		return "", accessibleLeadContact{}, false, err
 	}
 
-	leadContact, err := resolveAccessibleLeadContact(ctx, tx, tenantContext, leadID, requestedIdentity)
-	if err != nil {
-		return "", accessibleLeadContact{}, false, fmt.Errorf("%w: o telefone informado nao pertence ao lead selecionado", err)
-	}
-	identity := leadContact.Identity
-	aliases := identity.RemoteAliases()
-	if len(aliases) == 0 {
+	requestedAliases := requestedIdentity.RemoteAliases()
+	if len(requestedAliases) == 0 || requestedIdentity.RemoteJID == "" {
 		return "", accessibleLeadContact{}, false, ErrInvalidReference
 	}
 
@@ -232,32 +246,38 @@ func (repo Repository) claimExactQuarantinedConversationForLead(
 		  and wc.session_id = $2::uuid
 		  and wc.deleted_at is null
 		  and coalesce(wc.is_group, false) = false
-		  and (
-		    wc.remote_jid = any($3::text[])
-		    or exists (
-		      select 1
-		      from public.whatsapp_contact_identity_aliases alias
-		      where alias.organization_id = wc.organization_id
-		        and alias.session_id = wc.session_id
-		        and alias.alias_jid = any($3::text[])
-		        and alias.canonical_jid = wc.remote_jid
-		    )
-		  )
-		order by
-		  case when wc.remote_jid = $4 then 0 else 1 end,
-		  wc.last_message_at desc nulls last,
-		  wc.created_at desc
+		  and wc.remote_jid = $3
 		limit 1
 		for update of wc
-	`, tenantContext.OrganizationID, sessionID, aliases, identity.RemoteJID).Scan(&conversationID, &existingLeadID)
+	`, tenantContext.OrganizationID, sessionID, requestedIdentity.RemoteJID).Scan(&conversationID, &existingLeadID)
 	if errors.Is(err, pgx.ErrNoRows) {
+		leadContact, leadErr := resolveAccessibleLeadContact(ctx, tx, tenantContext, leadID, requestedIdentity)
+		if leadErr != nil {
+			return "", accessibleLeadContact{}, false, fmt.Errorf("%w: o telefone informado nao pertence ao lead selecionado", leadErr)
+		}
 		return "", leadContact, false, nil
 	}
 	if err != nil {
 		return "", accessibleLeadContact{}, false, err
 	}
-	if existingLeadID != "" && existingLeadID != leadID {
-		return "", accessibleLeadContact{}, false, fmt.Errorf("%w: a conversa ja pertence a outro lead", ErrInvalidReference)
+
+	// Inside the locked session, the remaining global mutation order is
+	// conversation -> lead. Revalidate both access and phone ownership only
+	// after the exact quarantine row is locked so lead deletion and every
+	// binding writer can never form a lock cycle.
+	leadContact, err := resolveAccessibleLeadContact(ctx, tx, tenantContext, leadID, requestedIdentity)
+	if err != nil {
+		return "", accessibleLeadContact{}, false, fmt.Errorf("%w: o telefone informado nao pertence ao lead selecionado", err)
+	}
+	identity := leadContact.Identity
+	aliases := identity.RemoteAliases()
+	if len(aliases) == 0 || identity.RemoteJID != requestedIdentity.RemoteJID {
+		return "", accessibleLeadContact{}, false, ErrInvalidReference
+	}
+	if existingLeadID != "" {
+		// This is an already bound chat, not a quarantine row. Let the explicit
+		// start path below activate the requested card through the binding RPC.
+		return "", leadContact, false, nil
 	}
 
 	var conflictingMessages, conflictingAliases, conflictingLogs bool
@@ -306,8 +326,7 @@ func (repo Repository) claimExactQuarantinedConversationForLead(
 
 	tag, err := tx.Exec(ctx, `
 		update public.whatsapp_conversations
-		set lead_id = $4::uuid,
-		    assigned_user_id = nullif($5, '')::uuid,
+		set assigned_user_id = nullif($5, '')::uuid,
 		    remote_jid = $6,
 		    contact_phone = $7,
 		    metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
@@ -318,7 +337,7 @@ func (repo Repository) claimExactQuarantinedConversationForLead(
 		where organization_id = $1::uuid
 		  and session_id = $2::uuid
 		  and id = $3::uuid
-		  and (lead_id is null or lead_id = $4::uuid)
+		  and lead_id is null
 	`, tenantContext.OrganizationID, sessionID, conversationID, leadID, leadContact.AssignedUserID, identity.RemoteJID, identity.ContactPhone)
 	if err != nil {
 		return "", accessibleLeadContact{}, false, err
@@ -326,14 +345,14 @@ func (repo Repository) claimExactQuarantinedConversationForLead(
 	if tag.RowsAffected() != 1 {
 		return "", accessibleLeadContact{}, false, ErrConversationNotFound
 	}
-
-	if _, err := tx.Exec(ctx, `
-		update public.whatsapp_messages
-		set lead_id = $3::uuid
-		where organization_id = $1::uuid
-		  and conversation_id = $2::uuid
-		  and (lead_id is null or lead_id = $3::uuid)
-	`, tenantContext.OrganizationID, conversationID, leadID); err != nil {
+	if _, err := activateRepositoryWhatsAppConversationLeadBindingIfExpected(
+		ctx,
+		tx,
+		tenantContext.OrganizationID,
+		conversationID,
+		leadID,
+		expectedPreviousLeadID,
+	); err != nil {
 		return "", accessibleLeadContact{}, false, err
 	}
 
@@ -354,18 +373,6 @@ func (repo Repository) claimExactQuarantinedConversationForLead(
 		where public.whatsapp_contact_identity_aliases.lead_id is null
 		   or public.whatsapp_contact_identity_aliases.lead_id = excluded.lead_id
 	`, tenantContext.OrganizationID, sessionID, aliases, identity.RemoteJID, identity.ContactPhone, leadID, conversationID); err != nil {
-		return "", accessibleLeadContact{}, false, err
-	}
-
-	if _, err := tx.Exec(ctx, `
-		update public.whatsapp_inbound_logs
-		set lead_id = $4::uuid,
-		    assigned_user_id = coalesce(assigned_user_id, nullif($5, '')::uuid)
-		where organization_id = $1::uuid
-		  and session_id = $2::uuid
-		  and conversation_id = $3::uuid
-		  and (lead_id is null or lead_id = $4::uuid)
-	`, tenantContext.OrganizationID, sessionID, conversationID, leadID, leadContact.AssignedUserID); err != nil {
 		return "", accessibleLeadContact{}, false, err
 	}
 
@@ -393,7 +400,10 @@ func (repo Repository) resolveStartSession(ctx context.Context, tenantContext te
 func (repo Repository) FindConversation(ctx context.Context, tenantContext tenant.Context, filter FindConversationFilter) (*Conversation, error) {
 	return resolveConversationFind(
 		filter,
-		func(leadID string) (*Conversation, error) {
+		func(leadID string, sessionID string) (*Conversation, error) {
+			if strings.TrimSpace(sessionID) != "" {
+				return repo.findConversationByLeadAndSession(ctx, tenantContext, leadID, sessionID)
+			}
 			return repo.findConversationForLead(ctx, tenantContext, leadID)
 		},
 		func(phone string, sessionID string) (*Conversation, error) {
@@ -403,21 +413,22 @@ func (repo Repository) FindConversation(ctx context.Context, tenantContext tenan
 	)
 }
 
-type conversationLeadFinder func(leadID string) (*Conversation, error)
+type conversationLeadFinder func(leadID string, sessionID string) (*Conversation, error)
 type conversationPhoneFinder func(phone string, sessionID string) (*Conversation, error)
 
 // resolveConversationFind keeps the start-chat lookup deterministic while the
 // repository callbacks retain the existing tenant and lead-visibility checks.
-// A linked lead conversation always wins, even when it belongs to another
-// accessible session. Phone matching is only the fallback and remains scoped
-// to the explicitly selected session when one is provided.
+// A linked lead conversation wins only inside the explicitly selected session.
+// Without a selected session, the historical cross-session lookup is retained
+// for read/navigation compatibility. Starting a chat never migrates a physical
+// conversation or its binding ledger between provider sessions.
 func resolveConversationFind(
 	filter FindConversationFilter,
 	findByLead conversationLeadFinder,
 	findByPhone conversationPhoneFinder,
 ) (*Conversation, error) {
 	if filter.LeadID != "" {
-		conversation, err := findByLead(filter.LeadID)
+		conversation, err := findByLead(filter.LeadID, filter.SessionID)
 		if err != nil {
 			return nil, err
 		}
@@ -438,12 +449,11 @@ func resolveConversationFind(
 
 func (repo Repository) findConversationByExactSessionJID(ctx context.Context, tenantContext tenant.Context, sessionID string, remoteJID string) (*Conversation, error) {
 	identity := newWhatsAppContactIdentity("", remoteJID, strings.Contains(strings.ToLower(remoteJID), "@g.us"))
-	aliases := identity.RemoteAliases()
-	if len(aliases) == 0 {
+	if identity.RemoteJID == "" {
 		return nil, nil
 	}
 
-	args := append(baseConversationArgs(tenantContext), sessionID, aliases, identity.RemoteJID)
+	args := append(baseConversationArgs(tenantContext), sessionID, identity.RemoteJID)
 	conversation, err := scanConversation(repo.db.Pool().QueryRow(ctx, `
 		select `+conversationSelectFields()+`
 		from public.whatsapp_conversations wc
@@ -455,32 +465,7 @@ func (repo Repository) findConversationByExactSessionJID(ctx context.Context, te
 		  and wc.deleted_at is null
 		  and `+conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 		  and wc.session_id = $5::uuid
-		  and (
-			wc.remote_jid = any($6::text[])
-			or exists (
-				select 1
-				from public.whatsapp_contact_identity_aliases wcia
-				where wcia.organization_id = wc.organization_id
-				  and wcia.session_id = wc.session_id
-				  and wcia.alias_jid = any($6::text[])
-				  and wcia.canonical_jid = wc.remote_jid
-			)
-		  )
-		order by
-		  case
-			when wc.remote_jid = $7 then 0
-			when exists (
-				select 1
-				from public.whatsapp_contact_identity_aliases wcia
-				where wcia.organization_id = wc.organization_id
-				  and wcia.session_id = wc.session_id
-				  and wcia.alias_jid = any($6::text[])
-				  and wcia.canonical_jid = wc.remote_jid
-			) then 1
-			else 2
-		  end,
-		  wc.last_message_at desc nulls last,
-		  wc.created_at desc
+		  and wc.remote_jid = $6
 		limit 1
 	`, args...))
 	if errors.Is(err, pgx.ErrNoRows) {

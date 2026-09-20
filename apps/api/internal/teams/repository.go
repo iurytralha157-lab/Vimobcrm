@@ -39,6 +39,11 @@ type queryRowExecutor interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
+type teamReadExecutor interface {
+	queryRowExecutor
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
 func setAuditActor(ctx context.Context, tx pgx.Tx, tenantContext tenant.Context) error {
 	userID := strings.TrimSpace(tenantContext.UserID)
 	if userID == "" {
@@ -177,11 +182,15 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 	if err := repo.replaceMemberAvailabilityWeeks(ctx, tx, tenantContext.OrganizationID, teamID, members); err != nil {
 		return Team{}, err
 	}
+	team, err := repo.getWithQueryer(ctx, tx, tenantContext, teamID)
+	if err != nil {
+		return Team{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Team{}, err
 	}
 
-	return repo.Get(ctx, tenantContext, teamID)
+	return team, nil
 }
 
 func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context, teamID string, request UpdateTeamRequest) (Team, error) {
@@ -314,10 +323,14 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		}
 	}
 
+	team, err := repo.getWithQueryer(ctx, tx, tenantContext, teamID)
+	if err != nil {
+		return Team{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Team{}, err
 	}
-	return repo.Get(ctx, tenantContext, teamID)
+	return team, nil
 }
 
 func (repo Repository) UpdateStatus(ctx context.Context, tenantContext tenant.Context, teamID string, isActive bool) (Team, error) {
@@ -391,7 +404,16 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, te
 	if !canViewTeam(tenantContext, teamID) {
 		return Team{}, tenant.ErrOrganizationAccessDenied
 	}
-	team, err := scanTeam(repo.db.Pool().QueryRow(ctx, `
+	return repo.getWithQueryer(ctx, repo.db.Pool(), tenantContext, teamID)
+}
+
+func (repo Repository) getWithQueryer(
+	ctx context.Context,
+	q teamReadExecutor,
+	tenantContext tenant.Context,
+	teamID string,
+) (Team, error) {
+	team, err := scanTeam(q.QueryRow(ctx, `
 		select
 			t.id::text,
 			t.name,
@@ -415,7 +437,7 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, te
 	if err != nil {
 		return Team{}, err
 	}
-	membersByTeam, err := repo.membersByTeam(ctx, tenantContext.OrganizationID)
+	membersByTeam, err := membersByTeamWithQueryer(ctx, q, tenantContext.OrganizationID, &teamID)
 	if err != nil {
 		return Team{}, err
 	}
@@ -930,7 +952,22 @@ func normalizeMemberAvailabilityInputs(
 }
 
 func (repo Repository) membersByTeam(ctx context.Context, organizationID string) (map[string][]TeamMember, error) {
-	rows, err := repo.db.Pool().Query(ctx, `
+	return membersByTeamWithQueryer(ctx, repo.db.Pool(), organizationID, nil)
+}
+
+func membersByTeamWithQueryer(
+	ctx context.Context,
+	q teamReadExecutor,
+	organizationID string,
+	teamID *string,
+) (map[string][]TeamMember, error) {
+	args := []any{organizationID}
+	teamPredicate := ""
+	if teamID != nil {
+		args = append(args, *teamID)
+		teamPredicate = " and t.id = $2::uuid"
+	}
+	rows, err := q.Query(ctx, `
 		select
 			tm.id::text,
 			tm.team_id::text,
@@ -949,10 +986,10 @@ func (repo Repository) membersByTeam(ctx context.Context, organizationID string)
 		 and om.user_id = tm.user_id
 		 and coalesce(om.is_active, false) = true
 		 and om.deleted_at is null
-		where coalesce(tm.is_active, true) = true
+		where coalesce(tm.is_active, true) = true`+teamPredicate+`
 		  and coalesce(u.is_active, false) = true
 		order by tm.created_at asc, tm.id asc
-	`, organizationID)
+	`, args...)
 	if err != nil {
 		return nil, err
 	}

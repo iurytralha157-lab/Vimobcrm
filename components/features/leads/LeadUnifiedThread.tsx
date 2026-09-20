@@ -27,7 +27,10 @@ import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
 import { toast } from 'sonner';
 import { whatsappAPI } from '@/lib/api/whatsapp';
-import { getWhatsAppMessageInputState } from '@/lib/whatsapp-message-input';
+import {
+  getWhatsAppMessageInputState,
+  WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
+} from '@/lib/whatsapp-message-input';
 import { groupLatestWhatsAppReactions } from '@/lib/whatsapp-reactions';
 import {
   blobToBase64,
@@ -976,6 +979,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       leadId,
       leadName,
       sessionId: whatsappMessageInputState.sendSessionId,
+      expectedPreviousLeadId: WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
     });
   };
 

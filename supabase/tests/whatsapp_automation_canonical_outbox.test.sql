@@ -110,6 +110,31 @@ insert into public.whatsapp_conversations (
   ('ca300000-0000-4000-8000-000000000003', 'ca000000-0000-4000-8000-000000000001', 'ca200000-0000-4000-8000-000000000001', 'ca100000-0000-4000-8000-000000000003', '5511999990003@s.whatsapp.net', '5511999990003', false),
   ('ca300000-0000-4000-8000-000000000004', 'ca000000-0000-4000-8000-000000000002', 'ca200000-0000-4000-8000-000000000003', 'ca100000-0000-4000-8000-000000000004', '5511999990004@s.whatsapp.net', '5511999990004', false);
 
+do $$
+begin
+  perform public.activate_whatsapp_conversation_lead_binding(
+    'ca000000-0000-4000-8000-000000000001',
+    'ca300000-0000-4000-8000-000000000001',
+    'ca100000-0000-4000-8000-000000000001'
+  );
+  perform public.activate_whatsapp_conversation_lead_binding(
+    'ca000000-0000-4000-8000-000000000001',
+    'ca300000-0000-4000-8000-000000000002',
+    'ca100000-0000-4000-8000-000000000002'
+  );
+  perform public.activate_whatsapp_conversation_lead_binding(
+    'ca000000-0000-4000-8000-000000000001',
+    'ca300000-0000-4000-8000-000000000003',
+    'ca100000-0000-4000-8000-000000000003'
+  );
+  perform public.activate_whatsapp_conversation_lead_binding(
+    'ca000000-0000-4000-8000-000000000002',
+    'ca300000-0000-4000-8000-000000000004',
+    'ca100000-0000-4000-8000-000000000004'
+  );
+end;
+$$;
+
 insert into public.automations (
   id, organization_id, name, is_active, trigger_type, trigger_config, flow_definition
 ) values (
@@ -145,9 +170,9 @@ insert into public.automation_executions (
 insert into public.automation_effect_dispatches (
   organization_id, execution_id, node_key, effect_key, effect_type, status, request
 ) values
-  ('ca000000-0000-4000-8000-000000000001', 'ca600000-0000-4000-8000-000000000001', 'text', 'automation:ca600000-0000-4000-8000-000000000001:text:send_whatsapp', 'send_whatsapp', 'sending', '{"delivery_contract":"canonical_whatsapp_outbox_v1"}'),
-  ('ca000000-0000-4000-8000-000000000001', 'ca600000-0000-4000-8000-000000000002', 'text', 'automation:ca600000-0000-4000-8000-000000000002:text:send_whatsapp', 'send_whatsapp', 'sending', '{"delivery_contract":"canonical_whatsapp_outbox_v1"}'),
-  ('ca000000-0000-4000-8000-000000000001', 'ca600000-0000-4000-8000-000000000003', 'media', 'automation:ca600000-0000-4000-8000-000000000003:media:send_image', 'send_image', 'sending', '{"delivery_contract":"canonical_whatsapp_outbox_v1"}');
+  ('ca000000-0000-4000-8000-000000000001', 'ca600000-0000-4000-8000-000000000001', 'text', 'automation:ca600000-0000-4000-8000-000000000001:text:send_whatsapp', 'send_whatsapp', 'sending', '{"delivery_contract":"canonical_whatsapp_outbox_v1","session_id":"ca200000-0000-4000-8000-000000000001"}'),
+  ('ca000000-0000-4000-8000-000000000001', 'ca600000-0000-4000-8000-000000000002', 'text', 'automation:ca600000-0000-4000-8000-000000000002:text:send_whatsapp', 'send_whatsapp', 'sending', '{"delivery_contract":"canonical_whatsapp_outbox_v1","session_id":"ca200000-0000-4000-8000-000000000002"}'),
+  ('ca000000-0000-4000-8000-000000000001', 'ca600000-0000-4000-8000-000000000003', 'media', 'automation:ca600000-0000-4000-8000-000000000003:media:send_image', 'send_image', 'sending', '{"delivery_contract":"canonical_whatsapp_outbox_v1","session_id":"ca200000-0000-4000-8000-000000000001"}');
 
 create temporary table canonical_text_result as
 select public.enqueue_automation_whatsapp_outbox(

@@ -11,7 +11,10 @@ import (
 
 func (repo Repository) List(ctx context.Context, tenantContext tenant.Context) ([]RoundRobin, error) {
 	args := []any{tenantContext.OrganizationID}
-	where := []string{"rr.organization_id = $1::uuid"}
+	where := []string{
+		"rr.organization_id = $1::uuid",
+		"rr.deleted_at is null",
+	}
 	if !canManageRoundRobins(tenantContext) {
 		if !tenantContext.IsTeamLeader {
 			return []RoundRobin{}, nil
@@ -144,11 +147,20 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, ro
 	if !ok {
 		return RoundRobin{}, ErrRoundRobinNotFound
 	}
-	if err := repo.ensureRoundRobinVisible(ctx, repo.db.Pool(), tenantContext, roundRobinID); err != nil {
+	return repo.getWithQueryer(ctx, repo.db.Pool(), tenantContext, roundRobinID)
+}
+
+func (repo Repository) getWithQueryer(
+	ctx context.Context,
+	q queryer,
+	tenantContext tenant.Context,
+	roundRobinID string,
+) (RoundRobin, error) {
+	if err := repo.ensureRoundRobinVisible(ctx, q, tenantContext, roundRobinID); err != nil {
 		return RoundRobin{}, err
 	}
 
-	item, err := scanRoundRobin(repo.db.Pool().QueryRow(ctx, `
+	item, err := scanRoundRobin(q.QueryRow(ctx, `
 		select
 			rr.id::text,
 			rr.organization_id::text,
@@ -212,6 +224,7 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, ro
 		) logs on true
 		where rr.organization_id = $1::uuid
 		  and rr.id = $2::uuid
+		  and rr.deleted_at is null
 		limit 1
 	`, tenantContext.OrganizationID, roundRobinID))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -221,11 +234,11 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, ro
 		return RoundRobin{}, err
 	}
 
-	rules, err := repo.listRules(ctx, tenantContext.OrganizationID, &roundRobinID)
+	rules, err := listRulesWithQueryer(ctx, q, tenantContext.OrganizationID, &roundRobinID)
 	if err != nil {
 		return RoundRobin{}, err
 	}
-	metaFormLinkRules, err := repo.listMetaFormLinkRules(ctx, tenantContext.OrganizationID)
+	metaFormLinkRules, err := listMetaFormLinkRulesWithQueryer(ctx, q, tenantContext.OrganizationID)
 	if err != nil {
 		return RoundRobin{}, err
 	}
@@ -236,7 +249,7 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, ro
 		}
 	}
 	rules = mergeMissingMetaFormLinkRules(rules, linkedRulesForQueue)
-	members, err := repo.listMembers(ctx, tenantContext.OrganizationID, &roundRobinID)
+	members, err := listMembersWithQueryer(ctx, q, tenantContext.OrganizationID, &roundRobinID)
 	if err != nil {
 		return RoundRobin{}, err
 	}

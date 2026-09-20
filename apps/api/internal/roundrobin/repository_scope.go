@@ -134,6 +134,7 @@ func (repo Repository) ensureRoundRobinVisible(ctx context.Context, q queryer, t
 			from public.round_robins rr
 			where rr.organization_id = $1::uuid
 			  and rr.id = $2::uuid
+			  and rr.deleted_at is null
 			  and `+condition+`
 		)
 	`, args...).Scan(&exists); err != nil {
@@ -185,6 +186,7 @@ func (repo Repository) visibleRoundRobinIDSet(ctx context.Context, tenantContext
 		select rr.id::text
 		from public.round_robins rr
 		where rr.organization_id = $1::uuid
+		  and rr.deleted_at is null
 		  and `+condition+`
 	`, args...)
 	if err != nil {

@@ -108,6 +108,7 @@ export function ConversationListItem({
   const previewMentionNames = useMentionNames(previewMentionDigits, {
     groupJid: conversation.is_group ? conversation.remote_jid : null,
     sessionId: conversation.is_group ? conversation.session_id : null,
+    leadId: conversation.lead_id || conversation.lead?.id || null,
   });
   const previewMessageWithNames = previewMentionDigits.reduce(
     (text, digits) => text.replaceAll(`@${digits}`, `@${previewMentionNames[digits] || digits}`),

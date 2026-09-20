@@ -320,6 +320,20 @@ func (client *oauthGraphClient) fetchAdAccounts(ctx context.Context, token strin
 	return accounts, nil
 }
 
+func (client *oauthGraphClient) validatePageLeadFormsAccess(ctx context.Context, page oauthPage) error {
+	payload, err := client.graphRequest(ctx, http.MethodGet, page.ID+"/leadgen_forms", page.AccessToken, map[string]string{
+		"fields": "id",
+		"limit":  "1",
+	}, nil)
+	if err != nil {
+		return newOAuthFailure("meta_lead_forms_access_failed", oauthErrorStatus(err), err)
+	}
+	if _, ok := payload["data"].([]any); !ok {
+		return newOAuthFailure("meta_lead_forms_access_failed", http.StatusBadGateway)
+	}
+	return nil
+}
+
 func (client *oauthGraphClient) adAccountFields() string {
 	if client != nil && client.loginConfigID != "" {
 		return oauthBusinessLoginAdAccountFields
@@ -391,25 +405,31 @@ func (client *oauthGraphClient) graphCollection(ctx context.Context, path string
 		}
 		for _, raw := range oauthAnySlice(payload["data"]) {
 			if item := oauthMap(raw); item != nil {
-				items = append(items, item)
-				if len(items) >= oauthMaxGraphItems {
-					return items, nil
+				if len(items) == oauthMaxGraphItems {
+					return nil, newOAuthFailure("meta_graph_collection_limit_exceeded", http.StatusBadGateway)
 				}
+				items = append(items, item)
 			}
 		}
 		paging := oauthMap(payload["paging"])
+		if oauthString(paging["next"]) == "" {
+			return items, nil
+		}
 		cursors := oauthMap(paging["cursors"])
 		next := oauthString(cursors["after"])
 		if next == "" {
-			return items, nil
+			return nil, newOAuthFailure("meta_paging_cursor_missing", http.StatusBadGateway)
 		}
 		if _, exists := seen[next]; exists {
 			return nil, newOAuthFailure("meta_repeated_paging_cursor", http.StatusBadGateway)
 		}
+		if len(items) == oauthMaxGraphItems || page == oauthMaxGraphPages-1 {
+			return nil, newOAuthFailure("meta_graph_collection_limit_exceeded", http.StatusBadGateway)
+		}
 		seen[next] = struct{}{}
 		after = next
 	}
-	return items, nil
+	return nil, newOAuthFailure("meta_graph_collection_limit_exceeded", http.StatusBadGateway)
 }
 
 func (client *oauthGraphClient) graphRequest(ctx context.Context, method string, path string, token string, parameters map[string]string, form url.Values) (map[string]any, error) {

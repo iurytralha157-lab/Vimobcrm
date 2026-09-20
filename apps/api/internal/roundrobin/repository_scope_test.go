@@ -162,6 +162,7 @@ func TestLeaderWithDistributionGrantCannotReadOutsideLeadershipScope(t *testing.
 	for _, fragment := range []string{
 		"rr.organization_id = $1::uuid",
 		"rr.id = $2::uuid",
+		"rr.deleted_at is null",
 		"rr.created_by = $3::uuid",
 		"rr.pipeline_id in ($4::uuid)",
 		"scoped_rrm.team_id in ($5::uuid)",

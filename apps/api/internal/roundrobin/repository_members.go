@@ -36,6 +36,9 @@ func (repo Repository) AddMember(ctx context.Context, tenantContext tenant.Conte
 	if err != nil {
 		return nil, err
 	}
+	if err := repo.rejectPendingWhatsAppIntake(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+		return nil, err
+	}
 
 	items := []memberInput{{
 		Type:     input.Type,
@@ -100,6 +103,9 @@ func (repo Repository) UpdateMember(ctx context.Context, tenantContext tenant.Co
 	if err != nil {
 		return Member{}, err
 	}
+	if err := repo.rejectPendingWhatsAppIntake(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+		return Member{}, err
+	}
 
 	setClauses := []string{}
 	args := []any{tenantContext.OrganizationID, memberID}
@@ -160,6 +166,9 @@ func (repo Repository) DeleteMember(ctx context.Context, tenantContext tenant.Co
 	if err != nil {
 		return err
 	}
+	if err := repo.rejectPendingWhatsAppIntake(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+		return err
+	}
 
 	commandTag, err := tx.Exec(ctx, `
 		delete from public.round_robin_members
@@ -179,6 +188,10 @@ func (repo Repository) DeleteMember(ctx context.Context, tenantContext tenant.Co
 }
 
 func (repo Repository) listMembers(ctx context.Context, organizationID string, roundRobinID *string) ([]Member, error) {
+	return listMembersWithQueryer(ctx, repo.db.Pool(), organizationID, roundRobinID)
+}
+
+func listMembersWithQueryer(ctx context.Context, q queryer, organizationID string, roundRobinID *string) ([]Member, error) {
 	args := []any{organizationID}
 	where := "rrm.organization_id = $1::uuid"
 	if roundRobinID != nil {
@@ -186,7 +199,7 @@ func (repo Repository) listMembers(ctx context.Context, organizationID string, r
 		where += " and rrm.round_robin_id = $2::uuid"
 	}
 
-	rows, err := repo.db.Pool().Query(ctx, `
+	rows, err := q.Query(ctx, `
 		select
 			rrm.id::text,
 			rrm.round_robin_id::text,
@@ -201,6 +214,9 @@ func (repo Repository) listMembers(ctx context.Context, organizationID string, r
 			u.avatar_url,
 			coalesce(logs.total, 0)
 		from public.round_robin_members rrm
+		join public.round_robins rr
+		  on rr.organization_id = rrm.organization_id
+		 and rr.id = rrm.round_robin_id
 		left join public.users u
 		  on u.id = rrm.user_id
 		left join lateral (
@@ -220,6 +236,7 @@ func (repo Repository) listMembers(ctx context.Context, organizationID string, r
 			  )
 		) logs on true
 		where `+where+`
+		  and rr.deleted_at is null
 		order by rrm.round_robin_id, coalesce(rrm.position, 0) asc, rrm.created_at asc
 	`, args...)
 	if err != nil {
@@ -254,6 +271,9 @@ func (repo Repository) getMember(ctx context.Context, organizationID string, mem
 			u.avatar_url,
 			coalesce(logs.total, 0)
 		from public.round_robin_members rrm
+		join public.round_robins rr
+		  on rr.organization_id = rrm.organization_id
+		 and rr.id = rrm.round_robin_id
 		left join public.users u
 		  on u.id = rrm.user_id
 		left join lateral (
@@ -274,6 +294,7 @@ func (repo Repository) getMember(ctx context.Context, organizationID string, mem
 		) logs on true
 		where rrm.organization_id = $1::uuid
 		  and rrm.id = $2::uuid
+		  and rr.deleted_at is null
 		limit 1
 	`, organizationID, memberID))
 	if errors.Is(err, pgx.ErrNoRows) {

@@ -284,4 +284,35 @@ test("handler applies tenant references before provider and side effects", async
   assert.match(outbox, /conversationReferencesBelongToTenant\(/);
   assert.match(outbox, /\.eq\("organization_id", organizationId\)/);
   assert.match(outbox, /\.eq\("session_id", conversation\.session_id\)/);
+  assert.match(outbox, /const currentLeadId = requireCurrentLeadId\(conversation\.lead_id\)/);
+  assert.match(outbox, /lead_id: currentLeadId/);
+  assert.match(outbox, /conversationUpdate\.eq\("lead_id", currentLeadId\)/);
+});
+
+test("AI resolves immutable inbound lead identity and fails closed on ambiguous phones", async () => {
+  const handler = await readFile(new URL("./index.ts", import.meta.url), "utf8");
+  const messageIdentity = handler.slice(
+    handler.indexOf("async function getInboundMessageIdentity"),
+    handler.indexOf("async function claimAIResponse"),
+  );
+  assert.match(messageIdentity, /loadByColumn\("message_id"\)/);
+  assert.match(messageIdentity, /loadByColumn\("provider_message_id"\)/);
+  assert.match(messageIdentity, /Inbound WhatsApp message identity is conflicting/);
+
+  const phoneLookup = handler.slice(
+    handler.indexOf("async function findLeadByConversationPhone"),
+    handler.indexOf("async function bindConversationLead"),
+  );
+  assert.match(phoneLookup, /\.rpc\("find_lead_by_normalized_phone"/);
+  assert.match(phoneLookup, /whatsapp_lead_phone_ambiguous/);
+  assert.doesNotMatch(phoneLookup, /phone\.ilike|\.limit\(/);
+
+  const binding = handler.slice(
+    handler.indexOf("async function bindConversationLead"),
+    handler.indexOf("async function fetchLead"),
+  );
+  assert.match(binding, /\.rpc\("activate_whatsapp_conversation_lead_binding"/);
+  assert.match(binding, /data\.active_lead_id !== input\.lead\.id/);
+  assert.match(binding, /data\.is_current !== true/);
+  assert.doesNotMatch(binding, /\.update\(\{[^}]*lead_id:/s);
 });

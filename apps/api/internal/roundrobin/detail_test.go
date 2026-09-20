@@ -11,18 +11,23 @@ import (
 )
 
 func TestGetQueueReadUsesTenantVisibilityAndCompleteEditorShape(t *testing.T) {
-	source := repositoryFunctionSource(t, "Get")
+	getSource := repositoryFunctionSource(t, "Get")
+	requireRepositoryFragments(t, getSource,
+		"normalizeUUID(roundRobinID)",
+		"repo.getWithQueryer(ctx, repo.db.Pool(), tenantContext, roundRobinID)",
+	)
+
+	source := repositoryFunctionSource(t, "getWithQueryer")
 
 	requireRepositoryFragments(t, source,
-		"normalizeUUID(roundRobinID)",
-		"repo.ensureRoundRobinVisible(ctx, repo.db.Pool(), tenantContext, roundRobinID)",
+		"repo.ensureRoundRobinVisible(ctx, q, tenantContext, roundRobinID)",
 		"where rr.organization_id = $1::uuid",
 		"and rr.id = $2::uuid",
-		"repo.listRules(ctx, tenantContext.OrganizationID, &roundRobinID)",
-		"repo.listMetaFormLinkRules(ctx, tenantContext.OrganizationID)",
+		"listRulesWithQueryer(ctx, q, tenantContext.OrganizationID, &roundRobinID)",
+		"listMetaFormLinkRulesWithQueryer(ctx, q, tenantContext.OrganizationID)",
 		"rule.RoundRobinID == roundRobinID",
 		"mergeMissingMetaFormLinkRules(rules, linkedRulesForQueue)",
-		"repo.listMembers(ctx, tenantContext.OrganizationID, &roundRobinID)",
+		"listMembersWithQueryer(ctx, q, tenantContext.OrganizationID, &roundRobinID)",
 	)
 }
 

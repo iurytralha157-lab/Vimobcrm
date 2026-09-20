@@ -61,6 +61,7 @@ const AI_AUTOREPLY_TOKEN = Deno.env.get("AI_AUTOREPLY_TOKEN") || Deno.env.get("I
 // Stay below Evolution's callback retry window; failures persist as pending.
 const EVOLUTION_GO_MEDIA_TIMEOUT_MS = 20_000;
 const EVOLUTION_GO_MEDIA_RESPONSE_MAX_BYTES = Math.ceil(WHATSAPP_MEDIA_MAX_BYTES / 3) * 4 + 1024 * 1024;
+const CANONICAL_INTAKE_PROOF_V1 = "canonical_intake_v1:";
 
 let supabase: any;
 
@@ -137,6 +138,28 @@ function isUniqueViolation(error: any, constraintName?: string) {
 function isAmbiguousWhatsAppLeadPhone(error: any) {
   return error?.code === "23505"
     && normalizeText(error.message).includes("whatsapp_lead_phone_ambiguous");
+}
+
+function quarantinedWhatsAppLeadResolution(reason: string): JsonRecord {
+  return {
+    __whatsapp_lead_resolution_quarantined: true,
+    __whatsapp_lead_resolution_reason: reason,
+  };
+}
+
+function isQuarantinedWhatsAppLeadResolution(value: unknown): value is JsonRecord {
+  return isRecord(value) && value.__whatsapp_lead_resolution_quarantined === true;
+}
+
+function terminalLeadResolutionQuarantineReason(metadata: unknown) {
+  if (!isRecord(metadata)) return null;
+  const quarantine = metadata.lead_resolution_quarantine;
+  if (
+    !isRecord(quarantine)
+    || quarantine.terminal !== true
+    || quarantine.retryable !== false
+  ) return null;
+  return cleanText(quarantine.reason) || "whatsapp_lead_resolution_ambiguous";
 }
 
 function normalizeDigits(value: unknown) {
@@ -2027,12 +2050,24 @@ async function isManagedWhatsAppMessageDistributionRule(
     && inboundMatchValue.toLowerCase() === persistedMatchValue.trim().toLowerCase();
 }
 
-async function findLeadByPhone(organizationId: string, phone: string) {
+async function findLeadByPhone(
+  organizationId: string,
+  phone: string,
+  originRoundRobinId?: string | null,
+) {
+  const parameters: JsonRecord = {
+    p_organization_id: organizationId,
+    p_phone: phone,
+  };
+  if (originRoundRobinId !== undefined) {
+	// Supplying the third argument selects the queue-scoped overload. The
+	// database requires a concrete queue UUID; unscoped callers omit it and use
+	// the two-argument compatibility lookup, which fails closed on ambiguity.
+	if (!originRoundRobinId) throw new Error("lead_origin_round_robin_required");
+    parameters.p_origin_round_robin_id = originRoundRobinId;
+  }
   const { data, error } = await supabase
-    .rpc("find_lead_by_normalized_phone", {
-      p_organization_id: organizationId,
-      p_phone: phone,
-    });
+    .rpc("find_lead_by_normalized_phone", parameters);
 
   if (error) throw error;
   return Array.isArray(data) ? data[0] || null : data || null;
@@ -2068,7 +2103,11 @@ async function resolveActiveSessionOwner(session: JsonRecord) {
   return null;
 }
 
-async function loadScopedWhatsAppLead(session: JsonRecord, leadId: unknown) {
+async function loadScopedWhatsAppLead(
+  session: JsonRecord,
+  leadId: unknown,
+  missingIsNull = false,
+) {
   const scopedLeadId = optionalUuid(leadId);
   if (!scopedLeadId) return null;
 
@@ -2079,7 +2118,10 @@ async function loadScopedWhatsAppLead(session: JsonRecord, leadId: unknown) {
     .eq("id", scopedLeadId)
     .maybeSingle();
   if (error) throw error;
-  if (!data?.id) throw new Error("whatsapp_conversation_lead_not_found_in_organization");
+  if (!data?.id) {
+    if (missingIsNull) return null;
+    throw new Error("whatsapp_conversation_lead_not_found_in_organization");
+  }
   return data;
 }
 
@@ -2102,8 +2144,7 @@ async function findEstablishedWhatsAppConversationLead(
       .not("lead_id", "is", null)
       .is("deleted_at", null)
       .or("is_group.is.null,is_group.eq.false")
-      .order("last_message_at", { ascending: false, nullsFirst: false })
-      .limit(10);
+	  .order("last_message_at", { ascending: false, nullsFirst: false });
     if (error) throw error;
     conversations = data || [];
   }
@@ -2125,8 +2166,7 @@ async function findEstablishedWhatsAppConversationLead(
         .not("lead_id", "is", null)
         .is("deleted_at", null)
         .or("is_group.is.null,is_group.eq.false")
-        .order("last_message_at", { ascending: false, nullsFirst: false })
-        .limit(10);
+		.order("last_message_at", { ascending: false, nullsFirst: false });
       if (error) throw error;
       conversations = data || [];
     }
@@ -2178,44 +2218,168 @@ async function ensureLead(
   message: ReturnType<typeof normalizeMessage>,
   rule: JsonRecord | null,
   managedMessageDistribution: boolean,
+  expectedCurrentLeadId?: string | null,
+  providerEventLeadId?: string | null,
+  ingressRoutingSnapshot?: WhatsAppIngressRoutingSnapshot | null,
 ) {
   if (!message || message.isGroup) return null;
+
+  // The provider ledger is older and more authoritative than every mutable
+  // phone/alias/conversation lookup. A retry must request that exact card so
+  // the CAS RPC can return the original current or stale event assignment.
+  if (providerEventLeadId) {
+    const exactLead = await loadScopedWhatsAppLead(
+      session,
+      providerEventLeadId,
+      Boolean(ingressRoutingSnapshot),
+    );
+    if (!exactLead && ingressRoutingSnapshot) {
+      return quarantinedWhatsAppLeadResolution("whatsapp_ingress_snapshot_lead_deleted");
+    }
+    return exactLead;
+  }
+
+  // A v1 organic snapshot with no card is an immutable unlinked decision. A
+  // backlog worker must not discover a card or alias that appeared only after
+  // the provider callback was durably accepted.
+  if (
+    ingressRoutingSnapshot
+    && ingressRoutingSnapshot.contextKind === "organic"
+    && ingressRoutingSnapshot.state === "unlinked"
+  ) {
+    return null;
+  }
 
   const identity = whatsappIdentityForMessage(message);
   const ctwaConfirmationMethod = clickToWhatsAppAdConfirmationMethod(message);
   const confirmedCtwaAd = Boolean(ctwaConfirmationMethod);
+	const canonicalNonManagedIntake = confirmedCtwaAd && !managedMessageDistribution;
+	if (
+	  canonicalNonManagedIntake
+	  && (
+	    !ingressRoutingSnapshot
+	    || !ingressRoutingSnapshot.contextProof?.startsWith(CANONICAL_INTAKE_PROOF_V1)
+	  )
+	) {
+	  throw new Error("nonmanaged_whatsapp_canonical_intake_snapshot_required");
+	}
+  const targetRoundRobinId = managedMessageDistribution
+    ? optionalUuid(rule?.target_round_robin_id)
+	: canonicalNonManagedIntake
+	  ? optionalUuid(ingressRoutingSnapshot?.originRoundRobinId)
+	  : null;
+	if (managedMessageDistribution && !targetRoundRobinId) {
+	  throw new Error("managed_whatsapp_origin_round_robin_required");
+	}
   let phone = identity.contactPhone || phoneFromJidLike(message.remoteJid) || phoneFromJidLike(message.senderJid);
-  let aliasLead = await findEstablishedWhatsAppConversationLead(session, message, identity);
-  if (!aliasLead) {
-    const alias = await findWhatsAppIdentityAlias(
-      session,
-      mergeWhatsAppIdentityAliases(identity, [message.remoteJid, message.senderJid]),
-    );
+  let existing: JsonRecord | null = null;
+
+  if (confirmedCtwaAd) {
+    // A new CTWA context is resolved by its intake scope before the existing
+    // conversation binding is considered. This is what permits one phone to
+    // own independent cards in different queues.
     if (!phone) {
+      const aliasLookup = await findWhatsAppIdentityAlias(
+        session,
+        mergeWhatsAppIdentityAliases(identity, [message.remoteJid, message.senderJid]),
+      );
+      if (aliasLookup.quarantineReason) {
+        return quarantinedWhatsAppLeadResolution(aliasLookup.quarantineReason);
+      }
+      const alias = aliasLookup.match;
       phone = normalizeDigits(alias?.contact_phone || phoneFromJidLike(alias?.canonical_jid));
     }
-    if (alias?.lead_id) aliasLead = await loadScopedWhatsAppLead(session, alias.lead_id);
-  }
-  if (!phone && !aliasLead) return null;
-
-  let existing = aliasLead;
-  if (!existing) {
+    if (!phone) return null;
     try {
-      existing = await findLeadByPhone(session.organization_id, phone);
+	  // A canonical no-queue scope is `unscoped`, not a global phone lookup.
+	  // Let the transactional upsert resolve that scope so existing cards from
+	  // other queues cannot make this event ambiguous or become its target.
+	  existing = canonicalNonManagedIntake && !targetRoundRobinId
+	    ? null
+	    : targetRoundRobinId
+	      ? await findLeadByPhone(session.organization_id, phone, targetRoundRobinId)
+	      : await findLeadByPhone(session.organization_id, phone);
     } catch (error) {
-      if (!confirmedCtwaAd && isAmbiguousWhatsAppLeadPhone(error)) {
-        // Keep ordinary WhatsApp transport available without guessing which
-        // duplicate historical lead owns the contact. A later operator can
-        // resolve and attach the unlinked conversation explicitly.
-        console.warn("[evolution-go-webhook] ambiguous organic WhatsApp lead phone; storing conversation unlinked", {
+      if (isAmbiguousWhatsAppLeadPhone(error)) {
+        console.warn("[evolution-go-webhook] ambiguous scoped WhatsApp lead phone; quarantining terminally", {
           session_id: session.id,
           organization_id: session.organization_id,
           remote_jid: identity.remoteJid || message.remoteJid,
+          target_round_robin_id: targetRoundRobinId,
         });
-        return null;
+        return quarantinedWhatsAppLeadResolution("whatsapp_lead_phone_ambiguous_in_intake_scope");
       }
       throw error;
     }
+  } else {
+    // Organic traffic inherits the binding snapshot captured before lead
+    // resolution. Re-reading the mutable conversation here would let a newer
+    // operator relink retroactively change the event's card.
+    let aliasLead: JsonRecord | null = expectedCurrentLeadId
+      ? await loadScopedWhatsAppLead(session, expectedCurrentLeadId)
+      : null;
+    if (!aliasLead) {
+      try {
+        aliasLead = await findEstablishedWhatsAppConversationLead(session, message, identity);
+      } catch (error) {
+        if (normalizeText(error instanceof Error ? error.message : error).includes("whatsapp_conversation_lead_ambiguous")) {
+          console.warn("[evolution-go-webhook] ambiguous WhatsApp conversation binding; quarantining terminally", {
+            session_id: session.id,
+            organization_id: session.organization_id,
+            remote_jid: identity.remoteJid || message.remoteJid,
+          });
+          return quarantinedWhatsAppLeadResolution("whatsapp_conversation_lead_ambiguous");
+        }
+        throw error;
+      }
+    }
+    if (!aliasLead) {
+      const aliasLookup = await findWhatsAppIdentityAlias(
+        session,
+        mergeWhatsAppIdentityAliases(identity, [message.remoteJid, message.senderJid]),
+      );
+      if (aliasLookup.quarantineReason) {
+        return quarantinedWhatsAppLeadResolution(aliasLookup.quarantineReason);
+      }
+      const alias = aliasLookup.match;
+      if (!phone) {
+        phone = normalizeDigits(alias?.contact_phone || phoneFromJidLike(alias?.canonical_jid));
+      }
+      if (alias?.lead_id) aliasLead = await loadScopedWhatsAppLead(session, alias.lead_id);
+    }
+    if (!phone && !aliasLead) return null;
+    existing = aliasLead;
+    if (!existing) {
+      try {
+        // The two-argument overload is intentionally limited to an organic
+        // message with no active binding. It rejects rather than choosing one
+        // of several scoped cards for the same phone.
+        existing = await findLeadByPhone(session.organization_id, phone);
+      } catch (error) {
+        if (isAmbiguousWhatsAppLeadPhone(error)) {
+          console.warn("[evolution-go-webhook] ambiguous organic WhatsApp lead phone; storing conversation unlinked", {
+            session_id: session.id,
+            organization_id: session.organization_id,
+            remote_jid: identity.remoteJid || message.remoteJid,
+          });
+          return quarantinedWhatsAppLeadResolution("whatsapp_lead_phone_ambiguous");
+        }
+        throw error;
+      }
+    }
+  }
+
+  if (!phone && !existing) return null;
+  if (!phone) {
+    const aliasLookup = await findWhatsAppIdentityAlias(
+      session,
+      mergeWhatsAppIdentityAliases(identity, [message.remoteJid, message.senderJid]),
+    );
+    if (aliasLookup.quarantineReason) {
+      return quarantinedWhatsAppLeadResolution(aliasLookup.quarantineReason);
+    }
+    const alias = aliasLookup.match;
+    phone = normalizeDigits(alias?.contact_phone || phoneFromJidLike(alias?.canonical_jid));
   }
   const now = new Date().toISOString();
   const avatarUrl = message.avatarUrl || existing?.whatsapp_avatar_url || null;
@@ -2277,12 +2441,20 @@ async function ensureLead(
     if (updateError) throw updateError;
     const isInitialProviderRetry = confirmedCtwaAd
       && cleanText(existing.metadata?.whatsapp_initial_provider_event_id) === `${session.id}:${message.messageId}`;
-    return {
+    const resolvedExistingLead = {
       ...existing,
       ...update,
       is_new_lead: isInitialProviderRetry,
       is_managed_whatsapp_message_distribution: false,
     };
+	return canonicalNonManagedIntake
+	  ? await processCanonicalNonManagedWhatsAppDistribution(
+	    session,
+	    resolvedExistingLead,
+	    message,
+	    targetRoundRobinId,
+	  )
+	  : resolvedExistingLead;
   }
 
   if (!confirmedCtwaAd) {
@@ -2295,17 +2467,15 @@ async function ensureLead(
     return null;
   }
 
-  // CTWA leads are routed only by the canonical managed queue. If no managed
-  // queue matches, the connection owner is the explicit fallback; legacy
-  // inbound-rule targets must not bypass schedules, tags or redistribution.
+  // The Go ingress already froze the canonical intake queue. Queue-scoped
+  // cards stay unassigned until the canonical distributor runs; a deliberate
+  // no-queue decision retains the connection-owner fallback. Legacy inbound
+  // rule targets never bypass schedules, tags or redistribution.
   const targetPipelineId = null;
   const targetStageId = null;
   const targetTeamId = null;
-  const targetRoundRobinId = managedMessageDistribution
-    ? optionalUuid(rule?.target_round_robin_id)
-    : null;
   const ownerUserId = await resolveActiveSessionOwner(session);
-  const assignedUserId = managedMessageDistribution ? null : ownerUserId;
+  const assignedUserId = managedMessageDistribution || targetRoundRobinId ? null : ownerUserId;
   const sourceLabel = "WhatsApp Meta Ads";
 
   const { data: upsertedLead, error } = await supabase
@@ -2331,6 +2501,7 @@ async function ensureLead(
       p_first_touch_at: now,
       p_first_touch_channel: "whatsapp",
       p_last_contact_at: now,
+      p_origin_round_robin_id: targetRoundRobinId,
       p_metadata: {
         source: "whatsapp",
         whatsapp_lead_creation_contract: "ctwa_ad_v2",
@@ -2345,6 +2516,9 @@ async function ensureLead(
         whatsapp_initial_provider_event_id: `${session.id}:${message.messageId}`,
         target_team_id: targetTeamId,
         target_round_robin_id: targetRoundRobinId,
+		...(!managedMessageDistribution
+		  ? { distribution_deferred: true }
+		  : {}),
         campaign_label: campaignLabel,
         ctwa_ad_confirmed: true,
         whatsapp_attribution: attribution,
@@ -2355,18 +2529,72 @@ async function ensureLead(
   let lead = Array.isArray(upsertedLead) ? upsertedLead[0] : upsertedLead;
 
   if (error) {
-    if (isUniqueViolation(error, "leads_org_phone_unique")) {
-      const recovered = await findLeadByPhone(session.organization_id, phone);
-      if (recovered?.id) {
-        const isInitialProviderRetry = !managedMessageDistribution
-          && confirmedCtwaAd
-          && cleanText(recovered.metadata?.whatsapp_initial_provider_event_id) === `${session.id}:${message.messageId}`;
-        return {
+    let recovered: JsonRecord | null = null;
+    let compatibilityFallback = false;
+    try {
+      if (isUniqueViolation(error, "leads_org_scope_phone_unique")) {
+		recovered = targetRoundRobinId
+		  ? await findLeadByPhone(session.organization_id, phone, targetRoundRobinId)
+		  : await findLeadByPhone(session.organization_id, phone);
+      } else if (isUniqueViolation(error, "leads_org_phone_unique")) {
+        // Code-first rollout compatibility: while the legacy global index is
+        // still present, deterministically reuse its sole card and let the
+        // normal reentry path record the event. Once that index is removed,
+        // the scoped upsert creates the queue-specific card instead.
+        recovered = await findLeadByPhone(session.organization_id, phone);
+        compatibilityFallback = Boolean(recovered?.id);
+      }
+    } catch (recoveryError) {
+      if (isAmbiguousWhatsAppLeadPhone(recoveryError)) {
+        return quarantinedWhatsAppLeadResolution("whatsapp_lead_phone_ambiguous_during_upsert_recovery");
+      }
+      throw recoveryError;
+    }
+    if (recovered?.id) {
+      if (compatibilityFallback) {
+        const existingMetadata = isRecord(recovered.metadata) ? recovered.metadata : {};
+        const compatibility = {
+          mode: "legacy_global_phone_unique",
+          requested_origin_round_robin_id: targetRoundRobinId,
+          provider_message_id: message.messageId,
+          recorded_at: now,
+        };
+        const { error: compatibilityError } = await supabase
+          .from("leads")
+          .update({
+            metadata: {
+              ...existingMetadata,
+              whatsapp_queue_scope_compatibility: compatibility,
+            },
+          })
+          .eq("organization_id", session.organization_id)
+          .eq("id", recovered.id);
+        if (compatibilityError) throw compatibilityError;
+        recovered = {
           ...recovered,
-          is_new_lead: isInitialProviderRetry,
-          is_managed_whatsapp_message_distribution: managedMessageDistribution,
+          metadata: {
+            ...existingMetadata,
+            whatsapp_queue_scope_compatibility: compatibility,
+          },
+          __lead_scope_compatibility_fallback: true,
         };
       }
+      const isInitialProviderRetry = !managedMessageDistribution
+        && confirmedCtwaAd
+        && cleanText(recovered.metadata?.whatsapp_initial_provider_event_id) === `${session.id}:${message.messageId}`;
+      const resolvedRecoveredLead = {
+        ...recovered,
+        is_new_lead: isInitialProviderRetry,
+        is_managed_whatsapp_message_distribution: managedMessageDistribution,
+      };
+	  return canonicalNonManagedIntake
+	    ? await processCanonicalNonManagedWhatsAppDistribution(
+	      session,
+	      resolvedRecoveredLead,
+	      message,
+	      targetRoundRobinId,
+	    )
+	    : resolvedRecoveredLead;
     }
     throw error;
   }
@@ -2397,10 +2625,161 @@ async function ensureLead(
     lead = { ...lead, ...refreshedLead, is_new_lead: true };
   }
 
+	if (canonicalNonManagedIntake) {
+	  lead = await processCanonicalNonManagedWhatsAppDistribution(
+	    session,
+	    lead,
+	    message,
+	    targetRoundRobinId,
+	  );
+	}
+
   return {
     ...lead,
     is_new_lead: Boolean(lead.is_new_lead),
     is_managed_whatsapp_message_distribution: managedMessageDistribution,
+  };
+}
+
+async function processCanonicalNonManagedWhatsAppDistribution(
+  session: JsonRecord,
+  lead: JsonRecord,
+  message: ReturnType<typeof normalizeMessage>,
+  targetRoundRobinId: string | null,
+) {
+  const leadId = optionalUuid(lead?.id);
+  const queueId = optionalUuid(targetRoundRobinId);
+  if (!leadId || !message) {
+    throw new Error("nonmanaged_whatsapp_distribution_context_invalid");
+  }
+
+  const { data: persistedLead, error: leadError } = await supabase
+    .from("leads")
+    .select("*")
+    .eq("organization_id", session.organization_id)
+    .eq("id", leadId)
+    .single();
+  if (leadError) throw leadError;
+
+  const expectedScopeKey = queueId ? `queue:${queueId}` : "unscoped";
+  const persistedScopeKey = cleanText(persistedLead?.intake_scope_key)?.toLowerCase();
+  if (persistedScopeKey !== expectedScopeKey) {
+    // While A1/A2 retain the legacy global-phone index, a queue-B event can be
+    // forced onto a pre-existing queue-A card. Record the compatibility event,
+    // clear the trigger fence, and never redistribute or relabel that card.
+    const persistedMetadata = isRecord(persistedLead?.metadata) ? persistedLead.metadata : {};
+    const metadataWithoutFence = { ...persistedMetadata };
+    delete metadataWithoutFence.distribution_deferred;
+    const compatibility = {
+      mode: "legacy_global_phone_unique",
+      requested_origin_round_robin_id: queueId,
+      provider_message_id: message.messageId,
+      recorded_at: new Date().toISOString(),
+    };
+    const { data: compatibleLead, error: compatibilityError } = await supabase
+      .from("leads")
+      .update({
+        metadata: {
+          ...metadataWithoutFence,
+          whatsapp_queue_scope_compatibility: compatibility,
+        },
+        updated_at: new Date().toISOString(),
+      })
+      .eq("organization_id", session.organization_id)
+      .eq("id", leadId)
+      .select("*")
+      .single();
+    if (compatibilityError) throw compatibilityError;
+    return {
+      ...lead,
+      ...compatibleLead,
+      __lead_scope_compatibility_fallback: true,
+    };
+  }
+
+  if (!queueId) {
+    const persistedMetadata = isRecord(persistedLead?.metadata) ? persistedLead.metadata : {};
+    const metadataWithoutFence = { ...persistedMetadata };
+    delete metadataWithoutFence.distribution_deferred;
+    if (!("distribution_deferred" in persistedMetadata)) {
+      return {
+        ...lead,
+        ...persistedLead,
+        is_new_lead: Boolean(lead.is_new_lead),
+        is_managed_whatsapp_message_distribution: false,
+      };
+    }
+    const { data: finalizedLead, error: finalizeError } = await supabase
+      .from("leads")
+      .update({ metadata: metadataWithoutFence })
+      .eq("organization_id", session.organization_id)
+      .eq("id", leadId)
+      .select("*")
+      .single();
+    if (finalizeError) throw finalizeError;
+    return {
+      ...lead,
+      ...finalizedLead,
+      is_new_lead: Boolean(lead.is_new_lead),
+      is_managed_whatsapp_message_distribution: false,
+    };
+  }
+
+  const { data: queue, error: queueError } = await supabase
+    .from("round_robins")
+    .select("id, is_active, reentry_behavior, rules")
+    .eq("organization_id", session.organization_id)
+    .eq("id", queueId)
+    .maybeSingle();
+  if (queueError) throw queueError;
+  if (!queue?.id) {
+    throw new Error("nonmanaged_whatsapp_frozen_queue_unavailable");
+  }
+
+  const queueRules = isRecord(queue.rules) ? queue.rules : {};
+  const reentryBehavior = cleanText(queue.reentry_behavior || queueRules.reentry_behavior)?.toLowerCase() === "keep_assignee"
+    ? "keep_assignee"
+    : "redistribute";
+  const reentry = !Boolean(lead.is_new_lead);
+  const preserveAssignee = !reentry || reentryBehavior !== "redistribute";
+  // Go's encoding/json escapes these five characters before hashing. Provider
+  // ids normally do not contain them, but matching it here keeps retries
+  // idempotent even for an unusual yet valid provider identifier.
+  const stableKeyPayload = JSON.stringify([normalizeText(session.id), message.messageId])
+    .replace(/&/g, "\\u0026")
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+  const idempotencyKey = `whatsapp-native:${await sha256Hex(stableKeyPayload)}`;
+  const { data: distributionResult, error: distributionError } = await supabase
+    .rpc("distribute_lead_from_backend", {
+      p_organization_id: session.organization_id,
+      p_lead_id: leadId,
+      p_idempotency_key: idempotencyKey,
+      p_round_robin_id: queueId,
+      p_preserve_assignee: preserveAssignee,
+      p_source: "whatsapp",
+      p_now: message.sentAt,
+    });
+  if (distributionError) throw distributionError;
+  const reason = cleanText(distributionResult?.reason);
+  if (!reason || !["assigned", "already_assigned", "no_matching_queue", "no_available_members"].includes(reason)) {
+    throw new Error(`nonmanaged_whatsapp_distribution_rejected:${reason || "invalid_result"}`);
+  }
+
+  const { data: refreshedLead, error: refreshError } = await supabase
+    .from("leads")
+    .select("*")
+    .eq("organization_id", session.organization_id)
+    .eq("id", leadId)
+    .single();
+  if (refreshError) throw refreshError;
+  return {
+    ...lead,
+    ...refreshedLead,
+    is_new_lead: Boolean(lead.is_new_lead),
+    is_managed_whatsapp_message_distribution: false,
   };
 }
 
@@ -2709,7 +3088,9 @@ async function logCreativeActivity(
 }
 
 async function reconcileRecoveredConversationAfterMessage(
+  session: JsonRecord,
   conversation: JsonRecord,
+  expectedLeadId: string,
   message: ReturnType<typeof normalizeMessage>,
 ) {
   if (!message || message.messageType === "reaction") return;
@@ -2736,7 +3117,10 @@ async function reconcileRecoveredConversationAfterMessage(
         : Number(conversation.unread_count || 0) + 1,
       updated_at: new Date().toISOString(),
     })
-    .eq("id", conversation.id);
+    .eq("organization_id", session.organization_id)
+    .eq("session_id", session.id)
+    .eq("id", conversation.id)
+    .eq("lead_id", expectedLeadId);
   update = currentLastMessageAt
     ? update.eq("last_message_at", currentLastMessageAt)
     : update.is("last_message_at", null);
@@ -2856,11 +3240,20 @@ async function recoverPersistedNonManagedWhatsAppMessage(
   };
 
   const lookupLeadId = optionalUuid(lookup.lead_id);
-  const storedLeadId = optionalUuid(storedMessage.lead_id) || optionalUuid(conversation.lead_id);
+	const storedLeadId = optionalUuid(storedMessage.lead_id);
   if (lookupLeadId && storedLeadId && lookupLeadId !== storedLeadId) {
     throw new Error("legacy_whatsapp_retry_lead_collision");
   }
-  const leadId = lookupLeadId || storedLeadId;
+	if (lookupLeadId && !storedLeadId) {
+	  throw new Error("legacy_whatsapp_retry_immutable_lead_missing");
+	}
+	if (!storedLeadId) {
+	  // A quarantined/unbound inbound message has no business effects to
+	  // recover. Its replay is a handled no-op as long as the managed lookup
+	  // also remains leadless; a lookup that asserts a lead fails above.
+	  return;
+	}
+	const leadId = storedLeadId;
   let lead: JsonRecord | null = null;
   if (leadId) {
     const { data, error } = await supabase
@@ -2877,7 +3270,9 @@ async function recoverPersistedNonManagedWhatsAppMessage(
   // audit log. Recreate only that transport audit; never re-evaluate current
   // mutable routing rules for an already consumed provider delivery.
   await logInbound(session, conversation, lead, null, persistedMessage);
-  await reconcileRecoveredConversationAfterMessage(conversation, persistedMessage);
+	if (optionalUuid(conversation.lead_id) === leadId) {
+	  await reconcileRecoveredConversationAfterMessage(session, conversation, leadId, persistedMessage);
+	}
 
   if (!lead?.id || !isConfirmedClickToWhatsAppAd(persistedMessage)) return;
   const providerEventId = `${session.id}:${persistedMessage.messageId}`;
@@ -2928,9 +3323,55 @@ function mergeWhatsAppIdentityAliases(identity: ReturnType<typeof whatsappIdenti
   ].filter(Boolean));
 }
 
-async function findWhatsAppIdentityAlias(session: JsonRecord, aliases: string[]) {
+type WhatsAppIdentityAliasLookup = {
+  match: JsonRecord | null;
+  quarantineReason: string | null;
+};
+
+function resolveWhatsAppIdentityAliasRows(
+  rows: JsonRecord[],
+  normalizedAliases: string[],
+): WhatsAppIdentityAliasLookup {
+  if (rows.length === 0) return { match: null, quarantineReason: null };
+
+  const leadIds = unique(rows.map((row) => optionalUuid(row.lead_id)).filter(Boolean));
+  const canonicalJids = unique(rows
+    .map((row) => normalizeJid(row.canonical_jid, false))
+    .filter(Boolean));
+  const contactPhones = unique(rows
+    .map((row) => normalizeDigits(row.contact_phone))
+    .filter(Boolean));
+  if (leadIds.length > 1 || canonicalJids.length > 1 || contactPhones.length > 1) {
+    return {
+      match: null,
+      quarantineReason: "whatsapp_identity_alias_ambiguous",
+    };
+  }
+
+  // Prefer the provider's alias order, not mutable last_seen_at. Compatible
+  // rows are collapsed so a safe lead/phone present on a sibling alias is not
+  // lost merely because the first row has a legacy NULL field.
+  const match = normalizedAliases
+    .map((alias) => rows.find((row) => normalizeJid(row.alias_jid, false) === alias))
+    .find(Boolean) || rows[0];
+  if (!match) return { match: null, quarantineReason: null };
+  return {
+    match: {
+      ...match,
+      canonical_jid: canonicalJids[0] || match.canonical_jid || null,
+      contact_phone: contactPhones[0] || null,
+      lead_id: leadIds[0] || null,
+    },
+    quarantineReason: null,
+  };
+}
+
+async function findWhatsAppIdentityAlias(
+  session: JsonRecord,
+  aliases: string[],
+): Promise<WhatsAppIdentityAliasLookup> {
   const normalizedAliases = unique(aliases.map((alias) => normalizeJid(alias, false)).filter(Boolean));
-  if (normalizedAliases.length === 0) return null;
+  if (normalizedAliases.length === 0) return { match: null, quarantineReason: null };
 
   const { data, error } = await supabase
     .from("whatsapp_contact_identity_aliases")
@@ -2938,22 +3379,21 @@ async function findWhatsAppIdentityAlias(session: JsonRecord, aliases: string[])
     .eq("organization_id", session.organization_id)
     .eq("session_id", session.id)
     .in("alias_jid", normalizedAliases)
-    .order("last_seen_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(normalizedAliases.length);
 
   if (error) {
-    if (["42P01", "42703"].includes(error.code)) return null;
+    if (["42P01", "42703"].includes(error.code)) {
+      return { match: null, quarantineReason: null };
+    }
     throw error;
   }
 
-  return data || null;
+  return resolveWhatsAppIdentityAliasRows(data || [], normalizedAliases);
 }
 
 async function upsertWhatsAppIdentityAliases(
   session: JsonRecord,
   identity: ReturnType<typeof whatsappIdentityForMessage>,
-  lead: JsonRecord | null,
   conversation: JsonRecord,
   extraAliases: unknown[] = [],
 ) {
@@ -2984,7 +3424,6 @@ async function upsertWhatsAppIdentityAliases(
       alias_jid: aliasJid,
       canonical_jid: canonicalJid,
       contact_phone: contactPhone,
-      lead_id: conversation.lead_id || null,
       is_group: identity.isGroup,
       last_seen_at: now,
       metadata: {
@@ -3008,39 +3447,17 @@ async function upsertWhatsAppIdentityAliases(
   }
 }
 
-async function resolveAttachableLeadId(
-  session: JsonRecord,
-  conversationId: string | null,
-  candidateLeadId: string | null,
-) {
-  if (!candidateLeadId) return null;
-
-  let query = supabase
-    .from("whatsapp_conversations")
-    .select("id")
-    .eq("organization_id", session.organization_id)
-    .eq("session_id", session.id)
-    .eq("lead_id", candidateLeadId)
-    .is("deleted_at", null)
-    .or("is_group.is.null,is_group.eq.false")
-    .limit(1);
-
-  if (conversationId) query = query.neq("id", conversationId);
-
-  const { data, error } = await query.maybeSingle();
-  if (error) throw error;
-  return data?.id ? null : candidateLeadId;
-}
-
 async function safelyUpsertWhatsAppIdentityAliases(
   session: JsonRecord,
   identity: ReturnType<typeof whatsappIdentityForMessage>,
-  lead: JsonRecord | null,
   conversation: JsonRecord,
   extraAliases: unknown[] = [],
 ) {
   try {
-    await upsertWhatsAppIdentityAliases(session, identity, lead, conversation, extraAliases);
+    // Generic identity discovery must never rewrite card ownership. The
+    // row-locked conversation binding RPC is the sole writer of alias.lead_id;
+    // otherwise a delayed provider event can overwrite a newer binding.
+    await upsertWhatsAppIdentityAliases(session, identity, conversation, extraAliases);
   } catch (error) {
     console.warn("[evolution-go-webhook] identity alias update failed; message processing will continue", {
       session_id: session.id,
@@ -3050,21 +3467,449 @@ async function safelyUpsertWhatsAppIdentityAliases(
   }
 }
 
-async function ensureConversation(session: JsonRecord, message: ReturnType<typeof normalizeMessage>, lead: JsonRecord | null) {
+type WhatsAppConversationBindingSnapshot = {
+  conversationId: string | null;
+  currentLeadId: string | null;
+  activeBindingId: string | null;
+  leadResolutionQuarantineReason: string | null;
+};
+
+type WhatsAppIngressRoutingSnapshot = WhatsAppConversationBindingSnapshot & {
+  state: "bound" | "lead_match" | "unlinked" | "quarantine" | "contextual_intake" | "provider_replay" | "predecessor_inherit";
+  eventLeadId: string | null;
+  providerMessageId: string;
+  inboxEventKey: string;
+  processingLane: "live" | "backlog";
+  contextKind: "organic" | "contextual_intake";
+  contextProof: string | null;
+  ruleId: string | null;
+  originRoundRobinId: string | null;
+  managedMessageDistribution: boolean;
+  managedEventPending: boolean;
+  managedEventHandled: boolean;
+  routingKey: string;
+  bindingEligible: boolean;
+  targetMode: "snapshot" | "inherit_predecessor";
+  ingressSequence: number;
+  predecessorProviderMessageId: string | null;
+  predecessorInboxEventKey: string | null;
+  predecessorProcessingLane: "live" | "backlog" | null;
+};
+
+function ingressRoutingSnapshotForMessage(
+  payload: unknown,
+  session: JsonRecord,
+  message: ReturnType<typeof normalizeMessage>,
+  authorization: AuthorizedEvolutionGoWebhook,
+): WhatsAppIngressRoutingSnapshot | null {
+  if (!message) throw new Error("whatsapp_ingress_snapshot_message_required");
+  if (authorization.contract !== "internal_worker_lease") {
+    // Direct provider callbacks cannot atomically freeze DB routing before an
+    // ACK and must retry through the durable Go ingress. In particular they
+    // may never assert a provider-controlled __vimob_ingress object.
+    throw new Error("whatsapp_durable_ingress_required");
+  }
+  const root = isRecord(payload) ? payload : {};
+  const ingress = isRecord(root.__vimob_ingress) ? root.__vimob_ingress : {};
+  const envelope = isRecord(ingress.routing_snapshot) ? ingress.routing_snapshot : null;
+  if (!envelope) {
+    // A1-to-B1 compatibility only. B1 proves every active legacy inbox row is
+    // drained or quarantined and then rejects every new active row without v1.
+    return null;
+  }
+  if (Number(envelope.version) !== 1 || !Array.isArray(envelope.messages)) {
+    throw new Error("whatsapp_ingress_snapshot_envelope_invalid");
+  }
+  const matches = envelope.messages.filter((candidate: unknown) =>
+    isRecord(candidate) && cleanText(candidate.provider_message_id) === message.messageId
+  );
+  if (matches.length !== 1) {
+    throw new Error(matches.length === 0
+      ? "whatsapp_ingress_snapshot_message_missing"
+      : "whatsapp_ingress_snapshot_message_ambiguous");
+  }
+  const row = matches[0] as JsonRecord;
+  if (
+    Number(row.version) !== 1
+    || optionalUuid(row.organization_id) !== optionalUuid(session.organization_id)
+    || optionalUuid(row.session_id) !== optionalUuid(session.id)
+  ) {
+    throw new Error("whatsapp_ingress_snapshot_scope_invalid");
+  }
+  const state = cleanText(row.state) as WhatsAppIngressRoutingSnapshot["state"] | null;
+  if (!state || ![
+    "bound",
+    "lead_match",
+    "unlinked",
+    "quarantine",
+    "contextual_intake",
+    "provider_replay",
+    "predecessor_inherit",
+  ].includes(state)) {
+    throw new Error("whatsapp_ingress_snapshot_state_invalid");
+  }
+  const conversationId = optionalUuid(row.conversation_id);
+  const eventLeadId = optionalUuid(row.event_lead_id);
+  const currentLeadId = optionalUuid(row.current_lead_id);
+  const activeBindingId = optionalUuid(row.active_binding_id);
+  const quarantineReason = cleanText(row.quarantine_reason);
+  const contextKind = cleanText(row.context_kind) as "organic" | "contextual_intake" | null;
+  const contextProof = cleanText(row.context_proof);
+  const ruleId = optionalUuid(row.rule_id);
+  const originRoundRobinId = optionalUuid(row.origin_round_robin_id);
+  const inboxEventKey = cleanText(row.inbox_event_key);
+  const processingLane = cleanText(row.processing_lane) as "live" | "backlog" | null;
+  const managedMessageDistribution = row.managed_message_distribution === true;
+  const managedEventPending = row.managed_event_pending === true;
+  const managedEventHandled = row.managed_event_handled === true;
+  const routingKey = cleanText(row.routing_key);
+  const bindingEligible = row.binding_eligible === true;
+  const targetMode = cleanText(row.target_mode) as "snapshot" | "inherit_predecessor" | null;
+  const ingressSequence = Number(row.ingress_sequence);
+  const predecessorProviderMessageId = cleanText(row.predecessor_provider_message_id);
+  const predecessorInboxEventKey = cleanText(row.predecessor_inbox_event_key);
+  const predecessorProcessingLane = cleanText(row.predecessor_processing_lane) as "live" | "backlog" | null;
+  if (
+    !contextKind || !["organic", "contextual_intake"].includes(contextKind)
+    || !inboxEventKey
+    || !processingLane || !["live", "backlog"].includes(processingLane)
+    || !routingKey
+    || typeof row.binding_eligible !== "boolean"
+    || typeof row.managed_message_distribution !== "boolean"
+    || typeof row.managed_event_pending !== "boolean"
+    || typeof row.managed_event_handled !== "boolean"
+    || !targetMode || !["snapshot", "inherit_predecessor"].includes(targetMode)
+    || !Number.isSafeInteger(ingressSequence) || ingressSequence <= 0
+    || (activeBindingId && (!conversationId || !currentLeadId))
+    || (state === "quarantine" && (!quarantineReason || eventLeadId))
+    || (state !== "quarantine" && quarantineReason)
+    || (["bound", "lead_match", "provider_replay"].includes(state) && !eventLeadId)
+    || (state === "unlinked" && eventLeadId)
+    || (state === "predecessor_inherit" && eventLeadId)
+    || (managedMessageDistribution && (!ruleId || !originRoundRobinId || contextKind !== "contextual_intake"))
+    || (managedMessageDistribution !== (contextProof === "managed_rule"))
+    || (managedEventPending && managedEventHandled)
+    || (contextKind === "contextual_intake" && !contextProof)
+    || (bindingEligible && routingKey === "__session__")
+    || (targetMode === "inherit_predecessor" && (
+      state !== "predecessor_inherit"
+      || contextKind !== "organic"
+      || !bindingEligible
+      || !predecessorProviderMessageId
+      || !predecessorInboxEventKey
+      || !predecessorProcessingLane
+    ))
+    || (targetMode === "snapshot" && state === "predecessor_inherit")
+    || (!predecessorProviderMessageId && (predecessorInboxEventKey || predecessorProcessingLane))
+  ) {
+    throw new Error("whatsapp_ingress_snapshot_contract_invalid");
+  }
+  return {
+    state,
+    conversationId,
+    eventLeadId,
+    currentLeadId,
+    activeBindingId,
+    leadResolutionQuarantineReason: quarantineReason,
+    providerMessageId: message.messageId,
+    inboxEventKey,
+    processingLane,
+    contextKind,
+    contextProof,
+    ruleId,
+    originRoundRobinId,
+    managedMessageDistribution,
+    managedEventPending,
+    managedEventHandled,
+    routingKey,
+    bindingEligible,
+    targetMode,
+    ingressSequence,
+    predecessorProviderMessageId,
+    predecessorInboxEventKey,
+    predecessorProcessingLane,
+  };
+}
+
+function orderMessagesByIngressRoutingSnapshot(
+  payload: unknown,
+  session: JsonRecord,
+  messages: ReturnType<typeof extractMessages>,
+  authorization: AuthorizedEvolutionGoWebhook,
+) {
+  const ordered = messages.map((message, originalIndex) => ({
+    message,
+    originalIndex,
+    snapshot: ingressRoutingSnapshotForMessage(payload, session, message, authorization),
+  }));
+  const sequenced = ordered.filter((entry) => entry.snapshot !== null);
+  if (sequenced.length === 0) return messages;
+  if (sequenced.length !== ordered.length) {
+    throw new Error("whatsapp_ingress_snapshot_batch_incomplete");
+  }
+  const seen = new Set<number>();
+  for (const entry of sequenced) {
+    const sequence = entry.snapshot!.ingressSequence;
+    if (seen.has(sequence)) throw new Error("whatsapp_ingress_snapshot_sequence_ambiguous");
+    seen.add(sequence);
+  }
+  return ordered
+    .sort((left, right) =>
+      left.snapshot!.ingressSequence - right.snapshot!.ingressSequence
+      || left.originalIndex - right.originalIndex
+    )
+    .map((entry) => entry.message);
+}
+
+type WhatsAppProviderEventBinding = {
+  bindingId: string;
+  conversationId: string;
+  leadId: string;
+  stale: boolean;
+};
+
+async function findWhatsAppProviderEventBinding(
+  session: JsonRecord,
+  message: ReturnType<typeof normalizeMessage>,
+): Promise<WhatsAppProviderEventBinding | null> {
+  if (!message?.messageId) return null;
+  const { data, error } = await supabase
+    .from("whatsapp_conversation_lead_bindings")
+    .select("id, conversation_id, lead_id, stale")
+    .eq("organization_id", session.organization_id)
+    .eq("session_id", session.id)
+    .eq("provider_message_id", message.messageId)
+    .limit(2);
+  if (error) throw error;
+  if ((data || []).length > 1) {
+    throw new Error("whatsapp_provider_event_binding_ambiguous");
+  }
+  const row = data?.[0];
+  if (!row) return null;
+  const bindingId = optionalUuid(row.id);
+  const conversationId = optionalUuid(row.conversation_id);
+  const leadId = optionalUuid(row.lead_id);
+  if (!bindingId || !conversationId || !leadId || typeof row.stale !== "boolean") {
+    throw new Error("whatsapp_provider_event_binding_invalid");
+  }
+  return { bindingId, conversationId, leadId, stale: row.stale };
+}
+
+type WhatsAppInheritedRoutingTarget = {
+  ready: boolean;
+  terminal: boolean;
+  reason: string | null;
+  conversationId: string | null;
+  leadId: string | null;
+  activeBindingId: string | null;
+};
+
+async function resolveWhatsAppInheritedRoutingTarget(
+  session: JsonRecord,
+  snapshot: WhatsAppIngressRoutingSnapshot,
+): Promise<WhatsAppInheritedRoutingTarget> {
+  if (snapshot.targetMode !== "inherit_predecessor") {
+    throw new Error("whatsapp_inherited_target_route_invalid");
+  }
+  const { data, error } = await supabase.rpc(
+    "resolve_whatsapp_webhook_inherited_routing_target",
+    {
+      p_organization_id: session.organization_id,
+      p_session_id: session.id,
+      p_provider_message_id: snapshot.providerMessageId,
+    },
+  );
+  if (error) throw error;
+  if (!isRecord(data) || typeof data.ready !== "boolean" || typeof data.terminal !== "boolean") {
+    throw new Error("whatsapp_inherited_target_result_invalid");
+  }
+  const reason = cleanText(data.reason);
+  if (!data.ready) {
+    if (!data.terminal || !reason) throw new Error("whatsapp_inherited_target_result_incomplete");
+    return {
+      ready: false,
+      terminal: true,
+      reason,
+      conversationId: null,
+      leadId: null,
+      activeBindingId: null,
+    };
+  }
+  const conversationId = optionalUuid(data.conversation_id);
+  const leadId = optionalUuid(data.lead_id);
+  const activeBindingId = optionalUuid(data.active_binding_id);
+  if (data.terminal || reason || !conversationId || !leadId || !activeBindingId) {
+    throw new Error("whatsapp_inherited_target_result_incomplete");
+  }
+  return {
+    ready: true,
+    terminal: false,
+    reason: null,
+    conversationId,
+    leadId,
+    activeBindingId,
+  };
+}
+
+function parseWhatsAppConversationBindingSnapshot(
+  conversation: JsonRecord | null,
+): WhatsAppConversationBindingSnapshot {
+  if (!conversation) {
+    return {
+      conversationId: null,
+      currentLeadId: null,
+      activeBindingId: null,
+      leadResolutionQuarantineReason: null,
+    };
+  }
+  const conversationId = optionalUuid(conversation.id);
+  if (!conversationId) throw new Error("whatsapp_conversation_binding_snapshot_invalid");
+  const activeBindings = Array.isArray(conversation.active_bindings)
+    ? conversation.active_bindings.filter((binding) => isRecord(binding) && binding.active_to == null)
+    : (isRecord(conversation.active_bindings) && conversation.active_bindings.active_to == null
+      ? [conversation.active_bindings]
+      : []);
+  if (activeBindings.length > 1) {
+    throw new Error("whatsapp_conversation_active_binding_ambiguous");
+  }
+  const currentLeadId = optionalUuid(conversation.lead_id);
+  const activeBindingId = optionalUuid(activeBindings[0]?.id);
+  const activeBindingLeadId = optionalUuid(activeBindings[0]?.lead_id);
+  if (activeBindings.length === 1 && (!activeBindingId || activeBindingLeadId !== currentLeadId)) {
+    throw new Error("whatsapp_conversation_binding_snapshot_inconsistent");
+  }
+  return {
+    conversationId,
+    currentLeadId,
+    activeBindingId,
+    leadResolutionQuarantineReason: null,
+  };
+}
+
+async function captureWhatsAppConversationBindingSnapshot(
+  session: JsonRecord,
+  message: ReturnType<typeof normalizeMessage>,
+  storedConversationId?: unknown,
+): Promise<WhatsAppConversationBindingSnapshot> {
+  if (!message) throw new Error("Missing normalized message");
+  const requiredConversationId = optionalUuid(storedConversationId);
+  if (storedConversationId && !requiredConversationId) {
+    throw new Error("whatsapp_stored_conversation_identity_invalid");
+  }
+  const snapshotSelect = "id, lead_id, remote_jid, active_bindings:whatsapp_conversation_lead_bindings(id, lead_id, active_to)";
+  if (requiredConversationId) {
+    const { data, error } = await supabase
+      .from("whatsapp_conversations")
+      .select(snapshotSelect)
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .eq("id", requiredConversationId)
+      .is("active_bindings.active_to", null)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) throw new Error("whatsapp_stored_conversation_missing");
+    return parseWhatsAppConversationBindingSnapshot(data);
+  }
+  const identity = whatsappIdentityForMessage(message);
+  let remoteJid = identity.remoteJid || message.remoteJid;
+  let contactPhone = message.isGroup ? null : (identity.contactPhone || null);
+  let identityAliases = mergeWhatsAppIdentityAliases(identity, [message.remoteJid, remoteJid]);
+  const aliasLookup = await findWhatsAppIdentityAlias(session, identityAliases);
+  if (aliasLookup.quarantineReason) {
+    return {
+      conversationId: null,
+      currentLeadId: null,
+      activeBindingId: null,
+      leadResolutionQuarantineReason: aliasLookup.quarantineReason,
+    };
+  }
+  const aliasMatch = aliasLookup.match;
+  if (aliasMatch) {
+    if (!message.isGroup) {
+      contactPhone = contactPhone || aliasMatch.contact_phone || phoneFromJidLike(aliasMatch.canonical_jid) || null;
+    }
+    if (!isUsableCanonicalJid(remoteJid) || isOpaqueJid(normalizeJid(remoteJid, false))) {
+      remoteJid = normalizeJid(aliasMatch.canonical_jid, message.isGroup) || remoteJid;
+    }
+    identityAliases = mergeWhatsAppIdentityAliases(identity, [
+      ...identityAliases,
+      aliasMatch.alias_jid,
+      aliasMatch.canonical_jid,
+      aliasMatch.contact_phone ? `${aliasMatch.contact_phone}@s.whatsapp.net` : "",
+      aliasMatch.contact_phone ? `${aliasMatch.contact_phone}@c.us` : "",
+    ]);
+  }
+
+  let existing: JsonRecord | null = null;
+  if (identityAliases.length > 0) {
+    const { data, error } = await supabase
+      .from("whatsapp_conversations")
+      .select(snapshotSelect)
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .in("remote_jid", identityAliases)
+      .is("deleted_at", null)
+      .is("active_bindings.active_to", null)
+      .order("last_message_at", { ascending: false, nullsFirst: false });
+    if (error) throw error;
+    const matches = data || [];
+    const canonical = matches.find((conversation: JsonRecord) => conversation.remote_jid === remoteJid) || null;
+    if (!canonical && matches.length > 1) {
+      throw new Error("whatsapp_conversation_identity_ambiguous");
+    }
+    existing = canonical || matches[0] || null;
+  }
+
+  const phoneVariants = message.isGroup
+    ? []
+    : phoneMatchVariantsForWhatsApp(contactPhone, remoteJid, message.remoteJid, ...identityAliases);
+  if (!existing && phoneVariants.length > 0) {
+    const { data, error } = await supabase
+      .from("whatsapp_conversations")
+      .select(snapshotSelect)
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .in("contact_phone", phoneVariants)
+      .is("deleted_at", null)
+      .is("active_bindings.active_to", null)
+      .order("last_message_at", { ascending: false, nullsFirst: false });
+    if (error) throw error;
+    if ((data || []).length > 1) {
+      throw new Error("whatsapp_conversation_phone_ambiguous");
+    }
+    existing = data?.[0] || null;
+  }
+  return parseWhatsAppConversationBindingSnapshot(existing);
+}
+
+async function ensureConversation(
+  session: JsonRecord,
+  message: ReturnType<typeof normalizeMessage>,
+  lead: JsonRecord | null,
+  storedConversationId?: unknown,
+  knownLeadResolutionQuarantineReason?: string | null,
+) {
   if (!message) throw new Error("Missing normalized message");
   const identity = whatsappIdentityForMessage(message);
   let remoteJid = identity.remoteJid || message.remoteJid;
   let contactPhone = message.isGroup ? null : (identity.contactPhone || null);
   let identityAliases = mergeWhatsAppIdentityAliases(identity, [message.remoteJid, remoteJid]);
+  const requiredConversationId = optionalUuid(storedConversationId);
+  if (storedConversationId && !requiredConversationId) {
+    throw new Error("whatsapp_stored_conversation_identity_invalid");
+  }
+  let leadResolutionQuarantineReason = cleanText(knownLeadResolutionQuarantineReason) || null;
   let aliasMatch: JsonRecord | null = null;
-  try {
-    aliasMatch = await findWhatsAppIdentityAlias(session, identityAliases);
-  } catch (error) {
-    console.warn("[evolution-go-webhook] identity alias lookup failed; direct identity matching will continue", {
-      session_id: session.id,
-      remote_jid: remoteJid,
-      error: error instanceof Error ? error.message : String(error),
-    });
+  if (!requiredConversationId && !leadResolutionQuarantineReason) {
+    const aliasLookup = await findWhatsAppIdentityAlias(session, identityAliases);
+    aliasMatch = aliasLookup.match;
+    leadResolutionQuarantineReason = aliasLookup.quarantineReason;
+  }
+  if (leadResolutionQuarantineReason) {
+    // Conflicting aliases are evidence, not routing input. Restrict the
+    // physical lookup to the provider's primary JID and never update the
+    // winning alias/conversation merely because it was seen most recently.
+    identityAliases = unique([normalizeJid(remoteJid, message.isGroup)].filter(Boolean));
   }
 
   if (aliasMatch) {
@@ -3090,48 +3935,72 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
   let existing: JsonRecord | null = null;
   let canonicalConflict = false;
 
-  if (identityAliases.length > 0) {
+  if (requiredConversationId) {
+    const { data, error } = await supabase
+      .from("whatsapp_conversations")
+      .select("*")
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .eq("id", requiredConversationId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) throw new Error("whatsapp_stored_conversation_missing");
+    existing = data;
+  }
+
+  if (!existing && identityAliases.length > 0) {
     const { data, error } = await supabase
       .from("whatsapp_conversations")
       .select("*")
       .eq("organization_id", session.organization_id)
       .eq("session_id", session.id)
       .in("remote_jid", identityAliases)
-      .order("last_message_at", { ascending: false, nullsFirst: false })
-      .limit(10);
+	  .is("deleted_at", null)
+	  .order("last_message_at", { ascending: false, nullsFirst: false });
     if (error) throw error;
 
     const matches = data || [];
     const canonical = matches.find((conversation: JsonRecord) =>
       conversation.remote_jid === remoteJid
     ) || null;
-    existing = canonical || matches[0] || null;
-    canonicalConflict = Boolean(canonical && existing && canonical.id !== existing.id);
+	if (!canonical && matches.length > 1) {
+	  throw new Error("whatsapp_conversation_identity_ambiguous");
+	}
+	existing = canonical || matches[0] || null;
+	canonicalConflict = Boolean(canonical && matches.some((candidate: JsonRecord) => candidate.id !== canonical.id));
   }
 
   const phoneVariants = message.isGroup
     ? []
     : phoneMatchVariantsForWhatsApp(contactPhone, remoteJid, message.remoteJid, ...identityAliases);
 
-  if (!existing && !message.isGroup && phoneVariants.length > 0) {
+  if (!existing && !leadResolutionQuarantineReason && !message.isGroup && phoneVariants.length > 0) {
     const { data, error } = await supabase
       .from("whatsapp_conversations")
       .select("*")
       .eq("organization_id", session.organization_id)
       .eq("session_id", session.id)
       .in("contact_phone", phoneVariants)
-      .order("last_message_at", { ascending: false, nullsFirst: false })
-      .limit(10);
+	  .is("deleted_at", null)
+	  .order("last_message_at", { ascending: false, nullsFirst: false });
     if (error) throw error;
-    existing = data?.[0] || null;
+	if ((data || []).length > 1) {
+	  throw new Error("whatsapp_conversation_phone_ambiguous");
+	}
+	existing = data?.[0] || null;
   }
 
   if (existing) {
-    const attachableLeadId = existing.lead_id || await resolveAttachableLeadId(
-      session,
-      existing.id,
-      lead?.id || null,
-    );
+    if (leadResolutionQuarantineReason) {
+      return {
+        ...existing,
+        __whatsapp_identity_alias_quarantine_reason: leadResolutionQuarantineReason,
+      };
+    }
+    // Conversation ownership changes only through the binding RPC. Preserve
+    // the current lead here so a new queue context can never write a message
+    // into the previous card before the locked activation succeeds.
+    const attachableLeadId = existing.lead_id || null;
     const contactName = message.isGroup
       ? (resolvedGroupName || existing.contact_name || "Grupo WhatsApp")
       : (!message.fromMe && message.contactName ? message.contactName : existing.contact_name);
@@ -3139,7 +4008,6 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
       contact_name: contactName,
       contact_phone: existing.contact_phone || contactPhone,
       contact_picture: message.avatarUrl || existing.contact_picture,
-      lead_id: attachableLeadId,
       assigned_user_id: existing.assigned_user_id || (attachableLeadId ? optionalUuid(lead?.assigned_user_id) : null) || conversationOwnerUserId,
       updated_at: new Date().toISOString(),
       metadata: {
@@ -3151,7 +4019,7 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
           contact_phone: contactPhone,
         },
         ...(message.isGroup && resolvedGroupName ? { group_name: resolvedGroupName } : {}),
-        ...(attribution ? { whatsapp_attribution: attribution } : {}),
+        ...(!leadResolutionQuarantineReason && attribution ? { whatsapp_attribution: attribution } : {}),
       },
     };
 
@@ -3175,22 +4043,11 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
       .single();
     if (error) throw error;
 
-    if (attachableLeadId && !existing.lead_id) {
-      const { error: messageLeadUpdateError } = await supabase
-        .from("whatsapp_messages")
-        .update({ lead_id: attachableLeadId })
-        .eq("organization_id", session.organization_id)
-        .eq("session_id", session.id)
-        .eq("conversation_id", existing.id)
-        .is("lead_id", null);
-      if (messageLeadUpdateError) throw messageLeadUpdateError;
-    }
-
-    await safelyUpsertWhatsAppIdentityAliases(session, identity, lead, data, identityAliases);
+    await safelyUpsertWhatsAppIdentityAliases(session, identity, data, identityAliases);
     return data;
   }
 
-  const attachableLeadId = await resolveAttachableLeadId(session, null, lead?.id || null);
+  const attachableLeadId = null;
 
   const { data, error } = await supabase
     .from("whatsapp_conversations")
@@ -3216,7 +4073,7 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
           contact_phone: contactPhone,
         },
         ...(message.isGroup && resolvedGroupName ? { group_name: resolvedGroupName } : {}),
-        ...(attribution ? { whatsapp_attribution: attribution } : {}),
+        ...(!leadResolutionQuarantineReason && attribution ? { whatsapp_attribution: attribution } : {}),
       },
     })
     .select("*")
@@ -3233,46 +4090,148 @@ async function ensureConversation(session: JsonRecord, message: ReturnType<typeo
         .maybeSingle();
       if (recoveryError) throw recoveryError;
       if (recovered) {
-        await safelyUpsertWhatsAppIdentityAliases(session, identity, lead, recovered, identityAliases);
-        return recovered;
+        if (!leadResolutionQuarantineReason) {
+          await safelyUpsertWhatsAppIdentityAliases(session, identity, recovered, identityAliases);
+        }
+        return leadResolutionQuarantineReason
+          ? {
+              ...recovered,
+              __whatsapp_identity_alias_quarantine_reason: leadResolutionQuarantineReason,
+            }
+          : recovered;
       }
     }
     throw error;
   }
-  await safelyUpsertWhatsAppIdentityAliases(session, identity, lead, data, identityAliases);
-  return data;
+  if (!leadResolutionQuarantineReason) {
+    await safelyUpsertWhatsAppIdentityAliases(session, identity, data, identityAliases);
+  }
+  return leadResolutionQuarantineReason
+    ? {
+        ...data,
+        __whatsapp_identity_alias_quarantine_reason: leadResolutionQuarantineReason,
+      }
+    : data;
+}
+
+async function activateWhatsAppConversationLeadBinding(
+  session: JsonRecord,
+  conversation: JsonRecord,
+  lead: JsonRecord,
+  message: ReturnType<typeof normalizeMessage>,
+  expected: WhatsAppConversationBindingSnapshot,
+) {
+  if (!message || !conversation?.id || !lead?.id) {
+    throw new Error("whatsapp_conversation_lead_binding_context_invalid");
+  }
+  if (expected.conversationId && optionalUuid(conversation.id) !== expected.conversationId) {
+    throw new Error("whatsapp_conversation_binding_snapshot_changed");
+  }
+  const { data, error } = await supabase.rpc("activate_whatsapp_conversation_lead_binding_if_current", {
+    p_organization_id: session.organization_id,
+    p_conversation_id: conversation.id,
+    p_lead_id: lead.id,
+    p_provider_message_id: message.messageId || null,
+    p_expected_active_binding_id: expected.activeBindingId,
+    p_expected_current_lead_id: expected.currentLeadId,
+  });
+  if (error) throw error;
+  if (
+    !isRecord(data)
+    || data.success !== true
+    || optionalUuid(data.conversation_id) !== optionalUuid(conversation.id)
+    || optionalUuid(data.lead_id) !== optionalUuid(lead.id)
+    || !optionalUuid(data.binding_id)
+    || typeof data.stale !== "boolean"
+    || typeof data.is_current !== "boolean"
+    || (data.is_current === true && (
+      data.stale === true
+      || optionalUuid(data.active_lead_id) !== optionalUuid(lead.id)
+    ))
+    || (data.stale === true && data.is_current === true)
+  ) {
+    throw new Error("whatsapp_conversation_lead_binding_incomplete");
+  }
+  if (data.is_current !== true && !cleanText(message.messageId)) {
+    throw new Error("whatsapp_historical_conversation_binding_without_provider_identity");
+  }
+
+  const boundConversation = {
+    ...conversation,
+    lead_id: optionalUuid(data.active_lead_id),
+  };
+  await safelyUpsertWhatsAppIdentityAliases(
+    session,
+    whatsappIdentityForMessage(message),
+    boundConversation,
+    [message.remoteJid, message.senderJid],
+  );
+  return {
+    conversation: boundConversation,
+    eventLeadId: optionalUuid(data.lead_id),
+    isCurrent: data.is_current === true,
+  };
 }
 
 async function findStoredMessage(
   session: JsonRecord,
   message: ReturnType<typeof normalizeMessage>,
 ) {
-  if (!message) return null;
-  const { data, error } = await supabase
-    .from("whatsapp_messages")
-    .select("id, conversation_id, metadata")
-    .eq("organization_id", session.organization_id)
-    .eq("session_id", session.id)
-    .eq("message_id", message.messageId)
-    .maybeSingle();
-  if (error) throw error;
-  return data;
+  return await findMessageByProviderIdentity(
+    session,
+    message,
+    "id, conversation_id, lead_id, metadata",
+  );
 }
 
-async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead: JsonRecord | null, message: ReturnType<typeof normalizeMessage>) {
+async function findMessageByProviderIdentity(
+  session: JsonRecord,
+  message: ReturnType<typeof normalizeMessage>,
+  columns: string,
+) {
+  if (!message) return null;
+  const matches = new Map<string, JsonRecord>();
+  for (const identityColumn of ["message_id", "provider_message_id"] as const) {
+    const { data, error } = await supabase
+      .from("whatsapp_messages")
+      .select(columns)
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .eq(identityColumn, message.messageId)
+      .maybeSingle();
+    if (error) throw error;
+    if (data?.id) matches.set(String(data.id), data);
+  }
+  if (matches.size > 1) {
+    throw new Error("whatsapp_message_provider_identity_conflict");
+  }
+  return matches.values().next().value || null;
+}
+
+async function insertMessage(
+  session: JsonRecord,
+  conversation: JsonRecord,
+  lead: JsonRecord | null,
+  message: ReturnType<typeof normalizeMessage>,
+  leadResolutionQuarantineReason: string | null = null,
+  allowMediaEffects = true,
+) {
   if (!message) return { inserted: false, message: null };
+  const eventLeadId = leadResolutionQuarantineReason
+    ? null
+    : optionalUuid(lead?.id || conversation.lead_id);
 
-  const { data: existing, error: existingError } = await supabase
-    .from("whatsapp_messages")
-    .select("id, conversation_id, media_storage_path, media_status, media_error, metadata")
-    .eq("organization_id", session.organization_id)
-    .eq("session_id", session.id)
-    .eq("message_id", message.messageId)
-    .maybeSingle();
+  const existing = await findMessageByProviderIdentity(
+    session,
+    message,
+    "id, conversation_id, lead_id, media_storage_path, media_status, media_error, metadata",
+  );
 
-  if (existingError) throw existingError;
-
-  const isMedia = ["image", "video", "audio", "document", "sticker"].includes(message.messageType);
+  // Quarantine persists only neutral provider evidence. It must never start a
+  // media download/storage side effect for whichever card currently owns the
+  // physical conversation.
+  const isMedia = allowMediaEffects && !leadResolutionQuarantineReason
+    && ["image", "video", "audio", "document", "sticker"].includes(message.messageType);
   const media = isMedia && !existing?.media_storage_path
     ? await storeInboundMedia({ session, message })
     : null;
@@ -3288,18 +4247,18 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
     organization_id: session.organization_id,
     conversation_id: conversation.id,
     session_id: session.id,
-    lead_id: conversation.lead_id || null,
+    lead_id: eventLeadId,
     message_id: message.messageId,
     provider_message_id: message.messageId,
     from_me: message.fromMe,
     message_type: message.messageType,
     content: message.content,
-    media_url: message.mediaUrl,
-    media_mime_type: media?.contentType || message.mediaMimeType,
+    media_url: !allowMediaEffects || leadResolutionQuarantineReason ? null : message.mediaUrl,
+    media_mime_type: !allowMediaEffects || leadResolutionQuarantineReason ? null : (media?.contentType || message.mediaMimeType),
     media_storage_path: mediaStoragePath,
     media_status: mediaStatus,
     media_error: mediaError,
-    media_size: media?.size || message.mediaSize,
+    media_size: !allowMediaEffects || leadResolutionQuarantineReason ? null : (media?.size || message.mediaSize),
     remote_jid: conversation.remote_jid || message.remoteJid,
     sender_jid: message.senderJid,
     sender_name: message.senderName,
@@ -3312,6 +4271,17 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
     received_at: message.fromMe ? null : new Date().toISOString(),
     metadata: pendingEvolutionGoEffectMetadata({
       source: "evolution_go_webhook",
+      whatsapp_event_binding_is_current: allowMediaEffects && !leadResolutionQuarantineReason,
+      ...(leadResolutionQuarantineReason
+        ? {
+          lead_resolution_quarantine: {
+            reason: leadResolutionQuarantineReason,
+            terminal: true,
+            retryable: false,
+            recorded_at: new Date().toISOString(),
+          },
+        }
+        : {}),
       whatsapp_attribution: whatsappAttribution(message),
       whatsapp_referral: message.referral,
       raw: message.raw,
@@ -3319,14 +4289,38 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
   };
 
   if (existing) {
-    const movedConversation = existing.conversation_id && existing.conversation_id !== conversation.id;
+	const existingConversationId = optionalUuid(existing.conversation_id);
+	const requestedConversationId = optionalUuid(conversation.id);
+	const existingLeadId = optionalUuid(existing.lead_id);
+	if (!existingConversationId || existingConversationId !== requestedConversationId) {
+	  throw new Error("whatsapp_message_conversation_identity_conflict");
+	}
+	if (existingLeadId && existingLeadId !== eventLeadId) {
+	  throw new Error("whatsapp_message_lead_identity_conflict");
+	}
+	if (!eventLeadId && existingLeadId) {
+	  throw new Error("whatsapp_message_quarantine_identity_conflict");
+	}
     const { data, error } = await supabase
       .from("whatsapp_messages")
       .update({
-        ...row,
+        // Provider replay is immutable identity-wise. A legacy NULL may be
+        // filled only with the event's ledgered card; a non-NULL identity is
+        // never moved to another conversation/card.
+        lead_id: existingLeadId || eventLeadId,
         metadata: pendingEvolutionGoEffectMetadata({
           ...(isRecord(existing.metadata) ? existing.metadata : {}),
           source: "evolution_go_webhook",
+          ...(leadResolutionQuarantineReason
+            ? {
+              lead_resolution_quarantine: {
+                reason: leadResolutionQuarantineReason,
+                terminal: true,
+                retryable: false,
+                recorded_at: new Date().toISOString(),
+              },
+            }
+            : {}),
           whatsapp_attribution: whatsappAttribution(message),
           whatsapp_referral: message.referral,
           raw: message.raw,
@@ -3342,7 +4336,7 @@ async function insertMessage(session: JsonRecord, conversation: JsonRecord, lead
       .select("*")
       .single();
     if (error) throw error;
-    return { inserted: Boolean(movedConversation), message: data };
+    return { inserted: false, message: data };
   }
 
   const { data, error } = await supabase
@@ -3384,7 +4378,7 @@ async function markMessageDeleted(session: JsonRecord, message: ReturnType<typeo
 
   const { data: target, error: targetError } = await supabase
     .from("whatsapp_messages")
-    .select("id, conversation_id, sent_at, metadata")
+    .select("id, conversation_id, lead_id, sent_at, metadata")
     .eq("organization_id", session.organization_id)
     .eq("session_id", session.id)
     .eq("message_id", message.deletedMessageId)
@@ -3421,7 +4415,7 @@ async function markMessageDeleted(session: JsonRecord, message: ReturnType<typeo
   if (updateError) throw updateError;
 
   if (target.sent_at) {
-    const { error: conversationError } = await supabase
+    let conversationUpdate = supabase
       .from("whatsapp_conversations")
       .update({
         last_message: "Esta mensagem foi apagada",
@@ -3432,6 +4426,10 @@ async function markMessageDeleted(session: JsonRecord, message: ReturnType<typeo
       .eq("session_id", session.id)
       .eq("id", target.conversation_id)
       .eq("last_message_at", target.sent_at);
+    conversationUpdate = target.lead_id
+      ? conversationUpdate.eq("lead_id", target.lead_id)
+      : conversationUpdate.is("lead_id", null);
+    const { error: conversationError } = await conversationUpdate;
     if (conversationError) throw conversationError;
   }
 
@@ -3441,9 +4439,12 @@ async function markMessageDeleted(session: JsonRecord, message: ReturnType<typeo
 async function updateConversationAfterMessage(
   session: JsonRecord,
   conversation: JsonRecord,
+  expectedLeadId: string | null,
   normalized: ReturnType<typeof normalizeMessage>,
 ) {
-  if (!normalized || normalized.messageType === "reaction") return;
+  if (!normalized || normalized.messageType === "reaction") {
+    return await isConversationLeadBindingCurrent(session, conversation.id, expectedLeadId);
+  }
   const effectKey = await evolutionGoEffectFingerprint(
     session.organization_id,
     session.id,
@@ -3453,7 +4454,8 @@ async function updateConversationAfterMessage(
   let current = conversation;
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
-    if (hasConversationUnreadEffect(current.metadata, effectKey)) return;
+    if (optionalUuid(current.lead_id) !== expectedLeadId) return false;
+    if (hasConversationUnreadEffect(current.metadata, effectKey)) return true;
     if (
       conversationUnreadEffectCount(current.metadata) >=
         EVOLUTION_GO_UNREAD_LEDGER_LIMIT
@@ -3490,6 +4492,9 @@ async function updateConversationAfterMessage(
       .eq("organization_id", session.organization_id)
       .eq("session_id", session.id)
       .eq("id", current.id);
+    updateQuery = expectedLeadId
+      ? updateQuery.eq("lead_id", expectedLeadId)
+      : updateQuery.is("lead_id", null);
     updateQuery = previousUpdatedAt
       ? updateQuery.eq("updated_at", previousUpdatedAt)
       : updateQuery.is("updated_at", null);
@@ -3497,7 +4502,7 @@ async function updateConversationAfterMessage(
       .select("*")
       .maybeSingle();
     if (error) throw error;
-    if (data?.id) return;
+    if (data?.id) return true;
 
     const { data: refreshed, error: refreshError } = await supabase
       .from("whatsapp_conversations")
@@ -3508,9 +4513,29 @@ async function updateConversationAfterMessage(
       .maybeSingle();
     if (refreshError) throw refreshError;
     if (!refreshed) throw new Error("Conversation disappeared during webhook processing");
+    if (optionalUuid(refreshed.lead_id) !== expectedLeadId) return false;
     current = refreshed;
   }
   throw new Error("Conversation webhook effect remained contended");
+}
+
+async function isConversationLeadBindingCurrent(
+  session: JsonRecord,
+  conversationId: unknown,
+  expectedLeadId: string | null,
+) {
+  let query = supabase
+    .from("whatsapp_conversations")
+    .select("id")
+    .eq("organization_id", session.organization_id)
+    .eq("session_id", session.id)
+    .eq("id", conversationId);
+  query = expectedLeadId
+    ? query.eq("lead_id", expectedLeadId)
+    : query.is("lead_id", null);
+  const { data, error } = await query.maybeSingle();
+  if (error) throw error;
+  return Boolean(data?.id);
 }
 
 async function releaseConversationMessageEffect(
@@ -3597,13 +4622,18 @@ async function logInbound(session: JsonRecord, conversation: JsonRecord, lead: J
   if (lookupError) throw lookupError;
 
   if (existing?.id) {
+	const existingLeadId = optionalUuid(existing.lead_id);
+	const eventLeadId = optionalUuid(lead?.id);
+	if (existingLeadId && existingLeadId !== eventLeadId) {
+	  throw new Error("whatsapp_inbound_log_lead_identity_conflict");
+	}
     const nonNullDetails = Object.fromEntries(
       Object.entries(details).filter(([, value]) => value !== null && value !== undefined),
     );
     const { error: updateError } = await supabase
       .from("whatsapp_inbound_logs")
       .update({
-        lead_id: existing.lead_id || lead?.id || null,
+		lead_id: existingLeadId || eventLeadId,
         matched_rule_id: existing.matched_rule_id || rule?.id || null,
         assigned_user_id: existing.assigned_user_id || lead?.assigned_user_id || null,
         match_details: {
@@ -3636,6 +4666,7 @@ async function triggerAutoReply(
   conversation: JsonRecord,
   storedMessage: JsonRecord | null,
   message: ReturnType<typeof normalizeMessage>,
+  expectedLeadId: string,
 ) {
   if (
     !message || message.fromMe || message.isGroup ||
@@ -3660,6 +4691,7 @@ async function triggerAutoReply(
         sessionId: session.id,
         conversationId: conversation.id,
         messageId: storedMessage.id,
+        expectedLeadId,
         providerMessageId: message.messageId,
         text: message.content,
       }),
@@ -3691,7 +4723,17 @@ async function handleMessages(
   event: string,
   authorization: AuthorizedEvolutionGoWebhook,
 ) {
-  const messages = extractMessages(payload);
+  let messages = extractMessages(payload);
+  if (messages.length > 0 && authorization.contract !== "internal_worker_lease") {
+    // Message callbacks must enter through the Go API, which captures routing
+    // provenance in the same transaction as the durable inbox insert. Edge
+    // cannot provide that atomicity for a direct provider request, so it
+    // returns a retryable failure instead of acknowledging weaker provenance.
+    throw new Error("whatsapp_durable_ingress_required");
+  }
+  if (messages.length > 1) {
+    messages = orderMessagesByIngressRoutingSnapshot(payload, session, messages, authorization);
+  }
   let processed = 0;
   let duplicates = 0;
   let inProgress = 0;
@@ -3781,14 +4823,94 @@ async function handleMessages(
         }
       }
 
+      const providerEventBinding = await findWhatsAppProviderEventBinding(session, message);
+      const storedConversationId = optionalUuid(storedBeforeProcessing?.conversation_id);
+      const storedLeadId = optionalUuid(storedBeforeProcessing?.lead_id);
+      const ingressRoutingSnapshot = ingressRoutingSnapshotForMessage(
+        payload,
+        session,
+        message,
+        authorization,
+      );
+      let inheritedRoutingTarget: WhatsAppInheritedRoutingTarget | null = null;
+      let inheritedRoutingQuarantineReason: string | null = null;
+      if (
+        ingressRoutingSnapshot?.targetMode === "inherit_predecessor"
+        && !providerEventBinding
+        && !storedLeadId
+      ) {
+        inheritedRoutingTarget = await resolveWhatsAppInheritedRoutingTarget(
+          session,
+          ingressRoutingSnapshot,
+        );
+        if (!inheritedRoutingTarget.ready) {
+          inheritedRoutingQuarantineReason = inheritedRoutingTarget.reason;
+        } else if (
+          ingressRoutingSnapshot.conversationId
+          && ingressRoutingSnapshot.conversationId !== inheritedRoutingTarget.conversationId
+        ) {
+          throw new Error("whatsapp_inherited_target_conversation_conflict");
+        }
+      }
+      if (
+        providerEventBinding
+        && (
+          (storedConversationId && storedConversationId !== providerEventBinding.conversationId)
+          || (storedLeadId && storedLeadId !== providerEventBinding.leadId)
+        )
+      ) {
+        throw new Error("whatsapp_provider_event_persistence_identity_conflict");
+      }
+      if (
+        ingressRoutingSnapshot
+        && (
+          (providerEventBinding && (
+            (ingressRoutingSnapshot.conversationId
+              && providerEventBinding.conversationId !== ingressRoutingSnapshot.conversationId)
+            || (ingressRoutingSnapshot.eventLeadId
+              && providerEventBinding.leadId !== ingressRoutingSnapshot.eventLeadId)
+          ))
+          || (storedConversationId && ingressRoutingSnapshot.conversationId
+            && storedConversationId !== ingressRoutingSnapshot.conversationId)
+          || (storedLeadId && ingressRoutingSnapshot.eventLeadId
+            && storedLeadId !== ingressRoutingSnapshot.eventLeadId)
+        )
+      ) {
+        throw new Error("whatsapp_ingress_snapshot_persistence_identity_conflict");
+      }
+
+      // Freeze the physical conversation's binding version before any lead or
+      // routing resolution. The later row-locked CAS records a losing event as
+      // historical instead of letting a slow webhook undo a newer relink.
+      const conversationBindingSnapshot = ingressRoutingSnapshot || ((
+        !message.fromMe
+        && !message.isGroup
+        && message.messageType !== "reaction"
+      )
+        ? await captureWhatsAppConversationBindingSnapshot(
+          session,
+          message,
+          storedConversationId || providerEventBinding?.conversationId,
+        )
+        : {
+            conversationId: null,
+            currentLeadId: null,
+            activeBindingId: null,
+            leadResolutionQuarantineReason: null,
+          });
+
       let rule: JsonRecord | null = null;
       let lead: JsonRecord | null = null;
       let managedRuleMatched = false;
       let managedEntryWasPending = false;
       let managedEntryAlreadyHandled = false;
+      let leadResolutionQuarantineReason: string | null =
+        terminalLeadResolutionQuarantineReason(storedBeforeProcessing?.metadata)
+        || conversationBindingSnapshot.leadResolutionQuarantineReason
+        || inheritedRoutingQuarantineReason;
       const confirmedCtwaAd = isConfirmedClickToWhatsAppAd(message);
       const isReactionEvent = message.messageType === "reaction";
-      if (!message.fromMe && !message.isGroup && !isReactionEvent) {
+      if (!message.fromMe && !message.isGroup && !isReactionEvent && !leadResolutionQuarantineReason) {
         let managedEntryLookup: JsonRecord | null = null;
         try {
           managedEntryLookup = await lookupManagedWhatsAppLeadEntry(session, message);
@@ -3799,6 +4921,22 @@ async function handleMessages(
             error: redactLogText(error),
           });
           throw error;
+        }
+        if (
+          ingressRoutingSnapshot
+          && managedEntryLookup
+          && (managedEntryLookup.handled === true || managedEntryLookup.pending === true)
+        ) {
+          const lookupLeadId = optionalUuid(managedEntryLookup.lead_id);
+          const lookupRuleId = optionalUuid(managedEntryLookup.matched_rule_id);
+          const lookupQueueId = optionalUuid(managedEntryLookup.target_round_robin_id);
+          if (
+            (lookupLeadId && lookupLeadId !== ingressRoutingSnapshot.eventLeadId)
+            || (lookupRuleId && lookupRuleId !== ingressRoutingSnapshot.ruleId)
+            || (lookupQueueId && lookupQueueId !== ingressRoutingSnapshot.originRoundRobinId)
+          ) {
+            throw new Error("whatsapp_ingress_snapshot_managed_ledger_conflict");
+          }
         }
 
         if (managedEntryLookup?.handled === true) {
@@ -3869,16 +5007,30 @@ async function handleMessages(
             throw error;
           }
         } else {
-          try {
-            rule = await findInboundRule(session, message);
-            managedRuleMatched = Boolean(rule?.__managed_whatsapp_message_distribution);
-          } catch (error) {
-            console.warn("[evolution-go-webhook] inbound rule lookup failed; durable delivery will retry", {
-              session_id: session.id,
-              remote_jid: diagnosticRemoteJid,
-              error: redactLogText(error),
-            });
-            throw error;
+          if (ingressRoutingSnapshot) {
+            managedRuleMatched = ingressRoutingSnapshot.managedMessageDistribution;
+            managedEntryWasPending = ingressRoutingSnapshot.managedEventPending;
+            managedEntryAlreadyHandled = ingressRoutingSnapshot.managedEventHandled;
+            rule = ingressRoutingSnapshot.contextKind === "contextual_intake"
+              ? {
+                  id: ingressRoutingSnapshot.ruleId,
+                  session_id: session.id,
+                  target_round_robin_id: ingressRoutingSnapshot.originRoundRobinId,
+                  __managed_whatsapp_message_distribution: managedRuleMatched,
+                }
+              : null;
+          } else {
+            try {
+              rule = await findInboundRule(session, message);
+              managedRuleMatched = Boolean(rule?.__managed_whatsapp_message_distribution);
+            } catch (error) {
+              console.warn("[evolution-go-webhook] inbound rule lookup failed; durable delivery will retry", {
+                session_id: session.id,
+                remote_jid: diagnosticRemoteJid,
+                error: redactLogText(error),
+              });
+              throw error;
+            }
           }
 
           if (managedRuleMatched || confirmedCtwaAd) {
@@ -3890,7 +5042,22 @@ async function handleMessages(
           }
 
           try {
-            lead = await ensureLead(session, message, rule, managedRuleMatched);
+            lead = await ensureLead(
+              session,
+              message,
+              rule,
+              managedRuleMatched,
+              conversationBindingSnapshot.currentLeadId,
+              providerEventBinding?.leadId
+                || inheritedRoutingTarget?.leadId
+                || ingressRoutingSnapshot?.eventLeadId,
+              ingressRoutingSnapshot,
+            );
+            if (isQuarantinedWhatsAppLeadResolution(lead)) {
+              leadResolutionQuarantineReason = cleanText(lead.__whatsapp_lead_resolution_reason)
+                || "whatsapp_lead_resolution_ambiguous";
+              lead = null;
+            }
           } catch (error) {
             console.warn("[evolution-go-webhook] lead resolution failed; durable delivery will retry", {
               session_id: session.id,
@@ -3902,12 +5069,87 @@ async function handleMessages(
         }
       }
 
-      const conversation = await ensureConversation(session, message, lead);
-      const attachedLead = conversation.lead_id && conversation.lead_id === lead?.id ? lead : null;
+      let conversation = await ensureConversation(
+        session,
+        message,
+        lead,
+        storedConversationId
+          || providerEventBinding?.conversationId
+          || inheritedRoutingTarget?.conversationId
+          || ingressRoutingSnapshot?.conversationId,
+        leadResolutionQuarantineReason,
+      );
+      const conversationAliasQuarantineReason = cleanText(
+        conversation.__whatsapp_identity_alias_quarantine_reason,
+      );
+      if (conversationAliasQuarantineReason) {
+        leadResolutionQuarantineReason = conversationAliasQuarantineReason;
+        lead = null;
+      }
+      let eventLeadId = storedLeadId
+        || providerEventBinding?.leadId
+        || ingressRoutingSnapshot?.eventLeadId
+        || null;
+      let bindingResultIsCurrent: boolean | null = null;
+      // Every inbound one-to-one event with a resolved card gets an immutable
+      // provider ledger row, even when the target equals the current binding.
+      // A retry can therefore recover the original card without inheriting a
+      // later mutable conversation owner.
+      if (lead?.id) {
+        const binding = await activateWhatsAppConversationLeadBinding(
+          session,
+          conversation,
+          lead,
+          message,
+          conversationBindingSnapshot,
+        );
+        conversation = binding.conversation;
+        if (eventLeadId && eventLeadId !== binding.eventLeadId) {
+          throw new Error("whatsapp_message_binding_ledger_identity_conflict");
+        }
+        eventLeadId = binding.eventLeadId;
+        bindingResultIsCurrent = binding.isCurrent;
+      }
+      if (!eventLeadId && !leadResolutionQuarantineReason) {
+        eventLeadId = optionalUuid(lead?.id || (ingressRoutingSnapshot ? null : conversation.lead_id));
+      }
+      if (leadResolutionQuarantineReason) {
+        // Terminal routing evidence is retained without a dangling or guessed
+        // card FK. This includes a card deleted after the pre-ACK snapshot.
+        eventLeadId = null;
+      }
+      const activeConversationLeadId = optionalUuid(conversation.lead_id);
+      let eventBindingIsCurrent = bindingResultIsCurrent ?? (eventLeadId
+        ? eventLeadId === activeConversationLeadId
+        : !activeConversationLeadId);
+      if (
+        ingressRoutingSnapshot
+        && ingressRoutingSnapshot.state === "unlinked"
+        && activeConversationLeadId
+        && !leadResolutionQuarantineReason
+      ) {
+        // The physical row was linked after this provider event was accepted.
+        // Persist neutral evidence, but never let the old event inherit or
+        // trigger effects for the new card.
+        leadResolutionQuarantineReason = "whatsapp_ingress_unlinked_after_binding_change";
+        eventBindingIsCurrent = false;
+      }
+      const attachedLead = eventLeadId
+        ? (optionalUuid(lead?.id) === eventLeadId ? lead : { id: eventLeadId })
+        : null;
       // Persist the selected rule before the message write. A managed retry can
       // then recover the immutable lead and queue context after later failures.
-      await logInbound(session, conversation, attachedLead, rule, message);
-      const result = await insertMessage(session, conversation, attachedLead, message);
+      if (!leadResolutionQuarantineReason && eventBindingIsCurrent) {
+        await logInbound(session, conversation, attachedLead, rule, message);
+      }
+      const result = await insertMessage(
+        session,
+        conversation,
+        attachedLead,
+        message,
+        leadResolutionQuarantineReason,
+        eventBindingIsCurrent,
+      );
       if (!result.message?.id) throw new Error("Evolution message was not stored");
       const persistedState = storedEvolutionGoEffectState(
         result.message.metadata,
@@ -3929,7 +5171,26 @@ async function handleMessages(
         throw new Error("Evolution message effect ledger is invalid");
       }
 
-      await updateConversationAfterMessage(session, conversation, message);
+      if (leadResolutionQuarantineReason || !eventBindingIsCurrent) {
+        // Quarantine remains NULL-lead evidence; a CAS-losing or historical
+        // provider event remains attached to its immutable event card. Neither
+        // may touch the current preview, unread, logs, media/CRM attribution,
+        // distribution, automations, or AI for the active card.
+        await completeStoredMessageEffects(session, result.message, message.messageId);
+        await releaseConversationMessageEffect(
+          session,
+          result.message.conversation_id || conversation.id,
+          message.messageId,
+        );
+        if (ownedClaim) {
+          await completeEvolutionMessageDelivery(supabase, ownedClaim);
+        }
+        processed += 1;
+        continue;
+      }
+
+      eventBindingIsCurrent = eventBindingIsCurrent
+        && await updateConversationAfterMessage(session, conversation, eventLeadId, message);
       if (managedRuleMatched && !attachedLead?.id) {
         throw new Error("managed_whatsapp_lead_identity_unresolved");
       }
@@ -3949,8 +5210,8 @@ async function handleMessages(
       }
 
       let autoReplyTriggered = false;
-      if (result.inserted && !managedMessageDistribution && !isReactionEvent) {
-        await triggerAutoReply(session, conversation, result.message, message);
+      if (eventBindingIsCurrent && eventLeadId && result.inserted && !managedMessageDistribution && !isReactionEvent) {
+        await triggerAutoReply(session, conversation, result.message, message, eventLeadId);
         autoReplyTriggered = true;
       }
 
@@ -3962,8 +5223,8 @@ async function handleMessages(
       }
       // Keep the local durability contract: the API request is awaited and its
       // idempotent queue write must succeed before the message ledger is final.
-      if (!autoReplyTriggered) {
-        await triggerAutoReply(session, conversation, result.message, message);
+      if (eventBindingIsCurrent && eventLeadId && !autoReplyTriggered) {
+        await triggerAutoReply(session, conversation, result.message, message, eventLeadId);
       }
       await completeStoredMessageEffects(
         session,

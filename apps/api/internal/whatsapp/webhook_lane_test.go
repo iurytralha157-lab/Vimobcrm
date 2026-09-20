@@ -454,7 +454,11 @@ func TestSplitEvolutionWebhookMessageBatchBoundsWriteAmplification(t *testing.T)
 		if index > 0 {
 			messages.WriteByte(',')
 		}
-		_, _ = fmt.Fprintf(&messages, `{"Info":{"ID":"message-%d","Chat":"5511999991111@s.whatsapp.net","Timestamp":1788966000},"Message":{"conversation":"oi"}}`, index)
+		phone := "5511999991111"
+		if index%3 == 2 {
+			phone = "5511999992222"
+		}
+		_, _ = fmt.Fprintf(&messages, `{"Info":{"ID":"message-%d","Chat":"%s@s.whatsapp.net","Timestamp":1788966000},"Message":{"conversation":"oi"}}`, index, phone)
 	}
 	payload := []byte(`{"event":"messages.upsert","data":{"messages":[` + messages.String() + `]}}`)
 	parts, split, err := splitEvolutionWebhookMessageBatch(payload)
@@ -472,6 +476,64 @@ func TestSplitEvolutionWebhookMessageBatchBoundsWriteAmplification(t *testing.T)
 	})
 	if err != nil || len(durable) != 1 {
 		t.Fatalf("bounded durable parts = %d, error = %v, want one original row", len(durable), err)
+	}
+	decoded, err := decodeNativeEvolutionPayload(durable[0].Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := mapFromAny(decoded[evolutionWebhookRoutingMetaKey])
+	if got := firstString(metadata, "routing_key"); got != evolutionWebhookSessionRoute {
+		t.Fatalf("mixed >128 scheduling route = %q, want session serialization", got)
+	}
+	extracted := extractNativeEvolutionMessages(decoded)
+	if len(extracted) != evolutionWebhookMaxSplitMessages+1 {
+		t.Fatalf("mixed >128 extracted messages = %d", len(extracted))
+	}
+	for index, want := range []string{"phone:5511999991111", "phone:5511999991111", "phone:5511999992222"} {
+		if got := evolutionWebhookMessageBindingRoutingKey(extracted[index]); got != want {
+			t.Fatalf("message %d binding route = %q, want %q", index, got, want)
+		}
+	}
+}
+
+func TestUnsplitMultiLocationKeepsReactionAndInboundContactRoutes(t *testing.T) {
+	payload := []byte(`{
+		"event":"messages.upsert",
+		"messages":[{
+			"Info":{"ID":"reaction-first","Chat":"5511999991111@s.whatsapp.net","Timestamp":1788966000},
+			"Message":{"reactionMessage":{"key":{"id":"target"},"text":"ok"}}
+		}],
+		"data":{"messages":[{
+			"Info":{"ID":"inbound-second","Chat":"5511999991111@s.whatsapp.net","Timestamp":1788966001},
+			"Message":{"conversation":"oi"}
+		}]}
+	}`)
+	parts, split, err := splitEvolutionWebhookMessageBatch(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if split || len(parts) != 0 {
+		t.Fatalf("multi-location callback split = %v with %d parts, want one durable envelope", split, len(parts))
+	}
+	durable, err := prepareEvolutionWebhookDurableParts(evolutionWebhookEnvelope{
+		EventKey: "evolution_go:multi-location", EventType: "messages.upsert",
+		Payload: payload, ReceivedAt: time.Unix(1788966002, 0).UTC(),
+	})
+	if err != nil || len(durable) != 1 {
+		t.Fatalf("multi-location durable parts = %d, error = %v", len(durable), err)
+	}
+	decoded, err := decodeNativeEvolutionPayload(durable[0].Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := extractNativeEvolutionMessages(decoded)
+	if len(messages) != 2 || !messages[0].IsReaction || messages[1].IsReaction {
+		t.Fatalf("multi-location message order/types = %#v", messages)
+	}
+	for index, message := range messages {
+		if got := evolutionWebhookMessageBindingRoutingKey(message); got != "phone:5511999991111" {
+			t.Fatalf("multi-location message %d binding route = %q", index, got)
+		}
 	}
 }
 
@@ -496,7 +558,7 @@ func TestEvolutionWebhookProviderPayloadRemovesInternalOrderingMetadata(t *testi
 	}
 }
 
-func TestEvolutionWebhookRoutingKeyUnifiesPhoneAndFailsSafeForOpaqueIdentity(t *testing.T) {
+func TestEvolutionWebhookRoutingKeyUnifiesPhoneAndScopesOpaqueIdentity(t *testing.T) {
 	routeFor := func(t *testing.T, payload string) string {
 		t.Helper()
 		decoded, err := decodeNativeEvolutionPayload([]byte(payload))
@@ -513,8 +575,8 @@ func TestEvolutionWebhookRoutingKeyUnifiesPhoneAndFailsSafeForOpaqueIdentity(t *
 		"event":"messages.upsert",
 		"data":{"Info":{"ID":"lid","Chat":"123456789@lid","SenderPN":"5511999991111@s.whatsapp.net","Timestamp":1788966001},"Message":{"conversation":"oi"}}
 	}`)
-	if numericRoute == evolutionWebhookSessionRoute || lidWithPhoneRoute != numericRoute {
-		t.Fatalf("phone routes = numeric %q, LID %q", numericRoute, lidWithPhoneRoute)
+	if numericRoute == evolutionWebhookSessionRoute || lidWithPhoneRoute != "jid:123456789@lid" {
+		t.Fatalf("phone route = %q, promoted LID route = %q", numericRoute, lidWithPhoneRoute)
 	}
 	internationalRoute := routeFor(t, `{
 		"event":"messages.upsert",
@@ -527,7 +589,10 @@ func TestEvolutionWebhookRoutingKeyUnifiesPhoneAndFailsSafeForOpaqueIdentity(t *
 		"event":"messages.upsert",
 		"data":{"Info":{"ID":"opaque","Chat":"123456789@lid","Timestamp":1788966002},"Message":{"conversation":"oi"}}
 	}`)
-	if opaqueRoute != evolutionWebhookSessionRoute {
-		t.Fatalf("unresolved opaque route = %q, want session fail-safe", opaqueRoute)
+	if opaqueRoute != "jid:123456789@lid" {
+		t.Fatalf("opaque route = %q, want stable session-scoped LID", opaqueRoute)
+	}
+	if opaqueRoute != lidWithPhoneRoute {
+		t.Fatalf("LID route changed after SenderPN appeared: %q then %q", opaqueRoute, lidWithPhoneRoute)
 	}
 }

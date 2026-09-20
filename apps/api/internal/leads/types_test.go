@@ -60,13 +60,14 @@ func TestCreateRequestValidate(t *testing.T) {
 			"11111111-1111-1111-1111-111111111111",
 			"55555555-5555-4555-8555-555555555555",
 		},
-		ConversationID:   "22222222-2222-2222-2222-222222222222",
-		TeamID:           "44444444-4444-4444-4444-444444444444",
-		TagIDs:           []string{"33333333-3333-3333-3333-333333333333", "33333333-3333-3333-3333-333333333333"},
-		RendaFamiliar:    "12000",
-		FaixaValorImovel: "500k-700k",
-		AutoDistribute:   &autoDistribute,
-		RoundRobinID:     "66666666-6666-4666-8666-666666666666",
+		ConversationID:         "22222222-2222-2222-2222-222222222222",
+		ExpectedPreviousLeadID: "unlinked",
+		TeamID:                 "44444444-4444-4444-4444-444444444444",
+		TagIDs:                 []string{"33333333-3333-3333-3333-333333333333", "33333333-3333-3333-3333-333333333333"},
+		RendaFamiliar:          "12000",
+		FaixaValorImovel:       "500k-700k",
+		AutoDistribute:         &autoDistribute,
+		RoundRobinID:           "66666666-6666-4666-8666-666666666666",
 		Profile: &LeadProfileRequest{
 			PersonType: "individual",
 			Gender:     "female",
@@ -88,7 +89,9 @@ func TestCreateRequestValidate(t *testing.T) {
 	if input.InterestValue == nil || *input.InterestValue != interestValue {
 		t.Fatalf("Validate() interest value = %#v", input.InterestValue)
 	}
-	if input.DealStatus != "won" || input.PropertyID == nil || input.ConversationID == nil || input.TeamID == nil || input.RoundRobinID == nil {
+	if input.DealStatus != "won" || input.PropertyID == nil || input.ConversationID == nil ||
+		input.ExpectedPreviousLeadID == nil || *input.ExpectedPreviousLeadID != "unlinked" ||
+		input.TeamID == nil || input.RoundRobinID == nil {
 		t.Fatalf("Validate() new fields = %#v", input)
 	}
 	if input.AutoDistribute == nil || !*input.AutoDistribute || *input.RoundRobinID != "66666666-6666-4666-8666-666666666666" {
@@ -114,6 +117,9 @@ func TestCreateRequestRejectsInvalidValues(t *testing.T) {
 		{Name: "Ana", Email: "not-email"},
 		{Name: "Ana", Phone: "+1 415 CALL-NOW"},
 		{Name: "Ana", PipelineID: "not-a-uuid"},
+		{Name: "Ana", ConversationID: "22222222-2222-4222-8222-222222222222"},
+		{Name: "Ana", ConversationID: "22222222-2222-4222-8222-222222222222", ExpectedPreviousLeadID: "invalid"},
+		{Name: "Ana", ExpectedPreviousLeadID: "unlinked"},
 		{Name: "Ana", TeamID: "not-a-uuid"},
 		{Name: "Ana", RoundRobinID: "not-a-uuid"},
 		{Name: "Ana", RoundRobinID: "66666666-6666-4666-8666-666666666666"},

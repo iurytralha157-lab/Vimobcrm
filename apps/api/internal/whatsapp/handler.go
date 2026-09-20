@@ -457,7 +457,28 @@ func (handler Handler) ShowConversation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	conversation, err := handler.repo.GetConversation(r.Context(), tenantContext, r.PathValue("id"))
+	expectedLeadID, err := ParseExpectedLeadID(r.URL.Query())
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+
+	conversation, err := handler.repo.GetConversationForExpectedLead(r.Context(), tenantContext, r.PathValue("id"), expectedLeadID)
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[Conversation]{Data: conversation})
+}
+
+func (handler Handler) ShowConversationSnapshot(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := requireTenant(w, r)
+	if !ok {
+		return
+	}
+
+	conversation, err := handler.repo.GetConversationSnapshot(r.Context(), tenantContext, r.PathValue("id"))
 	if err != nil {
 		writeWhatsAppError(w, r, err)
 		return
@@ -477,6 +498,12 @@ func (handler Handler) ListMessages(w http.ResponseWriter, r *http.Request) {
 		writeWhatsAppError(w, r, err)
 		return
 	}
+	expectedLeadID, err := ParseExpectedLeadID(r.URL.Query())
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+	filter.ExpectedLeadID = expectedLeadID
 
 	page, err := handler.repo.ListMessages(r.Context(), tenantContext, r.PathValue("id"), filter)
 	if err != nil {
@@ -564,7 +591,13 @@ func (handler Handler) MarkConversationAsRead(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := handler.repo.MarkConversationAsRead(r.Context(), tenantContext, r.PathValue("id")); err != nil {
+	expectedLeadID, err := ParseExpectedLeadID(r.URL.Query())
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+
+	if err := handler.repo.MarkConversationAsRead(r.Context(), tenantContext, r.PathValue("id"), expectedLeadID); err != nil {
 		writeWhatsAppError(w, r, err)
 		return
 	}
@@ -578,7 +611,13 @@ func (handler Handler) MarkAsSeenOnWhatsApp(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := handler.repo.MarkAsSeenOnWhatsApp(r.Context(), tenantContext, r.PathValue("id")); err != nil {
+	expectedLeadID, err := ParseExpectedLeadID(r.URL.Query())
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+
+	if err := handler.repo.MarkAsSeenOnWhatsApp(r.Context(), tenantContext, r.PathValue("id"), expectedLeadID); err != nil {
 		writeWhatsAppError(w, r, err)
 		return
 	}
@@ -600,8 +639,13 @@ func (handler Handler) ArchiveConversation(w http.ResponseWriter, r *http.Reques
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_json", "Request body is invalid.")
 		return
 	}
+	archive, expectedLeadID, err := request.Validate()
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
 
-	if err := handler.repo.ArchiveConversation(r.Context(), tenantContext, r.PathValue("id"), request.Archive); err != nil {
+	if err := handler.repo.ArchiveConversation(r.Context(), tenantContext, r.PathValue("id"), archive, expectedLeadID); err != nil {
 		writeWhatsAppError(w, r, err)
 		return
 	}
@@ -615,7 +659,13 @@ func (handler Handler) DeleteConversation(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := handler.repo.DeleteConversation(r.Context(), tenantContext, r.PathValue("id")); err != nil {
+	expectedLeadID, err := ParseExpectedLeadID(r.URL.Query())
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+
+	if err := handler.repo.DeleteConversation(r.Context(), tenantContext, r.PathValue("id"), expectedLeadID); err != nil {
 		writeWhatsAppError(w, r, err)
 		return
 	}
@@ -638,12 +688,18 @@ func (handler Handler) LinkConversationToLead(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	leadID, err := request.Validate()
+	leadID, expectedPreviousLeadID, err := request.Validate()
 	if err != nil {
 		writeWhatsAppError(w, r, err)
 		return
 	}
-	if err := handler.repo.LinkConversationToLead(r.Context(), tenantContext, r.PathValue("id"), leadID); err != nil {
+	if err := handler.repo.LinkConversationToLead(
+		r.Context(),
+		tenantContext,
+		r.PathValue("id"),
+		leadID,
+		expectedPreviousLeadID,
+	); err != nil {
 		writeWhatsAppError(w, r, err)
 		return
 	}
@@ -940,6 +996,8 @@ func writeWhatsAppError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusNotFound, "whatsapp_session_not_found", "WhatsApp session was not found.")
 	case errors.Is(err, ErrConversationNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "whatsapp_conversation_not_found", "WhatsApp conversation was not found.")
+	case errors.Is(err, ErrConversationBindingChanged):
+		httpserver.WriteError(w, r, http.StatusConflict, "whatsapp_conversation_binding_changed", "The WhatsApp conversation was linked to another lead. Refresh and try again.")
 	case errors.Is(err, ErrMessageNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "whatsapp_message_not_found", "WhatsApp message was not found.")
 	case errors.Is(err, ErrProviderFailed):

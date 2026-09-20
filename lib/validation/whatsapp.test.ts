@@ -3,10 +3,12 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   createWhatsAppSessionInputSchema,
+  linkWhatsAppConversationLeadInputSchema,
   reactWhatsAppMessageInputSchema,
   reactWhatsAppMessageResponseSchema,
   sendWhatsAppMessageResponseSchema,
   sendWhatsAppMessageInputSchema,
+  startWhatsAppConversationInputSchema,
   whatsAppConversationResponseSchema,
   whatsAppHistoryResponseSchema,
   whatsAppMessagesResponseSchema,
@@ -94,10 +96,42 @@ test('aceita sessao Evolution GO e rejeita provider legado', () => {
   }).success, false)
 })
 
+test('exige snapshot anterior nos vinculos manuais de conversa', () => {
+  const startInput = {
+    phone: '5511999999999',
+    sessionId: ORG_ID,
+    leadId: ID,
+  }
+  assert.equal(startWhatsAppConversationInputSchema.safeParse({
+    ...startInput,
+    expectedPreviousLeadId: 'unlinked',
+  }).success, true)
+  assert.equal(startWhatsAppConversationInputSchema.safeParse({
+    ...startInput,
+    expectedPreviousLeadId: USER_ID,
+  }).success, true)
+  assert.equal(startWhatsAppConversationInputSchema.safeParse(startInput).success, false)
+  assert.equal(startWhatsAppConversationInputSchema.safeParse({
+    ...startInput,
+    expectedPreviousLeadId: 'invalid',
+  }).success, false)
+
+  assert.equal(linkWhatsAppConversationLeadInputSchema.safeParse({
+    leadId: ID,
+    expectedPreviousLeadId: 'unlinked',
+  }).success, true)
+  assert.equal(linkWhatsAppConversationLeadInputSchema.safeParse({
+    leadId: ID,
+    expectedPreviousLeadId: USER_ID,
+  }).success, true)
+  assert.equal(linkWhatsAppConversationLeadInputSchema.safeParse({ leadId: ID }).success, false)
+})
+
 test('exige texto ou midia no envio', () => {
-  assert.equal(sendWhatsAppMessageInputSchema.safeParse({ text: 'Ola' }).success, true)
-  assert.equal(sendWhatsAppMessageInputSchema.safeParse({ text: '', mediaUrl: 'https://example.com/foto.jpg' }).success, true)
-  assert.equal(sendWhatsAppMessageInputSchema.safeParse({ text: '' }).success, false)
+	assert.equal(sendWhatsAppMessageInputSchema.safeParse({ text: 'Ola', expectedLeadId: ID }).success, true)
+	assert.equal(sendWhatsAppMessageInputSchema.safeParse({ text: '', mediaUrl: 'https://example.com/foto.jpg', expectedLeadId: ID }).success, true)
+	assert.equal(sendWhatsAppMessageInputSchema.safeParse({ text: '', expectedLeadId: ID }).success, false)
+	assert.equal(sendWhatsAppMessageInputSchema.safeParse({ text: 'Ola' }).success, false)
 })
 
 test('valida lista de sessoes e cota', () => {
@@ -308,15 +342,18 @@ test('valida resposta de envio com mensagem canonica na fila', () => {
 })
 
 test('reacao exige chave idempotente e aceita remocao com emoji vazio', () => {
-  assert.equal(reactWhatsAppMessageInputSchema.safeParse({
-    emoji: '',
-    clientReactionId: 'reaction-client-1',
-  }).success, true)
-  assert.equal(reactWhatsAppMessageInputSchema.safeParse({ emoji: '👍' }).success, false)
-  assert.equal(reactWhatsAppMessageInputSchema.safeParse({
-    emoji: '👍'.repeat(65),
-    clientReactionId: 'reaction-client-2',
-  }).success, false)
+	assert.equal(reactWhatsAppMessageInputSchema.safeParse({
+		emoji: '',
+		clientReactionId: 'reaction-client-1',
+		expectedLeadId: ID,
+	}).success, true)
+	assert.equal(reactWhatsAppMessageInputSchema.safeParse({ emoji: '👍', expectedLeadId: ID }).success, false)
+	assert.equal(reactWhatsAppMessageInputSchema.safeParse({
+		emoji: '👍'.repeat(65),
+		clientReactionId: 'reaction-client-2',
+		expectedLeadId: ID,
+	}).success, false)
+	assert.equal(reactWhatsAppMessageInputSchema.safeParse({ emoji: '👍', clientReactionId: 'reaction-client-3' }).success, false)
 })
 
 test('valida resposta canonica da reacao enfileirada', () => {

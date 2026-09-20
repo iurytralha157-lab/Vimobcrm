@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(5);
+select plan(6);
 
 select is(
   (
@@ -19,7 +19,7 @@ select ok(
   position(
     'p_source_session_id::text'
     in pg_get_functiondef(
-      'public.upsert_whatsapp_webhook_lead(uuid,text,text,text,text,timestamptz,text,uuid,text,text,text,uuid,uuid,uuid,timestamptz,uuid,uuid,uuid,timestamptz,text,timestamptz,jsonb)'::regprocedure
+      'public.upsert_whatsapp_webhook_lead(uuid,text,text,text,text,timestamptz,text,uuid,text,text,text,uuid,uuid,uuid,timestamptz,uuid,uuid,uuid,timestamptz,text,timestamptz,jsonb,uuid)'::regprocedure
     )
   ) = 0,
   'the WhatsApp lead upsert never coerces the source session UUID to text'
@@ -27,9 +27,9 @@ select ok(
 
 select ok(
   position(
-    'source_session_id = coalesce(l.source_session_id, p_source_session_id)'
+    'source_session_id = coalesce(lead.source_session_id, p_source_session_id)'
     in pg_get_functiondef(
-      'public.upsert_whatsapp_webhook_lead(uuid,text,text,text,text,timestamptz,text,uuid,text,text,text,uuid,uuid,uuid,timestamptz,uuid,uuid,uuid,timestamptz,text,timestamptz,jsonb)'::regprocedure
+      'public.upsert_whatsapp_webhook_lead(uuid,text,text,text,text,timestamptz,text,uuid,text,text,text,uuid,uuid,uuid,timestamptz,uuid,uuid,uuid,timestamptz,text,timestamptz,jsonb,uuid)'::regprocedure
     )
   ) > 0,
   'existing leads retain or receive a UUID source session'
@@ -39,6 +39,11 @@ select is(
   has_function_privilege(
     'authenticated',
     'public.upsert_whatsapp_webhook_lead(uuid,text,text,text,text,timestamptz,text,uuid,text,text,text,uuid,uuid,uuid,timestamptz,uuid,uuid,uuid,timestamptz,text,timestamptz,jsonb)',
+    'execute'
+  )
+  or has_function_privilege(
+    'authenticated',
+    'public.upsert_whatsapp_webhook_lead(uuid,text,text,text,text,timestamptz,text,uuid,text,text,text,uuid,uuid,uuid,timestamptz,uuid,uuid,uuid,timestamptz,text,timestamptz,jsonb,uuid)',
     'execute'
   ),
   false,
@@ -50,9 +55,24 @@ select is(
     'service_role',
     'public.upsert_whatsapp_webhook_lead(uuid,text,text,text,text,timestamptz,text,uuid,text,text,text,uuid,uuid,uuid,timestamptz,uuid,uuid,uuid,timestamptz,text,timestamptz,jsonb)',
     'execute'
+  )
+  and has_function_privilege(
+    'service_role',
+    'public.upsert_whatsapp_webhook_lead(uuid,text,text,text,text,timestamptz,text,uuid,text,text,text,uuid,uuid,uuid,timestamptz,uuid,uuid,uuid,timestamptz,text,timestamptz,jsonb,uuid)',
+    'execute'
   ),
   true,
-  'only the trusted webhook processor can invoke the lead upsert'
+  'the trusted webhook processor can invoke both compatible upsert signatures'
+);
+
+select ok(
+  position(
+    'null::uuid'
+    in pg_get_functiondef(
+      'public.upsert_whatsapp_webhook_lead(uuid,text,text,text,text,timestamptz,text,uuid,text,text,text,uuid,uuid,uuid,timestamptz,uuid,uuid,uuid,timestamptz,text,timestamptz,jsonb)'::regprocedure
+    )
+  ) > 0,
+  'the 22-argument wrapper explicitly delegates with a NULL queue origin'
 );
 
 select * from finish();

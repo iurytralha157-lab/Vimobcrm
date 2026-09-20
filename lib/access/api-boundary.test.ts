@@ -343,6 +343,10 @@ test("editor de fila bloqueia salvamento inseguro e atualiza historico auditado"
   assert.match(editor, /!blockingReferenceDataError/);
   assert.match(editor, /\(!!formData\.target_pipeline_id && stagesLoading\)/);
   assert.match(editor, /const hasUnsavedChanges =/);
+  assert.match(editor, /const saveInFlightRef = useRef\(false\)/);
+  assert.match(editor, /if \(saveInFlightRef\.current\) return/);
+  assert.match(editor, /saveInFlightRef\.current = true/);
+  assert.match(editor, /finally \{[\s\S]*?saveInFlightRef\.current = false/);
   assert.match(
     editor,
     /const DEFAULT_PAGE_SECTION_IDS = \["basic", "members"\]/,
@@ -477,6 +481,10 @@ test("editor de equipe prioriza KPIs, selecao de escala e historico auditado", (
   assert.doesNotMatch(overview, /label="Eventos de fila"/);
   assert.doesNotMatch(overview, /label="Filas ativas"/);
   assert.match(editor, /aria-label=\{`Ver escala de/);
+  assert.match(editor, /const submitInFlightRef = useRef\(false\)/);
+  assert.match(editor, /if \(submitInFlightRef\.current\) return/);
+  assert.match(editor, /submitInFlightRef\.current = true/);
+  assert.match(editor, /finally \{[\s\S]*?submitInFlightRef\.current = false/);
   assert.match(
     editor,
     /onClick=\{\(\) => setActiveScheduleUserId\(user\.id\)\}/,

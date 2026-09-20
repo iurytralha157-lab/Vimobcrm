@@ -81,6 +81,7 @@ export const leadCreateInputSchema = z.object({
   lostReason: optionalText(300),
   isOwnResource: z.boolean().nullish(),
   conversationId: optionalUUID,
+  expectedPreviousLeadId: z.union([uuidSchema, z.literal('unlinked')]).optional(),
   tagIds: z.array(uuidSchema).max(50).optional(),
   cargo: optionalText(120),
   empresa: optionalText(160),
@@ -110,6 +111,20 @@ export const leadCreateInputSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['roundRobinId'],
       message: 'Fila de distribuicao exige distribuicao automatica',
+    })
+  }
+  if (input.conversationId && !input.expectedPreviousLeadId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['expectedPreviousLeadId'],
+      message: 'Snapshot anterior da conversa e obrigatorio',
+    })
+  }
+  if (!input.conversationId && input.expectedPreviousLeadId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['expectedPreviousLeadId'],
+      message: 'Snapshot anterior exige uma conversa',
     })
   }
 })

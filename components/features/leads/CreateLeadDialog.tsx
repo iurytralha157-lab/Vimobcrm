@@ -51,6 +51,7 @@ interface CreateLeadDialogProps {
   contactPhone?: string | null;
   contactName?: string | null;
   conversationId?: string | null;
+  expectedPreviousLeadId?: string | null;
   lead?: EditableLead | null;
   onSaved?: (lead: Lead) => void;
 }
@@ -112,6 +113,7 @@ export function CreateLeadDialog({
   contactPhone,
   contactName,
   conversationId,
+  expectedPreviousLeadId,
   lead: leadSummary,
   onSaved,
 }: CreateLeadDialogProps) {
@@ -552,6 +554,9 @@ export function CreateLeadDialog({
           tag_ids: formData.tag_ids.length > 0 ? formData.tag_ids : undefined,
           source: formData.source || 'manual',
           conversation_id: formData.conversation_id || undefined,
+          expected_previous_lead_id: formData.conversation_id
+            ? expectedPreviousLeadId || undefined
+            : undefined,
           cargo: formData.cargo || undefined,
           empresa: formData.empresa || undefined,
           profissao: formData.profissao || undefined,

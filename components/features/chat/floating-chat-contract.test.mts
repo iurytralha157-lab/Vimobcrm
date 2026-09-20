@@ -313,21 +313,21 @@ test("operações do balão falham fechadas sem whatsapp_operate", () => {
   assert.match(userPermissionsHookSource, /if \(isLoading\) return false/);
   assert.match(
     floatingChatSource,
-    /if \(canOperateWhatsApp && activeConversationReadTarget && activeConversationReadTarget\.unreadCount > 0\)/,
+    /if \(canManageActiveConversation && activeConversationReadTarget && activeConversationReadTarget\.unreadCount > 0\)/,
   );
-  assert.match(floatingChatSource, /const handleArchiveConversation[\s\S]{0,180}if \(!canOperateWhatsApp\) return/);
-  assert.match(floatingChatSource, /const handleDeleteConversation[\s\S]{0,180}if \(!canOperateWhatsApp\) return/);
-  assert.match(floatingChatSource, /const retryMediaDownload[\s\S]{0,180}if \(!canOperateWhatsApp\) return/);
-  assert.match(floatingChatSource, /const handleSendMessage[\s\S]{0,220}if \(!canOperateWhatsApp/);
-  assert.match(floatingChatSource, /const handleSendAudio[\s\S]{0,180}if \(!canOperateWhatsApp/);
-  assert.match(floatingChatSource, /const isReadOnlyMode = !canOperateWhatsApp/);
+  assert.match(floatingChatSource, /const handleArchiveConversation[\s\S]{0,220}if \(!canOperateWhatsApp \|\| conversation\.historical_lead_view\) return/);
+  assert.match(floatingChatSource, /const handleDeleteConversation[\s\S]{0,220}if \(!canOperateWhatsApp \|\| conversation\.historical_lead_view\) return/);
+  assert.match(floatingChatSource, /const retryMediaDownload[\s\S]{0,180}if \(!canMutateActiveConversation\) return/);
+  assert.match(floatingChatSource, /const handleSendMessage[\s\S]{0,220}if \(!canMutateActiveConversation/);
+  assert.match(floatingChatSource, /const handleSendAudio[\s\S]{0,180}if \(!canMutateActiveConversation/);
+  assert.match(floatingChatSource, /const isReadOnlyMode = !canMutateActiveConversation/);
   assert.match(floatingChatSource, /const messageInputDisabled = isReadOnlyMode \|\| whatsappMessageInputState\.disabled/);
   assert.match(floatingChatSource, /disabled=\{messageInputDisabled\}/);
   assert.match(
     floatingChatSource,
-    /onReact=\{canOperateWhatsApp[\s\S]{0,180}Boolean\(activeConversation\?\.session_id\)[\s\S]{0,180}Boolean\(msg\.session_id\)/,
+    /onReact=\{canMutateActiveConversation[\s\S]{0,180}Boolean\(activeConversation\?\.session_id\)[\s\S]{0,180}Boolean\(msg\.session_id\)/,
   );
-  assert.match(floatingChatSource, /onRetryMedia=\{canOperateWhatsApp \?/);
+  assert.match(floatingChatSource, /onRetryMedia=\{canMutateActiveConversation \?/);
 });
 
 test("reações ficam indisponíveis até a mensagem possuir alvo canônico", () => {
@@ -434,7 +434,7 @@ test("conversa ativa recebe todos os metadados novos da lista sem loop de estado
   assert.match(activeConversationSyncSource, /openConversation\(updatedConv\)/);
   assert.match(
     activeConversationSyncSource,
-    /\[activeConversation, activeConversationId, conversations, openConversation\]/,
+    /\[activeConversation, activeConversationId, activeConversationLeadId, conversations, openConversation\]/,
   );
 });
 
@@ -448,14 +448,20 @@ test("falha ao buscar tags aparece no submenu e pode ser tentada novamente", () 
   assert.match(conversationListItemSource, /onRetryTags\(\)/);
 });
 
-test("rascunhos são isolados por conversa e voltam ao campo quando o envio falha", () => {
+test("rascunhos são isolados por tenant, conversa e card e voltam ao snapshot original quando o envio falha", () => {
   assert.match(floatingChatSource, /useState<Record<string, string>>\(\{\}\)/);
   assert.match(
     floatingChatSource,
-    /activeConversationId \? messageDrafts\[activeConversationId\] \?\? "" : ""/,
+    /getWhatsAppConversationDraftKey\(\{[\s\S]*?tenantKey: activeTenantKey,[\s\S]*?conversationId: activeConversationId,[\s\S]*?expectedLeadId: activeConversationMessageScope\.expectedLeadId/,
   );
-  assert.match(floatingChatSource, /currentDrafts\[activeConversationId\] \?\? ""/);
-  assert.match(floatingChatSource, /return \{ \.\.\.currentDrafts, \[activeConversationId\]: nextValue \}/);
+  assert.match(floatingChatSource, /messageDrafts\[activeMessageDraftKey\] \?\? ""/);
+  assert.match(floatingChatSource, /updateWhatsAppConversationDraft\([\s\S]*?activeMessageDraftKey/);
+  assert.match(
+    conversationsScreenSource,
+    /getWhatsAppConversationDraftKey\(\{[\s\S]*?tenantKey: activeTenantKey,[\s\S]*?conversationId: selectedConversationId,[\s\S]*?selectedExpectedLeadId/,
+  );
+  assert.match(conversationsScreenSource, /messageDrafts\[selectedMessageDraftKey\] \?\? ""/);
+  assert.match(conversationsScreenSource, /updateWhatsAppConversationDraft\([\s\S]*?selectedMessageDraftKey/);
 
   const sendMessageSource = sourceBetween(
     floatingChatSource,
@@ -494,7 +500,7 @@ test("recuperação de mídia chama o backend e reconcilia a conversa", () => {
     "const handleSendMessage",
   );
   assertInOrder(floatingRetrySource, [
-    "if (!canOperateWhatsApp) return",
+    "if (!canMutateActiveConversation) return",
     "await whatsappAPI.retryMediaDownload",
     "await refetchMessages()",
   ]);

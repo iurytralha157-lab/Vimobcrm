@@ -10,6 +10,7 @@ interface StartConversationParams {
   sessionId?: string;
   leadId?: string;
   leadName?: string;
+  expectedPreviousLeadId: string;
 }
 
 export class WhatsAppStartError extends Error {
@@ -29,6 +30,14 @@ export function getWhatsAppStartErrorMessage(error: unknown) {
     return "Não foi possível abrir a conversa agora. Tente novamente em alguns instantes.";
   }
 
+  if (
+    normalized.includes("conversation binding changed") ||
+    normalized.includes("conversation_binding_changed") ||
+    normalized.includes("linked to another lead")
+  ) {
+    return "A conversa foi vinculada a outro card enquanto você estava nesta tela. Atualize e tente novamente.";
+  }
+
   if (normalized.includes("invalid") || normalized.includes("jid") || normalized.includes("phone") || normalized.includes("telefone")) {
     return "Este lead nao tem um WhatsApp valido cadastrado.";
   }
@@ -41,7 +50,7 @@ export function useStartConversation() {
   const { activeOrganization, profile } = useAuth();
 
   return useMutation({
-    mutationFn: async ({ phone, sessionId, leadId, leadName }: StartConversationParams): Promise<WhatsAppConversation> => {
+    mutationFn: async ({ phone, sessionId, leadId, leadName, expectedPreviousLeadId }: StartConversationParams): Promise<WhatsAppConversation> => {
       if (!isValidWhatsAppPhone(phone)) {
         throw new WhatsAppStartError("Telefone invalido para WhatsApp", "Este lead nao tem um WhatsApp valido cadastrado.");
       }
@@ -51,6 +60,7 @@ export function useStartConversation() {
         sessionId,
         leadId,
         leadName,
+        expectedPreviousLeadId,
       }, activeOrganization.organizationId) as Promise<WhatsAppConversation>;
     },
     onSuccess: () => {

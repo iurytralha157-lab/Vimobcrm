@@ -49,6 +49,22 @@ func TestEveryRegisteredTeamRouteIsDocumentedInOpenAPI(t *testing.T) {
 	}
 }
 
+func TestMemberAvailabilityOpenAPIDocumentsOvernightRanges(t *testing.T) {
+	contractSource, err := os.ReadFile("../../../../packages/contracts/openapi/v1.yaml")
+	if err != nil {
+		t.Fatalf("read OpenAPI contract: %v", err)
+	}
+
+	contract := string(contractSource)
+	want := "Active non-all-day entries require different start_time and end_time; start_time after end_time crosses midnight."
+	if count := strings.Count(contract, want); count != 2 {
+		t.Fatalf("overnight availability description count = %d, want 2", count)
+	}
+	if strings.Contains(contract, "Active non-all-day entries require start_time before end_time.") {
+		t.Fatal("OpenAPI still rejects valid overnight availability ranges")
+	}
+}
+
 func documentedOpenAPIOperations(t *testing.T, source string) map[string]map[string]struct{} {
 	t.Helper()
 

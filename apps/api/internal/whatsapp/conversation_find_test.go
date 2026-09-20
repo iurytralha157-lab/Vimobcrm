@@ -23,10 +23,10 @@ func TestParseFindConversationFilterAcceptsSingleCombinedLookup(t *testing.T) {
 	}
 }
 
-func TestResolveConversationFindPrioritizesLeadAcrossAccessibleSessions(t *testing.T) {
+func TestResolveConversationFindScopesLeadLookupToSelectedSession(t *testing.T) {
 	wanted := &Conversation{
 		ID:        "conversation-for-lead",
-		SessionID: "another-accessible-session",
+		SessionID: "selected-session",
 	}
 	phoneCalled := false
 
@@ -36,9 +36,12 @@ func TestResolveConversationFindPrioritizesLeadAcrossAccessibleSessions(t *testi
 			Phone:     "+5511999999999",
 			SessionID: "selected-session",
 		},
-		func(leadID string) (*Conversation, error) {
+		func(leadID string, sessionID string) (*Conversation, error) {
 			if leadID != "lead-id" {
 				t.Fatalf("lead lookup id = %q", leadID)
+			}
+			if sessionID != "selected-session" {
+				t.Fatalf("lead lookup session = %q", sessionID)
 			}
 			return wanted, nil
 		},
@@ -71,8 +74,8 @@ func TestResolveConversationFindFallsBackToPhoneInsideSelectedSession(t *testing
 			Phone:     "+5511999999999",
 			SessionID: "selected-session",
 		},
-		func(leadID string) (*Conversation, error) {
-			calls = append(calls, "lead:"+leadID)
+		func(leadID string, sessionID string) (*Conversation, error) {
+			calls = append(calls, "lead:"+leadID+":"+sessionID)
 			return nil, nil
 		},
 		func(phone string, sessionID string) (*Conversation, error) {
@@ -89,7 +92,7 @@ func TestResolveConversationFindFallsBackToPhoneInsideSelectedSession(t *testing
 	if got != wanted {
 		t.Fatalf("resolveConversationFind() = %#v, want phone conversation %#v", got, wanted)
 	}
-	wantCalls := []string{"lead:lead-id", "phone:+5511999999999:selected-session"}
+	wantCalls := []string{"lead:lead-id:selected-session", "phone:+5511999999999:selected-session"}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("lookup order = %#v, want %#v", calls, wantCalls)
 	}
@@ -105,7 +108,7 @@ func TestResolveConversationFindFailsClosedWhenLeadLookupIsDenied(t *testing.T) 
 			Phone:     "+5511999999999",
 			SessionID: "selected-session",
 		},
-		func(string) (*Conversation, error) {
+		func(string, string) (*Conversation, error) {
 			return nil, denied
 		},
 		func(string, string) (*Conversation, error) {
@@ -129,7 +132,7 @@ func TestResolveConversationFindKeepsLeadOnlyInvalidPhoneCompatibility(t *testin
 
 	got, err := resolveConversationFind(
 		FindConversationFilter{LeadID: "lead-id"},
-		func(string) (*Conversation, error) {
+		func(string, string) (*Conversation, error) {
 			return nil, nil
 		},
 		func(string, string) (*Conversation, error) {
@@ -154,7 +157,7 @@ func TestResolveConversationFindRejectsInvalidPhoneWithoutLead(t *testing.T) {
 
 	got, err := resolveConversationFind(
 		FindConversationFilter{Phone: "invalid", SessionID: "selected-session"},
-		func(string) (*Conversation, error) {
+		func(string, string) (*Conversation, error) {
 			leadCalled = true
 			return nil, nil
 		},

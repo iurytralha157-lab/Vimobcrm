@@ -16,23 +16,20 @@ function functionVerifyJwt(config, functionName) {
   return section[1] === "true";
 }
 
-test("private message functions explicitly bypass gateway JWT and authenticate in-handler", async () => {
-  const [config, sender, proxy, webhook] = await Promise.all([
-    readFile(path.join(root, "supabase", "config.toml"), "utf8"),
-    readFile(path.join(root, "supabase", "functions", "message-sender", "index.ts"), "utf8"),
-    readFile(path.join(root, "supabase", "functions", "evolution-go-proxy", "index.ts"), "utf8"),
-    readFile(path.join(root, "supabase", "functions", "evolution-webhook", "index.ts"), "utf8"),
-  ]);
+test("routable private message functions bypass gateway JWT and handlers keep defensive auth", async () => {
+	const [config, sender, proxy] = await Promise.all([
+		readFile(path.join(root, "supabase", "config.toml"), "utf8"),
+		readFile(path.join(root, "supabase", "functions", "message-sender", "index.ts"), "utf8"),
+		readFile(path.join(root, "supabase", "functions", "evolution-go-proxy", "index.ts"), "utf8"),
+	]);
 
-  for (const functionName of [
-    "message-sender",
-    "evolution-go-proxy",
-    "evolution-webhook",
-  ]) {
-    assert.equal(functionVerifyJwt(config, functionName), false);
-  }
+	for (const functionName of [
+		"evolution-go-proxy",
+	]) {
+		assert.equal(functionVerifyJwt(config, functionName), false);
+	}
 
-  assert.match(sender, /authorizePrivateWorkerRequest\(req, secretEnvironment\)/);
-  assert.match(proxy, /authenticate\(req, secretEnvironment, supabaseAdmin\)/);
-  assert.match(webhook, /authorizeEvolutionWebhookIngressRequest\(req,/);
+	assert.match(sender, /authorizePrivateWorkerRequest\(req, secretEnvironment\)/);
+	assert.match(proxy, /authenticate\(req, secretEnvironment, supabaseAdmin\)/);
+	assert.doesNotMatch(config, /^\[functions\.evolution-webhook\]\s*$/m);
 });

@@ -151,6 +151,7 @@ type LeadAPIOptions = {
 type LeadCreateInput = Partial<LeadInsert> & {
   tag_ids?: string[]
   conversation_id?: string
+  expected_previous_lead_id?: string
   import_mode?: boolean
   auto_distribute?: boolean
   round_robin_id?: string
@@ -245,6 +246,7 @@ export const leadsAPI = {
       lostReason: data.lost_reason,
       isOwnResource: data.is_own_resource,
       conversationId: data.conversation_id,
+      expectedPreviousLeadId: data.expected_previous_lead_id,
       tagIds: data.tag_ids,
       cargo: data.cargo,
       empresa: data.empresa,

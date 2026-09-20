@@ -108,6 +108,25 @@ const claimWhatsAppOutboxQueryTemplate = `
 					  and lower(btrim(coalesce(delivery_session.status, ''))) = 'connected'
 				)
 			  )
+			  and exists (
+				select 1
+				from public.whatsapp_messages as current_message
+				join public.whatsapp_conversations as current_conversation
+				  on current_conversation.id = current_message.conversation_id
+				 and current_conversation.organization_id = current_message.organization_id
+				 and current_conversation.session_id = current_message.session_id
+				join public.whatsapp_conversation_lead_bindings as current_binding
+				  on current_binding.organization_id = current_conversation.organization_id
+				 and current_binding.conversation_id = current_conversation.id
+				 and current_binding.session_id = current_conversation.session_id
+				 and current_binding.lead_id = current_conversation.lead_id
+				 and current_binding.active_to is null
+				where current_message.id = queued.message_id
+				  and current_message.organization_id = queued.organization_id
+				  and current_message.session_id = queued.session_id
+				  and current_message.conversation_id = queued.conversation_id
+				  and current_message.lead_id = current_conversation.lead_id
+			  )
 			  and queued.conversation_id > params.after_conversation_id
 			  ` + whatsappOutboxQueuedLanePredicateToken + `
 			order by
@@ -159,6 +178,25 @@ const claimWhatsAppOutboxQueryTemplate = `
 					  and lower(btrim(coalesce(delivery_session.status, ''))) = 'connected'
 				)
 			  )
+			  and exists (
+				select 1
+				from public.whatsapp_messages as current_message
+				join public.whatsapp_conversations as current_conversation
+				  on current_conversation.id = current_message.conversation_id
+				 and current_conversation.organization_id = current_message.organization_id
+				 and current_conversation.session_id = current_message.session_id
+				join public.whatsapp_conversation_lead_bindings as current_binding
+				  on current_binding.organization_id = current_conversation.organization_id
+				 and current_binding.conversation_id = current_conversation.id
+				 and current_binding.session_id = current_conversation.session_id
+				 and current_binding.lead_id = current_conversation.lead_id
+				 and current_binding.active_to is null
+				where current_message.id = queued.message_id
+				  and current_message.organization_id = queued.organization_id
+				  and current_message.session_id = queued.session_id
+				  and current_message.conversation_id = queued.conversation_id
+				  and current_message.lead_id = current_conversation.lead_id
+			  )
 			  and queued.next_attempt_at <= now()
 			  and not exists (
 				select 1
@@ -195,6 +233,25 @@ const claimWhatsAppOutboxQueryTemplate = `
 					  and coalesce(delivery_session.is_active, true)
 					  and lower(btrim(coalesce(delivery_session.status, ''))) = 'connected'
 				)
+			  )
+			  and exists (
+				select 1
+				from public.whatsapp_messages as current_message
+				join public.whatsapp_conversations as current_conversation
+				  on current_conversation.id = current_message.conversation_id
+				 and current_conversation.organization_id = current_message.organization_id
+				 and current_conversation.session_id = current_message.session_id
+				join public.whatsapp_conversation_lead_bindings as current_binding
+				  on current_binding.organization_id = current_conversation.organization_id
+				 and current_binding.conversation_id = current_conversation.id
+				 and current_binding.session_id = current_conversation.session_id
+				 and current_binding.lead_id = current_conversation.lead_id
+				 and current_binding.active_to is null
+				where current_message.id = queued.message_id
+				  and current_message.organization_id = queued.organization_id
+				  and current_message.session_id = queued.session_id
+				  and current_message.conversation_id = queued.conversation_id
+				  and current_message.lead_id = current_conversation.lead_id
 			  )
 			  and queued.next_attempt_at <= now()
 			  and not exists (
@@ -1245,6 +1302,25 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 	}
 	defer tx.Rollback(ctx)
 
+	// Binding switches lock the physical conversation before touching its
+	// outbox. Preserve that order during provider finalization as well: the
+	// message-context triggers may need the same conversation lock while merging
+	// a webhook projection that won the provider-id race.
+	var lockedConversationID string
+	if err := tx.QueryRow(ctx, `
+		select conversation.id::text
+		from public.whatsapp_conversations as conversation
+		where conversation.id = $1::uuid
+		  and conversation.organization_id = $2::uuid
+		  and conversation.session_id = $3::uuid
+		for no key update of conversation
+	`, item.ConversationID, item.OrganizationID, item.SessionID).Scan(&lockedConversationID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errWhatsAppOutboxLeaseLost
+		}
+		return err
+	}
+
 	var lockedID string
 	if err := tx.QueryRow(ctx, `
 		select id::text
@@ -1261,10 +1337,10 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 	}
 
 	canonicalMessageID := item.MessageRowID
-	var existingID string
+	var existingID, existingLeadID, pendingLeadID string
 	pendingMessageLocked := false
 	messageRows, err := tx.Query(ctx, `
-		select message.id::text, message.conversation_id::text
+		select message.id::text, message.conversation_id::text, coalesce(message.lead_id::text, '')
 		from public.whatsapp_messages as message
 		where message.organization_id = $1::uuid
 		  and message.session_id = $2::uuid
@@ -1280,8 +1356,8 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 		return err
 	}
 	for messageRows.Next() {
-		var messageID, conversationID string
-		if err := messageRows.Scan(&messageID, &conversationID); err != nil {
+		var messageID, conversationID, messageLeadID string
+		if err := messageRows.Scan(&messageID, &conversationID, &messageLeadID); err != nil {
 			messageRows.Close()
 			return err
 		}
@@ -1291,6 +1367,7 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 		}
 		if messageID == item.MessageRowID {
 			pendingMessageLocked = true
+			pendingLeadID = messageLeadID
 			continue
 		}
 		if existingID != "" && existingID != messageID {
@@ -1298,6 +1375,7 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 			return fmt.Errorf("%w: multiple WhatsApp message projections share provider id", ErrProviderFailed)
 		}
 		existingID = messageID
+		existingLeadID = messageLeadID
 	}
 	if err := messageRows.Err(); err != nil {
 		messageRows.Close()
@@ -1306,6 +1384,12 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 	messageRows.Close()
 	if !pendingMessageLocked {
 		return ErrMessageNotFound
+	}
+	if pendingLeadID == "" {
+		return fmt.Errorf("%w: WhatsApp outbox message has no immutable lead", ErrProviderFailed)
+	}
+	if existingID != "" && existingLeadID != "" && existingLeadID != pendingLeadID {
+		return fmt.Errorf("%w: WhatsApp provider projection lead mismatch", ErrProviderFailed)
 	}
 
 	if existingID != "" {

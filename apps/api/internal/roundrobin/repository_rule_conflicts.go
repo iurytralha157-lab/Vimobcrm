@@ -52,6 +52,7 @@ func (repo Repository) checkConditionConflicts(ctx context.Context, q queryer, o
 		  on rr.organization_id = rrr.organization_id
 		 and rr.id = rrr.round_robin_id
 		where rrr.organization_id = $1::uuid
+		  and rr.deleted_at is null
 		  and coalesce(rrr.is_active, true) = true
 		  and ($2::uuid is null or rrr.round_robin_id <> $2::uuid)
 	`, organizationID, nullable(excludeRoundRobinID))

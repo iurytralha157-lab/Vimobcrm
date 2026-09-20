@@ -63,6 +63,21 @@ values
   ('c5000000-0000-4000-8000-000000000002', 'c2000000-0000-4000-8000-000000000001', 'c4000000-0000-4000-8000-000000000001', null, null, '5511999990099@s.whatsapp.net', 'Quarantine'),
   ('c5000000-0000-4000-8000-000000000003', 'c2000000-0000-4000-8000-000000000002', 'c4000000-0000-4000-8000-000000000002', 'c3000000-0000-4000-8000-000000000002', 'c1000000-0000-4000-8000-000000000004', '5511999990002@s.whatsapp.net', 'Lead B');
 
+do $$
+begin
+  perform public.activate_whatsapp_conversation_lead_binding(
+    'c2000000-0000-4000-8000-000000000001',
+    'c5000000-0000-4000-8000-000000000001',
+    'c3000000-0000-4000-8000-000000000001'
+  );
+  perform public.activate_whatsapp_conversation_lead_binding(
+    'c2000000-0000-4000-8000-000000000002',
+    'c5000000-0000-4000-8000-000000000003',
+    'c3000000-0000-4000-8000-000000000002'
+  );
+end;
+$$;
+
 insert into public.whatsapp_messages (
   id, organization_id, conversation_id, session_id, lead_id,
   provider_message_id, message_id, client_message_id, from_me, direction,
@@ -318,7 +333,7 @@ select throws_ok(
 select throws_ok(
   $$select private.enqueue_whatsapp_outbox('c2000000-0000-4000-8000-000000000001', 'c4000000-0000-4000-8000-000000000001', 'c5000000-0000-4000-8000-000000000001', 'c6000000-0000-4000-8000-000000000004', 'cross-tenant-outbox', '5511999990001@s.whatsapp.net', 'text', '{}'::jsonb, 12)$$,
   '23514',
-  'WhatsApp worker row crosses organization, session, conversation, or message boundaries',
+  'canonical_whatsapp_outbox_message_mismatch',
   'outbox cannot bind a message from another tenant'
 );
 select results_eq(

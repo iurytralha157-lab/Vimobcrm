@@ -57,10 +57,13 @@ Crie um webhook de **Entrada** em Configurações > Integrações > Webhook e co
 
 ```http
 Authorization: Bearer <TOKEN_DO_WEBHOOK>
+Idempotency-Key: <ID_UNICO_DA_ENTRADA>
 Content-Type: application/json
 ```
 
-O corpo aceita `name` como obrigatório e os campos básicos, de atribuição, UTMs e respostas personalizadas mostrados na própria tela. Para reenvios seguros, inclua um identificador estável em `event_id`, `submission_id`, `leadgen_id` ou `external_id`. O mesmo identificador e corpo são idempotentes; o mesmo identificador com outro corpo retorna `409`.
+O corpo aceita `name` como obrigatório e os campos básicos, de atribuição, UTMs e respostas personalizadas mostrados na própria tela. Para reenvios seguros, envie uma `Idempotency-Key` estável por entrada lógica. Como alternativa, o corpo pode conter `event_id`, `submission_id`, `leadgen_id` ou `external_id`; o cabeçalho tem precedência quando ambos forem enviados. A mesma chave e o mesmo corpo são idempotentes; a mesma chave com outro corpo retorna `409`.
+
+O cabeçalho é opcional para manter compatibilidade com integrações existentes. Sem uma chave explícita, cada requisição é tratada como uma nova entrada, mesmo que o corpo seja idêntico, porque dois envios iguais podem representar reentradas legítimas do lead.
 
 O token também pode ser enviado em `X-Webhook-Token`. Tokens na URL não são aceitos para evitar vazamento em logs e histórico.
 

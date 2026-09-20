@@ -26,9 +26,10 @@ import (
 )
 
 type Repository struct {
-	db       *dbpkg.Postgres
-	external ExternalConfig
-	client   *http.Client
+	db            *dbpkg.Postgres
+	external      ExternalConfig
+	client        *http.Client
+	unmarshalJSON func([]byte, any) error
 }
 
 func NewRepository(db *dbpkg.Postgres, external ExternalConfig) Repository {
@@ -39,8 +40,9 @@ func NewRepository(db *dbpkg.Postgres, external ExternalConfig) Repository {
 		external.MetaGraphBaseURL = "https://graph.facebook.com"
 	}
 	return Repository{
-		db:       db,
-		external: external,
+		db:            db,
+		external:      external,
+		unmarshalJSON: json.Unmarshal,
 		client: &http.Client{
 			Timeout: 95 * time.Second,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -438,10 +440,12 @@ func (repo Repository) fetchMetaLeadForms(ctx context.Context, pageID string, ac
 	}
 	endpoint.RawQuery = query.Encode()
 
+	const maxPages = 10
+
 	forms := []map[string]any{}
 	after := ""
 	seenCursors := make(map[string]struct{})
-	for page := 0; page < 10; page++ {
+	for page := 0; page < maxPages; page++ {
 		pageURL := *endpoint
 		pageQuery := pageURL.Query()
 		if after == "" {
@@ -477,18 +481,24 @@ func (repo Repository) fetchMetaLeadForms(ctx context.Context, pageID string, ac
 		for _, form := range payload.Data {
 			forms = append(forms, metaLeadFormToMap(form))
 		}
+		if strings.TrimSpace(payload.Paging.Next) == "" {
+			return forms, nil
+		}
 		nextCursor := strings.TrimSpace(payload.Paging.Cursors.After)
-		if strings.TrimSpace(payload.Paging.Next) == "" || nextCursor == "" {
-			break
+		if nextCursor == "" {
+			return nil, fmt.Errorf("%w: Meta Graph omitted the lead form paging cursor", ErrMetaUpstream)
 		}
 		if _, repeated := seenCursors[nextCursor]; repeated {
-			break
+			return nil, fmt.Errorf("%w: Meta Graph repeated the lead form paging cursor", ErrMetaUpstream)
+		}
+		if page == maxPages-1 {
+			return nil, fmt.Errorf("%w: Meta Graph lead form pagination exceeded %d pages", ErrMetaUpstream, maxPages)
 		}
 		seenCursors[nextCursor] = struct{}{}
 		after = nextCursor
 	}
 
-	return forms, nil
+	return nil, fmt.Errorf("%w: Meta Graph lead form pagination did not terminate", ErrMetaUpstream)
 }
 
 func metaAppSecretProof(appSecret string, accessToken string) string {
@@ -893,6 +903,15 @@ func (repo Repository) SaveMetaFormConfig(ctx context.Context, tenantContext ten
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	if err := repo.lockMetaFormRoundRobins(
+		ctx,
+		tx,
+		tenantContext.OrganizationID,
+		request.RoundRobinID,
+		formID,
+	); err != nil {
+		return nil, err
+	}
 
 	var referencesBelongToOrganization bool
 	if err := tx.QueryRow(ctx, `
@@ -910,6 +929,7 @@ func (repo Repository) SaveMetaFormConfig(ctx context.Context, tenantContext ten
 					from public.round_robins as queue
 					where queue.organization_id = $1::uuid
 					  and queue.id = nullif($3, '')::uuid
+					  and queue.deleted_at is null
 				)
 			)
 			and (
@@ -1020,12 +1040,15 @@ func (repo Repository) SaveMetaFormConfig(ctx context.Context, tenantContext ten
 	if err := repo.replaceMetaFormRule(ctx, tx, tenantContext.OrganizationID, request.RoundRobinID, formID); err != nil {
 		return nil, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	var item map[string]any
+	unmarshalJSON := repo.unmarshalJSON
+	if unmarshalJSON == nil {
+		unmarshalJSON = json.Unmarshal
+	}
+	if err := unmarshalJSON(raw, &item); err != nil {
 		return nil, err
 	}
-
-	var item map[string]any
-	if err := json.Unmarshal(raw, &item); err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return item, nil
@@ -1102,17 +1125,33 @@ func canonicalMetaFormPropertyID(request MetaFormConfigRequest) (*string, error)
 }
 
 func (repo Repository) ToggleMetaFormConfig(ctx context.Context, tenantContext tenant.Context, request ToggleMetaFormConfigRequest) error {
-	if strings.TrimSpace(request.IntegrationID) == "" || strings.TrimSpace(request.FormID) == "" {
+	integrationID := strings.TrimSpace(request.IntegrationID)
+	formID := strings.TrimSpace(request.FormID)
+	if integrationID == "" || formID == "" {
 		return ErrInvalidInput
 	}
-	tag, err := repo.db.Pool().Exec(ctx, `
+	tx, err := repo.db.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := repo.lockMetaFormRoundRobins(
+		ctx,
+		tx,
+		tenantContext.OrganizationID,
+		nil,
+		formID,
+	); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `
 		update public.meta_form_configs
 		set is_active = $4,
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and integration_id = $2::uuid
 		  and form_id = $3
-	`, tenantContext.OrganizationID, request.IntegrationID, request.FormID, request.IsActive)
+	`, tenantContext.OrganizationID, integrationID, formID, request.IsActive)
 	if err != nil {
 		if isMetaFormRouteConflict(err) {
 			return ErrMetaFormRouteConflict
@@ -1122,7 +1161,7 @@ func (repo Repository) ToggleMetaFormConfig(ctx context.Context, tenantContext t
 	if tag.RowsAffected() == 0 {
 		return ErrIntegrationNotFound
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func isMetaFormRouteConflict(err error) bool {
@@ -1143,6 +1182,15 @@ func (repo Repository) DeleteMetaFormConfig(ctx context.Context, tenantContext t
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if err := repo.lockMetaFormRoundRobins(
+		ctx,
+		tx,
+		tenantContext.OrganizationID,
+		nil,
+		formID,
+	); err != nil {
+		return err
+	}
 
 	tag, err := tx.Exec(ctx, `
 		delete from public.meta_form_configs
@@ -1564,6 +1612,7 @@ func (repo Repository) replaceMetaFormRule(ctx context.Context, tx pgx.Tx, organ
 			from public.round_robins
 			where organization_id = $1::uuid
 			  and id = $2::uuid
+			  and deleted_at is null
 		)
 	`, organizationID, *roundRobinID).Scan(&exists); err != nil {
 		return err
@@ -1597,6 +1646,75 @@ func (repo Repository) replaceMetaFormRule(ctx context.Context, tx pgx.Tx, organ
 		)
 	`, organizationID, *roundRobinID, formID, string(matchJSON))
 	return err
+}
+
+// lockMetaFormRoundRobins establishes the same parent-before-child lock order
+// used by the round-robin repository. The tombstone guards lock a referenced
+// queue while a Meta config is written, and the rule guards lock it again when
+// the mirrored meta_form rule is replaced. Locking every old and requested
+// parent up front prevents concurrent saves/deletes from forming a SHARE to
+// UPDATE lock-upgrade cycle after either child row is already locked.
+func (repo Repository) lockMetaFormRoundRobins(
+	ctx context.Context,
+	tx pgx.Tx,
+	organizationID string,
+	roundRobinID *string,
+	formID string,
+) error {
+	// The advisory lock is intentionally a separate statement. At READ
+	// COMMITTED, a waiter receives a fresh snapshot for the following parent
+	// discovery query, so it cannot resume with the old queue set observed
+	// before another Save/Delete/Toggle committed a route move.
+	if _, err := tx.Exec(ctx, `
+		select pg_catalog.pg_advisory_xact_lock(
+		  pg_catalog.hashtextextended(
+		    'vimob:meta-form:' || $1::text || ':' || $2,
+		    0
+		  )
+		)
+	`, organizationID, formID); err != nil {
+		return err
+	}
+
+	rows, err := tx.Query(ctx, `
+		with referenced_queue as materialized (
+			select nullif($3, '')::uuid as id
+			union
+			select config.round_robin_id
+			from public.meta_form_configs as config
+			where config.organization_id = $1::uuid
+			  and config.form_id = $2
+			union
+			select rule.round_robin_id
+			from public.round_robin_rules as rule
+			where rule.organization_id = $1::uuid
+			  and coalesce(
+			    nullif(rule.match_type, ''),
+			    rule.conditions->>'match_type',
+			    rule.name,
+			    ''
+			  ) = 'meta_form'
+			  and coalesce(
+			    nullif(rule.match_value, ''),
+			    rule.conditions->>'match_value',
+			    ''
+			  ) = $2
+		)
+		select queue.id
+		from public.round_robins as queue
+		join referenced_queue as reference
+		  on reference.id = queue.id
+		where queue.organization_id = $1::uuid
+		order by queue.organization_id, queue.id
+		for update of queue
+	`, organizationID, formID, cleanStringOrEmpty(roundRobinID))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+	}
+	return rows.Err()
 }
 
 func (repo Repository) upsertSecretIntegration(ctx context.Context, query string, args ...any) (map[string]any, error) {

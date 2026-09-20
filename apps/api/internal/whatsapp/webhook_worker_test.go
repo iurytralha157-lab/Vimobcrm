@@ -49,6 +49,13 @@ func TestClaimEvolutionWebhooksQueryFairlyClaimsOneHeadPerSession(t *testing.T) 
 		"(older.created_at, older.id) < (wi.created_at, wi.id)",
 		"older.status in ('pending', 'retry')",
 		"{__vimob_ingress,routing_key}",
+		"{__vimob_ingress,routing_snapshot,messages}",
+		"routing_message.snapshot->>'binding_eligible' = 'true'",
+		"routing_message.snapshot->>'predecessor_inbox_event_key' <> wi.event_key",
+		"same_inbox_route.snapshot->>'provider_message_id' = routing_message.snapshot->>'predecessor_provider_message_id'",
+		"predecessor.status = 'processed'",
+		"from public.whatsapp_webhook_routing_outcomes predecessor_outcome",
+		"predecessor_outcome.provider_message_id = routing_message.snapshot->>'predecessor_provider_message_id'",
 		"or head.routing_key = '__session__'",
 		"and head.next_attempt_at <= now()",
 		"join public.whatsapp_webhook_inbox wi on wi.id = selected.event_id",
@@ -66,6 +73,15 @@ func TestClaimEvolutionWebhooksQueryFairlyClaimsOneHeadPerSession(t *testing.T) 
 	}
 	if strings.Contains(normalized, "limit 1 for update of wi skip locked") {
 		t.Fatal("claim query may not skip a locked head and claim a newer row from the same session")
+	}
+	if strings.Contains(normalized, "routing_snapshot,messages,0") {
+		t.Fatal("claim readiness may not inspect only the first message snapshot")
+	}
+	if got := strings.Count(normalized, "as routing_message(snapshot)"); got < 3 {
+		t.Fatalf("routing predecessor gates = %d, want every candidate/race/live-priority pass", got)
+	}
+	if got := strings.Count(normalized, "as same_inbox_route(snapshot)"); got < 3 {
+		t.Fatalf("same-envelope predecessor gates = %d, want every claim pass", got)
 	}
 	if strings.Contains(normalized, "wi.processing_lane = 'backlog' or wi.next_attempt_at <= now()") {
 		t.Fatal("backlog must retain strict FIFO and may not bypass a deferred head")
@@ -90,6 +106,51 @@ func TestClaimEvolutionWebhooksQueryFairlyClaimsOneHeadPerSession(t *testing.T) 
 	}
 	if shouldWrapEvolutionWebhookLaneClaim("", 0) || shouldWrapEvolutionWebhookLaneClaim("cursor", 1) {
 		t.Fatal("an initial or successful cursor segment must not wrap")
+	}
+}
+
+func TestMarkEvolutionWebhookProcessedAtomicallyCompletesExactRoutingOutcomes(t *testing.T) {
+	source := readWhatsAppSourceFunction(t, "webhook_worker.go", `func (repo Repository) markEvolutionWebhookProcessed`)
+	normalized := strings.ToLower(strings.Join(strings.Fields(source), " "))
+	for _, required := range []string{
+		"with owned as materialized",
+		"and inbox.status = 'processing'",
+		"and inbox.locked_by = $2",
+		"for update",
+		"routing_message.snapshot->>'binding_eligible' = 'true'",
+		"routing_snapshot.snapshot = payload_route.snapshot",
+		"count(distinct payload_route.snapshot->>'provider_message_id')",
+		"insert into public.whatsapp_webhook_routing_outcomes",
+		"where whatsapp_webhook_routing_outcomes.ingress_sequence = excluded.ingress_sequence",
+		"update public.whatsapp_webhook_inbox inbox set status = 'processed'",
+		"integrity.payload_count = integrity.validated_count",
+		"integrity.validated_count = (select count(*) from completed)",
+		"if updated != 1",
+	} {
+		if !strings.Contains(normalized, required) {
+			t.Fatalf("atomic webhook completion is missing %q\n%s", required, source)
+		}
+	}
+	completed := strings.Index(normalized, "insert into public.whatsapp_webhook_routing_outcomes")
+	processed := strings.Index(normalized, "update public.whatsapp_webhook_inbox inbox set status = 'processed'")
+	if completed < 0 || processed < 0 || completed > processed {
+		t.Fatalf("route outcomes must be proven before the inbox can become processed\n%s", source)
+	}
+	if strings.Contains(normalized, "on conflict (organization_id, session_id, provider_message_id) do update set ingress_sequence") {
+		t.Fatal("a replay may not rewrite immutable provider ingress sequence")
+	}
+}
+
+func TestClaimedEvolutionWebhookPublishesOutcomeOnlyAfterDispatchCompletes(t *testing.T) {
+	source := readWhatsAppSourceFunction(t, "webhook_worker.go", `func (repo Repository) processClaimedEvolutionWebhook`)
+	dispatch := strings.Index(source, "repo.dispatchEvolutionWebhook(ctx, item)")
+	failed := strings.Index(source, "repo.markEvolutionWebhookFailed(ctx, item, err)")
+	processed := strings.Index(source, "repo.markEvolutionWebhookProcessed(ctx, item)")
+	if dispatch < 0 || failed < dispatch || processed < failed {
+		t.Fatalf("dispatch, failure handling, and atomic completion are not ordered fail-closed\n%s", source)
+	}
+	if strings.Count(source, "repo.markEvolutionWebhookProcessed(ctx, item)") != 1 {
+		t.Fatalf("routing outcome must be published through one completion path only\n%s", source)
 	}
 }
 
@@ -277,7 +338,7 @@ func TestForwardEvolutionWebhookBoundsTargetResponseBody(t *testing.T) {
 	}
 }
 
-func TestForwardEvolutionWebhookStripsInternalRoutingMetadata(t *testing.T) {
+func TestForwardEvolutionWebhookPreservesAuthenticatedRoutingSnapshot(t *testing.T) {
 	var forwarded []byte
 	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		forwarded, _ = io.ReadAll(request.Body)
@@ -298,13 +359,13 @@ func TestForwardEvolutionWebhookStripsInternalRoutingMetadata(t *testing.T) {
 		Payload: []byte(`{
 			"event":"MESSAGES_UPSERT",
 			"data":{"message":{"conversation":"oi"}},
-			"__vimob_ingress":{"routing_key":"phone:5511999991111"}
+			"__vimob_ingress":{"routing_key":"phone:5511999991111","routing_snapshot":{"version":1,"messages":[]}}
 		}`),
 	})
 	if err != nil {
 		t.Fatalf("forwardEvolutionWebhook() returned error: %v", err)
 	}
-	if strings.Contains(string(forwarded), evolutionWebhookRoutingMetaKey) || !strings.Contains(string(forwarded), `"conversation":"oi"`) {
+	if !strings.Contains(string(forwarded), `"routing_snapshot"`) || !strings.Contains(string(forwarded), `"conversation":"oi"`) {
 		t.Fatalf("forwarded provider payload = %s", forwarded)
 	}
 }

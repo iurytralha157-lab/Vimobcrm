@@ -58,7 +58,14 @@ import {
 } from "@/components/ui/tooltip";
 import { useAuth } from "@/contexts/AuthContext";
 import { whatsappAPI } from "@/lib/api/whatsapp";
-import { getWhatsAppMessageInputState } from "@/lib/whatsapp-message-input";
+import {
+  getWhatsAppConversationDraftKey,
+  getWhatsAppConversationMessageScope,
+  getWhatsAppMessageInputState,
+  preserveWhatsAppConversationCardSnapshot,
+  updateWhatsAppConversationDraft,
+  WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
+} from "@/lib/whatsapp-message-input";
 import { getWhatsAppSendFailureStatus, resolveWhatsAppConversationSessionFilter } from "@/lib/whatsapp-query-cache";
 import { canReactToWhatsAppMessage, groupLatestWhatsAppReactions } from "@/lib/whatsapp-reactions";
 import { normalizeSearchText } from "@/lib/search-text";
@@ -263,6 +270,8 @@ export function FloatingChat() {
   const hasWhatsAppViewPermission = hasPermission("whatsapp_view");
   const canOperateWhatsApp = hasPermission("whatsapp_operate");
   const canOperateLeads = hasPermission("lead_operate");
+  const currentUserId = profile?.id || user?.id || null;
+  const activeTenantKey = `${currentUserId || "anonymous"}:${activeOrganization.organizationId || "none"}`;
   const [searchTerm, setSearchTerm] = useState("");
   const debouncedSearchTerm = useDebouncedValue(searchTerm, 300);
   const [messageDrafts, setMessageDrafts] = useState<Record<string, string>>({});
@@ -335,23 +344,25 @@ export function FloatingChat() {
     };
   }, [profile?.id, activeOrganization.organizationId]);
   const activeConversationId = activeConversation?.id;
-  const messageText = activeConversationId ? messageDrafts[activeConversationId] ?? "" : "";
+  const activeConversationMessageScope = getWhatsAppConversationMessageScope(activeConversation);
+  const activeMessageDraftKey = getWhatsAppConversationDraftKey({
+    tenantKey: activeTenantKey,
+    conversationId: activeConversationId,
+    expectedLeadId: activeConversationMessageScope.expectedLeadId,
+  });
+  const messageText = activeMessageDraftKey ? messageDrafts[activeMessageDraftKey] ?? "" : "";
   const setMessageText = useCallback((value: string | ((current: string) => string)) => {
-    if (!activeConversationId) return;
-    setMessageDrafts((currentDrafts) => {
-      const currentValue = currentDrafts[activeConversationId] ?? "";
-      const nextValue = typeof value === "function" ? value(currentValue) : value;
-      if (nextValue === currentValue) return currentDrafts;
-      if (!nextValue) {
-        const { [activeConversationId]: _removed, ...remainingDrafts } = currentDrafts;
-        void _removed;
-        return remainingDrafts;
-      }
-      return { ...currentDrafts, [activeConversationId]: nextValue };
-    });
-  }, [activeConversationId]);
+    if (!activeMessageDraftKey) return;
+    setMessageDrafts((currentDrafts) => updateWhatsAppConversationDraft(
+      currentDrafts,
+      activeMessageDraftKey,
+      value,
+    ));
+  }, [activeMessageDraftKey]);
   const activeConversationLead = activeConversation?.lead;
   const activeConversationLeadId = activeConversation?.lead_id || activeConversationLead?.id || null;
+  const canMutateActiveConversation = canOperateWhatsApp && activeConversationMessageScope.canMutate;
+  const canManageActiveConversation = canOperateWhatsApp && activeConversationMessageScope.canManage;
   const activeConversationUnreadCount = activeConversation?.unread_count ?? 0;
   const activeConversationSessionId = activeConversation?.session_id;
   const activeConversationRemoteJid = activeConversation?.remote_jid;
@@ -360,19 +371,20 @@ export function FloatingChat() {
   const shouldLoadFloatingChatData = accessReady
     && canViewWhatsApp
     && (isOpen || Boolean(pendingPhone) || Boolean(activeConversation));
-  const currentUserId = profile?.id || user?.id || null;
   const activeConversationReadTarget = useMemo(() => (
     activeConversationId && activeConversationSessionId && activeConversationRemoteJid
       ? {
           id: activeConversationId,
           unreadCount: activeConversationUnreadCount,
           sessionId: activeConversationSessionId,
-          remoteJid: activeConversationRemoteJid,
-          isGroup: Boolean(activeConversationIsGroup),
+		  remoteJid: activeConversationRemoteJid,
+		  isGroup: Boolean(activeConversationIsGroup),
+		  leadId: activeConversationLeadId,
         }
       : null
   ), [
-    activeConversationId,
+	activeConversationId,
+	activeConversationLeadId,
     activeConversationUnreadCount,
     activeConversationSessionId,
     activeConversationRemoteJid,
@@ -454,7 +466,11 @@ export function FloatingChat() {
     refetch: refetchMessages,
   } = useWhatsAppMessagesPaginated(
     shouldSyncFloatingChat ? activeConversationId || null : null,
-    { pageSize: 30 },
+    {
+      pageSize: 30,
+      expectedLeadId: activeConversationMessageScope.expectedLeadId,
+      historyLeadId: activeConversationMessageScope.historyLeadId,
+    },
   );
   const reactionMessages = useMemo(() => {
     return (messages || []).filter((message) => message.message_type === "reaction");
@@ -506,10 +522,16 @@ export function FloatingChat() {
       if (pendingLink?.conversationId === updatedConv.id) {
         if (updatedConv.lead_id !== pendingLink.leadId) return;
         pendingConversationLinkRef.current = null;
+		openConversation(updatedConv);
+		return;
       }
-      openConversation(updatedConv);
+	  const resolvedConversation = preserveWhatsAppConversationCardSnapshot(
+		activeConversation,
+		updatedConv,
+	  );
+	  openConversation(resolvedConversation);
     }
-  }, [activeConversation, activeConversationId, conversations, openConversation]);
+  }, [activeConversation, activeConversationId, activeConversationLeadId, conversations, openConversation]);
 
   const handleScrollArea = useCallback((event: React.UIEvent<HTMLDivElement>) => {
     const target = event.currentTarget.querySelector<HTMLElement>("[data-radix-scroll-area-viewport]")
@@ -679,12 +701,12 @@ export function FloatingChat() {
   }, [activeConversation, clearPendingMessage, pendingMessage, setMessageText]);
 
   useEffect(() => {
-    if (!chatVisible || isMobile || !activeConversationId || !canOperateWhatsApp) return undefined;
+    if (!chatVisible || isMobile || !activeConversationId || !canMutateActiveConversation) return undefined;
     const focusFrame = window.requestAnimationFrame(() => {
       messageInputRef.current?.focus({ preventScroll: true });
     });
     return () => window.cancelAnimationFrame(focusFrame);
-  }, [activeConversationId, canOperateWhatsApp, chatVisible, isMobile]);
+  }, [activeConversationId, canMutateActiveConversation, chatVisible, isMobile]);
 
   useEffect(() => {
     if (!chatVisible) return undefined;
@@ -711,15 +733,16 @@ export function FloatingChat() {
   ]);
 
   useEffect(() => {
-    if (canOperateWhatsApp && activeConversationReadTarget && activeConversationReadTarget.unreadCount > 0) {
-      markConversationAsRead({
+	if (canManageActiveConversation && activeConversationReadTarget && activeConversationReadTarget.unreadCount > 0) {
+	  markConversationAsRead({
         id: activeConversationReadTarget.id,
         session_id: activeConversationReadTarget.sessionId,
         remote_jid: activeConversationReadTarget.remoteJid,
-        is_group: activeConversationReadTarget.isGroup
+		is_group: activeConversationReadTarget.isGroup,
+		lead_id: activeConversationReadTarget.leadId,
       });
     }
-  }, [activeConversationReadTarget, canOperateWhatsApp, markConversationAsRead]);
+  }, [activeConversationReadTarget, canManageActiveConversation, markConversationAsRead]);
 
   const handleSessionSelect = (session: WhatsAppSession) => {
     setShowSessionSelector(false);
@@ -771,12 +794,27 @@ export function FloatingChat() {
     setIsStartingConversation(true);
 
     try {
-      // Uma única busca preserva a prioridade: conversa do lead em qualquer
-      // sessão acessível e, depois, telefone restrito à sessão escolhida.
-      if (leadId || sessionId) {
+      // Reabra primeiro a projeção do próprio card. Se a conversa física já
+      // estiver vinculada a outro card, o backend devolve o histórico imutável
+      // deste lead e a simples navegação nunca reativa o vínculo antigo.
+      if (leadId) {
+		const existingForLead = await whatsappAPI.findConversation({
+		  phone: "",
+		  leadId,
+		  organizationId: activeOrganization.organizationId,
+		}) as WhatsAppConversation | null;
+		if (existingForLead) {
+		  openConversation(existingForLead);
+		  return;
+		}
+	  }
+
+      // Sem histórico do card, a busca física permanece restrita à sessão
+      // escolhida. Um vínculo só é ativado abaixo como parte do fluxo explícito
+      // de iniciar a conversa para esse card.
+      if (sessionId) {
         const existing = await findConversation.mutateAsync({
           phone: canonicalPhone,
-          leadId,
           sessionId,
         });
         if (existing) {
@@ -792,26 +830,21 @@ export function FloatingChat() {
               return;
             }
             await linkConversationToLead.mutateAsync({
-              conversationId: existing.id,
+              conversation: existing,
               leadId,
             });
             pendingConversationLinkRef.current = {
               conversationId: existing.id,
               leadId,
             };
-            try {
-              conversationToOpen = await whatsappAPI.getConversation(
-                existing.id,
-                activeOrganization.organizationId,
-              );
-            } catch {
-              conversationToOpen = {
-                ...existing,
-                lead_id: leadId,
-                lead: undefined,
-                updated_at: new Date().toISOString(),
-              };
-            }
+            // Read back the binding we just requested. A concurrent rebind or
+            // an unavailable read must stop here; fabricating a lead_id in the
+            // browser would display a card snapshot the server never proved.
+            conversationToOpen = await whatsappAPI.getConversation(
+              existing.id,
+			  leadId,
+              activeOrganization.organizationId,
+            );
           }
           openConversation(conversationToOpen);
           return;
@@ -864,7 +897,8 @@ export function FloatingChat() {
         phone: canonicalPhone,
         sessionId,
         leadId,
-        leadName
+        leadName,
+        expectedPreviousLeadId: WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
       });
 
       openConversation(newConversation);
@@ -896,10 +930,10 @@ export function FloatingChat() {
   };
 
   const handleArchiveConversation = (conversation: WhatsAppConversation) => {
-    if (!canOperateWhatsApp) return;
-    archiveConversation.mutate({
-      conversationId: conversation.id,
-      archive: !conversation.archived_at,
+    if (!canOperateWhatsApp || conversation.historical_lead_view) return;
+	archiveConversation.mutate({
+	  conversation,
+	  archive: !conversation.archived_at,
     }, {
       onSuccess: () => {
         if (activeConversation?.id === conversation.id) clearActiveConversation();
@@ -908,7 +942,7 @@ export function FloatingChat() {
   };
 
   const handleDeleteConversation = (conversation: WhatsAppConversation) => {
-    if (!canOperateWhatsApp) return;
+    if (!canOperateWhatsApp || conversation.historical_lead_view) return;
     setPendingDeleteConversation(conversation);
   };
 
@@ -916,7 +950,7 @@ export function FloatingChat() {
     if (!pendingDeleteConversation) return;
 
     try {
-      await deleteConversation.mutateAsync(pendingDeleteConversation.id);
+	  await deleteConversation.mutateAsync(pendingDeleteConversation);
       if (activeConversation?.id === pendingDeleteConversation.id) clearActiveConversation();
       setPendingDeleteConversation(null);
     } catch {
@@ -925,7 +959,7 @@ export function FloatingChat() {
   };
 
   const retryMediaDownload = async (messageId: string) => {
-    if (!canOperateWhatsApp) return;
+    if (!canMutateActiveConversation) return;
     try {
       await whatsappAPI.retryMediaDownload(messageId, activeOrganization.organizationId);
       await refetchMessages();
@@ -944,7 +978,7 @@ export function FloatingChat() {
 
   const handleSendMessage = async () => {
     const textToSend = messageText.trim();
-    if (!canOperateWhatsApp || !textToSend || !activeConversation) return;
+    if (!canMutateActiveConversation || !textToSend || !activeConversation) return;
     if (sendMessage.isPending) return;
     if (whatsappMessageInputState.disabled || isReadOnlyMode) {
       toast({
@@ -980,7 +1014,7 @@ export function FloatingChat() {
   };
 
   const handleSendAudio = async (base64: string, mimetype: string) => {
-    if (!canOperateWhatsApp || !activeConversation) return;
+    if (!canMutateActiveConversation || !activeConversation) return;
     if (whatsappMessageInputState.disabled || isReadOnlyMode) {
       toast({
         title: "Audio nao enviado",
@@ -1013,7 +1047,7 @@ export function FloatingChat() {
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !canOperateWhatsApp || !activeConversation) return;
+    if (!file || !canMutateActiveConversation || !activeConversation) return;
     if (file.size > MAX_OUTBOUND_MESSAGE_MEDIA_BYTES) {
       toast({
         title: "Arquivo muito grande",
@@ -1156,7 +1190,7 @@ export function FloatingChat() {
   if (!chatVisible) return null;
 
   // A visualização do histórico é independente da permissão de operação.
-  const isReadOnlyMode = !canOperateWhatsApp;
+  const isReadOnlyMode = !canMutateActiveConversation;
   const whatsappMessageInputState = getWhatsAppMessageInputState(activeConversation, selectedSessionId, sessions);
   const messageInputDisabled = isReadOnlyMode || whatsappMessageInputState.disabled;
 
@@ -1451,7 +1485,7 @@ export function FloatingChat() {
                       sentAt={msg.sent_at}
                       senderName={msg.sender_name ?? null}
                       isGroup={activeConversation!.is_group}
-                      onRetryMedia={canOperateWhatsApp ? () => retryMediaDownload(msg.id) : undefined}
+                      onRetryMedia={canMutateActiveConversation ? () => retryMediaDownload(msg.id) : undefined}
                       messageId={msg.id}
                       leadId={canOperateLeads ? activeConversation!.lead?.id || activeConversation!.lead_id || '' : ''}
                       leadName={activeConversation!.lead?.name || activeConversation!.contact_name || ''}
@@ -1460,7 +1494,7 @@ export function FloatingChat() {
                       conversationSessionId={activeConversation!.session_id ?? null}
                       reactionPickerPosition="outside"
                       reactions={reactionsByMessageId.get(msg.message_id) || reactionsByMessageId.get(msg.id) || []}
-                      onReact={canOperateWhatsApp
+                      onReact={canMutateActiveConversation
                         && Boolean(activeConversation?.session_id)
                         && Boolean(msg.session_id)
                         && canReactToWhatsAppMessage(msg)
@@ -1518,7 +1552,7 @@ export function FloatingChat() {
             <button aria-label="Anexar arquivo" title="Anexar arquivo" type="button" onClick={() => fileInputRef.current?.click()} disabled={messageInputDisabled}>
               <Paperclip className="w-5 h-5" aria-hidden="true" />
             </button>
-            {activeLeadId && canStartAutomations && (
+            {activeLeadId && canStartAutomations && canMutateActiveConversation && (
               <button aria-label="Iniciar automação" type="button" onClick={() => setShowAutomationDialog(true)} title="Iniciar automação">
                 <Zap className="w-5 h-5" aria-hidden="true" />
               </button>
@@ -1694,7 +1728,7 @@ export function FloatingChat() {
       <>
         {SessionSelectorDialog()}
         {deleteConversationDialog}
-        {activeLeadId && (
+        {activeLeadId && canMutateActiveConversation && (
           <StartAutomationDialog
             open={showAutomationDialog}
             onOpenChange={setShowAutomationDialog}
@@ -1745,7 +1779,7 @@ export function FloatingChat() {
     <>
       {SessionSelectorDialog()}
       {deleteConversationDialog}
-      {activeLeadId && (
+      {activeLeadId && canMutateActiveConversation && (
         <StartAutomationDialog
           open={showAutomationDialog}
           onOpenChange={setShowAutomationDialog}

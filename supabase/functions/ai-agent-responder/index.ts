@@ -20,6 +20,10 @@ import {
 } from "./response-idempotency.ts";
 import { canonicalAIPauseReason } from "./canonical-ai-pause.ts";
 import { filterPublicSiteEligibleProperties } from "./public-property-eligibility.ts";
+import {
+  requireCurrentLeadId,
+  rowsForCurrentLead,
+} from "./lead-history-scope.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -131,6 +135,29 @@ Deno.serve(async (req) => {
     ) {
       return json({ success: false, error: "Related resource not found" }, 404);
     }
+    const inboundMessageIdentity = await getInboundMessageIdentity(supabase, {
+      organizationId: organization_id,
+      sessionId: conversation.session_id,
+      conversationId: conversation_id,
+      providerMessageId: provider_message_id,
+    });
+    if (!inboundMessageIdentity) {
+      return json({ success: false, error: "Related resource not found" }, 404);
+    }
+    const inboundMessageLeadId = inboundMessageIdentity.lead_id || null;
+    if (
+      inboundMessageLeadId
+      && conversation.lead_id
+      && inboundMessageLeadId !== conversation.lead_id
+    ) {
+      return json({ success: true, action: "historical_binding_no_ai" });
+    }
+    if (!inboundMessageLeadId && conversation.lead_id) {
+      // A legacy NULL row cannot inherit the conversation's mutable current
+      // card. The cutover backfill/binding ledger must establish attribution
+      // before AI may read context or emit a response.
+      return json({ success: true, action: "unattributed_message_no_ai" });
+    }
 
     const agent = await findActiveAgent(
       supabase,
@@ -154,6 +181,7 @@ Deno.serve(async (req) => {
       organizationId: organization_id,
       conversation,
       agentConversation: agentConversationIdentity,
+      inboundMessageLeadId,
     });
     if (!tenantReferences) {
       return json({ success: false, error: "Related resource not found" }, 404);
@@ -172,6 +200,20 @@ Deno.serve(async (req) => {
     }
 
     const lead = tenantReferences.lead;
+    if (tenantReferences.leadResolutionQuarantined) {
+      console.warn("[ai-agent-responder] multiple scoped leads match an unbound conversation; skipping AI", {
+        organization_id,
+        conversation_id,
+        provider_message_id,
+      });
+      return json({ success: true, action: "lead_resolution_quarantined" });
+    }
+    if (!lead?.id) {
+      // History and takeover state are immutable-lead scoped. Without an
+      // attributable current card, fail closed before claiming or calling AI.
+      return json({ success: true, action: "lead_unavailable_no_ai" });
+    }
+    const currentLeadId = requireCurrentLeadId(lead.id);
     const initialCanonicalPause = await getCanonicalAIPauseReason(supabase, {
       organizationId: organization_id,
       sessionId: conversation.session_id,
@@ -202,6 +244,7 @@ Deno.serve(async (req) => {
         conversationId: conversation_id,
         sessionId: conversation.session_id,
         lead,
+        providerMessageId: provider_message_id,
         contactName: contact_name,
         existingContactName: conversation.contact_name,
       });
@@ -213,6 +256,9 @@ Deno.serve(async (req) => {
         id: lead.id,
         organization_id,
       };
+    }
+    if (conversation.lead_id !== currentLeadId) {
+      throw new Error("Current WhatsApp lead binding changed after claim");
     }
 
     const sessionOwnerId = tenantReferences.sessionOwnerId;
@@ -232,11 +278,12 @@ Deno.serve(async (req) => {
       organization_id,
       conversation_id,
       conversation.session_id || null,
+      currentLeadId,
       takeoverSince,
     );
 
     if (humanTakeover.detected) {
-      await markHandedOff(supabase, agent, conversation_id, lead?.id || null, agentConv, humanTakeover.reason);
+      await markHandedOff(supabase, agent, conversation_id, currentLeadId, agentConv, humanTakeover.reason);
       await notifyHumanNeeded(supabase, organization_id, lead, sessionOwnerId, conversation_id, humanTakeover.reason);
       await completeAIResponseClaim(supabase, responseClaimContext, {
         eventType: "auto_reply_human_takeover",
@@ -272,7 +319,7 @@ Deno.serve(async (req) => {
         return json({ success: true, action: "human_takeover_active" });
       }
 
-      await markHandedOff(supabase, agent, conversation_id, lead?.id || null, agentConv, reason, messageCount);
+      await markHandedOff(supabase, agent, conversation_id, currentLeadId, agentConv, reason, messageCount);
       const pauseBeforeHandoffOutbox = await getCanonicalAIPauseReason(
         supabase,
         {
@@ -364,6 +411,7 @@ Deno.serve(async (req) => {
       organization_id,
       conversation_id,
       conversation.session_id || null,
+      currentLeadId,
       message,
       historyLimit,
       historySince,
@@ -435,7 +483,7 @@ Deno.serve(async (req) => {
       agent,
       agentConv,
       conversationId: conversation_id,
-      leadId: lead?.id || null,
+      leadId: currentLeadId,
       messageCount,
       memorySummary,
       property: selectedProperty,
@@ -492,7 +540,7 @@ Deno.serve(async (req) => {
       metadata: {
         source: "ai-agent-responder",
         mode: "auto",
-        lead_id: lead?.id || null,
+        lead_id: currentLeadId,
         property_id: selectedProperty?.id || null,
         property_code: selectedProperty?.code || null,
         response_parts: splitAssistantMessages(aiResponse).length,
@@ -535,6 +583,39 @@ function json(
       ...Object.fromEntries(new Headers(extraHeaders).entries()),
     },
   });
+}
+
+async function getInboundMessageIdentity(supabase: any, input: {
+  organizationId: string;
+  sessionId: string;
+  conversationId: string;
+  providerMessageId: string;
+}) {
+  const loadByColumn = async (column: "message_id" | "provider_message_id") => {
+    const { data, error } = await supabase
+      .from("whatsapp_messages")
+      .select("id, lead_id")
+      .eq("organization_id", input.organizationId)
+      .eq("session_id", input.sessionId)
+      .eq("conversation_id", input.conversationId)
+      .eq(column, input.providerMessageId)
+      .eq("from_me", false)
+      .eq("message_type", "text")
+      .maybeSingle();
+    if (error) throw error;
+    return data || null;
+  };
+
+  const byMessageId = await loadByColumn("message_id");
+  const byProviderMessageId = await loadByColumn("provider_message_id");
+  if (
+    byMessageId?.id
+    && byProviderMessageId?.id
+    && byMessageId.id !== byProviderMessageId.id
+  ) {
+    throw new Error("Inbound WhatsApp message identity is conflicting");
+  }
+  return byMessageId || byProviderMessageId || null;
 }
 
 async function claimAIResponse(supabase: any, input: {
@@ -799,6 +880,7 @@ async function loadTenantReferenceContext(supabase: any, input: {
   organizationId: string;
   conversation: any;
   agentConversation: any;
+  inboundMessageLeadId: string | null;
 }) {
   if (
     !input.conversation.session_id ||
@@ -815,19 +897,24 @@ async function loadTenantReferenceContext(supabase: any, input: {
 
   const agentConversationLeadId = input.agentConversation?.lead_id || null;
   const conversationLeadId = input.conversation.lead_id || null;
-  if (
-    agentConversationLeadId && conversationLeadId &&
-    agentConversationLeadId !== conversationLeadId
-  ) return null;
+  const explicitLeadIds = Array.from(new Set([
+    input.inboundMessageLeadId,
+    agentConversationLeadId,
+    conversationLeadId,
+  ].filter(Boolean)));
+  if (explicitLeadIds.length > 1) return null;
 
-  const leadId = agentConversationLeadId || conversationLeadId;
-  const lead = leadId
-    ? await fetchLead(supabase, input.organizationId, leadId)
+  const leadId = input.inboundMessageLeadId || agentConversationLeadId || conversationLeadId;
+  const phoneResolution = leadId
+    ? { lead: null, ambiguous: false }
     : await findLeadByConversationPhone(
       supabase,
       input.organizationId,
       input.conversation,
     );
+  const lead = leadId
+    ? await fetchLead(supabase, input.organizationId, leadId)
+    : phoneResolution.lead;
 
   // A populated FK that disappeared or resolves outside this tenant is a
   // broken reference, not permission to fall back to another tenant's data.
@@ -871,6 +958,7 @@ async function loadTenantReferenceContext(supabase: any, input: {
 
   return {
     lead: hydratedLead,
+    leadResolutionQuarantined: phoneResolution.ambiguous,
     conversationLeadNeedsBinding: !conversationLeadId && Boolean(lead?.id),
     sessionOwnerId: sessionOwnerId ? String(sessionOwnerId) : null,
     currentProperty: relatedRecord(
@@ -992,20 +1080,26 @@ async function findLeadByConversationPhone(
   conversation: any,
 ) {
   const phone = conversation.contact_phone || conversation.remote_jid || "";
-  const variants = phoneVariants(phone);
-  if (!variants.length) return null;
+  if (!phoneVariants(phone).length) return { lead: null, ambiguous: false };
 
-  const { data } = await supabase
-    .from("leads")
-    .select(leadSelect())
-    .eq("organization_id", organizationId)
-    .or(variants.map((variant) => `phone.ilike.%${variant}%`).join(","))
-    .limit(20);
-
-  return (data || []).find((candidate: any) =>
-    candidate.organization_id === organizationId &&
-    phonesMatch(candidate.phone || "", phone)
-  ) || null;
+  const { data, error } = await supabase.rpc("find_lead_by_normalized_phone", {
+    p_organization_id: organizationId,
+    p_phone: phone,
+  });
+  if (error) {
+    const message = String(error.message || "");
+    if (
+      error.code === "23505"
+      && (message.includes("whatsapp_lead_phone_ambiguous") || message.includes("lead_queue_phone_ambiguous"))
+    ) {
+      return { lead: null, ambiguous: true };
+    }
+    throw error;
+  }
+  const match = Array.isArray(data) ? data[0] || null : data || null;
+  if (!match?.id) return { lead: null, ambiguous: false };
+  const lead = await fetchLead(supabase, organizationId, match.id);
+  return { lead, ambiguous: false };
 }
 
 async function bindConversationLead(supabase: any, input: {
@@ -1013,35 +1107,38 @@ async function bindConversationLead(supabase: any, input: {
   conversationId: string;
   sessionId: string;
   lead: any;
+  providerMessageId: string;
   contactName?: string | null;
   existingContactName?: string | null;
 }) {
-  const { data, error } = await supabase
+  const { data, error } = await supabase.rpc("activate_whatsapp_conversation_lead_binding", {
+    p_organization_id: input.organizationId,
+    p_conversation_id: input.conversationId,
+    p_lead_id: input.lead.id,
+    p_provider_message_id: input.providerMessageId,
+  });
+  if (
+    error
+    || !data
+    || data.success !== true
+    || data.conversation_id !== input.conversationId
+    || data.lead_id !== input.lead.id
+    || data.active_lead_id !== input.lead.id
+    || data.is_current !== true
+    || !data.binding_id
+  ) return false;
+
+  const { data: current, error: currentError } = await supabase
     .from("whatsapp_conversations")
     .update({
-      lead_id: input.lead.id,
-      contact_name: input.lead.name || input.contactName ||
-        input.existingContactName,
+      contact_name: input.lead.name || input.contactName || input.existingContactName,
       updated_at: new Date().toISOString(),
     })
     .eq("id", input.conversationId)
     .eq("organization_id", input.organizationId)
     .eq("session_id", input.sessionId)
-    .is("lead_id", null)
-    .select("id")
-    .maybeSingle();
-
-  if (error) return false;
-  if (data?.id === input.conversationId) return true;
-
-  // A concurrent invocation may have established the exact same safe link.
-  // Re-read only inside the already established tenant/session boundary.
-  const { data: current, error: currentError } = await supabase
-    .from("whatsapp_conversations")
+    .eq("lead_id", input.lead.id)
     .select("id, lead_id")
-    .eq("id", input.conversationId)
-    .eq("organization_id", input.organizationId)
-    .eq("session_id", input.sessionId)
     .maybeSingle();
 
   return !currentError && current?.id === input.conversationId &&
@@ -1564,15 +1661,18 @@ async function getCompactHistory(
   organizationId: string,
   conversationId: string,
   sessionId: string | null,
+  leadId: string,
   currentMessage: string,
   limit: number,
   since?: string | null,
 ) {
+  const currentLeadId = requireCurrentLeadId(leadId);
   let query = supabase
     .from("whatsapp_messages")
-    .select("content, from_me, message_type, sent_at, created_at")
+    .select("lead_id, content, from_me, message_type, sent_at, created_at")
     .eq("organization_id", organizationId)
     .eq("conversation_id", conversationId)
+    .eq("lead_id", currentLeadId)
     .eq("message_type", "text")
     .order("sent_at", { ascending: false })
     .limit(limit);
@@ -1582,9 +1682,10 @@ async function getCompactHistory(
     query = query.gte("sent_at", since);
   }
 
-  const { data } = await query;
+  const { data, error } = await query;
+  if (error) throw error;
 
-  const history = (data || [])
+  const history = rowsForCurrentLead(data, currentLeadId)
     .reverse()
     .map((msg: any) => ({
       role: msg.from_me ? "assistant" as const : "user" as const,
@@ -1769,6 +1870,7 @@ async function insertOutboxMessage(
   ) {
     throw new Error("Tenant conversation reference is unavailable");
   }
+  const currentLeadId = requireCurrentLeadId(conversation.lead_id);
 
   const chunks = splitAssistantMessages(content);
   let lastContent = chunks[chunks.length - 1] || content;
@@ -1800,6 +1902,7 @@ async function insertOutboxMessage(
       conversation_id: conversation.id,
       session_id: conversation.session_id,
       organization_id: organizationId,
+      lead_id: currentLeadId,
       content: chunk,
       message_type: "text",
       status: "pending",
@@ -1818,7 +1921,7 @@ async function insertOutboxMessage(
         conversation_id: conversation.id,
         session_id: conversation.session_id,
         organization_id: organizationId,
-        lead_id: conversation.lead_id || null,
+        lead_id: currentLeadId,
         message_id: clientMessageId,
         client_message_id: clientMessageId,
         from_me: true,
@@ -1848,6 +1951,8 @@ async function insertOutboxMessage(
     .eq("id", conversation.id)
     .eq("organization_id", organizationId)
     .eq("session_id", conversation.session_id);
+
+  conversationUpdate = conversationUpdate.eq("lead_id", currentLeadId);
 
   // Optimistic history inserts can touch conversation.updated_at through a
   // trigger, so use the inbound last-message snapshot as the CAS token. A
@@ -2061,13 +2166,16 @@ async function detectHumanTakeover(
   organizationId: string,
   conversationId: string,
   sessionId: string | null,
+  leadId: string,
   since: string,
 ) {
+  const currentLeadId = requireCurrentLeadId(leadId);
   let messageQuery = supabase
     .from("whatsapp_messages")
-    .select("id, sender_name")
+    .select("id, lead_id, sender_name")
     .eq("organization_id", organizationId)
     .eq("conversation_id", conversationId)
+    .eq("lead_id", currentLeadId)
     .eq("from_me", true)
     .not("sender_name", "is", null)
     .gte("sent_at", since)
@@ -2076,15 +2184,17 @@ async function detectHumanTakeover(
   const { data: manualMessages, error: manualMessagesError } = await messageQuery;
   if (manualMessagesError) throw manualMessagesError;
 
-  if ((manualMessages || []).some((message: any) => !isAutomationSenderName(message.sender_name))) {
+  if (rowsForCurrentLead(manualMessages, currentLeadId)
+    .some((message: any) => !isAutomationSenderName(message.sender_name))) {
     return { detected: true, reason: "manual_message" };
   }
 
   let outboxQuery = supabase
     .from("outbox_messages")
-    .select("id")
+    .select("id, lead_id")
     .eq("organization_id", organizationId)
     .eq("conversation_id", conversationId)
+    .eq("lead_id", currentLeadId)
     .not("created_by", "is", null)
     .gte("created_at", since)
     .limit(1);
@@ -2092,7 +2202,9 @@ async function detectHumanTakeover(
   const { data: manualOutbox, error: manualOutboxError } = await outboxQuery;
   if (manualOutboxError) throw manualOutboxError;
 
-  if (manualOutbox?.length) return { detected: true, reason: "manual_outbox" };
+  if (rowsForCurrentLead(manualOutbox, currentLeadId).length) {
+    return { detected: true, reason: "manual_outbox" };
+  }
   return { detected: false, reason: "" };
 }
 

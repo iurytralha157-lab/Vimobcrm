@@ -366,6 +366,8 @@ func writeRoundRobinError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_round_robin_reference", "One or more round-robin references do not belong to this organization.")
 	case errors.Is(err, ErrConditionConflict):
 		httpserver.WriteError(w, r, http.StatusConflict, "round_robin_condition_conflict", err.Error())
+	case errors.Is(err, ErrPendingWhatsAppIntake):
+		httpserver.WriteError(w, r, http.StatusConflict, "round_robin_pending_whatsapp_intake", "This queue still has accepted WhatsApp events waiting for processing or review. Retry deletion after they finish.")
 	case errors.Is(err, ErrRoundRobinNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "round_robin_not_found", "Round-robin was not found.")
 	case errors.Is(err, ErrRuleNotFound):

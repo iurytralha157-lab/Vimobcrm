@@ -41,6 +41,18 @@ func TestWhatsAppUnreadCountRouteUsesViewPermission(t *testing.T) {
 	}
 }
 
+func TestWhatsAppConversationSnapshotRouteUsesViewPermission(t *testing.T) {
+	raw, err := os.ReadFile("routes.go")
+	if err != nil {
+		t.Fatalf("read routes.go: %v", err)
+	}
+
+	expected := `mux.Handle("GET /v1/whatsapp/conversations/{id}/snapshot", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ShowConversationSnapshot)))`
+	if !strings.Contains(string(raw), expected) {
+		t.Fatal("WhatsApp conversation snapshot must stay behind the WhatsApp view permission")
+	}
+}
+
 func TestWhatsAppSessionStatusesRouteUsesViewPermission(t *testing.T) {
 	raw, err := os.ReadFile("routes.go")
 	if err != nil {

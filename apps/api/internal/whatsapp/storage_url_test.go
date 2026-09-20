@@ -381,12 +381,12 @@ func TestSessionJSONRedactsProviderCredentials(t *testing.T) {
 
 func TestSendMessageRequestRejectsOversizedClientIDAndMedia(t *testing.T) {
 	oversizedClientID := strings.Repeat("x", 201)
-	if _, err := (SendMessageRequest{Text: "hello", ClientMessageID: &oversizedClientID}).Validate(); err == nil {
+	if _, err := (SendMessageRequest{Text: "hello", ClientMessageID: &oversizedClientID, ExpectedLeadID: "11111111-1111-4111-8111-111111111111"}).Validate(); err == nil {
 		t.Fatal("expected oversized client message id to be rejected")
 	}
 
 	oversizedBase64 := strings.Repeat("A", 7*1024*1024+1)
-	if _, err := (SendMessageRequest{Base64: &oversizedBase64}).Validate(); err == nil {
+	if _, err := (SendMessageRequest{Base64: &oversizedBase64, ExpectedLeadID: "11111111-1111-4111-8111-111111111111"}).Validate(); err == nil {
 		t.Fatal("expected oversized media to be rejected")
 	}
 }

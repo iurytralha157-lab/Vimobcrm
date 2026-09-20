@@ -50,19 +50,27 @@ func TestFindLeadgenRouteQueryScopesByPageAndFormBeforeChoosingCandidate(t *test
 	}
 }
 
-func TestLegacyMetaLeadRecoveryRemainsTenantAndRouteScoped(t *testing.T) {
+func TestMetaWebhookClaimRequiresAnExplicitRetryDeadlineForFailures(t *testing.T) {
 	normalizedQuery := strings.Join(strings.Fields(claimPendingWebhookEventsQuery), " ")
 	for _, contract := range []string{
-		"coalesce(received_at, created_at, now()) >= now() - interval '7 days'",
-		"form_config.organization_id = meta_webhook_events.organization_id",
-		"btrim(form_config.form_id) = btrim(meta_webhook_events.form_id)",
-		"btrim(integration.page_id) = btrim(meta_webhook_events.page_id)",
-		"coalesce(form_config.is_active, true) = true",
-		"coalesce(integration.is_connected, false) = true",
+		"status = 'received'",
+		"status = 'deferred'",
+		"status = 'failed' and coalesce(attempts, 0) < 5 and next_retry_at is not null and next_retry_at <= now()",
+		"status = 'processing'",
 		"for update skip locked",
 	} {
 		if !strings.Contains(normalizedQuery, contract) {
-			t.Fatalf("legacy recovery must contain %q; query = %q", contract, normalizedQuery)
+			t.Fatalf("webhook claim must contain %q; query = %q", contract, normalizedQuery)
+		}
+	}
+	for _, forbidden := range []string{
+		"apps in dev mode should only access leads",
+		"unsupported get request",
+		"meta page access token is missing",
+		"lead name is invalid",
+	} {
+		if strings.Contains(normalizedQuery, forbidden) {
+			t.Fatalf("webhook claim still reopens permanent failure %q", forbidden)
 		}
 	}
 }

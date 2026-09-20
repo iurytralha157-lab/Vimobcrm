@@ -1,6 +1,7 @@
 import type { Json } from '@/lib/supabase/types'
 import {
   createWhatsAppSessionInputSchema,
+  linkWhatsAppConversationLeadInputSchema,
   parseDomainInput,
   reactWhatsAppMessageInputSchema,
   reactWhatsAppMessageResponseSchema,
@@ -133,6 +134,7 @@ export interface WhatsAppConversation {
   deleted_at: string | null
   created_at: string
   updated_at: string
+	historical_lead_view?: boolean
   session?: {
     id: string
     instance_name: string
@@ -248,7 +250,8 @@ export type WhatsAppMessageMediaURL = {
 }
 
 export type SendWhatsAppMessageInput = {
-  text: string
+	text: string
+	expectedLeadId: string
   mediaUrl?: string
   mediaType?: string
   base64?: string
@@ -267,8 +270,9 @@ export type SendWhatsAppMessageResult = Record<string, unknown> & {
 }
 
 export type ReactWhatsAppMessageInput = {
-  emoji: string
-  clientReactionId: string
+	emoji: string
+	clientReactionId: string
+	expectedLeadId: string
 }
 
 export type ReactWhatsAppMessageResult = {
@@ -540,6 +544,7 @@ export const whatsappAPI = {
     sessionId?: string
     leadId?: string
     leadName?: string
+    expectedPreviousLeadId: string
   }, organizationId?: string | null) {
     const body = parseDomainInput(startWhatsAppConversationInputSchema, input, 'whatsapp.conversations.start')
     const response = await vimobAPIRequest<Envelope<WhatsAppConversation>>('/v1/whatsapp/conversations/start', {
@@ -571,7 +576,7 @@ export const whatsappAPI = {
 
   async getHistoryAccess(params: {
     conversationId?: string | null
-    leadId?: string | null
+    leadId: string
     allMessages?: boolean
     limit?: number
     cursor?: string | null
@@ -601,12 +606,21 @@ export const whatsappAPI = {
     return response.data
   },
 
-  async getConversation(conversationId: string, organizationId?: string | null) {
+	async getConversation(conversationId: string, expectedLeadId: string, organizationId?: string | null) {
     const response = await vimobAPIRequest<Envelope<WhatsAppConversation>>(
       `/v1/whatsapp/conversations/${conversationId}`,
-      { organizationId },
+	  { organizationId, query: { expectedLeadId } },
     )
     validateDomainResponse(whatsAppConversationResponseSchema, response, 'whatsapp.conversations.get')
+    return response.data
+  },
+
+  async getConversationSnapshot(conversationId: string, organizationId?: string | null) {
+    const response = await vimobAPIRequest<Envelope<WhatsAppConversation>>(
+      `/v1/whatsapp/conversations/${conversationId}/snapshot`,
+      { organizationId },
+    )
+    validateDomainResponse(whatsAppConversationResponseSchema, response, 'whatsapp.conversations.snapshot')
     return response.data
   },
 
@@ -616,6 +630,7 @@ export const whatsappAPI = {
     limit?: number
     cursor?: string | null
     includeMediaUrls?: boolean
+	expectedLeadId: string
   }) {
     const response = await vimobAPIRequest<Envelope<WhatsAppMessagesPage>>(
       `/v1/whatsapp/conversations/${params.conversationId}/messages`,
@@ -625,6 +640,7 @@ export const whatsappAPI = {
           limit: params.limit,
           cursor: params.cursor,
           includeMediaUrls: params.includeMediaUrls,
+		  expectedLeadId: params.expectedLeadId,
         },
       },
     )
@@ -641,10 +657,11 @@ export const whatsappAPI = {
     return response.data
   },
 
-  async markConversationAsRead(conversationId: string, organizationId?: string | null) {
-    await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/conversations/${conversationId}/mark-read`, {
-      method: 'POST',
-      organizationId,
+	async markConversationAsRead(conversationId: string, expectedLeadId: string, organizationId?: string | null) {
+		await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/conversations/${conversationId}/mark-read`, {
+			method: 'POST',
+			organizationId,
+			query: { expectedLeadId },
     })
   },
 
@@ -680,33 +697,44 @@ export const whatsappAPI = {
     return response
   },
 
-  async markAsSeenOnWhatsApp(conversationId: string, organizationId?: string | null) {
-    await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/conversations/${conversationId}/mark-seen`, {
-      method: 'POST',
-      organizationId,
-    })
+	async markAsSeenOnWhatsApp(conversationId: string, expectedLeadId: string, organizationId?: string | null) {
+		await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/conversations/${conversationId}/mark-seen`, {
+			method: 'POST',
+			organizationId,
+			query: { expectedLeadId },
+		})
+	},
+
+	async archiveConversation(conversationId: string, archive: boolean, expectedLeadId: string, organizationId?: string | null) {
+		await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/conversations/${conversationId}/archive`, {
+			method: 'POST',
+			organizationId,
+			body: { archive, expectedLeadId },
+		})
+	},
+
+	async deleteConversation(conversationId: string, expectedLeadId: string, organizationId?: string | null) {
+		await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/conversations/${conversationId}`, {
+			method: 'DELETE',
+			organizationId,
+			query: { expectedLeadId },
+		})
   },
 
-  async archiveConversation(conversationId: string, archive: boolean, organizationId?: string | null) {
-    await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/conversations/${conversationId}/archive`, {
-      method: 'POST',
-      organizationId,
-      body: { archive },
-    })
-  },
-
-  async deleteConversation(conversationId: string, organizationId?: string | null) {
-    await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/conversations/${conversationId}`, {
-      method: 'DELETE',
-      organizationId,
-    })
-  },
-
-  async linkConversationToLead(conversationId: string, leadId: string, organizationId?: string | null) {
+  async linkConversationToLead(
+    conversationId: string,
+    leadId: string,
+    expectedPreviousLeadId: string,
+    organizationId?: string | null,
+  ) {
+    const body = parseDomainInput(linkWhatsAppConversationLeadInputSchema, {
+      leadId,
+      expectedPreviousLeadId,
+    }, 'whatsapp.conversations.link-lead')
     await vimobAPIRequest<{ ok: boolean }>(`/v1/whatsapp/conversations/${conversationId}/link-lead`, {
       method: 'POST',
       organizationId,
-      body: { leadId },
+      body,
     })
   },
 

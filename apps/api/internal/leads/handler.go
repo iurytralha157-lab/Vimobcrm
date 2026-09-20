@@ -413,6 +413,8 @@ func writeLeadError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusConflict, "lead_phone_conflict", "Este telefone ja esta cadastrado em outro lead.")
 	case errors.Is(err, ErrLeadPropertyUnavailable):
 		httpserver.WriteError(w, r, http.StatusConflict, "lead_property_unavailable", leadErrorMessage(err, ErrLeadPropertyUnavailable))
+	case errors.Is(err, ErrConversationBindingChanged):
+		httpserver.WriteError(w, r, http.StatusConflict, "whatsapp_conversation_binding_changed", "The WhatsApp conversation was linked to another lead. Refresh and try again.")
 	case errors.Is(err, ErrInvalidReference):
 		httpserver.WriteError(w, r, http.StatusBadRequest, "invalid_lead_reference", "One or more lead references do not belong to this organization.")
 	case errors.Is(err, ErrLeadNotFound):

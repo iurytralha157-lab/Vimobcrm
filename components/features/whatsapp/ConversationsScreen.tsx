@@ -24,7 +24,7 @@ import {
   type ScreenConversation,
 } from "@/components/features/whatsapp/conversations";
 import { normalizeSearchText } from "@/lib/search-text";
-import { useWhatsAppConversation, useWhatsAppConversationForLead, useWhatsAppConversations, useSendWhatsAppMessage, useReactToWhatsAppMessage, useMarkConversationAsRead, useWhatsAppLeadRealtime, useArchiveConversation, useDeleteConversation, useLinkConversationToLead, type WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
+import { useWhatsAppConversation, useWhatsAppConversationForLead, useWhatsAppConversationSnapshot, useWhatsAppConversations, useSendWhatsAppMessage, useReactToWhatsAppMessage, useMarkConversationAsRead, useWhatsAppLeadRealtime, useArchiveConversation, useDeleteConversation, useLinkConversationToLead, type WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
 import { useWhatsAppMessagesPaginated } from "@/hooks/use-whatsapp-messages-paginated";
 import { useAccessibleSessions } from "@/hooks/use-accessible-sessions";
 import { getWhatsAppSendFailureStatus, resolveWhatsAppConversationSessionFilter } from "@/lib/whatsapp-query-cache";
@@ -38,7 +38,13 @@ import { useMetaConversations, useMetaMessages, useSendMetaMessage } from "@/hoo
 import { createUUID } from "@/lib/client-id";
 import { useMetaIntegrations } from "@/hooks/use-meta-integration";
 import { whatsappAPI } from "@/lib/api/whatsapp";
-import { getWhatsAppMessageInputState } from "@/lib/whatsapp-message-input";
+import {
+	getWhatsAppConversationDraftKey,
+  getWhatsAppConversationMessageScope,
+  getWhatsAppMessageInputState,
+  preserveWhatsAppConversationCardSnapshot,
+	updateWhatsAppConversationDraft,
+} from "@/lib/whatsapp-message-input";
 import { groupLatestWhatsAppReactions } from "@/lib/whatsapp-reactions";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
@@ -83,20 +89,51 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   const [selectedPageId, setSelectedPageId] = useState<string>("all");
   const [selectedConversationState, setSelectedConversationState] = useState<{
     tenantKey: string;
-    conversationId: string;
+	conversationId: string;
+	expectedLeadId: string | null;
+	conversationSnapshot: ScreenConversation;
   } | null>(null);
   const [mobileConversationListReturnPosition, setMobileConversationListReturnPosition] = useState<ConversationListReturnPosition | null>(null);
   const selectedConversationId = selectedConversationState?.tenantKey === activeTenantKey
     ? selectedConversationState.conversationId
     : null;
+  const selectedExpectedLeadId = selectedConversationState?.tenantKey === activeTenantKey
+	  ? selectedConversationState.expectedLeadId
+	  : null;
   const setSelectedConversation = useCallback((conversation: ScreenConversation | null) => {
+	const expectedLeadId = getWhatsAppConversationMessageScope(
+	  conversation as WhatsAppConversation | null,
+	).expectedLeadId;
     setSelectedConversationState(conversation
-      ? { tenantKey: activeTenantKey, conversationId: conversation.id }
+	  ? {
+		  tenantKey: activeTenantKey,
+		  conversationId: conversation.id,
+		  expectedLeadId,
+		  conversationSnapshot: conversation,
+		}
       : null);
   }, [activeTenantKey]);
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
-  const [messageText, setMessageText] = useState("");
+  const [messageDrafts, setMessageDrafts] = useState<Record<string, string>>({});
+  const selectedMessageDraftKey = useMemo(() => getWhatsAppConversationDraftKey({
+    tenantKey: activeTenantKey,
+    conversationId: selectedConversationId,
+    expectedLeadId: activePlatform === "whatsapp"
+      ? selectedExpectedLeadId
+      : selectedConversationId ? `channel:${activePlatform}` : null,
+  }), [activePlatform, activeTenantKey, selectedConversationId, selectedExpectedLeadId]);
+  const messageText = selectedMessageDraftKey
+    ? messageDrafts[selectedMessageDraftKey] ?? ""
+    : "";
+  const setMessageText = useCallback((value: string | ((current: string) => string)) => {
+    if (!selectedMessageDraftKey) return;
+    setMessageDrafts((currentDrafts) => updateWhatsAppConversationDraft(
+      currentDrafts,
+      selectedMessageDraftKey,
+      value,
+    ));
+  }, [selectedMessageDraftKey]);
   const [hideGroups, setHideGroups] = useState(() => {
     if (typeof window === "undefined") return false;
     return localStorage.getItem("whatsapp-hide-groups") === "true";
@@ -127,7 +164,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
       setSelectedSessionId("all");
       setSelectedPageId("all");
       setActivePlatform("whatsapp");
-      setMessageText("");
+      setMessageDrafts({});
       setMobileConversationListReturnPosition(null);
       lastVisibleMessageIdRef.current = null;
       isUserScrollingRef.current = false;
@@ -142,52 +179,18 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
-  const directConversationQuery = useWhatsAppConversation(initialConversationId || null);
   const leadConversationQuery = useWhatsAppConversationForLead(
-    initialConversationId ? null : initialLeadId,
+	initialLeadId,
+	initialConversationId,
   );
   const {
     data: selectedWhatsAppConversation,
     refetch: refetchSelectedWhatsAppConversation,
   } = useWhatsAppConversation(
     activePlatform === "whatsapp" ? selectedConversationId : null,
+	activePlatform === "whatsapp" ? selectedExpectedLeadId : null,
   );
-  const deepLinkQuery = initialConversationId ? directConversationQuery : leadConversationQuery;
   const deepLinkKey = `${activeTenantKey}:${initialConversationId || ""}:${initialLeadId || ""}`;
-
-  useEffect(() => {
-    if ((!initialConversationId && !initialLeadId) || resolvedDeepLinkRef.current === deepLinkKey) return;
-    if (!currentUserId || !(activeOrganization.organizationId) || !deepLinkQuery.isFetched) return;
-
-    resolvedDeepLinkRef.current = deepLinkKey;
-    if (deepLinkQuery.data) {
-      const conversation = deepLinkQuery.data;
-      queueMicrotask(() => {
-        if (resolvedDeepLinkRef.current === deepLinkKey) {
-          setSelectedConversation(conversation);
-        }
-      });
-      return;
-    }
-
-    toast({
-      title: "Conversa não encontrada",
-      description: deepLinkQuery.isError
-        ? "Não foi possível abrir esta conversa agora. Tente novamente."
-        : "Esta conversa não existe ou não está disponível para o seu acesso.",
-      variant: "destructive",
-    });
-  }, [
-    currentUserId,
-    deepLinkKey,
-    deepLinkQuery.data,
-    deepLinkQuery.isError,
-    deepLinkQuery.isFetched,
-    initialConversationId,
-    initialLeadId,
-    activeOrganization.organizationId,
-    setSelectedConversation,
-  ]);
   const {
     data: sessions,
     isLoading: loadingSessions,
@@ -256,6 +259,88 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     conversationSessionFilter.accessibleSessionIds,
   );
 
+  // Legacy notifications may carry only a physical conversation id. Resolve
+  // its current binding through a direct authorized read, independent of inbox
+  // pagination, filters and archive state. The second request is pinned to that
+  // UUID or to the explicit unlinked sentinel, so a concurrent rebind fails
+  // closed instead of opening another card. New links should include both ids.
+  const legacyDeepLinkSnapshotQuery = useWhatsAppConversationSnapshot(
+    initialConversationId && !initialLeadId ? initialConversationId : null,
+  );
+  const legacyDeepLinkExpectedLeadId = getWhatsAppConversationMessageScope(
+    legacyDeepLinkSnapshotQuery.data,
+  ).expectedLeadId;
+  const legacyDeepLinkQuery = useWhatsAppConversation(
+    initialConversationId && !initialLeadId ? initialConversationId : null,
+    legacyDeepLinkExpectedLeadId,
+  );
+
+  useEffect(() => {
+    if ((!initialConversationId && !initialLeadId) || resolvedDeepLinkRef.current === deepLinkKey) return;
+    if (!currentUserId || !activeOrganization.organizationId) return;
+
+    const legacyConversationLink = Boolean(initialConversationId && !initialLeadId);
+    if (legacyConversationLink) {
+      if (!legacyDeepLinkSnapshotQuery.isFetched || legacyDeepLinkSnapshotQuery.isFetching) return;
+      if (!legacyDeepLinkSnapshotQuery.data) {
+        resolvedDeepLinkRef.current = deepLinkKey;
+        toast({
+          title: "Conversa não encontrada",
+          description: legacyDeepLinkSnapshotQuery.isError
+            ? "Esta conversa não pôde ser resolvida na sua caixa autorizada. Atualize a página e tente novamente."
+            : "Esta conversa não existe ou não está disponível para o seu acesso.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (!legacyDeepLinkQuery.isFetched || legacyDeepLinkQuery.isFetching) return;
+    } else if (!leadConversationQuery.isFetched) {
+      return;
+    }
+
+    const deepLinkData = legacyConversationLink
+      ? legacyDeepLinkQuery.data
+      : leadConversationQuery.data;
+    const deepLinkError = legacyConversationLink
+      ? legacyDeepLinkQuery.isError
+      : leadConversationQuery.isError;
+    resolvedDeepLinkRef.current = deepLinkKey;
+    if (deepLinkData) {
+      queueMicrotask(() => {
+        if (resolvedDeepLinkRef.current === deepLinkKey) {
+          setSelectedConversation(deepLinkData);
+        }
+      });
+      return;
+    }
+
+    toast({
+      title: "Conversa não encontrada",
+      description: deepLinkError
+        ? "A conversa mudou de vínculo ou não pôde ser aberta agora. Atualize a caixa e tente novamente."
+        : "Esta conversa não existe ou não está disponível para o seu acesso.",
+      variant: "destructive",
+    });
+  }, [
+    activeOrganization.organizationId,
+    currentUserId,
+    deepLinkKey,
+    initialConversationId,
+    initialLeadId,
+    leadConversationQuery.data,
+    leadConversationQuery.isError,
+    leadConversationQuery.isFetched,
+    legacyDeepLinkQuery.data,
+    legacyDeepLinkQuery.isError,
+    legacyDeepLinkQuery.isFetched,
+    legacyDeepLinkQuery.isFetching,
+    legacyDeepLinkSnapshotQuery.data,
+    legacyDeepLinkSnapshotQuery.isError,
+    legacyDeepLinkSnapshotQuery.isFetched,
+    legacyDeepLinkSnapshotQuery.isFetching,
+    setSelectedConversation,
+  ]);
+
   const {
     data: metaConversations,
     isLoading: loadingMetaConversations
@@ -269,15 +354,36 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     if (!selectedConversationId) return null;
 
     if (activePlatform === "whatsapp") {
+	  const conversationSnapshot = selectedConversationState?.conversationSnapshot;
+	  if (conversationSnapshot?.id === selectedConversationId && conversationSnapshot.historical_lead_view) {
+		return conversationSnapshot;
+	  }
       const conversationFromList = conversations?.find(
         (conversation) => conversation.id === selectedConversationId,
       );
-      if (conversationFromList) return conversationFromList as ScreenConversation;
+	  if (conversationFromList) {
+		const candidateLeadId = getWhatsAppConversationMessageScope(
+		  conversationFromList,
+		).expectedLeadId;
+		if (selectedExpectedLeadId && candidateLeadId !== selectedExpectedLeadId && conversationSnapshot) {
+		  return preserveWhatsAppConversationCardSnapshot(
+			conversationSnapshot,
+			conversationFromList as ScreenConversation,
+		  );
+		}
+		return conversationFromList as ScreenConversation;
+	  }
 
       const conversationFromDetail = selectedWhatsAppConversation;
-      return conversationFromDetail?.id === selectedConversationId
-        ? conversationFromDetail as ScreenConversation
-        : null;
+	  if (conversationFromDetail?.id === selectedConversationId) {
+		const candidateLeadId = getWhatsAppConversationMessageScope(
+		  conversationFromDetail,
+		).expectedLeadId;
+		if (!selectedExpectedLeadId || candidateLeadId === selectedExpectedLeadId) {
+		  return conversationFromDetail as ScreenConversation;
+		}
+	  }
+	  return conversationSnapshot?.id === selectedConversationId ? conversationSnapshot : null;
     }
 
     const metaConversation = metaConversations?.find(
@@ -289,12 +395,23 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     conversations,
     metaConversations,
     selectedConversationId,
+	selectedConversationState?.conversationSnapshot,
+	selectedExpectedLeadId,
     selectedWhatsAppConversation,
   ]);
 
   const selectedLeadId = activePlatform === "whatsapp"
     ? selectedConversation?.lead_id || selectedConversation?.lead?.id || null
     : selectedConversation?.lead?.id || null;
+  const selectedMessageScope = getWhatsAppConversationMessageScope(
+    activePlatform === "whatsapp" ? selectedConversation as WhatsAppConversation | null : null,
+  );
+	const canMutateSelectedWhatsAppConversation = canOperateWhatsApp
+	  && activePlatform === "whatsapp"
+	  && selectedMessageScope.canMutate;
+	const canManageSelectedWhatsAppConversation = canOperateWhatsApp
+	  && activePlatform === "whatsapp"
+	  && selectedMessageScope.canManage;
   const selectedRealtimeLeadIds = useMemo(
     () => {
       if (activePlatform !== "whatsapp" || !selectedLeadId) return [];
@@ -318,7 +435,12 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     isLoadingOlder,
   } = useWhatsAppMessagesPaginated(
     activePlatform === 'whatsapp' ? selectedConversation?.id || null : null,
-    { pageSize: 50, includeMediaUrls: false },
+    {
+      pageSize: 50,
+      includeMediaUrls: false,
+	  expectedLeadId: selectedMessageScope.expectedLeadId,
+	  historyLeadId: selectedMessageScope.historyLeadId,
+    },
   );
 
   useEffect(() => {
@@ -552,17 +674,11 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     const selectedConversationUnreadCount = selectedConversation?.unread_count ?? 0;
     const selectedConversationSessionId = selectedConversation?.session_id;
     const selectedConversationRemoteJid = selectedConversation?.remote_jid;
-    const selectedConversationIsGroup = selectedConversation?.is_group ?? false;
 
-    if (canOperateWhatsApp && selectedConversationId && selectedConversationSessionId && selectedConversationRemoteJid && selectedConversationUnreadCount > 0) {
-      markConversationAsRead({
-        id: selectedConversationId,
-        session_id: selectedConversationSessionId,
-        remote_jid: selectedConversationRemoteJid,
-        is_group: selectedConversationIsGroup
-      });
-    }
-  }, [canOperateWhatsApp, markConversationAsRead, selectedConversation]);
+	if (canManageSelectedWhatsAppConversation && selectedConversationId && selectedConversationSessionId && selectedConversationRemoteJid && selectedConversationUnreadCount > 0) {
+	  markConversationAsRead(selectedConversation as WhatsAppConversation);
+	}
+	}, [canManageSelectedWhatsAppConversation, markConversationAsRead, selectedConversation]);
   const filteredConversations = useMemo(() => {
     let source: ScreenConversation[] = [];
     if (activePlatform === 'whatsapp') {
@@ -750,10 +866,10 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     }
   };
   const handleArchive = (conv: WhatsAppConversation) => {
-    if (!canOperateWhatsApp) return;
-    archiveConversation.mutate({
-      conversationId: conv.id,
-      archive: !conv.archived_at
+	if (!canOperateWhatsApp || conv.historical_lead_view) return;
+	archiveConversation.mutate({
+	  conversation: conv,
+	  archive: !conv.archived_at
     }, {
       onSuccess: () => {
         if (selectedConversation?.id === conv.id) {
@@ -763,7 +879,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     });
   };
   const handleDelete = (conv: WhatsAppConversation) => {
-    if (!canOperateWhatsApp) return;
+	if (!canOperateWhatsApp || conv.historical_lead_view) return;
     setPendingDeleteConversation(conv);
   };
   const confirmDeleteConversation = async () => {
@@ -771,7 +887,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     if (!conversation) return;
 
     try {
-      await deleteConversation.mutateAsync(conversation.id);
+	  await deleteConversation.mutateAsync(conversation);
       if (selectedConversation?.id === conversation.id) {
         setSelectedConversation(null);
       }
@@ -801,6 +917,9 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   };
 
   const openCreateLeadForConversation = (conversation: ScreenConversation) => {
+    const expectedPreviousLeadId = getWhatsAppConversationMessageScope(
+      conversation as WhatsAppConversation,
+    ).expectedLeadId;
     setCreateLeadContact({
       phone: normalizeWhatsAppContactPhoneToE164(
         conversation.contact_phone,
@@ -808,6 +927,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
       ) || undefined,
       name: conversation.contact_name || undefined,
       conversationId: conversation.id,
+      expectedPreviousLeadId: expectedPreviousLeadId || undefined,
     });
     setCreateLeadOpen(true);
   };
@@ -826,12 +946,19 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   ]);
 
   const handleLinkExistingLead = async (leadId: string) => {
-    const conversationId = selectedConversationId;
-    if (!canOperateWhatsApp || !conversationId) return;
+    const conversation = selectedConversation;
+	if (!canOperateWhatsApp || !conversation || conversation.historical_lead_view) return;
+    const conversationId = conversation.id;
 
     try {
-      await linkConversationToLead.mutateAsync({ conversationId, leadId });
-      await refreshSelectedWhatsAppConversation();
+	  await linkConversationToLead.mutateAsync({ conversation, leadId });
+	  const refreshed = await whatsappAPI.getConversation(
+		conversationId,
+		leadId,
+		activeOrganization.organizationId,
+	  );
+	  setSelectedConversation(refreshed);
+	  await refetchConversations();
     } catch (error) {
       toast({
         title: "Não foi possível vincular o lead",
@@ -881,7 +1008,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
               <MobileConversationHeader
                 conversation={selectedConversation}
                 selectedLeadId={selectedLeadId}
-                canOperateWhatsApp={canOperateWhatsApp}
+				canOperateWhatsApp={canManageSelectedWhatsAppConversation}
                 onBack={handleBackToList}
                 onArchive={() => handleArchive(selectedConversation)}
                 onDelete={() => handleDelete(selectedConversation)}
@@ -900,7 +1027,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 onLoadOlderMessages={() => void loadOlderMessages()}
                 messagesEndRef={messagesEndRef}
                 onScrollCapture={handleMessagesScroll}
-                canOperateWhatsApp={canOperateWhatsApp}
+				canOperateWhatsApp={canMutateSelectedWhatsAppConversation}
                 canOperateLeads={canOperateLeads}
                 selectedLeadId={selectedLeadId}
                 onRetryMedia={retryMediaDownload}
@@ -926,7 +1053,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 disabled={messageInputDisabled}
                 isSending={sendTextMessage.isPending}
                 selectedLeadId={selectedLeadId}
-                canStartAutomations={canStartAutomations}
+                canStartAutomations={canStartAutomations && canMutateSelectedWhatsAppConversation}
                 hasActiveAutomation={hasActiveLeadAutomation}
                 isLoadingAutomationState={activeLeadAutomations.isPending}
                 isAutomationStateUnavailable={activeLeadAutomations.isError}
@@ -980,7 +1107,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 sessionsDisconnected={!loadingSessions && sessions?.length === 0}
                 canManageWhatsApp={canManageWhatsApp}
                 onConnectWhatsApp={() => router.push("/settings?tab=whatsapp")}
-                canOperate={canOperateWhatsApp}
+				canOperate={canOperateWhatsApp}
                 canCreateLead={canCreateLeads}
                 availableTags={availableTags || []}
                 onSelect={setSelectedConversation}
@@ -1104,7 +1231,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 remoteJid={selectedConversation.remote_jid}
                 onArchive={() => handleArchive(selectedConversation)}
                 onDelete={() => handleDelete(selectedConversation)}
-                canOperate={canOperateWhatsApp}
+                canOperate={canManageSelectedWhatsAppConversation}
                 onCreateLead={canCreateLeads ? () => openCreateLeadForConversation(selectedConversation) : undefined}
                 onToggleLeadPanel={() => setShowLeadPanel((previous) => !previous)}
                 showLeadPanel={showLeadPanel}
@@ -1123,7 +1250,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 onLoadOlderMessages={() => void loadOlderMessages()}
                 messagesEndRef={messagesEndRef}
                 onScrollCapture={handleMessagesScroll}
-                canOperateWhatsApp={canOperateWhatsApp}
+                canOperateWhatsApp={canMutateSelectedWhatsAppConversation}
                 canOperateLeads={canOperateLeads}
                 selectedLeadId={selectedLeadId}
                 onRetryMedia={retryMediaDownload}
@@ -1149,7 +1276,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 disabled={messageInputDisabled}
                 isSending={sendTextMessage.isPending}
                 selectedLeadId={selectedLeadId}
-                canStartAutomations={canStartAutomations}
+                canStartAutomations={canStartAutomations && canMutateSelectedWhatsAppConversation}
                 hasActiveAutomation={hasActiveLeadAutomation}
                 isLoadingAutomationState={activeLeadAutomations.isPending}
                 isAutomationStateUnavailable={activeLeadAutomations.isError}

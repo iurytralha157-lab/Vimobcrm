@@ -35,6 +35,7 @@ func (repo Repository) getStateForUpdate(ctx context.Context, q queryer, organiz
 		from public.round_robins
 		where organization_id = $1::uuid
 		  and id = $2::uuid
+		  and deleted_at is null
 		for update
 	`, organizationID, roundRobinID).Scan(&state.ID, &pipelineID, &metadataRaw)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -51,6 +52,25 @@ func (repo Repository) getStateForUpdate(ctx context.Context, q queryer, organiz
 	return state, nil
 }
 
+// rejectPendingWhatsAppIntake must run only after the caller holds the queue
+// row FOR UPDATE. The pre-ACK snapshot trigger takes FOR SHARE on that same row,
+// so this check is the causal boundary for every queue/rule mutation.
+func (repo Repository) rejectPendingWhatsAppIntake(ctx context.Context, q queryer, organizationID string, roundRobinID string) error {
+	var pending bool
+	if err := q.QueryRow(ctx, `
+		select private.round_robin_has_pending_whatsapp_intake(
+		  $1::uuid,
+		  $2::uuid
+		)
+	`, organizationID, roundRobinID).Scan(&pending); err != nil {
+		return err
+	}
+	if pending {
+		return ErrPendingWhatsAppIntake
+	}
+	return nil
+}
+
 func (repo Repository) ensureRoundRobin(ctx context.Context, q queryer, organizationID string, roundRobinID string) error {
 	var exists bool
 	if err := q.QueryRow(ctx, `
@@ -59,6 +79,7 @@ func (repo Repository) ensureRoundRobin(ctx context.Context, q queryer, organiza
 			from public.round_robins
 			where organization_id = $1::uuid
 			  and id = $2::uuid
+			  and deleted_at is null
 		)
 	`, organizationID, roundRobinID).Scan(&exists); err != nil {
 		return err

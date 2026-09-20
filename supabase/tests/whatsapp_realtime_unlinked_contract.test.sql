@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(16);
+select plan(17);
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -228,23 +228,46 @@ select is(
   'an unlinked message is not broadcast to any lead topic'
 );
 
-update public.whatsapp_conversations
-set lead_id = 'a8300000-0000-4000-8000-000000000001',
-    assigned_user_id = 'a8100000-0000-4000-8000-000000000001'
-where id = 'a8500000-0000-4000-8000-000000000001';
+do $$
+begin
+  perform public.activate_whatsapp_conversation_lead_binding(
+    'a8200000-0000-4000-8000-000000000001',
+    'a8500000-0000-4000-8000-000000000001',
+    'a8300000-0000-4000-8000-000000000001',
+    'provider-linked-realtime'
+  );
+end;
+$$;
 
-update public.whatsapp_messages
-set lead_id = 'a8300000-0000-4000-8000-000000000001'
-where id = 'a8600000-0000-4000-8000-000000000001';
+insert into public.whatsapp_messages (
+  id, organization_id, conversation_id, session_id, lead_id,
+  provider_message_id, message_id, from_me, direction,
+  message_type, content, remote_jid, status
+)
+values (
+  'a8600000-0000-4000-8000-000000000002',
+  'a8200000-0000-4000-8000-000000000001',
+  'a8500000-0000-4000-8000-000000000001',
+  'a8400000-0000-4000-8000-000000000001',
+  null,
+  'provider-linked-realtime',
+  'provider-linked-realtime',
+  false,
+  'inbound',
+  'text',
+  'New linked message body',
+  '5511999991111@s.whatsapp.net',
+  'received'
+);
 
 select is(
   (
     select lead_id
     from public.whatsapp_messages
-    where id = 'a8600000-0000-4000-8000-000000000001'
+    where id = 'a8600000-0000-4000-8000-000000000002'
   ),
   'a8300000-0000-4000-8000-000000000001'::uuid,
-  'the canonical message accepts the reconciled lead link'
+  'a new provider-ledger message is attributed to the activated lead'
 );
 
 select is(
@@ -255,7 +278,7 @@ select is(
       and event = 'whatsapp.inbox.changed'
   ),
   2::bigint,
-  'the lead_id UPDATE emits a second organization wake-up'
+  'the new linked INSERT emits a second organization wake-up'
 );
 
 select ok(
@@ -277,7 +300,7 @@ select is(
       and event = 'whatsapp.message.changed'
   ),
   1::bigint,
-  'linking the message emits one detailed hint to the authorized lead topic'
+  'the linked INSERT emits one detailed hint to the authorized lead topic'
 );
 
 select ok(
@@ -286,8 +309,8 @@ select ok(
     from realtime.messages
     where topic = 'whatsapp:a8200000-0000-4000-8000-000000000001:lead:a8300000-0000-4000-8000-000000000001'
       and event = 'whatsapp.message.changed'
-      and payload ->> 'operation' = 'UPDATE'
-      and payload ->> 'messageId' = 'a8600000-0000-4000-8000-000000000001'
+      and payload ->> 'operation' = 'INSERT'
+      and payload ->> 'messageId' = 'a8600000-0000-4000-8000-000000000002'
       and payload ->> 'conversationId' = 'a8500000-0000-4000-8000-000000000001'
       and not (
         payload ?| array[
@@ -298,13 +321,16 @@ select ok(
   'the lead-scoped hint contains identifiers/status only, never message content'
 );
 
-update public.whatsapp_conversations
-set lead_id = null
-where id = 'a8500000-0000-4000-8000-000000000001';
-
-update public.whatsapp_messages
-set lead_id = null
-where id = 'a8600000-0000-4000-8000-000000000001';
+select throws_ok(
+  $$
+    update public.whatsapp_messages
+    set lead_id = 'a8300000-0000-4000-8000-000000000001'
+    where id = 'a8600000-0000-4000-8000-000000000001'
+  $$,
+  '23514',
+  'whatsapp_message_context_immutable',
+  'a persisted unlinked provider message cannot be retroactively moved to a lead'
+);
 
 select is(
   (
@@ -313,7 +339,7 @@ select is(
     where id = 'a8600000-0000-4000-8000-000000000001'
   ),
   null::uuid,
-  'the fixture message is unlinked after its conversation is unlinked'
+  'the original quarantine message remains unlinked'
 );
 
 select is(
@@ -323,8 +349,8 @@ select is(
     where topic = 'whatsapp:a8200000-0000-4000-8000-000000000001:inbox'
       and event = 'whatsapp.inbox.changed'
   ),
-  3::bigint,
-  'unlinking a message still wakes the organization inbox'
+  2::bigint,
+  'the rejected context rewrite emits no extra organization wake-up'
 );
 
 select is(
@@ -334,8 +360,8 @@ select is(
     where topic = 'whatsapp:a8200000-0000-4000-8000-000000000001:lead:a8300000-0000-4000-8000-000000000001'
       and event = 'whatsapp.message.changed'
   ),
-  2::bigint,
-  'unlinking also wakes the previous lead topic so stale history can reconcile'
+  1::bigint,
+  'the rejected context rewrite emits no extra lead-scoped hint'
 );
 
 select ok(

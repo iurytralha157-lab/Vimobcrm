@@ -1,14 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
-import { useAuth } from "@/contexts/AuthContext";
 import { whatsappAPI, type WhatsAppConversation } from "@/lib/api/whatsapp";
+import { WHATSAPP_UNLINKED_LEAD_SNAPSHOT } from "@/lib/whatsapp-message-input";
+import { useWhatsAppQueryScope } from "@/hooks/use-whatsapp-query-scope";
 
 type MentionLookupContext = {
   groupJid?: string | null;
   sessionId?: string | null;
+  leadId?: string | null;
 };
 
 type LookupContext = MentionLookupContext & {
   organizationId?: string | null;
+  userId?: string | null;
+  accessScope?: string | null;
 };
 
 type CacheValue = string | null;
@@ -59,7 +63,15 @@ function normalizeJid(value: unknown): string {
 }
 
 function cacheKey(digits: string, context?: LookupContext): string {
-  return `${context?.organizationId || "org"}:${context?.groupJid || "global"}:${context?.sessionId || "any"}:${digits}`;
+  return JSON.stringify([
+    context?.organizationId || "none",
+    context?.userId || "none",
+    context?.accessScope || "none",
+    context?.leadId || "none",
+    context?.groupJid || "global",
+    context?.sessionId || "any",
+    digits,
+  ]);
 }
 
 function formatPhone(digits: string): string {
@@ -146,9 +158,14 @@ function findParticipant(participants: GroupParticipant[], digits: string): Grou
 }
 
 async function fetchConversations(context?: LookupContext): Promise<WhatsAppConversation[]> {
-  if (!context?.organizationId) return [];
+  if (!context?.organizationId || !context.userId || !context.accessScope) return [];
 
-  const key = `${context.organizationId}:${context.sessionId || "all"}`;
+  const key = JSON.stringify([
+    context.organizationId,
+    context.userId,
+    context.accessScope,
+    context.sessionId || "all",
+  ]);
   if (!conversationsCache.has(key)) {
     conversationsCache.set(
       key,
@@ -176,13 +193,14 @@ async function findGroupConversation(context?: LookupContext): Promise<WhatsAppC
 
 async function fetchMessageSenderName(digits: string, context?: LookupContext): Promise<string | null> {
   const conversation = await findGroupConversation(context);
-  if (!conversation) return null;
+	if (!conversation) return null;
 
   try {
     const page = await whatsappAPI.getMessages({
       conversationId: conversation.id,
       organizationId: context?.organizationId,
       limit: 200,
+	  expectedLeadId: conversation.lead_id || WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
     });
     const digitVariants = new Set(buildDigitVariants(digits));
     const jidVariants = new Set(buildJidVariants(digits));
@@ -201,6 +219,26 @@ async function fetchMessageSenderName(digits: string, context?: LookupContext): 
   }
 }
 
+function selectKnownContactName(
+  matchingConversations: WhatsAppConversation[],
+  digits: string,
+  leadId?: string | null,
+): string | null {
+  const exactCard = leadId
+    ? matchingConversations.find((item) => (item.lead_id || item.lead?.id) === leadId)
+    : null;
+  if (exactCard?.contact_name && isUsefulName(exactCard.contact_name, digits)) return exactCard.contact_name;
+  if (exactCard?.lead?.name && isUsefulName(exactCard.lead.name, digits)) return exactCard.lead.name;
+
+  // Provider contact names are neutral to the CRM card. Lead names are not:
+  // without an exact card match, falling back to the first lead for a phone
+  // would leak or mislabel another card that shares the same number.
+  const providerConversation = matchingConversations.find(
+    (item) => item.contact_name && isUsefulName(item.contact_name, digits),
+  );
+  return providerConversation?.contact_name || null;
+}
+
 async function fetchKnownContactName(digits: string, context?: LookupContext): Promise<string | null> {
   const variants = new Set(buildDigitVariants(digits));
   const jidVariants = new Set(buildJidVariants(digits));
@@ -209,16 +247,13 @@ async function fetchKnownContactName(digits: string, context?: LookupContext): P
   if (senderName) return senderName;
 
   const conversations = await fetchConversations(context);
-  const conversation = conversations.find((item) => {
+  const matchingConversations = conversations.filter((item) => {
     const phone = normalize(item.contact_phone || "");
     const jid = normalizeJid(item.remote_jid);
     return variants.has(phone) || jidVariants.has(jid) || variants.has(normalize(jid));
   });
 
-  if (conversation?.contact_name && isUsefulName(conversation.contact_name, digits)) return conversation.contact_name;
-  if (conversation?.lead?.name && isUsefulName(conversation.lead.name, digits)) return conversation.lead.name;
-
-  return null;
+  return selectKnownContactName(matchingConversations, digits, context?.leadId);
 }
 
 async function fetchGroupParticipantName(digits: string, context?: LookupContext): Promise<string | null> {
@@ -264,12 +299,15 @@ async function fetchName(digits: string, context?: LookupContext): Promise<strin
 }
 
 export function useMentionNames(rawDigitsList: string[], context?: MentionLookupContext): Record<string, string> {
-  const { activeOrganization } = useAuth();
+  const queryScope = useWhatsAppQueryScope();
   const [, force] = useState(0);
   const rawDigitsKey = rawDigitsList.join(",");
   const contextGroupJid = context?.groupJid;
   const contextSessionId = context?.sessionId;
-  const organizationId = activeOrganization.organizationId;
+  const contextLeadId = context?.leadId;
+  const organizationId = queryScope.organizationId;
+  const userId = queryScope.userId;
+  const accessScope = queryScope.accessScope;
   const normalizedDigits = useMemo(
     () => Array.from(new Set(rawDigitsKey.split(",").map(normalize).filter(Boolean))),
     [rawDigitsKey],
@@ -277,10 +315,17 @@ export function useMentionNames(rawDigitsList: string[], context?: MentionLookup
   const lookupContext = useMemo<LookupContext | undefined>(
     () => (
       contextGroupJid || contextSessionId || organizationId
-        ? { groupJid: contextGroupJid, sessionId: contextSessionId, organizationId }
+        ? {
+          groupJid: contextGroupJid,
+          sessionId: contextSessionId,
+          leadId: contextLeadId,
+          organizationId,
+          userId,
+          accessScope,
+        }
         : undefined
     ),
-    [contextGroupJid, contextSessionId, organizationId],
+    [accessScope, contextGroupJid, contextLeadId, contextSessionId, organizationId, userId],
   );
   const subscriptionKeys = useMemo(
     () => normalizedDigits.map((digits) => cacheKey(digits, lookupContext)),

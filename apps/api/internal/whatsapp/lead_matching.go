@@ -2,9 +2,13 @@ package whatsapp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
@@ -151,7 +155,18 @@ func (repo Repository) findLeadByPhone(ctx context.Context, tenantContext tenant
 
 	var match leadPhoneMatch
 	var leadName, leadAvatar, pipelineID, stageID, assignedUserID, assignedUserName, assigneeAvatar pgtype.Text
+	var matchCount int
 	err := repo.db.Pool().QueryRow(ctx, `
+		with global_matches as materialized (
+		  select distinct matched.id
+		  from unnest($5::text[]) as candidate(value)
+		  cross join lateral public.find_lead_by_normalized_phone(
+		    $1::uuid,
+		    candidate.value
+		  ) as matched
+		), global_count as (
+		  select count(*)::integer as match_count from global_matches
+		)
 		select
 			l.id::text,
 			l.name,
@@ -160,27 +175,14 @@ func (repo Repository) findLeadByPhone(ctx context.Context, tenantContext tenant
 			l.stage_id::text,
 			l.assigned_user_id::text,
 			u.name,
-			u.avatar_url
-		from public.leads l
+			u.avatar_url,
+			global_count.match_count
+		from global_matches
+		cross join global_count
+		join public.leads l on l.id = global_matches.id
 		left join public.users u on u.id = l.assigned_user_id
 		where l.organization_id = $1::uuid
 		  and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
-		  and exists (
-			select 1
-			from unnest($5::text[]) as candidate(value)
-			where normalize_phone(candidate.value) <> ''
-			  and (
-				(l.phone is not null and normalize_phone(l.phone) = normalize_phone(candidate.value))
-				or (
-					nullif(to_jsonb(l)->>'whatsapp', '') is not null
-					and normalize_phone(to_jsonb(l)->>'whatsapp') = normalize_phone(candidate.value)
-				)
-			  )
-		  )
-		order by
-			case when l.deal_status = 'open' then 0 else 1 end,
-			l.last_contact_at desc nulls last,
-			l.created_at desc
 		limit 1
 	`, append(baseConversationArgs(tenantContext), candidates)...).Scan(
 		&match.ID,
@@ -191,12 +193,25 @@ func (repo Repository) findLeadByPhone(ctx context.Context, tenantContext tenant
 		&assignedUserID,
 		&assignedUserName,
 		&assigneeAvatar,
+		&matchCount,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
+		var postgresError *pgconn.PgError
+		if errors.As(err, &postgresError) && postgresError.Code == "23505" &&
+			(strings.Contains(postgresError.Message, "whatsapp_lead_phone_ambiguous") ||
+				strings.Contains(postgresError.Message, "lead_queue_phone_ambiguous")) {
+			return nil, nil
+		}
 		return nil, err
+	}
+	if matchCount != 1 {
+		// Phone identity is no longer a card identity. Without an explicit lead
+		// or active conversation binding, multiple scoped cards are terminally
+		// ambiguous and must remain unlinked.
+		return nil, nil
 	}
 
 	match.Name = textValue(leadName)
@@ -211,26 +226,67 @@ func (repo Repository) findLeadByPhone(ctx context.Context, tenantContext tenant
 }
 
 func (repo Repository) attachConversationToLead(ctx context.Context, organizationID string, conversationID string, leadID string) error {
-	_, err := repo.db.Pool().Exec(ctx, `
-		update public.whatsapp_conversations
-		set lead_id = $3::uuid,
-		    updated_at = now()
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-		  and lead_id is null
-	`, organizationID, conversationID, leadID)
+	_, err := activateRepositoryWhatsAppConversationLeadBindingIfExpected(
+		ctx,
+		repo.db.Pool(),
+		organizationID,
+		conversationID,
+		leadID,
+		unlinkedConversationLeadSnapshot,
+	)
+	return err
+}
+
+type repositoryWhatsAppConversationLeadBinding struct {
+	Success        bool   `json:"success"`
+	Changed        bool   `json:"changed"`
+	Stale          bool   `json:"stale"`
+	IsCurrent      bool   `json:"is_current"`
+	ConversationID string `json:"conversation_id"`
+	LeadID         string `json:"lead_id"`
+	ActiveLeadID   string `json:"active_lead_id"`
+	BindingID      string `json:"binding_id"`
+}
+
+// activateRepositoryWhatsAppConversationLeadBindingIfExpected is reserved for
+// explicit browser/operator actions. Unlike provider-event replay, a stale
+// browser snapshot must not be retained as binding history or activate the
+// destination card. The five-argument SQL overload compares the expected
+// previous lead while holding the same conversation lock used by activation.
+func activateRepositoryWhatsAppConversationLeadBindingIfExpected(
+	ctx context.Context,
+	queryer whatsappQueryRower,
+	organizationID string,
+	conversationID string,
+	leadID string,
+	expectedPreviousLeadID string,
+) (repositoryWhatsAppConversationLeadBinding, error) {
+	var rawResult string
+	err := queryer.QueryRow(ctx, `
+		select public.activate_whatsapp_conversation_lead_binding(
+		  p_organization_id => $1::uuid,
+		  p_conversation_id => $2::uuid,
+		  p_lead_id => $3::uuid,
+		  p_provider_message_id => null,
+		  p_expected_previous_lead_id => $4
+		)::text
+	`, organizationID, conversationID, leadID, expectedPreviousLeadID).Scan(&rawResult)
 	if err != nil {
-		return err
+		return repositoryWhatsAppConversationLeadBinding{}, err
 	}
 
-	_, err = repo.db.Pool().Exec(ctx, `
-		update public.whatsapp_messages
-		set lead_id = $3::uuid
-		where organization_id = $1::uuid
-		  and conversation_id = $2::uuid
-		  and lead_id is null
-	`, organizationID, conversationID, leadID)
-	return err
+	var binding repositoryWhatsAppConversationLeadBinding
+	if err := json.Unmarshal([]byte(rawResult), &binding); err != nil {
+		return repositoryWhatsAppConversationLeadBinding{}, fmt.Errorf("decode WhatsApp conversation lead binding CAS: %w", err)
+	}
+	if binding.ConversationID != conversationID || binding.LeadID != leadID {
+		return repositoryWhatsAppConversationLeadBinding{}, errors.New("WhatsApp conversation lead binding CAS returned another target")
+	}
+	if !binding.Success || binding.Stale || !binding.IsCurrent ||
+		binding.ActiveLeadID != leadID || strings.TrimSpace(binding.BindingID) == "" {
+		return binding, ErrConversationBindingChanged
+	}
+	return binding, nil
 }
 
 func phoneMatchCandidates(values ...string) []string {

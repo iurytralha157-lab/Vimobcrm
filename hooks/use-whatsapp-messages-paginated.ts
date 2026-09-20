@@ -25,21 +25,57 @@ const latestPageRequests = new Map<string, Promise<PaginatedMessagesResult>>()
 
 export function useWhatsAppMessagesPaginated(
   conversationId: string | null,
-  options?: { pageSize?: number; refetchIntervalMs?: number | false; includeMediaUrls?: boolean },
+  options?: {
+    pageSize?: number
+    refetchIntervalMs?: number | false
+    includeMediaUrls?: boolean
+    expectedLeadId?: string | null
+	historyLeadId?: string | null
+  },
 ) {
   const queryClient = useQueryClient()
   const scope = useWhatsAppQueryScope()
   const pageSize = options?.pageSize || 30
   const includeMediaUrls = options?.includeMediaUrls ?? true
+  const expectedLeadId = options?.expectedLeadId ?? null
+	const historyLeadId = options?.historyLeadId ?? null
   const refreshInterval = options?.refetchIntervalMs ?? WHATSAPP_PAGINATED_MESSAGES_REFETCH_MS
-  const queryEnabled = !!conversationId && !!scope.organizationId && !!scope.userId
+	const queryEnabled = !!conversationId && !!expectedLeadId && !!scope.organizationId && !!scope.userId
   const queryKey = useMemo(
-    () => [...whatsappQueryKeys.paginatedMessages(scope, conversationId, pageSize), includeMediaUrls ? 'with-media-urls' : 'lazy-media-urls'] as const,
-    [conversationId, includeMediaUrls, pageSize, scope],
+    () => [
+      ...whatsappQueryKeys.paginatedMessages(scope, conversationId, pageSize, expectedLeadId),
+	  historyLeadId ? `lead-history:${historyLeadId}` : 'current-conversation',
+      includeMediaUrls ? 'with-media-urls' : 'lazy-media-urls',
+    ] as const,
+	[conversationId, expectedLeadId, historyLeadId, includeMediaUrls, pageSize, scope],
   )
   const queryFingerprint = useMemo(() => JSON.stringify(queryKey), [queryKey])
   const refreshStateRef = useRef({ key: queryFingerprint, lastStartedAt: 0 })
   const refreshedOnMountKeyRef = useRef<string | null>(null)
+	const fetchPage = useCallback(async (cursor: string | null): Promise<PaginatedMessagesResult> => {
+	  if (!conversationId || !expectedLeadId) return { messages: [], nextCursor: null }
+	  if (historyLeadId) {
+		const history = await whatsappAPI.getHistoryAccess({
+		  conversationId,
+		  leadId: historyLeadId,
+		  organizationId: scope.organizationId,
+		  limit: pageSize,
+		  cursor,
+		})
+		return {
+		  messages: history.messages,
+		  nextCursor: history.nextCursor ?? null,
+		}
+	  }
+	  return whatsappAPI.getMessages({
+		conversationId,
+		organizationId: scope.organizationId,
+		limit: pageSize,
+		cursor,
+		includeMediaUrls,
+		expectedLeadId,
+	  }) as Promise<PaginatedMessagesResult>
+	}, [conversationId, expectedLeadId, historyLeadId, includeMediaUrls, pageSize, scope.organizationId])
 
   const refreshLatestPage = useCallback(async (minimumGapMs = WHATSAPP_HEAD_REFRESH_MIN_GAP_MS) => {
     if (!queryEnabled || !conversationId) return
@@ -57,13 +93,7 @@ export function useWhatsAppMessagesPaginated(
 
     let request = latestPageRequests.get(queryFingerprint)
     if (!request) {
-      request = whatsappAPI.getMessages({
-        conversationId,
-        organizationId: scope.organizationId,
-        limit: pageSize,
-        cursor: null,
-        includeMediaUrls,
-      }) as Promise<PaginatedMessagesResult>
+	  request = fetchPage(null)
       latestPageRequests.set(queryFingerprint, request)
       void request.then(
         () => latestPageRequests.delete(queryFingerprint),
@@ -128,7 +158,7 @@ export function useWhatsAppMessagesPaginated(
       // Polling and wake-up reconciliation are best effort. The regular query
       // keeps its last canonical data and exposes initial-load failures.
     }
-  }, [conversationId, includeMediaUrls, pageSize, queryClient, queryEnabled, queryFingerprint, queryKey, scope.organizationId])
+	}, [conversationId, fetchPage, pageSize, queryClient, queryEnabled, queryFingerprint, queryKey])
 
   const query = useInfiniteQuery({
     queryKey,
@@ -137,13 +167,7 @@ export function useWhatsAppMessagesPaginated(
         return { messages: [], nextCursor: null }
       }
 
-      const page = await whatsappAPI.getMessages({
-        conversationId,
-        organizationId: scope.organizationId,
-        limit: pageSize,
-        cursor: pageParam,
-        includeMediaUrls,
-      })
+	  const page = await fetchPage(pageParam)
       if (pageParam !== null) return page
 
       const cached = queryClient.getQueryData<InfiniteData<PaginatedMessagesResult>>(queryKey)

@@ -15,9 +15,12 @@ func TestCanonicalDistributionChannelContracts(t *testing.T) {
 	t.Run("site", func(t *testing.T) {
 		source := goFunctionSource(t, filepath.Join("..", "site", "repository.go"), "CreatePublicContact")
 		requireContains(t, source,
+			"distribution.ResolveIntakeDestination(ctx, tx",
 			"distribution.Distribute(ctx, tx",
 			`"site:" + submissionID`,
-			"PreserveAssignee: true",
+			"RoundRobinID:       intakeDestination.RoundRobinID",
+			"RoundRobinResolved: intakeDestination.Resolved",
+			"PreserveAssignee:   distribution.PreserveAssigneeForIntake(reentry, intakeDestination)",
 			`distributionSource := "site"`,
 		)
 		if strings.Count(source, "distribution_deferred") < 2 {
@@ -34,7 +37,7 @@ func TestCanonicalDistributionChannelContracts(t *testing.T) {
 			"distributionOutcome := CreateDistributionOutcomeSkipped",
 			"if shouldAutoDistribute(input)",
 			"distribution.Distribute(ctx, tx",
-			"newLeadDistributionRequest(tenantContext, input, leadID)",
+			"newLeadDistributionRequest(tenantContext, input, leadID, intakeDestination)",
 			"distributionOutcome = CreateDistributionOutcome(distributionResult.Reason)",
 			"DistributionOutcome: distributionOutcome",
 		)
@@ -45,18 +48,25 @@ func TestCanonicalDistributionChannelContracts(t *testing.T) {
 		request := goFunctionSource(t, filepath.Join("..", "leads", "repository.go"), "newLeadDistributionRequest")
 		requireContains(t, request,
 			`"manual:" + leadID`,
-			"RoundRobinID:     input.RoundRobinID",
-			"PreserveAssignee: true",
-			"Source:           &distributionSource",
+			"RoundRobinID:       input.RoundRobinID",
+			"RoundRobinResolved: intakeDestination.Resolved",
+			"PreserveAssignee:   true",
+			"Source:             &distributionSource",
 		)
 		requireAbsent(t, request, "handle_lead_intake", "round_robin_logs", "request.jwt.claim.role")
 
 		reentry := goFunctionSource(t, filepath.Join("..", "leads", "repository.go"), "registerReentry")
 		requireContains(t, reentry,
+			"distributionOutcome := CreateDistributionOutcomeReentryPreserved",
+			`reentryBehavior := "keep_assignee"`,
+			`if reentryBehavior == "redistribute"`,
+			"distribution.Distribute(ctx, tx",
+			`distribution.StableKey("manual-reentry", existingLead.ID, entryID)`,
+			"PreserveAssignee:   false",
 			"Reentry:             true",
-			"DistributionOutcome: CreateDistributionOutcomeReentryPreserved",
+			"DistributionOutcome: distributionOutcome",
 		)
-		requireAbsent(t, reentry, "distribution.Distribute")
+		requireOrdered(t, reentry, `if reentryBehavior == "redistribute"`, "distribution.Distribute(ctx, tx")
 	})
 
 	t.Run("generic webhook", func(t *testing.T) {
@@ -65,6 +75,7 @@ func TestCanonicalDistributionChannelContracts(t *testing.T) {
 			"repo.receiveLead(ctx",
 			`Source:                "webhook"`,
 			`Provider:              "generic_webhook"`,
+			"ProviderEventID:       providerEventID",
 			"SourceWebhookID:       &webhookID",
 			"IncrementWebhookStats: true",
 		)
@@ -78,28 +89,38 @@ func TestCanonicalDistributionChannelContracts(t *testing.T) {
 			"RequirePhone:    true",
 		)
 
-		shared := goFunctionSource(t, filepath.Join("..", "webhooks", "repository.go"), "receiveLead")
+		shared := goFunctionSource(t, filepath.Join("..", "webhooks", "repository.go"), "receiveLeadWithIdentityMode")
 		requireContains(t, shared,
 			`"distribution_deferred": true`,
-			"sha256.Sum256",
-			`distributionKey := options.Provider + ":"`,
+			"webhookDistributionKey(webhook.ID, options.Provider, providerEventKey, leadEntryID)",
+			"distribution.ResolveIntakeDestination(ctx, tx",
 			"distribution.Distribute(ctx, tx",
-			"PreserveAssignee: true",
+			"RoundRobinID:       intakeDestination.RoundRobinID",
+			"RoundRobinResolved: intakeDestination.Resolved",
+			"PreserveAssignee:   distribution.PreserveAssigneeForIntake(reentry, intakeDestination)",
 			"distributionSource := options.Source",
-			"OccurredAt:       occurredAt",
+			"OccurredAt:         occurredAt",
 		)
 		requireOrdered(t, shared, "repo.insertWebhookLeadEntry", "distribution.Distribute(ctx, tx")
 		requireAbsent(t, shared, "handle_lead_intake", "round_robin_members", "round_robin_logs")
+
+		distributionKey := goFunctionSource(t, filepath.Join("..", "webhooks", "repository.go"), "webhookDistributionKey")
+		requireContains(t, distributionKey,
+			"sha256.Sum256",
+			`return strings.TrimSpace(provider) + ":"`,
+		)
 	})
 
 	t.Run("meta", func(t *testing.T) {
-		persist := goFunctionSource(t, filepath.Join("..", "meta", "repository.go"), "persistLead")
+		persist := goFunctionSource(t, filepath.Join("..", "meta", "repository.go"), "persistLeadWithIdentityMode")
 		requireContains(t, persist,
 			`metadata["distribution_deferred"] = true`,
 			`distribution.StableKey("meta", integration.ID, change.LeadgenID)`,
-			"RoundRobinID:     destination.RoundRobinID",
-			"PreserveAssignee: true",
-			"Source:           &source",
+			"RoundRobinID:       destination.RoundRobinID",
+			"RoundRobinResolved: destination.RoundRobinResolved",
+			"preserveAssignee := preserveAssigneeForMetaIntake(reentry, destination)",
+			"PreserveAssignee:   preserveAssignee",
+			"Source:             &source",
 			"repo.enrichCanonicalLeadNotification",
 		)
 		requireOrdered(t, persist, "repo.insertLeadEntry", "distribution.Distribute(ctx, tx")
@@ -116,8 +137,9 @@ func TestCanonicalDistributionChannelContracts(t *testing.T) {
 			`"distribution_deferred": true`,
 			`"portal:" + eventID`,
 			`distributionSource := "grupo_olx"`,
-			"RoundRobinID:     roundRobinID",
-			"PreserveAssignee: true",
+			"RoundRobinID:       roundRobinID",
+			"RoundRobinResolved: destination.RoundRobinResolved",
+			"PreserveAssignee:   preserveAssigneeForPortalIntake(reentry, destination)",
 		)
 		requireOrdered(t, process, "insert into public.lead_meta", "distribution.Distribute(ctx, tx")
 		requireAbsent(t, process, "recordPortalRoundRobinAssignment", "source_webhook_id")
@@ -131,9 +153,12 @@ func TestCanonicalDistributionChannelContracts(t *testing.T) {
 		requireContains(t, process,
 			`metadataPayload["distribution_deferred"] = true`,
 			`if !rule.ManagedMessageDistribution`,
+			"resolveNativeCTWAIntakeDestination(",
+			"lockNativeCTWAIntakeDestination(",
 			`distribution.StableKey("whatsapp-native", session.ID, message.ProviderMessageID)`,
 			"distribution.Distribute(ctx, tx",
-			"PreserveAssignee: true",
+			"RoundRobinResolved: true",
+			"PreserveAssignee:   distribution.PreserveAssigneeForIntake(!lead.IsNew, intakeDestination)",
 			`distributionSource := "whatsapp"`,
 		)
 		requireOrdered(t, process, "upsert_whatsapp_webhook_lead", "distribution.Distribute(ctx, tx")
@@ -157,8 +182,14 @@ func TestCanonicalDistributionChannelContracts(t *testing.T) {
 			"p_message: message.content",
 			"p_occurred_at: message.sentAt",
 			"Managed WhatsApp intake was not handled",
+			"async function processCanonicalNonManagedWhatsAppDistribution",
+			`.rpc("distribute_lead_from_backend"`,
+			"p_round_robin_id: queueId",
+			"p_preserve_assignee: preserveAssignee",
+			"const idempotencyKey = `whatsapp-native:${await sha256Hex(stableKeyPayload)}`",
 		)
 		requireOrdered(t, source, `.rpc("upsert_whatsapp_webhook_lead"`, `.rpc("process_managed_whatsapp_lead_entry"`)
+		requireOrdered(t, source, `.rpc("upsert_whatsapp_webhook_lead"`, `.rpc("distribute_lead_from_backend"`)
 		requireAbsent(t, source,
 			"resolveRoundRobinAssignee",
 			"async function distributeLeadFromEdge",

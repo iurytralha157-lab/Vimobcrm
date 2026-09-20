@@ -1,9 +1,13 @@
 package portals
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
 )
 
 func TestGrupoOLXFeedIsCanonicalFirstWithPropertyScopedLegacyFallback(t *testing.T) {
@@ -213,6 +217,100 @@ func TestGrupoOLXReentryAdvancesBoardOrderWithoutResettingStageClock(t *testing.
 	}
 	if strings.Contains(update, "board_order_at = case") {
 		t.Fatal("Grupo OLX board ordering must not depend on a stage change")
+	}
+}
+
+func TestGrupoOLXLeadIdentityIsQueueScopedAfterLegacyCutover(t *testing.T) {
+	routing := readPortalContractFile(t, "repository_lead_routing.go")
+	leads := readPortalContractFile(t, "repository_leads.go")
+	for _, required := range []string{
+		"reentry_behavior",
+		"preserveAssigneeForPortalIntake(reentry, destination)",
+		"RoundRobinResolved: destination.RoundRobinResolved",
+	} {
+		if !strings.Contains(routing+leads, required) {
+			t.Fatalf("Grupo OLX reentry routing contract is missing %q", required)
+		}
+	}
+	for _, required := range []string{
+		"resolveAutomaticPortalIntakeDestination",
+		"legacyPortalLeadPhoneUniquenessActive",
+		"findPortalLeadByPhoneLegacy",
+		"findPortalLeadByPhone(ctx",
+		"portalLeadPhoneUniqueViolationConstraint",
+		"attemptTx, err := tx.Begin(ctx)",
+		`constraintName == "leads_org_phone_unique"`,
+		"intake_scope_key",
+		"origin_round_robin_id",
+		"$1 || ':legacy-global:' || normalize_phone($2)",
+		"$1 || ':' || $2 || ':' || normalize_phone($3)",
+	} {
+		if !strings.Contains(leads, required) {
+			t.Fatalf("Grupo OLX scoped identity contract is missing %q", required)
+		}
+	}
+	automaticResolution := strings.Index(leads, "resolveAutomaticPortalIntakeDestination")
+	intakeScope := strings.Index(leads, "intakeScopeKey := portalLeadIntakeScopeKey")
+	phoneLock := strings.Index(leads, "lockPortalLeadIntakeIdentity")
+	if automaticResolution < 0 || intakeScope < 0 || phoneLock < 0 || automaticResolution >= intakeScope || intakeScope >= phoneLock {
+		t.Fatal("Grupo OLX automatic queue must be frozen before intake scope and phone identity")
+	}
+}
+
+func TestGrupoOLXAutomaticIntakeScopesQueueIdentityAndReentryBehavior(t *testing.T) {
+	const (
+		queueA = "11111111-1111-4111-8111-111111111111"
+		queueB = "22222222-2222-4222-8222-222222222222"
+	)
+	queue := func(value string) *string { return &value }
+	base := portalDestination{}
+	autoA := applyPortalIntakeDestination(base, distribution.IntakeDestination{
+		RoundRobinID: queue(queueA), ReentryBehavior: "keep_assignee", Resolved: true,
+	})
+	autoARepeat := applyPortalIntakeDestination(base, distribution.IntakeDestination{
+		RoundRobinID: queue(queueA), ReentryBehavior: "keep_assignee", Resolved: true,
+	})
+	autoB := applyPortalIntakeDestination(base, distribution.IntakeDestination{
+		RoundRobinID: queue(queueB), ReentryBehavior: "redistribute", Resolved: true,
+	})
+	explicitA := portalDestination{
+		RoundRobinID: queueA, RoundRobinResolved: true, ReentryBehavior: "keep_assignee",
+	}
+	explicitAAfterAutomatic, err := resolveAutomaticPortalIntakeDestination(context.Background(), nil, "", explicitA, nil)
+	if err != nil || explicitAAfterAutomatic != explicitA {
+		t.Fatalf("Grupo OLX explicit queue lost precedence: destination=%#v error=%v", explicitAAfterAutomatic, err)
+	}
+
+	if portalLeadIntakeScopeKey(autoA.RoundRobinID) != portalLeadIntakeScopeKey(autoARepeat.RoundRobinID) {
+		t.Fatal("Grupo OLX automatic A,A must reuse the same queue-scoped card")
+	}
+	if portalLeadIntakeScopeKey(autoA.RoundRobinID) == portalLeadIntakeScopeKey(autoB.RoundRobinID) {
+		t.Fatal("Grupo OLX automatic A,B must create separate queue-scoped cards")
+	}
+	if portalLeadIntakeScopeKey(autoA.RoundRobinID) != portalLeadIntakeScopeKey(explicitA.RoundRobinID) {
+		t.Fatal("Grupo OLX automatic A followed by explicit A must resolve to the same intake identity")
+	}
+	if !preserveAssigneeForPortalIntake(true, autoA) {
+		t.Fatal("Grupo OLX keep_assignee queue must preserve the assignee on reentry")
+	}
+	if preserveAssigneeForPortalIntake(true, autoB) {
+		t.Fatal("Grupo OLX redistribute queue must release the assignee on reentry")
+	}
+	noQueue := applyPortalIntakeDestination(base, distribution.IntakeDestination{Resolved: true})
+	if !noQueue.RoundRobinResolved || noQueue.RoundRobinID != "" || portalLeadIntakeScopeKey(noQueue.RoundRobinID) != "unscoped" {
+		t.Fatalf("Grupo OLX frozen no-queue decision = %#v", noQueue)
+	}
+}
+
+func TestGrupoOLXPhoneConflictRetryDistinguishesLegacyAndScopedIndexes(t *testing.T) {
+	for _, constraintName := range []string{"leads_org_phone_unique", "leads_org_scope_phone_unique"} {
+		err := &pgconn.PgError{Code: "23505", ConstraintName: constraintName}
+		if got := portalLeadPhoneUniqueViolationConstraint(err); got != constraintName {
+			t.Fatalf("constraint = %q, want %q", got, constraintName)
+		}
+	}
+	if got := portalLeadPhoneUniqueViolationConstraint(&pgconn.PgError{Code: "23505", ConstraintName: "other_unique"}); got != "" {
+		t.Fatalf("unrelated constraint was recognized: %q", got)
 	}
 }
 

@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "6b29eec0cb9ef3ca1f149b6984011ba1fd60970617fb7c44b972e7f3a2b9787b",
+  "sourceDigestSha256": "095354191decea6b6b51b9b7ade7b285ec65f0ade4e500c5c094a162ce3e03fd",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -1054,10 +1054,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:2d337b9bb58c07414bd9",
+          "id": "overlay:85438fcbe7973293a594",
           "column": 9,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 157,
+          "line": 164,
           "owner": "FloatingConversationFilters",
           "routes": [
             "/agenda",
@@ -1108,10 +1108,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:bea7a558b4d190149fc9",
+          "id": "overlay:b3ed60f29248274a2cf4",
           "column": 5,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1104,
+          "line": 1138,
           "owner": "SessionSelectorDialog",
           "routes": [
             "/agenda",
@@ -1162,10 +1162,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:701240e592c614198787",
+          "id": "overlay:f457c1689c478c36c971",
           "column": 5,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1660,
+          "line": 1694,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -1551,10 +1551,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:1e2f7b6c7ef1aad75944",
+          "id": "overlay:3cf92df97fc516846eb8",
           "column": 5,
           "file": "components/features/integrations/MetaFormConfigDialog.tsx",
-          "line": 253,
+          "line": 265,
           "owner": "MetaFormConfigDialog",
           "routes": [
             "/settings/integrations/meta"
@@ -1562,10 +1562,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:caf3fc392efc40003ed4",
+          "id": "overlay:db89c1cf58e6467cf142",
           "column": 21,
           "file": "components/features/integrations/MetaFormConfigDialog.tsx",
-          "line": 348,
+          "line": 360,
           "owner": "MetaFormConfigDialog",
           "routes": [
             "/settings/integrations/meta"
@@ -1650,10 +1650,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:23f6c342df5fde1f9ce7",
+          "id": "overlay:7277416c77f14b406fdc",
           "column": 5,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 812,
+          "line": 817,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -2858,10 +2858,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:4aed2a2b73050fe7d2ce",
+          "id": "overlay:257dc62e08b77295d059",
           "column": 5,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1189,
+          "line": 1193,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -3222,10 +3222,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:979ff885a18a9468b223",
+          "id": "overlay:d1b77775c6359d89f028",
           "column": 7,
           "file": "components/features/settings/WebhooksTab.tsx",
-          "line": 846,
+          "line": 847,
           "owner": "WebhooksTab",
           "routes": [
             "/settings"
@@ -3233,10 +3233,10 @@
           "kind": "sheet"
         },
         {
-          "id": "overlay:e6b5ea50eab6c1fa985b",
+          "id": "overlay:ea20c516d2bd4069acbb",
           "column": 7,
           "file": "components/features/settings/WebhooksTab.tsx",
-          "line": 1068,
+          "line": 1069,
           "owner": "WebhooksTab",
           "routes": [
             "/settings"
@@ -3550,10 +3550,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:c48eea2b2d29c3930186",
+          "id": "overlay:51b143fb31785514f17b",
           "column": 9,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 266,
+          "line": 267,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -3604,10 +3604,10 @@
           "kind": "dropdownMenu"
         },
         {
-          "id": "overlay:f0db8c2a2cf91fd7d8b1",
+          "id": "overlay:5f0fe0e0d0a44539f044",
           "column": 7,
           "file": "components/features/whatsapp/conversations/ConversationOverlays.tsx",
-          "line": 85,
+          "line": 87,
           "owner": "ConversationOverlays",
           "routes": [
             "/agenda",
@@ -4653,10 +4653,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:7bd2c9357ecd332219ce",
+          "id": "form:447a6efae011bd8a4f21",
           "column": 9,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 864,
+          "line": 869,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -9591,10 +9591,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:63c020bec89f7d70d743",
+          "id": "cta:894e6b02e6f3cf77ef57",
           "column": 13,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 159,
+          "line": 166,
           "owner": "FloatingConversationFilters",
           "routes": [
             "/agenda",
@@ -9646,10 +9646,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:81167a2e113910bf75fc",
+          "id": "cta:8c042d22bcc936e8063b",
           "column": 17,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 222,
+          "line": 229,
           "owner": "FloatingConversationFilters",
           "routes": [
             "/agenda",
@@ -9701,10 +9701,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a6f7d003199d927c34d0",
+          "id": "cta:79a633d8d3029b01ddfc",
           "column": 13,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1126,
+          "line": 1160,
           "owner": "SessionSelectorDialog",
           "routes": [
             "/agenda",
@@ -9756,10 +9756,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:03c4ee1b13b4ace0080e",
+          "id": "cta:c561c589d207a6b8e591",
           "column": 13,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1188,
+          "line": 1222,
           "owner": "FloatingChatHeader",
           "routes": [
             "/agenda",
@@ -9811,10 +9811,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:867e820080755959815d",
+          "id": "cta:cd396d86201025355181",
           "column": 17,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1236,
+          "line": 1270,
           "owner": "FloatingChatHeader",
           "routes": [
             "/agenda",
@@ -9866,10 +9866,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:aa8d7d4a99aa2583eb10",
+          "id": "cta:a23f540fcb27e78c13eb",
           "column": 21,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1278,
+          "line": 1312,
           "owner": "FloatingChatHeader",
           "routes": [
             "/agenda",
@@ -9921,10 +9921,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d0473550a38e4d0977c2",
+          "id": "cta:73aefed6aea6dda7d14c",
           "column": 19,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1296,
+          "line": 1330,
           "owner": "FloatingChatHeader",
           "routes": [
             "/agenda",
@@ -9976,10 +9976,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d7fc04361eff62cc8146",
+          "id": "cta:0bb58118e9e39ca11b6b",
           "column": 15,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1399,
+          "line": 1433,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -10031,10 +10031,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2d73a15af891791bd86d",
+          "id": "cta:cd74032cd64bd6981b44",
           "column": 15,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1427,
+          "line": 1461,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -10086,10 +10086,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d42a175bb924e786a2fb",
+          "id": "cta:c58dd762e261a2ba9361",
           "column": 9,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1484,
+          "line": 1518,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -10141,10 +10141,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:b3a491a9f5ea8346ba70",
+          "id": "cta:9c8e83eb94d506200eeb",
           "column": 13,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1518,
+          "line": 1552,
           "owner": "renderMessageInput",
           "routes": [
             "/agenda",
@@ -10196,10 +10196,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:7eceabdd4612d05610ef",
+          "id": "cta:6eaf9b1f5444e763118c",
           "column": 15,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1522,
+          "line": 1556,
           "owner": "renderMessageInput",
           "routes": [
             "/agenda",
@@ -10251,10 +10251,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:e5783aacb6886e907e8a",
+          "id": "cta:2d8a111e2858011e6777",
           "column": 15,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1564,
+          "line": 1598,
           "owner": "ConversationList",
           "routes": [
             "/agenda",
@@ -10306,10 +10306,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a07d761f81ff68eeb39e",
+          "id": "cta:42f08e6a30440704ef2c",
           "column": 17,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1582,
+          "line": 1616,
           "owner": "ConversationList",
           "routes": [
             "/agenda",
@@ -10361,10 +10361,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f63692bf89be5d59d1ac",
+          "id": "cta:a3bc8e6c662eb53233d9",
           "column": 19,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1627,
+          "line": 1661,
           "owner": "ConversationList",
           "routes": [
             "/agenda",
@@ -13178,10 +13178,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:333fef5dc7ec585d02a8",
+          "id": "cta:b7cf868e3403abe8341a",
           "column": 23,
           "file": "components/features/integrations/MetaFormConfigDialog.tsx",
-          "line": 337,
+          "line": 349,
           "owner": "MetaFormConfigDialog",
           "routes": [
             "/settings/integrations/meta"
@@ -13190,10 +13190,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:3ca00feb48feb384cd32",
+          "id": "cta:c196f7cba9a89dc44f0f",
           "column": 25,
           "file": "components/features/integrations/MetaFormConfigDialog.tsx",
-          "line": 356,
+          "line": 368,
           "owner": "MetaFormConfigDialog",
           "routes": [
             "/settings/integrations/meta"
@@ -13202,10 +13202,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a332f02413b5ecfb14e1",
+          "id": "cta:bf9271dc38f875e6adb6",
           "column": 23,
           "file": "components/features/integrations/MetaFormConfigDialog.tsx",
-          "line": 452,
+          "line": 464,
           "owner": "MetaFormConfigDialog",
           "routes": [
             "/settings/integrations/meta"
@@ -13214,10 +13214,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:be71c2230418bd993b95",
+          "id": "cta:d337d8c2d7f481ec3fa1",
           "column": 11,
           "file": "components/features/integrations/MetaFormConfigDialog.tsx",
-          "line": 480,
+          "line": 492,
           "owner": "MetaFormConfigDialog",
           "routes": [
             "/settings/integrations/meta"
@@ -13226,10 +13226,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:e5556558924c878e137f",
+          "id": "cta:cf866d0a7135dc1c3bbc",
           "column": 11,
           "file": "components/features/integrations/MetaFormConfigDialog.tsx",
-          "line": 483,
+          "line": 495,
           "owner": "MetaFormConfigDialog",
           "routes": [
             "/settings/integrations/meta"
@@ -13468,10 +13468,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:87b367c9da6209980e09",
+          "id": "cta:91122bd7dbfdef0ef222",
           "column": 13,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 853,
+          "line": 858,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -13523,10 +13523,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:06267647741d653be6a0",
+          "id": "cta:122b42f08087cd28bdb5",
           "column": 25,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 981,
+          "line": 986,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -13578,10 +13578,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:aed45d505d0aee748fe8",
+          "id": "cta:ac6c76431345e696d381",
           "column": 25,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1089,
+          "line": 1094,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -13633,10 +13633,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:c21945c8bf4240b5b9be",
+          "id": "cta:44ca26e1de90af45e048",
           "column": 25,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1136,
+          "line": 1141,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -13688,10 +13688,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:bc94335af436bd32087b",
+          "id": "cta:4b412884d2f51b26a645",
           "column": 25,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1170,
+          "line": 1175,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -13743,10 +13743,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:06e96c8e2856ba9c3629",
+          "id": "cta:85905288b45c963ad3cf",
           "column": 13,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1343,
+          "line": 1348,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -13798,10 +13798,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:092ee79d6ddf1a96696e",
+          "id": "cta:f563e57e5053cc394ec0",
           "column": 15,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1347,
+          "line": 1352,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -13853,10 +13853,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:b78d25da80777474566c",
+          "id": "cta:6a330fb186f3dad76637",
           "column": 15,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 1366,
+          "line": 1371,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -14670,10 +14670,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:28a2946ec5b12fac7c6b",
+          "id": "cta:d5d748195c7c260eee07",
           "column": 15,
           "file": "components/features/leads/LeadUnifiedThread.tsx",
-          "line": 1109,
+          "line": 1113,
           "owner": "LeadUnifiedThread",
           "routes": [
             "/crm/contacts",
@@ -14683,10 +14683,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:9b48a1b47246b6a67b3a",
+          "id": "cta:2e24fc922e5491407568",
           "column": 17,
           "file": "components/features/leads/LeadUnifiedThread.tsx",
-          "line": 1224,
+          "line": 1228,
           "owner": "LeadUnifiedThread",
           "routes": [
             "/crm/contacts",
@@ -20203,10 +20203,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:45ad80463d42e8001656",
+          "id": "cta:2e7f18f62408af0001d9",
           "column": 13,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1151,
+          "line": 1155,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -20217,10 +20217,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:16b5b8c96fea78866e0d",
+          "id": "cta:c2a368d1919cae8ba421",
           "column": 13,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1158,
+          "line": 1162,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -22228,10 +22228,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:987465f39cf779b04b3c",
+          "id": "cta:16db04222c996af23996",
           "column": 35,
           "file": "components/features/settings/WebhooksTab.tsx",
-          "line": 640,
+          "line": 641,
           "owner": "WebhooksTab",
           "routes": [
             "/settings"
@@ -22240,10 +22240,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:b0def73dff9c3bbdc9c7",
+          "id": "cta:ef5ba743219f4411e8fe",
           "column": 35,
           "file": "components/features/settings/WebhooksTab.tsx",
-          "line": 681,
+          "line": 682,
           "owner": "WebhooksTab",
           "routes": [
             "/settings"
@@ -22252,10 +22252,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0fe937072747bf8d3176",
+          "id": "cta:b39cbb22a3a8f5a90ba4",
           "column": 35,
           "file": "components/features/settings/WebhooksTab.tsx",
-          "line": 693,
+          "line": 694,
           "owner": "WebhooksTab",
           "routes": [
             "/settings"
@@ -22264,10 +22264,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:990ab29272c30324c8b2",
+          "id": "cta:5cf32abf3a4fa5de1821",
           "column": 15,
           "file": "components/features/settings/WebhooksTab.tsx",
-          "line": 1051,
+          "line": 1052,
           "owner": "WebhooksTab",
           "routes": [
             "/settings"
@@ -22276,10 +22276,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0d7d5ea22c8f86b6cefc",
+          "id": "cta:4019c791fd3b6a89ebf1",
           "column": 15,
           "file": "components/features/settings/WebhooksTab.tsx",
-          "line": 1054,
+          "line": 1055,
           "owner": "WebhooksTab",
           "routes": [
             "/settings"
@@ -22288,10 +22288,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:8a39ff8fc865c289a0ab",
+          "id": "cta:cb406b1921b939c8f1ea",
           "column": 13,
           "file": "components/features/settings/WebhooksTab.tsx",
-          "line": 1094,
+          "line": 1095,
           "owner": "WebhooksTab",
           "routes": [
             "/settings"
@@ -23905,10 +23905,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:bff8298b7e63ca837c6e",
+          "id": "cta:19ee82d51515af0a1990",
           "column": 13,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 551,
+          "line": 555,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -23918,10 +23918,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f2c0a34f24a912093062",
+          "id": "cta:b68404b6ef97bb66d2c8",
           "column": 13,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 593,
+          "line": 597,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -23931,10 +23931,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a72b3a375f049fed9241",
+          "id": "cta:bd81a3c0e39026da92c7",
           "column": 13,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 624,
+          "line": 628,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -23945,10 +23945,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:b56614dd43d11bd49337",
+          "id": "cta:6118e31ea1c3a034d91a",
           "column": 13,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 645,
+          "line": 649,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -23958,10 +23958,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:17d8b6825a8f46e3b111",
+          "id": "cta:25b6f776e4eef2a98688",
           "column": 13,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 667,
+          "line": 671,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -23971,10 +23971,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:b2d561b5570e3e7d3d06",
+          "id": "cta:c3c7af2beec1e814b028",
           "column": 21,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 805,
+          "line": 809,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -23984,10 +23984,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:336c9171d4886dbf2699",
+          "id": "cta:c7b8599f76c0b8b05934",
           "column": 23,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 856,
+          "line": 860,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -23997,10 +23997,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:ea3e8d16c960e6ae38dd",
+          "id": "cta:2d7bac1adc7a76838490",
           "column": 21,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 903,
+          "line": 907,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -24010,10 +24010,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:d3a3d1539fd760226571",
+          "id": "cta:840f6cdda2b06cb70248",
           "column": 25,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 1038,
+          "line": 1042,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -24023,10 +24023,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:e54f3248c4495af123ba",
+          "id": "cta:2fceca662fa146104659",
           "column": 19,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 1073,
+          "line": 1077,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -24036,10 +24036,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:04d655e37ab11d9be779",
+          "id": "cta:b0d568ab7b95ee1ec5cd",
           "column": 15,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 1127,
+          "line": 1131,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -24050,10 +24050,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:61b38f69d65f3dba5848",
+          "id": "cta:3c617ce85bb510c0dd81",
           "column": 13,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 1129,
+          "line": 1133,
           "owner": "TeamEditorScreen",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -24063,10 +24063,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:05bd37b9baf43ca9f793",
+          "id": "cta:1b0c8d05de3fbd560c94",
           "column": 9,
           "file": "components/features/teams/TeamEditorScreen.tsx",
-          "line": 1250,
+          "line": 1254,
           "owner": "EditorMessage",
           "routes": [
             "/crm/management/teams/[id]/edit",
@@ -25283,10 +25283,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ccdc1b7c1b91e4e6d485",
+          "id": "cta:61789b4929d1e72a8f5c",
           "column": 7,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 127,
+          "line": 128,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -25338,10 +25338,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:05a66df1df4b979b10bf",
+          "id": "cta:6188c6c2a40fdadbc457",
           "column": 13,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 268,
+          "line": 269,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -25393,10 +25393,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:64464777046bb8eb3b5b",
+          "id": "cta:41d9620c9035e1e9b8cd",
           "column": 25,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 334,
+          "line": 335,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -29316,10 +29316,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:ca6d075a3878ad775ff0",
+          "id": "control:21ea4cfb05a9ae0a4bf8",
           "column": 11,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1674,
+          "line": 1708,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -29371,10 +29371,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:9606d3b2104500a40b45",
+          "id": "control:73fa049f3a6b100d4db0",
           "column": 11,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1675,
+          "line": 1709,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -30395,10 +30395,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:8831bf52d86ab5eae160",
+          "id": "control:42355d413d94ca9f4b0f",
           "column": 19,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 869,
+          "line": 874,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -30450,10 +30450,10 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:60f42107275f2d65c550",
+          "id": "control:e83c05963ffddbb7db18",
           "column": 19,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 870,
+          "line": 875,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -30505,10 +30505,10 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:3e4f11a93e7dae9d5360",
+          "id": "control:2fdde85a24b32677287d",
           "column": 19,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 871,
+          "line": 876,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -30560,10 +30560,10 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:761bd1118f10a471b9be",
+          "id": "control:1cdba737cf29bdae0c22",
           "column": 35,
           "file": "components/features/leads/CreateLeadDialog.tsx",
-          "line": 872,
+          "line": 877,
           "owner": "CreateLeadDialog",
           "routes": [
             "/agenda",
@@ -32168,10 +32168,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:fbf5aabfdd2928d94f0c",
+          "id": "control:e722615cc67b6def38df",
           "column": 13,
           "file": "components/features/settings/WebhooksTab.tsx",
-          "line": 1088,
+          "line": 1089,
           "owner": "WebhooksTab",
           "routes": [
             "/settings"
@@ -32372,10 +32372,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:76ef53affbfcd7fd47d0",
+          "id": "control:97b616d1d6144c5145a1",
           "column": 17,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 285,
+          "line": 286,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -32427,10 +32427,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:1181c67b1fabeb9d21e4",
+          "id": "control:6ef948c2252d8f89cac2",
           "column": 17,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 294,
+          "line": 295,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -32482,10 +32482,10 @@
           "tag": "DropdownMenuSubTrigger"
         },
         {
-          "id": "control:3698e1a0aedc8b355652",
+          "id": "control:8859c051f780ed3cfa81",
           "column": 25,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 312,
+          "line": 313,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -32537,10 +32537,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:d63dc669909bda616fb1",
+          "id": "control:4d1a8bff26543a0b34a8",
           "column": 25,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 353,
+          "line": 354,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -32592,10 +32592,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:4b7af8952defc2e72a55",
+          "id": "control:32c10bbb669cec9c0eff",
           "column": 15,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 373,
+          "line": 374,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -32647,10 +32647,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:638c4fc6c456bb7468cc",
+          "id": "control:7bc9bbd7c9b86136635b",
           "column": 17,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 380,
+          "line": 381,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -32702,10 +32702,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:cf1d1f3f4cc1bd4ac9da",
+          "id": "control:8d3c3ce5f341ea994178",
           "column": 17,
           "file": "components/features/whatsapp/conversations/ConversationListItem.tsx",
-          "line": 385,
+          "line": 386,
           "owner": "ConversationListItem",
           "routes": [
             "/agenda",
@@ -32757,10 +32757,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:40c22c3f2d48f3ac8914",
+          "id": "control:27fa6f40387a8e51ab76",
           "column": 13,
           "file": "components/features/whatsapp/conversations/ConversationOverlays.tsx",
-          "line": 94,
+          "line": 96,
           "owner": "ConversationOverlays",
           "routes": [
             "/agenda",
@@ -32812,10 +32812,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:11a045d03ac571bed302",
+          "id": "control:0e8329aad6223001ee33",
           "column": 13,
           "file": "components/features/whatsapp/conversations/ConversationOverlays.tsx",
-          "line": 95,
+          "line": 97,
           "owner": "ConversationOverlays",
           "routes": [
             "/agenda",
@@ -33693,7 +33693,7 @@
         }
       ]
     },
-    "digestSha256": "4445d59417f194c07343e6a70e95d93865ecf700d51f10f280ebf8fedb8a4757"
+    "digestSha256": "6a185e74d48525f9b0872e76f2d4b29a7cb2b0c6874e0f89a5bc076dd058e86a"
   },
   "routes": [
     {

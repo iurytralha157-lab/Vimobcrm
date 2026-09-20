@@ -108,6 +108,7 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const initializedRef = useRef<string | null>(null);
+  const submitInFlightRef = useRef(false);
 
   const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId || null;
@@ -450,6 +451,7 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
   };
 
   const handleSubmit = async () => {
+    if (submitInFlightRef.current) return;
     if (!canSubmit) {
       if (unresolvedWarnings.length > 0) {
         toast.error(
@@ -461,6 +463,7 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
       return;
     }
 
+    submitInFlightRef.current = true;
     setIsSubmitting(true);
     try {
       const finalLogoUrl = await uploadLogo();
@@ -528,6 +531,7 @@ export default function TeamEditorScreen(props: TeamEditorScreenProps) {
           : "Não foi possível salvar a equipe.",
       );
     } finally {
+      submitInFlightRef.current = false;
       setIsSubmitting(false);
     }
   };

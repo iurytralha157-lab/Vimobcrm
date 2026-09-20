@@ -573,6 +573,7 @@ export function WebhooksTab() {
                                 <div className="app-card-soft p-3 font-mono text-xs overflow-x-auto">
                                   <pre>{`curl -X POST "${webhookUrl}" \\
   -H "Authorization: Bearer ${webhook.api_token}" \\
+  -H "Idempotency-Key: <ID_UNICO_DA_ENTRADA>" \\
   -H "Content-Type: application/json" \\
   -d '{
     "name": "João Silva",

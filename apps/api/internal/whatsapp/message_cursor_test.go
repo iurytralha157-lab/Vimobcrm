@@ -65,6 +65,45 @@ func TestParseMessageFilterAllowsLazyMediaURLsWithoutChangingDefault(t *testing.
 	}
 }
 
+func TestParseMessageFilterValidatesExpectedLeadID(t *testing.T) {
+	const leadID = "ebf40d3f-6085-4e48-b3e9-17945b2f73b8"
+	filter, err := ParseMessageFilter(url.Values{"expectedLeadId": {leadID}})
+	if err != nil {
+		t.Fatalf("ParseMessageFilter(expectedLeadId) error = %v", err)
+	}
+	if filter.ExpectedLeadID != leadID {
+		t.Fatalf("ExpectedLeadID = %q, want %q", filter.ExpectedLeadID, leadID)
+	}
+	if _, err := ParseMessageFilter(url.Values{"expectedLeadId": {"not-a-uuid"}}); err == nil {
+		t.Fatal("ParseMessageFilter(expectedLeadId) expected invalid UUID error")
+	}
+	unlinkedFilter, err := ParseMessageFilter(url.Values{"expectedLeadId": {unlinkedConversationLeadSnapshot}})
+	if err != nil || unlinkedFilter.ExpectedLeadID != unlinkedConversationLeadSnapshot {
+		t.Fatalf("ParseMessageFilter(unlinked) = %#v, %v", unlinkedFilter, err)
+	}
+}
+
+func TestParseExpectedLeadIDIsRequiredForConversationMutations(t *testing.T) {
+	leadID := "11111111-1111-4111-8111-111111111111"
+	parsed, err := ParseExpectedLeadID(url.Values{"expectedLeadId": {leadID}})
+	if err != nil {
+		t.Fatalf("ParseExpectedLeadID() error = %v", err)
+	}
+	if parsed != leadID {
+		t.Fatalf("ParseExpectedLeadID() = %q, want %q", parsed, leadID)
+	}
+	if _, err := ParseExpectedLeadID(url.Values{}); err == nil {
+		t.Fatal("ParseExpectedLeadID() accepted a missing card snapshot")
+	}
+	if _, err := ParseExpectedLeadID(url.Values{"expectedLeadId": {"not-a-uuid"}}); err == nil {
+		t.Fatal("ParseExpectedLeadID() accepted an invalid card snapshot")
+	}
+	unlinked, err := ParseExpectedLeadID(url.Values{"expectedLeadId": {unlinkedConversationLeadSnapshot}})
+	if err != nil || unlinked != unlinkedConversationLeadSnapshot {
+		t.Fatalf("ParseExpectedLeadID(unlinked) = %q, %v", unlinked, err)
+	}
+}
+
 func TestParseHistoryAccessFilterReusesBoundedMessageCursor(t *testing.T) {
 	const leadID = "22222222-2222-4222-8222-222222222222"
 	const cursorID = "11111111-1111-4111-8111-111111111111"
@@ -78,6 +117,16 @@ func TestParseHistoryAccessFilterReusesBoundedMessageCursor(t *testing.T) {
 	}
 	if filter.LeadID != leadID || filter.Limit != 40 || filter.CursorID != cursorID || filter.CursorAt == nil {
 		t.Fatalf("unexpected history filter: %#v", filter)
+	}
+}
+
+func TestParseHistoryAccessFilterRequiresLeadSnapshot(t *testing.T) {
+	t.Parallel()
+
+	if _, err := ParseHistoryAccessFilter(url.Values{
+		"conversationId": {"11111111-1111-4111-8111-111111111111"},
+	}); err == nil {
+		t.Fatal("ParseHistoryAccessFilter() accepted conversation history without a lead snapshot")
 	}
 }
 

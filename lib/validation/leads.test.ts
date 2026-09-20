@@ -105,6 +105,27 @@ test('aceita uma entrada valida de lead', () => {
   assert.equal(result.success, true)
 })
 
+test('vinculo de conversa na criacao exige o snapshot observado', () => {
+  assert.equal(leadCreateInputSchema.safeParse({
+    name: 'Contato WhatsApp',
+    conversationId: ORG_ID,
+    expectedPreviousLeadId: 'unlinked',
+  }).success, true)
+  assert.equal(leadCreateInputSchema.safeParse({
+    name: 'Contato WhatsApp',
+    conversationId: ORG_ID,
+    expectedPreviousLeadId: ID,
+  }).success, true)
+  assert.equal(leadCreateInputSchema.safeParse({
+    name: 'Contato WhatsApp',
+    conversationId: ORG_ID,
+  }).success, false)
+  assert.equal(leadCreateInputSchema.safeParse({
+    name: 'Contato WhatsApp',
+    expectedPreviousLeadId: 'unlinked',
+  }).success, false)
+})
+
 test('valida o controle de distribuicao da importacao', () => {
   const automatic = leadCreateInputSchema.safeParse({
     name: 'Contato distribuido',

@@ -43,6 +43,7 @@ import {
   metaPageFormsActionResponseSchema,
   metaPublicIntegrationSchema,
 } from "./integrations";
+import { metaConnectErrorMessage } from "../meta-connect-error";
 
 test("identificadores Google sao normalizados e validados por provedor", () => {
   assert.equal(
@@ -1116,4 +1117,40 @@ test("tela Meta preserva autoria, métricas e linhas compactas na lista", () => 
   assert.match(source, /getAccountPageSummary\(account\)/);
   assert.doesNotMatch(source, />Nova conexão</);
   assert.match(source, /Atualizar conexão da página/);
+});
+
+test("editor Meta preserva a configuração existente e bloqueia salvamento duplicado", () => {
+  const source = readFileSync(
+    resolve(
+      process.cwd(),
+      "components/features/integrations/MetaFormConfigDialog.tsx",
+    ),
+    "utf8",
+  );
+
+  assert.match(source, /if \(saveInFlightRef\.current\) return;/);
+  assert.match(source, /\.\.\.\(config\?\.default_values \|\| \{\}\)/);
+  assert.match(source, /source: config\?\.source \|\| null/);
+  assert.match(source, /sourceDetails: config\?\.source_details \|\| null/);
+  assert.match(source, /isActive: config\?\.is_active \?\? true/);
+  assert.match(source, /finally \{[\s\S]*saveInFlightRef\.current = false;/);
+});
+
+test("conexão Meta traduz os códigos estáveis recebidos em code ou message", () => {
+  const expectedMessages = {
+    meta_leads_retrieval_required:
+      "A Meta não liberou a leitura dos leads. Autorize leads_retrieval e conecte a página novamente.",
+    meta_lead_forms_access_failed:
+      "A Meta não liberou o acesso aos formulários de leads. Revise as permissões da página e conecte-a novamente.",
+  } as const;
+
+  for (const [stableError, friendlyMessage] of Object.entries(expectedMessages)) {
+    assert.equal(
+      metaConnectErrorMessage(Object.assign(new Error("api_error"), { code: stableError })),
+      friendlyMessage,
+    );
+    assert.equal(metaConnectErrorMessage(new Error(stableError)), friendlyMessage);
+  }
+  assert.equal(metaConnectErrorMessage(new Error("Falha específica")), "Falha específica");
+  assert.equal(metaConnectErrorMessage(null), "Não foi possível conectar esta página.");
 });

@@ -54,6 +54,43 @@ const claimEvolutionWebhooksQuery = `
 			    and ($4 <> 'live' or wi.next_attempt_at <= now())
 			    and not exists (
 			      select 1
+			      from pg_catalog.jsonb_array_elements(
+			        case
+			          when pg_catalog.jsonb_typeof(wi.payload #> '{__vimob_ingress,routing_snapshot,messages}') = 'array'
+			            then wi.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+			          else '[]'::jsonb
+			        end
+			      ) as routing_message(snapshot)
+			      where routing_message.snapshot->>'binding_eligible' = 'true'
+			        and nullif(routing_message.snapshot->>'predecessor_inbox_event_key', '') is not null
+			        and routing_message.snapshot->>'predecessor_inbox_event_key' <> wi.event_key
+			        and not exists (
+			          select 1
+			          from pg_catalog.jsonb_array_elements(
+			            wi.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+			          ) as same_inbox_route(snapshot)
+			          where same_inbox_route.snapshot->>'provider_message_id' =
+			            routing_message.snapshot->>'predecessor_provider_message_id'
+			        )
+			        and not exists (
+			          select 1
+			          from public.whatsapp_webhook_inbox predecessor
+				          where predecessor.organization_id = wi.organization_id
+				            and predecessor.session_id = wi.session_id
+				            and predecessor.event_key = routing_message.snapshot->>'predecessor_inbox_event_key'
+				            and predecessor.status = 'processed'
+				        )
+				        and not exists (
+				          select 1
+				          from public.whatsapp_webhook_routing_outcomes predecessor_outcome
+				          where predecessor_outcome.organization_id = wi.organization_id
+				            and predecessor_outcome.session_id = wi.session_id
+				            and predecessor_outcome.provider_message_id =
+				              routing_message.snapshot->>'predecessor_provider_message_id'
+				        )
+			    )
+			    and not exists (
+			      select 1
 			      from public.whatsapp_webhook_inbox older
 			      where older.session_id = wi.session_id
 			        and older.processing_lane = wi.processing_lane
@@ -95,6 +132,43 @@ const claimEvolutionWebhooksQuery = `
 			        and live_due.status in ('pending', 'retry')
 			        and live_due.attempts < live_due.max_attempts
 			        and live_due.next_attempt_at <= now()
+			        and not exists (
+			          select 1
+			          from pg_catalog.jsonb_array_elements(
+			            case
+			              when pg_catalog.jsonb_typeof(live_due.payload #> '{__vimob_ingress,routing_snapshot,messages}') = 'array'
+			                then live_due.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+			              else '[]'::jsonb
+			            end
+			          ) as routing_message(snapshot)
+			          where routing_message.snapshot->>'binding_eligible' = 'true'
+			            and nullif(routing_message.snapshot->>'predecessor_inbox_event_key', '') is not null
+			            and routing_message.snapshot->>'predecessor_inbox_event_key' <> live_due.event_key
+			            and not exists (
+			              select 1
+			              from pg_catalog.jsonb_array_elements(
+			                live_due.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+			              ) as same_inbox_route(snapshot)
+			              where same_inbox_route.snapshot->>'provider_message_id' =
+			                routing_message.snapshot->>'predecessor_provider_message_id'
+			            )
+			            and not exists (
+			              select 1
+			              from public.whatsapp_webhook_inbox predecessor
+				              where predecessor.organization_id = live_due.organization_id
+				                and predecessor.session_id = live_due.session_id
+				                and predecessor.event_key = routing_message.snapshot->>'predecessor_inbox_event_key'
+				                and predecessor.status = 'processed'
+				            )
+				            and not exists (
+				              select 1
+				              from public.whatsapp_webhook_routing_outcomes predecessor_outcome
+				              where predecessor_outcome.organization_id = live_due.organization_id
+				                and predecessor_outcome.session_id = live_due.session_id
+				                and predecessor_outcome.provider_message_id =
+				                  routing_message.snapshot->>'predecessor_provider_message_id'
+				            )
+			        )
 			    )
 			  )
 			order by ws.id
@@ -111,6 +185,43 @@ const claimEvolutionWebhooksQuery = `
 			  and wi.status in ('pending', 'retry')
 			  and wi.attempts < wi.max_attempts
 			  and wi.next_attempt_at <= now()
+			  and not exists (
+			    select 1
+			    from pg_catalog.jsonb_array_elements(
+			      case
+			        when pg_catalog.jsonb_typeof(wi.payload #> '{__vimob_ingress,routing_snapshot,messages}') = 'array'
+			          then wi.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+			        else '[]'::jsonb
+			      end
+			    ) as routing_message(snapshot)
+			    where routing_message.snapshot->>'binding_eligible' = 'true'
+			      and nullif(routing_message.snapshot->>'predecessor_inbox_event_key', '') is not null
+			      and routing_message.snapshot->>'predecessor_inbox_event_key' <> wi.event_key
+			      and not exists (
+			        select 1
+			        from pg_catalog.jsonb_array_elements(
+			          wi.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+			        ) as same_inbox_route(snapshot)
+			        where same_inbox_route.snapshot->>'provider_message_id' =
+			          routing_message.snapshot->>'predecessor_provider_message_id'
+			      )
+			      and not exists (
+			        select 1
+			        from public.whatsapp_webhook_inbox predecessor
+			        where predecessor.organization_id = wi.organization_id
+			          and predecessor.session_id = wi.session_id
+			          and predecessor.event_key = routing_message.snapshot->>'predecessor_inbox_event_key'
+			          and predecessor.status = 'processed'
+			      )
+			      and not exists (
+			        select 1
+			        from public.whatsapp_webhook_routing_outcomes predecessor_outcome
+			        where predecessor_outcome.organization_id = wi.organization_id
+			          and predecessor_outcome.session_id = wi.session_id
+			          and predecessor_outcome.provider_message_id =
+			            routing_message.snapshot->>'predecessor_provider_message_id'
+			      )
+			  )
 			  and not exists (
 			    select 1
 			    from public.whatsapp_webhook_inbox active
@@ -140,6 +251,43 @@ const claimEvolutionWebhooksQuery = `
 			  and wi.status in ('pending', 'retry')
 			  and wi.attempts < wi.max_attempts
 			  and wi.next_attempt_at <= now()
+			  and not exists (
+			    select 1
+			    from pg_catalog.jsonb_array_elements(
+			      case
+			        when pg_catalog.jsonb_typeof(wi.payload #> '{__vimob_ingress,routing_snapshot,messages}') = 'array'
+			          then wi.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+			        else '[]'::jsonb
+			      end
+			    ) as routing_message(snapshot)
+			    where routing_message.snapshot->>'binding_eligible' = 'true'
+			      and nullif(routing_message.snapshot->>'predecessor_inbox_event_key', '') is not null
+			      and routing_message.snapshot->>'predecessor_inbox_event_key' <> wi.event_key
+			      and not exists (
+			        select 1
+			        from pg_catalog.jsonb_array_elements(
+			          wi.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+			        ) as same_inbox_route(snapshot)
+			        where same_inbox_route.snapshot->>'provider_message_id' =
+			          routing_message.snapshot->>'predecessor_provider_message_id'
+			      )
+			      and not exists (
+			        select 1
+			        from public.whatsapp_webhook_inbox predecessor
+			        where predecessor.organization_id = wi.organization_id
+			          and predecessor.session_id = wi.session_id
+			          and predecessor.event_key = routing_message.snapshot->>'predecessor_inbox_event_key'
+			          and predecessor.status = 'processed'
+			      )
+			      and not exists (
+			        select 1
+			        from public.whatsapp_webhook_routing_outcomes predecessor_outcome
+			        where predecessor_outcome.organization_id = wi.organization_id
+			          and predecessor_outcome.session_id = wi.session_id
+			          and predecessor_outcome.provider_message_id =
+			            routing_message.snapshot->>'predecessor_provider_message_id'
+			      )
+			  )
 			  and not exists (
 			    select 1
 			    from public.whatsapp_webhook_inbox active
@@ -467,6 +615,16 @@ func (repo Repository) CleanupExpiredWebhookInbox(ctx context.Context, limit int
 	`, limit)
 	if err != nil {
 		return 0, err
+	}
+	provenanceLimit := limit
+	if provenanceLimit > 250 {
+		provenanceLimit = 250
+	}
+	var deletedProvenance int64
+	if err := repo.db.Pool().QueryRow(ctx, `
+		select private.cleanup_whatsapp_webhook_routing_provenance($1)::bigint
+	`, provenanceLimit).Scan(&deletedProvenance); err != nil {
+		return result.RowsAffected(), err
 	}
 	return result.RowsAffected(), nil
 }
@@ -891,10 +1049,12 @@ func (repo Repository) forwardEvolutionWebhook(ctx context.Context, item pending
 	}
 	endpoint.RawQuery = query.Encode()
 
-	// Routing metadata is an internal durable-inbox concern. Never extend the
-	// legacy Edge provider contract with backend-only ordering fields.
-	providerPayload := evolutionWebhookProviderPayload(item.Payload)
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(providerPayload))
+	// This target is authenticated as the private worker contract, not as a
+	// provider callback. Preserve the ingress-owned routing snapshot so Edge can
+	// consume the exact pre-ACK card version. Provider-supplied __vimob_ingress
+	// is removed before persistence, and direct provider callbacks are never
+	// allowed to assert this metadata.
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(item.Payload))
 	if err != nil {
 		return err
 	}
@@ -976,20 +1136,123 @@ func semanticPositiveCount(value any) bool {
 
 func (repo Repository) markEvolutionWebhookProcessed(ctx context.Context, item pendingEvolutionWebhook) error {
 	retentionSeconds := int64(evolutionWebhookProcessedRetention(item.EventType) / time.Second)
-	_, err := repo.db.Pool().Exec(ctx, `
-		update public.whatsapp_webhook_inbox
-		set status = 'processed',
-		    processed_at = now(),
-		    expires_at = now() + ($3 * interval '1 second'),
-		    locked_at = null,
-		    locked_by = null,
-		    last_error = null,
-		    updated_at = now()
-		where id = $1::uuid
-		  and status = 'processing'
-		  and locked_by = $2
-	`, item.ID, whatsappWebhookWorkerID, retentionSeconds)
-	return err
+	var updated int
+	err := repo.db.Pool().QueryRow(ctx, `
+		with owned as materialized (
+		  select
+		    inbox.id,
+		    inbox.organization_id,
+		    inbox.session_id,
+		    inbox.event_key,
+		    inbox.payload
+		  from public.whatsapp_webhook_inbox inbox
+		  where inbox.id = $1::uuid
+		    and inbox.status = 'processing'
+		    and inbox.locked_by = $2
+		  for update
+		),
+		payload_routes as materialized (
+		  select
+		    owned.organization_id,
+		    owned.session_id,
+		    owned.event_key,
+		    routing_message.snapshot
+		  from owned
+		  cross join lateral pg_catalog.jsonb_array_elements(
+		    case
+		      when pg_catalog.jsonb_typeof(
+		        owned.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+		      ) = 'array'
+		        then owned.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+		      else '[]'::jsonb
+		    end
+		  ) as routing_message(snapshot)
+		  where routing_message.snapshot->>'binding_eligible' = 'true'
+		),
+		validated_routes as materialized (
+		  select
+		    routing_snapshot.organization_id,
+		    routing_snapshot.session_id,
+		    routing_snapshot.provider_message_id,
+		    routing_snapshot.ingress_sequence,
+		    payload_route.event_key
+		  from payload_routes payload_route
+		  join public.whatsapp_webhook_routing_snapshots routing_snapshot
+		    on routing_snapshot.organization_id = payload_route.organization_id
+		   and routing_snapshot.session_id = payload_route.session_id
+		   and routing_snapshot.provider_message_id =
+		     nullif(payload_route.snapshot->>'provider_message_id', '')
+		   and routing_snapshot.binding_eligible = true
+		   and routing_snapshot.snapshot = payload_route.snapshot
+		),
+		integrity as materialized (
+		  select
+		    count(*) filter (where payload_route.snapshot is not null) as payload_count,
+		    count(distinct payload_route.snapshot->>'provider_message_id')
+		      filter (where payload_route.snapshot is not null) as distinct_provider_count,
+		    (select count(*) from validated_routes) as validated_count
+		  from payload_routes payload_route
+		),
+		completed as (
+		  insert into public.whatsapp_webhook_routing_outcomes (
+		    organization_id,
+		    session_id,
+		    provider_message_id,
+		    ingress_sequence,
+		    completed_inbox_event_key,
+		    completed_at
+		  )
+		  select
+		    validated_route.organization_id,
+		    validated_route.session_id,
+		    validated_route.provider_message_id,
+		    validated_route.ingress_sequence,
+		    validated_route.event_key,
+		    clock_timestamp()
+		  from validated_routes validated_route
+		  cross join integrity
+		  where integrity.payload_count = integrity.distinct_provider_count
+		    and integrity.payload_count = integrity.validated_count
+		  on conflict (organization_id, session_id, provider_message_id) do update
+		  set
+		    completed_inbox_event_key = case
+		      when excluded.completed_at >= whatsapp_webhook_routing_outcomes.completed_at
+		        then excluded.completed_inbox_event_key
+		      else whatsapp_webhook_routing_outcomes.completed_inbox_event_key
+		    end,
+		    completed_at = greatest(
+		      whatsapp_webhook_routing_outcomes.completed_at,
+		      excluded.completed_at
+		    )
+		  where whatsapp_webhook_routing_outcomes.ingress_sequence =
+		    excluded.ingress_sequence
+		  returning 1
+		),
+		updated as (
+		  update public.whatsapp_webhook_inbox inbox
+		  set status = 'processed',
+		      processed_at = now(),
+		      expires_at = now() + ($3 * interval '1 second'),
+		      locked_at = null,
+		      locked_by = null,
+		      last_error = null,
+		      updated_at = now()
+		  from owned, integrity
+		  where inbox.id = owned.id
+		    and integrity.payload_count = integrity.distinct_provider_count
+		    and integrity.payload_count = integrity.validated_count
+		    and integrity.validated_count = (select count(*) from completed)
+		  returning 1
+		)
+		select count(*)::integer from updated
+	`, item.ID, whatsappWebhookWorkerID, retentionSeconds).Scan(&updated)
+	if err != nil {
+		return err
+	}
+	if updated != 1 {
+		return errors.New("Evolution webhook completion lost its lease or routing provenance")
+	}
+	return nil
 }
 
 func evolutionWebhookProcessedRetention(eventType string) time.Duration {

@@ -96,7 +96,7 @@ func TestNativeAliasLeadResolutionFailsClosed(t *testing.T) {
 	if !regexp.MustCompile(queryPattern).MatchString(source) {
 		t.Fatal("alias lead lookup must be scoped by organization, session and exact aliases, with at most two distinct matches")
 	}
-	precedencePattern := `(?s)lead, err = findSingleNativeEvolutionAliasLead\(ctx, tx, session, aliases\).*?if lead\.ID == "" \{\s*lead, err = findSingleNativeEvolutionLead\(`
+	precedencePattern := `(?s)lead, err = findSingleNativeEvolutionAliasLead\(ctx, tx, session, aliases\).*?if lead\.ID == "" && quarantineReason == "" \{\s*lead, err = findSingleNativeEvolutionLead\(`
 	if !regexp.MustCompile(precedencePattern).MatchString(source) {
 		t.Fatal("exact alias lead lookup must run before the phone fallback")
 	}

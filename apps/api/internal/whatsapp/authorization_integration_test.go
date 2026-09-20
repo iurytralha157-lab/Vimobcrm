@@ -330,6 +330,16 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	if len(visibleConversations) != 1 || visibleConversations[0].ID != ownConversationID {
 		t.Fatalf("lead-scoped conversations = %#v, want assigned lead on another owner's session", visibleConversations)
 	}
+	conversationSnapshot, err := repo.GetConversationSnapshot(ctx, broker, ownConversationID)
+	if err != nil || conversationSnapshot.ID != ownConversationID || pointerValue(conversationSnapshot.LeadID) != ownLeadID {
+		t.Fatalf("own conversation snapshot = %#v, %v", conversationSnapshot, err)
+	}
+	if _, err := repo.GetConversationSnapshot(ctx, broker, otherConversationID); !errors.Is(err, ErrConversationNotFound) {
+		t.Fatalf("same-organization snapshot IDOR error = %v, want not found", err)
+	}
+	if _, err := repo.GetConversationSnapshot(ctx, broker, foreignConversationID); !errors.Is(err, ErrConversationNotFound) {
+		t.Fatalf("cross-organization snapshot IDOR error = %v, want not found", err)
+	}
 
 	var relinkedConversationID string
 	if err := postgres.Pool().QueryRow(ctx, `
@@ -366,7 +376,11 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 		historicalMediaPath).Scan(&relinkedHistoricalMediaID); err != nil {
 		t.Fatal(err)
 	}
-	relinkedHistory, err := repo.GetHistoryAccess(ctx, broker, HistoryAccessFilter{LeadID: ownLeadID, MessageFilter: MessageFilter{Limit: 50}})
+	relinkedHistory, err := repo.GetHistoryAccess(ctx, broker, HistoryAccessFilter{
+		ConversationID: relinkedConversationID,
+		LeadID:         ownLeadID,
+		MessageFilter:  MessageFilter{Limit: 50},
+	})
 	if err != nil {
 		t.Fatalf("relinked immutable lead history: %v", err)
 	}
@@ -382,6 +396,7 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	}
 	if pointerValue(safeHistoricalConversation.LeadID) != ownLeadID ||
 		safeHistoricalConversation.Lead == nil || safeHistoricalConversation.Lead.ID != ownLeadID ||
+		!safeHistoricalConversation.HistoricalLeadView ||
 		pointerValue(safeHistoricalConversation.ContactName) != fixtureSuffix+"-own" ||
 		pointerValue(safeHistoricalConversation.LastMessage) != "historical own lead message" ||
 		safeHistoricalConversation.UnreadCount != 0 {
@@ -466,6 +481,7 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	if _, err := repo.ReactToMessage(ctx, otherBroker, otherConversationID, mismatchedOtherConversationMediaID, reactToMessageInput{
 		Emoji:            "👍",
 		ClientReactionID: fixtureSuffix + "-mismatched-reaction",
+		ExpectedLeadID:   otherLeadID,
 	}); !errors.Is(err, ErrMessageNotFound) {
 		t.Fatalf("reaction to mismatched lead message error = %v, want message not found", err)
 	}
@@ -473,10 +489,10 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 		t.Fatalf("media retry for mismatched lead message error = %v, want message not found", err)
 	}
 
-	if err := repo.DeleteConversation(ctx, broker, ownConversationID); !errors.Is(err, ErrConversationNotFound) {
+	if err := repo.DeleteConversation(ctx, broker, ownConversationID, ownLeadID); !errors.Is(err, ErrConversationNotFound) {
 		t.Fatalf("ordinary lead viewer delete error = %v, want conversation not found", err)
 	}
-	if err := repo.DeleteConversation(ctx, otherBroker, ownConversationID); err != nil {
+	if err := repo.DeleteConversation(ctx, otherBroker, ownConversationID, ownLeadID); err != nil {
 		t.Fatalf("session owner could not soft-delete conversation: %v", err)
 	}
 	if _, err := repo.ListMessages(ctx, broker, ownConversationID, MessageFilter{Limit: 50}); !errors.Is(err, ErrConversationNotFound) {
@@ -489,6 +505,78 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	if len(deletedHistory.Messages) != 3 || len(deletedHistory.Conversations) != 2 {
 		t.Fatalf("soft delete hid or mixed immutable history: %#v", deletedHistory)
 	}
+
+	t.Run("explicit unlinked snapshot fails closed after null to lead binding", func(t *testing.T) {
+		targetLeadID := createLead(organizationID, otherBrokerID, fixtureSuffix+"-unlinked-target")
+		const phone = "5511888886666"
+		if _, err := postgres.Pool().Exec(ctx, `
+			update public.leads set phone = $2 where id = $1::uuid
+		`, targetLeadID, phone); err != nil {
+			t.Fatal(err)
+		}
+
+		var conversationID string
+		if err := postgres.Pool().QueryRow(ctx, `
+			insert into public.whatsapp_conversations (
+			  organization_id, session_id, remote_jid, contact_phone, contact_name, unread_count
+			) values ($1::uuid, $2::uuid, $3, $4, 'Unlinked snapshot', 2)
+			returning id::text
+		`, organizationID, sessionID, phone+"@s.whatsapp.net", phone).Scan(&conversationID); err != nil {
+			t.Fatal(err)
+		}
+		var unlinkedMessageID string
+		if err := postgres.Pool().QueryRow(ctx, `
+			insert into public.whatsapp_messages (
+			  organization_id, conversation_id, session_id, lead_id,
+			  message_id, content, message_type, status
+			) values ($1::uuid, $2::uuid, $3::uuid, null, $4, 'unlinked evidence', 'text', 'received')
+			returning id::text
+		`, organizationID, conversationID, sessionID, fixtureSuffix+"-unlinked-snapshot").Scan(&unlinkedMessageID); err != nil {
+			t.Fatal(err)
+		}
+
+		conversation, err := repo.GetConversationForExpectedLead(ctx, otherBroker, conversationID, unlinkedConversationLeadSnapshot)
+		if err != nil || conversation.ID != conversationID || conversation.LeadID != nil {
+			t.Fatalf("unlinked Show = %#v, %v", conversation, err)
+		}
+		page, err := repo.ListMessages(ctx, otherBroker, conversationID, MessageFilter{
+			Limit:          50,
+			ExpectedLeadID: unlinkedConversationLeadSnapshot,
+		})
+		if err != nil || len(page.Messages) != 1 || page.Messages[0].ID != unlinkedMessageID {
+			t.Fatalf("unlinked ListMessages = %#v, %v", page, err)
+		}
+		if err := repo.MarkConversationAsRead(ctx, otherBroker, conversationID, unlinkedConversationLeadSnapshot); err != nil {
+			t.Fatalf("unlinked MarkConversationAsRead: %v", err)
+		}
+		if err := repo.ArchiveConversation(ctx, otherBroker, conversationID, true, unlinkedConversationLeadSnapshot); err != nil {
+			t.Fatalf("unlinked ArchiveConversation: %v", err)
+		}
+		if err := repo.ArchiveConversation(ctx, otherBroker, conversationID, false, unlinkedConversationLeadSnapshot); err != nil {
+			t.Fatalf("unlinked restore: %v", err)
+		}
+
+		if err := repo.LinkConversationToLead(ctx, otherBroker, conversationID, targetLeadID, unlinkedConversationLeadSnapshot); err != nil {
+			t.Fatalf("link unlinked conversation: %v", err)
+		}
+		insertMessage(conversationID, targetLeadID, "text")
+
+		if _, err := repo.GetConversationForExpectedLead(ctx, otherBroker, conversationID, unlinkedConversationLeadSnapshot); !errors.Is(err, ErrConversationNotFound) {
+			t.Fatalf("stale unlinked Show error = %v", err)
+		}
+		if _, err := repo.ListMessages(ctx, otherBroker, conversationID, MessageFilter{Limit: 50, ExpectedLeadID: unlinkedConversationLeadSnapshot}); !errors.Is(err, ErrConversationNotFound) {
+			t.Fatalf("stale unlinked ListMessages error = %v", err)
+		}
+		if err := repo.MarkConversationAsRead(ctx, otherBroker, conversationID, unlinkedConversationLeadSnapshot); !errors.Is(err, ErrConversationNotFound) {
+			t.Fatalf("stale unlinked MarkConversationAsRead error = %v", err)
+		}
+		if err := repo.ArchiveConversation(ctx, otherBroker, conversationID, true, unlinkedConversationLeadSnapshot); !errors.Is(err, ErrConversationNotFound) {
+			t.Fatalf("stale unlinked ArchiveConversation error = %v", err)
+		}
+		if err := repo.DeleteConversation(ctx, otherBroker, conversationID, unlinkedConversationLeadSnapshot); !errors.Is(err, ErrConversationNotFound) {
+			t.Fatalf("stale unlinked DeleteConversation error = %v", err)
+		}
+	})
 
 	admin := broker
 	admin.MemberRole = "admin"
@@ -524,7 +612,7 @@ func TestWhatsAppHistoryRejectsBOLA(t *testing.T) {
 	`, organizationID, quarantineID, sessionID, fixtureSuffix+"-legacy-null").Scan(&legacyNullMessageID); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.LinkConversationToLead(ctx, admin, quarantineID, claimLeadID); err != nil {
+	if err := repo.LinkConversationToLead(ctx, admin, quarantineID, claimLeadID, unlinkedConversationLeadSnapshot); err != nil {
 		t.Fatalf("admin quarantine claim: %v", err)
 	}
 	var explicitLeadAfter, legacyLeadAfter string

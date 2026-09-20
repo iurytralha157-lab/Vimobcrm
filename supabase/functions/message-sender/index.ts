@@ -1,10 +1,18 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { authorizePrivateWorkerRequest } from "../_shared/private-worker-auth.ts";
+import {
+  authorizePrivateWorkerRequest,
+  privateWorkerRequestHeaders,
+} from "../_shared/private-worker-auth.ts";
 import {
   readSupabaseSecretKeyEnvironment,
   selectSupabaseAdminSecretKey,
 } from "../_shared/supabase-secret-keys.ts";
+import {
+  assertWhatsAppConversationBindingSnapshot,
+  type WhatsAppConversationBindingSnapshot,
+  WhatsAppBindingSnapshotError,
+} from "../_shared/whatsapp-binding-snapshot.ts";
 import {
   applyOutboxSnapshotFilters,
   isAmbiguousProviderFailure,
@@ -29,7 +37,7 @@ const corsHeaders = {
 const OUTBOX_MESSAGE_SELECT = `
   *,
   session:whatsapp_sessions!outbox_messages_session_id_fkey(id, organization_id, instance_name, status, provider),
-  conversation:whatsapp_conversations!outbox_messages_conversation_id_fkey(id, remote_jid, is_group, organization_id, lead_id)
+  conversation:whatsapp_conversations!outbox_messages_conversation_id_fkey(id, remote_jid, is_group, organization_id, session_id, lead_id, updated_at)
 `;
 
 const OUTBOX_CANDIDATE_SELECT =
@@ -260,7 +268,10 @@ async function ensurePendingMessageHistory(
   stableProviderRequestId: string,
 ) {
   const messageOrganizationId = message.organization_id;
-  const messageLeadId = message.lead_id || message.conversation?.lead_id || null;
+  // `outbox_messages.lead_id` is the immutable delivery snapshot. Falling
+  // back to the conversation here would silently move an older send to a card
+  // that became current after the outbox row was created.
+  const messageLeadId = message.lead_id || null;
   const messageRemoteJid = message.conversation?.remote_jid || null;
   const pendingValues = {
     conversation_id: message.conversation_id,
@@ -387,6 +398,120 @@ async function ensurePendingMessageHistory(
     );
   }
   return updated;
+}
+
+async function loadOutboundBindingSnapshot(
+  supabase: any,
+  message: any,
+): Promise<WhatsAppConversationBindingSnapshot> {
+  const { data: activeBindings, error } = await supabase
+    .from("whatsapp_conversation_lead_bindings")
+    .select("id, organization_id, conversation_id, session_id, lead_id, active_to, stale")
+    .eq("organization_id", message.organization_id)
+    .eq("conversation_id", message.conversation_id)
+    .is("active_to", null)
+    .limit(2);
+
+  if (error) {
+    throw new ManualReconciliationRequiredError(
+      "binding-snapshot-unavailable",
+      `Unable to verify the WhatsApp lead binding: ${error.message}`,
+    );
+  }
+
+  try {
+    const snapshot = assertWhatsAppConversationBindingSnapshot({
+      conversation: message.conversation,
+      activeBindings,
+      expectedLeadId: message.lead_id || null,
+    });
+    if (snapshot.sessionId !== message.session_id) {
+      throw new WhatsAppBindingSnapshotError("whatsapp_binding_outbox_session_mismatch");
+    }
+    return snapshot;
+  } catch (error) {
+    const reason = error instanceof WhatsAppBindingSnapshotError
+      ? error.code
+      : "whatsapp_binding_snapshot_invalid";
+    throw new ManualReconciliationRequiredError(
+      reason,
+      "Legacy outbox delivery no longer matches the active WhatsApp card",
+    );
+  }
+}
+
+async function updateConversationPreviewIfSnapshotCurrent(
+  supabase: any,
+  message: any,
+  snapshot: WhatsAppConversationBindingSnapshot,
+) {
+  // `updated_at` is advanced by every binding switch. Pairing it with the
+  // immutable lead snapshot makes this a fail-closed CAS, including A -> B ->
+  // A ABA switches. If any inbound event or relink won the race, its newer
+  // preview remains authoritative.
+  if (!snapshot.conversationUpdatedAt) return false;
+
+  const projectedAt = new Date().toISOString();
+  let query = supabase
+    .from("whatsapp_conversations")
+    .update({
+      last_message: message.content,
+      last_message_at: projectedAt,
+      unread_count: 0,
+      updated_at: projectedAt,
+    })
+    .eq("id", snapshot.conversationId)
+    .eq("organization_id", snapshot.organizationId)
+    .eq("updated_at", snapshot.conversationUpdatedAt);
+
+  query = snapshot.sessionId
+    ? query.eq("session_id", snapshot.sessionId)
+    : query.is("session_id", null);
+  query = snapshot.leadId
+    ? query.eq("lead_id", snapshot.leadId)
+    : query.is("lead_id", null);
+
+  const { data, error } = await query.select("id").maybeSingle();
+  if (error) {
+    console.error("Unable to CAS the outbound conversation preview", {
+      conversation_id: snapshot.conversationId,
+      error_code: error.code || "unknown",
+    });
+    return false;
+  }
+  return Boolean(data?.id);
+}
+
+async function refreshConversationProjectionVersion(
+  supabase: any,
+  snapshot: WhatsAppConversationBindingSnapshot,
+) {
+  let query = supabase
+    .from("whatsapp_conversations")
+    .select("id, updated_at")
+    .eq("id", snapshot.conversationId)
+    .eq("organization_id", snapshot.organizationId);
+  query = snapshot.sessionId
+    ? query.eq("session_id", snapshot.sessionId)
+    : query.is("session_id", null);
+  query = snapshot.leadId
+    ? query.eq("lead_id", snapshot.leadId)
+    : query.is("lead_id", null);
+
+  const { data, error } = await query.maybeSingle();
+  if (error || !data?.id || !data.updated_at) {
+    throw new ManualReconciliationRequiredError(
+      "conversation-projection-snapshot-lost",
+      error
+        ? `Unable to refresh the conversation projection snapshot: ${error.message}`
+        : "Conversation no longer matches the claimed outbox binding",
+    );
+  }
+
+  return {
+    ...snapshot,
+    conversationUpdatedAt: data.updated_at,
+  };
 }
 
 async function markMessageHistorySent(
@@ -938,6 +1063,7 @@ Deno.serve(async (req) => {
       let deliveryCommitted = false;
       let provider: WhatsAppProvider | null = null;
       let pendingHistoryId: string | null = null;
+      let bindingSnapshot: WhatsAppConversationBindingSnapshot | null = null;
       try {
         // Check session is connected
         if (message.session?.status !== "connected") {
@@ -951,6 +1077,12 @@ Deno.serve(async (req) => {
         ) {
           throw new Error("Outbox tenant scope mismatch");
         }
+
+        // The claim is already `processing`, so the binding RPC cannot switch
+        // cards while this worker is before the provider boundary. Validate
+        // the immutable outbox lead instead of inheriting mutable conversation
+        // state. A linked row without a current ledger entry is quarantined.
+        bindingSnapshot = await loadOutboundBindingSnapshot(supabase, message);
 
         // A client retry can create more than one legacy outbox row. Resolve
         // one deterministic logical owner before either history or provider
@@ -986,6 +1118,13 @@ Deno.serve(async (req) => {
           stableProviderRequestId,
         );
         pendingHistoryId = pendingHistory.id;
+        // Message-insert triggers may legitimately touch the conversation's
+        // version. Refresh our CAS only after that durable pre-provider write;
+        // any later inbound/rebind update will still make the projection skip.
+        bindingSnapshot = await refreshConversationProjectionVersion(
+          supabase,
+          bindingSnapshot,
+        );
 
         // Build request body
         let body: any;
@@ -1108,49 +1247,48 @@ Deno.serve(async (req) => {
         deliveryCommitted = true;
 
         const messageOrganizationId = message.organization_id;
-        // Update conversation
-        await supabase
-          .from("whatsapp_conversations")
-          .update({
-            last_message: message.content,
-            last_message_at: new Date().toISOString(),
-            unread_count: 0,
-          })
-          .eq("id", message.conversation_id)
-          .eq("organization_id", messageOrganizationId);
+        // Delivery is already durable. The mutable conversation projection is
+        // best-effort and only applies if the exact pre-provider binding
+        // snapshot is still current; a newer inbound event or relink wins.
+        const previewUpdated = await updateConversationPreviewIfSnapshotCurrent(
+          supabase,
+          message,
+          bindingSnapshot,
+        );
+        if (!previewUpdated) {
+          console.log(
+            `Skipped stale conversation preview for outbox message ${message.id}`,
+          );
+        }
 
         // ===== FIRST RESPONSE & FIRST TOUCH TRACKING =====
-        // Get the conversation to check if it has a lead_id
-        const { data: convData } = await supabase
-          .from("whatsapp_conversations")
-          .select("lead_id")
-          .eq("id", message.conversation_id)
-          .eq("organization_id", messageOrganizationId)
-          .single();
-
-        if (convData?.lead_id) {
+        // These effects belong to the delivered message's immutable card,
+        // even if the physical conversation is rebound immediately after the
+        // outbox commit.
+        const deliveredLeadId = bindingSnapshot.leadId;
+        if (deliveredLeadId) {
           try {
-            console.log(`Triggering first response calculation for lead ${convData.lead_id}`);
+            console.log(`Triggering first response calculation for lead ${deliveredLeadId}`);
 
             // Mark first_touch_at for pool system (only if not already set)
             await supabase
               .from("leads")
               .update({ first_touch_at: new Date().toISOString() })
-              .eq("id", convData.lead_id)
+              .eq("id", deliveredLeadId)
               .eq("organization_id", messageOrganizationId)
               .is("first_touch_at", null);
 
-            console.log(`Marked first touch for lead ${convData.lead_id}`);
+            console.log(`Marked first touch for lead ${deliveredLeadId}`);
 
             // Call calculate-first-response for SLA tracking
             await fetch(`${SUPABASE_URL}/functions/v1/calculate-first-response`, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
-                "Authorization": `Bearer ${INTERNAL_FUNCTION_KEY}`
+                ...privateWorkerRequestHeaders(INTERNAL_FUNCTION_KEY),
               },
               body: JSON.stringify({
-                lead_id: convData.lead_id,
+                lead_id: deliveredLeadId,
                 channel: "whatsapp",
                 actor_user_id: message.created_by,
                 is_automation: isAutomationOutboxMessage(message),
@@ -1171,7 +1309,7 @@ Deno.serve(async (req) => {
             const { data: activeExecs } = await supabase
               .from("automation_executions")
               .select("id, automation_id, automations(name)")
-              .eq("lead_id", convData.lead_id)
+              .eq("lead_id", deliveredLeadId)
               .eq("organization_id", messageOrganizationId)
               .in("status", ["running", "waiting"]);
 
@@ -1189,7 +1327,7 @@ Deno.serve(async (req) => {
 
               const activityRows = activeExecs.map((e: any) => ({
                 organization_id: messageOrganizationId,
-                lead_id: convData.lead_id,
+                lead_id: deliveredLeadId,
                 type: "automation_cancelled_manual",
                 content: `Automação "${e.automations?.name || ""}" cancelada: atendimento humano iniciado`,
                 metadata: { is_automation: true, execution_id: e.id, automation_id: e.automation_id, source: "internal_chat" },

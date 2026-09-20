@@ -142,7 +142,7 @@ func (handler Handler) ReceiveLead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := handler.repo.ReceiveLead(r.Context(), token, payload)
+	result, err := handler.repo.ReceiveLead(r.Context(), token, webhookIdempotencyKey(r), payload)
 	if err != nil {
 		writeWebhookError(w, r, err)
 		return
@@ -184,6 +184,13 @@ func webhookToken(r *http.Request) string {
 		return bearer
 	}
 	return headerToken
+}
+
+func webhookIdempotencyKey(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	return strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 }
 
 func bearerToken(header string) string {

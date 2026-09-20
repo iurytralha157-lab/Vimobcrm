@@ -554,6 +554,22 @@
     {
       "file": "20260915120000_add_lead_sources_table.sql",
       "sha256": "f3c05c2cbe706cb86ae62d54031508b92180d6c3652dbbb61253b4ac78f7f9f8"
+    },
+    {
+      "file": "20260919181318_queue_scoped_lead_identity_and_whatsapp_binding.sql",
+      "sha256": "9fb51ddca12176eb9544962154162ff7a24d83815614cb6b3d790abf30dd1deb"
+    },
+    {
+      "file": "20260919232152_harden_automation_whatsapp_binding_fences.sql",
+      "sha256": "35ccb1111d59fad56eaab17c43b4ef95bc37bc95ea8cc1ff9241659b95a05c90"
+    },
+    {
+      "file": "20260920012629_preserve_deleted_round_robin_identity.sql",
+      "sha256": "d594ae0cfccd8adb13797e1107d77680217f8ab7049042567d029bfafaba880e"
+    },
+    {
+      "file": "20260920022237_harden_canonical_distribution_availability.sql",
+      "sha256": "4cb7ff01a8bb180b22b1c83f5a4426544840661aec34554201f069a9120769ed"
     }
   ]
 }

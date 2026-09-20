@@ -42,6 +42,16 @@ const evolutionWebhookSchemaCompatibilityQuery = `
 			  and attnum > 0
 			  and not attisdropped
 		)
+		and to_regprocedure(
+			'private.capture_whatsapp_webhook_routing_snapshot(uuid,uuid,text,text,text,text,boolean,text[],text,text,text,boolean,boolean,boolean,uuid,uuid,uuid)'
+		) is not null
+		and to_regclass('public.whatsapp_webhook_routing_outcomes') is not null
+		and to_regprocedure(
+			'public.resolve_whatsapp_webhook_inherited_routing_target(uuid,uuid,text)'
+		) is not null
+		and to_regprocedure(
+			'private.cleanup_whatsapp_webhook_routing_provenance(integer,timestamp with time zone)'
+		) is not null
 		and coalesce((
 			select indisready and indisvalid
 			from pg_catalog.pg_index
@@ -93,7 +103,7 @@ func (repo Repository) ensureEvolutionWebhookSchema(ctx context.Context) error {
 	compatible := false
 	err := repo.db.Pool().QueryRow(checkContext, evolutionWebhookSchemaCompatibilityQuery).Scan(&compatible)
 	if err == nil && !compatible {
-		err = fmt.Errorf("%w: required inbox columns or fair-claim indexes are missing", errWebhookSchemaUnavailable)
+		err = fmt.Errorf("%w: required A1 inbox columns, routing functions, or fair-claim indexes are missing", errWebhookSchemaUnavailable)
 	} else if err != nil {
 		err = fmt.Errorf("%w: %v", errWebhookSchemaUnavailable, err)
 	}
@@ -319,6 +329,11 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	parts, err = attachEvolutionWebhookRoutingSnapshots(ctx, tx, session, parts)
+	if err != nil {
+		return evolutionWebhookReceipt{}, fmt.Errorf("capture Evolution webhook routing provenance: %w", err)
+	}
+
 	// Insert the original event key first. Besides preserving the public receipt
 	// contract, this is a rolling-deploy fence: if an older API replica already
 	// persisted the unsplit callback, this replica must not add derived rows that
@@ -368,20 +383,46 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		receipt.Duplicate = true
+		var exactRoutingReplay bool
 		err = tx.QueryRow(ctx, `
-			select id::text, session_id::text, event_type, status, created_at
+			select
+			  id::text,
+			  session_id::text,
+			  event_type,
+			  status,
+			  created_at,
+			  provider = 'evolution_go'
+			    and event_type = $4
+			    and coalesce(
+			      payload #> '{__vimob_ingress}' =
+			        $5::jsonb #> '{__vimob_ingress}',
+			      false
+			    ) as exact_routing_replay
 			from public.whatsapp_webhook_inbox
 			where organization_id = $1::uuid
 			  and session_id = $2::uuid
 			  and event_key = $3
 			limit 1
-		`, session.OrganizationID, session.ID, eventKey).Scan(&receipt.ID, &receipt.SessionID, &receipt.EventType, &receipt.Status, &firstCreatedAt)
+		`, session.OrganizationID, session.ID, eventKey, first.EventType, string(first.Payload)).Scan(
+			&receipt.ID,
+			&receipt.SessionID,
+			&receipt.EventType,
+			&receipt.Status,
+			&firstCreatedAt,
+			&exactRoutingReplay,
+		)
+		if err == nil && !exactRoutingReplay {
+			return evolutionWebhookReceipt{}, errors.New("persist Evolution webhook: event key routing provenance conflict")
+		}
 	}
 	if err != nil {
 		return evolutionWebhookReceipt{}, err
 	}
 	if receipt.Duplicate {
-		if err := tx.Commit(ctx); err != nil {
+		// Snapshot capture precedes the inbox INSERT so both can commit atomically.
+		// An event-key conflict means this callback owns no new inbox row; rollback
+		// every tentative ledger row instead of committing orphan provenance.
+		if err := tx.Rollback(ctx); err != nil {
 			return evolutionWebhookReceipt{}, err
 		}
 		return receipt, nil
@@ -392,8 +433,10 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 		if err != nil {
 			return evolutionWebhookReceipt{}, fmt.Errorf("encode Evolution webhook batch parts: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `
-			insert into public.whatsapp_webhook_inbox (
+		var insertedParts int
+		if err := tx.QueryRow(ctx, `
+			with inserted as (
+			  insert into public.whatsapp_webhook_inbox (
 				organization_id,
 				session_id,
 				provider,
@@ -408,7 +451,7 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 				created_at,
 				expires_at
 			)
-			select
+			  select
 				$1::uuid,
 				$2::uuid,
 				'evolution_go',
@@ -422,7 +465,7 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 				now(),
 				$5::timestamptz + (part.ordinal::double precision * interval '1 microsecond'),
 				now() + interval '30 days'
-			from jsonb_to_recordset($4::jsonb) as part (
+			  from jsonb_to_recordset($4::jsonb) as part (
 				event_key text,
 				event_type text,
 				payload jsonb,
@@ -430,10 +473,19 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 				provider_occurred_at timestamptz,
 				ordinal integer
 			)
-			order by part.ordinal
-			on conflict (event_key) do nothing
-		`, session.OrganizationID, session.ID, firstNonEmpty(session.InstanceID, session.InstanceName), string(encodedParts), firstCreatedAt); err != nil {
+			  order by part.ordinal
+			  on conflict (event_key) do nothing
+			  returning 1
+			)
+			select count(*)::integer from inserted
+		`, session.OrganizationID, session.ID, firstNonEmpty(session.InstanceID, session.InstanceName), string(encodedParts), firstCreatedAt).Scan(&insertedParts); err != nil {
 			return evolutionWebhookReceipt{}, fmt.Errorf("persist Evolution webhook batch parts: %w", err)
+		}
+		if insertedParts != len(parts)-1 {
+			// Every routing snapshot was captured in this transaction. A conflict on
+			// any derived key therefore invalidates the whole callback; committing a
+			// partial set would strand ledger rows or attach them to another receipt.
+			return evolutionWebhookReceipt{}, errors.New("persist Evolution webhook batch parts: derived event key conflict")
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -457,6 +509,11 @@ type evolutionWebhookDurablePart struct {
 	ProcessingLane     string          `json:"processing_lane"`
 	ProviderOccurredAt *time.Time      `json:"provider_occurred_at"`
 	Ordinal            int             `json:"ordinal"`
+}
+
+type evolutionWebhookRoutingSnapshotEnvelope struct {
+	Version  int              `json:"version"`
+	Messages []map[string]any `json:"messages"`
 }
 
 type evolutionWebhookMessageListLocation struct {
@@ -594,6 +651,283 @@ func annotateEvolutionWebhookRouting(payload []byte) ([]byte, error) {
 	return json.Marshal(decoded)
 }
 
+func attachEvolutionWebhookRoutingSnapshots(
+	ctx context.Context,
+	tx pgx.Tx,
+	session evolutionWebhookSession,
+	parts []evolutionWebhookDurablePart,
+) ([]evolutionWebhookDurablePart, error) {
+	result := make([]evolutionWebhookDurablePart, len(parts))
+	copy(result, parts)
+	nativeSession := nativeEvolutionSession{
+		ID:             session.ID,
+		OrganizationID: session.OrganizationID,
+	}
+	for index := range result {
+		decoded, err := decodeNativeEvolutionPayload(result[index].Payload)
+		if err != nil {
+			return nil, err
+		}
+		messages := withoutNativeEvolutionHistorySyncControls(extractNativeEvolutionMessages(decoded))
+		messages = withoutNativeEvolutionGroupMessages(messages)
+		metadata := mapFromAny(decoded[evolutionWebhookRoutingMetaKey])
+		schedulingRoutingKey := strings.TrimSpace(stringFromAny(metadata["routing_key"]))
+		if schedulingRoutingKey == "" {
+			return nil, errors.New("direct WhatsApp provider message is missing a routing key")
+		}
+		snapshots := make([]map[string]any, 0, len(messages))
+		for _, message := range messages {
+			if message.ProviderMessageIDSynthetic || strings.TrimSpace(message.ProviderMessageID) == "" {
+				return nil, errors.New("direct WhatsApp provider message is missing an immutable provider id")
+			}
+
+			rule := nativeInboundRule{}
+			if !message.FromMe {
+				rule, err = findNativeInboundRule(ctx, tx, nativeSession, message)
+				if err != nil {
+					return nil, err
+				}
+				if err := lockNativeManagedInboundRuleForSnapshot(
+					ctx,
+					tx,
+					nativeSession,
+					message,
+					rule,
+				); err != nil {
+					return nil, err
+				}
+			}
+			canonicalIntakeProof := ""
+			if message.IsCTWAAd && !rule.ManagedMessageDistribution &&
+				strings.TrimSpace(rule.ManagedProviderEventLeadID) == "" {
+				confirmationMethod := nativeCTWAAdConfirmationMethod(message)
+				if confirmationMethod == "" {
+					return nil, errors.New("click-to-WhatsApp intake is missing canonical provider proof")
+				}
+				propertyID, propertyErr := resolveNativeCampaignProperty(
+					ctx,
+					tx,
+					session.OrganizationID,
+					message.CampaignPropertyCode,
+				)
+				if propertyErr != nil {
+					return nil, propertyErr
+				}
+				intakeDestination, destinationErr := resolveNativeCTWAIntakeDestination(
+					ctx,
+					tx,
+					nativeSession,
+					message,
+					propertyID,
+				)
+				if destinationErr != nil {
+					return nil, destinationErr
+				}
+				// Manual inbound-rule targets are not a canonical intake decision.
+				// Persist only the queue selected by the shared resolver and mark the
+				// proof so both workers can distinguish it from pre-release snapshots.
+				rule = nativeInboundRule{CanonicalIntakeResolved: true}
+				if intakeDestination.RoundRobinID != nil {
+					rule.TargetRoundRobinID = *intakeDestination.RoundRobinID
+				}
+				canonicalIntakeProof = nativeCanonicalIntakeProofV1 + confirmationMethod
+			}
+
+			contextKind := "organic"
+			contextProof := ""
+			if rule.ManagedMessageDistribution {
+				contextKind = "contextual_intake"
+				contextProof = "managed_rule"
+			} else if strings.TrimSpace(rule.ManagedProviderEventLeadID) != "" {
+				contextKind = "contextual_intake"
+				contextProof = "provider_event_ledger"
+			} else if message.IsCTWAAd {
+				contextKind = "contextual_intake"
+				contextProof = canonicalIntakeProof
+				if contextProof == "" {
+					return nil, errors.New("click-to-WhatsApp intake is missing canonical provider proof")
+				}
+			}
+
+			aliases := uniqueStrings(append([]string{message.RemoteJID}, message.RemoteAliases...)...)
+			if message.ContactPhone != "" {
+				aliases = uniqueStrings(append(aliases,
+					message.ContactPhone+"@s.whatsapp.net",
+					message.ContactPhone+"@c.us",
+				)...)
+			}
+			// The inbox scheduling key may intentionally collapse a mixed batch to
+			// __session__. Binding provenance must stay scoped to the individual
+			// contact or unrelated contacts could become one authorization chain.
+			routingKey := evolutionWebhookMessageBindingRoutingKey(message)
+			bindingEligible := !message.FromMe &&
+				!message.IsReaction &&
+				!message.IsDeletion &&
+				!message.UnsupportedMessage &&
+				routingKey != evolutionWebhookSessionRoute
+			var snapshotJSON string
+			err = tx.QueryRow(ctx, `
+				select private.capture_whatsapp_webhook_routing_snapshot(
+				  $1::uuid,
+				  $2::uuid,
+				  $3,
+				  $4,
+				  $5,
+				  $6,
+				  $7,
+				  $8::text[],
+				  nullif($9, ''),
+				  $10,
+				  nullif($11, ''),
+				  $12,
+				  $13,
+				  $14,
+				  nullif($15, '')::uuid,
+				  nullif($16, '')::uuid,
+				  nullif($17, '')::uuid
+				)::text
+			`,
+				session.OrganizationID,
+				session.ID,
+				message.ProviderMessageID,
+				result[index].EventKey,
+				result[index].ProcessingLane,
+				routingKey,
+				bindingEligible,
+				aliases,
+				message.ContactPhone,
+				contextKind,
+				contextProof,
+				rule.ManagedMessageDistribution,
+				rule.ManagedProviderEventPending,
+				rule.ManagedProviderEventHandled,
+				rule.ID,
+				rule.TargetRoundRobinID,
+				rule.ManagedProviderEventLeadID,
+			).Scan(&snapshotJSON)
+			if err != nil {
+				return nil, err
+			}
+			var snapshot map[string]any
+			if err := json.Unmarshal([]byte(snapshotJSON), &snapshot); err != nil {
+				return nil, fmt.Errorf("decode immutable WhatsApp routing snapshot: %w", err)
+			}
+			if version, ok := snapshot["version"].(float64); !ok || version != 1 {
+				return nil, errors.New("immutable WhatsApp routing snapshot has an unsupported version")
+			}
+			snapshots = append(snapshots, snapshot)
+		}
+
+		metadata["routing_snapshot"] = evolutionWebhookRoutingSnapshotEnvelope{
+			Version:  1,
+			Messages: snapshots,
+		}
+		decoded[evolutionWebhookRoutingMetaKey] = metadata
+		encoded, err := json.Marshal(decoded)
+		if err != nil {
+			return nil, err
+		}
+		result[index].Payload = encoded
+	}
+	return result, nil
+}
+
+// lockNativeManagedInboundRuleForSnapshot closes the mutable-rule gap between
+// rule selection and the durable routing snapshot. Queue/rule writers lock the
+// parent queue FOR UPDATE; holding it FOR SHARE while reselecting the winning
+// managed rule makes either the configuration mutation or this ACK win in a
+// deterministic order. The locks remain held by the ingress transaction until
+// the inbox and routing snapshot commit together.
+func lockNativeManagedInboundRuleForSnapshot(
+	ctx context.Context,
+	tx pgx.Tx,
+	session nativeEvolutionSession,
+	message nativeEvolutionMessage,
+	rule nativeInboundRule,
+) error {
+	if !rule.ManagedMessageDistribution {
+		return nil
+	}
+	ruleID := strings.TrimSpace(rule.ID)
+	roundRobinID := strings.TrimSpace(rule.TargetRoundRobinID)
+	if ruleID == "" || roundRobinID == "" {
+		return errors.New("managed WhatsApp routing rule is missing immutable context")
+	}
+
+	var lockedRuleID string
+	var lockedRoundRobinID string
+	err := tx.QueryRow(ctx, `
+		with locked_queue as materialized (
+		  select queue.id
+		  from public.round_robins as queue
+		  where queue.organization_id = $1::uuid
+		    and queue.id = $3::uuid
+		    and queue.deleted_at is null
+		    and coalesce(queue.is_active, true) = true
+		    and lower(btrim(coalesce(
+		      queue.settings->>'require_checkin',
+		      'false'
+		    ))) not in ('true', '1', 'yes')
+		  for share
+		)
+		select
+		  inbound_rule.id::text,
+		  inbound_rule.target_round_robin_id::text
+		from locked_queue
+		join public.whatsapp_inbound_rules as inbound_rule
+		  on inbound_rule.organization_id = $1::uuid
+		 and inbound_rule.session_id = $2::uuid
+		 and inbound_rule.target_round_robin_id = locked_queue.id
+		join public.round_robin_rules as managed_rule
+		  on managed_rule.organization_id = inbound_rule.organization_id
+		 and managed_rule.id = inbound_rule.id
+		 and managed_rule.round_robin_id = locked_queue.id
+		where coalesce(inbound_rule.is_active, true) = true
+		  and lower(btrim(coalesce(inbound_rule.match_type, ''))) = 'contains'
+		  and lower(btrim(coalesce(inbound_rule.match_field, 'message'))) = 'message'
+		  and btrim(coalesce(inbound_rule.match_value, '')) <> ''
+		  and coalesce(managed_rule.is_active, true) = true
+		  and coalesce(
+		    nullif(managed_rule.match_type, ''),
+		    managed_rule.conditions->>'match_type',
+		    managed_rule.name,
+		    ''
+		  ) = 'whatsapp_message_contains'
+		  and coalesce(
+		    nullif(btrim(managed_rule.match->>'whatsapp_session_id'), ''),
+		    nullif(btrim(
+		      managed_rule.conditions->'match'->>'whatsapp_session_id'
+		    ), '')
+		  ) = $2::uuid::text
+		  and lower(btrim(inbound_rule.match_value)) = lower(btrim(coalesce(
+		    nullif(managed_rule.match_value, ''),
+		    managed_rule.conditions->>'match_value',
+		    ''
+		  )))
+		  and position(
+		    lower(btrim(inbound_rule.match_value))
+		    in lower(btrim($4))
+		  ) > 0
+		order by inbound_rule.priority desc, inbound_rule.created_at asc,
+		  inbound_rule.id asc
+		limit 1
+		for share of inbound_rule, managed_rule
+	`, session.OrganizationID, session.ID, roundRobinID, message.Content).Scan(
+		&lockedRuleID,
+		&lockedRoundRobinID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errors.New("managed WhatsApp routing rule changed before durable snapshot")
+	}
+	if err != nil {
+		return err
+	}
+	if lockedRuleID != ruleID || lockedRoundRobinID != roundRobinID {
+		return errors.New("managed WhatsApp routing winner changed before durable snapshot")
+	}
+	return nil
+}
+
 func evolutionWebhookPayloadRoutingKey(payload map[string]any) string {
 	messages := withoutNativeEvolutionGroupMessages(extractNativeEvolutionMessages(payload))
 	if len(messages) == 0 {
@@ -601,16 +935,8 @@ func evolutionWebhookPayloadRoutingKey(payload map[string]any) string {
 	}
 	route := ""
 	for _, message := range messages {
-		candidate := ""
-		// ContactPhone was already normalized by the identity parser. Do not run
-		// a bare international number through locale-sensitive canonicalization a
-		// second time or two callbacks could receive different ordering keys.
-		if phone := normalizeDigits(message.ContactPhone); len(phone) >= 8 && len(phone) <= 20 {
-			candidate = "phone:" + phone
-		} else if remoteJID := normalizeRemoteAlias(message.RemoteJID); remoteJID != "" && !isOpaqueWhatsAppJID(remoteJID) {
-			candidate = "jid:" + remoteJID
-		}
-		if candidate == "" || len(candidate) > evolutionWebhookMaxRoutingBytes {
+		candidate := evolutionWebhookMessageBindingRoutingKey(message)
+		if candidate == evolutionWebhookSessionRoute {
 			return evolutionWebhookSessionRoute
 		}
 		if route == "" {
@@ -622,6 +948,45 @@ func evolutionWebhookPayloadRoutingKey(payload map[string]any) string {
 		}
 	}
 	return route
+}
+
+func evolutionWebhookMessageBindingRoutingKey(message nativeEvolutionMessage) string {
+	// The parser promotes a known LID to its SenderPN-backed canonical JID, but
+	// retains the original provider identity in RemoteAliases. Route by that
+	// opaque identity whenever present so the causal chain does not change when
+	// SenderPN first appears on a later callback.
+	for _, alias := range uniqueStrings(append([]string{message.RemoteJID}, message.RemoteAliases...)...) {
+		remoteJID := normalizeRemoteAlias(alias)
+		if remoteJID == "" || !isOpaqueWhatsAppJID(remoteJID) {
+			continue
+		}
+		// A LID can gain SenderPN on a later callback. Prefer the stable primary
+		// identity so pre-ACK LID -> LID+phone events remain one causal route;
+		// SQL still resolves the known alias to its canonical conversation.
+		route := "jid:" + remoteJID
+		if len(route) <= evolutionWebhookMaxRoutingBytes {
+			return route
+		}
+	}
+	// ContactPhone was already normalized by the identity parser. Do not run a
+	// bare international number through locale-sensitive canonicalization a
+	// second time or two callbacks could receive different ordering keys.
+	if phone := normalizeDigits(message.ContactPhone); len(phone) >= 8 && len(phone) <= 20 {
+		route := "phone:" + phone
+		if len(route) <= evolutionWebhookMaxRoutingBytes {
+			return route
+		}
+	}
+	if remoteJID := normalizeRemoteAlias(message.RemoteJID); remoteJID != "" {
+		// LIDs are opaque phone-wise but stable inside one Evolution session.
+		// Keeping the full normalized JID avoids merging distinct LIDs while still
+		// allowing a known alias to form the same predecessor chain.
+		route := "jid:" + remoteJID
+		if len(route) <= evolutionWebhookMaxRoutingBytes {
+			return route
+		}
+	}
+	return evolutionWebhookSessionRoute
 }
 
 func evolutionWebhookStatusRoutingKey(payload map[string]any) string {

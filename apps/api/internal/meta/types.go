@@ -132,8 +132,12 @@ type resolvedDestination struct {
 	AssignedUserID         *string
 	TeamID                 *string
 	RoundRobinID           *string
+	RoundRobinResolved     bool
+	PreservedQueueIdentity bool
 	RoundRobinMemberID     *string
+	ReentryBehavior        string
 	RedistributionSettings map[string]any
+	TagIDs                 []string
 }
 
 type leadData struct {

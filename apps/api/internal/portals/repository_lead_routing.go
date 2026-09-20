@@ -15,26 +15,40 @@ type portalDestination struct {
 	AssignedUserID     string
 	TeamID             string
 	RoundRobinID       string
+	RoundRobinResolved bool
 	RoundRobinMemberID string
+	ReentryBehavior    string
 }
 
 func (repo Repository) resolvePortalDestination(ctx context.Context, tx pgx.Tx, integration publicIntegration) (portalDestination, error) {
 	destination := portalDestination{
-		PipelineID:     integration.DefaultPipelineID,
-		StageID:        integration.DefaultStageID,
-		AssignedUserID: integration.DefaultAssignedUserID,
+		PipelineID:         integration.DefaultPipelineID,
+		StageID:            integration.DefaultStageID,
+		AssignedUserID:     integration.DefaultAssignedUserID,
+		RoundRobinResolved: integration.DefaultRoundRobinID != "",
 	}
 	fallbackUsed := false
 
 	if integration.DefaultRoundRobinID != "" {
-		var queuePipelineID, queueStageID string
+		var queuePipelineID, queueStageID, reentryBehavior string
 		err := tx.QueryRow(ctx, `
-			select coalesce(target_pipeline_id::text, ''), coalesce(target_stage_id::text, '')
+			select
+			  coalesce(target_pipeline_id::text, ''),
+			  coalesce(target_stage_id::text, ''),
+			  case
+			    when lower(btrim(coalesce(
+			      nullif(reentry_behavior, ''),
+			      nullif(rules->>'reentry_behavior', ''),
+			      'redistribute'
+			    ))) = 'keep_assignee' then 'keep_assignee'
+			    else 'redistribute'
+			  end
 			from public.round_robins
 			where organization_id = $1::uuid
 			  and id = $2::uuid
 			  and coalesce(is_active, true)
-		`, integration.OrganizationID, integration.DefaultRoundRobinID).Scan(&queuePipelineID, &queueStageID)
+			for share
+		`, integration.OrganizationID, integration.DefaultRoundRobinID).Scan(&queuePipelineID, &queueStageID, &reentryBehavior)
 		if errors.Is(err, pgx.ErrNoRows) {
 			fallbackUsed = true
 			destination.RoundRobinID = ""
@@ -42,6 +56,7 @@ func (repo Repository) resolvePortalDestination(ctx context.Context, tx pgx.Tx, 
 			return portalDestination{}, err
 		} else {
 			destination.RoundRobinID = integration.DefaultRoundRobinID
+			destination.ReentryBehavior = reentryBehavior
 			if destination.PipelineID == "" {
 				destination.PipelineID = queuePipelineID
 			}
@@ -144,6 +159,50 @@ func (repo Repository) resolvePortalDestination(ctx context.Context, tx pgx.Tx, 
 		`, integration.ID)
 	}
 	return destination, nil
+}
+
+func resolveAutomaticPortalIntakeDestination(ctx context.Context, tx pgx.Tx, organizationID string, destination portalDestination, propertyID *string) (portalDestination, error) {
+	if destination.RoundRobinResolved {
+		return destination, nil
+	}
+	var pipelineID *string
+	if destination.PipelineID != "" {
+		pipelineID = &destination.PipelineID
+	}
+	intakeDestination, err := distribution.ResolveIntakeDestination(ctx, tx, distribution.IntakeContext{
+		OrganizationID:     organizationID,
+		PipelineID:         pipelineID,
+		Source:             "grupo_olx",
+		PropertyID:         propertyID,
+		InterestPropertyID: propertyID,
+	})
+	if err != nil {
+		return portalDestination{}, err
+	}
+	return applyPortalIntakeDestination(destination, intakeDestination), nil
+}
+
+func applyPortalIntakeDestination(destination portalDestination, intakeDestination distribution.IntakeDestination) portalDestination {
+	destination.RoundRobinResolved = intakeDestination.Resolved
+	destination.ReentryBehavior = intakeDestination.ReentryBehavior
+	if intakeDestination.RoundRobinID != nil {
+		destination.RoundRobinID = *intakeDestination.RoundRobinID
+	} else {
+		destination.RoundRobinID = ""
+	}
+	return destination
+}
+
+func preserveAssigneeForPortalIntake(reentry bool, destination portalDestination) bool {
+	var roundRobinID *string
+	if destination.RoundRobinID != "" {
+		roundRobinID = &destination.RoundRobinID
+	}
+	return distribution.PreserveAssigneeForIntake(reentry, distribution.IntakeDestination{
+		RoundRobinID:    roundRobinID,
+		ReentryBehavior: destination.ReentryBehavior,
+		Resolved:        destination.RoundRobinResolved,
+	})
 }
 
 func selectPortalRoundRobinMember(ctx context.Context, tx pgx.Tx, organizationID string, roundRobinID string) (string, string, string, error) {

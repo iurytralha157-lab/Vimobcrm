@@ -10,7 +10,7 @@ import (
 )
 
 func TestQueueReadContractsUseCanonicalLogCounters(t *testing.T) {
-	for _, functionName := range []string{"List", "Get"} {
+	for _, functionName := range []string{"List", "getWithQueryer"} {
 		t.Run(functionName, func(t *testing.T) {
 			source := repositoryFunctionSource(t, functionName)
 
@@ -28,7 +28,7 @@ func TestQueueReadContractsUseCanonicalLogCounters(t *testing.T) {
 }
 
 func TestMemberReadContractsPreferCanonicalMemberID(t *testing.T) {
-	for _, functionName := range []string{"listMembers", "getMember"} {
+	for _, functionName := range []string{"listMembersWithQueryer", "getMember"} {
 		t.Run(functionName, func(t *testing.T) {
 			source := repositoryFunctionSource(t, functionName)
 
@@ -60,6 +60,70 @@ func TestDirectMemberResolutionValidatesUserBeforeTeamContext(t *testing.T) {
 
 	requireRepositoryOrder(t, source, "repo.validateUser", "repo.activeUserTeamIDs")
 	requireRepositoryOrder(t, source, "repo.activeUserTeamIDs", "resolveDirectUserTeamID")
+}
+
+func TestQueueDeleteRetainsIdentityTombstoneAndCleansOperationalReferences(t *testing.T) {
+	source := repositoryFunctionSource(t, "Delete")
+
+	requireRepositoryFragments(t, source,
+		"repo.getStateForUpdate",
+		"repo.deleteWhatsAppInboundRulesForRoundRobin",
+		"update public.pipelines set default_round_robin_id = null",
+		"update public.portal_integrations set default_round_robin_id = null",
+		"update public.meta_form_configs set round_robin_id = null",
+		"update public.whatsapp_inbound_rules set target_round_robin_id = null",
+		"delete from public.lead_redistribution_jobs",
+		"delete from public.round_robin_members",
+		"delete from public.round_robin_rules",
+		"set is_active = false",
+		"deleted_at = clock_timestamp()",
+		"pipeline_id = null",
+		"target_pipeline_id = null",
+		"target_stage_id = null",
+		"and deleted_at is null",
+		"commandTag.RowsAffected() != 1",
+	)
+	requireRepositoryFragmentAbsent(t, source, "delete from public.round_robins")
+	requireRepositoryFragmentAbsent(t, source, "delete from public.round_robin_logs")
+	requireRepositoryOrder(t, source, "repo.getStateForUpdate", "update public.pipelines")
+	requireRepositoryOrder(t, source, "delete from public.round_robin_rules", "deleted_at = clock_timestamp()")
+}
+
+func TestUserFacingQueueRepositoryExcludesIdentityTombstones(t *testing.T) {
+	for _, functionName := range []string{
+		"List",
+		"getWithQueryer",
+		"getStateForUpdate",
+		"ensureRoundRobin",
+		"ensureRoundRobinVisible",
+		"visibleRoundRobinIDSet",
+		"listRulesWithQueryer",
+		"getRule",
+		"listMembersWithQueryer",
+		"getMember",
+	} {
+		t.Run(functionName, func(t *testing.T) {
+			source := repositoryFunctionSource(t, functionName)
+			requireRepositoryFragments(t, source, "deleted_at is null")
+		})
+	}
+}
+
+func TestQueueMutationsReadBackBeforeCommit(t *testing.T) {
+	for _, functionName := range []string{"Create", "Update"} {
+		t.Run(functionName, func(t *testing.T) {
+			source := repositoryFunctionSource(t, functionName)
+			requireRepositoryFragments(t, source,
+				"repo.getWithQueryer(ctx, tx, tenantContext, roundRobinID)",
+				"tx.Commit(ctx)",
+			)
+			requireRepositoryOrder(t, source,
+				"repo.getWithQueryer(ctx, tx, tenantContext, roundRobinID)",
+				"tx.Commit(ctx)",
+			)
+			requireRepositoryFragmentAbsent(t, source, "return repo.Get(ctx, tenantContext, roundRobinID)")
+		})
+	}
 }
 
 func repositoryFunctionSource(t *testing.T, functionName string) string {

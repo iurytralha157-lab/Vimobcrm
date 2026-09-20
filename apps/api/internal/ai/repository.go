@@ -840,26 +840,36 @@ func (repo Repository) Metrics(ctx context.Context, tenantContext tenant.Context
 		),
 		period as (
 			select now() - interval '30 days' as start_at
+		),
+		received_cards as (
+			select distinct l.id
+			from public.leads l
+			join public.whatsapp_messages wm
+			  on wm.organization_id = l.organization_id
+			 and wm.lead_id = l.id
+			 and wm.from_me = false
+			join ai_sessions ais on ais.id = wm.session_id
+			cross join period p
+			where l.organization_id = $1::uuid
+			  and l.created_at >= p.start_at
+		),
+		attended_cards as (
+			select distinct wm.lead_id
+			from public.whatsapp_messages wm
+			join ai_sessions ais on ais.id = wm.session_id
+			join public.leads l
+			  on l.organization_id = wm.organization_id
+			 and l.id = wm.lead_id
+			cross join period p
+			where wm.organization_id = $1::uuid
+			  and wm.lead_id is not null
+			  and wm.from_me = true
+			  and coalesce(wm.sent_at, wm.created_at) >= p.start_at
+			  and wm.metadata->>'ai_generated' = 'true'
 		)
 		select
-			coalesce((
-				select count(distinct wc.id)::bigint
-				from public.whatsapp_conversations wc
-				join ai_sessions ais on ais.id = wc.session_id
-				cross join period p
-				where wc.created_at >= p.start_at
-				  and wc.deleted_at is null
-				  and wc.is_group = false
-				  and wc.lead_id is not null
-			), 0)::bigint as leads_received,
-			coalesce((
-				select count(distinct wm.conversation_id)::bigint
-				from public.whatsapp_messages wm
-				join ai_sessions ais on ais.id = wm.session_id
-				cross join period p
-				where wm.created_at >= p.start_at
-				  and wm.metadata->>'ai_generated' = 'true'
-			), 0)::bigint as leads_attended,
+			(select count(*)::bigint from received_cards) as leads_received,
+			(select count(*)::bigint from attended_cards) as leads_attended,
 			coalesce((
 				select count(distinct l.id)::bigint
 				from public.leads l
@@ -892,22 +902,31 @@ func (repo Repository) Metrics(ctx context.Context, tenantContext tenant.Context
 			  and lower(coalesce(advanced_settings->>'ai_auto_reply_enabled', 'false')) in ('true', '1', 'yes', 'sim')
 		),
 		received as (
-			select wc.created_at::date as day, count(distinct wc.id)::bigint as total
-			from public.whatsapp_conversations wc
-			join ai_sessions ais on ais.id = wc.session_id
-			where wc.deleted_at is null
-			  and wc.is_group = false
-			  and wc.lead_id is not null
-			  and wc.created_at >= date_trunc('day', now()) - interval '13 days'
-			group by wc.created_at::date
+			select l.created_at::date as day, count(distinct l.id)::bigint as total
+			from public.leads l
+			join public.whatsapp_messages wm
+			  on wm.organization_id = l.organization_id
+			 and wm.lead_id = l.id
+			 and wm.from_me = false
+			join ai_sessions ais on ais.id = wm.session_id
+			where l.organization_id = $1::uuid
+			  and l.created_at >= date_trunc('day', now()) - interval '13 days'
+			group by l.created_at::date
 		),
 		attended as (
-			select wm.created_at::date as day, count(distinct wm.conversation_id)::bigint as total
+			select coalesce(wm.sent_at, wm.created_at)::date as day,
+			       count(distinct wm.lead_id)::bigint as total
 			from public.whatsapp_messages wm
 			join ai_sessions ais on ais.id = wm.session_id
-			where wm.metadata->>'ai_generated' = 'true'
-			  and wm.created_at >= date_trunc('day', now()) - interval '13 days'
-			group by wm.created_at::date
+			join public.leads l
+			  on l.organization_id = wm.organization_id
+			 and l.id = wm.lead_id
+			where wm.organization_id = $1::uuid
+			  and wm.lead_id is not null
+			  and wm.from_me = true
+			  and wm.metadata->>'ai_generated' = 'true'
+			  and coalesce(wm.sent_at, wm.created_at) >= date_trunc('day', now()) - interval '13 days'
+			group by coalesce(wm.sent_at, wm.created_at)::date
 		),
 		followups as (
 			select l.next_follow_up_at::date as day, count(distinct l.id)::bigint as total
@@ -1022,6 +1041,24 @@ func (repo Repository) SaveConversationState(ctx context.Context, tenantContext 
 		handoffHistory = append(handoffHistory, handoff)
 	}
 	_, _ = repo.db.Pool().Exec(ctx, `
+		with whatsapp_binding_guard as materialized (
+			select wc.id
+			from public.whatsapp_conversations wc
+			where wc.organization_id = $1::uuid
+			  and wc.id = $2::uuid
+			  and wc.deleted_at is null
+			  and wc.lead_id = nullif($5, '')::uuid
+			for share
+		), allowed_conversation as (
+			select true as allowed
+			where exists (select 1 from whatsapp_binding_guard)
+			   or not exists (
+				select 1
+				from public.whatsapp_conversations wc
+				where wc.organization_id = $1::uuid
+				  and wc.id = $2::uuid
+			   )
+		)
 		insert into public.conversation_ai_state (
 			organization_id,
 			lead_id,
@@ -1032,7 +1069,16 @@ func (repo Repository) SaveConversationState(ctx context.Context, tenantContext 
 			triage_status,
 			handoff_history
 		)
-		values ($1::uuid, nullif($5, '')::uuid, $2::uuid, nullif($3, ''), $4::jsonb, nullif($6, '')::uuid, $7, $8::jsonb)
+		select
+			$1::uuid,
+			nullif($5, '')::uuid,
+			$2::uuid,
+			nullif($3, ''),
+			$4::jsonb,
+			nullif($6, '')::uuid,
+			$7,
+			$8::jsonb
+		from allowed_conversation
 		on conflict (organization_id, conversation_id)
 		do update set last_response_id = excluded.last_response_id,
 		              lead_id = coalesce(excluded.lead_id, conversation_ai_state.lead_id),

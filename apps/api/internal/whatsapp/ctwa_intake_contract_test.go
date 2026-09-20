@@ -416,21 +416,28 @@ func TestEvolutionGoEdgeUsesProviderCTWASignalBeforeManagedRoutingOrLeadCreation
 		"const ctwaConfirmationMethod = clickToWhatsAppAdConfirmationMethod(message)",
 		"const confirmedCtwaAd = Boolean(ctwaConfirmationMethod)",
 		"await findEstablishedWhatsAppConversationLead(session, message, identity)",
-		"if (!confirmedCtwaAd && isAmbiguousWhatsAppLeadPhone(error))",
+		"if (isAmbiguousWhatsAppLeadPhone(error))",
+		`return quarantinedWhatsAppLeadResolution("whatsapp_lead_phone_ambiguous")`,
 		"return null",
-		"const targetRoundRobinId = managedMessageDistribution ? optionalUuid(rule?.target_round_robin_id) : null",
+		"const canonicalNonManagedIntake = confirmedCtwaAd && !managedMessageDistribution",
+		`throw new Error("nonmanaged_whatsapp_canonical_intake_snapshot_required")`,
+		"const targetRoundRobinId = managedMessageDistribution ? optionalUuid(rule?.target_round_robin_id) : canonicalNonManagedIntake ? optionalUuid(ingressRoutingSnapshot?.originRoundRobinId) : null",
 		"const ownerUserId = await resolveActiveSessionOwner(session)",
-		"const assignedUserId = managedMessageDistribution ? null : ownerUserId",
+		"const assignedUserId = managedMessageDistribution || targetRoundRobinId ? null : ownerUserId",
+		"processCanonicalNonManagedWhatsAppDistribution(",
+		`.rpc("distribute_lead_from_backend"`,
 		`whatsapp_lead_creation_contract: "ctwa_ad_v2"`,
 		"ctwa_confirmation_method: ctwaConfirmationMethod",
 		"ctwa_ad_confirmed: true",
 	} {
 		requireCTWAContractContains(t, leadCreation, fragment)
 	}
+	ctwaScopedLookup := strings.Index(leadCreation, "? await findLeadByPhone(session.organization_id, phone, targetRoundRobinId)")
 	establishedLead := strings.Index(leadCreation, "await findEstablishedWhatsAppConversationLead(session, message, identity)")
-	globalPhoneLookup := strings.Index(leadCreation, "await findLeadByPhone(session.organization_id, phone)")
-	if establishedLead < 0 || globalPhoneLookup < 0 || establishedLead >= globalPhoneLookup {
-		t.Fatal("Edge intake must reuse an established session conversation before global phone resolution")
+	organicPhoneLookup := strings.Index(leadCreation, "existing = await findLeadByPhone(session.organization_id, phone)")
+	if ctwaScopedLookup < 0 || establishedLead < 0 || organicPhoneLookup < 0 ||
+		ctwaScopedLookup >= establishedLead || establishedLead >= organicPhoneLookup {
+		t.Fatal("Edge intake must resolve confirmed CTWA in its queue scope, while organic traffic reuses the active conversation before global phone resolution")
 	}
 
 	ownerFallback := compactCTWAContract(sectionCTWAContract(
@@ -722,7 +729,7 @@ func TestEvolutionGoEdgePersistsCTWAAttributionAcrossManagedRetryLifecycle(t *te
 		t.Fatal("managed pending and first-attempt success paths must enrich after the canonical intake RPC succeeds")
 	}
 	autoReply := strings.Index(handleMessages,
-		"await triggerAutoReply(session, conversation, result.message, message)")
+		"await triggerAutoReply(session, conversation, result.message, message, eventLeadId)")
 	effectsComplete := -1
 	if autoReply >= 0 {
 		effectsComplete = strings.Index(handleMessages[autoReply:], "await completeStoredMessageEffects(")
@@ -737,11 +744,11 @@ func TestNativeOrganicAmbiguousPhoneRemainsReceivableWithoutUnsafeAttachment(t *
 		"apps", "api", "internal", "whatsapp", "webhook_native_processor.go",
 	))
 	for _, fragment := range []string{
-		"if errors.Is(err, errNativeEvolutionLeadPhoneAmbiguous) && !message.IsCTWAAd",
+		"if isNativeEvolutionLeadPhoneAmbiguous(err)",
+		`quarantineReason = "whatsapp_lead_phone_ambiguous"`,
 		"lead = nativeEvolutionLead{}",
 		"err = nil",
-		"and l.phone is not null",
-		"and normalize_phone(l.phone) = normalize_phone(candidate.value)",
+		"from public.find_lead_by_normalized_phone($1::uuid, $2) as lead",
 	} {
 		requireCTWAContractContains(t, source, fragment)
 	}

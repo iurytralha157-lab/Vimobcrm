@@ -37,6 +37,16 @@ type metaLeadMatch struct {
 	DetailsPending bool
 }
 
+type metaLeadIntakeIdentity struct {
+	ScopeKey           string
+	OriginRoundRobinID string
+}
+
+type pendingMetaLeadReentry struct {
+	PlaceholderLeadID string
+	IntakeIdentity    metaLeadIntakeIdentity
+}
+
 func (err duplicateLeadgenError) Error() string {
 	return "Meta leadgen event was already processed"
 }
@@ -313,30 +323,9 @@ const claimPendingWebhookEventsQuery = `
 		    )
 		    or (
 		      status = 'failed'
-		      and coalesce(received_at, created_at, now()) >= now() - interval '7 days'
-		      and (
-		        lower(coalesce(error_message, last_error, '')) like '%apps in dev mode should only access leads%'
-		        or lower(coalesce(error_message, last_error, '')) like '%unsupported get request%'
-		        or lower(coalesce(error_message, last_error, '')) like '%meta page access token is missing%'
-		        or lower(coalesce(error_message, last_error, '')) like '%lead name is invalid%'
-		      )
-		      and exists (
-		        select 1
-		        from public.meta_form_configs as form_config
-		        join public.meta_integrations as integration
-		          on integration.organization_id = form_config.organization_id
-		         and integration.id = form_config.integration_id
-		        where form_config.organization_id = meta_webhook_events.organization_id
-		          and btrim(form_config.form_id) = btrim(meta_webhook_events.form_id)
-		          and btrim(integration.page_id) = btrim(meta_webhook_events.page_id)
-		          and coalesce(form_config.is_active, true) = true
-		          and coalesce(integration.is_connected, false) = true
-		      )
-		    )
-		    or (
-		      status = 'failed'
 		      and coalesce(attempts, 0) < 5
-		      and coalesce(next_retry_at, received_at, created_at, now()) <= now()
+		      and next_retry_at is not null
+		      and next_retry_at <= now()
 		    )
 		    or (
 		      status = 'processing'
@@ -493,10 +482,11 @@ func (repo Repository) processLeadgenChange(ctx context.Context, webhookPayload 
 		result.Error = "Meta lead details are incomplete: a non-empty provider field mapped to name is required"
 		return result
 	}
+	var pendingReentry *pendingMetaLeadReentry
 	if leadMatch.LeadID != "" {
-		discarded, err := repo.discardUntouchedPendingMetaLeadForReentry(
+		pendingReentry, err = repo.prepareUntouchedPendingMetaLeadForReentry(
 			ctx,
-			integration.OrganizationID,
+			integration,
 			change.LeadgenID,
 			leadMatch.LeadID,
 			lead.Phone,
@@ -505,7 +495,7 @@ func (repo Repository) processLeadgenChange(ctx context.Context, webhookPayload 
 			result.Error = err.Error()
 			return result
 		}
-		if discarded {
+		if pendingReentry != nil {
 			leadMatch = metaLeadMatch{}
 		}
 	}
@@ -520,7 +510,7 @@ func (repo Repository) processLeadgenChange(ctx context.Context, webhookPayload 
 		return result
 	}
 
-	leadID, reentry, err := repo.persistLead(ctx, webhookPayload, details, change, integration, formConfig, lead, "")
+	leadID, reentry, err := repo.persistLead(ctx, webhookPayload, details, change, integration, formConfig, lead, "", pendingReentry)
 	if err != nil {
 		var duplicateErr duplicateLeadgenError
 		if errors.As(err, &duplicateErr) {
@@ -1007,7 +997,17 @@ func setFirstURL(target map[string]any, key string, values ...any) {
 	}
 }
 
-func (repo Repository) persistLead(ctx context.Context, webhookPayload map[string]any, details map[string]any, change leadgenChange, integration metaIntegration, formConfig metaFormConfig, lead leadData, detailsError string) (string, bool, error) {
+func (repo Repository) persistLead(ctx context.Context, webhookPayload map[string]any, details map[string]any, change leadgenChange, integration metaIntegration, formConfig metaFormConfig, lead leadData, detailsError string, pendingReentry *pendingMetaLeadReentry) (string, bool, error) {
+	leadID, reentry, err := repo.persistLeadWithIdentityMode(ctx, webhookPayload, details, change, integration, formConfig, lead, detailsError, pendingReentry, nil)
+	constraintName := metaLeadPhoneUniqueViolationConstraint(err)
+	if constraintName == "" {
+		return leadID, reentry, err
+	}
+	legacyIdentity := constraintName == "leads_org_phone_unique"
+	return repo.persistLeadWithIdentityMode(ctx, webhookPayload, details, change, integration, formConfig, lead, detailsError, pendingReentry, &legacyIdentity)
+}
+
+func (repo Repository) persistLeadWithIdentityMode(ctx context.Context, webhookPayload map[string]any, details map[string]any, change leadgenChange, integration metaIntegration, formConfig metaFormConfig, lead leadData, detailsError string, pendingReentry *pendingMetaLeadReentry, forceLegacyIdentity *bool) (string, bool, error) {
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return "", false, err
@@ -1023,36 +1023,71 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 	}
 	if duplicateLeadID, err := findLeadByProviderEventID(ctx, tx, integration.OrganizationID, "meta", change.LeadgenID); err != nil {
 		return "", false, err
-	} else if duplicateLeadID != "" {
+	} else if duplicateLeadID != "" && (pendingReentry == nil || duplicateLeadID != pendingReentry.PlaceholderLeadID) {
 		return "", false, duplicateLeadgenError{leadID: duplicateLeadID}
 	}
 
-	if digitsOnly(lead.Phone) != "" {
-		if _, err := tx.Exec(ctx, `
-			select pg_advisory_xact_lock(
-				hashtextextended('lead-phone:' || $1 || ':' || normalize_phone($2), 0)
-			)
-		`, integration.OrganizationID, *lead.Phone); err != nil {
-			return "", false, err
-		}
+	var destination resolvedDestination
+	if pendingReentry != nil {
+		destination, err = repo.resolveDestinationForIntakeIdentity(ctx, tx, integration, formConfig, pendingReentry.IntakeIdentity)
+	} else {
+		destination, err = repo.resolveDestination(ctx, tx, integration, formConfig)
 	}
-
-	destination, err := repo.resolveDestination(ctx, tx, integration, formConfig)
 	if err != nil {
 		return "", false, err
 	}
-
+	source := coalesceText(formConfig.Source, "meta")
 	propertyID := resolvePropertyID(formConfig)
+	if shouldResolveAutomaticMetaIntake(pendingReentry, formConfig) {
+		destination, err = repo.resolveAutomaticMetaIntakeDestination(
+			ctx,
+			tx,
+			destination,
+			integration,
+			formConfig,
+			change,
+			lead,
+			details,
+			source,
+			propertyID,
+		)
+		if err != nil {
+			return "", false, err
+		}
+	}
+	intakeScopeKey := metaLeadIntakeScopeKey(destination.RoundRobinID)
+	if pendingReentry != nil && intakeScopeKey != pendingReentry.IntakeIdentity.ScopeKey {
+		return "", false, fmt.Errorf("%w: preserved Meta intake identity was reclassified", ErrInvalidInput)
+	}
+	legacyIdentity := false
+	if forceLegacyIdentity != nil {
+		legacyIdentity = *forceLegacyIdentity
+	} else {
+		legacyIdentity, err = legacyMetaLeadPhoneUniquenessActive(ctx, tx)
+		if err != nil {
+			return "", false, err
+		}
+	}
+	if err := lockMetaLeadIntakeIdentity(ctx, tx, integration.OrganizationID, lead.Phone, intakeScopeKey, legacyIdentity); err != nil {
+		return "", false, err
+	}
+
 	if err := repo.validateProperty(ctx, tx, integration.OrganizationID, propertyID); err != nil {
 		return "", false, err
 	}
 
-	existingLeadID, err := repo.findExistingLeadByPhone(ctx, tx, integration.OrganizationID, lead.Phone)
+	var existingLeadID string
+	if pendingReentry != nil {
+		existingLeadID, err = repo.discardUntouchedPendingMetaLeadForReentry(ctx, tx, integration.OrganizationID, pendingReentry, lead.Phone, legacyIdentity)
+	} else if legacyIdentity {
+		existingLeadID, err = repo.findExistingLeadByPhoneLegacy(ctx, tx, integration.OrganizationID, lead.Phone)
+	} else {
+		existingLeadID, err = repo.findExistingLeadByPhone(ctx, tx, integration.OrganizationID, lead.Phone, intakeScopeKey)
+	}
 	if err != nil {
 		return "", false, err
 	}
 
-	source := coalesceText(formConfig.Source, "meta")
 	sourceDetail := sourceDetail(integration, formConfig)
 	interestValue := interestValue(formConfig.DefaultValues)
 	status := coalesceText(formConfig.DefaultStatus, coalesceText(integration.DefaultStatus, "new"))
@@ -1060,6 +1095,10 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 	setMetaLeadDetailsState(metadata, detailsError)
 	metadata["source_detail"] = sourceDetail
 	metadata["distribution_deferred"] = true
+	metadata["intake_scope_key"] = intakeScopeKey
+	if destination.RoundRobinID != nil {
+		metadata["origin_round_robin_id"] = *destination.RoundRobinID
+	}
 	payloadJSON := jsonb(map[string]any{
 		"webhook_payload": webhookPayload,
 		"lead_details":    details,
@@ -1110,7 +1149,7 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 			    valor_interesse = coalesce($23::numeric, valor_interesse),
 			    last_entry_at = now(),
 			    reentry_count = coalesce(reentry_count, 0) + 1,
-			    metadata = coalesce(metadata, '{}'::jsonb) || $24::jsonb,
+			    metadata = coalesce(metadata, '{}'::jsonb) || ($24::jsonb - 'intake_scope_key' - 'origin_round_robin_id'),
 			    updated_at = now()
 			where organization_id = $1::uuid
 			  and id = $2::uuid
@@ -1149,7 +1188,9 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 				stage_entered_at,
 				board_order_at,
 				last_entry_at,
-				metadata
+				metadata,
+				intake_scope_key,
+				origin_round_robin_id
 			)
 			values (
 				$1::uuid,
@@ -1183,10 +1224,12 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 				case when $3::uuid is null then null else now() end,
 				case when $3::uuid is null then null else now() end,
 				now(),
-				$25::jsonb
+				$25::jsonb,
+				$26,
+				$27::uuid
 			)
 			returning id::text
-		`, integration.OrganizationID, nullablePointer(destination.PipelineID), nullablePointer(destination.StageID), nullablePointer(destination.AssignedUserID), nullablePointer(propertyID), lead.Name, nullablePointer(lead.Email), nullablePointer(lead.Phone), source, nullablePointer(lead.Message), status, nullablePointer(lead.Cargo), nullablePointer(lead.Empresa), nullablePointer(lead.Cidade), nullablePointer(lead.Bairro), nullablePointer(formConfig.Purpose), change.LeadgenID, change.FormID, nullableString(metaText(details, change.Raw, "campaign_id")), nullableString(metaText(details, change.Raw, "adset_id")), nullableString(metaText(details, change.Raw, "ad_id")), nullableString(metaText(details, change.Raw, "campaign_name")), nullablePointer(interestValue), nullablePointer(destination.TeamID), jsonb(metadata)).Scan(&leadID)
+		`, integration.OrganizationID, nullablePointer(destination.PipelineID), nullablePointer(destination.StageID), nullablePointer(destination.AssignedUserID), nullablePointer(propertyID), lead.Name, nullablePointer(lead.Email), nullablePointer(lead.Phone), source, nullablePointer(lead.Message), status, nullablePointer(lead.Cargo), nullablePointer(lead.Empresa), nullablePointer(lead.Cidade), nullablePointer(lead.Bairro), nullablePointer(formConfig.Purpose), change.LeadgenID, change.FormID, nullableString(metaText(details, change.Raw, "campaign_id")), nullableString(metaText(details, change.Raw, "adset_id")), nullableString(metaText(details, change.Raw, "ad_id")), nullableString(metaText(details, change.Raw, "campaign_name")), nullablePointer(interestValue), nullablePointer(destination.TeamID), jsonb(metadata), intakeScopeKey, nullablePointer(destination.RoundRobinID)).Scan(&leadID)
 	}
 	if err != nil {
 		return "", false, err
@@ -1195,7 +1238,7 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 	if err := repo.insertLeadMeta(ctx, tx, integration.OrganizationID, leadID, details, change, formConfig, payloadJSON); err != nil {
 		return "", false, err
 	}
-	if err := repo.insertLeadTags(ctx, tx, integration.OrganizationID, leadID, tagIDs(formConfig)); err != nil {
+	if err := repo.insertLeadTags(ctx, tx, integration.OrganizationID, leadID, destination.TagIDs); err != nil {
 		return "", false, err
 	}
 	if !entryInserted {
@@ -1203,14 +1246,16 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 			return "", false, err
 		}
 	}
+	preserveAssignee := preserveAssigneeForMetaIntake(reentry, destination)
 	distributionResult, err := distribution.Distribute(ctx, tx, distribution.Request{
-		OrganizationID:   integration.OrganizationID,
-		LeadID:           leadID,
-		IdempotencyKey:   distribution.StableKey("meta", integration.ID, change.LeadgenID),
-		RoundRobinID:     destination.RoundRobinID,
-		PreserveAssignee: true,
-		Source:           &source,
-		OccurredAt:       metaLeadOccurredAt(change.CreatedTime),
+		OrganizationID:     integration.OrganizationID,
+		LeadID:             leadID,
+		IdempotencyKey:     distribution.StableKey("meta", integration.ID, change.LeadgenID),
+		RoundRobinID:       destination.RoundRobinID,
+		RoundRobinResolved: destination.RoundRobinResolved,
+		PreserveAssignee:   preserveAssignee,
+		Source:             &source,
+		OccurredAt:         metaLeadOccurredAt(change.CreatedTime),
 	})
 	if err != nil {
 		return "", false, err
@@ -1312,20 +1357,20 @@ func (repo Repository) persistLead(ctx context.Context, webhookPayload map[strin
 	return leadID, reentry, nil
 }
 
-func (repo Repository) discardUntouchedPendingMetaLeadForReentry(
+func (repo Repository) prepareUntouchedPendingMetaLeadForReentry(
 	ctx context.Context,
-	organizationID string,
+	integration metaIntegration,
 	leadgenID string,
 	pendingLeadID string,
 	phone *string,
-) (bool, error) {
+) (*pendingMetaLeadReentry, error) {
 	if digitsOnly(phone) == "" {
-		return false, nil
+		return nil, nil
 	}
 
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	defer tx.Rollback(ctx)
 
@@ -1333,15 +1378,22 @@ func (repo Repository) discardUntouchedPendingMetaLeadForReentry(
 		select pg_advisory_xact_lock(
 			hashtextextended('lead-entry:meta:' || $1 || ':' || $2, 0)
 		)
-	`, organizationID, leadgenID); err != nil {
-		return false, err
+	`, integration.OrganizationID, leadgenID); err != nil {
+		return nil, err
 	}
-	if _, err := tx.Exec(ctx, `
-		select pg_advisory_xact_lock(
-			hashtextextended('lead-phone:' || $1 || ':' || normalize_phone($2), 0)
-		)
-	`, organizationID, *phone); err != nil {
-		return false, err
+	intakeIdentity, err := repo.pendingMetaLeadIntakeIdentity(ctx, tx, integration.OrganizationID, pendingLeadID, true)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("%w: pending Meta placeholder no longer exists", ErrInvalidInput)
+	}
+	if err != nil {
+		return nil, err
+	}
+	legacyIdentity, err := legacyMetaLeadPhoneUniquenessActive(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	if err := lockMetaLeadIntakeIdentity(ctx, tx, integration.OrganizationID, phone, intakeIdentity.ScopeKey, legacyIdentity); err != nil {
+		return nil, err
 	}
 
 	var detailsPending bool
@@ -1358,27 +1410,92 @@ func (repo Repository) discardUntouchedPendingMetaLeadForReentry(
 		from public.leads
 		where organization_id = $1::uuid
 		  and id = $2::uuid
-		for update
-	`, organizationID, pendingLeadID).Scan(&detailsPending, &phoneMissing, &untouched)
+	`, integration.OrganizationID, pendingLeadID).Scan(&detailsPending, &phoneMissing, &untouched)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// Another worker may have removed the same legacy placeholder while this
-		// retry waited for the provider-event lock. Continue through canonical
-		// persistence, whose stable key makes that concurrent retry idempotent.
-		return true, tx.Commit(ctx)
+		return nil, fmt.Errorf("%w: pending Meta placeholder no longer exists", ErrInvalidInput)
 	}
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	if !detailsPending || !phoneMissing || !untouched {
-		return false, tx.Commit(ctx)
+		return nil, tx.Commit(ctx)
 	}
 
-	existingLeadID, err := repo.findExistingLeadByPhone(ctx, tx, organizationID, phone)
+	var existingLeadID string
+	if legacyIdentity {
+		existingLeadID, err = repo.findExistingLeadByPhoneLegacy(ctx, tx, integration.OrganizationID, phone)
+	} else {
+		existingLeadID, err = repo.findExistingLeadByPhone(ctx, tx, integration.OrganizationID, phone, intakeIdentity.ScopeKey)
+	}
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	if existingLeadID == "" || existingLeadID == pendingLeadID {
-		return false, tx.Commit(ctx)
+		return nil, tx.Commit(ctx)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &pendingMetaLeadReentry{
+		PlaceholderLeadID: pendingLeadID,
+		IntakeIdentity:    intakeIdentity,
+	}, nil
+}
+
+func (repo Repository) discardUntouchedPendingMetaLeadForReentry(
+	ctx context.Context,
+	tx pgx.Tx,
+	organizationID string,
+	pendingReentry *pendingMetaLeadReentry,
+	phone *string,
+	legacyIdentity bool,
+) (string, error) {
+	if pendingReentry == nil || digitsOnly(phone) == "" {
+		return "", ErrInvalidInput
+	}
+
+	currentIdentity, err := repo.pendingMetaLeadIntakeIdentity(ctx, tx, organizationID, pendingReentry.PlaceholderLeadID, true)
+	if err != nil {
+		return "", err
+	}
+	if currentIdentity != pendingReentry.IntakeIdentity {
+		return "", fmt.Errorf("%w: pending Meta intake identity changed", ErrInvalidInput)
+	}
+
+	var detailsPending bool
+	var phoneMissing bool
+	var untouched bool
+	err = tx.QueryRow(ctx, `
+		select
+		  lower(coalesce(metadata->>'meta_details_status', '')) = 'pending',
+		  phone is null or normalize_phone(phone) = '',
+		  first_touch_at is null
+		    and first_response_at is null
+		    and owner_last_activity_at is null
+		    and last_contact_at is null
+		from public.leads
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+	`, organizationID, pendingReentry.PlaceholderLeadID).Scan(&detailsPending, &phoneMissing, &untouched)
+	if err != nil {
+		return "", err
+	}
+	if !detailsPending || !phoneMissing || !untouched {
+		return "", fmt.Errorf("%w: pending Meta placeholder is no longer disposable", ErrInvalidInput)
+	}
+
+	var existingLeadID string
+	if legacyIdentity {
+		existingLeadID, err = repo.findExistingLeadByPhoneLegacy(ctx, tx, organizationID, phone)
+	} else {
+		existingLeadID, err = repo.findExistingLeadByPhone(ctx, tx, organizationID, phone, currentIdentity.ScopeKey)
+	}
+	if err != nil {
+		return "", err
+	}
+	if existingLeadID == "" || existingLeadID == pendingReentry.PlaceholderLeadID {
+		return "", fmt.Errorf("%w: pending Meta reentry target no longer exists", ErrInvalidInput)
 	}
 
 	command, err := tx.Exec(ctx, `
@@ -1386,17 +1503,14 @@ func (repo Repository) discardUntouchedPendingMetaLeadForReentry(
 		where organization_id = $1::uuid
 		  and id = $2::uuid
 		  and lower(coalesce(metadata->>'meta_details_status', '')) = 'pending'
-	`, organizationID, pendingLeadID)
+	`, organizationID, pendingReentry.PlaceholderLeadID)
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	if command.RowsAffected() != 1 {
-		return false, tx.Commit(ctx)
+		return "", fmt.Errorf("%w: pending Meta placeholder was not discarded", ErrInvalidInput)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, err
-	}
-	return true, nil
+	return existingLeadID, nil
 }
 
 func (repo Repository) enrichPendingMetaLead(
@@ -1422,6 +1536,17 @@ func (repo Repository) enrichPendingMetaLead(
 	`, integration.OrganizationID, change.LeadgenID); err != nil {
 		return err
 	}
+	intakeIdentity, err := repo.pendingMetaLeadIntakeIdentity(ctx, tx, integration.OrganizationID, leadID, true)
+	if err != nil {
+		return err
+	}
+	legacyIdentity, err := legacyMetaLeadPhoneUniquenessActive(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if err := lockMetaLeadIntakeIdentity(ctx, tx, integration.OrganizationID, lead.Phone, intakeIdentity.ScopeKey, legacyIdentity); err != nil {
+		return err
+	}
 
 	var detailsPending bool
 	err = tx.QueryRow(ctx, `
@@ -1442,6 +1567,10 @@ func (repo Repository) enrichPendingMetaLead(
 	metadata := buildLeadMetadata(webhookPayload, details, change, integration, formConfig, lead)
 	setMetaLeadDetailsState(metadata, "")
 	metadata["source_detail"] = sourceDetail(integration, formConfig)
+	metadata["intake_scope_key"] = intakeIdentity.ScopeKey
+	if intakeIdentity.OriginRoundRobinID != "" {
+		metadata["origin_round_robin_id"] = intakeIdentity.OriginRoundRobinID
+	}
 
 	_, err = tx.Exec(ctx, `
 		update public.leads
@@ -1463,10 +1592,12 @@ func (repo Repository) enrichPendingMetaLead(
 		    utm_medium = coalesce(utm_medium, 'lead_ads'),
 		    utm_campaign = coalesce($17, utm_campaign),
 		    metadata = (coalesce(metadata, '{}'::jsonb) - 'meta_details_error') || $18::jsonb,
+		    intake_scope_key = $19,
+		    origin_round_robin_id = $20::uuid,
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and id = $2::uuid
-	`, integration.OrganizationID, leadID, lead.Name, nullablePointer(lead.Email), nullablePointer(lead.Phone), source, nullablePointer(lead.Message), nullablePointer(lead.Cargo), nullablePointer(lead.Empresa), nullablePointer(lead.Cidade), nullablePointer(lead.Bairro), change.LeadgenID, change.FormID, nullableString(metaText(details, change.Raw, "campaign_id")), nullableString(metaText(details, change.Raw, "adset_id")), nullableString(metaText(details, change.Raw, "ad_id")), nullableString(metaText(details, change.Raw, "campaign_name")), jsonb(metadata))
+	`, integration.OrganizationID, leadID, lead.Name, nullablePointer(lead.Email), nullablePointer(lead.Phone), source, nullablePointer(lead.Message), nullablePointer(lead.Cargo), nullablePointer(lead.Empresa), nullablePointer(lead.Cidade), nullablePointer(lead.Bairro), change.LeadgenID, change.FormID, nullableString(metaText(details, change.Raw, "campaign_id")), nullableString(metaText(details, change.Raw, "adset_id")), nullableString(metaText(details, change.Raw, "ad_id")), nullableString(metaText(details, change.Raw, "campaign_name")), jsonb(metadata), intakeIdentity.ScopeKey, nullableString(intakeIdentity.OriginRoundRobinID))
 	if err != nil {
 		return err
 	}
@@ -1487,8 +1618,128 @@ func (repo Repository) enrichPendingMetaLead(
 }
 
 func (repo Repository) resolveDestination(ctx context.Context, tx pgx.Tx, integration metaIntegration, formConfig metaFormConfig) (resolvedDestination, error) {
+	return repo.resolveDestinationWithRoundRobin(ctx, tx, integration, formConfig, formConfig.RoundRobinID, false)
+}
+
+func shouldResolveAutomaticMetaIntake(pendingReentry *pendingMetaLeadReentry, formConfig metaFormConfig) bool {
+	return pendingReentry == nil && formConfig.RoundRobinID == nil
+}
+
+func (repo Repository) resolveAutomaticMetaIntakeDestination(
+	ctx context.Context,
+	tx pgx.Tx,
+	destination resolvedDestination,
+	integration metaIntegration,
+	formConfig metaFormConfig,
+	change leadgenChange,
+	lead leadData,
+	details map[string]any,
+	source string,
+	propertyID *string,
+) (resolvedDestination, error) {
+	optionalText := func(value string) *string {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil
+		}
+		return &value
+	}
+	campaignName := metaText(details, change.Raw, "campaign_name")
+	campaignID := metaText(details, change.Raw, "campaign_id")
+	intakeDestination, err := distribution.ResolveIntakeDestination(ctx, tx, distribution.IntakeContext{
+		OrganizationID:       integration.OrganizationID,
+		PipelineID:           destination.PipelineID,
+		Source:               source,
+		PropertyID:           propertyID,
+		InterestPropertyID:   propertyID,
+		TagIDs:               tagIDs(formConfig),
+		FormID:               optionalText(change.FormID),
+		City:                 lead.Cidade,
+		UTMCampaign:          optionalText(campaignName),
+		LeadMetaCampaignName: optionalText(campaignName),
+		MetaCampaignID:       optionalText(campaignID),
+	})
+	if err != nil {
+		return resolvedDestination{}, err
+	}
+	return applyMetaIntakeDestination(destination, intakeDestination), nil
+}
+
+func applyMetaIntakeDestination(destination resolvedDestination, intakeDestination distribution.IntakeDestination) resolvedDestination {
+	destination.RoundRobinID = intakeDestination.RoundRobinID
+	destination.ReentryBehavior = intakeDestination.ReentryBehavior
+	destination.RoundRobinResolved = intakeDestination.Resolved
+	destination.TagIDs = append([]string(nil), intakeDestination.TagIDs...)
+	return destination
+}
+
+func preserveAssigneeForMetaIntake(reentry bool, destination resolvedDestination) bool {
+	return distribution.PreserveAssigneeForIntake(reentry, distribution.IntakeDestination{
+		RoundRobinID:    destination.RoundRobinID,
+		ReentryBehavior: destination.ReentryBehavior,
+		Resolved:        destination.RoundRobinResolved,
+	})
+}
+
+func (repo Repository) resolveDestinationForIntakeIdentity(ctx context.Context, tx pgx.Tx, integration metaIntegration, formConfig metaFormConfig, identity metaLeadIntakeIdentity) (resolvedDestination, error) {
+	canonical, err := resolveStoredMetaLeadIntakeIdentity(identity.ScopeKey, identity.OriginRoundRobinID, "", "")
+	if err != nil || canonical != identity {
+		return resolvedDestination{}, fmt.Errorf("%w: invalid preserved Meta intake identity", ErrInvalidInput)
+	}
+
+	if identity.OriginRoundRobinID == "" {
+		destination, err := repo.resolveDestinationWithRoundRobin(ctx, tx, integration, formConfig, nil, true)
+		destination.RoundRobinResolved = true
+		return destination, err
+	}
+
+	value := identity.OriginRoundRobinID
+	destination, err := repo.resolveDestinationWithRoundRobin(ctx, tx, integration, formConfig, &value, true)
+	if errors.Is(err, ErrInvalidInput) {
+		// Queue provenance is durable even though queues themselves are
+		// hard-deleted. Preserve the historical scope and force keep-assignee;
+		// distribution with this missing explicit queue will return
+		// no_matching_queue instead of silently selecting a different queue.
+		return resolvedDestination{
+			RoundRobinID:       &value,
+			RoundRobinResolved: true,
+			ReentryBehavior:    "keep_assignee",
+			TagIDs:             tagIDs(formConfig),
+		}, nil
+	}
+	return destination, err
+}
+
+func (repo Repository) resolveDestinationWithRoundRobin(ctx context.Context, tx pgx.Tx, integration metaIntegration, formConfig metaFormConfig, roundRobinID *string, includeInactiveRoundRobin bool) (resolvedDestination, error) {
 	assignedUserID := firstUUID(formConfig.AssignedUserID, integration.AssignedUserID)
-	destination := resolvedDestination{AssignedUserID: assignedUserID}
+	destination := resolvedDestination{AssignedUserID: assignedUserID, TagIDs: tagIDs(formConfig)}
+
+	if roundRobinID != nil {
+		roundRobin, err := repo.resolveRoundRobin(ctx, tx, formConfig.OrganizationID, *roundRobinID, includeInactiveRoundRobin)
+		if err != nil {
+			return resolvedDestination{}, err
+		}
+		destination.RoundRobinID = roundRobin.RoundRobinID
+		destination.RoundRobinResolved = roundRobin.RoundRobinResolved
+		if roundRobin.PreservedQueueIdentity {
+			// A delayed provider event owns the historical queue identity, not
+			// today's form/integration defaults. The frozen destination (when it
+			// is still active) is authoritative; nil keeps an existing card in
+			// place and lets the lead INSERT trigger choose its audited fallback.
+			roundRobin.TagIDs = nil
+			return roundRobin, nil
+		}
+		destination.RoundRobinMemberID = roundRobin.RoundRobinMemberID
+		destination.ReentryBehavior = roundRobin.ReentryBehavior
+		destination.RedistributionSettings = roundRobin.RedistributionSettings
+		if roundRobin.AssignedUserID != nil {
+			destination.AssignedUserID = roundRobin.AssignedUserID
+		}
+		if roundRobin.PipelineID != nil || roundRobin.StageID != nil {
+			destination.PipelineID = roundRobin.PipelineID
+			destination.StageID = roundRobin.StageID
+		}
+	}
 
 	if formConfig.StageID != nil {
 		pipelineID, stageID, err := repo.resolveStage(ctx, tx, formConfig.OrganizationID, *formConfig.StageID)
@@ -1502,21 +1753,8 @@ func (repo Repository) resolveDestination(ctx context.Context, tx pgx.Tx, integr
 		}
 	}
 
-	if formConfig.RoundRobinID != nil {
-		roundRobin, err := repo.resolveRoundRobin(ctx, tx, formConfig.OrganizationID, *formConfig.RoundRobinID)
-		if err != nil {
-			return resolvedDestination{}, err
-		}
-		destination.RoundRobinID = roundRobin.RoundRobinID
-		destination.RoundRobinMemberID = roundRobin.RoundRobinMemberID
-		if roundRobin.AssignedUserID != nil {
-			destination.AssignedUserID = roundRobin.AssignedUserID
-		}
-		if roundRobin.PipelineID != nil || roundRobin.StageID != nil {
-			destination.PipelineID = roundRobin.PipelineID
-			destination.StageID = roundRobin.StageID
-			return destination, nil
-		}
+	if destination.RoundRobinID != nil && (destination.PipelineID != nil || destination.StageID != nil) {
+		return destination, nil
 	}
 
 	if formConfig.PipelineID != nil {
@@ -1564,18 +1802,19 @@ func (repo Repository) resolveDestination(ctx context.Context, tx pgx.Tx, integr
 	return destination, nil
 }
 
-func (repo Repository) resolveRoundRobin(ctx context.Context, tx pgx.Tx, organizationID string, roundRobinID string) (resolvedDestination, error) {
+func (repo Repository) resolveRoundRobin(ctx context.Context, tx pgx.Tx, organizationID string, roundRobinID string, includeInactive bool) (resolvedDestination, error) {
 	var raw []byte
 	err := tx.QueryRow(ctx, `
 		select to_jsonb(rr)
 		from public.round_robins rr
 		where rr.organization_id = $1::uuid
 		  and rr.id = $2::uuid
-		  and coalesce(rr.is_active, true) = true
+		  and ($3::boolean or coalesce(rr.is_active, true) = true)
 		limit 1
-	`, organizationID, roundRobinID).Scan(&raw)
+		for share of rr
+	`, organizationID, roundRobinID, includeInactive).Scan(&raw)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return resolvedDestination{}, nil
+		return resolvedDestination{}, ErrInvalidInput
 	}
 	if err != nil {
 		return resolvedDestination{}, err
@@ -1586,13 +1825,32 @@ func (repo Repository) resolveRoundRobin(ctx context.Context, tx pgx.Tx, organiz
 		return resolvedDestination{}, err
 	}
 
+	deleted := strings.TrimSpace(textFromAny(item["deleted_at"])) != ""
 	destination := resolvedDestination{
-		RoundRobinID: uuidPointer(item["id"]),
-		PipelineID:   firstUUID(uuidPointer(item["target_pipeline_id"]), uuidPointer(item["pipeline_id"])),
-		StageID:      firstUUID(uuidPointer(item["target_stage_id"]), uuidPointer(objectMap(item["rules"])["target_stage_id"])),
+		RoundRobinID:           uuidPointer(item["id"]),
+		RoundRobinResolved:     true,
+		PreservedQueueIdentity: deleted,
 	}
-	rules := objectMap(item["rules"])
-	destination.RedistributionSettings = objectMap(rules["settings"])
+	if deleted {
+		destination.PipelineID = uuidPointer(item["tombstone_pipeline_id"])
+		destination.StageID = uuidPointer(item["tombstone_stage_id"])
+		destination.ReentryBehavior = "keep_assignee"
+	} else {
+		rules := objectMap(item["rules"])
+		destination.PipelineID = firstUUID(
+			uuidPointer(item["target_pipeline_id"]),
+			uuidPointer(item["pipeline_id"]),
+		)
+		destination.StageID = firstUUID(
+			uuidPointer(item["target_stage_id"]),
+			uuidPointer(rules["target_stage_id"]),
+		)
+		destination.ReentryBehavior = normalizeMetaReentryBehavior(firstNonEmptyText(
+			textFromAny(item["reentry_behavior"]),
+			textFromAny(rules["reentry_behavior"]),
+		))
+		destination.RedistributionSettings = objectMap(rules["settings"])
+	}
 	if destination.StageID != nil {
 		pipelineID, stageID, err := repo.resolveStage(ctx, tx, organizationID, *destination.StageID)
 		if err != nil {
@@ -1607,6 +1865,14 @@ func (repo Repository) resolveRoundRobin(ctx context.Context, tx pgx.Tx, organiz
 		}
 		destination.PipelineID = pipelineID
 		destination.StageID = stageID
+	}
+	if destination.PreservedQueueIdentity &&
+		(destination.PipelineID == nil || destination.StageID == nil) {
+		// Never substitute current form/integration routing for a preserved
+		// queue. A new card is hydrated by the tombstone trigger; a reentry
+		// retains its existing board position through the nil/coalesce update.
+		destination.PipelineID = nil
+		destination.StageID = nil
 	}
 
 	return destination, nil
@@ -1853,7 +2119,32 @@ func findLeadByProviderEventID(ctx context.Context, tx pgx.Tx, organizationID st
 	return leadID, err
 }
 
-func (repo Repository) findExistingLeadByPhone(ctx context.Context, tx pgx.Tx, organizationID string, phone *string) (string, error) {
+func (repo Repository) findExistingLeadByPhone(ctx context.Context, tx pgx.Tx, organizationID string, phone *string, intakeScopeKey string) (string, error) {
+	if digitsOnly(phone) == "" {
+		return "", nil
+	}
+
+	var leadID string
+	err := tx.QueryRow(ctx, `
+		select id::text
+		from public.leads
+		where organization_id = $1::uuid
+		  and intake_scope_key = $3
+		  and phone is not null
+		  and btrim(phone) <> ''
+		  and normalize_phone(phone) is not null
+		  and normalize_phone(phone) <> ''
+		  and normalize_phone(phone) = normalize_phone($2)
+		order by created_at asc
+		limit 1
+	`, organizationID, *phone, intakeScopeKey).Scan(&leadID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return leadID, err
+}
+
+func (repo Repository) findExistingLeadByPhoneLegacy(ctx context.Context, tx pgx.Tx, organizationID string, phone *string) (string, error) {
 	if digitsOnly(phone) == "" {
 		return "", nil
 	}
@@ -1864,6 +2155,8 @@ func (repo Repository) findExistingLeadByPhone(ctx context.Context, tx pgx.Tx, o
 		from public.leads
 		where organization_id = $1::uuid
 		  and phone is not null
+		  and btrim(phone) <> ''
+		  and normalize_phone(phone) is not null
 		  and normalize_phone(phone) <> ''
 		  and normalize_phone(phone) = normalize_phone($2)
 		order by created_at asc
@@ -1873,6 +2166,183 @@ func (repo Repository) findExistingLeadByPhone(ctx context.Context, tx pgx.Tx, o
 		return "", nil
 	}
 	return leadID, err
+}
+
+func metaLeadIntakeScopeKey(roundRobinID *string) string {
+	if roundRobinID == nil || strings.TrimSpace(*roundRobinID) == "" {
+		return "unscoped"
+	}
+	return "queue:" + strings.ToLower(strings.TrimSpace(*roundRobinID))
+}
+
+func resolveStoredMetaLeadIntakeIdentity(storedScope string, storedOrigin string, metadataScope string, metadataOrigin string) (metaLeadIntakeIdentity, error) {
+	queueID := ""
+	addQueueID := func(raw string, source string) error {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return nil
+		}
+		normalized, ok := normalizeUUID(raw)
+		if !ok {
+			return fmt.Errorf("%w: invalid %s", ErrInvalidInput, source)
+		}
+		if queueID != "" && queueID != normalized {
+			return fmt.Errorf("%w: conflicting Meta intake queue identity", ErrInvalidInput)
+		}
+		queueID = normalized
+		return nil
+	}
+	addScope := func(raw string, source string) error {
+		raw = strings.TrimSpace(raw)
+		if raw == "" || strings.EqualFold(raw, "unscoped") {
+			return nil
+		}
+		const prefix = "queue:"
+		if len(raw) <= len(prefix) || !strings.EqualFold(raw[:len(prefix)], prefix) {
+			return fmt.Errorf("%w: invalid %s", ErrInvalidInput, source)
+		}
+		return addQueueID(strings.TrimSpace(raw[len(prefix):]), source)
+	}
+
+	if err := addScope(storedScope, "stored intake_scope_key"); err != nil {
+		return metaLeadIntakeIdentity{}, err
+	}
+	if err := addQueueID(storedOrigin, "stored origin_round_robin_id"); err != nil {
+		return metaLeadIntakeIdentity{}, err
+	}
+	if err := addScope(metadataScope, "metadata intake_scope_key"); err != nil {
+		return metaLeadIntakeIdentity{}, err
+	}
+	if err := addQueueID(metadataOrigin, "metadata origin_round_robin_id"); err != nil {
+		return metaLeadIntakeIdentity{}, err
+	}
+	if queueID == "" {
+		return metaLeadIntakeIdentity{ScopeKey: "unscoped"}, nil
+	}
+	return metaLeadIntakeIdentity{
+		ScopeKey:           "queue:" + queueID,
+		OriginRoundRobinID: queueID,
+	}, nil
+}
+
+func (repo Repository) pendingMetaLeadIntakeIdentity(ctx context.Context, tx pgx.Tx, organizationID string, leadID string, lockRow bool) (metaLeadIntakeIdentity, error) {
+	query := `
+		select
+		  coalesce(nullif(intake_scope_key, ''), 'unscoped'),
+		  coalesce(origin_round_robin_id::text, ''),
+		  coalesce(nullif(metadata->>'intake_scope_key', ''), ''),
+		  coalesce(nullif(metadata->>'origin_round_robin_id', ''), '')
+		from public.leads
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+	`
+	if lockRow {
+		query += " for update"
+	}
+
+	var storedScope string
+	var storedOrigin string
+	var metadataScope string
+	var metadataOrigin string
+	err := tx.QueryRow(ctx, query, organizationID, leadID).Scan(&storedScope, &storedOrigin, &metadataScope, &metadataOrigin)
+	if err != nil {
+		return metaLeadIntakeIdentity{}, err
+	}
+	identity, err := resolveStoredMetaLeadIntakeIdentity(storedScope, storedOrigin, metadataScope, metadataOrigin)
+	if err != nil {
+		return metaLeadIntakeIdentity{}, err
+	}
+	// The placeholder already owns this immutable intake identity. Its source
+	// queue may legitimately have been hard-deleted after the lead was accepted,
+	// so validate the canonical stored shape without requiring a live queue row.
+	if err := repo.validateMetaLeadIntakeIdentity(ctx, tx, organizationID, identity, false); err != nil {
+		return metaLeadIntakeIdentity{}, err
+	}
+	return identity, nil
+}
+
+func (repo Repository) validateMetaLeadIntakeIdentity(ctx context.Context, tx pgx.Tx, organizationID string, identity metaLeadIntakeIdentity, requireLiveQueue bool) error {
+	canonical, err := resolveStoredMetaLeadIntakeIdentity(identity.ScopeKey, identity.OriginRoundRobinID, "", "")
+	if err != nil || canonical != identity {
+		return fmt.Errorf("%w: invalid Meta intake identity", ErrInvalidInput)
+	}
+	if identity.OriginRoundRobinID == "" || !requireLiveQueue {
+		return nil
+	}
+
+	var exists bool
+	err = tx.QueryRow(ctx, `
+		select exists (
+		  select 1
+		  from public.round_robins
+		  where organization_id = $1::uuid
+		    and id = $2::uuid
+		)
+	`, organizationID, identity.OriginRoundRobinID).Scan(&exists)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("%w: Meta intake queue does not belong to the organization", ErrInvalidInput)
+	}
+	return nil
+}
+
+func normalizeMetaReentryBehavior(value string) string {
+	if strings.EqualFold(strings.TrimSpace(value), "keep_assignee") {
+		return "keep_assignee"
+	}
+	return "redistribute"
+}
+
+func firstNonEmptyText(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func lockMetaLeadIntakeIdentity(ctx context.Context, tx pgx.Tx, organizationID string, phone *string, intakeScopeKey string, legacyIdentity bool) error {
+	if digitsOnly(phone) == "" {
+		return nil
+	}
+	if legacyIdentity {
+		_, err := tx.Exec(ctx, `
+			select pg_advisory_xact_lock(
+				hashtextextended($1 || ':legacy-global:' || normalize_phone($2), 0)
+			)
+		`, organizationID, *phone)
+		return err
+	}
+	_, err := tx.Exec(ctx, `
+		select pg_advisory_xact_lock(
+			hashtextextended($1 || ':' || $2 || ':' || normalize_phone($3), 0)
+		)
+	`, organizationID, intakeScopeKey, *phone)
+	return err
+}
+
+func legacyMetaLeadPhoneUniquenessActive(ctx context.Context, tx pgx.Tx) (bool, error) {
+	var active bool
+	err := tx.QueryRow(ctx, `
+		select to_regclass('public.leads_org_phone_unique') is not null
+	`).Scan(&active)
+	return active, err
+}
+
+func metaLeadPhoneUniqueViolationConstraint(err error) string {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		return ""
+	}
+	switch pgErr.ConstraintName {
+	case "leads_org_phone_unique", "leads_org_scope_phone_unique":
+		return pgErr.ConstraintName
+	default:
+		return ""
+	}
 }
 
 func (repo Repository) validateProperty(ctx context.Context, tx pgx.Tx, organizationID string, propertyID *string) error {

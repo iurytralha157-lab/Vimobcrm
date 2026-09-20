@@ -14,14 +14,15 @@ import (
 )
 
 var (
-	ErrInvalidInput           = errors.New("invalid whatsapp input")
-	ErrInvalidReference       = errors.New("invalid whatsapp reference")
-	ErrSessionNotFound        = errors.New("whatsapp session not found")
-	ErrConversationNotFound   = errors.New("whatsapp conversation not found")
-	ErrMessageNotFound        = errors.New("whatsapp message not found")
-	ErrProviderFailed         = errors.New("whatsapp provider operation failed")
-	ErrProviderOutcomeUnknown = errors.New("whatsapp provider outcome is unknown")
-	ErrFeatureUnavailable     = errors.New("whatsapp feature unavailable")
+	ErrInvalidInput               = errors.New("invalid whatsapp input")
+	ErrInvalidReference           = errors.New("invalid whatsapp reference")
+	ErrSessionNotFound            = errors.New("whatsapp session not found")
+	ErrConversationNotFound       = errors.New("whatsapp conversation not found")
+	ErrMessageNotFound            = errors.New("whatsapp message not found")
+	ErrProviderFailed             = errors.New("whatsapp provider operation failed")
+	ErrProviderOutcomeUnknown     = errors.New("whatsapp provider outcome is unknown")
+	ErrFeatureUnavailable         = errors.New("whatsapp feature unavailable")
+	ErrConversationBindingChanged = errors.New("whatsapp conversation binding changed")
 )
 
 type Session struct {
@@ -106,25 +107,26 @@ type AccessUser struct {
 }
 
 type Conversation struct {
-	ID                string       `json:"id"`
-	SessionID         string       `json:"session_id"`
-	LeadID            *string      `json:"lead_id"`
-	RemoteJID         string       `json:"remote_jid"`
-	ContactName       *string      `json:"contact_name"`
-	ContactPhone      *string      `json:"contact_phone"`
-	ContactPicture    *string      `json:"contact_picture"`
-	ContactPresence   *string      `json:"contact_presence"`
-	PresenceUpdatedAt *time.Time   `json:"presence_updated_at"`
-	LastMessage       *string      `json:"last_message"`
-	LastMessageAt     *time.Time   `json:"last_message_at"`
-	UnreadCount       int          `json:"unread_count"`
-	IsGroup           bool         `json:"is_group"`
-	ArchivedAt        *time.Time   `json:"archived_at"`
-	DeletedAt         *time.Time   `json:"deleted_at"`
-	CreatedAt         time.Time    `json:"created_at"`
-	UpdatedAt         time.Time    `json:"updated_at"`
-	Session           *SessionLite `json:"session,omitempty"`
-	Lead              *LeadLite    `json:"lead,omitempty"`
+	ID                 string       `json:"id"`
+	SessionID          string       `json:"session_id"`
+	LeadID             *string      `json:"lead_id"`
+	RemoteJID          string       `json:"remote_jid"`
+	ContactName        *string      `json:"contact_name"`
+	ContactPhone       *string      `json:"contact_phone"`
+	ContactPicture     *string      `json:"contact_picture"`
+	ContactPresence    *string      `json:"contact_presence"`
+	PresenceUpdatedAt  *time.Time   `json:"presence_updated_at"`
+	LastMessage        *string      `json:"last_message"`
+	LastMessageAt      *time.Time   `json:"last_message_at"`
+	UnreadCount        int          `json:"unread_count"`
+	IsGroup            bool         `json:"is_group"`
+	ArchivedAt         *time.Time   `json:"archived_at"`
+	DeletedAt          *time.Time   `json:"deleted_at"`
+	CreatedAt          time.Time    `json:"created_at"`
+	UpdatedAt          time.Time    `json:"updated_at"`
+	HistoricalLeadView bool         `json:"historical_lead_view,omitempty"`
+	Session            *SessionLite `json:"session,omitempty"`
+	Lead               *LeadLite    `json:"lead,omitempty"`
 }
 
 // MarshalJSON keeps the operational Go model ergonomic while making missing
@@ -279,6 +281,7 @@ type MessageFilter struct {
 	CursorAt         *time.Time
 	CursorID         string
 	IncludeMediaURLs bool
+	ExpectedLeadID   string
 }
 
 type FindConversationFilter struct {
@@ -325,11 +328,13 @@ type grantAccessInput struct {
 }
 
 type LinkLeadRequest struct {
-	LeadID string `json:"leadId"`
+	LeadID                 string `json:"leadId"`
+	ExpectedPreviousLeadID string `json:"expectedPreviousLeadId"`
 }
 
 type ArchiveRequest struct {
-	Archive bool `json:"archive"`
+	Archive        bool   `json:"archive"`
+	ExpectedLeadID string `json:"expectedLeadId"`
 }
 
 type SessionOperationResponse struct {
@@ -373,6 +378,7 @@ type SendMessageRequest struct {
 	Filename        *string `json:"filename,omitempty"`
 	SendSessionID   *string `json:"sendSessionId,omitempty"`
 	ClientMessageID *string `json:"clientMessageId,omitempty"`
+	ExpectedLeadID  string  `json:"expectedLeadId"`
 }
 
 type sendMessageInput struct {
@@ -384,6 +390,7 @@ type sendMessageInput struct {
 	Filename        string
 	SendSessionID   string
 	ClientMessageID string
+	ExpectedLeadID  string
 }
 
 type SendMessageResponse struct {
@@ -397,11 +404,13 @@ type SendMessageResponse struct {
 type ReactToMessageRequest struct {
 	Emoji            string `json:"emoji"`
 	ClientReactionID string `json:"clientReactionId"`
+	ExpectedLeadID   string `json:"expectedLeadId"`
 }
 
 type reactToMessageInput struct {
 	Emoji            string
 	ClientReactionID string
+	ExpectedLeadID   string
 }
 
 type ReactToMessageResponse struct {
@@ -488,10 +497,11 @@ type HistorySyncRequest struct {
 }
 
 type StartConversationRequest struct {
-	Phone     string `json:"phone"`
-	SessionID string `json:"sessionId"`
-	LeadID    string `json:"leadId,omitempty"`
-	LeadName  string `json:"leadName,omitempty"`
+	Phone                  string `json:"phone"`
+	SessionID              string `json:"sessionId"`
+	LeadID                 string `json:"leadId,omitempty"`
+	LeadName               string `json:"leadName,omitempty"`
+	ExpectedPreviousLeadID string `json:"expectedPreviousLeadId"`
 }
 
 func ParseConversationListFilter(values url.Values) (ConversationListFilter, error) {
@@ -578,6 +588,13 @@ func ParseMessageFilter(values url.Values) (MessageFilter, error) {
 	}
 
 	filter := MessageFilter{Limit: limit, IncludeMediaURLs: true}
+	if raw := strings.TrimSpace(values.Get("expectedLeadId")); raw != "" {
+		value, err := validateExpectedConversationLeadSnapshot(raw)
+		if err != nil {
+			return MessageFilter{}, fmt.Errorf("%w: expectedLeadId is invalid", ErrInvalidInput)
+		}
+		filter.ExpectedLeadID = value
+	}
 	if raw := strings.TrimSpace(values.Get("includeMediaUrls")); raw != "" {
 		value, err := strconv.ParseBool(raw)
 		if err != nil {
@@ -605,6 +622,17 @@ func ParseMessageFilter(values url.Values) (MessageFilter, error) {
 	}
 
 	return filter, nil
+}
+
+// ParseExpectedLeadID validates the immutable conversation binding snapshot
+// sent by a browser. A linked conversation uses the card UUID. An explicitly
+// unlinked conversation uses the reserved sentinel and is authorized only
+// while the row still has lead_id IS NULL. The value is intentionally
+// required: a browser tab opened for card A (or while unlinked) must not
+// silently read or mutate a different binding after the physical conversation
+// is rebound.
+func ParseExpectedLeadID(values url.Values) (string, error) {
+	return validateExpectedConversationLeadSnapshot(values.Get("expectedLeadId"))
 }
 
 func ParseFindConversationFilter(values url.Values) (FindConversationFilter, error) {
@@ -655,8 +683,8 @@ func ParseHistoryAccessFilter(values url.Values) (HistoryAccessFilter, error) {
 		}
 		filter.LeadID = value
 	}
-	if filter.ConversationID == "" && filter.LeadID == "" {
-		return HistoryAccessFilter{}, fmt.Errorf("%w: conversationId or leadId is required", ErrInvalidInput)
+	if filter.LeadID == "" {
+		return HistoryAccessFilter{}, fmt.Errorf("%w: leadId is required", ErrInvalidInput)
 	}
 
 	return filter, nil
@@ -705,6 +733,10 @@ func (request GrantAccessRequest) Validate() (grantAccessInput, error) {
 }
 
 func (request SendMessageRequest) Validate() (sendMessageInput, error) {
+	expectedLeadID, err := validateExpectedLeadID(request.ExpectedLeadID)
+	if err != nil {
+		return sendMessageInput{}, err
+	}
 	input := sendMessageInput{
 		Text:            strings.TrimSpace(request.Text),
 		MediaURL:        stringPtrValue(request.MediaURL),
@@ -714,6 +746,7 @@ func (request SendMessageRequest) Validate() (sendMessageInput, error) {
 		Filename:        strings.TrimSpace(stringPtrValue(request.Filename)),
 		SendSessionID:   strings.TrimSpace(stringPtrValue(request.SendSessionID)),
 		ClientMessageID: strings.TrimSpace(stringPtrValue(request.ClientMessageID)),
+		ExpectedLeadID:  expectedLeadID,
 	}
 
 	if input.Text == "" && input.MediaURL == "" && input.Base64 == "" {
@@ -755,6 +788,10 @@ func (request SendMessageRequest) Validate() (sendMessageInput, error) {
 }
 
 func (request ReactToMessageRequest) Validate() (reactToMessageInput, error) {
+	expectedLeadID, err := validateExpectedLeadID(request.ExpectedLeadID)
+	if err != nil {
+		return reactToMessageInput{}, err
+	}
 	emoji := strings.TrimSpace(request.Emoji)
 	clientReactionID := strings.TrimSpace(request.ClientReactionID)
 	if clientReactionID == "" || len(clientReactionID) > 200 {
@@ -767,16 +804,29 @@ func (request ReactToMessageRequest) Validate() (reactToMessageInput, error) {
 	return reactToMessageInput{
 		Emoji:            emoji,
 		ClientReactionID: clientReactionID,
+		ExpectedLeadID:   expectedLeadID,
 	}, nil
 }
 
-func (request LinkLeadRequest) Validate() (string, error) {
+func (request ArchiveRequest) Validate() (bool, string, error) {
+	expectedLeadID, err := validateExpectedConversationLeadSnapshot(request.ExpectedLeadID)
+	if err != nil {
+		return false, "", err
+	}
+	return request.Archive, expectedLeadID, nil
+}
+
+func (request LinkLeadRequest) Validate() (string, string, error) {
 	value, ok := normalizeUUID(request.LeadID)
 	if !ok {
-		return "", fmt.Errorf("%w: leadId is invalid", ErrInvalidInput)
+		return "", "", fmt.Errorf("%w: leadId is invalid", ErrInvalidInput)
+	}
+	expectedPreviousLeadID, err := validateExpectedPreviousConversationLeadID(request.ExpectedPreviousLeadID)
+	if err != nil {
+		return "", "", err
 	}
 
-	return value, nil
+	return value, expectedPreviousLeadID, nil
 }
 
 func stringPtrValue(value *string) string {
@@ -812,4 +862,31 @@ func validEnum(value string, allowed ...string) bool {
 
 func normalizeUUID(value string) (string, bool) {
 	return pgvalue.NormalizeUUID(value)
+}
+
+func validateExpectedLeadID(value string) (string, error) {
+	normalized, ok := normalizeUUID(strings.TrimSpace(value))
+	if !ok {
+		return "", fmt.Errorf("%w: expectedLeadId is required and must be a valid UUID", ErrInvalidInput)
+	}
+	return normalized, nil
+}
+
+const unlinkedConversationLeadSnapshot = "unlinked"
+
+func validateExpectedConversationLeadSnapshot(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == unlinkedConversationLeadSnapshot {
+		return trimmed, nil
+	}
+
+	return validateExpectedLeadID(trimmed)
+}
+
+func validateExpectedPreviousConversationLeadID(value string) (string, error) {
+	normalized, err := validateExpectedConversationLeadSnapshot(value)
+	if err != nil {
+		return "", fmt.Errorf("%w: expectedPreviousLeadId is required and must be a valid UUID or unlinked", ErrInvalidInput)
+	}
+	return normalized, nil
 }

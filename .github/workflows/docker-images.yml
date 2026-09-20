@@ -84,6 +84,9 @@ jobs:
           scripts/tests/media-worker-edge-retirement.test.mjs
           scripts/tests/meta-edge-retirement.test.mjs
           scripts/tests/message-worker-gateway-config.test.mjs
+          scripts/tests/queue-scoped-lead-edge-consumers.test.mjs
+          scripts/tests/whatsapp-auxiliary-binding-hardening.test.mjs
+          supabase/functions/_shared/whatsapp-binding-snapshot.test.ts
 
       - name: Test API and shared Go packages
         run: go test ./apps/api/... ./packages/auth/... ./packages/db/...

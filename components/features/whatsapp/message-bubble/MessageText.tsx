@@ -8,6 +8,7 @@ export interface MessageTextProps {
   fromMe: boolean;
   groupJid?: string | null;
   sessionId?: string | null;
+  leadId?: string | null;
   compact?: boolean;
 }
 
@@ -18,6 +19,7 @@ export function MessageText({
   fromMe,
   groupJid,
   sessionId,
+  leadId,
   compact = false,
 }: MessageTextProps) {
   const mentionRegex = /(@\d{7,}|@[\w\u00C0-\u017F]+(?:\s[\w\u00C0-\u017F]+){0,2})/g;
@@ -29,7 +31,7 @@ export function MessageText({
   const digitMentions = parts
     .filter((part) => /^@\d{7,}$/.test(part))
     .map((part) => part.slice(1));
-  const names = useMentionNames(digitMentions, { groupJid, sessionId });
+  const names = useMentionNames(digitMentions, { groupJid, sessionId, leadId });
 
   const renderTextWithLinks = (text: string) => {
     const urlRegex = /(https?:\/\/[^\s<>"']+)/gi;

@@ -59,6 +59,9 @@ func (repo Repository) CreateRule(ctx context.Context, tenantContext tenant.Cont
 	if _, err := repo.getStateForUpdate(ctx, tx, tenantContext.OrganizationID, input.RoundRobinID); err != nil {
 		return Rule{}, err
 	}
+	if err := repo.rejectPendingWhatsAppIntake(ctx, tx, tenantContext.OrganizationID, input.RoundRobinID); err != nil {
+		return Rule{}, err
+	}
 	if err := repo.checkConditionConflicts(ctx, tx, tenantContext.OrganizationID, &input.RoundRobinID, []ruleInput{{
 		MatchType:  input.MatchType,
 		MatchValue: input.MatchValue,
@@ -168,6 +171,9 @@ func (repo Repository) UpdateRule(ctx context.Context, tenantContext tenant.Cont
 	if _, err := repo.getStateForUpdate(ctx, tx, tenantContext.OrganizationID, current.RoundRobinID); err != nil {
 		return Rule{}, err
 	}
+	if err := repo.rejectPendingWhatsAppIntake(ctx, tx, tenantContext.OrganizationID, current.RoundRobinID); err != nil {
+		return Rule{}, err
+	}
 	if err := repo.checkConditionConflicts(ctx, tx, tenantContext.OrganizationID, &current.RoundRobinID, []ruleInput{{
 		MatchType:  matchType,
 		MatchValue: matchValue,
@@ -258,6 +264,12 @@ func (repo Repository) DeleteRule(ctx context.Context, tenantContext tenant.Cont
 	if err := repo.ensureRoundRobinMutable(ctx, tx, tenantContext, current.RoundRobinID); err != nil {
 		return err
 	}
+	if _, err := repo.getStateForUpdate(ctx, tx, tenantContext.OrganizationID, current.RoundRobinID); err != nil {
+		return err
+	}
+	if err := repo.rejectPendingWhatsAppIntake(ctx, tx, tenantContext.OrganizationID, current.RoundRobinID); err != nil {
+		return err
+	}
 	if err := repo.deleteWhatsAppInboundRule(ctx, tx, tenantContext.OrganizationID, ruleID); err != nil {
 		return err
 	}
@@ -280,6 +292,10 @@ func (repo Repository) DeleteRule(ctx context.Context, tenantContext tenant.Cont
 }
 
 func (repo Repository) listRules(ctx context.Context, organizationID string, roundRobinID *string) ([]Rule, error) {
+	return listRulesWithQueryer(ctx, repo.db.Pool(), organizationID, roundRobinID)
+}
+
+func listRulesWithQueryer(ctx context.Context, q queryer, organizationID string, roundRobinID *string) ([]Rule, error) {
 	args := []any{organizationID}
 	where := "r.organization_id = $1::uuid"
 	if roundRobinID != nil {
@@ -287,7 +303,7 @@ func (repo Repository) listRules(ctx context.Context, organizationID string, rou
 		where += " and r.round_robin_id = $2::uuid"
 	}
 
-	rows, err := repo.db.Pool().Query(ctx, `
+	rows, err := q.Query(ctx, `
 		select
 			r.id::text,
 			r.round_robin_id::text,
@@ -299,7 +315,11 @@ func (repo Repository) listRules(ctx context.Context, organizationID string, rou
 			r.created_at,
 			r.updated_at
 		from public.round_robin_rules r
+		join public.round_robins rr
+		  on rr.organization_id = r.organization_id
+		 and rr.id = r.round_robin_id
 		where `+where+`
+		  and rr.deleted_at is null
 		order by r.round_robin_id, coalesce(r.priority, 0) desc, r.created_at asc
 	`, args...)
 	if err != nil {
@@ -331,8 +351,12 @@ func (repo Repository) getRule(ctx context.Context, organizationID string, ruleI
 			r.created_at,
 			r.updated_at
 		from public.round_robin_rules r
+		join public.round_robins rr
+		  on rr.organization_id = r.organization_id
+		 and rr.id = r.round_robin_id
 		where r.organization_id = $1::uuid
 		  and r.id = $2::uuid
+		  and rr.deleted_at is null
 		limit 1
 	`, organizationID, ruleID))
 	if errors.Is(err, pgx.ErrNoRows) {

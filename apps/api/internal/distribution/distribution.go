@@ -17,16 +17,40 @@ var ErrInvalidRequest = errors.New("invalid distribution request")
 var ErrRejected = errors.New("distribution request rejected")
 var ErrInvalidResult = errors.New("invalid distribution result")
 
+// frozenNoQueueRoundRobinID is never persisted as an intake identity. It is
+// only passed as an explicit, nonexistent queue to private.distribute_lead when
+// an intake caller has already resolved routing and found no queue. The SQL
+// guard below fails closed if this UUID was ever inserted for the tenant.
+const frozenNoQueueRoundRobinID = "00000000-0000-0000-0000-000000000000"
+
 const distributeLeadSQL = `
+	with routing_request as (
+		select case
+			when $8::boolean and $4::uuid is null
+				then '` + frozenNoQueueRoundRobinID + `'::uuid
+			else $4::uuid
+		end as round_robin_id
+		where not (
+			$8::boolean
+			and $4::uuid is null
+			and exists (
+				select 1
+				from public.round_robins as queue
+				where queue.organization_id = $1::uuid
+				  and queue.id = '` + frozenNoQueueRoundRobinID + `'::uuid
+			)
+		)
+	)
 	select private.distribute_lead(
 		$1::uuid,
 		$2::uuid,
 		$3::text,
-		$4::uuid,
+		routing_request.round_robin_id,
 		$5::boolean,
 		$6::text,
 		$7::timestamptz
-	)`
+	)
+	from routing_request`
 
 // Queryer is intentionally satisfied by both pgx.Tx and pgxpool.Pool. Intake
 // paths should pass their existing transaction so enrichment and distribution
@@ -36,13 +60,17 @@ type Queryer interface {
 }
 
 type Request struct {
-	OrganizationID   string
-	LeadID           string
-	IdempotencyKey   string
-	RoundRobinID     *string
-	PreserveAssignee bool
-	Source           *string
-	OccurredAt       time.Time
+	OrganizationID string
+	LeadID         string
+	IdempotencyKey string
+	RoundRobinID   *string
+	// RoundRobinResolved distinguishes legacy auto-routing (false + nil queue)
+	// from a frozen intake decision that deliberately found no queue (true +
+	// nil queue). Existing callers remain backwards compatible by default.
+	RoundRobinResolved bool
+	PreserveAssignee   bool
+	Source             *string
+	OccurredAt         time.Time
 }
 
 type Result struct {
@@ -94,6 +122,7 @@ func Distribute(ctx context.Context, queryer Queryer, request Request) (Result, 
 		request.PreserveAssignee,
 		nullableText(request.Source),
 		occurredAt,
+		request.RoundRobinResolved,
 	).Scan(&raw)
 	if err != nil {
 		return Result{}, fmt.Errorf("distribute lead: %w", err)

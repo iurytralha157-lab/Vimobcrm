@@ -3,6 +3,10 @@ import { apiEnvelopeSchema, nonNegativeIntegerSchema, timestampSchema, uuidSchem
 
 export const whatsAppProviderSchema = z.enum(['evolution', 'evolution_go'])
 export const whatsAppAccessModeSchema = z.literal('assigned_leads_only')
+export const whatsAppConversationLeadSnapshotSchema = z.union([
+  uuidSchema,
+  z.literal('unlinked'),
+])
 
 export const createWhatsAppSessionInputSchema = z.object({
   displayName: z.string().trim().min(2).max(80),
@@ -29,10 +33,17 @@ export const startWhatsAppConversationInputSchema = z.object({
   sessionId: uuidSchema.optional(),
   leadId: uuidSchema.optional(),
   leadName: z.string().trim().max(180).optional(),
+  expectedPreviousLeadId: whatsAppConversationLeadSnapshotSchema,
+}).strict()
+
+export const linkWhatsAppConversationLeadInputSchema = z.object({
+  leadId: uuidSchema,
+  expectedPreviousLeadId: whatsAppConversationLeadSnapshotSchema,
 }).strict()
 
 export const sendWhatsAppMessageInputSchema = z.object({
-  text: z.string().max(10_000),
+	text: z.string().max(10_000),
+	expectedLeadId: uuidSchema,
   mediaUrl: z.string().trim().max(4_000).optional(),
   mediaType: z.enum(['text', 'image', 'video', 'document', 'audio', 'sticker']).optional(),
   base64: z.string().min(1).optional(),
@@ -150,6 +161,7 @@ export const whatsAppConversationSchema = z.object({
   deleted_at: timestampSchema.nullable(),
   created_at: timestampSchema,
   updated_at: timestampSchema,
+	historical_lead_view: z.boolean().optional(),
   session: z.object({
     id: uuidSchema,
     instance_name: z.string(),
@@ -249,10 +261,11 @@ export const sendWhatsAppMessageResponseSchema = z.object({
 }).passthrough()
 
 export const reactWhatsAppMessageInputSchema = z.object({
-  emoji: z.string()
+	emoji: z.string()
     .transform((value) => value.trim())
     .refine((value) => [...value].length <= 64, 'Reacao invalida'),
-  clientReactionId: z.string().trim().min(1).max(200),
+	clientReactionId: z.string().trim().min(1).max(200),
+	expectedLeadId: uuidSchema,
 }).strict()
 
 export const reactWhatsAppMessageResponseSchema = z.object({

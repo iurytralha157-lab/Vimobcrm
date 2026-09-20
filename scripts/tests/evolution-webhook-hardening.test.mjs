@@ -55,7 +55,7 @@ test("message replay claim precedes every per-message side effect", async () => 
     aiEffect,
   );
   assert.ok(completionAfterAi > aiEffect);
-  assert.match(source, /const aiAgentResponse = await fetch\(`\$\{supabaseUrl\}\/functions\/v1\/ai-agent-responder`/);
+  assert.match(source, /const aiAgentResponse = await fetch\(\s*`\$\{supabaseUrl\}\/functions\/v1\/ai-agent-responder`/);
   assert.match(source, /await retryEvolutionMessageDelivery\(supabase, ownedClaim\)/);
 });
 

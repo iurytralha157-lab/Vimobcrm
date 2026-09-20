@@ -20,6 +20,7 @@ export type CreateLeadContact = {
   phone?: string;
   name?: string;
   conversationId?: string;
+  expectedPreviousLeadId?: string;
 };
 
 type ConversationOverlaysProps = {
@@ -70,6 +71,7 @@ export function ConversationOverlays({
           contactPhone={createLeadContact.phone}
           contactName={createLeadContact.name}
           conversationId={createLeadContact.conversationId}
+          expectedPreviousLeadId={createLeadContact.expectedPreviousLeadId}
           onSaved={(lead) => onLeadSaved(lead.id)}
         />
       )}

@@ -33,6 +33,7 @@ export type CreateLeadInput = {
   team_id?: string;
   tag_ids?: string[];
   conversation_id?: string;
+  expected_previous_lead_id?: string;
   cargo?: string;
   empresa?: string;
   profissao?: string;
@@ -262,6 +263,10 @@ export function useCreateLead() {
       }
       if (error instanceof VimobAPIError && error.code === 'lead_already_exists') {
         toast.warning('Atenção: lead não criado, pois já está cadastrado e atribuído a outro responsável. Entre em contato com o administrador.');
+        return;
+      }
+      if (error instanceof VimobAPIError && error.code === 'whatsapp_conversation_binding_changed') {
+        toast.warning('A conversa foi vinculada a outro card. Atualize a tela antes de criar o lead.');
         return;
       }
       toast.error('Erro ao criar lead: ' + getErrorMessage(error));

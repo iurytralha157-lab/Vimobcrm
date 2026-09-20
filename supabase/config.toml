@@ -61,16 +61,6 @@ vector_port = 56328
 [functions.evolution-go-webhook]
 verify_jwt = false
 
-# Evolution callbacks and private worker events are authenticated inside the
-# handler with their callback secret or constant-time private worker secret.
-[functions.evolution-webhook]
-verify_jwt = false
-
-# Private message workers receive service-role `apikey` requests and enforce
-# their own constant-time private authentication before any database access.
-[functions.message-sender]
-verify_jwt = false
-
 [functions.evolution-go-proxy]
 verify_jwt = false
 
@@ -168,9 +158,6 @@ verify_jwt = true
 # BEGIN: production-manifest verify_jwt (generated)
 # Do not edit this block manually. Update production-manifest.json and run:
 # node scripts/supabase/verify-edge-functions.mjs --write-config
-[functions.ai-agent-responder]
-verify_jwt = false
-
 [functions.auto-migrate-wp-images]
 verify_jwt = false
 
@@ -187,9 +174,6 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.automation-trigger]
-verify_jwt = false
-
-[functions.calculate-first-response]
 verify_jwt = false
 
 [functions.cleanup-notifications]
@@ -282,13 +266,7 @@ verify_jwt = false
 [functions.smart-recurring-generator]
 verify_jwt = false
 
-[functions.sync-whatsapp-contacts]
-verify_jwt = true
-
 [functions.telephony-recording-proxy]
-verify_jwt = false
-
-[functions.threecplus-webhook]
 verify_jwt = false
 
 [functions.verify-domain-dns]
@@ -301,8 +279,5 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.whatsapp-history-access]
-verify_jwt = true
-
-[functions.whatsapp-notifier]
 verify_jwt = true
 # END: production-manifest verify_jwt (generated)

@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(78);
+select plan(92);
 
 select has_table(
   'private',
@@ -780,8 +780,20 @@ select ok(
     where lead_id = 'd9000000-0000-4000-8000-000000000001'
       and type = 'lead_assigned'
       and metadata->>'event_key' = 'new_lead_received'
-      and metadata->>'dedupe_key' =
-        'new_lead_received:d9000000-0000-4000-8000-000000000001:d2000000-0000-4000-8000-000000000001'
+      and metadata->>'distribution_event_id' = (
+        select distribution_event.id::text
+        from private.lead_distribution_events as distribution_event
+        where distribution_event.organization_id =
+          'd1000000-0000-4000-8000-000000000001'
+          and distribution_event.idempotency_key = 'team:first'
+      )
+      and metadata->>'dedupe_key' = concat_ws(
+        ':',
+        'new_lead_received',
+        'd9000000-0000-4000-8000-000000000001',
+        'd2000000-0000-4000-8000-000000000001',
+        metadata->>'distribution_event_id'
+      )
       and metadata->'dispatch'->'whatsapp'->>'status' = 'pending'
       and metadata->'dispatch'->'push'->>'status' = 'pending'
   ),
@@ -1279,6 +1291,11 @@ select ok(
     select
       lower(procedure.prosrc) not like '%from pg_catalog.pg_timezone_names%'
       and lower(procedure.prosrc) like '%at time zone v_timezone%'
+      and lower(procedure.prosrc)
+        like '%nullif(btrim(v_queue.settings->>''timezone''), '''')%'
+      and lower(procedure.prosrc)
+        like '%from public.organization_attention_settings as settings%'
+      and lower(procedure.prosrc) like '%''america/sao_paulo''%'
     from pg_catalog.pg_proc as procedure
     where procedure.oid =
       'private.distribute_lead(uuid,uuid,text,uuid,boolean,text,timestamptz)'::regprocedure
@@ -2548,6 +2565,381 @@ select ok(
       'private.distribute_lead(uuid,uuid,text,uuid,boolean,text,timestamptz)'::regprocedure
   ),
   'function keeps the lead safety lock without restoring a queue or member lock convoy'
+);
+
+-- Canonical availability regressions. These calls exercise the database
+-- picker directly with a deterministic weekday/time and do not depend on the
+-- wall clock or the API fallback selector.
+insert into public.round_robins (
+  id,
+  organization_id,
+  name,
+  strategy,
+  is_active,
+  created_by
+)
+values
+  (
+    'd7000000-0000-4000-8000-000000000006',
+    'd1000000-0000-4000-8000-000000000001',
+    'Direct Availability Regression Queue',
+    'simple',
+    true,
+    'd2000000-0000-4000-8000-000000000001'
+  ),
+  (
+    'd7000000-0000-4000-8000-000000000007',
+    'd1000000-0000-4000-8000-000000000001',
+    'Exact Team Membership Regression Queue',
+    'simple',
+    true,
+    'd2000000-0000-4000-8000-000000000001'
+  );
+
+insert into public.round_robin_members (
+  id,
+  organization_id,
+  round_robin_id,
+  user_id,
+  team_id,
+  weight,
+  position,
+  is_active
+)
+values
+  (
+    'd8000000-0000-4000-8000-000000000007',
+    'd1000000-0000-4000-8000-000000000001',
+    'd7000000-0000-4000-8000-000000000006',
+    'd2000000-0000-4000-8000-000000000002',
+    null,
+    1,
+    0,
+    true
+  ),
+  (
+    'd8000000-0000-4000-8000-000000000008',
+    'd1000000-0000-4000-8000-000000000001',
+    'd7000000-0000-4000-8000-000000000007',
+    'd2000000-0000-4000-8000-000000000002',
+    'd5000000-0000-4000-8000-000000000001',
+    1,
+    0,
+    true
+  );
+
+select is(
+  (
+    select count(*)
+    from private.pick_round_robin_ticket_candidate(
+      'd1000000-0000-4000-8000-000000000001',
+      'd7000000-0000-4000-8000-000000000006',
+      'simple',
+      false,
+      1,
+      '10:00:00'::time,
+      1
+    )
+  ),
+  0::bigint,
+  'a direct queue member inherits team availability and is blocked outside its configured hours'
+);
+
+update public.member_availability
+set is_active = false
+where id = 'd6100000-0000-4000-8000-000000000002';
+
+select is(
+  (
+    select count(*)
+    from private.pick_round_robin_ticket_candidate(
+      'd1000000-0000-4000-8000-000000000001',
+      'd7000000-0000-4000-8000-000000000006',
+      'simple',
+      false,
+      1,
+      '18:30:00'::time,
+      1
+    )
+  ),
+  0::bigint,
+  'an entirely disabled configured schedule fails closed instead of becoming 24-hour availability'
+);
+
+update public.member_availability
+set day_of_week = 1,
+    start_time = '22:00:00'::time,
+    end_time = '08:00:00'::time,
+    is_all_day = false,
+    is_active = true
+where id = 'd6100000-0000-4000-8000-000000000002';
+
+select is(
+  (
+    select candidate.user_id
+    from private.pick_round_robin_ticket_candidate(
+      'd1000000-0000-4000-8000-000000000001',
+      'd7000000-0000-4000-8000-000000000006',
+      'simple',
+      false,
+      1,
+      '22:00:00'::time,
+      1
+    ) as candidate
+  ),
+  'd2000000-0000-4000-8000-000000000002'::uuid,
+  'a Monday 22:00-08:00 schedule includes its exact 22:00 start boundary'
+);
+
+select is(
+  (
+    select candidate.user_id
+    from private.pick_round_robin_ticket_candidate(
+      'd1000000-0000-4000-8000-000000000001',
+      'd7000000-0000-4000-8000-000000000006',
+      'simple',
+      false,
+      1,
+      '23:59:59'::time,
+      1
+    ) as candidate
+  ),
+  'd2000000-0000-4000-8000-000000000002'::uuid,
+  'a Monday 22:00-08:00 schedule includes late Monday night'
+);
+
+select is(
+  (
+    select candidate.user_id
+    from private.pick_round_robin_ticket_candidate(
+      'd1000000-0000-4000-8000-000000000001',
+      'd7000000-0000-4000-8000-000000000006',
+      'simple',
+      false,
+      2,
+      '00:30:00'::time,
+      1
+    ) as candidate
+  ),
+  'd2000000-0000-4000-8000-000000000002'::uuid,
+  'a Monday 22:00-08:00 schedule carries into early Tuesday'
+);
+
+select is(
+  (
+    select candidate.user_id
+    from private.pick_round_robin_ticket_candidate(
+      'd1000000-0000-4000-8000-000000000001',
+      'd7000000-0000-4000-8000-000000000006',
+      'simple',
+      false,
+      2,
+      '01:00:00'::time,
+      1
+    ) as candidate
+  ),
+  'd2000000-0000-4000-8000-000000000002'::uuid,
+  'a Monday 22:00-08:00 schedule permits the Tuesday 01:00 overnight carry'
+);
+
+select is(
+  (
+    select candidate.user_id
+    from private.pick_round_robin_ticket_candidate(
+      'd1000000-0000-4000-8000-000000000001',
+      'd7000000-0000-4000-8000-000000000006',
+      'simple',
+      false,
+      2,
+      '07:59:00'::time,
+      1
+    ) as candidate
+  ),
+  'd2000000-0000-4000-8000-000000000002'::uuid,
+  'a Monday 22:00-08:00 schedule includes Tuesday 07:59'
+);
+
+select is(
+  (
+    select candidate.user_id
+    from private.pick_round_robin_ticket_candidate(
+      'd1000000-0000-4000-8000-000000000001',
+      'd7000000-0000-4000-8000-000000000006',
+      'simple',
+      false,
+      2,
+      '08:00:00'::time,
+      1
+    ) as candidate
+  ),
+  'd2000000-0000-4000-8000-000000000002'::uuid,
+  'the overnight end boundary is inclusive at exactly Tuesday 08:00'
+);
+
+select is(
+  (
+    select count(*)
+    from private.pick_round_robin_ticket_candidate(
+      'd1000000-0000-4000-8000-000000000001',
+      'd7000000-0000-4000-8000-000000000006',
+      'simple',
+      false,
+      2,
+      '08:00:01'::time,
+      1
+    )
+  ),
+  0::bigint,
+  'the overnight window is closed immediately after Tuesday 08:00'
+);
+
+select is(
+  (
+    select count(*)
+    from private.pick_round_robin_ticket_candidate(
+      'd1000000-0000-4000-8000-000000000001',
+      'd7000000-0000-4000-8000-000000000006',
+      'simple',
+      false,
+      2,
+      '22:30:00'::time,
+      1
+    )
+  ),
+  0::bigint,
+  'a Monday overnight row does not authorize a new Tuesday 22:30 window'
+);
+
+update public.member_availability
+set day_of_week = 2
+where id = 'd6100000-0000-4000-8000-000000000002';
+
+select is(
+  (
+    select count(*)
+    from private.pick_round_robin_ticket_candidate(
+      'd1000000-0000-4000-8000-000000000001',
+      'd7000000-0000-4000-8000-000000000006',
+      'simple',
+      false,
+      2,
+      '01:00:00'::time,
+      1
+    )
+  ),
+  0::bigint,
+  'a Tuesday 22:00-08:00 schedule does not permit Tuesday 01:00 without a Monday carry row'
+);
+
+select is(
+  (
+    select candidate.user_id
+    from private.pick_round_robin_ticket_candidate(
+      'd1000000-0000-4000-8000-000000000001',
+      'd7000000-0000-4000-8000-000000000006',
+      'simple',
+      false,
+      2,
+      '22:30:00'::time,
+      1
+    ) as candidate
+  ),
+  'd2000000-0000-4000-8000-000000000002'::uuid,
+  'Tuesday 22:30 is available only after a Tuesday overnight row is configured'
+);
+
+select is(
+  (
+    select candidate.user_id
+    from private.pick_round_robin_ticket_candidate(
+      'd1000000-0000-4000-8000-000000000001',
+      'd7000000-0000-4000-8000-000000000006',
+      'simple',
+      true,
+      2,
+      '01:00:00'::time,
+      1
+    ) as candidate
+  ),
+  'd2000000-0000-4000-8000-000000000002'::uuid,
+  'ignore_availability explicitly bypasses the configured schedule gate'
+);
+
+insert into public.teams (
+  id,
+  organization_id,
+  name,
+  is_active
+)
+values (
+  'd5000000-0000-4000-8000-000000000003',
+  'd1000000-0000-4000-8000-000000000001',
+  'Alternate Availability Team',
+  true
+);
+
+insert into public.team_members (
+  id,
+  organization_id,
+  team_id,
+  user_id,
+  is_active
+)
+values (
+  'd6000000-0000-4000-8000-000000000005',
+  'd1000000-0000-4000-8000-000000000001',
+  'd5000000-0000-4000-8000-000000000003',
+  'd2000000-0000-4000-8000-000000000002',
+  true
+);
+
+insert into public.member_availability (
+  id,
+  organization_id,
+  team_member_id,
+  day_of_week,
+  start_time,
+  end_time,
+  is_all_day,
+  is_active
+)
+values (
+  'd6100000-0000-4000-8000-000000000005',
+  'd1000000-0000-4000-8000-000000000001',
+  'd6000000-0000-4000-8000-000000000005',
+  2,
+  null,
+  null,
+  true,
+  true
+);
+
+select ok(
+  exists (
+    select 1
+    from private.pick_round_robin_ticket_candidate(
+      'd1000000-0000-4000-8000-000000000001',
+      'd7000000-0000-4000-8000-000000000006',
+      'simple',
+      false,
+      2,
+      '01:00:00'::time,
+      1
+    )
+  )
+  and not exists (
+    select 1
+    from private.pick_round_robin_ticket_candidate(
+      'd1000000-0000-4000-8000-000000000001',
+      'd7000000-0000-4000-8000-000000000007',
+      'simple',
+      false,
+      2,
+      '01:00:00'::time,
+      1
+    )
+  ),
+  'an unbound direct member may inherit another active membership schedule while a team-bound member remains exact'
 );
 
 select * from finish();

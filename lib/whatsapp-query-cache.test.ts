@@ -8,6 +8,7 @@ import {
   isWhatsAppQueryKeyForScope,
   isWhatsAppInboxWakePayload,
   matchesLeadMessagesQueryKey,
+  matchesPaginatedWhatsAppMessagesQueryKey,
   matchesWhatsAppMessageRefreshQueryKey,
   matchesWhatsAppMessagesQueryKey,
   mergeWhatsAppLatestMessagePage,
@@ -59,6 +60,7 @@ test('segrega as chaves por organizacao, usuario e escopo de acesso', () => {
   assert.equal(isWhatsAppQueryKeyForScope(keyA, scopeA), true)
   assert.equal(isWhatsAppQueryKeyForScope(keyA, scopeB), false)
   assert.equal(matchesWhatsAppMessagesQueryKey(keyA, scopeA, 'conversation-a'), true)
+  assert.equal(matchesWhatsAppMessagesQueryKey(keyA, scopeA, 'conversation-a', 'lead-b'), false)
   assert.equal(matchesWhatsAppMessagesQueryKey(keyA, scopeB, 'conversation-a'), false)
 })
 
@@ -73,6 +75,54 @@ test('segrega o historico paginado do lead pelo mesmo escopo de acesso', () => {
   assert.equal(matchesLeadMessagesQueryKey(keyA, scopeB, 'lead-a'), false)
 })
 
+test('segrega o historico paginado da conversa pelo card esperado', () => {
+  const keyLeadA = whatsappQueryKeys.paginatedMessages(
+    scopeA,
+    'conversation-a',
+    50,
+    'lead-a',
+  )
+  const keyLeadB = whatsappQueryKeys.paginatedMessages(
+    scopeA,
+    'conversation-a',
+    50,
+    'lead-b',
+  )
+
+  assert.notDeepEqual(keyLeadA, keyLeadB)
+  assert.equal(
+    matchesPaginatedWhatsAppMessagesQueryKey(keyLeadA, scopeA, 'conversation-a', 'lead-a'),
+    true,
+  )
+  assert.equal(
+    matchesPaginatedWhatsAppMessagesQueryKey(keyLeadA, scopeA, 'conversation-a', 'lead-b'),
+    false,
+  )
+
+  const keyUnlinked = whatsappQueryKeys.paginatedMessages(
+    scopeA,
+    'conversation-a',
+    50,
+    'unlinked',
+  )
+  const keyMissingSnapshot = whatsappQueryKeys.paginatedMessages(
+    scopeA,
+    'conversation-a',
+    50,
+    null,
+  )
+  assert.notDeepEqual(keyUnlinked, keyLeadA)
+  assert.notDeepEqual(keyUnlinked, keyMissingSnapshot)
+  assert.equal(
+    matchesPaginatedWhatsAppMessagesQueryKey(keyUnlinked, scopeA, 'conversation-a', 'unlinked'),
+    true,
+  )
+  assert.equal(
+    matchesPaginatedWhatsAppMessagesQueryKey(keyUnlinked, scopeA, 'conversation-a', 'lead-a'),
+    false,
+  )
+})
+
 test('reconcilia o envio nas consultas simples e paginadas da conversa ativa', () => {
   const conversationIds = ['conversation-a', 'conversation-canonical']
   const simpleKey = whatsappQueryKeys.messages(scopeA, {
@@ -81,8 +131,8 @@ test('reconcilia o envio nas consultas simples e paginadas da conversa ativa', (
     limit: 50,
     includeLeadHistory: false,
   })
-  const paginatedKey = whatsappQueryKeys.paginatedMessages(scopeA, 'conversation-canonical', 50)
-  const unrelatedKey = whatsappQueryKeys.paginatedMessages(scopeA, 'conversation-b', 50)
+  const paginatedKey = whatsappQueryKeys.paginatedMessages(scopeA, 'conversation-canonical', 50, 'lead-a')
+  const unrelatedKey = whatsappQueryKeys.paginatedMessages(scopeA, 'conversation-b', 50, 'lead-a')
 
   assert.equal(
     matchesWhatsAppMessageRefreshQueryKey(simpleKey, scopeA, conversationIds, 'lead-a'),
@@ -165,6 +215,17 @@ test('segrega deep link de lead por tenant ativo', () => {
   const keyB = whatsappQueryKeys.conversationForLead(scopeB, 'lead-a')
 
   assert.notDeepEqual(keyA, keyB)
+  assert.equal(isWhatsAppQueryKeyForScope(keyA, scopeA), true)
+  assert.equal(isWhatsAppQueryKeyForScope(keyA, scopeB), false)
+})
+
+test('segrega snapshot de deep link por conversa e tenant ativo', () => {
+  const keyA = whatsappQueryKeys.conversationSnapshot(scopeA, 'conversation-a')
+  const keyOtherConversation = whatsappQueryKeys.conversationSnapshot(scopeA, 'conversation-b')
+  const keyOtherTenant = whatsappQueryKeys.conversationSnapshot(scopeB, 'conversation-a')
+
+  assert.notDeepEqual(keyA, keyOtherConversation)
+  assert.notDeepEqual(keyA, keyOtherTenant)
   assert.equal(isWhatsAppQueryKeyForScope(keyA, scopeA), true)
   assert.equal(isWhatsAppQueryKeyForScope(keyA, scopeB), false)
 })
@@ -263,6 +324,17 @@ test('ordena paginas antigas antes das novas e elimina sobreposicao de cursor', 
     flattenWhatsAppMessagePages(pages).map((message) => message.id),
     ['message-1', 'message-2', 'message-3', 'message-4'],
   )
+})
+
+test('segrega a projecao historica por conversa e card esperado', () => {
+  const cardA = whatsappQueryKeys.conversationHistoryProjection(scopeA, 'conversation-a', 'lead-a')
+  const cardB = whatsappQueryKeys.conversationHistoryProjection(scopeA, 'conversation-a', 'lead-b')
+  const otherConversation = whatsappQueryKeys.conversationHistoryProjection(scopeA, 'conversation-b', 'lead-a')
+
+  assert.notDeepEqual(cardA, cardB)
+  assert.notDeepEqual(cardA, otherConversation)
+  assert.equal(isWhatsAppQueryKeyForScope(cardA, scopeA), true)
+  assert.equal(isWhatsAppQueryKeyForScope(cardA, scopeB), false)
 })
 
 test('atualiza somente a pagina recente e preserva o historico paginado', () => {

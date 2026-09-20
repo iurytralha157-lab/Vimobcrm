@@ -4,17 +4,17 @@
   "captured_at": "2026-08-09T12:39:15.763Z",
   "purpose": "Canonical Edge Function deployment inventory. ACTIVE entries are routable; RETIRED entries are inventory-only.",
   "source_hash_algorithm": "sha256-tree-utf8-lf-v1",
-  "shared_source_sha256": "1e9d98adf46dd6843ac6160db3da527c1f6707b4ca27ff775f21311b9a2359aa",
+  "shared_source_sha256": "8bd8fd72fa7e0be66871b7ac179344db9c5945b26d652de62b61e10c76faa8e2",
   "functions": [
     {
       "slug": "ai-agent-responder",
-      "status": "ACTIVE",
-      "lifecycle": "LIVE",
+      "status": "RETIRED",
+      "lifecycle": "RETIRED",
       "version": 590,
       "verify_jwt": false,
-      "auth_boundary": "HANDLER_MANAGED",
+      "auth_boundary": "NOT_ROUTABLE",
       "captured_deployment_sha256": "1ab1210ad5212f4e9accdefb87a2262d4e419d25afed0e31263e86aa84eacd41",
-      "source_sha256": "6ac6a04b5f5b5292d4c9521703bf7f5b1cd8977f699f3ce911e94b92b5f070b5"
+      "source_sha256": "65a93e8ac4d00c96d5b057ac40940d1997fa4111a940709e65bfd8b75ba251dd"
     },
     {
       "slug": "approve-onboarding-request",
@@ -158,13 +158,13 @@
     },
     {
       "slug": "calculate-first-response",
-      "status": "ACTIVE",
-      "lifecycle": "LIVE",
+      "status": "RETIRED",
+      "lifecycle": "RETIRED",
       "version": 663,
       "verify_jwt": false,
-      "auth_boundary": "HANDLER_MANAGED",
+      "auth_boundary": "NOT_ROUTABLE",
       "captured_deployment_sha256": "947ea76cd45cc2586310a111ccec02981a5be73e14bb3b370c0a719bc8a1d466",
-      "source_sha256": "681c57dff958e152669878209cf72eea29dd62dd3cfa0a4ee0296ebe8b7aca24"
+      "source_sha256": "5cf79df3e61f5116dc33ee832a69f248c89461f7df3478d43783e7f2fe5a27d4"
     },
     {
       "slug": "change-password",
@@ -264,7 +264,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "6aed1133e54b46c80cd6cc084d459dfce5cf580bab7825674701149586af05fa",
-      "source_sha256": "ba1a461bf65504fabb4de47fc908ec3c39d700abee9bb529e56c5c736e107466"
+      "source_sha256": "d1e08e8b028e879dcd56d4a2157e0be560386bb64418698a0a2ae985d061fb69"
     },
     {
       "slug": "evolution-proxy",
@@ -278,13 +278,13 @@
     },
     {
       "slug": "evolution-webhook",
-      "status": "ACTIVE",
-      "lifecycle": "LIVE",
+      "status": "RETIRED",
+      "lifecycle": "RETIRED",
       "version": 694,
       "verify_jwt": false,
-      "auth_boundary": "HANDLER_MANAGED",
+      "auth_boundary": "NOT_ROUTABLE",
       "captured_deployment_sha256": "82e151f2056a55f0cdb0130fb84c1ded3ba1dbb2a7e59897cecd0dcfe8b26e3c",
-      "source_sha256": "b348fa9deb751286e64fc610f53bcafa7bdd2072c9d2dfac136065444cd83006"
+      "source_sha256": "1e0f0af2ef91f1b1c923deab00f44eefa25a5c3904d000b254c098a5ee3dca54"
     },
     {
       "slug": "financial-engine",
@@ -448,13 +448,13 @@
     },
     {
       "slug": "message-sender",
-      "status": "ACTIVE",
-      "lifecycle": "LIVE",
+      "status": "RETIRED",
+      "lifecycle": "RETIRED",
       "version": 663,
       "verify_jwt": false,
-      "auth_boundary": "HANDLER_MANAGED",
+      "auth_boundary": "NOT_ROUTABLE",
       "captured_deployment_sha256": "0a890d0ba966bcd0cb1f49df69ad36d84b87d2bfd8430e72f3e45d3ab8c339fa",
-      "source_sha256": "c7adc8e93e98409e36b73a7afb8fd2087d08d79a762fee749b598180211832ad"
+      "source_sha256": "a1ea4f8356201c9441e79dea89d3857bd1ac2d715a9ba55459773deb0886f39c"
     },
     {
       "slug": "meta-campaign-insights",
@@ -738,13 +738,13 @@
     },
     {
       "slug": "sync-whatsapp-contacts",
-      "status": "ACTIVE",
-      "lifecycle": "LIVE",
+      "status": "RETIRED",
+      "lifecycle": "RETIRED",
       "version": 134,
       "verify_jwt": true,
-      "auth_boundary": "GATEWAY_JWT",
+      "auth_boundary": "NOT_ROUTABLE",
       "captured_deployment_sha256": "19b41a83f60d6a2534b6aa113d871965222804cb05bf606646df6ad568b6e0df",
-      "source_sha256": "32d0a7cc1f37799627e8c2d0f162b15a0679ad26e60d3cc266f77ecb909a4ff9"
+      "source_sha256": "edc1c28b468e3cbd8a4381a27c0aeaa583be2f67eae3b9aa9f12c0a6d6844118"
     },
     {
       "slug": "telephony-recording-proxy",
@@ -758,13 +758,13 @@
     },
     {
       "slug": "threecplus-webhook",
-      "status": "ACTIVE",
-      "lifecycle": "LIVE",
+      "status": "RETIRED",
+      "lifecycle": "RETIRED",
       "version": 657,
       "verify_jwt": false,
-      "auth_boundary": "HANDLER_MANAGED",
+      "auth_boundary": "NOT_ROUTABLE",
       "captured_deployment_sha256": null,
-      "source_sha256": "9cabcd8d9e11606f6c9c067908886941ff6b1e2978ad7253eec1ac46e2b3b4ac"
+      "source_sha256": "b13e71e2867877035d027f5850f7e630075b63b4ef80aa4e782dcb9328fab828"
     },
     {
       "slug": "update-organization-user",
@@ -818,13 +818,13 @@
     },
     {
       "slug": "whatsapp-notifier",
-      "status": "ACTIVE",
-      "lifecycle": "LIVE",
+      "status": "RETIRED",
+      "lifecycle": "RETIRED",
       "version": 363,
       "verify_jwt": true,
-      "auth_boundary": "GATEWAY_JWT",
+      "auth_boundary": "NOT_ROUTABLE",
       "captured_deployment_sha256": "02d9b246a1a8819d1dd8f6501131d5d28b9fe8ad425e359765e22396e84f0741",
-      "source_sha256": "2de6f20f85fc8c10a728186c3383b6634a551502c951f8248e8371a1f451cbc5"
+      "source_sha256": "ef0acbef8812eea9c03b798383ea864a9cdd3b2f37214b3e4feee30f993743d0"
     }
   ]
 }

@@ -73,6 +73,18 @@ func TestOAuthConnectRejectsTokenWithoutLeadRetrievalBeforeProviderMutation(t *t
 	}
 }
 
+func TestOAuthConnectProvesLeadFormsAccessBeforeProviderMutationOrHealthyPersistence(t *testing.T) {
+	source := readOAuthSource(t, "oauth_service.go")
+	connect := oauthSourceSection(t, source, "func (service *oauthService) connectPage", "func (service *oauthService) updatePage")
+
+	validate := strings.Index(connect, "validatePageLeadFormsAccess(ctx, page)")
+	subscribe := strings.Index(connect, "subscribePageWebhook(")
+	persist := strings.Index(connect, "persistConnectedIntegration(")
+	if validate < 0 || subscribe <= validate || persist <= validate {
+		t.Fatal("connect must prove /leadgen_forms access before subscribing or persisting the Page as healthy")
+	}
+}
+
 func TestOAuthCallbackStoresTransientUserTokenOnlyInVault(t *testing.T) {
 	postgresSource := readOAuthSource(t, "oauth_postgres.go")
 	finish := oauthSourceSection(t, postgresSource, "func (store oauthPostgresStore) finishCallbackSuccess", "func (store oauthPostgresStore) claimConnectFlow")

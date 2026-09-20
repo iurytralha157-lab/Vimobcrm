@@ -17,6 +17,8 @@ import (
 
 const autoReplyClientMessagePrefix = "ai-"
 
+var errAutoReplyBindingStale = errors.New("WhatsApp auto-reply binding changed")
+
 type aiRunner interface {
 	Run(context.Context, tenant.Context, ai.RunRequest) (ai.RunResponse, error)
 }
@@ -26,6 +28,7 @@ type AutoReplyRequest struct {
 	SessionID         string `json:"sessionId"`
 	ConversationID    string `json:"conversationId"`
 	MessageID         string `json:"messageId"`
+	ExpectedLeadID    string `json:"expectedLeadId"`
 	ProviderMessageID string `json:"providerMessageId,omitempty"`
 	Text              string `json:"text,omitempty"`
 }
@@ -45,6 +48,7 @@ type autoReplyInput struct {
 	SessionID      string
 	ConversationID string
 	MessageID      string
+	ExpectedLeadID string
 	Text           string
 }
 
@@ -90,6 +94,10 @@ func (handler Handler) AutoReply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	replyContext, err := handler.repo.loadAutoReplyContext(r.Context(), input)
+	if errors.Is(err, errAutoReplyBindingStale) {
+		httpserver.WriteJSON(w, http.StatusOK, AutoReplyResponse{OK: true, Skipped: true, Reason: "binding_changed"})
+		return
+	}
 	if err != nil {
 		writeWhatsAppError(w, r, err)
 		return
@@ -107,6 +115,10 @@ func (handler Handler) AutoReply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	queued, err := handler.repo.enqueueAutoReplyJob(r.Context(), input)
+	if errors.Is(err, errAutoReplyBindingStale) {
+		httpserver.WriteJSON(w, http.StatusOK, AutoReplyResponse{OK: true, Skipped: true, Reason: "binding_changed"})
+		return
+	}
 	if err != nil {
 		writeWhatsAppError(w, r, err)
 		return
@@ -129,6 +141,9 @@ func (handler Handler) runAutoReplyNow(ctx context.Context, input autoReplyInput
 	}
 
 	replyContext, err := handler.repo.loadAutoReplyContext(ctx, input)
+	if errors.Is(err, errAutoReplyBindingStale) {
+		return AutoReplyResponse{OK: true, Skipped: true, Reason: "binding_changed"}, nil
+	}
 	if err != nil {
 		return AutoReplyResponse{}, err
 	}
@@ -158,12 +173,27 @@ func (handler Handler) runAutoReplyNow(ctx context.Context, input autoReplyInput
 		return AutoReplyResponse{OK: true, Skipped: true, Reason: "empty_ai_output"}, nil
 	}
 
+	// The model call may take seconds. Revalidate the immutable event/card
+	// snapshot before creating an outbound message; a rebind while the model was
+	// running turns this job into a terminal stale skip.
+	replyContext, err = handler.repo.loadAutoReplyContext(ctx, input)
+	if errors.Is(err, errAutoReplyBindingStale) {
+		return AutoReplyResponse{OK: true, Skipped: true, Reason: "binding_changed"}, nil
+	}
+	if err != nil {
+		return AutoReplyResponse{}, err
+	}
+
 	clientMessageID := autoReplyClientMessagePrefix + replyContext.Message.ID
 	sendResponse, err := handler.repo.SendMessage(ctx, replyContext.Tenant, replyContext.Conversation.ID, sendMessageInput{
 		Text:            output,
 		SendSessionID:   replyContext.Session.ID,
 		ClientMessageID: clientMessageID,
+		ExpectedLeadID:  pointerValue(replyContext.Conversation.LeadID),
 	})
+	if errors.Is(err, ErrConversationNotFound) {
+		return AutoReplyResponse{OK: true, Skipped: true, Reason: "binding_changed"}, nil
+	}
 	if err != nil {
 		handler.repo.saveAutoReplyFailure(ctx, replyContext, "ai_autoreply_send_failed", err.Error())
 		return AutoReplyResponse{}, err
@@ -198,11 +228,16 @@ func (request AutoReplyRequest) validate() (autoReplyInput, error) {
 	if !ok {
 		return autoReplyInput{}, ErrInvalidInput
 	}
+	expectedLeadID, ok := normalizeUUID(request.ExpectedLeadID)
+	if !ok {
+		return autoReplyInput{}, ErrInvalidInput
+	}
 	return autoReplyInput{
 		OrganizationID: organizationID,
 		SessionID:      sessionID,
 		ConversationID: conversationID,
 		MessageID:      messageID,
+		ExpectedLeadID: expectedLeadID,
 		Text:           strings.TrimSpace(request.Text),
 	}, nil
 }
@@ -254,11 +289,21 @@ func (repo Repository) loadAutoReplyContext(ctx context.Context, input autoReply
 		where wc.organization_id = $1::uuid
 		  and wc.id = $2::uuid
 		  and wc.session_id = $3::uuid
+		  and wc.lead_id = $4::uuid
+		  and exists (
+			select 1
+			from public.whatsapp_messages event_message
+			where event_message.organization_id = wc.organization_id
+			  and event_message.id = $5::uuid
+			  and event_message.conversation_id = wc.id
+			  and event_message.session_id = wc.session_id
+			  and event_message.lead_id = wc.lead_id
+		  )
 		  and wc.deleted_at is null
 		limit 1
-	`, session.OrganizationID, input.ConversationID, session.ID))
+	`, session.OrganizationID, input.ConversationID, session.ID, input.ExpectedLeadID, input.MessageID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return autoReplyContext{}, ErrConversationNotFound
+		return autoReplyContext{}, errAutoReplyBindingStale
 	}
 	if err != nil {
 		return autoReplyContext{}, err
@@ -271,10 +316,11 @@ func (repo Repository) loadAutoReplyContext(ctx context.Context, input autoReply
 		  and wm.id = $2::uuid
 		  and wm.conversation_id = $3::uuid
 		  and wm.session_id = $4::uuid
+		  and wm.lead_id = $5::uuid
 		limit 1
-	`, session.OrganizationID, input.MessageID, conversation.ID, session.ID))
+	`, session.OrganizationID, input.MessageID, conversation.ID, session.ID, input.ExpectedLeadID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return autoReplyContext{}, ErrMessageNotFound
+		return autoReplyContext{}, errAutoReplyBindingStale
 	}
 	if err != nil {
 		return autoReplyContext{}, err

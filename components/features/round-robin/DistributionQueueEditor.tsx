@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -226,6 +226,7 @@ export function DistributionQueueEditor({
   );
 
   const [saving, setSaving] = useState(false);
+  const saveInFlightRef = useRef(false);
   const [openSections, setOpenSections] = useState<string[]>([]);
 
   const [formData, setFormData] = useState<DistributionQueueFormData>(
@@ -589,6 +590,7 @@ export function DistributionQueueEditor({
   };
 
   const handleSave = async () => {
+    if (saveInFlightRef.current) return;
     if (blockingReferenceDataError) {
       toast.error(
         "Não foi possível validar todos os dados da fila. Recarregue as referências antes de salvar.",
@@ -875,6 +877,7 @@ export function DistributionQueueEditor({
       conditions: sanitizedConditions,
       members: validMembers,
     };
+    saveInFlightRef.current = true;
     setSaving(true);
     try {
       await onSave(payload);
@@ -882,6 +885,7 @@ export function DistributionQueueEditor({
       setSavedFingerprint(buildEditorFingerprint(payload));
       if (presentation === "dialog") onOpenChange(false);
     } finally {
+      saveInFlightRef.current = false;
       setSaving(false);
     }
   };

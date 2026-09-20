@@ -1,5 +1,10 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import {
+  readSupabaseSecretKeyEnvironment,
+  selectSupabaseAdminSecretKey,
+} from "../_shared/supabase-secret-keys.ts";
+import { privateWorkerRequestHeaders } from "../_shared/private-worker-auth.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -34,7 +39,8 @@ serve(async (req) => {
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const secretEnvironment = readSupabaseSecretKeyEnvironment();
+    const supabaseAdminKey = selectSupabaseAdminSecretKey(secretEnvironment);
     const webhookSecret = Deno.env.get('THREECPLUS_WEBHOOK_SECRET');
 
     // Validate webhook secret if configured
@@ -49,7 +55,15 @@ serve(async (req) => {
       }
     }
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    if (!supabaseUrl || !supabaseAdminKey) {
+      console.error('ThreeCPlus webhook Supabase configuration unavailable');
+      return new Response(JSON.stringify({ error: 'Worker configuration unavailable' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseAdminKey);
     const payload: ThreeCPlusEvent = await req.json();
 
     console.log('3C Plus webhook received:', JSON.stringify(payload));
@@ -88,25 +102,53 @@ serve(async (req) => {
       });
     }
 
-    // Try to find lead by phone
+    // Resolve a lead only when the normalized phone identifies exactly one
+    // card in the organization. Queue-scoped identity deliberately permits
+    // multiple cards with the same phone, so choosing the first row would
+    // attach calls and first-response metrics to an arbitrary queue.
     let leadId: string | null = null;
+    let existingCallFound = false;
     const phoneToSearch = payload.direction === 'outbound' ? payload.phone_to : payload.phone_from;
-    
-    if (phoneToSearch) {
-      const normalizedPhone = phoneToSearch.replace(/\D/g, '');
-      const phoneVariants = [
-        normalizedPhone,
-        normalizedPhone.startsWith('55') ? normalizedPhone.slice(2) : `55${normalizedPhone}`,
-      ];
 
-      const { data: leads } = await supabase
-        .from('leads')
-        .select('id')
+    // Once a call exists, its lead/user attribution is an immutable snapshot.
+    // A later callback must never be rebound by looking at the phone again:
+    // queue-scoped identity can legitimately make the same phone resolve to a
+    // different (or newly unambiguous) card after the call started.
+    if (!['call.initiated', 'call.started'].includes(event_type)) {
+      const { data: existingCall, error: existingCallError } = await supabase
+        .from('telephony_calls')
+        .select('lead_id, user_id')
         .eq('organization_id', organizationId)
-        .or(phoneVariants.map(p => `phone.ilike.%${p}%`).join(','))
-        .limit(1);
+        .eq('external_call_id', call_id)
+        .maybeSingle();
 
-      if (leads && leads.length > 0) {
+      if (existingCallError) throw existingCallError;
+      if (existingCall) {
+        existingCallFound = true;
+        leadId = existingCall.lead_id || null;
+        userId = existingCall.user_id || userId;
+      }
+    }
+
+    if (!existingCallFound && phoneToSearch) {
+      const { data: leads, error: leadLookupError } = await supabase.rpc(
+        'find_lead_by_normalized_phone',
+        {
+          p_organization_id: organizationId,
+          p_phone: phoneToSearch,
+        },
+      );
+
+      if (leadLookupError) {
+        const isAmbiguous = leadLookupError.code === '23505'
+          && leadLookupError.message?.includes('whatsapp_lead_phone_ambiguous');
+        if (!isAmbiguous) throw leadLookupError;
+        console.warn('Lead phone is ambiguous; telephony event remains unlinked', {
+          event_type,
+          call_id,
+          organization_id: organizationId,
+        });
+      } else if (Array.isArray(leads) && leads.length === 1) {
         leadId = leads[0].id;
       }
     }
@@ -146,6 +188,7 @@ serve(async (req) => {
             status: 'answered',
             answered_at: payload.answered_at || new Date().toISOString(),
           })
+          .eq('organization_id', organizationId)
           .eq('external_call_id', call_id);
 
         if (updateError) {
@@ -175,6 +218,7 @@ serve(async (req) => {
         const { error: updateError } = await supabase
           .from('telephony_calls')
           .update(updateData)
+          .eq('organization_id', organizationId)
           .eq('external_call_id', call_id);
 
         if (updateError) {
@@ -185,14 +229,26 @@ serve(async (req) => {
         // Trigger first response calculation if we have a lead
         if (leadId && userId) {
           try {
-            await supabase.functions.invoke('calculate-first-response', {
-              body: {
-                lead_id: leadId,
-                actor_user_id: userId,
-                channel: 'phone',
-                is_automation: false,
+            const firstResponseResult = await fetch(
+              `${supabaseUrl}/functions/v1/calculate-first-response`,
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...privateWorkerRequestHeaders(supabaseAdminKey),
+                },
+                body: JSON.stringify({
+                  lead_id: leadId,
+                  actor_user_id: userId,
+                  channel: 'phone',
+                  is_automation: false,
+                  organization_id: organizationId,
+                }),
               },
-            });
+            );
+            if (!firstResponseResult.ok) {
+              throw new Error('First-response calculation was not accepted');
+            }
           } catch (err) {
             console.error('Error triggering first response calculation:', err);
           }
@@ -216,6 +272,7 @@ serve(async (req) => {
         const { error: updateError } = await supabase
           .from('telephony_calls')
           .update(updateData)
+          .eq('organization_id', organizationId)
           .eq('external_call_id', call_id);
 
         if (updateError) {
@@ -232,6 +289,7 @@ serve(async (req) => {
             recording_status: 'failed',
             recording_error: payload.metadata?.error as string || 'Recording failed',
           })
+          .eq('organization_id', organizationId)
           .eq('external_call_id', call_id);
 
         if (updateError) {

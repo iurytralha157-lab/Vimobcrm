@@ -1,6 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // Sync contact names and avatars for one Evolution Go WhatsApp session.
 import { createClient } from "npm:@supabase/supabase-js@2";
+import {
+  assertWhatsAppConversationBindingSnapshot,
+  type WhatsAppConversationBindingRow,
+  type WhatsAppConversationBindingSnapshot,
+  WhatsAppBindingSnapshotError,
+} from "../_shared/whatsapp-binding-snapshot.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -161,38 +167,79 @@ async function fetchAvatar(session: JsonRecord, jid: string) {
   return result.ok ? avatarFromPayload(result.data) : null;
 }
 
-async function updateConversationContact(session: JsonRecord, conversation: JsonRecord, contact: JsonRecord) {
+async function updateConversationContact(
+  session: JsonRecord,
+  conversation: JsonRecord,
+  contact: JsonRecord,
+  activeBindings: WhatsAppConversationBindingRow[],
+) {
+  let snapshot: WhatsAppConversationBindingSnapshot;
+  try {
+    snapshot = assertWhatsAppConversationBindingSnapshot({
+      conversation,
+      activeBindings,
+      expectedLeadId: optionalUuid(conversation.lead_id),
+    });
+  } catch (error) {
+    const reason = error instanceof WhatsAppBindingSnapshotError
+      ? error.code
+      : "whatsapp_binding_snapshot_invalid";
+    console.warn("Skipping stale WhatsApp contact snapshot", {
+      conversation_id: conversation.id,
+      reason,
+    });
+    return false;
+  }
+
+  if (!snapshot.conversationUpdatedAt || snapshot.sessionId !== session.id) {
+    console.warn("Skipping WhatsApp contact without a current session snapshot", {
+      conversation_id: conversation.id,
+    });
+    return false;
+  }
+
   const jid = normalizeJid(firstPresent(contact.jid, contact.id, contact.remoteJid, contact.number, conversation.remote_jid));
   const name = normalizeText(firstPresent(contact.name, contact.pushName, contact.notifyName, contact.verifiedName));
   const avatar = avatarFromPayload(contact) || await fetchAvatar(session, jid);
+  const syncedAt = new Date().toISOString();
 
   const updates: JsonRecord = {
     contact_name: name || conversation.contact_name,
     contact_picture: avatar || conversation.contact_picture,
-    updated_at: new Date().toISOString(),
+    updated_at: syncedAt,
     metadata: {
       ...(conversation.metadata || {}),
-      contact_synced_at: new Date().toISOString(),
+      contact_synced_at: syncedAt,
     },
   };
 
-  await supabase
+  let updateQuery = supabase
     .from("whatsapp_conversations")
     .update(updates)
     .eq("id", conversation.id)
-    .eq("organization_id", session.organization_id);
+    .eq("organization_id", session.organization_id)
+    .eq("session_id", session.id)
+    .eq("updated_at", snapshot.conversationUpdatedAt);
+  updateQuery = snapshot.leadId
+    ? updateQuery.eq("lead_id", snapshot.leadId)
+    : updateQuery.is("lead_id", null);
 
-  if (conversation.lead_id && avatar) {
-    await supabase
-      .from("leads")
-      .update({
-        whatsapp_avatar_url: avatar,
-        whatsapp_avatar_synced_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", conversation.lead_id)
-      .eq("organization_id", session.organization_id);
+  const { data: updated, error: updateError } = await updateQuery
+    .select("id")
+    .maybeSingle();
+  if (updateError) throw updateError;
+  if (!updated?.id) {
+    console.warn("Skipped WhatsApp contact update after binding CAS loss", {
+      conversation_id: conversation.id,
+      binding_id: snapshot.bindingId,
+    });
+    return false;
   }
+
+  // Do not project a provider avatar into `leads` from this asynchronous
+  // snapshot. The physical thread may be rebound immediately after this CAS,
+  // and a second REST update cannot atomically prove the same binding. Lead
+  // avatar enrichment remains owned by the queue-scoped intake transaction.
 
   return Boolean(avatar || name);
 }
@@ -216,7 +263,7 @@ Deno.serve(async (req) => {
     const limit = Math.min(Number(body.limit || 100), 500);
     const { data: conversations, error } = await supabase
       .from("whatsapp_conversations")
-      .select("id, organization_id, session_id, lead_id, remote_jid, contact_name, contact_picture, metadata")
+      .select("id, organization_id, session_id, lead_id, remote_jid, contact_name, contact_picture, metadata, updated_at")
       .eq("organization_id", session.organization_id)
       .eq("session_id", session.id)
       .eq("is_group", false)
@@ -224,6 +271,24 @@ Deno.serve(async (req) => {
       .limit(limit);
 
     if (error) throw error;
+
+    const conversationIds = (conversations || []).map((conversation) => conversation.id);
+    const activeBindingsByConversation = new Map<string, WhatsAppConversationBindingRow[]>();
+    if (conversationIds.length > 0) {
+      const { data: activeBindings, error: bindingError } = await supabase
+        .from("whatsapp_conversation_lead_bindings")
+        .select("id, organization_id, conversation_id, session_id, lead_id, active_to, stale")
+        .eq("organization_id", session.organization_id)
+        .in("conversation_id", conversationIds)
+        .is("active_to", null);
+      if (bindingError) throw bindingError;
+
+      for (const binding of activeBindings || []) {
+        const list = activeBindingsByConversation.get(binding.conversation_id) || [];
+        list.push(binding);
+        activeBindingsByConversation.set(binding.conversation_id, list);
+      }
+    }
 
     const contactsResult = await evolutionFetch(session, "GET", "/user/contacts");
     const contacts = toContactList(contactsResult.data);
@@ -236,7 +301,12 @@ Deno.serve(async (req) => {
     let updated = 0;
     for (const conversation of conversations || []) {
       const contact = contactByJid.get(conversation.remote_jid) || { jid: conversation.remote_jid };
-      if (await updateConversationContact(session, conversation, contact)) updated += 1;
+      if (await updateConversationContact(
+        session,
+        conversation,
+        contact,
+        activeBindingsByConversation.get(conversation.id) || [],
+      )) updated += 1;
     }
 
     return json({

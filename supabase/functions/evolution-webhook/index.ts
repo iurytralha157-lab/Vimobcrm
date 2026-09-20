@@ -15,6 +15,7 @@ import {
   authorizeEvolutionWebhookIngressRequest,
   validateEvolutionCallbackSessionToken,
 } from "./request-security.ts";
+import { privateWorkerRequestHeaders } from "../_shared/private-worker-auth.ts";
 import { buildDistributionIdempotencyKey } from "../_shared/distribution-idempotency.ts";
 
 const MAGIC_BYTES: Record<string, string[]> = {
@@ -354,6 +355,76 @@ function normalizePhoneNumber(phone: string): string {
     return cleaned.substring(2);
   }
   return cleaned;
+}
+
+async function findLegacyWhatsAppLeadByPhone(
+  supabase: any,
+  organizationId: string,
+  phone: string,
+  originRoundRobinId?: string | null,
+): Promise<{ lead: any | null; ambiguous: boolean }> {
+  const parameters: Record<string, unknown> = {
+    p_organization_id: organizationId,
+    p_phone: phone,
+  };
+  if (originRoundRobinId !== undefined) {
+	if (!originRoundRobinId) throw new Error("lead_origin_round_robin_required");
+    parameters.p_origin_round_robin_id = originRoundRobinId;
+  }
+  const { data, error } = await supabase.rpc("find_lead_by_normalized_phone", parameters);
+  if (error) {
+    if (
+      error.code === "23505"
+	  && (
+		String(error.message || "").includes("whatsapp_lead_phone_ambiguous")
+		|| String(error.message || "").includes("lead_queue_phone_ambiguous")
+	  )
+    ) {
+      return { lead: null, ambiguous: true };
+    }
+    throw error;
+  }
+  return {
+    lead: Array.isArray(data) ? data[0] || null : data || null,
+    ambiguous: false,
+  };
+}
+
+async function activateLegacyWhatsAppConversationLeadBinding(
+  supabase: any,
+  session: any,
+  conversation: any,
+  leadId: string,
+  providerMessageId: string | null,
+) {
+  const { data, error } = await supabase.rpc("activate_whatsapp_conversation_lead_binding", {
+    p_organization_id: session.organization_id,
+    p_conversation_id: conversation.id,
+    p_lead_id: leadId,
+    p_provider_message_id: providerMessageId || null,
+  });
+  if (error) throw error;
+  if (
+    !data
+    || data.success !== true
+    || data.conversation_id !== conversation.id
+    || data.lead_id !== leadId
+    || !data.binding_id
+    || !data.active_lead_id
+    || typeof data.is_current !== "boolean"
+    || data.is_current !== (data.active_lead_id === leadId)
+  ) {
+    throw new Error("legacy_whatsapp_conversation_lead_binding_incomplete");
+  }
+  if (!data.is_current && !providerMessageId) {
+    throw new Error("legacy_whatsapp_historical_binding_without_provider_identity");
+  }
+  conversation.lead_id = data.active_lead_id;
+  return {
+    eventLeadId: data.lead_id as string,
+    activeLeadId: data.active_lead_id as string,
+    isCurrent: data.is_current === true,
+  };
 }
 
 Deno.serve(async (req) => {
@@ -893,7 +964,8 @@ async function handleMessagesUpsert(
       const { data: existingAutomationMsg, error: existingMessageError } =
         await supabase
           .from("whatsapp_messages")
-          .select("id, sender_name, client_message_id")
+		  .select("id, conversation_id, lead_id, sender_name, client_message_id")
+		  .eq("organization_id", session.organization_id)
           .eq("session_id", session.id)
           .eq("message_id", messageId)
           .maybeSingle();
@@ -1088,6 +1160,10 @@ async function handleMessagesUpsert(
         Math.floor(Date.now() / 1000);
       const messageDate = new Date(Number(timestamp) * 1000).toISOString();
 
+      let messageLeadId: string | null = null;
+      let messageBindingIsCurrent = true;
+      let leadResolutionQuarantineReason: string | null = null;
+
       // Find or create conversation - search by contact_phone to avoid duplicates
       // eslint-disable-next-line prefer-const
       let { data: conversation, error: convError } = await supabase
@@ -1101,6 +1177,16 @@ async function handleMessagesUpsert(
       if (convError) {
         console.error("Error finding conversation:", convError);
       }
+
+      const previousConversationSummary = conversation
+        ? {
+          last_message: conversation.last_message || null,
+		  last_message_preview: conversation.last_message_preview || null,
+          last_message_at: conversation.last_message_at || null,
+          unread_count: conversation.unread_count || 0,
+        }
+        : null;
+	  const previousConversationLeadId = conversation?.lead_id || null;
 
       if (!conversation) {
         // For new conversations, only set name if it's a received message
@@ -1153,7 +1239,7 @@ async function handleMessagesUpsert(
           });
 
           if (isFromFacebookAds || matchedRule) {
-            await createLeadFromConversation(
+            const leadResolution = await createLeadFromConversation(
               supabase,
               session,
               conversation,
@@ -1165,6 +1251,13 @@ async function handleMessagesUpsert(
               adSource,
               { rule: matchedRule, adContext, utm },
             );
+            if (leadResolution && "quarantined" in leadResolution && leadResolution.quarantined) {
+              leadResolutionQuarantineReason = leadResolution.reason || "whatsapp_lead_resolution_ambiguous";
+            } else if (leadResolution && "eventLeadId" in leadResolution && leadResolution.eventLeadId) {
+              messageLeadId = leadResolution.eventLeadId;
+              messageBindingIsCurrent = leadResolution.isCurrent === true;
+              conversation.lead_id = leadResolution.activeLeadId;
+            }
           } else {
             console.log(
               `Conversation sem match de regra/ads - sem criação de lead: ${contactPhone}`,
@@ -1173,28 +1266,28 @@ async function handleMessagesUpsert(
         }
 
         // ===== AUTO-LINK: Link new conversation to existing lead by phone =====
-        if (!isGroup && !conversation.lead_id) {
+        if (!isGroup && !conversation.lead_id && !leadResolutionQuarantineReason) {
           try {
             const normalizedPhone = normalizePhoneNumber(contactPhone);
-            const { data: matchingLeads } = await supabase
-              .from("leads")
-              .select("id, phone")
-              .eq("organization_id", session.organization_id)
-              .not("phone", "is", null);
-
-            const matchingLead = matchingLeads?.find((l: any) => {
-              if (!l.phone) return false;
-              return normalizePhoneNumber(l.phone) === normalizedPhone;
-            });
-
-            if (matchingLead) {
-              await supabase
-                .from("whatsapp_conversations")
-                .update({ lead_id: matchingLead.id })
-                .eq("id", conversation.id);
-              conversation.lead_id = matchingLead.id;
+            const matching = await findLegacyWhatsAppLeadByPhone(
+              supabase,
+              session.organization_id,
+              normalizedPhone,
+            );
+            if (matching.ambiguous) {
+              leadResolutionQuarantineReason = "whatsapp_lead_phone_ambiguous";
+            } else if (matching.lead?.id) {
+              const binding = await activateLegacyWhatsAppConversationLeadBinding(
+                supabase,
+                session,
+                conversation,
+                matching.lead.id,
+                messageId,
+              );
+              messageLeadId = binding.eventLeadId;
+              messageBindingIsCurrent = binding.isCurrent;
               console.log(
-                `✅ Auto-linked new conversation to lead ${matchingLead.id} by phone ${contactPhone}`,
+                `✅ Auto-linked new conversation to lead ${matching.lead.id} by unique phone ${contactPhone}`,
               );
             }
           } catch (linkError) {
@@ -1202,6 +1295,7 @@ async function handleMessagesUpsert(
               "Error auto-linking conversation to lead:",
               linkError,
             );
+			throw linkError;
           }
         }
       } else {
@@ -1275,29 +1369,65 @@ async function handleMessagesUpsert(
           }
         }
 
-        // ===== AUTO-LINK: Link existing conversation to lead if not yet linked =====
-        if (!isGroup && !conversation.lead_id) {
+        // A queue-scoped CTWA/rule entry is evaluated for every inbound event,
+        // including an already existing chat. A different queue therefore gets
+        // a different card before this message is persisted.
+        if (!isGroup && !fromMe) {
+          const adContext = extractAdContext(contextInfo);
+          const utm = extractUtmFromText(content || "");
+          const matchedRule = await applyInboundRules(supabase, session, {
+            content: content || "",
+            pushName: messageData.pushName || "",
+            phone: contactPhone,
+            adContext,
+            utm,
+          });
+          if (isFromFacebookAds || matchedRule) {
+            const leadResolution = await createLeadFromConversation(
+              supabase,
+              session,
+              conversation,
+              contactName,
+              contactPhone,
+              content,
+              messageId,
+              isFromFacebookAds,
+              adSource,
+              { rule: matchedRule, adContext, utm },
+            );
+            if (leadResolution && "quarantined" in leadResolution && leadResolution.quarantined) {
+              leadResolutionQuarantineReason = leadResolution.reason || "whatsapp_lead_resolution_ambiguous";
+            } else if (leadResolution && "eventLeadId" in leadResolution && leadResolution.eventLeadId) {
+              messageLeadId = leadResolution.eventLeadId;
+              messageBindingIsCurrent = leadResolution.isCurrent === true;
+              conversation.lead_id = leadResolution.activeLeadId;
+            }
+          }
+        }
+
+        // ===== AUTO-LINK: only a unique global phone match may establish a legacy binding =====
+        if (!isGroup && !conversation.lead_id && !leadResolutionQuarantineReason) {
           try {
             const normalizedPhone = normalizePhoneNumber(contactPhone);
-            const { data: matchingLeads } = await supabase
-              .from("leads")
-              .select("id, phone")
-              .eq("organization_id", session.organization_id)
-              .not("phone", "is", null);
-
-            const matchingLead = matchingLeads?.find((l: any) => {
-              if (!l.phone) return false;
-              return normalizePhoneNumber(l.phone) === normalizedPhone;
-            });
-
-            if (matchingLead) {
-              await supabase
-                .from("whatsapp_conversations")
-                .update({ lead_id: matchingLead.id })
-                .eq("id", conversation.id);
-              conversation.lead_id = matchingLead.id;
+            const matching = await findLegacyWhatsAppLeadByPhone(
+              supabase,
+              session.organization_id,
+              normalizedPhone,
+            );
+            if (matching.ambiguous) {
+              leadResolutionQuarantineReason = "whatsapp_lead_phone_ambiguous";
+            } else if (matching.lead?.id) {
+              const binding = await activateLegacyWhatsAppConversationLeadBinding(
+                supabase,
+                session,
+                conversation,
+                matching.lead.id,
+                messageId,
+              );
+              messageLeadId = binding.eventLeadId;
+              messageBindingIsCurrent = binding.isCurrent;
               console.log(
-                `✅ Auto-linked existing conversation to lead ${matchingLead.id} by phone ${contactPhone}`,
+                `✅ Auto-linked existing conversation to lead ${matching.lead.id} by unique phone ${contactPhone}`,
               );
             }
           } catch (linkError) {
@@ -1305,8 +1435,43 @@ async function handleMessagesUpsert(
               "Error auto-linking conversation to lead:",
               linkError,
             );
+			throw linkError;
           }
         }
+      }
+
+      if (!messageLeadId && !leadResolutionQuarantineReason) {
+        messageLeadId = conversation.lead_id || null;
+      }
+      if (previousConversationSummary && (!messageBindingIsCurrent || leadResolutionQuarantineReason)) {
+        // A historical replay or quarantined identity belongs to no current
+        // card summary. Undo the eager legacy preview/unread mutation without
+        // touching a newer concurrently persisted message.
+        await supabase
+          .from("whatsapp_conversations")
+          .update(previousConversationSummary)
+          .eq("organization_id", session.organization_id)
+          .eq("id", conversation.id)
+          .eq("last_message_at", messageDate);
+	  } else if (
+		messageBindingIsCurrent
+		&& messageLeadId
+		&& previousConversationLeadId !== messageLeadId
+	  ) {
+		// A card switch starts a fresh operational summary. The previous card's
+		// unread badge/preview must never be inherited, while this event becomes
+		// the first current message of the newly activated card.
+		await supabase
+		  .from("whatsapp_conversations")
+		  .update({
+			last_message: content,
+			last_message_preview: content,
+			last_message_at: messageDate,
+			unread_count: fromMe ? 0 : 1,
+		  })
+		  .eq("organization_id", session.organization_id)
+		  .eq("id", conversation.id)
+		  .eq("lead_id", messageLeadId);
       }
 
       // Process media if exists - download and store permanently
@@ -1436,6 +1601,17 @@ async function handleMessagesUpsert(
       // not execute effects; only the owner of a resumed stale claim may reuse
       // the canonical row after a partial crash.
       const resumedDelivery = Boolean(ownedClaim?.resumed);
+	  if (resumedDelivery && existingAutomationMsg?.id) {
+		const storedLeadId = existingAutomationMsg.lead_id || null;
+		const expectedLeadId = leadResolutionQuarantineReason ? null : messageLeadId;
+		if (
+		  existingAutomationMsg.conversation_id !== conversation.id
+		  || (storedLeadId && storedLeadId !== expectedLeadId)
+		  || (!expectedLeadId && storedLeadId)
+		) {
+		  throw new Error("whatsapp_message_replay_identity_conflict");
+		}
+	  }
       let insertedMessage = resumedDelivery && existingAutomationMsg?.id
         ? { id: existingAutomationMsg.id }
         : null;
@@ -1447,7 +1623,7 @@ async function handleMessagesUpsert(
             conversation_id: conversation.id,
             session_id: session.id,
             organization_id: session.organization_id,
-            lead_id: conversation.lead_id || null,
+            lead_id: leadResolutionQuarantineReason ? null : messageLeadId,
             message_id: messageId,
             from_me: fromMe,
             content,
@@ -1460,6 +1636,16 @@ async function handleMessagesUpsert(
             sent_at: messageDate,
             sender_jid: senderJid,
             sender_name: isAutomationMessage ? "Automação" : senderName,
+            metadata: leadResolutionQuarantineReason
+              ? {
+                lead_resolution_quarantine: {
+                  reason: leadResolutionQuarantineReason,
+                  terminal: true,
+                  retryable: false,
+                  recorded_at: new Date().toISOString(),
+                },
+              }
+              : {},
           }, {
             onConflict: "session_id,message_id",
             ignoreDuplicates: true,
@@ -1489,11 +1675,11 @@ async function handleMessagesUpsert(
         );
 
         // ===== TIMELINE LOGGING: Log incoming messages to lead_timeline_events =====
-        if (!fromMe && conversation.lead_id) {
+        if (!fromMe && messageLeadId && !leadResolutionQuarantineReason) {
           try {
             await supabase.from("lead_timeline_events").insert({
               organization_id: session.organization_id,
-              lead_id: conversation.lead_id,
+              lead_id: messageLeadId,
               event_type: "whatsapp_message_received",
               channel: "whatsapp",
               metadata: {
@@ -1505,7 +1691,7 @@ async function handleMessagesUpsert(
               },
             });
             console.log(
-              `✅ Incoming message logged to timeline for lead ${conversation.lead_id}`,
+              `✅ Incoming message logged to timeline for lead ${messageLeadId}`,
             );
           } catch (timelineError) {
             console.error(
@@ -1599,7 +1785,7 @@ async function handleMessagesUpsert(
                 method: "POST",
                 headers: {
                   "Content-Type": "application/json",
-                  Authorization: `Bearer ${supabaseKey}`,
+                  ...privateWorkerRequestHeaders(supabaseKey),
                 },
                 body: JSON.stringify({
                   lead_id: conversation.lead_id,
@@ -1625,7 +1811,7 @@ async function handleMessagesUpsert(
         // trigger. `zz_automation_inbound_message` enqueues the durable event
         // exactly once; the retired event-shaped POST to automation-trigger is
         // intentionally not repeated here (that worker only accepts batch_size).
-        if (!fromMe && !isGroup) {
+        if (!fromMe && !isGroup && !leadResolutionQuarantineReason && messageBindingIsCurrent) {
           // ===== AI AGENT: Auto-respond to incoming text messages =====
           if (messageType === "text" && content) {
             try {
@@ -1690,74 +1876,34 @@ async function handleMessagesUpsert(
           // ===== STOP FOLLOW-UP ON REPLY =====
           // Cancel running/waiting automation executions when lead replies
           // Even if conversation has no lead_id, try to find lead by phone
-          let leadIdForStop = conversation.lead_id;
+          let leadIdForStop = messageLeadId || conversation.lead_id;
 
           if (!leadIdForStop) {
-            // Try to find lead by phone number with multiple variations
-            // Covers: with/without country code 55, with/without 9th digit
-            const cleanPhone = contactPhone.replace(/\D/g, "");
-            const basePhone = cleanPhone.startsWith("55")
-              ? cleanPhone.substring(2)
-              : cleanPhone;
-
-            // Generate all possible phone variations
-            const phoneVariants = new Set<string>();
-
-            // Original formats
-            phoneVariants.add(cleanPhone); // 5522974063727
-            phoneVariants.add(basePhone); // 22974063727
-            phoneVariants.add(`55${basePhone}`); // 5522974063727
-
-            // Handle 9th digit variations for Brazilian mobile numbers
-            // DDD (2 digits) + 9 (optional) + number (8 digits)
-            if (basePhone.length === 11) {
-              // Has 9th digit, create variant without it
-              const ddd = basePhone.substring(0, 2);
-              const numberPart = basePhone.substring(3); // Skip the 9
-              const without9 = `${ddd}${numberPart}`;
-              phoneVariants.add(without9); // 2297406372
-              phoneVariants.add(`55${without9}`); // 552297406372
-            } else if (basePhone.length === 10) {
-              // Missing 9th digit, create variant with it
-              const ddd = basePhone.substring(0, 2);
-              const numberPart = basePhone.substring(2);
-              const with9 = `${ddd}9${numberPart}`;
-              phoneVariants.add(with9); // 22997406372
-              phoneVariants.add(`55${with9}`); // 5522997406372
-            }
-
-            const variantsArray = Array.from(phoneVariants);
-            console.log(
-              `Stop-on-reply: searching lead with phone variants: ${
-                variantsArray.join(", ")
-              }`,
+            const matching = await findLegacyWhatsAppLeadByPhone(
+              supabase,
+              session.organization_id,
+              contactPhone,
             );
-
-            const { data: matchingLead } = await supabase
-              .from("leads")
-              .select("id")
-              .eq("organization_id", session.organization_id)
-              .or(variantsArray.map((p) => `phone.eq.${p}`).join(","))
-              .limit(1)
-              .maybeSingle();
-
-            if (matchingLead) {
-              leadIdForStop = matchingLead.id;
+            if (matching.ambiguous) {
+              console.warn("Stop-on-reply skipped because phone maps to multiple scoped cards", {
+                organization_id: session.organization_id,
+                conversation_id: conversation.id,
+              });
+            } else if (matching.lead?.id) {
+              const binding = await activateLegacyWhatsAppConversationLeadBinding(
+                supabase,
+                session,
+                conversation,
+                matching.lead.id,
+                messageId,
+              );
+              leadIdForStop = binding.eventLeadId;
               console.log(
                 `Found lead ${leadIdForStop} by phone match for stop-on-reply`,
               );
-
-              // BONUS: Link the conversation to the lead for future messages
-              await supabase
-                .from("whatsapp_conversations")
-                .update({ lead_id: matchingLead.id })
-                .eq("id", conversation.id);
-
-              // Update local variable too for notifications below
-              conversation.lead_id = matchingLead.id;
             } else {
               console.log(
-                `No lead found for phone variants: ${variantsArray.join(", ")}`,
+                `No unique lead found for phone: ${contactPhone}`,
               );
             }
           }
@@ -2328,33 +2474,47 @@ async function createLeadFromConversation(
       `Attempting to create lead: phone=${contactPhone}, session_owner=${session.owner_user_id}, org=${session.organization_id}, isFromAds=${isFromAds}, adSource=${adSource}`,
     );
 
-    // ===== BUSCAR LEAD EXISTENTE COM TELEFONE NORMALIZADO =====
+    // ===== BUSCAR LEAD EXISTENTE NO ESCOPO DE ENTRADA =====
     const normalizedPhone = normalizePhoneNumber(contactPhone);
+    const originRoundRobinId = hubCtx?.rule?.target_round_robin_id || null;
+    const intakeScopeKey = originRoundRobinId
+      ? `queue:${originRoundRobinId}`
+      : "unscoped";
     console.log(
       `Normalized phone: ${normalizedPhone} (original: ${contactPhone})`,
     );
 
-    // Buscar todos os leads da organização com telefone
-    const { data: allLeads, error: searchError } = await supabase
-      .from("leads")
-      .select("id, phone")
-      .eq("organization_id", session.organization_id)
-      .not("phone", "is", null);
-
-    if (searchError) {
-      console.error("Error searching for existing leads:", searchError);
+	const scopedLookup = originRoundRobinId
+	  ? await findLegacyWhatsAppLeadByPhone(
+		supabase,
+		session.organization_id,
+		normalizedPhone,
+		originRoundRobinId,
+	  )
+	  : await findLegacyWhatsAppLeadByPhone(
+		supabase,
+		session.organization_id,
+		normalizedPhone,
+	  );
+    if (scopedLookup.ambiguous) {
+      console.warn("Ambiguous scoped WhatsApp lead; terminal quarantine", {
+        organization_id: session.organization_id,
+        conversation_id: conversation.id,
+        provider_message_id: providerMessageId,
+        intake_scope_key: intakeScopeKey,
+      });
+      return { quarantined: true, reason: "whatsapp_lead_phone_ambiguous_in_intake_scope" };
     }
-
-    // Verificar se algum lead tem telefone que combina (normalizado)
-    const existingLead = allLeads?.find(
-      (l: { id: string; phone: string | null }) => {
-        if (!l.phone) return false;
-        const leadNormalizedPhone = normalizePhoneNumber(l.phone);
-        return leadNormalizedPhone === normalizedPhone;
-      },
-    );
+    const existingLead = scopedLookup.lead;
 
     if (existingLead) {
+	  const binding = await activateLegacyWhatsAppConversationLeadBinding(
+	    supabase,
+	    session,
+	    conversation,
+	    existingLead.id,
+	    providerMessageId,
+	  );
       const providerEventId = await buildDistributionIdempotencyKey(
         "evolution-whatsapp-ingress",
         {
@@ -2412,7 +2572,7 @@ async function createLeadFromConversation(
           ? `Acknowledged completed WhatsApp reentry: ${reentryProcessing.event_id}`
           : `Atomically linked conversation to existing lead: ${existingLead.id}`,
       );
-      return;
+      return binding;
     }
 
     // Determinar usuário responsável
@@ -2549,6 +2709,8 @@ async function createLeadFromConversation(
         stage_id: stage.id,
         assigned_user_id: assignedUserId,
         source_session_id: session.id,
+        intake_scope_key: intakeScopeKey,
+        origin_round_robin_id: originRoundRobinId,
         // Meta CTWA
         meta_campaign_id: adCtx.meta_campaign_id || null,
         meta_ad_id: adCtx.meta_ad_id || null,
@@ -2566,18 +2728,93 @@ async function createLeadFromConversation(
 
     if (leadError) {
       console.error("Error creating lead:", leadError);
+      const isLegacyPhoneConflict = leadError.code === "23505"
+        && String(leadError.message || "").includes("leads_org_phone_unique");
+      const isScopedPhoneConflict = leadError.code === "23505"
+        && String(leadError.message || "").includes("leads_org_scope_phone_unique");
+      if (isLegacyPhoneConflict || isScopedPhoneConflict) {
+        const recoveredLookup = await findLegacyWhatsAppLeadByPhone(
+          supabase,
+          session.organization_id,
+          normalizedPhone,
+		  isScopedPhoneConflict && originRoundRobinId ? originRoundRobinId : undefined,
+        );
+        if (recoveredLookup.ambiguous || !recoveredLookup.lead?.id) {
+          console.warn("WhatsApp lead conflict recovery is ambiguous; terminal quarantine", {
+            organization_id: session.organization_id,
+            conversation_id: conversation.id,
+            provider_message_id: providerMessageId,
+          });
+          return { quarantined: true, reason: "whatsapp_lead_phone_ambiguous_during_conflict_recovery" };
+        }
+        const recoveredLead = recoveredLookup.lead;
+        if (isLegacyPhoneConflict) {
+          const recoveredMetadata = recoveredLead.metadata && typeof recoveredLead.metadata === "object"
+            ? recoveredLead.metadata
+            : {};
+          const { error: compatibilityError } = await supabase
+            .from("leads")
+            .update({
+              metadata: {
+                ...recoveredMetadata,
+                whatsapp_queue_scope_compatibility: {
+                  mode: "legacy_global_phone_unique",
+                  requested_origin_round_robin_id: originRoundRobinId,
+                  provider_message_id: providerMessageId,
+                  recorded_at: new Date().toISOString(),
+                },
+              },
+            })
+            .eq("organization_id", session.organization_id)
+            .eq("id", recoveredLead.id);
+          if (compatibilityError) throw compatibilityError;
+        }
+        const binding = await activateLegacyWhatsAppConversationLeadBinding(
+          supabase,
+          session,
+          conversation,
+          recoveredLead.id,
+          providerMessageId,
+        );
+        const providerEventId = await buildDistributionIdempotencyKey(
+          "evolution-whatsapp-ingress",
+          { sessionId: session.id, providerMessageId },
+        );
+        const { data: reentryProcessing, error: reentryError } = await supabase
+          .rpc("process_whatsapp_lead_reentry_from_backend", {
+            p_organization_id: session.organization_id,
+            p_lead_id: recoveredLead.id,
+            p_provider_event_id: providerEventId,
+            p_conversation_id: conversation.id,
+            p_source: "whatsapp",
+            p_entry_subtype: "whatsapp_reentry",
+            p_metadata: {
+              phone: contactPhone,
+              first_message: firstMessage,
+              provider_message_id: providerMessageId,
+              inbound_rule_id: rule?.id || null,
+              queue_scope_compatibility_fallback: isLegacyPhoneConflict,
+              requested_origin_round_robin_id: originRoundRobinId,
+            },
+            p_lead_meta: buildLeadMetaFromWhatsApp(hubCtx, isFromAds, adSource),
+            p_occurred_at: new Date().toISOString(),
+          });
+        if (reentryError) throw reentryError;
+        if (!reentryProcessing?.success || !reentryProcessing?.event_id) {
+          throw new Error("lead_reentry_processing_incomplete");
+        }
+        return binding;
+      }
       return;
     }
 
-    // Link conversation to new lead
-    const { error: linkError } = await supabase
-      .from("whatsapp_conversations")
-      .update({ lead_id: newLead.id })
-      .eq("id", conversation.id);
-
-    if (linkError) {
-      console.error("Error linking conversation to lead:", linkError);
-    }
+    const binding = await activateLegacyWhatsAppConversationLeadBinding(
+      supabase,
+      session,
+      conversation,
+      newLead.id,
+      providerMessageId,
+    );
 
     await recordLeadMetaFromWhatsApp(
       supabase,
@@ -2647,6 +2884,7 @@ async function createLeadFromConversation(
         rule?.id || "none"
       }`,
     );
+    return binding;
   } catch (error) {
     console.error("Error creating lead from conversation:", error);
     throw error;

@@ -57,12 +57,22 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.users (id, organization_id, name, email, role, is_active)
 		values ($1::uuid, $2::uuid, $3, $4, 'user', true)
+		on conflict (id) do update
+		set organization_id = excluded.organization_id,
+		    name = excluded.name,
+		    email = excluded.email,
+		    role = excluded.role,
+		    is_active = excluded.is_active
 	`, userID, organizationID, suffix, suffix+"@example.invalid"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.organization_members (organization_id, user_id, role, is_active)
 		values ($1::uuid, $2::uuid, 'user', true)
+		on conflict (user_id, organization_id) do update
+		set role = excluded.role,
+		    is_active = excluded.is_active,
+		    deleted_at = null
 	`, organizationID, userID); err != nil {
 		t.Fatal(err)
 	}
@@ -85,13 +95,20 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	}
 	if err := postgres.Pool().QueryRow(ctx, `
 		insert into public.whatsapp_conversations (
-			organization_id, session_id, lead_id, assigned_user_id, remote_jid,
+			organization_id, session_id, assigned_user_id, remote_jid,
 			contact_phone, contact_name, unread_count
 		) values (
-			$1::uuid, $2::uuid, $3::uuid, $4::uuid,
-			'5511999991111@s.whatsapp.net', '5511999991111', $5, 0
+			$1::uuid, $2::uuid, $3::uuid,
+			'5511999991111@s.whatsapp.net', '5511999991111', $4, 0
 		) returning id::text
-	`, organizationID, sessionID, leadID, userID, suffix).Scan(&conversationID); err != nil {
+	`, organizationID, sessionID, userID, suffix).Scan(&conversationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		select public.activate_whatsapp_conversation_lead_binding(
+			$1::uuid, $2::uuid, $3::uuid, null
+		)
+	`, organizationID, conversationID, leadID); err != nil {
 		t.Fatal(err)
 	}
 	if err := postgres.Pool().QueryRow(ctx, `
@@ -174,23 +191,14 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		t.Fatalf("outbound self JID repaired session phone = %q", repairedSessionPhone)
 	}
 
-	if handled, err := repo.processEvolutionWebhookNative(ctx, item("messages.upsert", "message_media.json")); err == nil || !handled {
-		t.Fatalf("media without durable Storage must stay retryable: handled:%v error:%v", handled, err)
-	}
-	var pendingMediaCount int
-	var pendingMediaStatus, pendingMediaError string
-	if err := postgres.Pool().QueryRow(ctx, `
-		select count(*)::integer, coalesce(max(media_status), ''), coalesce(max(media_error), '')
-		from public.whatsapp_messages
-		where organization_id = $1::uuid and session_id = $2::uuid and message_id = 'provider-inbound-image-1'
-	`, organizationID, sessionID).Scan(&pendingMediaCount, &pendingMediaStatus, &pendingMediaError); err != nil {
-		t.Fatal(err)
-	}
-	if pendingMediaCount != 1 || pendingMediaStatus != "pending" || pendingMediaError != "media_retained_in_webhook_inbox" {
-		t.Fatalf("media placeholder state = rows:%d status:%q error:%q", pendingMediaCount, pendingMediaStatus, pendingMediaError)
-	}
+	mediaBytes := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
 	var mediaUploads atomic.Int32
 	storageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet && request.URL.Path == "/media/source.png" {
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(mediaBytes)
+			return
+		}
 		if request.Method != http.MethodPost || !strings.HasPrefix(request.URL.Path, "/storage/v1/object/whatsapp-media/") {
 			http.NotFound(w, request)
 			return
@@ -215,9 +223,75 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer storageServer.Close()
+	mediaItem := item("messages.upsert", "message_media.json")
+	var mediaPayload map[string]any
+	if err := json.Unmarshal(mediaItem.Payload, &mediaPayload); err != nil {
+		t.Fatal(err)
+	}
+	mediaEnvelope := mapFromAny(mapFromAny(mediaPayload["data"])["message"])
+	mediaEnvelope["mediaUrl"] = storageServer.URL + "/media/source.png"
+	mediaItem.Payload, err = json.Marshal(mediaPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handled, err := repo.processEvolutionWebhookNative(ctx, mediaItem); err != nil || !handled {
+		t.Fatalf("native media enqueue = handled:%v error:%v", handled, err)
+	}
+	var pendingMediaCount int
+	var pendingMediaStatus, pendingMediaError, pendingMediaRowID string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select count(*)::integer, coalesce(max(media_status), ''), coalesce(max(media_error), ''), coalesce(max(id::text), '')
+		from public.whatsapp_messages
+		where organization_id = $1::uuid and session_id = $2::uuid and message_id = 'provider-inbound-image-1'
+	`, organizationID, sessionID).Scan(&pendingMediaCount, &pendingMediaStatus, &pendingMediaError, &pendingMediaRowID); err != nil {
+		t.Fatal(err)
+	}
+	if pendingMediaCount != 1 || pendingMediaStatus != "pending" || pendingMediaError != "" || pendingMediaRowID == "" {
+		t.Fatalf("media placeholder state = rows:%d status:%q error:%q", pendingMediaCount, pendingMediaStatus, pendingMediaError)
+	}
+	var pendingMediaJobs int
+	var pendingJobStatus, pendingJobOrganizationID, pendingJobSessionID, pendingJobConversationID, pendingJobMessageID string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select count(*)::integer,
+		       coalesce(max(status), ''),
+		       coalesce(max(organization_id::text), ''),
+		       coalesce(max(session_id::text), ''),
+		       coalesce(max(conversation_id::text), ''),
+		       coalesce(max(message_id::text), '')
+		from public.media_jobs
+		where organization_id = $1::uuid and message_id = $2::uuid
+	`, organizationID, pendingMediaRowID).Scan(
+		&pendingMediaJobs,
+		&pendingJobStatus,
+		&pendingJobOrganizationID,
+		&pendingJobSessionID,
+		&pendingJobConversationID,
+		&pendingJobMessageID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if pendingMediaJobs != 1 || pendingJobStatus != "pending" ||
+		pendingJobOrganizationID != organizationID || pendingJobSessionID != sessionID ||
+		pendingJobConversationID != conversationID || pendingJobMessageID != pendingMediaRowID {
+		t.Fatalf(
+			"durable media job = rows:%d status:%q organization:%q session:%q conversation:%q message:%q",
+			pendingMediaJobs,
+			pendingJobStatus,
+			pendingJobOrganizationID,
+			pendingJobSessionID,
+			pendingJobConversationID,
+			pendingJobMessageID,
+		)
+	}
 	storageRepo := NewRepository(postgres, nil, StorageConfig{ProjectURL: storageServer.URL, APIKey: "sb_secret_whatsapp_test"})
-	if handled, err := storageRepo.processEvolutionWebhookNative(ctx, item("messages.upsert", "message_media.json")); err != nil || !handled {
+	if handled, err := storageRepo.processEvolutionWebhookNative(ctx, mediaItem); err != nil || !handled {
 		t.Fatalf("native media placeholder replay = handled:%v error:%v", handled, err)
+	}
+	if mediaUploads.Load() != 0 {
+		t.Fatalf("webhook replay performed %d inline media uploads, want 0", mediaUploads.Load())
+	}
+	if processed, err := storageRepo.drainOneWhatsAppMediaJobForSessions(ctx, time.Minute, defaultWhatsAppMediaWorkerConcurrency, []string{sessionID}); err != nil || !processed {
+		t.Fatalf("native media worker drain = processed:%v error:%v", processed, err)
 	}
 	var replayedMediaCount int
 	var replayedMediaStatus, replayedMediaPath, replayedMediaError string
@@ -232,10 +306,13 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	if replayedMediaCount != 1 || replayedMediaStatus != "ready" || replayedMediaPath == "" || replayedMediaError != "" {
 		t.Fatalf("replayed media state = rows:%d status:%q path:%q error:%q", replayedMediaCount, replayedMediaStatus, replayedMediaPath, replayedMediaError)
 	}
-	readyMedia := item("messages.upsert", "message_media.json")
+	readyMedia := mediaItem
 	readyMedia.Payload = []byte(strings.ReplaceAll(string(readyMedia.Payload), "provider-inbound-image-1", "provider-inbound-image-ready"))
 	if handled, err := storageRepo.processEvolutionWebhookNative(ctx, readyMedia); err != nil || !handled {
-		t.Fatalf("native stored media = handled:%v error:%v", handled, err)
+		t.Fatalf("native stored media enqueue = handled:%v error:%v", handled, err)
+	}
+	if processed, err := storageRepo.drainOneWhatsAppMediaJobForSessions(ctx, time.Minute, defaultWhatsAppMediaWorkerConcurrency, []string{sessionID}); err != nil || !processed {
+		t.Fatalf("native stored media worker drain = processed:%v error:%v", processed, err)
 	}
 	var readyMediaStatus, readyMediaPath string
 	if err := postgres.Pool().QueryRow(ctx, `
@@ -278,19 +355,22 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 			t.Errorf("provider recovery did not receive the official media block: %#v", body)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"message":"success","data":{"base64":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB","timestamp":""}}`))
+		_, _ = w.Write([]byte(`{"message":"success","data":{"base64":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nKsAAAAASUVORK5CYII=","timestamp":""}}`))
 	}))
 	defer providerServer.Close()
 	providerRepo := NewRepository(postgres, nil, StorageConfig{
 		ProjectURL: storageServer.URL,
-		APIKey:     "service-key",
+		APIKey:     "sb_secret_whatsapp_test",
 		EvolutionGo: EvolutionGoConfig{
 			APIURL: providerServer.URL,
 			APIKey: "provider-key",
 		},
 	})
 	if handled, err := providerRepo.processEvolutionWebhookNative(ctx, item("messages.upsert", "message_media_provider.json")); err != nil || !handled {
-		t.Fatalf("provider media recovery = handled:%v error:%v", handled, err)
+		t.Fatalf("provider media enqueue = handled:%v error:%v", handled, err)
+	}
+	if processed, err := providerRepo.drainOneWhatsAppMediaJobForSessions(ctx, time.Minute, defaultWhatsAppMediaWorkerConcurrency, []string{sessionID}); err != nil || !processed {
+		t.Fatalf("provider media worker drain = processed:%v error:%v", processed, err)
 	}
 	var providerMediaStatus, providerMediaPath string
 	if err := postgres.Pool().QueryRow(ctx, `
@@ -310,7 +390,7 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	defer failingProvider.Close()
 	failingProviderRepo := NewRepository(postgres, nil, StorageConfig{
 		ProjectURL: storageServer.URL,
-		APIKey:     "service-key",
+		APIKey:     "sb_secret_whatsapp_test",
 		EvolutionGo: EvolutionGoConfig{
 			APIURL: failingProvider.URL,
 			APIKey: "provider-key",
@@ -318,19 +398,53 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	})
 	failedProviderItem := item("messages.upsert", "message_media_provider.json")
 	failedProviderItem.Payload = []byte(strings.ReplaceAll(string(failedProviderItem.Payload), "provider-inbound-image-download-1", "provider-inbound-image-download-failed"))
-	if handled, err := failingProviderRepo.processEvolutionWebhookNative(ctx, failedProviderItem); err == nil || !handled {
-		t.Fatalf("provider failure must remain retryable: handled:%v error:%v", handled, err)
+	failedProviderItem.Payload = []byte(strings.ReplaceAll(
+		string(failedProviderItem.Payload),
+		"JfUmzNXDAYgL4c7/jmtyXqb4UJqqrtMwyampRkhTYQY=",
+		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+	))
+	if handled, err := failingProviderRepo.processEvolutionWebhookNative(ctx, failedProviderItem); err != nil || !handled {
+		t.Fatalf("failing provider media enqueue = handled:%v error:%v", handled, err)
+	}
+	if processed, err := failingProviderRepo.drainOneWhatsAppMediaJobForSessions(ctx, time.Minute, defaultWhatsAppMediaWorkerConcurrency, []string{sessionID}); err != nil || !processed {
+		t.Fatalf("failing provider media worker drain = processed:%v error:%v", processed, err)
 	}
 	var failedProviderRows int
-	var failedProviderStatus string
+	var failedProviderStatus, failedProviderError, failedProviderJobStatus, failedProviderJobError string
+	var failedProviderAttempts int
 	if err := postgres.Pool().QueryRow(ctx, `
-		select count(*)::integer, coalesce(max(media_status), '') from public.whatsapp_messages
-		where organization_id = $1::uuid and session_id = $2::uuid and message_id = 'provider-inbound-image-download-failed'
-	`, organizationID, sessionID).Scan(&failedProviderRows, &failedProviderStatus); err != nil {
+		select count(*)::integer,
+		       coalesce(max(message.media_status), ''),
+		       coalesce(max(message.media_error), ''),
+		       coalesce(max(job.status), ''),
+		       coalesce(max(job.attempts), 0)::integer,
+		       coalesce(max(job.error_code), '')
+		from public.whatsapp_messages as message
+		left join public.media_jobs as job on job.message_id = message.id
+		where message.organization_id = $1::uuid
+		  and message.session_id = $2::uuid
+		  and message.message_id = 'provider-inbound-image-download-failed'
+	`, organizationID, sessionID).Scan(
+		&failedProviderRows,
+		&failedProviderStatus,
+		&failedProviderError,
+		&failedProviderJobStatus,
+		&failedProviderAttempts,
+		&failedProviderJobError,
+	); err != nil {
 		t.Fatal(err)
 	}
-	if failedProviderRows != 1 || failedProviderStatus != "pending" {
-		t.Fatalf("provider failure placeholder = rows:%d status:%q", failedProviderRows, failedProviderStatus)
+	if failedProviderRows != 1 || failedProviderStatus != "pending" || failedProviderError != mediaErrorRetry ||
+		failedProviderJobStatus != "pending" || failedProviderAttempts != 1 || failedProviderJobError == "" {
+		t.Fatalf(
+			"provider failure retry state = rows:%d message:%q/%q job:%q attempts:%d error:%q",
+			failedProviderRows,
+			failedProviderStatus,
+			failedProviderError,
+			failedProviderJobStatus,
+			failedProviderAttempts,
+			failedProviderJobError,
+		)
 	}
 
 	reactionPayload := strings.ReplaceAll(string(readNativeFixture(t, "message_reaction.json")), "provider-outbound-for-reaction", "provider-outbound-status")
@@ -429,12 +543,12 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		}
 	}
 	var lidConversationCount, lidMessageCount int
-	var lidLeadID string
+	var lidLeadID, lidConversationID string
 	if err := postgres.Pool().QueryRow(ctx, `
-		select count(*)::integer, coalesce(max(lead_id::text), '')
+		select count(*)::integer, coalesce(max(lead_id::text), ''), coalesce(max(id::text), '')
 		from public.whatsapp_conversations
 		where organization_id = $1::uuid and session_id = $2::uuid and remote_jid = '987654321012345@lid'
-	`, organizationID, sessionID).Scan(&lidConversationCount, &lidLeadID); err != nil {
+	`, organizationID, sessionID).Scan(&lidConversationCount, &lidLeadID, &lidConversationID); err != nil {
 		t.Fatal(err)
 	}
 	if err := postgres.Pool().QueryRow(ctx, `
@@ -457,13 +571,20 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	var preexistingCanonicalConversationID string
 	if err := postgres.Pool().QueryRow(ctx, `
 		insert into public.whatsapp_conversations (
-		  organization_id, session_id, lead_id, assigned_user_id, remote_jid,
+		  organization_id, session_id, assigned_user_id, remote_jid,
 		  contact_phone, contact_name, unread_count
 		) values (
-		  $1::uuid, $2::uuid, $3::uuid, $4::uuid, '5511666665555@s.whatsapp.net',
+		  $1::uuid, $2::uuid, $3::uuid, '5511666665555@s.whatsapp.net',
 		  '5511666665555', 'Contato LID promovido', 0
 		) returning id::text
-	`, organizationID, sessionID, promotedLeadID, userID).Scan(&preexistingCanonicalConversationID); err != nil {
+	`, organizationID, sessionID, userID).Scan(&preexistingCanonicalConversationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		select public.activate_whatsapp_conversation_lead_binding(
+			$1::uuid, $2::uuid, $3::uuid, null
+		)
+	`, organizationID, preexistingCanonicalConversationID, promotedLeadID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -488,9 +609,19 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		  raw_app_meta_data, raw_user_meta_data, created_at, updated_at
 		) values ($1::uuid, 'authenticated', 'authenticated', $2, '', now(), '{}'::jsonb, '{}'::jsonb, now(), now());
 		insert into public.users (id, organization_id, name, email, role, is_active)
-		values ($1::uuid, $3::uuid, $4, $2, 'user', true);
+		values ($1::uuid, $3::uuid, $4, $2, 'user', true)
+		on conflict (id) do update
+		set organization_id = excluded.organization_id,
+		    name = excluded.name,
+		    email = excluded.email,
+		    role = excluded.role,
+		    is_active = excluded.is_active;
 		insert into public.organization_members (organization_id, user_id, role, is_active)
 		values ($3::uuid, $1::uuid, 'user', true)
+		on conflict (user_id, organization_id) do update
+		set role = excluded.role,
+		    is_active = excluded.is_active,
+		    deleted_at = null
 	`, lidForeignUserID, suffix+"-lid-foreign@example.invalid", lidForeignOrganizationID, suffix+"-lid-foreign"); err != nil {
 		t.Fatal(err)
 	}
@@ -517,8 +648,9 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 			t.Fatalf("native LID promotion attempt %d = handled:%v error:%v", attempt+1, handled, err)
 		}
 	}
-	var activeCanonicalConversations, activeLIDConversations, promotedHistoryRows int
+	var activeCanonicalConversations, activeLIDConversations, promotedHistoryRows, quarantinedHistoryRows int
 	var promotedConversationID, promotedHistoryLeadID, promotedAliasCanonical string
+	var quarantinedHistoryLeadID string
 	if err := postgres.Pool().QueryRow(ctx, `
 		select count(*)::integer, coalesce(max(id::text), '')
 		from public.whatsapp_conversations
@@ -544,9 +676,38 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := postgres.Pool().QueryRow(ctx, `
+		select count(*)::integer, coalesce(max(lead_id::text), '')
+		from public.whatsapp_messages
+		where organization_id = $1::uuid and session_id = $2::uuid
+		  and conversation_id = $3::uuid
+		  and message_id = 'provider-lid-quarantine-1'
+	`, organizationID, sessionID, lidConversationID).Scan(&quarantinedHistoryRows, &quarantinedHistoryLeadID); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
 		select canonical_jid from public.whatsapp_contact_identity_aliases
 		where organization_id = $1::uuid and session_id = $2::uuid and alias_jid = '987654321012345@lid'
 	`, organizationID, sessionID).Scan(&promotedAliasCanonical); err != nil {
+		t.Fatal(err)
+	}
+	postPromotionLIDItem := item("messages.upsert", "message_lid_quarantine.json")
+	postPromotionLIDItem.Payload = []byte(strings.ReplaceAll(
+		string(postPromotionLIDItem.Payload),
+		"provider-lid-quarantine-1",
+		"provider-lid-post-promotion-3",
+	))
+	for attempt := 0; attempt < 2; attempt++ {
+		if handled, err := repo.processEvolutionWebhookNative(ctx, postPromotionLIDItem); err != nil || !handled {
+			t.Fatalf("post-promotion LID attempt %d = handled:%v error:%v", attempt+1, handled, err)
+		}
+	}
+	var postPromotionConversationID, postPromotionLeadID string
+	if err := postgres.Pool().QueryRow(ctx, `
+		select conversation_id::text, coalesce(lead_id::text, '')
+		from public.whatsapp_messages
+		where organization_id = $1::uuid and session_id = $2::uuid
+		  and message_id = 'provider-lid-post-promotion-3'
+	`, organizationID, sessionID).Scan(&postPromotionConversationID, &postPromotionLeadID); err != nil {
 		t.Fatal(err)
 	}
 	var foreignLIDActive bool
@@ -556,11 +717,17 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	`, lidForeignOrganizationID, lidForeignSessionID, lidForeignConversationID).Scan(&foreignLIDActive); err != nil {
 		t.Fatal(err)
 	}
-	if activeCanonicalConversations != 1 || activeLIDConversations != 0 || promotedHistoryRows != 2 ||
+	if activeCanonicalConversations != 1 || activeLIDConversations != 0 || promotedHistoryRows != 1 ||
 		promotedConversationID != preexistingCanonicalConversationID || promotedHistoryLeadID != promotedLeadID ||
-		promotedAliasCanonical != "5511666665555@s.whatsapp.net" || !foreignLIDActive {
-		t.Fatalf("LID promotion state = canonical:%d lid:%d history:%d lead:%s alias:%s foreignActive:%v",
-			activeCanonicalConversations, activeLIDConversations, promotedHistoryRows, promotedHistoryLeadID, promotedAliasCanonical, foreignLIDActive)
+		quarantinedHistoryRows != 1 || quarantinedHistoryLeadID != "" ||
+		promotedAliasCanonical != "5511666665555@s.whatsapp.net" ||
+		postPromotionConversationID != preexistingCanonicalConversationID || postPromotionLeadID != promotedLeadID ||
+		!foreignLIDActive {
+		t.Fatalf("LID promotion state = canonical:%d lid:%d targetHistory:%d/%s sourceHistory:%d/%s alias:%s followup:%s/%s foreignActive:%v",
+			activeCanonicalConversations, activeLIDConversations,
+			promotedHistoryRows, promotedHistoryLeadID,
+			quarantinedHistoryRows, quarantinedHistoryLeadID,
+			promotedAliasCanonical, postPromotionConversationID, postPromotionLeadID, foreignLIDActive)
 	}
 
 	var wrongOrganizationID string
@@ -587,7 +754,7 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		t.Fatalf("unverified Meta referral created %d leads", invalidCampaignLeadCount)
 	}
 
-	var roundRobinUserID, roundRobinID, inboundRuleID string
+	var roundRobinUserID, pipelineID, stageID, roundRobinID, inboundRuleID string
 	if err := postgres.Pool().QueryRow(ctx, `select gen_random_uuid()::text`).Scan(&roundRobinUserID); err != nil {
 		t.Fatal(err)
 	}
@@ -607,19 +774,50 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.users (id, organization_id, name, email, role, is_active)
 		values ($1::uuid, $2::uuid, 'Round Robin User', $3, 'user', true)
+		on conflict (id) do update
+		set organization_id = excluded.organization_id,
+		    name = excluded.name,
+		    email = excluded.email,
+		    role = excluded.role,
+		    is_active = excluded.is_active
 	`, roundRobinUserID, organizationID, suffix+"-rr@example.invalid"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := postgres.Pool().Exec(ctx, `
 		insert into public.organization_members (organization_id, user_id, role, is_active)
 		values ($1::uuid, $2::uuid, 'user', true)
+		on conflict (user_id, organization_id) do update
+		set role = excluded.role,
+		    is_active = excluded.is_active,
+		    deleted_at = null
 	`, organizationID, roundRobinUserID); err != nil {
 		t.Fatal(err)
 	}
 	if err := postgres.Pool().QueryRow(ctx, `
-		insert into public.round_robins (organization_id, name, is_active, current_position, created_by)
-		values ($1::uuid, $2, true, 0, $3::uuid) returning id::text
-	`, organizationID, suffix+" RR", userID).Scan(&roundRobinID); err != nil {
+		insert into public.pipelines (
+		  organization_id, name, is_default, is_active, position
+		) values ($1::uuid, $2, true, true, 0)
+		returning id::text
+	`, organizationID, suffix+" Pipeline").Scan(&pipelineID); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.stages (
+		  organization_id, pipeline_id, name, stage_key, position, is_active
+		) values ($1::uuid, $2::uuid, $3, 'new', 0, true)
+		returning id::text
+	`, organizationID, pipelineID, suffix+" Stage").Scan(&stageID); err != nil {
+		t.Fatal(err)
+	}
+	if err := postgres.Pool().QueryRow(ctx, `
+		insert into public.round_robins (
+		  organization_id, name, is_active, current_position, created_by,
+		  pipeline_id, target_pipeline_id, target_stage_id
+		) values (
+		  $1::uuid, $2, true, 0, $3::uuid, $4::uuid, $4::uuid, $5::uuid
+		)
+		returning id::text
+	`, organizationID, suffix+" RR", userID, pipelineID, stageID).Scan(&roundRobinID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := postgres.Pool().Exec(ctx, `
@@ -634,7 +832,7 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		  organization_id, session_id, name, match_type, match_field, match_value,
 		  priority, is_active, target_round_robin_id, campaign_label
 		) values (
-		  $1::uuid, $2::uuid, $3, 'exact', 'ad_id', '120249512922100328',
+		  $1::uuid, $2::uuid, $3, 'equals', 'ad_id', '120249512922100328',
 		  100, true, $4::uuid, 'Campanha roteada'
 		) returning id::text
 	`, organizationID, sessionID, suffix+" inbound", roundRobinID).Scan(&inboundRuleID); err != nil {
@@ -670,20 +868,16 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 	if verifiedLeadCount != 1 || campaignConversationLeadID == "" || campaignConversationLeadID != campaignMessageLeadID {
 		t.Fatalf("confirmed CTWA state = leads:%d conversationLead:%s messageLead:%s", verifiedLeadCount, campaignConversationLeadID, campaignMessageLeadID)
 	}
-	var campaignAssignedUserID, campaignPropertyID, campaignInterestPropertyID string
+	var campaignAssignedUserID, campaignPipelineID, campaignPropertyID, campaignInterestPropertyID string
 	var distributionOutcome, distributionSource string
 	var distributionMarkerPresent bool
-	var roundRobinPosition int
 	var roundRobinLogs, distributionEvents, leadMetaRows, leadEntryRows, activityRows, inboundLogRows int
-	var leadEntryProviderID, leadEntryMetadataProviderID, creativeInstagramURL, storedEntryPoint string
+	var leadEntryProviderID, leadEntryMetadataProviderID, creativeInstagramURL, storedEntryPoint, inboundLogRuleID string
 	if err := postgres.Pool().QueryRow(ctx, `
-		select coalesce(assigned_user_id::text, ''), coalesce(property_id::text, ''),
+		select coalesce(assigned_user_id::text, ''), coalesce(pipeline_id::text, ''), coalesce(property_id::text, ''),
 		       coalesce(interest_property_id::text, ''), metadata ? 'distribution_deferred'
 		from public.leads where id = $1::uuid
-	`, campaignConversationLeadID).Scan(&campaignAssignedUserID, &campaignPropertyID, &campaignInterestPropertyID, &distributionMarkerPresent); err != nil {
-		t.Fatal(err)
-	}
-	if err := postgres.Pool().QueryRow(ctx, `select current_position from public.round_robins where id = $1::uuid`, roundRobinID).Scan(&roundRobinPosition); err != nil {
+	`, campaignConversationLeadID).Scan(&campaignAssignedUserID, &campaignPipelineID, &campaignPropertyID, &campaignInterestPropertyID, &distributionMarkerPresent); err != nil {
 		t.Fatal(err)
 	}
 	if err := postgres.Pool().QueryRow(ctx, `
@@ -723,11 +917,12 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := postgres.Pool().QueryRow(ctx, `
-		select count(*)::integer from public.whatsapp_inbound_logs
+		select count(*)::integer, coalesce(max(matched_rule_id::text), '')
+		from public.whatsapp_inbound_logs
 		where organization_id = $1::uuid and session_id = $2::uuid
 		  and match_details->>'message_id' = 'provider-meta-ctwa-instagram-1'
-		  and matched_rule_id = $3::uuid and lead_id = $4::uuid
-	`, organizationID, sessionID, inboundRuleID, campaignConversationLeadID).Scan(&inboundLogRows); err != nil {
+		  and lead_id = $3::uuid
+	`, organizationID, sessionID, campaignConversationLeadID).Scan(&inboundLogRows, &inboundLogRuleID); err != nil {
 		t.Fatal(err)
 	}
 	if err := postgres.Pool().QueryRow(ctx, `
@@ -738,20 +933,20 @@ func TestNativeEvolutionWebhookCoreIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	expectedProviderID := sessionID + ":provider-meta-ctwa-instagram-1"
-	if campaignAssignedUserID != roundRobinUserID || campaignPropertyID != "" || campaignInterestPropertyID != "" || roundRobinPosition != 1 || roundRobinLogs != 1 ||
+	if campaignAssignedUserID != roundRobinUserID || campaignPipelineID != pipelineID || campaignPropertyID != "" || campaignInterestPropertyID != "" || roundRobinLogs != 1 ||
 		distributionEvents != 1 || distributionOutcome != "assigned" || distributionSource != "whatsapp" || distributionMarkerPresent ||
 		leadMetaRows != 1 || leadEntryRows != 1 || leadEntryProviderID != "nonmanaged:"+expectedProviderID || leadEntryMetadataProviderID != expectedProviderID ||
-		activityRows != 1 || inboundLogRows != 1 || creativeInstagramURL != "https://www.instagram.com/p/Dcyi6FjgAeQ/" || storedEntryPoint != "ctwa_ad" {
-		t.Fatalf("CTWA canonical distribution parity = assignee:%s property:%s interest:%s rrPos:%d rrLogs:%d dist:%d/%s/%s marker:%v leadMeta:%d entries:%d provider:%s metadataProvider:%s activities:%d inbound:%d instagram:%s entry:%s",
-			campaignAssignedUserID, campaignPropertyID, campaignInterestPropertyID, roundRobinPosition, roundRobinLogs,
+		activityRows != 1 || inboundLogRows != 1 || inboundLogRuleID != "" || creativeInstagramURL != "https://www.instagram.com/p/Dcyi6FjgAeQ/" || storedEntryPoint != "ctwa_ad" {
+		t.Fatalf("CTWA canonical distribution parity = assignee:%s pipeline:%s property:%s interest:%s rrLogs:%d dist:%d/%s/%s marker:%v leadMeta:%d entries:%d provider:%s metadataProvider:%s activities:%d inbound:%d/rule:%s instagram:%s entry:%s",
+			campaignAssignedUserID, campaignPipelineID, campaignPropertyID, campaignInterestPropertyID, roundRobinLogs,
 			distributionEvents, distributionOutcome, distributionSource, distributionMarkerPresent,
 			leadMetaRows, leadEntryRows, leadEntryProviderID, leadEntryMetadataProviderID,
-			activityRows, inboundLogRows, creativeInstagramURL, storedEntryPoint)
+			activityRows, inboundLogRows, inboundLogRuleID, creativeInstagramURL, storedEntryPoint)
 	}
 	if _, err := postgres.Pool().Exec(ctx, `
-		insert into public.properties (organization_id, code, title) values
-		  ($1::uuid, 'AMBIG-META-1', 'Ambiguo A'),
-		  ($1::uuid, 'AMBIG-META-1', 'Ambiguo B')
+		insert into public.properties (organization_id, code, referencia_alternativa, title) values
+		  ($1::uuid, 'AMBIG-META-A', 'AMBIG-META-1', 'Ambiguo A'),
+		  ($1::uuid, 'AMBIG-META-B', 'AMBIG-META-1', 'Ambiguo B')
 	`, organizationID); err != nil {
 		t.Fatal(err)
 	}

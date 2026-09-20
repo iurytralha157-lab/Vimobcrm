@@ -194,13 +194,39 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 	}
 	var propertyID any
 	var propertyCode any
+	var routingPropertyID *string
 	if resolvedProperty != nil {
 		propertyID = resolvedProperty.ID
 		propertyCode = optionalText(resolvedProperty.Code)
+		routingPropertyID = &resolvedProperty.ID
 	}
 
 	destination, err := repo.resolvePublicLeadDestination(ctx, tx, organizationID)
 	if err != nil {
+		return nil, err
+	}
+	distributionSource := "site"
+	websiteCategory := "public_site"
+	intakeDestination, err := distribution.ResolveIntakeDestination(ctx, tx, distribution.IntakeContext{
+		OrganizationID:     organizationID,
+		PipelineID:         destination.PipelineID,
+		Source:             distributionSource,
+		PropertyID:         routingPropertyID,
+		InterestPropertyID: routingPropertyID,
+		WebsiteCategory:    &websiteCategory,
+		UTMCampaign:        request.UTMCampaign,
+	})
+	if err != nil {
+		return nil, err
+	}
+	intakeScopeKey := distribution.IntakeScopeKey(intakeDestination.RoundRobinID)
+	var legacyPhoneIdentity bool
+	if err := tx.QueryRow(ctx, `
+		select to_regclass('public.leads_org_phone_unique') is not null
+	`).Scan(&legacyPhoneIdentity); err != nil {
+		return nil, err
+	}
+	if err := lockPublicContactLeadIntakeIdentity(ctx, tx, organizationID, phone, intakeScopeKey, legacyPhoneIdentity); err != nil {
 		return nil, err
 	}
 
@@ -209,20 +235,23 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 	err = tx.QueryRow(ctx, `
 		select id::text from public.leads
 		where organization_id=$1::uuid
+		  and ($4::boolean or intake_scope_key=$3)
 		  and phone is not null
 		  and btrim(phone) <> ''
 		  and normalize_phone(phone) is not null
 		  and normalize_phone(phone) <> ''
 		  and normalize_phone(phone)=normalize_phone($2)
+		order by created_at asc, id asc
 		limit 1
-	`, organizationID, phone).Scan(&leadID)
+	`, organizationID, phone, intakeScopeKey, legacyPhoneIdentity).Scan(&leadID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = tx.QueryRow(ctx, `
 			insert into public.leads (
 				organization_id, pipeline_id, stage_id, property_id, interest_property_id,
 				name, email, phone, property_code, message, initial_message, source, source_detail,
 				visitor_session_id, utm_source, utm_medium, utm_campaign, status, deal_status,
-				first_touch_at, stage_entered_at, board_order_at, metadata
+				first_touch_at, stage_entered_at, board_order_at, metadata,
+				intake_scope_key, origin_round_robin_id
 			) values (
 				$1::uuid, $2::uuid, $3::uuid, $4::uuid, $4::uuid,
 				$5, $6, $7, $8, $9, $9, 'site', 'public_site',
@@ -233,12 +262,15 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 					'property_code', $8, 'best_time', $11, 'privacy_accepted', $12::boolean,
 					'privacy_url', $13, 'landing_page', $17, 'referrer', $18,
 					'utm_term', $19, 'utm_content', $20, 'gclid', $21, 'fbclid', $22,
-					'submission_id', $23, 'distribution_deferred', true
-				)
+					'submission_id', $23, 'distribution_deferred', true,
+					'intake_scope_key', $24, 'origin_round_robin_id', $25
+				),
+				$24,
+				$25::uuid
 			)
 			on conflict do nothing
 			returning id::text
-		`, organizationID, optionalText(destination.PipelineID), optionalText(destination.StageID), propertyID, name, optionalText(request.Email), phone, propertyCode, message, sessionValue, optionalText(request.BestTime), request.PrivacyAccepted, optionalText(request.PrivacyURL), optionalText(request.UTMSource), optionalText(request.UTMMedium), optionalText(request.UTMCampaign), optionalText(request.LandingPage), optionalText(request.Referrer), optionalText(request.UTMTerm), optionalText(request.UTMContent), optionalText(request.GCLID), optionalText(request.FBCLID), submissionID).Scan(&leadID)
+		`, organizationID, optionalText(destination.PipelineID), optionalText(destination.StageID), propertyID, name, optionalText(request.Email), phone, propertyCode, message, sessionValue, optionalText(request.BestTime), request.PrivacyAccepted, optionalText(request.PrivacyURL), optionalText(request.UTMSource), optionalText(request.UTMMedium), optionalText(request.UTMCampaign), optionalText(request.LandingPage), optionalText(request.Referrer), optionalText(request.UTMTerm), optionalText(request.UTMContent), optionalText(request.GCLID), optionalText(request.FBCLID), submissionID, intakeScopeKey, optionalText(intakeDestination.RoundRobinID)).Scan(&leadID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Another transaction won the normalized-phone unique index. The
 			// INSERT waits for that transaction to finish, so this new statement
@@ -246,13 +278,15 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 			err = tx.QueryRow(ctx, `
 				select id::text from public.leads
 				where organization_id=$1::uuid
+				  and ($4::boolean or intake_scope_key=$3)
 				  and phone is not null
 				  and btrim(phone) <> ''
 				  and normalize_phone(phone) is not null
 				  and normalize_phone(phone) <> ''
 				  and normalize_phone(phone)=normalize_phone($2)
+				order by created_at asc, id asc
 				limit 1
-			`, organizationID, phone).Scan(&leadID)
+			`, organizationID, phone, intakeScopeKey, legacyPhoneIdentity).Scan(&leadID)
 			reentry = true
 		} else {
 			reentry = false
@@ -408,14 +442,15 @@ func (repo Repository) CreatePublicContact(ctx context.Context, request PublicCo
 	// queue row is intentionally locked while its counters and assignment side
 	// effects advance; doing unrelated submission/analytics writes first keeps
 	// that critical section as short as possible under concurrent site intake.
-	distributionSource := "site"
 	if _, err := distribution.Distribute(ctx, tx, distribution.Request{
-		OrganizationID:   organizationID,
-		LeadID:           leadID,
-		IdempotencyKey:   "site:" + submissionID,
-		PreserveAssignee: true,
-		Source:           &distributionSource,
-		OccurredAt:       time.Now().UTC(),
+		OrganizationID:     organizationID,
+		LeadID:             leadID,
+		IdempotencyKey:     "site:" + submissionID,
+		RoundRobinID:       intakeDestination.RoundRobinID,
+		RoundRobinResolved: intakeDestination.Resolved,
+		PreserveAssignee:   distribution.PreserveAssigneeForIntake(reentry, intakeDestination),
+		Source:             &distributionSource,
+		OccurredAt:         time.Now().UTC(),
 	}); err != nil {
 		return nil, err
 	}
@@ -439,6 +474,30 @@ func phoneDigits(value string) string {
 		}
 	}
 	return out.String()
+}
+
+func lockPublicContactLeadIntakeIdentity(
+	ctx context.Context,
+	tx pgx.Tx,
+	organizationID string,
+	phone string,
+	intakeScopeKey string,
+	legacyIdentity bool,
+) error {
+	if legacyIdentity {
+		_, err := tx.Exec(ctx, `
+			select pg_advisory_xact_lock(
+				hashtextextended($1 || ':legacy-global:' || normalize_phone($2), 0)
+			)
+		`, organizationID, phone)
+		return err
+	}
+	_, err := tx.Exec(ctx, `
+		select pg_advisory_xact_lock(
+			hashtextextended($1 || ':' || $2 || ':' || normalize_phone($3), 0)
+		)
+	`, organizationID, intakeScopeKey, phone)
+	return err
 }
 
 func (repo Repository) resolvePublicLeadDestination(ctx context.Context, q siteQueryer, organizationID string) (publicLeadDestination, error) {

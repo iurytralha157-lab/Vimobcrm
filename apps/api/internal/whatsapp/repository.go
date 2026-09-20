@@ -471,6 +471,18 @@ func onlyDigits(value string) string {
 }
 
 func (repo Repository) GetConversation(ctx context.Context, tenantContext tenant.Context, conversationID string) (Conversation, error) {
+	conversation, err := repo.GetConversationSnapshot(ctx, tenantContext, conversationID)
+	if err != nil {
+		return Conversation{}, err
+	}
+
+	return repo.resolveConversationLead(ctx, tenantContext, conversation)
+}
+
+// GetConversationSnapshot returns the current persisted card binding without
+// running the legacy auto-link fallback. Browser deep links use this read only
+// to pin the subsequent detail request to the same lead (or to "unlinked").
+func (repo Repository) GetConversationSnapshot(ctx context.Context, tenantContext tenant.Context, conversationID string) (Conversation, error) {
 	conversationID, ok := normalizeUUID(conversationID)
 	if !ok {
 		return Conversation{}, ErrConversationNotFound
@@ -496,8 +508,49 @@ func (repo Repository) GetConversation(ctx context.Context, tenantContext tenant
 	if err != nil {
 		return Conversation{}, err
 	}
+	return conversation, nil
+}
 
-	return repo.resolveConversationLead(ctx, tenantContext, conversation)
+// GetConversationForExpectedLead is the web-safe conversation read. Unlike
+// GetConversation, it never auto-links an unbound conversation and returns no
+// row when a browser still carries an older card snapshot.
+func (repo Repository) GetConversationForExpectedLead(ctx context.Context, tenantContext tenant.Context, conversationID string, expectedLeadID string) (Conversation, error) {
+	conversationID, ok := normalizeUUID(conversationID)
+	if !ok {
+		return Conversation{}, ErrConversationNotFound
+	}
+	expectedLeadID, err := validateExpectedConversationLeadSnapshot(expectedLeadID)
+	if err != nil {
+		return Conversation{}, err
+	}
+
+	args := append(baseConversationArgs(tenantContext), conversationID)
+	expectedLeadPredicate := "wc.lead_id is null"
+	if expectedLeadID != unlinkedConversationLeadSnapshot {
+		args = append(args, expectedLeadID)
+		expectedLeadPredicate = fmt.Sprintf("wc.lead_id = $%d::uuid", len(args))
+	}
+	conversation, err := scanConversation(repo.db.Pool().QueryRow(ctx, `
+		select `+conversationSelectFields()+`
+		from public.whatsapp_conversations wc
+		left join public.whatsapp_sessions ws on ws.id = wc.session_id
+		left join public.leads l on l.id = wc.lead_id
+		left join public.pipelines pipeline on pipeline.id = l.pipeline_id
+		left join public.stages stage on stage.id = l.stage_id
+		where wc.organization_id = $1::uuid
+		  and wc.deleted_at is null
+		  and `+conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
+		  and wc.id = $5::uuid
+		  and `+expectedLeadPredicate+`
+		limit 1
+	`, args...))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Conversation{}, ErrConversationNotFound
+	}
+	if err != nil {
+		return Conversation{}, err
+	}
+	return conversation, nil
 }
 
 func (repo Repository) ListMessages(ctx context.Context, tenantContext tenant.Context, conversationID string, filter MessageFilter) (MessagePage, error) {
@@ -505,7 +558,14 @@ func (repo Repository) ListMessages(ctx context.Context, tenantContext tenant.Co
 	if !ok {
 		return MessagePage{}, ErrConversationNotFound
 	}
-	if err := repo.ensureCanViewConversation(ctx, tenantContext, conversationID); err != nil {
+	if filter.ExpectedLeadID != "" {
+		normalizedExpectedLeadID, err := validateExpectedConversationLeadSnapshot(filter.ExpectedLeadID)
+		if err != nil {
+			return MessagePage{}, err
+		}
+		filter.ExpectedLeadID = normalizedExpectedLeadID
+	}
+	if err := repo.ensureCanViewConversationForLead(ctx, tenantContext, conversationID, filter.ExpectedLeadID); err != nil {
 		return MessagePage{}, err
 	}
 
@@ -514,6 +574,17 @@ func (repo Repository) ListMessages(ctx context.Context, tenantContext tenant.Co
 		"wm.organization_id = $1::uuid",
 		"wm.conversation_id = $2::uuid",
 		conversationMessageLeadMatchSQL(),
+	}
+	if filter.ExpectedLeadID != "" {
+		// Repeat the active-card guard in the message statement. If a binding
+		// changes after the authorization check, this request returns no rows
+		// instead of leaking the newly active card into the stale UI cache.
+		if filter.ExpectedLeadID == unlinkedConversationLeadSnapshot {
+			where = append(where, "wc.lead_id is null")
+		} else {
+			args = append(args, filter.ExpectedLeadID)
+			where = append(where, fmt.Sprintf("wc.lead_id = $%d::uuid", len(args)))
+		}
 	}
 	if filter.CursorAt != nil {
 		args = append(args, *filter.CursorAt)
@@ -579,68 +650,33 @@ func (repo Repository) ListMessages(ctx context.Context, tenantContext tenant.Co
 	return MessagePage{Messages: messages, NextCursor: nextCursor}, nil
 }
 
-func (repo Repository) MarkConversationAsRead(ctx context.Context, tenantContext tenant.Context, conversationID string) error {
+func (repo Repository) MarkConversationAsRead(ctx context.Context, tenantContext tenant.Context, conversationID string, expectedLeadID string) error {
 	conversationID, ok := normalizeUUID(conversationID)
 	if !ok {
 		return ErrConversationNotFound
 	}
-	if err := repo.ensureCanViewConversation(ctx, tenantContext, conversationID); err != nil {
+	expectedLeadID, err := validateExpectedConversationLeadSnapshot(expectedLeadID)
+	if err != nil {
+		return err
+	}
+	if err := repo.ensureCanViewConversationForLead(ctx, tenantContext, conversationID, expectedLeadID); err != nil {
 		return err
 	}
 
-	_, err := repo.db.Pool().Exec(ctx, `
+	args := []any{tenantContext.OrganizationID, conversationID}
+	expectedLeadPredicate := "lead_id is null"
+	if expectedLeadID != unlinkedConversationLeadSnapshot {
+		args = append(args, expectedLeadID)
+		expectedLeadPredicate = fmt.Sprintf("lead_id = $%d::uuid", len(args))
+	}
+	tag, err := repo.db.Pool().Exec(ctx, `
 		update public.whatsapp_conversations
 		set unread_count = 0,
 		    updated_at = now()
 		where organization_id = $1::uuid
 		  and id = $2::uuid
-	`, tenantContext.OrganizationID, conversationID)
-	return err
-}
-
-func (repo Repository) ArchiveConversation(ctx context.Context, tenantContext tenant.Context, conversationID string, archive bool) error {
-	conversationID, ok := normalizeUUID(conversationID)
-	if !ok {
-		return ErrConversationNotFound
-	}
-	if err := repo.ensureCanEditConversation(ctx, tenantContext, conversationID); err != nil {
-		return err
-	}
-
-	_, err := repo.db.Pool().Exec(ctx, `
-		update public.whatsapp_conversations
-		set archived_at = case when $3::boolean then now() else null end,
-		    updated_at = now()
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-	`, tenantContext.OrganizationID, conversationID, archive)
-	return err
-}
-
-func (repo Repository) DeleteConversation(ctx context.Context, tenantContext tenant.Context, conversationID string) error {
-	conversationID, ok := normalizeUUID(conversationID)
-	if !ok {
-		return ErrConversationNotFound
-	}
-
-	// Deleting a conversation removes it from the operational inbox. It is a
-	// privileged action: lead visibility alone is deliberately insufficient.
-	// Historical messages remain available through the lead history endpoint.
-	tag, err := repo.db.Pool().Exec(ctx, `
-		update public.whatsapp_conversations wc
-		set deleted_at = now(),
-		    updated_at = now()
-		from public.whatsapp_sessions ws
-		where wc.organization_id = $1::uuid
-		  and wc.id = $2::uuid
-		  and wc.deleted_at is null
-		  and ws.id = wc.session_id
-		  and ws.organization_id = wc.organization_id
-		  and ws.provider = 'evolution_go'
-		  and coalesce(ws.is_active, true) = true
-		  and coalesce(ws.status, '') <> 'deleted'
-		  and (ws.owner_user_id = $3::uuid or $4::boolean)
-	`, tenantContext.OrganizationID, conversationID, tenantContext.UserID, canManageWhatsApp(tenantContext))
+		  and `+expectedLeadPredicate+`
+	`, args...)
 	if err != nil {
 		return err
 	}
@@ -650,7 +686,93 @@ func (repo Repository) DeleteConversation(ctx context.Context, tenantContext ten
 	return nil
 }
 
-func (repo Repository) LinkConversationToLead(ctx context.Context, tenantContext tenant.Context, conversationID string, leadID string) error {
+func (repo Repository) ArchiveConversation(ctx context.Context, tenantContext tenant.Context, conversationID string, archive bool, expectedLeadID string) error {
+	conversationID, ok := normalizeUUID(conversationID)
+	if !ok {
+		return ErrConversationNotFound
+	}
+	expectedLeadID, err := validateExpectedConversationLeadSnapshot(expectedLeadID)
+	if err != nil {
+		return err
+	}
+	if err := repo.ensureCanViewConversationForLead(ctx, tenantContext, conversationID, expectedLeadID); err != nil {
+		return err
+	}
+
+	args := []any{tenantContext.OrganizationID, conversationID, archive}
+	expectedLeadPredicate := "lead_id is null"
+	if expectedLeadID != unlinkedConversationLeadSnapshot {
+		args = append(args, expectedLeadID)
+		expectedLeadPredicate = fmt.Sprintf("lead_id = $%d::uuid", len(args))
+	}
+	tag, err := repo.db.Pool().Exec(ctx, `
+		update public.whatsapp_conversations
+		set archived_at = case when $3::boolean then now() else null end,
+		    updated_at = now()
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		  and `+expectedLeadPredicate+`
+	`, args...)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConversationNotFound
+	}
+	return nil
+}
+
+func (repo Repository) DeleteConversation(ctx context.Context, tenantContext tenant.Context, conversationID string, expectedLeadID string) error {
+	conversationID, ok := normalizeUUID(conversationID)
+	if !ok {
+		return ErrConversationNotFound
+	}
+	expectedLeadID, err := validateExpectedConversationLeadSnapshot(expectedLeadID)
+	if err != nil {
+		return err
+	}
+
+	// Deleting a conversation removes it from the operational inbox. It is a
+	// privileged action: lead visibility alone is deliberately insufficient.
+	// Historical messages remain available through the lead history endpoint.
+	args := []any{tenantContext.OrganizationID, conversationID, tenantContext.UserID, canManageWhatsApp(tenantContext)}
+	expectedLeadPredicate := "wc.lead_id is null"
+	if expectedLeadID != unlinkedConversationLeadSnapshot {
+		args = append(args, expectedLeadID)
+		expectedLeadPredicate = fmt.Sprintf("wc.lead_id = $%d::uuid", len(args))
+	}
+	tag, err := repo.db.Pool().Exec(ctx, `
+		update public.whatsapp_conversations wc
+		set deleted_at = now(),
+		    updated_at = now()
+		from public.whatsapp_sessions ws
+		where wc.organization_id = $1::uuid
+		  and wc.id = $2::uuid
+		  and `+expectedLeadPredicate+`
+		  and wc.deleted_at is null
+		  and ws.id = wc.session_id
+		  and ws.organization_id = wc.organization_id
+		  and ws.provider = 'evolution_go'
+		  and coalesce(ws.is_active, true) = true
+		  and coalesce(ws.status, '') <> 'deleted'
+		  and (ws.owner_user_id = $3::uuid or $4::boolean)
+	`, args...)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConversationNotFound
+	}
+	return nil
+}
+
+func (repo Repository) LinkConversationToLead(
+	ctx context.Context,
+	tenantContext tenant.Context,
+	conversationID string,
+	leadID string,
+	expectedPreviousLeadID string,
+) error {
 	conversationID, ok := normalizeUUID(conversationID)
 	if !ok {
 		return ErrConversationNotFound
@@ -659,43 +781,43 @@ func (repo Repository) LinkConversationToLead(ctx context.Context, tenantContext
 	if !ok {
 		return ErrInvalidReference
 	}
+	expectedPreviousLeadID, err := validateExpectedPreviousConversationLeadID(expectedPreviousLeadID)
+	if err != nil {
+		return err
+	}
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
-	args := append(baseConversationArgs(tenantContext), canManageWhatsApp(tenantContext), conversationID)
+	canManageBinding := canManageWhatsApp(tenantContext)
+	// This query only establishes the organization-scoped conversation lock.
+	// Supplying the four visibility arguments would leave $2-$4 unused and pgx
+	// rejects that parameter set before the binding CAS can execute.
+	lockArgs := []any{tenantContext.OrganizationID, conversationID}
 	var remoteJID, contactPhone string
 	var isGroup bool
+	var currentLeadID, sessionOwnerID pgtype.Text
 	err = tx.QueryRow(ctx, `
-		select wc.remote_jid, coalesce(wc.contact_phone, ''), wc.is_group
+		select
+		  wc.remote_jid,
+		  coalesce(wc.contact_phone, ''),
+		  wc.is_group,
+		  wc.lead_id::text,
+		  ws.owner_user_id::text
 		from public.whatsapp_conversations wc
 		join public.whatsapp_sessions ws
 		  on ws.id = wc.session_id
 		 and ws.organization_id = wc.organization_id
-		left join public.leads l
-		  on l.id = wc.lead_id
-		 and l.organization_id = wc.organization_id
 		where wc.organization_id = $1::uuid
-		  and wc.id = $6::uuid
+		  and wc.id = $2::uuid
 		  and wc.deleted_at is null
 		  and ws.provider = 'evolution_go'
 		  and coalesce(ws.is_active, true) = true
 		  and coalesce(ws.status, '') <> 'deleted'
-		  and (
-			(
-			  wc.lead_id is not null
-			  and l.id is not null
-			  and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
-			)
-			or (
-			  wc.lead_id is null
-			  and (ws.owner_user_id = $2::uuid or $5::boolean)
-			)
-		  )
 		for update of wc
-	`, args...).Scan(&remoteJID, &contactPhone, &isGroup)
+	`, lockArgs...).Scan(&remoteJID, &contactPhone, &isGroup, &currentLeadID, &sessionOwnerID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrConversationNotFound
 	}
@@ -703,32 +825,45 @@ func (repo Repository) LinkConversationToLead(ctx context.Context, tenantContext
 		return err
 	}
 
+	if !canManageBinding {
+		if currentLeadID.Valid {
+			visibilityArgs := append(baseConversationArgs(tenantContext), currentLeadID.String)
+			var currentLeadVisible bool
+			err = tx.QueryRow(ctx, `
+				select true
+				from public.leads as l
+				where l.organization_id = $1::uuid
+				  and l.id = $5::uuid
+				  and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
+				for share of l
+			`, visibilityArgs...).Scan(&currentLeadVisible)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrConversationNotFound
+			}
+			if err != nil {
+				return err
+			}
+			if !currentLeadVisible {
+				return ErrConversationNotFound
+			}
+		} else if !sessionOwnerID.Valid || sessionOwnerID.String != tenantContext.UserID {
+			return ErrConversationNotFound
+		}
+	}
+
 	identity := newWhatsAppContactIdentity(contactPhone, remoteJID, isGroup)
 	if err := ensureAccessibleLeadMatchesIdentity(ctx, tx, tenantContext, leadID, identity); err != nil {
 		return fmt.Errorf("%w: a conversa e o lead possuem telefones diferentes", err)
 	}
 
-	tag, err := tx.Exec(ctx, `
-		update public.whatsapp_conversations
-		set lead_id = $3::uuid,
-		    updated_at = now()
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-	`, tenantContext.OrganizationID, conversationID, leadID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrConversationNotFound
-	}
-
-	if _, err := tx.Exec(ctx, `
-		update public.whatsapp_messages
-		set lead_id = $3::uuid
-		where organization_id = $1::uuid
-		  and conversation_id = $2::uuid
-		  and lead_id is null
-	`, tenantContext.OrganizationID, conversationID, leadID); err != nil {
+	if _, err := activateRepositoryWhatsAppConversationLeadBindingIfExpected(
+		ctx,
+		tx,
+		tenantContext.OrganizationID,
+		conversationID,
+		leadID,
+		expectedPreviousLeadID,
+	); err != nil {
 		return err
 	}
 
@@ -756,7 +891,7 @@ func (repo Repository) GetMessageMediaURL(ctx context.Context, tenantContext ten
 		  on ws.id = wm.session_id
 		 and ws.organization_id = wm.organization_id
 		left join public.leads l
-		  on l.id = coalesce(wm.lead_id, wc.lead_id)
+		  on l.id = wm.lead_id
 		 and l.organization_id = wm.organization_id
 		where wm.organization_id = $1::uuid
 		  and wc.organization_id = $1::uuid
@@ -914,8 +1049,30 @@ func (repo Repository) ensureCanManageSession(ctx context.Context, tenantContext
 }
 
 func (repo Repository) ensureCanViewConversation(ctx context.Context, tenantContext tenant.Context, conversationID string) error {
+	return repo.ensureCanViewConversationForLead(ctx, tenantContext, conversationID, "")
+}
+
+func (repo Repository) ensureCanViewConversationForLead(
+	ctx context.Context,
+	tenantContext tenant.Context,
+	conversationID string,
+	expectedLeadID string,
+) error {
 	var ok bool
 	args := append(baseConversationArgs(tenantContext), conversationID)
+	expectedLeadPredicate := ""
+	if expectedLeadID != "" {
+		normalizedExpectedLeadID, err := validateExpectedConversationLeadSnapshot(expectedLeadID)
+		if err != nil {
+			return err
+		}
+		if normalizedExpectedLeadID == unlinkedConversationLeadSnapshot {
+			expectedLeadPredicate = "and wc.lead_id is null"
+		} else {
+			args = append(args, normalizedExpectedLeadID)
+			expectedLeadPredicate = fmt.Sprintf("and wc.lead_id = $%d::uuid", len(args))
+		}
+	}
 	err := repo.db.Pool().QueryRow(ctx, `
 		select exists (
 			select 1
@@ -926,6 +1083,7 @@ func (repo Repository) ensureCanViewConversation(ctx context.Context, tenantCont
 			  and wc.deleted_at is null
 		  and `+conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 			  and wc.id = $5::uuid
+			  `+expectedLeadPredicate+`
 		)
 	`, args...).Scan(&ok)
 	if err != nil {
@@ -1135,7 +1293,13 @@ func leadHistoryConversationSelectFields() string {
 		wc.id::text,
 		ws.id::text,
 		$5::uuid::text,
-		coalesce(history.remote_jid, case when wc.lead_id = $5::uuid then wc.remote_jid end, ''),
+		coalesce(history.remote_jid, case when wc.lead_id = $5::uuid or exists (
+		  select 1
+		  from public.whatsapp_conversation_lead_bindings binding_identity
+		  where binding_identity.organization_id = wc.organization_id
+		    and binding_identity.conversation_id = wc.id
+		    and binding_identity.lead_id = $5::uuid
+		) then wc.remote_jid end, ''),
 		l.name,
 		coalesce(nullif(l.phone, ''), nullif(to_jsonb(l)->>'whatsapp', '')),
 		l.whatsapp_avatar_url,
@@ -1508,13 +1672,13 @@ func leadHistoryVisibilitySQL(canViewOwn bool) string {
 
 // Media authorization is evaluated in the same statement that selects the
 // object path. An attributed message follows its immutable message-level lead,
-// even if the conversation is later relinked. Only legacy messages without a
-// lead fall back to the conversation's current lead. Truly unlinked media stays
-// operationally scoped to the owner of the message's active historical session.
+// even if the conversation is later relinked. A null legacy attribution never
+// inherits the conversation's current card; only a still-unlinked quarantine
+// row is operationally visible to the owner of its active historical session.
 func messageMediaVisibilitySQL(canViewOwn bool) string {
 	return `(
 		(
-			coalesce(wm.lead_id, wc.lead_id) is not null
+			wm.lead_id is not null
 			and ` + leadHistoryVisibilitySQL(canViewOwn) + `
 		)
 		or (
@@ -1530,16 +1694,18 @@ func messageMediaVisibilitySQL(canViewOwn bool) string {
 	)`
 }
 
-// A conversation timeline follows the conversation's current lead, while
-// preserving old rows that predate message-level lead attribution.
+// A conversation timeline follows the conversation's current lead. Null rows
+// remain visible only while the conversation itself is still quarantined;
+// after a card switch they must not be inherited by the new active card.
 func conversationMessageLeadMatchSQL() string {
-	return "(wm.lead_id is null or wm.lead_id = wc.lead_id)"
+	return "(wm.lead_id = wc.lead_id or (wm.lead_id is null and wc.lead_id is null))"
 }
 
-// Lead history treats a non-null message lead as immutable evidence. The
-// conversation lead is only a compatibility fallback for legacy null rows.
+// Lead history uses only immutable message-level attribution. Legacy null rows
+// are backfilled from the binding ledger during cutover and are never inferred
+// from the conversation's current card at read time.
 func leadHistoryMessageLeadMatchSQL() string {
-	return "(wm.lead_id = $5::uuid or (wm.lead_id is null and wc.lead_id = $5::uuid))"
+	return "wm.lead_id = $5::uuid"
 }
 
 func leadVisibilitySQL(canViewOwn bool) string {

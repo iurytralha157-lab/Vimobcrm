@@ -122,6 +122,12 @@ begin
     raise notice 'Pamella campaign contract fixture is not installed; skipping.';
     return;
   end if;
+  perform public.activate_whatsapp_conversation_lead_binding(
+    '4251164b-cfb0-402a-a854-ecae79470561',
+    'fa2d3170-a8c5-433f-9318-35f7b8cb3d92',
+    'f4c4fcc9-374e-4118-aefe-22388204945e',
+    generated_id
+  );
   insert into public.whatsapp_messages (
     organization_id, conversation_id, session_id, lead_id, sender_user_id,
     provider_message_id, message_id, client_message_id, from_me, direction,

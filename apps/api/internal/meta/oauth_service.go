@@ -241,6 +241,9 @@ func (service *oauthService) connectPage(ctx context.Context, auth oauthAuthCont
 	if err != nil {
 		return nil, newOAuthFailure("meta_module_lookup_failed", http.StatusServiceUnavailable, err)
 	}
+	if err := service.graph.validatePageLeadFormsAccess(ctx, page); err != nil {
+		return nil, err
+	}
 	releasePageSubscription, err := acquireMetaPageSubscriptionLock(ctx, service.store.db, page.ID)
 	if err != nil {
 		return nil, newOAuthFailure("meta_page_subscription_busy", http.StatusServiceUnavailable, err)

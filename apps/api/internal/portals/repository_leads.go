@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
 )
 
@@ -75,6 +76,10 @@ func (repo Repository) ProcessGrupoOLXLead(ctx context.Context, token string, au
 	if err != nil {
 		return leadWebhookResult{}, err
 	}
+	destination, err = resolveAutomaticPortalIntakeDestination(ctx, tx, integration.OrganizationID, destination, propertyID)
+	if err != nil {
+		return leadWebhookResult{}, err
+	}
 
 	name := truncatePortalRunes(firstText(body, "name", "consumerName", "leadName"), 180)
 	email := normalizeGrupoOLXLeadEmail(firstText(body, "email", "consumerEmail"))
@@ -106,6 +111,11 @@ func (repo Repository) ProcessGrupoOLXLead(ctx context.Context, token string, au
 		"webhook_payload":       body,
 		"distribution_deferred": true,
 	}
+	intakeScopeKey := portalLeadIntakeScopeKey(destination.RoundRobinID)
+	leadMetadata["intake_scope_key"] = intakeScopeKey
+	if destination.RoundRobinID != "" {
+		leadMetadata["origin_round_robin_id"] = destination.RoundRobinID
+	}
 	if unlinkedOrdinaryLead {
 		leadMetadata["unlinked_reason"] = "listing_not_found"
 	}
@@ -113,7 +123,7 @@ func (repo Repository) ProcessGrupoOLXLead(ctx context.Context, token string, au
 		leadMetadata["mcmv"] = mcmv
 	}
 	metadataJSON, _ := json.Marshal(leadMetadata)
-	leadID, _, err = repo.persistGrupoOLXLead(
+	leadID, reentry, err := repo.persistGrupoOLXLead(
 		ctx, tx, integration, destination, eventKey, name, email, phone,
 		sourceDetail, message, providerOccurredAt, propertyID, propertyCode, metadataJSON,
 	)
@@ -138,13 +148,14 @@ func (repo Repository) ProcessGrupoOLXLead(ctx context.Context, token string, au
 	}
 	distributionSource := "grupo_olx"
 	if _, err := distribution.Distribute(ctx, tx, distribution.Request{
-		OrganizationID:   integration.OrganizationID,
-		LeadID:           leadID,
-		IdempotencyKey:   "portal:" + eventID,
-		RoundRobinID:     roundRobinID,
-		PreserveAssignee: true,
-		Source:           &distributionSource,
-		OccurredAt:       time.Now().UTC(),
+		OrganizationID:     integration.OrganizationID,
+		LeadID:             leadID,
+		IdempotencyKey:     "portal:" + eventID,
+		RoundRobinID:       roundRobinID,
+		RoundRobinResolved: destination.RoundRobinResolved,
+		PreserveAssignee:   preserveAssigneeForPortalIntake(reentry, destination),
+		Source:             &distributionSource,
+		OccurredAt:         time.Now().UTC(),
 	}); err != nil {
 		return leadWebhookResult{}, err
 	}
@@ -202,25 +213,75 @@ func (repo Repository) persistGrupoOLXLead(
 	propertyCode *string,
 	metadataJSON []byte,
 ) (string, bool, error) {
-	leadID := ""
-	reentry := false
-	if phone != "" {
-		if _, err := tx.Exec(ctx, `
-			select pg_advisory_xact_lock(
-			  hashtextextended('lead-phone:' || $1 || ':' || normalize_phone($2), 0)
-			)
-		`, integration.OrganizationID, phone); err != nil {
+	runAttempt := func(forceLegacyIdentity *bool) (string, bool, error) {
+		attemptTx, err := tx.Begin(ctx)
+		if err != nil {
 			return "", false, err
 		}
-		err := tx.QueryRow(ctx, `
-			select id::text
-			from public.leads
-			where organization_id = $1::uuid
-			  and normalize_phone(phone) = normalize_phone($2)
-			order by created_at, id
-			limit 1
-			for update
-		`, integration.OrganizationID, phone).Scan(&leadID)
+		leadID, reentry, err := repo.persistGrupoOLXLeadWithIdentityMode(
+			ctx, attemptTx, integration, destination, eventKey, name, email, phone,
+			sourceDetail, message, providerOccurredAt, propertyID, propertyCode, metadataJSON,
+			forceLegacyIdentity,
+		)
+		if err != nil {
+			_ = attemptTx.Rollback(ctx)
+			return "", false, err
+		}
+		if err := attemptTx.Commit(ctx); err != nil {
+			_ = attemptTx.Rollback(ctx)
+			return "", false, err
+		}
+		return leadID, reentry, nil
+	}
+
+	leadID, reentry, err := runAttempt(nil)
+	constraintName := portalLeadPhoneUniqueViolationConstraint(err)
+	if constraintName == "" {
+		return leadID, reentry, err
+	}
+	legacyIdentity := constraintName == "leads_org_phone_unique"
+	return runAttempt(&legacyIdentity)
+}
+
+func (repo Repository) persistGrupoOLXLeadWithIdentityMode(
+	ctx context.Context,
+	tx pgx.Tx,
+	integration publicIntegration,
+	destination portalDestination,
+	eventKey string,
+	name string,
+	email string,
+	phone string,
+	sourceDetail string,
+	message string,
+	providerOccurredAt string,
+	propertyID *string,
+	propertyCode *string,
+	metadataJSON []byte,
+	forceLegacyIdentity *bool,
+) (string, bool, error) {
+	leadID := ""
+	reentry := false
+	intakeScopeKey := portalLeadIntakeScopeKey(destination.RoundRobinID)
+	legacyIdentity := false
+	var err error
+	if forceLegacyIdentity != nil {
+		legacyIdentity = *forceLegacyIdentity
+	} else {
+		legacyIdentity, err = legacyPortalLeadPhoneUniquenessActive(ctx, tx)
+		if err != nil {
+			return "", false, err
+		}
+	}
+	if phone != "" {
+		if err := lockPortalLeadIntakeIdentity(ctx, tx, integration.OrganizationID, phone, intakeScopeKey, legacyIdentity); err != nil {
+			return "", false, err
+		}
+		if legacyIdentity {
+			leadID, err = findPortalLeadByPhoneLegacy(ctx, tx, integration.OrganizationID, phone)
+		} else {
+			leadID, err = findPortalLeadByPhone(ctx, tx, integration.OrganizationID, phone, intakeScopeKey)
+		}
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return "", false, err
 		}
@@ -265,7 +326,7 @@ func (repo Repository) persistGrupoOLXLead(
 			    property_code = coalesce(nullif($11, ''), property_code),
 			    last_entry_at = clock_timestamp(),
 			    reentry_count = coalesce(reentry_count, 0) + 1,
-			    metadata = coalesce(metadata, '{}'::jsonb) || $12::jsonb,
+			    metadata = coalesce(metadata, '{}'::jsonb) || ($12::jsonb - 'intake_scope_key' - 'origin_round_robin_id'),
 			    updated_at = clock_timestamp()
 			where organization_id = $1::uuid and id = $2::uuid
 		`, integration.OrganizationID, leadID, name, email, phone, sourceDetail, message,
@@ -278,7 +339,8 @@ func (repo Repository) persistGrupoOLXLead(
 			  organization_id, pipeline_id, stage_id, assigned_user_id, team_id,
 			  property_id, interest_property_id, property_code, name, email, phone,
 			  source, source_detail, message, initial_message, status, deal_status,
-			  utm_source, utm_medium, metadata, created_by, last_entry_at, updated_at
+			  utm_source, utm_medium, metadata, created_by, last_entry_at, updated_at,
+			  intake_scope_key, origin_round_robin_id
 			) values (
 			  $1::uuid, nullif($2, '')::uuid, nullif($3, '')::uuid,
 			  nullif($4, '')::uuid, nullif($5, '')::uuid,
@@ -286,13 +348,13 @@ func (repo Repository) persistGrupoOLXLead(
 			  coalesce(nullif($8, ''), 'Lead Grupo OLX'), nullif($9, ''), nullif($10, ''), 'grupo_olx', $11,
 			  nullif($12, ''), nullif($12, ''), 'new', 'open',
 			  'grupo_olx', 'portal', $13::jsonb, nullif($14, '')::uuid,
-			  clock_timestamp(), clock_timestamp()
+			  clock_timestamp(), clock_timestamp(), $15, nullif($16, '')::uuid
 			)
 			returning id::text
 		`, integration.OrganizationID, destination.PipelineID, destination.StageID,
 			destination.AssignedUserID, destination.TeamID, nullableStringValue(propertyID),
 			nullableStringValue(propertyCode), name, email, phone, sourceDetail, message,
-			string(metadataJSON), destination.AssignedUserID).Scan(&leadID)
+			string(metadataJSON), destination.AssignedUserID, intakeScopeKey, destination.RoundRobinID).Scan(&leadID)
 		if err != nil {
 			return "", false, err
 		}
@@ -335,6 +397,89 @@ func (repo Repository) persistGrupoOLXLead(
 		}
 	}
 	return leadID, reentry, nil
+}
+
+func portalLeadIntakeScopeKey(roundRobinID string) string {
+	roundRobinID = strings.TrimSpace(roundRobinID)
+	if roundRobinID == "" {
+		return distribution.IntakeScopeKey(nil)
+	}
+	return distribution.IntakeScopeKey(&roundRobinID)
+}
+
+func findPortalLeadByPhone(ctx context.Context, tx pgx.Tx, organizationID string, phone string, intakeScopeKey string) (string, error) {
+	var leadID string
+	err := tx.QueryRow(ctx, `
+		select id::text
+		from public.leads
+		where organization_id = $1::uuid
+		  and intake_scope_key = $2
+		  and phone is not null
+		  and btrim(phone) <> ''
+		  and normalize_phone(phone) is not null
+		  and normalize_phone(phone) <> ''
+		  and normalize_phone(phone) = normalize_phone($3)
+		order by created_at, id
+		limit 1
+		for update
+	`, organizationID, intakeScopeKey, phone).Scan(&leadID)
+	return leadID, err
+}
+
+func findPortalLeadByPhoneLegacy(ctx context.Context, tx pgx.Tx, organizationID string, phone string) (string, error) {
+	var leadID string
+	err := tx.QueryRow(ctx, `
+		select id::text
+		from public.leads
+		where organization_id = $1::uuid
+		  and phone is not null
+		  and btrim(phone) <> ''
+		  and normalize_phone(phone) is not null
+		  and normalize_phone(phone) <> ''
+		  and normalize_phone(phone) = normalize_phone($2)
+		order by created_at, id
+		limit 1
+		for update
+	`, organizationID, phone).Scan(&leadID)
+	return leadID, err
+}
+
+func lockPortalLeadIntakeIdentity(ctx context.Context, tx pgx.Tx, organizationID string, phone string, intakeScopeKey string, legacyIdentity bool) error {
+	if legacyIdentity {
+		_, err := tx.Exec(ctx, `
+			select pg_advisory_xact_lock(
+			  hashtextextended($1 || ':legacy-global:' || normalize_phone($2), 0)
+			)
+		`, organizationID, phone)
+		return err
+	}
+	_, err := tx.Exec(ctx, `
+		select pg_advisory_xact_lock(
+		  hashtextextended($1 || ':' || $2 || ':' || normalize_phone($3), 0)
+		)
+	`, organizationID, intakeScopeKey, phone)
+	return err
+}
+
+func legacyPortalLeadPhoneUniquenessActive(ctx context.Context, tx pgx.Tx) (bool, error) {
+	var active bool
+	err := tx.QueryRow(ctx, `
+		select to_regclass('public.leads_org_phone_unique') is not null
+	`).Scan(&active)
+	return active, err
+}
+
+func portalLeadPhoneUniqueViolationConstraint(err error) string {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		return ""
+	}
+	switch pgErr.ConstraintName {
+	case "leads_org_phone_unique", "leads_org_scope_phone_unique":
+		return pgErr.ConstraintName
+	default:
+		return ""
+	}
 }
 
 func isGrupoOLXMCMVLead(body map[string]any) bool {

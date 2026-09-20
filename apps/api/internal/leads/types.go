@@ -22,16 +22,17 @@ const (
 )
 
 var (
-	ErrInvalidInput            = errors.New("invalid lead input")
-	ErrInvalidReference        = errors.New("invalid lead reference")
-	ErrLeadPropertyUnavailable = errors.New("lead property unavailable")
-	ErrLeadAlreadyExists       = errors.New("lead already exists")
-	ErrLeadPhoneConflict       = errors.New("lead phone already exists")
-	ErrLeadNotFound            = errors.New("lead not found")
-	ErrNoLeadChanges           = errors.New("no lead changes provided")
-	ErrTagAlreadyExists        = errors.New("tag already exists on lead")
-	ErrLeadSourceAlreadyExists = errors.New("lead source already exists")
-	ErrLostReasonRequired      = fmt.Errorf("%w: lost reason required", ErrInvalidInput)
+	ErrInvalidInput               = errors.New("invalid lead input")
+	ErrInvalidReference           = errors.New("invalid lead reference")
+	ErrLeadPropertyUnavailable    = errors.New("lead property unavailable")
+	ErrLeadAlreadyExists          = errors.New("lead already exists")
+	ErrLeadPhoneConflict          = errors.New("lead phone already exists")
+	ErrConversationBindingChanged = errors.New("whatsapp conversation binding changed")
+	ErrLeadNotFound               = errors.New("lead not found")
+	ErrNoLeadChanges              = errors.New("no lead changes provided")
+	ErrTagAlreadyExists           = errors.New("tag already exists on lead")
+	ErrLeadSourceAlreadyExists    = errors.New("lead source already exists")
+	ErrLostReasonRequired         = fmt.Errorf("%w: lost reason required", ErrInvalidInput)
 )
 
 type Lead struct {
@@ -128,40 +129,41 @@ type ListFilter struct {
 }
 
 type CreateRequest struct {
-	Name                string              `json:"name"`
-	Email               string              `json:"email,omitempty"`
-	Phone               string              `json:"phone,omitempty"`
-	Source              string              `json:"source,omitempty"`
-	Message             string              `json:"message,omitempty"`
-	Feedback            string              `json:"feedback,omitempty"`
-	PropertyCode        string              `json:"propertyCode,omitempty"`
-	PropertyID          string              `json:"propertyId,omitempty"`
-	InterestPropertyIDs []string            `json:"interestPropertyIds,omitempty"`
-	PipelineID          string              `json:"pipelineId,omitempty"`
-	StageID             string              `json:"stageId,omitempty"`
-	AssignedUserID      string              `json:"assignedUserId,omitempty"`
-	TeamID              string              `json:"teamId,omitempty"`
-	InterestValue       *string             `json:"interestValue,omitempty"`
-	DealStatus          string              `json:"dealStatus,omitempty"`
-	LostReason          string              `json:"lostReason,omitempty"`
-	IsOwnResource       *bool               `json:"isOwnResource,omitempty"`
-	ConversationID      string              `json:"conversationId,omitempty"`
-	TagIDs              []string            `json:"tagIds,omitempty"`
-	Cargo               string              `json:"cargo,omitempty"`
-	Empresa             string              `json:"empresa,omitempty"`
-	Profissao           string              `json:"profissao,omitempty"`
-	Endereco            string              `json:"endereco,omitempty"`
-	Bairro              string              `json:"bairro,omitempty"`
-	Numero              string              `json:"numero,omitempty"`
-	CEP                 string              `json:"cep,omitempty"`
-	Cidade              string              `json:"cidade,omitempty"`
-	UF                  string              `json:"uf,omitempty"`
-	RendaFamiliar       string              `json:"rendaFamiliar,omitempty"`
-	FaixaValorImovel    string              `json:"faixaValorImovel,omitempty"`
-	Profile             *LeadProfileRequest `json:"profile,omitempty"`
-	ImportMode          bool                `json:"importMode,omitempty"`
-	AutoDistribute      *bool               `json:"autoDistribute,omitempty"`
-	RoundRobinID        string              `json:"roundRobinId,omitempty"`
+	Name                   string              `json:"name"`
+	Email                  string              `json:"email,omitempty"`
+	Phone                  string              `json:"phone,omitempty"`
+	Source                 string              `json:"source,omitempty"`
+	Message                string              `json:"message,omitempty"`
+	Feedback               string              `json:"feedback,omitempty"`
+	PropertyCode           string              `json:"propertyCode,omitempty"`
+	PropertyID             string              `json:"propertyId,omitempty"`
+	InterestPropertyIDs    []string            `json:"interestPropertyIds,omitempty"`
+	PipelineID             string              `json:"pipelineId,omitempty"`
+	StageID                string              `json:"stageId,omitempty"`
+	AssignedUserID         string              `json:"assignedUserId,omitempty"`
+	TeamID                 string              `json:"teamId,omitempty"`
+	InterestValue          *string             `json:"interestValue,omitempty"`
+	DealStatus             string              `json:"dealStatus,omitempty"`
+	LostReason             string              `json:"lostReason,omitempty"`
+	IsOwnResource          *bool               `json:"isOwnResource,omitempty"`
+	ConversationID         string              `json:"conversationId,omitempty"`
+	ExpectedPreviousLeadID string              `json:"expectedPreviousLeadId,omitempty"`
+	TagIDs                 []string            `json:"tagIds,omitempty"`
+	Cargo                  string              `json:"cargo,omitempty"`
+	Empresa                string              `json:"empresa,omitempty"`
+	Profissao              string              `json:"profissao,omitempty"`
+	Endereco               string              `json:"endereco,omitempty"`
+	Bairro                 string              `json:"bairro,omitempty"`
+	Numero                 string              `json:"numero,omitempty"`
+	CEP                    string              `json:"cep,omitempty"`
+	Cidade                 string              `json:"cidade,omitempty"`
+	UF                     string              `json:"uf,omitempty"`
+	RendaFamiliar          string              `json:"rendaFamiliar,omitempty"`
+	FaixaValorImovel       string              `json:"faixaValorImovel,omitempty"`
+	Profile                *LeadProfileRequest `json:"profile,omitempty"`
+	ImportMode             bool                `json:"importMode,omitempty"`
+	AutoDistribute         *bool               `json:"autoDistribute,omitempty"`
+	RoundRobinID           string              `json:"roundRobinId,omitempty"`
 }
 
 type LeadProfileRequest struct {
@@ -178,40 +180,41 @@ type LeadProfileRequest struct {
 }
 
 type createInput struct {
-	Name                string
-	Email               *string
-	Phone               *string
-	Source              string
-	Message             *string
-	Feedback            *string
-	PropertyCode        *string
-	PropertyID          *string
-	InterestPropertyIDs []string
-	PipelineID          *string
-	StageID             *string
-	AssignedUserID      *string
-	TeamID              *string
-	InterestValue       *string
-	DealStatus          string
-	LostReason          *string
-	IsOwnResource       *bool
-	ConversationID      *string
-	TagIDs              []string
-	Cargo               *string
-	Empresa             *string
-	Profissao           *string
-	Endereco            *string
-	Bairro              *string
-	Numero              *string
-	CEP                 *string
-	Cidade              *string
-	UF                  *string
-	RendaFamiliar       *string
-	FaixaValorImovel    *string
-	Metadata            LeadMetadata
-	ImportMode          bool
-	AutoDistribute      *bool
-	RoundRobinID        *string
+	Name                   string
+	Email                  *string
+	Phone                  *string
+	Source                 string
+	Message                *string
+	Feedback               *string
+	PropertyCode           *string
+	PropertyID             *string
+	InterestPropertyIDs    []string
+	PipelineID             *string
+	StageID                *string
+	AssignedUserID         *string
+	TeamID                 *string
+	InterestValue          *string
+	DealStatus             string
+	LostReason             *string
+	IsOwnResource          *bool
+	ConversationID         *string
+	ExpectedPreviousLeadID *string
+	TagIDs                 []string
+	Cargo                  *string
+	Empresa                *string
+	Profissao              *string
+	Endereco               *string
+	Bairro                 *string
+	Numero                 *string
+	CEP                    *string
+	Cidade                 *string
+	UF                     *string
+	RendaFamiliar          *string
+	FaixaValorImovel       *string
+	Metadata               LeadMetadata
+	ImportMode             bool
+	AutoDistribute         *bool
+	RoundRobinID           *string
 }
 
 type patchString struct {
@@ -559,6 +562,18 @@ func (request CreateRequest) Validate() (createInput, error) {
 			return createInput{}, fmt.Errorf("%w: conversationId is invalid", ErrInvalidInput)
 		}
 		input.ConversationID = &value
+
+		expectedPreviousLeadID := strings.TrimSpace(request.ExpectedPreviousLeadID)
+		if expectedPreviousLeadID != "unlinked" {
+			normalized, ok := normalizeUUID(expectedPreviousLeadID)
+			if !ok {
+				return createInput{}, fmt.Errorf("%w: expectedPreviousLeadId is required with conversationId and must be a valid UUID or unlinked", ErrInvalidInput)
+			}
+			expectedPreviousLeadID = normalized
+		}
+		input.ExpectedPreviousLeadID = &expectedPreviousLeadID
+	} else if strings.TrimSpace(request.ExpectedPreviousLeadID) != "" {
+		return createInput{}, fmt.Errorf("%w: expectedPreviousLeadId requires conversationId", ErrInvalidInput)
 	}
 
 	if len(request.TagIDs) > 50 {

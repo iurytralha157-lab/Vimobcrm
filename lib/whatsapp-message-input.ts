@@ -5,6 +5,7 @@ type MessageInputConversation = {
   contact_phone?: string | null;
   remote_jid?: string | null;
   is_group?: boolean | null;
+	historical_lead_view?: boolean | null;
   lead?: {
     id?: string | null;
   } | null;
@@ -26,6 +27,90 @@ export type WhatsAppMessageInputState = {
   placeholder: string;
   sendSessionId?: string;
 };
+
+type RefreshableConversation = MessageInputConversation & {
+  unread_count?: number | null;
+};
+
+export type WhatsAppConversationMessageScope = {
+	expectedLeadId: string | null;
+	historyLeadId: string | null;
+	canMutate: boolean;
+	canManage: boolean;
+};
+
+// Explicit snapshot for a conversation that has not been linked to a card.
+// The API accepts it only while the persisted lead_id is still NULL.
+export const WHATSAPP_UNLINKED_LEAD_SNAPSHOT = 'unlinked';
+
+export function getWhatsAppConversationDraftKey(params: {
+  tenantKey?: string | null;
+  conversationId?: string | null;
+  expectedLeadId?: string | null;
+}): string | null {
+  const tenantKey = params.tenantKey?.trim();
+  const conversationId = params.conversationId?.trim();
+  const expectedLeadId = params.expectedLeadId?.trim();
+  if (!tenantKey || !conversationId || !expectedLeadId) return null;
+
+  // JSON encoding keeps every boundary explicit, so tenant/conversation/card
+  // combinations cannot collide even when an identifier contains separators.
+  return JSON.stringify([tenantKey, conversationId, expectedLeadId]);
+}
+
+export function updateWhatsAppConversationDraft(
+  drafts: Record<string, string>,
+  draftKey: string,
+  value: string | ((current: string) => string),
+): Record<string, string> {
+  const currentValue = drafts[draftKey] ?? '';
+  const nextValue = typeof value === 'function' ? value(currentValue) : value;
+  if (nextValue === currentValue) return drafts;
+  if (!nextValue) {
+    const { [draftKey]: _removed, ...remainingDrafts } = drafts;
+    void _removed;
+    return remainingDrafts;
+  }
+  return { ...drafts, [draftKey]: nextValue };
+}
+
+export function getWhatsAppConversationMessageScope(
+	conversation?: MessageInputConversation | null,
+): WhatsAppConversationMessageScope {
+	const linkedLeadId = conversation?.lead_id || conversation?.lead?.id || null;
+	const expectedLeadId = conversation
+		? linkedLeadId || WHATSAPP_UNLINKED_LEAD_SNAPSHOT
+		: null;
+	const historicalLeadView = Boolean(conversation?.historical_lead_view);
+	return {
+		expectedLeadId,
+		historyLeadId: historicalLeadView ? linkedLeadId : null,
+		canMutate: Boolean(linkedLeadId) && !historicalLeadView,
+		canManage: Boolean(expectedLeadId) && !historicalLeadView,
+	};
+}
+
+// A list/realtime refresh may expose the same physical conversation after its
+// active binding moved from card A to card B. Keep the browser's card-A
+// snapshot as an immutable history projection instead of silently replacing
+// the open tab with card B.
+export function preserveWhatsAppConversationCardSnapshot<
+  T extends RefreshableConversation,
+>(snapshot: T, refreshed: T): T & RefreshableConversation {
+  if (snapshot.historical_lead_view) return snapshot;
+
+  const snapshotLeadId = snapshot.lead_id || snapshot.lead?.id || null;
+  const refreshedLeadId = refreshed.lead_id || refreshed.lead?.id || null;
+  if (snapshotLeadId !== refreshedLeadId) {
+    return {
+      ...snapshot,
+      historical_lead_view: true,
+      unread_count: 0,
+    };
+  }
+
+  return refreshed;
+}
 
 export function isUsableWhatsAppSessionStatus(status?: string | null) {
   return status === "connected";
@@ -146,6 +231,13 @@ export function getWhatsAppMessageInputState(
       placeholder: "Crie ou vincule um lead para responder",
     };
   }
+
+	if (conversation.historical_lead_view) {
+		return {
+			disabled: true,
+			placeholder: "Histórico deste card (somente leitura)",
+		};
+	}
 
   const sendSessionId = getWhatsAppSendSessionId(conversation, selectedSessionId, sessions);
   if (!sendSessionId) {

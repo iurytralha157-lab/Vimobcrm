@@ -109,11 +109,15 @@ func (repo Repository) Create(ctx context.Context, tenantContext tenant.Context,
 		return RoundRobin{}, err
 	}
 
+	item, err := repo.getWithQueryer(ctx, tx, tenantContext, roundRobinID)
+	if err != nil {
+		return RoundRobin{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return RoundRobin{}, err
 	}
 
-	return repo.Get(ctx, tenantContext, roundRobinID)
+	return item, nil
 }
 
 func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context, roundRobinID string, input updateInput) (RoundRobin, error) {
@@ -141,6 +145,9 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 
 	current, err := repo.getStateForUpdate(ctx, tx, tenantContext.OrganizationID, roundRobinID)
 	if err != nil {
+		return RoundRobin{}, err
+	}
+	if err := repo.rejectPendingWhatsAppIntake(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
 		return RoundRobin{}, err
 	}
 	if input.Settings.Set {
@@ -278,11 +285,15 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 		return RoundRobin{}, err
 	}
 
+	item, err := repo.getWithQueryer(ctx, tx, tenantContext, roundRobinID)
+	if err != nil {
+		return RoundRobin{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return RoundRobin{}, err
 	}
 
-	return repo.Get(ctx, tenantContext, roundRobinID)
+	return item, nil
 }
 
 func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context, roundRobinID string) error {
@@ -307,19 +318,50 @@ func (repo Repository) Delete(ctx context.Context, tenantContext tenant.Context,
 	if _, err := repo.getStateForUpdate(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
 		return err
 	}
+	if err := repo.rejectPendingWhatsAppIntake(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
+		return err
+	}
 	if err := repo.deleteWhatsAppInboundRulesForRoundRobin(ctx, tx, tenantContext.OrganizationID, roundRobinID); err != nil {
 		return err
 	}
 
+	// A queue UUID is part of the immutable lead intake identity and may also
+	// be held by an already-acknowledged WhatsApp routing snapshot. Reproduce
+	// the operational effects of the former FK-backed hard delete, but retain
+	// an inactive tombstone so delayed processing can still resolve queue:<id>.
 	for _, query := range []string{
+		`update public.pipelines set default_round_robin_id = null, updated_at = now() where organization_id = $1::uuid and default_round_robin_id = $2::uuid`,
+		`update public.portal_integrations set default_round_robin_id = null, updated_at = now() where organization_id = $1::uuid and default_round_robin_id = $2::uuid`,
+		`update public.meta_form_configs set round_robin_id = null, updated_at = now() where organization_id = $1::uuid and round_robin_id = $2::uuid`,
+		`update public.whatsapp_inbound_rules set target_round_robin_id = null, updated_at = now() where organization_id = $1::uuid and target_round_robin_id = $2::uuid`,
+		`delete from public.lead_redistribution_jobs where organization_id = $1::uuid and round_robin_id = $2::uuid`,
 		`delete from public.round_robin_members where organization_id = $1::uuid and round_robin_id = $2::uuid`,
 		`delete from public.round_robin_rules where organization_id = $1::uuid and round_robin_id = $2::uuid`,
-		`delete from public.round_robin_logs where organization_id = $1::uuid and round_robin_id = $2::uuid`,
-		`delete from public.round_robins where organization_id = $1::uuid and id = $2::uuid`,
 	} {
 		if _, err := tx.Exec(ctx, query, tenantContext.OrganizationID, roundRobinID); err != nil {
 			return err
 		}
+	}
+
+	commandTag, err := tx.Exec(ctx, `
+		update public.round_robins
+		set is_active = false,
+		    deleted_at = clock_timestamp(),
+		    pipeline_id = null,
+		    target_pipeline_id = null,
+		    target_stage_id = null,
+		    ai_agent_id = null,
+		    created_by = null,
+		    updated_at = now()
+		where organization_id = $1::uuid
+		  and id = $2::uuid
+		  and deleted_at is null
+	`, tenantContext.OrganizationID, roundRobinID)
+	if err != nil {
+		return err
+	}
+	if commandTag.RowsAffected() != 1 {
+		return ErrRoundRobinNotFound
 	}
 
 	return tx.Commit(ctx)

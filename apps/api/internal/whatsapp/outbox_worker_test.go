@@ -87,10 +87,16 @@ func TestOutboxClaimUsesConversationFIFOAndExplicitCursorWrap(t *testing.T) {
 		"active.status = 'processing'",
 		"$4::text as requested_lane",
 		"$5::double precision as media_ordering_grace_millis",
+		"current_message.lead_id = current_conversation.lead_id",
+		"current_binding.lead_id = current_conversation.lead_id",
+		"current_binding.active_to is null",
 	} {
 		if !strings.Contains(query, required) {
 			t.Fatalf("outbox claim is missing %q", required)
 		}
+	}
+	if got := strings.Count(query, "current_binding.active_to is null"); got != 3 {
+		t.Fatalf("outbox binding fence count = %d, want head, locked-row and claim rechecks", got)
 	}
 	if strings.Contains(query, "where active.session_id") || strings.Contains(query, "for no key update of ws") {
 		t.Fatal("outbox claim must not let media in one conversation serialize every chat on the same WhatsApp session")
@@ -111,6 +117,30 @@ func TestOutboxClaimUsesConversationFIFOAndExplicitCursorWrap(t *testing.T) {
 	}
 	if whatsappOutboxMediaOrderingGrace != 2*time.Second {
 		t.Fatalf("cross-lane media ordering grace = %s, want explicit 2s bound", whatsappOutboxMediaOrderingGrace)
+	}
+}
+
+func TestOutboxFinalizationLocksConversationBeforeOutbox(t *testing.T) {
+	t.Parallel()
+
+	sourceBytes, err := os.ReadFile("outbox_worker.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(sourceBytes)
+	start := strings.Index(source, "func (repo Repository) completeWhatsAppOutbox")
+	if start < 0 {
+		t.Fatal("completeWhatsAppOutbox source start not found")
+	}
+	end := strings.Index(source[start:], "func (repo Repository) failWhatsAppOutbox")
+	if end < 0 {
+		t.Fatal("completeWhatsAppOutbox source bounds not found")
+	}
+	body := source[start : start+end]
+	conversationLock := strings.Index(body, "for no key update of conversation")
+	outboxLock := strings.Index(body, "for update")
+	if conversationLock < 0 || outboxLock < 0 || conversationLock >= outboxLock {
+		t.Fatal("provider finalization must preserve conversation -> outbox lock order")
 	}
 }
 

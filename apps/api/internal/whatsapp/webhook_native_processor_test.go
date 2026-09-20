@@ -2,6 +2,7 @@ package whatsapp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -12,6 +13,146 @@ import (
 	"sync/atomic"
 	"testing"
 )
+
+func nativeRoutingSnapshotTestRow(providerMessageID string, ingressSequence int64) map[string]any {
+	return map[string]any{
+		"version":                         1,
+		"organization_id":                 "11111111-1111-4111-8111-111111111111",
+		"session_id":                      "22222222-2222-4222-8222-222222222222",
+		"provider_message_id":             providerMessageID,
+		"inbox_event_key":                 "inbox-" + providerMessageID,
+		"processing_lane":                 "live",
+		"state":                           "bound",
+		"conversation_id":                 "33333333-3333-4333-8333-333333333333",
+		"event_lead_id":                   "44444444-4444-4444-8444-444444444444",
+		"current_lead_id":                 "44444444-4444-4444-8444-444444444444",
+		"active_binding_id":               "55555555-5555-4555-8555-555555555555",
+		"quarantine_reason":               nil,
+		"context_kind":                    "organic",
+		"context_proof":                   nil,
+		"rule_id":                         nil,
+		"origin_round_robin_id":           nil,
+		"managed_message_distribution":    false,
+		"managed_event_pending":           false,
+		"managed_event_handled":           false,
+		"routing_key":                     "phone:5511999991111",
+		"binding_eligible":                true,
+		"target_mode":                     "snapshot",
+		"ingress_sequence":                ingressSequence,
+		"predecessor_provider_message_id": nil,
+		"predecessor_inbox_event_key":     nil,
+		"predecessor_processing_lane":     nil,
+	}
+}
+
+func nativeRoutingSnapshotTestPayload(t *testing.T, rows ...map[string]any) []byte {
+	t.Helper()
+	payload, err := json.Marshal(map[string]any{
+		evolutionWebhookRoutingMetaKey: map[string]any{
+			"routing_key": "__session__",
+			"routing_snapshot": map[string]any{
+				"version":  1,
+				"messages": rows,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
+}
+
+func TestNativeIngressRoutingSnapshotRequiresCompleteImmutableManagedContext(t *testing.T) {
+	session := nativeEvolutionSession{
+		ID:             "22222222-2222-4222-8222-222222222222",
+		OrganizationID: "11111111-1111-4111-8111-111111111111",
+	}
+	message := nativeEvolutionMessage{ProviderMessageID: "provider-managed"}
+	managed := nativeRoutingSnapshotTestRow(message.ProviderMessageID, 41)
+	managed["state"] = "contextual_intake"
+	managed["context_kind"] = "contextual_intake"
+	managed["context_proof"] = "managed_rule"
+	managed["managed_message_distribution"] = true
+	managed["rule_id"] = "66666666-6666-4666-8666-666666666666"
+	managed["origin_round_robin_id"] = "77777777-7777-4777-8777-777777777777"
+
+	snapshot, err := nativeIngressRoutingSnapshotForMessage(
+		nativeRoutingSnapshotTestPayload(t, managed), session, message,
+	)
+	if err != nil || snapshot == nil || !snapshot.ManagedMessageDistribution || snapshot.RuleID == "" {
+		t.Fatalf("valid immutable managed snapshot = %#v, error = %v", snapshot, err)
+	}
+
+	for name, mutate := range map[string]func(map[string]any){
+		"missing managed boolean":  func(row map[string]any) { delete(row, "managed_event_pending") },
+		"managed proof downgraded": func(row map[string]any) { row["managed_message_distribution"] = false },
+		"tenant mismatch":          func(row map[string]any) { row["session_id"] = "88888888-8888-4888-8888-888888888888" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			row := nativeRoutingSnapshotTestRow(message.ProviderMessageID, 41)
+			for key, value := range managed {
+				row[key] = value
+			}
+			mutate(row)
+			if got, err := nativeIngressRoutingSnapshotForMessage(
+				nativeRoutingSnapshotTestPayload(t, row), session, message,
+			); err == nil || got != nil {
+				t.Fatalf("invalid snapshot accepted: %#v", got)
+			}
+		})
+	}
+}
+
+func TestNativeEvolutionMessagesUseIngressSequenceForUnsplitEnvelope(t *testing.T) {
+	session := nativeEvolutionSession{
+		ID:             "22222222-2222-4222-8222-222222222222",
+		OrganizationID: "11111111-1111-4111-8111-111111111111",
+	}
+	reaction := nativeEvolutionMessage{ProviderMessageID: "provider-reaction", IsReaction: true}
+	inbound := nativeEvolutionMessage{ProviderMessageID: "provider-inbound"}
+	reactionRow := nativeRoutingSnapshotTestRow(reaction.ProviderMessageID, 52)
+	reactionRow["binding_eligible"] = false
+	inboundRow := nativeRoutingSnapshotTestRow(inbound.ProviderMessageID, 51)
+	payload := nativeRoutingSnapshotTestPayload(t, reactionRow, inboundRow)
+
+	ordered, err := nativeEvolutionMessagesInIngressOrder(payload, session, []nativeEvolutionMessage{reaction, inbound})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ordered) != 2 || ordered[0].ProviderMessageID != inbound.ProviderMessageID || ordered[1].ProviderMessageID != reaction.ProviderMessageID {
+		t.Fatalf("ingress sequence order = %#v", ordered)
+	}
+
+	incomplete := nativeRoutingSnapshotTestPayload(t, inboundRow)
+	if _, err := nativeEvolutionMessagesInIngressOrder(incomplete, session, []nativeEvolutionMessage{reaction, inbound}); err == nil {
+		t.Fatal("partially snapshotted multi-message envelope was accepted")
+	}
+}
+
+func TestNativeDeletedSnapshotLeadBecomesTerminalNeutralEvidence(t *testing.T) {
+	conversation := nativeEvolutionConversation{
+		LeadID:                         "44444444-4444-4444-8444-444444444444",
+		MessageLeadID:                  "44444444-4444-4444-8444-444444444444",
+		LeadResolutionQuarantineReason: "whatsapp_ingress_snapshot_lead_deleted",
+	}
+	metadata := nativeEvolutionMessageMetadata(nativeEvolutionMessage{}, conversation)
+	if current, ok := metadata["whatsapp_event_binding_is_current"].(bool); !ok || current {
+		t.Fatalf("deleted snapshot lead current marker = %#v", metadata["whatsapp_event_binding_is_current"])
+	}
+	quarantine := mapFromAny(metadata["lead_resolution_quarantine"])
+	if quarantine["reason"] != "whatsapp_ingress_snapshot_lead_deleted" || quarantine["terminal"] != true || quarantine["retryable"] != false {
+		t.Fatalf("deleted snapshot quarantine = %#v", quarantine)
+	}
+	if leadID := nativeEvolutionMessageLeadID(conversation); leadID != "" {
+		t.Fatalf("deleted snapshot evidence retained dangling lead %q", leadID)
+	}
+
+	source := readWhatsAppSourceFunction(t, "webhook_native_processor.go", `func ensureNativeEvolutionConversation`)
+	if !strings.Contains(source, `errors.Is(err, errNativeEvolutionScopedLeadMissing)`) ||
+		!strings.Contains(source, `quarantineReason = "whatsapp_ingress_snapshot_lead_deleted"`) {
+		t.Fatalf("native processor does not terminally neutralize a deleted snapshot lead\n%s", source)
+	}
+}
 
 func TestNativeEvolutionFixtures(t *testing.T) {
 	t.Run("text", func(t *testing.T) {
@@ -906,11 +1047,17 @@ func TestNativeLegacyRecoveryUsesPersistedAttribution(t *testing.T) {
 		"message.organization_id = $1::uuid",
 		"message.session_id = $2::uuid",
 		"coalesce(message.from_me, false) = false",
-		"for update of message, conversation",
+		"for no key update of conversation",
+		"for update of message",
 	} {
 		if !strings.Contains(nativeLegacyNonManagedRecoveryQuery, fragment) {
 			t.Fatalf("legacy recovery query missing %q", fragment)
 		}
+	}
+	conversationLock := strings.Index(nativeLegacyNonManagedRecoveryQuery, "for no key update of conversation")
+	messageLock := strings.Index(nativeLegacyNonManagedRecoveryQuery, "for update of message")
+	if conversationLock < 0 || messageLock < 0 || conversationLock >= messageLock {
+		t.Fatal("legacy recovery must lock conversation before message")
 	}
 	if !strings.Contains(nativeLegacyNonManagedConversationRecoveryQuery,
 		"conversation.last_message_at is null or conversation.last_message_at < $4::timestamptz") {
@@ -935,6 +1082,29 @@ func TestNativeCTWAWithoutManagedRuleDropsLegacyAssignmentTargets(t *testing.T) 
 	managed.ManagedMessageDistribution = true
 	if got := nativeCTWALeadAssignmentRule(managed); got.ID != managed.ID || !got.ManagedMessageDistribution {
 		t.Fatalf("managed assignment context was not preserved: %#v", got)
+	}
+
+	source := compactCTWAContract(readCTWAContractFile(t,
+		"apps", "api", "internal", "whatsapp", "webhook_native_processor.go",
+	))
+	creation := sectionCTWAContract(
+		t,
+		source,
+		"func createAuthorizedNativeLead(",
+		"func nativeCTWALeadAssignmentRule(",
+	)
+	for _, fragment := range []string{
+		"if rule.ManagedMessageDistribution { return lead, nil }",
+		"resolveNativeCTWAIntakeDestination(",
+		"resolveNativeCTWAIntakePipeline(",
+		"PipelineID: pipelineID",
+		"lockNativeCTWAIntakeDestination(",
+		"RoundRobinID: roundRobinID, RoundRobinResolved: true",
+		"PreserveAssignee: distribution.PreserveAssigneeForIntake(!lead.IsNew, intakeDestination)",
+	} {
+		if !strings.Contains(creation, fragment) {
+			t.Fatalf("non-managed CTWA distribution must use its frozen canonical intake decision; missing %q", fragment)
+		}
 	}
 }
 
@@ -1066,7 +1236,7 @@ func TestNativeLIDPromotionFailsClosedOnLeadConflict(t *testing.T) {
 func TestNativeInboundRuleUsesOnlyTheSelectedField(t *testing.T) {
 	message := nativeEvolutionMessage{Content: "codigo 123456789012345 no texto"}
 	rule := nativeInboundRule{
-		MatchType:     "exact",
+		MatchType:     "equals",
 		MatchField:    "ad_id",
 		MatchValue:    "123456789012345",
 		CampaignLabel: "123456789012345",
@@ -1077,6 +1247,10 @@ func TestNativeInboundRuleUsesOnlyTheSelectedField(t *testing.T) {
 	message.CampaignSourceID = "123456789012345"
 	if !nativeInboundRuleMatches(rule, message) {
 		t.Fatal("ad_id rule did not match the normalized referral ad id")
+	}
+	message.CampaignSourceID = "prefix-123456789012345-suffix"
+	if nativeInboundRuleMatches(rule, message) {
+		t.Fatal("equals rule accepted a partial referral ad id")
 	}
 }
 
@@ -1490,19 +1664,59 @@ func TestNativeProcessorKeepsOutboxBeforeMessageLockOrder(t *testing.T) {
 	}
 	source := string(sourceBytes)
 
-	mergeStart := strings.Index(source, "func mergeNativeEvolutionConversation(")
-	if mergeStart < 0 {
-		t.Fatal("mergeNativeEvolutionConversation source boundary not found")
+	reconcileStart := strings.Index(source, "func reconcileNativeEvolutionConversationIdentity(")
+	if reconcileStart < 0 {
+		t.Fatal("reconcileNativeEvolutionConversationIdentity source boundary not found")
 	}
-	mergeEnd := strings.Index(source[mergeStart:], "\nfunc ")
-	if mergeEnd < 0 {
-		t.Fatal("mergeNativeEvolutionConversation source boundary not found")
+	reconcileEnd := strings.Index(source[reconcileStart:], "\nfunc ")
+	if reconcileEnd < 0 {
+		t.Fatal("reconcileNativeEvolutionConversationIdentity source boundary not found")
 	}
-	mergeBody := source[mergeStart : mergeStart+mergeEnd]
-	mergeOutbox := strings.Index(mergeBody, "update public.whatsapp_outbox")
-	mergeMessage := strings.Index(mergeBody, "update public.whatsapp_messages")
-	if mergeOutbox < 0 || mergeMessage < 0 || mergeOutbox >= mergeMessage {
-		t.Fatal("conversation merge must mutate whatsapp_outbox before whatsapp_messages")
+	reconcileBody := strings.ToLower(source[reconcileStart : reconcileStart+reconcileEnd])
+	for _, forbidden := range []string{
+		"set lead_id",
+		"set conversation_id",
+		"unread_count =",
+		"update public.whatsapp_outbox",
+	} {
+		if strings.Contains(reconcileBody, forbidden) {
+			t.Fatalf("identity reconciliation must not merge lead-scoped history or derived state; found %q", forbidden)
+		}
+	}
+	if !strings.Contains(reconcileBody, "len(sources) != 1") {
+		t.Fatal("identity reconciliation must only promote one unambiguous LID conversation")
+	}
+
+	targetLockStart := strings.Index(source, "func lockNativeEvolutionMessageTarget(")
+	if targetLockStart < 0 {
+		t.Fatal("lockNativeEvolutionMessageTarget source boundary not found")
+	}
+	targetLockEnd := strings.Index(source[targetLockStart:], "\nfunc ")
+	if targetLockEnd < 0 {
+		t.Fatal("lockNativeEvolutionMessageTarget source boundary not found")
+	}
+	targetLockBody := source[targetLockStart : targetLockStart+targetLockEnd]
+	conversationLock := strings.Index(targetLockBody, "for no key update of conversation")
+	messageTargetLock := strings.Index(targetLockBody, "for update of message")
+	if conversationLock < 0 || messageTargetLock < 0 || conversationLock >= messageTargetLock {
+		t.Fatal("native deletion/reaction targets must lock conversation before message")
+	}
+	for _, functionName := range []string{
+		"func processNativeEvolutionDeletion(",
+		"func processNativeEvolutionReaction(",
+	} {
+		functionStart := strings.Index(source, functionName)
+		if functionStart < 0 {
+			t.Fatalf("%s source boundary not found", functionName)
+		}
+		functionEnd := strings.Index(source[functionStart:], "\nfunc ")
+		if functionEnd < 0 {
+			t.Fatalf("%s source boundary not found", functionName)
+		}
+		functionBody := source[functionStart : functionStart+functionEnd]
+		if !strings.Contains(functionBody, "lockNativeEvolutionMessageTarget(") {
+			t.Fatalf("%s must use the canonical conversation-first target lock", functionName)
+		}
 	}
 
 	statusLockStart := strings.Index(source, "func lockNativeStatusTransportRows(")
