@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "68bb5123eba600611ff0c29c9dd3b388101705d09da17f5183a70f5645c23473",
-  "surfaceInventoryDigestSha256": "095354191decea6b6b51b9b7ade7b285ec65f0ade4e500c5c094a162ce3e03fd",
+  "sourceDigestSha256": "181f1a5cb865dfca2f427a4d3d1cba940373ab89ceaad8913ce8d765f5c3dcc8",
+  "surfaceInventoryDigestSha256": "37975f9a4f327aeb79c4c4b86946537b7679eb834c1deb529fd9f0864efc4e6f",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
     "filesScanned": 536,
@@ -1336,7 +1336,7 @@
     },
     {
       "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
-      "line": 161,
+      "line": 150,
       "match": "shadow-lg",
       "priority": "P1",
       "rule": "heavy-shadow",
@@ -1345,7 +1345,7 @@
     },
     {
       "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
-      "line": 298,
+      "line": 270,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1354,7 +1354,7 @@
     },
     {
       "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
-      "line": 298,
+      "line": 270,
       "match": "tracking-wide",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1363,7 +1363,7 @@
     },
     {
       "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
-      "line": 510,
+      "line": 468,
       "match": "shadow-lg",
       "priority": "P1",
       "rule": "heavy-shadow",
@@ -1372,7 +1372,7 @@
     },
     {
       "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-      "line": 937,
+      "line": 920,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1381,7 +1381,7 @@
     },
     {
       "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-      "line": 1018,
+      "line": 1001,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1390,7 +1390,7 @@
     },
     {
       "file": "components/features/round-robin/DistributionQueueEditorScreen.tsx",
-      "line": 48,
+      "line": 50,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",

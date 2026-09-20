@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "095354191decea6b6b51b9b7ade7b285ec65f0ade4e500c5c094a162ce3e03fd",
+  "sourceDigestSha256": "37975f9a4f327aeb79c4c4b86946537b7679eb834c1deb529fd9f0864efc4e6f",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -2832,10 +2832,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:c574e0896bb8b96a39ba",
+          "id": "overlay:12c7c6ecbacdcbee2c82",
           "column": 5,
           "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
-          "line": 136,
+          "line": 127,
           "owner": "SearchableTeamPicker",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -2845,10 +2845,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:e85a92f79485d82ef07c",
+          "id": "overlay:896f650101290761ba46",
           "column": 11,
           "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
-          "line": 490,
+          "line": 448,
           "owner": "DistributionQueueMembersSection",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -2858,10 +2858,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:257dc62e08b77295d059",
+          "id": "overlay:dce48f8fd02d5dc46bbd",
           "column": 5,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1193,
+          "line": 1181,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -4397,10 +4397,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:0a2a0e51ac357384ba77",
-          "column": 11,
+          "id": "form:1c5598d7c61eb6a243f2",
+          "column": 9,
           "file": "components/features/auth/invitation-screen.tsx",
-          "line": 411,
+          "line": 487,
           "owner": "InvitationScreen",
           "routes": [
             "/convite/[token]"
@@ -4409,10 +4409,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:a160258049723d325591",
+          "id": "form:8be33833d77c5004bd73",
           "column": 9,
           "file": "components/features/auth/login-form.tsx",
-          "line": 584,
+          "line": 597,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -4421,10 +4421,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:d4397f80b4d3697e8536",
+          "id": "form:fd2ba07a8972cb87593d",
           "column": 11,
           "file": "components/features/auth/login-form.tsx",
-          "line": 663,
+          "line": 676,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -8300,10 +8300,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:7ca30c353e2316c3f001",
+          "id": "cta:1e649cb881510a431625",
           "column": 9,
           "file": "components/features/auth/invitation-screen.tsx",
-          "line": 103,
+          "line": 128,
           "owner": "InvitationConsentCheckbox",
           "routes": [
             "/convite/[token]"
@@ -8313,10 +8313,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:38b3344dcaaf000ab9c1",
-          "column": 13,
+          "id": "cta:8a2ca23b6d7468b1ee87",
+          "column": 11,
           "file": "components/features/auth/invitation-screen.tsx",
-          "line": 360,
+          "line": 430,
           "owner": "InvitationScreen",
           "routes": [
             "/convite/[token]"
@@ -8326,10 +8326,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:56f4adeb4edb445140bd",
-          "column": 13,
+          "id": "cta:99b3daee45aac905e1fe",
+          "column": 11,
           "file": "components/features/auth/invitation-screen.tsx",
-          "line": 381,
+          "line": 453,
           "owner": "InvitationScreen",
           "routes": [
             "/convite/[token]"
@@ -8338,10 +8338,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:eee89a4d1a7bcd37c524",
-          "column": 13,
+          "id": "cta:5fea884216f249c40001",
+          "column": 11,
           "file": "components/features/auth/invitation-screen.tsx",
-          "line": 396,
+          "line": 470,
           "owner": "InvitationScreen",
           "routes": [
             "/convite/[token]"
@@ -8351,10 +8351,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:66c26178703e44095b79",
-          "column": 13,
+          "id": "cta:823bba3b10d06ff0c17d",
+          "column": 11,
           "file": "components/features/auth/invitation-screen.tsx",
-          "line": 406,
+          "line": 482,
           "owner": "InvitationScreen",
           "routes": [
             "/convite/[token]"
@@ -8364,10 +8364,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:c5ecca5c1d36fb3c01ed",
-          "column": 17,
+          "id": "cta:c1d07e0985d5e12ee942",
+          "column": 15,
           "file": "components/features/auth/invitation-screen.tsx",
-          "line": 462,
+          "line": 551,
           "owner": "InvitationScreen",
           "routes": [
             "/convite/[token]"
@@ -8376,10 +8376,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:f4c92c04ca6de5d1def8",
-          "column": 17,
+          "id": "cta:6816ccd2961e6d0d4a56",
+          "column": 21,
           "file": "components/features/auth/invitation-screen.tsx",
-          "line": 601,
+          "line": 641,
           "owner": "InvitationScreen",
           "routes": [
             "/convite/[token]"
@@ -8388,10 +8388,34 @@
           "tag": "button"
         },
         {
-          "id": "cta:18438cda0a9afbbe41b9",
+          "id": "cta:7437356fdeae7f549781",
+          "column": 21,
+          "file": "components/features/auth/invitation-screen.tsx",
+          "line": 676,
+          "owner": "InvitationScreen",
+          "routes": [
+            "/convite/[token]"
+          ],
+          "kind": "actionButton",
+          "tag": "button"
+        },
+        {
+          "id": "cta:f6ad2b63d32271d121ea",
+          "column": 15,
+          "file": "components/features/auth/invitation-screen.tsx",
+          "line": 741,
+          "owner": "InvitationScreen",
+          "routes": [
+            "/convite/[token]"
+          ],
+          "kind": "actionButton",
+          "tag": "button"
+        },
+        {
+          "id": "cta:9c8c8da9d86b04dad588",
           "column": 11,
           "file": "components/features/auth/login-form.tsx",
-          "line": 545,
+          "line": 558,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -8400,10 +8424,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:df9b2382153877514106",
+          "id": "cta:350e4ae179265c856914",
           "column": 11,
           "file": "components/features/auth/login-form.tsx",
-          "line": 633,
+          "line": 646,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -8412,10 +8436,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:dbb82b4a9b5777ff6a90",
+          "id": "cta:78ebb911ff286a52ab82",
           "column": 17,
           "file": "components/features/auth/login-form.tsx",
-          "line": 725,
+          "line": 738,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -8424,10 +8448,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:8e9e6ece80f79cbf39b8",
+          "id": "cta:d58b8912a4be38742458",
           "column": 13,
           "file": "components/features/auth/login-form.tsx",
-          "line": 754,
+          "line": 767,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -8436,10 +8460,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:0ced1d5544aa2867e86a",
+          "id": "cta:7cb995bd4bdcd6756f9d",
           "column": 17,
           "file": "components/features/auth/login-form.tsx",
-          "line": 774,
+          "line": 787,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -8448,10 +8472,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:67002168d00b1de6dbe6",
+          "id": "cta:7eb11ddda8641f5232a7",
           "column": 13,
           "file": "components/features/auth/login-form.tsx",
-          "line": 803,
+          "line": 816,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -8460,10 +8484,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:2e63370bf2f8430532d1",
+          "id": "cta:256de2238b496ff2fbe8",
           "column": 13,
           "file": "components/features/auth/login-form.tsx",
-          "line": 813,
+          "line": 826,
           "owner": "LoginForm",
           "routes": [
             "/login"
@@ -20091,10 +20115,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:430192758abf41b4f0c3",
+          "id": "cta:d1721dfbcb20366f852b",
           "column": 19,
           "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueConditionValueEditor.tsx",
-          "line": 260,
+          "line": 262,
           "owner": "DistributionQueueConditionValueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -20105,10 +20129,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:619f531e8154d1f2b180",
+          "id": "cta:4ad457bce15f4b292d23",
           "column": 17,
           "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueConditionValueEditor.tsx",
-          "line": 313,
+          "line": 315,
           "owner": "DistributionQueueConditionValueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -20119,10 +20143,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:a41ba44372a4deabd7cb",
+          "id": "cta:8558bf419129f8b465dd",
           "column": 9,
           "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
-          "line": 138,
+          "line": 129,
           "owner": "SearchableTeamPicker",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -20133,10 +20157,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ca7f69ef0edd2e139eb5",
+          "id": "cta:c08d06af757fad6cf220",
           "column": 7,
           "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
-          "line": 256,
+          "line": 228,
           "owner": "SortableMemberRow",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -20147,10 +20171,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:1d1cac7d6187323e5033",
+          "id": "cta:8529a0f4b65f88d37bea",
           "column": 7,
           "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
-          "line": 374,
+          "line": 328,
           "owner": "SortableMemberRow",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -20161,10 +20185,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:1487388ecbe0b05fbb7f",
+          "id": "cta:e15ae62ed5d6d38034dc",
           "column": 15,
           "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueMembersSection.tsx",
-          "line": 492,
+          "line": 450,
           "owner": "DistributionQueueMembersSection",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -20175,10 +20199,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:62b29f0e90ecd25a0c24",
+          "id": "cta:7a4a6bececf2d1ae4951",
           "column": 13,
           "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueRulesSection.tsx",
-          "line": 184,
+          "line": 198,
           "owner": "DistributionQueueRulesSection",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -20189,10 +20213,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:fc14a3ea0c9c98c4ee47",
+          "id": "cta:596d29108c1252f3bf20",
           "column": 9,
           "file": "components/features/round-robin/distribution-queue-editor/DistributionQueueRulesSection.tsx",
-          "line": 224,
+          "line": 238,
           "owner": "DistributionQueueRulesSection",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -20203,10 +20227,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2e7f18f62408af0001d9",
+          "id": "cta:d387a9707b5a893918a0",
           "column": 13,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1155,
+          "line": 1140,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -20217,10 +20241,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c2a368d1919cae8ba421",
+          "id": "cta:838165795ebc78ec7266",
           "column": 13,
           "file": "components/features/round-robin/DistributionQueueEditor.tsx",
-          "line": 1162,
+          "line": 1148,
           "owner": "DistributionQueueEditor",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -20231,10 +20255,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:e1336827a075b992728d",
+          "id": "cta:4b67be59d54d3137bd44",
           "column": 13,
           "file": "components/features/round-robin/DistributionQueueEditorScreen.tsx",
-          "line": 177,
+          "line": 179,
           "owner": "DistributionQueueEditorScreen",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -20244,10 +20268,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c24196254215617c0e7d",
+          "id": "cta:23d078f54502186ac793",
           "column": 13,
           "file": "components/features/round-robin/DistributionQueueEditorScreen.tsx",
-          "line": 223,
+          "line": 225,
           "owner": "DistributionQueueEditorScreen",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -20258,10 +20282,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:4803b650f521fc687b5d",
+          "id": "cta:eb41ce2a503781fbd940",
           "column": 9,
           "file": "components/features/round-robin/DistributionQueueEditorScreen.tsx",
-          "line": 341,
+          "line": 347,
           "owner": "QueueMessage",
           "routes": [
             "/crm/management/distribution/[id]/edit",
@@ -33693,7 +33717,7 @@
         }
       ]
     },
-    "digestSha256": "6a185e74d48525f9b0872e76f2d4b29a7cb2b0c6874e0f89a5bc076dd058e86a"
+    "digestSha256": "d31b95c7c61b618ea055b01b1e05fd354d418f1e7e6e6d20692207aa3479385e"
   },
   "routes": [
     {
@@ -36582,19 +36606,11 @@
       "access": [
         "auth"
       ],
-      "file": "components/features/auth/auth-shell.tsx",
-      "routes": [
-        "/convite/[token]"
-      ]
-    },
-    {
-      "access": [
-        "auth"
-      ],
       "file": "components/features/auth/AuthSplitLayout.tsx",
       "routes": [
         "/cadastro",
         "/confirmar-email",
+        "/convite/[token]",
         "/login",
         "/reset-password"
       ]
@@ -36713,6 +36729,7 @@
       "routes": [
         "/cadastro",
         "/confirmar-email",
+        "/convite/[token]",
         "/login",
         "/reset-password"
       ]
@@ -36725,6 +36742,7 @@
       "routes": [
         "/cadastro",
         "/confirmar-email",
+        "/convite/[token]",
         "/login",
         "/reset-password"
       ]
@@ -43268,9 +43286,9 @@
       "asChildButtonsWithUnrecognizedChild": 0,
       "asChildPrimitiveControlsExcluded": 83,
       "asChildPrimitiveControlsWithUnrecognizedChild": 0,
-      "ctasAll": 1366,
+      "ctasAll": 1368,
       "ctasByKind": {
-        "actionButton": 1210,
+        "actionButton": 1212,
         "external": 6,
         "internal": 31,
         "internalDynamic": 75,
@@ -43279,8 +43297,8 @@
       "forms": 49,
       "formsRouteReachable": 49,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1316,
-      "internalCtasRouteReachable": 1280,
+      "internalCtas": 1318,
+      "internalCtasRouteReachable": 1282,
       "overlays": 217,
       "overlaysByKind": {
         "alertDialog": 60,
@@ -43308,7 +43326,7 @@
     "protectedAccessChecksThreePersonas": 204,
     "renderableRouteViewportChecksDesktopAndMobile": 164,
     "routeReachableFormImplementations": 49,
-    "routeReachableInternalCtaImplementations": 1280,
+    "routeReachableInternalCtaImplementations": 1282,
     "routeReachableOverlayImplementations": 210,
     "routeReachableSupplementalOverlayAndTabControls": 272
   },
