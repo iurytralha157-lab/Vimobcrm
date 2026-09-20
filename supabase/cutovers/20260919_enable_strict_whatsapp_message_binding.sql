@@ -79,22 +79,31 @@ select pg_catalog.set_config(
 begin;
 
 set local lock_timeout = '5s';
-set local statement_timeout = '5min';
+set local statement_timeout = '30s';
+
+-- ALTER TABLE and DROP TRIGGER below need ACCESS EXCLUSIVE on these relations.
+-- Acquire them in the worker's inbox -> conversation -> binding -> message ->
+-- outbox order before the broader cutover boundary. PostgreSQL therefore never
+-- has to upgrade a lock while a worker holds ACCESS SHARE on one relation and
+-- waits to write a later one. The online path still fails without changes when
+-- the lock is unavailable for five seconds; workers are never quiesced.
+lock table
+  public.whatsapp_webhook_inbox,
+  public.whatsapp_conversations,
+  public.whatsapp_conversation_lead_bindings,
+  public.whatsapp_messages,
+  public.whatsapp_outbox
+in access exclusive mode;
 
 -- The fully quiesced path uses these locks as its maintenance boundary. The
 -- online path keeps every process running, but takes the same fail-fast locks
 -- for the final tail materialization and strict-trigger installation. If any
 -- lock cannot be acquired in five seconds, the transaction changes nothing.
 lock table
-  public.whatsapp_webhook_inbox,
   public.whatsapp_webhook_routing_snapshots,
   public.whatsapp_webhook_routing_outcomes,
   public.whatsapp_conversation_routing_heads,
-  public.whatsapp_conversations,
-  public.whatsapp_conversation_lead_bindings,
-  public.whatsapp_messages,
   public.whatsapp_inbound_logs,
-  public.whatsapp_outbox,
   public.outbox_messages,
   public.ai_jobs,
   public.jobs,

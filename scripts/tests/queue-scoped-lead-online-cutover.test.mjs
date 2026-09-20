@@ -69,6 +69,30 @@ test("online cutover proves the exact frozen identity at every gate", () => {
   }
 
   assert.match(strictBinding, /set local lock_timeout = '5s'/);
+  assert.match(strictBinding, /set local statement_timeout = '30s'/);
+  assert.match(
+    strictBinding,
+    /lock table\s+public\.whatsapp_webhook_inbox,\s+public\.whatsapp_conversations,\s+public\.whatsapp_conversation_lead_bindings,\s+public\.whatsapp_messages,\s+public\.whatsapp_outbox\s+in access exclusive mode/i,
+  );
+
+  const ddlLock = strictBinding.search(
+    /lock table\s+public\.whatsapp_webhook_inbox,[\s\S]*?in access exclusive mode/i,
+  );
+  const broaderBoundary = strictBinding.search(
+    /lock table\s+public\.whatsapp_webhook_routing_snapshots,[\s\S]*?in share row exclusive mode/i,
+  );
+  const inboxConstraint = strictBinding.indexOf(
+    "alter table public.whatsapp_webhook_inbox",
+  );
+  assert.ok(ddlLock >= 0, "expected the DDL lock boundary");
+  assert.ok(
+    broaderBoundary > ddlLock,
+    "DDL relations must lock before the broader online boundary",
+  );
+  assert.ok(
+    inboxConstraint > ddlLock,
+    "the inbox lock must not be upgraded after workers enter their write path",
+  );
   assert.match(
     strictBinding,
     /whatsapp_webhook_active_routing_snapshot_v1_check[\s\S]*private\.is_frozen_legacy_whatsapp_ingress/,
