@@ -66,10 +66,19 @@ export function DistributionQueueBasicSection({
       open={open}
       onOpenChange={onToggle}
     >
-      <CollapsibleTrigger className="flex w-full items-center justify-between rounded-[6px] border-0 bg-[var(--app-surface-muted)] px-3 py-2.5 text-left transition-colors hover:bg-[var(--app-surface-hover)] data-[state=open]:bg-primary/10">
-        <div className="flex items-center gap-2">
-          <Settings2 className="h-4 w-4 text-primary" />
-          <span className="font-medium">Informações básicas</span>
+      <CollapsibleTrigger className="flex w-full items-center justify-between rounded-[6px] border-0 bg-[var(--app-surface-muted)] px-3 py-2 text-left transition-colors hover:bg-[var(--app-surface-hover)] data-[state=open]:bg-primary/10">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[6px] bg-primary/50 text-white">
+            <Settings2 className="h-4 w-4" aria-hidden="true" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-medium">
+              Informações básicas
+            </span>
+            <span className="block truncate text-[10px] font-light text-[var(--app-text-tertiary)]">
+              Nome, estratégia e destino
+            </span>
+          </span>
         </div>
         <ChevronDown
           className={cn("h-4 w-4 transition-transform", open && "rotate-180")}
@@ -83,6 +92,7 @@ export function DistributionQueueBasicSection({
               placeholder="Ex: Leads Facebook"
               value={name}
               onChange={(event) => onNameChange(event.target.value)}
+              className="h-10 border-0 bg-[var(--app-surface-soft)] text-[12px] shadow-none focus-visible:ring-1 focus-visible:ring-primary/30"
             />
           </div>
           <div className="space-y-2">
@@ -95,7 +105,7 @@ export function DistributionQueueBasicSection({
                 }
               }}
             >
-              <SelectTrigger>
+              <SelectTrigger className="h-10 border-0 bg-[var(--app-surface-soft)] text-[12px] shadow-none">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -114,7 +124,10 @@ export function DistributionQueueBasicSection({
               onValueChange={onPipelineChange}
             >
               <SelectTrigger
-                className={!targetPipelineId ? "border-destructive" : ""}
+                className={cn(
+                  "h-10 border-0 bg-[var(--app-surface-soft)] text-[12px] shadow-none",
+                  !targetPipelineId && "ring-1 ring-destructive/50",
+                )}
               >
                 <SelectValue placeholder="Selecione um pipeline..." />
               </SelectTrigger>
@@ -134,7 +147,7 @@ export function DistributionQueueBasicSection({
               onValueChange={onStageChange}
               disabled={!targetPipelineId}
             >
-              <SelectTrigger>
+              <SelectTrigger className="h-10 border-0 bg-[var(--app-surface-soft)] text-[12px] shadow-none">
                 <SelectValue placeholder="Selecione um estágio..." />
               </SelectTrigger>
               <SelectContent>

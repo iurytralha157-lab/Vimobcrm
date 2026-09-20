@@ -28,6 +28,12 @@ func TestWriteAdminErrorInvitationConflicts(t *testing.T) {
 			wantCode:    "invitation_already_pending",
 			wantMessage: "Já existe um convite pendente para este usuário nesta imobiliária.",
 		},
+		{
+			name:        "invitation already being processed",
+			err:         ErrInvitationInProgress,
+			wantCode:    "invitation_operation_in_progress",
+			wantMessage: "Este convite já está sendo processado. Aguarde e tente novamente.",
+		},
 	}
 
 	for _, test := range tests {

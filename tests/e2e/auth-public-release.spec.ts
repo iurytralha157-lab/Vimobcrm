@@ -129,7 +129,7 @@ test.describe('contratos públicos de autenticação e onboarding', () => {
     await page.getByRole('button', { name: 'Enviar link de recuperação' }).click();
 
     await expect(
-      page.getByText('Enviamos um link de recuperação para o seu e-mail.'),
+      page.getByText('Se existir uma conta com esse e-mail, você receberá um link de recuperação.'),
     ).toBeVisible();
     expect(recoveryRequests).toBe(1);
     expect(recoveryRedirectTo).toBe(`${new URL(page.url()).origin}/reset-password`);

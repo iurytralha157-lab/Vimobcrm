@@ -31,6 +31,8 @@ import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { VimobAPIError } from "@/lib/api/vimob-client";
 
 const MANAGEMENT_DISTRIBUTION_URL = "/crm/management?tab=distribution";
+const DISTRIBUTION_EDITOR_PANEL_HEIGHT_CLASS =
+  "h-[600px] xl:h-full xl:min-h-0";
 
 function QueueMetric({
   icon: Icon,
@@ -126,8 +128,8 @@ export default function DistributionQueueEditorScreen(
 
   if (isLoading) {
     return (
-      <AppLayout title={title}>
-        <div className="flex w-full flex-col gap-3">
+      <AppLayout title={title} disableMainScroll>
+        <div className="flex h-full min-h-0 w-full flex-col gap-3 overflow-hidden">
           <Skeleton className="h-8 w-40 rounded-[6px]" />
           {isEditing && (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -212,8 +214,8 @@ export default function DistributionQueueEditorScreen(
     : "";
 
   return (
-    <AppLayout title={title}>
-      <div className="flex w-full flex-col gap-3 pb-2 text-[12px] font-light">
+    <AppLayout title={title} disableMainScroll>
+      <div className="flex h-full min-h-0 w-full flex-col gap-3 overflow-x-hidden overflow-y-auto pb-8 text-[12px] font-light xl:pb-0">
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
           <Button
             asChild
@@ -269,40 +271,44 @@ export default function DistributionQueueEditorScreen(
         )}
 
         <div
-          className={`grid min-w-0 items-start gap-3 ${
+          className={`grid min-w-0 shrink-0 gap-3 xl:min-h-[360px] xl:flex-1 ${
             isEditing
-              ? "min-[1900px]:grid-cols-[minmax(0,1fr)_minmax(280px,340px)]"
+              ? "xl:grid-cols-[minmax(0,1fr)_minmax(260px,320px)]"
               : "grid-cols-1"
           }`}
         >
-          <DistributionQueueEditor
-            presentation="page"
-            open
-            queue={queue || null}
-            onOpenChange={(open) => {
-              if (!open) router.push(MANAGEMENT_DISTRIBUTION_URL);
-            }}
-            onSave={async (data) => {
-              if (isEditing && queue) {
-                await updateQueue.mutateAsync({ id: queue.id, ...data });
-                return;
+          <div className={DISTRIBUTION_EDITOR_PANEL_HEIGHT_CLASS}>
+            <DistributionQueueEditor
+              presentation="page"
+              open
+              queue={queue || null}
+              onOpenChange={(open) => {
+                if (!open) router.push(MANAGEMENT_DISTRIBUTION_URL);
+              }}
+              onSave={async (data) => {
+                if (isEditing && queue) {
+                  await updateQueue.mutateAsync({ id: queue.id, ...data });
+                  return;
+                }
+                const createdQueue = await createQueue.mutateAsync(data);
+                router.replace(
+                  `/crm/management/distribution/${createdQueue.id}/edit`,
+                );
+              }}
+              allowedTeamIds={
+                canManageAllDistribution ? undefined : access.ledTeamIds
               }
-              const createdQueue = await createQueue.mutateAsync(data);
-              router.replace(
-                `/crm/management/distribution/${createdQueue.id}/edit`,
-              );
-            }}
-            allowedTeamIds={
-              canManageAllDistribution ? undefined : access.ledTeamIds
-            }
-            allowedUserIds={
-              canManageAllDistribution ? undefined : access.ledUserIds
-            }
-            allowedPipelineIds={allowedPipelineIds}
-          />
+              allowedUserIds={
+                canManageAllDistribution ? undefined : access.ledUserIds
+              }
+              allowedPipelineIds={allowedPipelineIds}
+            />
+          </div>
 
           {isEditing && queue && (
-            <div className="min-w-0">
+            <div
+              className={`${DISTRIBUTION_EDITOR_PANEL_HEIGHT_CLASS} min-w-0 w-full`}
+            >
               <DistributionQueueChangeHistory queueId={queue.id} />
             </div>
           )}

@@ -27,6 +27,17 @@ const telemetryProviderSource = readFileSync(
   'components/providers/telemetry-provider.tsx',
   'utf8',
 )
+const recoveryEmailTemplateSource = readFileSync(
+  'supabase/templates/recovery.html',
+  'utf8',
+)
+const supabaseConfigSource = readFileSync('supabase/config.toml', 'utf8')
+const selfHostedSupabaseReadmeSource = readFileSync(
+  'deploy/supabase-self-hosted/README.md',
+  'utf8',
+)
+const recoveryTemplateLink =
+  '{{ .RedirectTo }}?token_hash={{ .TokenHash }}&amp;type=recovery'
 
 function unsignedToken(payload: Record<string, unknown>) {
   const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url')
@@ -205,6 +216,44 @@ test('reset screen maps external auth errors to fixed copy', () => {
   assert.match(resetPasswordScreenSource, /Este link de recuperação expirou ou não é válido\./)
   assert.doesNotMatch(resetPasswordScreenSource, /markInvalid\(hashError\)/)
   assert.doesNotMatch(resetPasswordScreenSource, /hashParams\?\.get\("error_description"\)/)
+})
+
+test('recovery email keeps the exact reset contract inside the canonical brand shell', () => {
+  const recoveryLinkOccurrences = recoveryEmailTemplateSource
+    .split(recoveryTemplateLink)
+    .length - 1
+
+  assert.equal(recoveryLinkOccurrences, 3)
+  assert.match(
+    recoveryEmailTemplateSource,
+    /src="https:\/\/vimobcrm\.com\.br\/images\/logo-black\.png"/,
+  )
+  assert.match(recoveryEmailTemplateSource, /max-width:640px/)
+  assert.match(recoveryEmailTemplateSource, /height:6px;background:#ff4529/)
+  assert.match(recoveryEmailTemplateSource, /background:#fff0ed/)
+  assert.match(recoveryEmailTemplateSource, /copie e cole este link no navegador/)
+  assert.doesNotMatch(recoveryEmailTemplateSource, /\.ConfirmationURL|\.SiteURL/)
+  assert.doesNotMatch(recoveryEmailTemplateSource, /#c9361f/i)
+})
+
+test('recovery template configuration is explicit for local and self-hosted Auth', () => {
+  assert.match(
+    supabaseConfigSource,
+    /\[auth\.email\.template\.recovery\]\s+subject = "Redefina sua senha no Vimob CRM"\s+content_path = "\.\/supabase\/templates\/recovery\.html"/,
+  )
+  assert.match(
+    selfHostedSupabaseReadmeSource,
+    /GOTRUE_MAILER_TEMPLATES_RECOVERY:\s*http:\/\/templates-server\/recovery\.html/,
+  )
+  assert.match(
+    selfHostedSupabaseReadmeSource,
+    /GOTRUE_MAILER_SUBJECTS_RECOVERY:\s*Redefina sua senha no Vimob CRM/,
+  )
+  assert.match(
+    selfHostedSupabaseReadmeSource,
+    /ADDITIONAL_REDIRECT_URLS=https:\/\/app\.vimobcrm\.com\.br\/reset-password,https:\/\/app\.vimobcrm\.com\.br\/login\?emailConfirmation=success/,
+  )
+  assert.match(selfHostedSupabaseReadmeSource, /nunca substitua a allowlist inteira/)
 })
 
 test('recovery exits are bounded and always navigate from a finally block', () => {

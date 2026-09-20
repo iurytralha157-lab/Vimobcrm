@@ -47,12 +47,19 @@ export function DistributionQueueWhatsAppAutoReplySection({
       open={open}
       onOpenChange={onToggle}
     >
-      <CollapsibleTrigger className="flex w-full items-center justify-between rounded-[6px] border-0 bg-[var(--app-surface-muted)] px-3 py-2.5 text-left transition-colors hover:bg-[var(--app-surface-hover)] data-[state=open]:bg-primary/10">
-        <div className="flex items-center gap-2">
-          <MessageSquare className="h-4 w-4 text-primary" />
-          <span className="font-medium">Resposta ao lead</span>
+      <CollapsibleTrigger className="flex w-full items-center justify-between rounded-[6px] border-0 bg-[var(--app-surface-muted)] px-3 py-2 text-left transition-colors hover:bg-[var(--app-surface-hover)] data-[state=open]:bg-primary/10">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[6px] bg-primary/50 text-white">
+            <MessageSquare className="h-4 w-4" aria-hidden="true" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-medium">Resposta ao lead</span>
+            <span className="block truncate text-[10px] font-light text-[var(--app-text-tertiary)]">
+              Mensagem após a distribuição
+            </span>
+          </span>
           {enabled && (
-            <Badge variant="secondary" className="text-xs">
+            <Badge className="h-5 shrink-0 rounded-[5px] border-0 bg-primary/50 px-1.5 text-[10px] font-light text-white shadow-none hover:bg-primary/50">
               Ativa
             </Badge>
           )}
@@ -108,6 +115,7 @@ export function DistributionQueueWhatsAppAutoReplySection({
                         event.target.value,
                     })
                   }
+                  className="border-0 bg-[var(--app-surface-solid)] text-[12px] shadow-none focus-visible:ring-1 focus-visible:ring-primary/30"
                 />
                 <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
                   <span>
@@ -144,6 +152,7 @@ export function DistributionQueueWhatsAppAutoReplySection({
                           : DEFAULT_WHATSAPP_DISTRIBUTION_AUTO_REPLY_DELAY_SECONDS,
                     });
                   }}
+                  className="h-9 border-0 bg-[var(--app-surface-solid)] shadow-none focus-visible:ring-1 focus-visible:ring-primary/30"
                 />
                 <p className="text-[11px] text-muted-foreground">
                   Segundos após a distribuição concluída. Padrão:{" "}

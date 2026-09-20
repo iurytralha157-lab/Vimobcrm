@@ -15,6 +15,10 @@ const invitationScreenSource = readFileSync(
   'components/features/auth/invitation-screen.tsx',
   'utf8',
 )
+const invitationPageSource = readFileSync(
+  'app/(auth)/convite/[token]/page.tsx',
+  'utf8',
+)
 
 test('aceita somente o token canonico realmente gerado pelo backend', () => {
   assert.equal(normalizeInvitationToken(TOKEN), TOKEN)
@@ -84,7 +88,15 @@ test('cadastro por convite reutiliza a politica forte de senha e explica os requ
   assert.match(invitationScreenSource, /PASSWORD_POLICY\.maxLength/)
 })
 
-test('superficie ativa do convite preserva o contrato visual da Home', () => {
+test('rota de convite reutiliza o layout publico canonico de autenticacao', () => {
+  assert.match(invitationPageSource, /import \{ AuthSplitLayout \}/)
+  assert.match(invitationPageSource, /<AuthSplitLayout/)
+  assert.match(invitationPageSource, /contentLabel="Aceite de convite do Vimob CRM"/)
+  assert.match(invitationPageSource, /heroMedia="video"/)
+  assert.doesNotMatch(invitationPageSource, /AuthShell/)
+})
+
+test('superficie ativa do convite preserva o contrato visual atual de autenticacao', () => {
   assert.doesNotMatch(invitationScreenSource, /#[0-9a-f]{3,8}\b/i)
   assert.doesNotMatch(invitationScreenSource, /\bbg-(?:black|white)(?:\/(?:\[[^\]]+\]|\d+))?/)
   assert.doesNotMatch(invitationScreenSource, /\bbackdrop-blur/)
@@ -97,4 +109,25 @@ test('superficie ativa do convite preserva o contrato visual da Home', () => {
     invitationScreenSource,
     /\bfont-(?:thin|extralight|medium|semibold|bold|extrabold|black)\b|\buppercase\b|\btracking-(?:wide|wider|widest)\b/,
   )
+  assert.match(invitationScreenSource, /max-w-\[400px\]/)
+  assert.match(invitationScreenSource, /auth-login-field/)
+  assert.match(invitationScreenSource, /auth-primary-action/)
+  assert.match(invitationScreenSource, /text-\[var\(--app-text-primary\)\]/)
+  assert.match(invitationScreenSource, /bg-primary\/10/)
+  assert.match(invitationScreenSource, /border-primary\/25/)
+  assert.match(invitationScreenSource, /<h1[\s\S]*?>[\s\S]*?Aceitar convite[\s\S]*?<\/h1>/)
+  assert.doesNotMatch(invitationScreenSource, /<AuthLogo\b/)
+  assert.doesNotMatch(invitationScreenSource, /text-white|--auth-hero-panel/)
+})
+
+test('formulario de convite associa erros ao campo correto e bloqueia envios concorrentes', () => {
+  assert.match(invitationScreenSource, /<form\s+[\s\S]*?noValidate/)
+  assert.match(invitationScreenSource, /reportFieldError\("name"/)
+  assert.match(invitationScreenSource, /reportFieldError\("whatsapp"/)
+  assert.match(invitationScreenSource, /reportFieldError\(\s*"password"/)
+  assert.match(invitationScreenSource, /reportFieldError\("passwordConfirm"/)
+  assert.match(invitationScreenSource, /aria-invalid=\{invalidField === "name" \|\| undefined\}/)
+  assert.match(invitationScreenSource, /aria-invalid=\{invalidField === "whatsapp" \|\| undefined\}/)
+  assert.match(invitationScreenSource, /submissionInFlightRef\.current/)
+  assert.match(invitationScreenSource, /aria-label=\{showPassword \? "Ocultar senha" : "Mostrar senha"\}/)
 })

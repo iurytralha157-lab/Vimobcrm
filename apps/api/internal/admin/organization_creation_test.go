@@ -23,6 +23,8 @@ func TestSuperAdminOrganizationCreationUsesInvitationLifecycle(t *testing.T) {
 		"'admin'",
 		"pg_advisory_xact_lock",
 		"findRecoverableOrganizationInvitation",
+		"repo.classifyInvitationIdentity(ctx, invitation.ID, adminEmail)",
+		"existingAccount := identity.requiresLogin()",
 		"repo.sendInvitationEmail",
 		`invitationResult["recoverable"] = true`,
 	} {
@@ -41,6 +43,7 @@ func TestSuperAdminOrganizationCreationUsesInvitationLifecycle(t *testing.T) {
 		"insert into public.organization_members",
 		"returning id::text, token",
 		"i.token,",
+		"userIDByEmail",
 	} {
 		if strings.Contains(source, forbidden) {
 			t.Errorf("organization creation must not contain %q", forbidden)
@@ -48,9 +51,11 @@ func TestSuperAdminOrganizationCreationUsesInvitationLifecycle(t *testing.T) {
 	}
 
 	commitIndex := strings.Index(source, "tx.Commit(ctx)")
+	classificationIndex := strings.Index(source, "repo.classifyInvitationIdentity(ctx, invitation.ID, adminEmail)")
 	emailIndex := strings.Index(source, "repo.sendInvitationEmail")
-	if commitIndex == -1 || emailIndex == -1 || commitIndex >= emailIndex {
-		t.Fatal("organization and invitation must commit before the external email request")
+	if commitIndex == -1 || classificationIndex == -1 || emailIndex == -1 ||
+		commitIndex >= classificationIndex || classificationIndex >= emailIndex {
+		t.Fatal("organization invitation must commit, classify its exact identity, and only then send email")
 	}
 }
 

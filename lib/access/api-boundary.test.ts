@@ -305,12 +305,19 @@ test("gestao abre a criacao e a edicao de equipes e filas em paginas dedicadas",
     queueScreen,
     /<DistributionQueueChangeHistory queueId=\{queue\.id\} \/>/,
   );
-  assert.match(queueScreen, /<AppLayout title=\{title\}>/);
+  assert.match(
+    queueScreen,
+    /<AppLayout title=\{title\} disableMainScroll>/,
+  );
   assert.match(queueScreen, /Criada por \{creator\} em \{createdAt\}/);
   assert.doesNotMatch(queueScreen, /queue\.name/);
   assert.doesNotMatch(queueScreen, /Fila ativa|Fila inativa/);
-  assert.doesNotMatch(queueScreen, /disableMainScroll|xl:overflow-y-hidden/);
-  assert.doesNotMatch(queueLoading, /disableMainScroll/);
+  assert.match(
+    queueScreen,
+    /xl:grid-cols-\[minmax\(0,1fr\)_minmax\(260px,320px\)\]/,
+  );
+  assert.match(queueScreen, /DISTRIBUTION_EDITOR_PANEL_HEIGHT_CLASS/);
+  assert.match(queueLoading, /disableMainScroll/);
 });
 
 test("editor de fila bloqueia salvamento inseguro e atualiza historico auditado", () => {
@@ -349,20 +356,32 @@ test("editor de fila bloqueia salvamento inseguro e atualiza historico auditado"
   assert.match(editor, /finally \{[\s\S]*?saveInFlightRef\.current = false/);
   assert.match(
     editor,
-    /const DEFAULT_PAGE_SECTION_IDS = \["basic", "members"\]/,
+    /const DEFAULT_PAGE_SECTION_IDS = \["basic", "rules", "members"\]/,
   );
   assert.match(
     editor,
     /2xl:grid-cols-\[minmax\(0,1\.08fr\)_minmax\(0,0\.92fr\)\]/,
   );
-  assert.match(editor, /presentation === "page"[\s\S]*?"overflow-visible"/);
-  assert.match(editor, /presentation === "page" \? "sticky bottom-0 z-20"/);
+  assert.match(
+    editor,
+    /min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain/,
+  );
+  assert.match(
+    editor,
+    /presentation === "page"[\s\S]*?sticky bottom-0 z-20/,
+  );
   assert.match(editor, /border-t border-\[var\(--app-border\)\]/);
-  assert.doesNotMatch(editor, /max-w-\[680px\]/);
-  assert.doesNotMatch(editor, /shadow-\[0_-10px_30px/);
+  assert.match(editor, /max-w-\[680px\]/);
+  assert.match(editor, /shadow-\[0_-10px_30px/);
+  assert.match(editor, /disabled:cursor-not-allowed disabled:opacity-50/);
+  assert.doesNotMatch(editor, /disabled:bg-primary\/50/);
+  assert.match(editor, /addMember\("user", userId, user\.name\)/);
   assert.match(history, /useRoundRobinHistory\(queueId\)/);
   assert.match(history, /data-distribution-history-scroll/);
-  assert.match(history, /max-h-\[420px\][\s\S]*overflow-y-auto/);
+  assert.match(history, /min-h-0 flex-1 overflow-y-auto/);
+  assert.doesNotMatch(history, /max-h-\[420px\]/);
+  assert.match(history, /Filtrar histórico de alterações/);
+  assert.match(history, /matchesHistoryFilter\(event, filter\)/);
   assert.match(history, /dd\/MM · HH:mm/);
   assert.match(
     hook,
@@ -403,6 +422,13 @@ test("editor de fila oferece busca e deixa regras e tags mais legiveis", () => {
     ),
     "utf8",
   );
+  const redistributionSection = readFileSync(
+    resolve(
+      process.cwd(),
+      "components/features/round-robin/distribution-queue-editor/DistributionQueueRedistributionSection.tsx",
+    ),
+    "utf8",
+  );
 
   assert.match(membersSection, /function SearchableTeamPicker/);
   assert.match(membersSection, /placeholder="Buscar equipe por nome\.\.\."/);
@@ -412,6 +438,12 @@ test("editor de fila oferece busca e deixa regras e tags mais legiveis", () => {
   );
   assert.match(membersSection, />Participantes<\/span>/);
   assert.match(membersSection, /max-h-\[clamp\(220px,36dvh,360px\)\]/);
+  assert.doesNotMatch(membersSection, /Sem equipe \(direto\)/);
+  assert.doesNotMatch(membersSection, /onUpdateTeam/);
+  assert.match(
+    membersSection,
+    /Ao adicionar um usuário, ele participa diretamente/,
+  );
   assert.match(tagsSection, /SearchableTagPicker/);
   assert.match(tagsSection, /loading=\{tagsLoading\}/);
   assert.match(tagsSection, /error=\{tagsError\}/);
@@ -427,6 +459,22 @@ test("editor de fila oferece busca e deixa regras e tags mais legiveis", () => {
   assert.match(conditionValueEditor, /max-h-\[232px\]/);
   assert.match(conditionValueEditor, /min\(100%,240px\)/);
   assert.match(conditionValueEditor, /bg-\[var\(--app-surface-soft\)\]/);
+  assert.match(
+    conditionValueEditor,
+    /const textEntryClassName =[\s\S]*?bg-\[var\(--app-surface-solid\)\]/,
+  );
+  assert.match(
+    redistributionSection,
+    /Redistribuição por inatividade/,
+  );
+  assert.match(
+    redistributionSection,
+    /rounded-\[5px\][^"]*bg-primary\/50[^"]*text-white/,
+  );
+  assert.match(
+    redistributionSection,
+    /aria-label="Ativar redistribuição por inatividade"/,
+  );
   assert.match(
     conditionValueEditor,
     /case "tag":[\s\S]*?<SearchableTagPicker[\s\S]*?selectedTagIds=\{condition\.values\}/,

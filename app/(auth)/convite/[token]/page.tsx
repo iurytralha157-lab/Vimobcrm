@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { AuthShell } from "@/components/features/auth/auth-shell";
+import { AuthSplitLayout } from "@/components/features/auth/AuthSplitLayout";
 import { InvitationScreen } from "@/components/features/auth/invitation-screen";
 import { PublicQueryProvider } from "@/components/providers/public-query-provider";
 import { normalizeInvitationToken } from "@/lib/auth/invitation";
@@ -24,10 +24,13 @@ export default async function InvitationPage({ params }: { params: Promise<{ tok
   const { token: rawToken } = await params;
   const token = normalizeInvitationToken(rawToken);
   return (
-    <AuthShell>
+    <AuthSplitLayout
+      contentLabel="Aceite de convite do Vimob CRM"
+      heroMedia="video"
+    >
       <PublicQueryProvider>
         <InvitationScreen token={token} />
       </PublicQueryProvider>
-    </AuthShell>
+    </AuthSplitLayout>
   );
 }

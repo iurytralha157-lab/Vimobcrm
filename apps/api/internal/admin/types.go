@@ -9,6 +9,7 @@ var (
 	ErrInvitationEmailMissing          = errors.New("invitation email is missing")
 	ErrInvitationUserAlreadyMember     = errors.New("invitation user already belongs to organization")
 	ErrInvitationAlreadyPending        = errors.New("invitation already pending for organization and email")
+	ErrInvitationInProgress            = errors.New("invitation operation already in progress")
 	ErrPasswordRecoveryEmailFailed     = errors.New("password recovery email failed")
 	ErrOrganizationDeleteConfirm       = errors.New("organization deletion confirmation does not match")
 	ErrOrganizationExternalCleanup     = errors.New("organization external cleanup failed")

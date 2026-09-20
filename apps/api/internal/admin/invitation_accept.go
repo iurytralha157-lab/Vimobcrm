@@ -77,27 +77,42 @@ func (repo Repository) AcceptInvitationPublic(ctx context.Context, token string,
 	if err != nil {
 		return AcceptInvitationResult{}, err
 	}
-
-	existingUserID, err := repo.userIDByEmail(ctx, invitation.Email)
-	if err == nil && existingUserID != "" {
-		if invitation.UsedAt.Valid {
-			return repo.committedInvitationAcceptance(ctx, invitation, existingUserID, true)
-		}
-		return AcceptInvitationResult{
-			Success:          false,
-			RequiresLogin:    true,
-			ExistingAccount:  true,
-			Email:            invitation.Email,
-			OrganizationID:   invitation.OrganizationID,
-			OrganizationName: invitation.OrganizationName,
-			Message:          "Este e-mail ja possui uma conta. Entre para aceitar o convite.",
-		}, nil
+	releaseIdentityLock, err := repo.acquireInvitationIdentityLock(ctx, invitation.Email)
+	if err != nil {
+		return AcceptInvitationResult{}, err
 	}
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	defer releaseIdentityLock()
+
+	// The token may have been consumed or rotated while this request waited for
+	// another acceptance/resend for the same identity. Re-read it only after the
+	// cross-replica lock is held, before any Auth password or metadata mutation.
+	lockedInvitation, err := repo.invitationByTokenForAccept(ctx, token)
+	if err != nil {
+		return AcceptInvitationResult{}, err
+	}
+	if lockedInvitation.ID != invitation.ID ||
+		!strings.EqualFold(lockedInvitation.Email, invitation.Email) {
+		return AcceptInvitationResult{}, ErrNotFound
+	}
+	invitation = lockedInvitation
+
+	identity, err := repo.classifyInvitationIdentity(ctx, invitation.ID, invitation.Email)
+	if err != nil {
 		return AcceptInvitationResult{}, err
 	}
 	if invitation.UsedAt.Valid {
-		return AcceptInvitationResult{}, ErrNotFound
+		if identity.UserID == "" {
+			return AcceptInvitationResult{}, ErrNotFound
+		}
+		return repo.committedInvitationAcceptance(
+			ctx,
+			invitation,
+			identity.UserID,
+			identity.requiresLogin(),
+		)
+	}
+	if identity.requiresLogin() {
+		return invitationRequiresLoginResult(invitation), nil
 	}
 
 	name := strings.TrimSpace(request.Name)
@@ -114,19 +129,71 @@ func (repo Repository) AcceptInvitationPublic(ctx context.Context, token string,
 		return AcceptInvitationResult{}, err
 	}
 
-	authUserID, err := repo.createAuthUser(ctx, invitation.Email, password, name)
-	if err != nil {
-		if isAuthUserAlreadyExistsError(err) {
-			return AcceptInvitationResult{
-				Success:          false,
-				RequiresLogin:    true,
-				ExistingAccount:  true,
-				Email:            invitation.Email,
-				OrganizationID:   invitation.OrganizationID,
-				OrganizationName: invitation.OrganizationName,
-				Message:          "Este e-mail ja possui uma conta. Entre para aceitar o convite.",
-			}, nil
+	authUserID := identity.UserID
+	if identity.resumable() {
+		if err := repo.updateResumableInvitationAuthUser(
+			ctx,
+			identity,
+			invitation,
+			password,
+			name,
+		); err != nil {
+			return AcceptInvitationResult{}, err
 		}
+	} else {
+		authUserID, err = repo.createAuthUser(
+			ctx,
+			invitation.ID,
+			invitation.Email,
+			password,
+			name,
+		)
+		if err != nil {
+			createErr := err
+			reconciliationContext, cancel := invitationIdentityReconciliationContext(ctx)
+			defer cancel()
+			reconciledIdentity, reconcileErr := repo.classifyInvitationIdentity(
+				reconciliationContext,
+				invitation.ID,
+				invitation.Email,
+			)
+			if reconcileErr != nil {
+				return AcceptInvitationResult{}, errors.Join(
+					createErr,
+					fmt.Errorf("reconcile invitation auth identity: %w", reconcileErr),
+				)
+			}
+			if reconciledIdentity.requiresLogin() {
+				return invitationRequiresLoginResult(invitation), nil
+			}
+			if !reconciledIdentity.resumable() {
+				return AcceptInvitationResult{}, createErr
+			}
+			authUserID = reconciledIdentity.UserID
+			resumeErr := repo.updateResumableInvitationAuthUser(
+				reconciliationContext,
+				reconciledIdentity,
+				invitation,
+				password,
+				name,
+			)
+			if resumeErr != nil {
+				return AcceptInvitationResult{}, errors.Join(
+					createErr,
+					fmt.Errorf("resume reconciled invitation auth identity: %w", resumeErr),
+				)
+			}
+		}
+	}
+
+	profileContext, cancelProfile := invitationIdentityReconciliationContext(ctx)
+	defer cancelProfile()
+	if err := repo.ensureInvitationProvisionalProfileInactive(
+		profileContext,
+		authUserID,
+		invitation,
+		name,
+	); err != nil {
 		return AcceptInvitationResult{}, err
 	}
 
@@ -141,6 +208,7 @@ func (repo Repository) AcceptInvitationPublic(ctx context.Context, token string,
 				name,
 				cleanString(request.Whatsapp),
 				&consent,
+				true,
 			)
 		},
 		func(reconcileContext context.Context) (invitationActivationEvidence, error) {
@@ -167,6 +235,18 @@ func (repo Repository) AcceptInvitationPublic(ctx context.Context, token string,
 	}, nil
 }
 
+func invitationRequiresLoginResult(invitation invitationRecord) AcceptInvitationResult {
+	return AcceptInvitationResult{
+		Success:          false,
+		RequiresLogin:    true,
+		ExistingAccount:  true,
+		Email:            invitation.Email,
+		OrganizationID:   invitation.OrganizationID,
+		OrganizationName: invitation.OrganizationName,
+		Message:          "Este e-mail ja possui uma conta. Entre para aceitar o convite.",
+	}
+}
+
 func (repo Repository) AcceptInvitationAuthenticated(
 	ctx context.Context,
 	userID string,
@@ -186,6 +266,21 @@ func (repo Repository) AcceptInvitationAuthenticated(
 	if err != nil {
 		return AcceptInvitationResult{}, err
 	}
+	releaseIdentityLock, err := repo.acquireInvitationIdentityLock(ctx, invitation.Email)
+	if err != nil {
+		return AcceptInvitationResult{}, err
+	}
+	defer releaseIdentityLock()
+
+	lockedInvitation, err := repo.invitationByTokenForAccept(ctx, token)
+	if err != nil {
+		return AcceptInvitationResult{}, err
+	}
+	if lockedInvitation.ID != invitation.ID ||
+		!strings.EqualFold(lockedInvitation.Email, invitation.Email) {
+		return AcceptInvitationResult{}, ErrNotFound
+	}
+	invitation = lockedInvitation
 
 	email, name, whatsapp, err := repo.userIdentity(ctx, userID)
 	if err != nil {
@@ -198,7 +293,7 @@ func (repo Repository) AcceptInvitationAuthenticated(
 		return repo.committedInvitationAcceptance(ctx, invitation, userID, true)
 	}
 
-	if err := repo.activateInvitationForUser(ctx, invitation, userID, name, whatsapp, &consent); err != nil {
+	if err := repo.activateInvitationForUser(ctx, invitation, userID, name, whatsapp, &consent, false); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return repo.committedInvitationAcceptance(ctx, invitation, userID, true)
 		}
@@ -334,12 +429,18 @@ func (repo Repository) activateInvitationForUser(
 	name string,
 	whatsapp *string,
 	consent *invitationLegalConsent,
+	requireInvitationOwnedIdentity bool,
 ) error {
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if requireInvitationOwnedIdentity {
+		if err := lockInvitationOwnedAuthIdentity(ctx, tx, invitation, userID); err != nil {
+			return err
+		}
+	}
 
 	persistedRole, err := claimInvitationForActivation(ctx, tx, invitation)
 	if err != nil {
@@ -411,6 +512,35 @@ func (repo Repository) activateInvitationForUser(
 			errInvitationActivationCommitUnknown,
 			fmt.Errorf("commit invitation activation: %w", err),
 		)
+	}
+	return nil
+}
+
+func lockInvitationOwnedAuthIdentity(
+	ctx context.Context,
+	tx pgx.Tx,
+	invitation invitationRecord,
+	userID string,
+) error {
+	var lockedUserID string
+	err := tx.QueryRow(ctx, `
+		select auth_user.id::text
+		from auth.users auth_user
+		where auth_user.id = $1::uuid
+		  and lower(btrim(auth_user.email)) = lower(btrim($2))
+		  and auth_user.deleted_at is null
+		  and auth_user.raw_app_meta_data ->> 'provisioning_source' = 'admin_invitation'
+		  and auth_user.raw_app_meta_data ->> 'invitation_id' = $3
+		for update
+	`, userID, invitation.Email, invitation.ID).Scan(&lockedUserID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrInvalidInput
+	}
+	if err != nil {
+		return err
+	}
+	if lockedUserID != userID {
+		return ErrInvalidInput
 	}
 	return nil
 }
@@ -667,17 +797,6 @@ func (repo Repository) organizationName(ctx context.Context, organizationID stri
 		return "", ErrNotFound
 	}
 	return name, err
-}
-
-func isAuthUserAlreadyExistsError(err error) bool {
-	if err == nil {
-		return false
-	}
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "already") ||
-		strings.Contains(message, "registered") ||
-		strings.Contains(message, "exists") ||
-		strings.Contains(message, "unique")
 }
 
 func memberRoleFromInvitation(role string) string {

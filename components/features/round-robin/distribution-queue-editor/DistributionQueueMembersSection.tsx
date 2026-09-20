@@ -20,7 +20,6 @@ import {
   ChevronDown,
   GripVertical,
   Trash2,
-  UserRound,
   UserPlus,
   Users,
   UsersRound,
@@ -49,7 +48,6 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
-  activeTeamsForUser,
   queueMemberKey,
   type QueueMemberDraft,
   type QueueTeamSource,
@@ -84,7 +82,6 @@ interface DistributionQueueMembersSectionProps {
   onAddUser: (userId: string) => void;
   onAddTeam: (teamId: string) => void;
   onUpdateWeight: (memberKey: string, weight: number) => void;
-  onUpdateTeam: (memberKey: string, teamId?: string) => void;
   onRemove: (memberKey: string) => void;
 }
 
@@ -94,9 +91,8 @@ interface SortableMemberRowProps {
   index: number;
   strategy: DistributionQueueStrategy;
   totalWeight: number;
-  teamOptions: QueueTeamSource[];
+  teams: QueueTeamSource[];
   onUpdateWeight: (memberKey: string, weight: number) => void;
-  onUpdateTeam: (memberKey: string, teamId?: string) => void;
   onRemove: (memberKey: string) => void;
 }
 
@@ -112,25 +108,20 @@ function getInitials(value: string) {
 
 function SearchableTeamPicker({
   teams,
-  value,
   placeholder,
   emptyMessage = "Nenhuma equipe encontrada.",
-  clearLabel,
   disabled,
   className,
   onSelect,
 }: {
   teams: QueueTeamSource[];
-  value?: string;
   placeholder: string;
   emptyMessage?: string;
-  clearLabel?: string;
   disabled?: boolean;
   className?: string;
   onSelect: (teamId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const selectedTeam = teams.find((team) => team.id === value);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -149,9 +140,7 @@ function SearchableTeamPicker({
         >
           <span className="flex min-w-0 items-center gap-2">
             <UsersRound className="h-3.5 w-3.5 shrink-0 text-primary" />
-            <span className="truncate">
-              {selectedTeam?.name || placeholder}
-            </span>
+            <span className="truncate">{placeholder}</span>
           </span>
           <ChevronDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
         </Button>
@@ -170,21 +159,6 @@ function SearchableTeamPicker({
               {emptyMessage}
             </CommandEmpty>
             <CommandGroup>
-              {clearLabel && (
-                <CommandItem
-                  value={`${clearLabel} usuario direto sem equipe`}
-                  className="cursor-pointer gap-2 rounded-[5px] text-[12px]"
-                  onSelect={() => {
-                    onSelect("");
-                    setOpen(false);
-                  }}
-                >
-                  <span className="grid h-7 w-7 shrink-0 place-items-center rounded-[5px] bg-primary/10 text-primary">
-                    <UserRound className="h-3.5 w-3.5" />
-                  </span>
-                  <span className="truncate">{clearLabel}</span>
-                </CommandItem>
-              )}
               {teams.map((team) => (
                 <CommandItem
                   key={team.id}
@@ -215,9 +189,8 @@ function SortableMemberRow({
   index,
   strategy,
   totalWeight,
-  teamOptions,
+  teams,
   onUpdateWeight,
-  onUpdateTeam,
   onRemove,
 }: SortableMemberRowProps) {
   const memberKey = queueMemberKey(member);
@@ -240,9 +213,8 @@ function SortableMemberRow({
   const displayName = member.name || user?.name || "Desconhecido";
   const initials = getInitials(displayName) || "?";
   const linkedTeam = member.teamId
-    ? teamOptions.find((team) => team.id === member.teamId)
+    ? teams.find((team) => team.id === member.teamId)
     : undefined;
-
   return (
     <li
       ref={setNodeRef}
@@ -310,36 +282,18 @@ function SortableMemberRow({
           </p>
         )}
 
-        {member.type === "user" && linkedTeam && (
-          <p className="mt-0.5 flex min-w-0 items-center gap-1 text-[10px] text-[var(--app-text-tertiary)]">
+        {member.type === "user" && member.teamId && (
+          <span
+            className="mt-1 inline-flex max-w-full items-center gap-1 rounded-[5px] bg-primary/10 px-1.5 py-0.5 text-[9px] text-primary"
+            title="Contexto de equipe preservado nesta participação"
+          >
             <UsersRound className="h-3 w-3 shrink-0" aria-hidden="true" />
             <span className="truncate">
-              {linkedTeam.name || "Equipe vinculada"}
+              Via {linkedTeam?.name || "equipe vinculada"}
             </span>
-          </p>
+          </span>
         )}
 
-        {member.type === "user" && teamOptions.length > 0 && (
-          <SearchableTeamPicker
-            teams={teamOptions}
-            value={member.teamId}
-            placeholder="Sem equipe (direto)"
-            clearLabel="Sem equipe (direto)"
-            className="mt-1.5 h-8 w-full max-w-[250px] bg-[var(--app-surface-solid)] text-[11px]"
-            onSelect={(teamId) =>
-              onUpdateTeam(memberKey, teamId || undefined)
-            }
-          />
-        )}
-
-        {member.type === "user" && teamOptions.length === 0 && (
-          <p
-            className="mt-0.5 truncate text-[10px] text-[var(--app-text-tertiary)]"
-            title="Direto · sem escala de equipe"
-          >
-            Direto · sem escala de equipe
-          </p>
-        )}
       </div>
 
       {strategy === "weighted" ? (
@@ -405,7 +359,6 @@ export function DistributionQueueMembersSection({
   onAddUser,
   onAddTeam,
   onUpdateWeight,
-  onUpdateTeam,
   onRemove,
 }: DistributionQueueMembersSectionProps) {
   const [userPickerOpen, setUserPickerOpen] = useState(false);
@@ -423,12 +376,22 @@ export function DistributionQueueMembersSection({
       open={open}
       onOpenChange={onToggle}
     >
-      <CollapsibleTrigger className="flex w-full items-center justify-between rounded-[6px] border-0 bg-[var(--app-surface-muted)] px-3 py-2.5 text-left transition-colors hover:bg-[var(--app-surface-hover)] data-[state=open]:bg-primary/10">
-        <div className="flex items-center gap-2">
-          <Users className="h-4 w-4 text-primary" />
-          <span className="font-medium">Participantes</span>
+      <CollapsibleTrigger className="flex w-full items-center justify-between rounded-[6px] border-0 bg-[var(--app-surface-muted)] px-3 py-2 text-left transition-colors hover:bg-[var(--app-surface-hover)] data-[state=open]:bg-primary/10">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[6px] bg-primary/50 text-white">
+            <Users className="h-4 w-4" aria-hidden="true" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-medium">Participantes</span>
+            <span className="block truncate text-[10px] font-light text-[var(--app-text-tertiary)]">
+              Usuários diretos ou equipes completas
+            </span>
+          </span>
           {members.length > 0 && (
-            <Badge variant="secondary" className="text-xs">
+            <Badge
+              variant="secondary"
+              className="h-5 shrink-0 rounded-[5px] border-0 px-1.5 text-[10px] font-light"
+            >
               {members.length}
             </Badge>
           )}
@@ -466,13 +429,8 @@ export function DistributionQueueMembersSection({
                     index={index}
                     strategy={strategy}
                     totalWeight={totalWeight}
-                    teamOptions={
-                      member.type === "user"
-                        ? activeTeamsForUser(member.entityId, visibleTeams)
-                        : []
-                    }
+                    teams={visibleTeams}
                     onUpdateWeight={onUpdateWeight}
-                    onUpdateTeam={onUpdateTeam}
                     onRemove={onRemove}
                   />
                 ))}
@@ -574,9 +532,9 @@ export function DistributionQueueMembersSection({
             onSelect={onAddTeam}
           />
         </div>
-        <p className="text-xs text-muted-foreground">
-          Corretores podem participar diretamente. Vincule uma equipe somente
-          quando quiser aplicar a escala dela.
+        <p className="text-[11px] leading-4 text-muted-foreground">
+          Ao adicionar um usuário, ele participa diretamente. Ao adicionar uma
+          equipe, a distribuição respeita os membros e a escala dela.
         </p>
         {totalTeams > 0 && activeTeams === 0 && (
           <p className="text-xs text-muted-foreground">

@@ -49,15 +49,6 @@ func (repo Repository) createOrganizationWithAdminInvitation(
 		}
 	}
 
-	var recipientUserID *string
-	existingAccount := false
-	if existingUserID, lookupErr := repo.userIDByEmail(ctx, adminEmail); lookupErr == nil {
-		existingAccount = true
-		recipientUserID = &existingUserID
-	} else if !errors.Is(lookupErr, pgx.ErrNoRows) {
-		return nil, lookupErr
-	}
-
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -187,6 +178,15 @@ func (repo Repository) createOrganizationWithAdminInvitation(
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
+	}
+	identity, err := repo.classifyInvitationIdentity(ctx, invitation.ID, adminEmail)
+	if err != nil {
+		return nil, err
+	}
+	existingAccount := identity.requiresLogin()
+	var recipientUserID *string
+	if identity.UserID != "" {
+		recipientUserID = &identity.UserID
 	}
 
 	organization, err := repo.getOrganizationByID(ctx, invitation.OrganizationID)

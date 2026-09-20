@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -13,8 +14,40 @@ import {
 } from "lucide-react";
 
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useRoundRobinHistory } from "@/hooks/use-round-robins";
 import type { RoundRobinHistoryEvent } from "@/lib/api/round-robins";
+
+type HistoryFilter = "all" | "queue" | "rules" | "members";
+
+const HISTORY_FILTERS: Array<{ value: HistoryFilter; label: string }> = [
+  { value: "all", label: "Tudo" },
+  { value: "queue", label: "Configuração da fila" },
+  { value: "rules", label: "Critérios de entrada" },
+  { value: "members", label: "Participantes" },
+];
+
+function isHistoryFilter(value: string): value is HistoryFilter {
+  return HISTORY_FILTERS.some((filter) => filter.value === value);
+}
+
+function matchesHistoryFilter(
+  event: RoundRobinHistoryEvent,
+  filter: HistoryFilter,
+) {
+  if (filter === "all") return true;
+  if (filter === "queue") return event.entity_type === "distribution_queue";
+  if (filter === "rules") {
+    return event.entity_type === "distribution_queue_rule";
+  }
+  return event.entity_type === "distribution_queue_member";
+}
 
 function changedKeys(event: RoundRobinHistoryEvent) {
   return new Set(Object.keys(event.diff || {}));
@@ -98,26 +131,71 @@ export function DistributionQueueChangeHistory({
 }) {
   const historyQuery = useRoundRobinHistory(queueId);
   const events = historyQuery.data || [];
+  const [filter, setFilter] = useState<HistoryFilter>("all");
+  const visibleEvents = useMemo(
+    () =>
+      (historyQuery.data || []).filter((event) =>
+        matchesHistoryFilter(event, filter),
+      ),
+    [filter, historyQuery.data],
+  );
 
   return (
     <section
       data-distribution-panel="history"
-      className="flex w-full min-w-0 flex-col rounded-[8px] bg-[var(--app-surface-solid)] p-2 sm:p-3"
+      className="flex h-full w-full min-w-0 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] p-2 sm:p-3"
     >
       <div className="flex shrink-0 items-center gap-2 px-1 pb-2">
         <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[6px] bg-primary/50 text-white">
           <History className="h-4 w-4" aria-hidden="true" />
         </span>
-        <h2 className="min-w-0 truncate text-[13px] font-normal">
-          Histórico de alterações
-        </h2>
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-[13px] font-normal">
+            Histórico de alterações
+          </h2>
+          <p className="text-[10px] text-[var(--app-text-tertiary)]">
+            {visibleEvents.length} de {events.length} eventos
+          </p>
+        </div>
       </div>
+
+      <Select
+        value={filter}
+        onValueChange={(value) => {
+          if (isHistoryFilter(value)) setFilter(value);
+        }}
+      >
+        <SelectTrigger
+          aria-label="Filtrar histórico de alterações"
+          className="mb-2 h-8 shrink-0 rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2.5 text-[11px] font-light shadow-none"
+        >
+          <span className="flex min-w-0 items-center gap-1.5">
+            <ListFilter
+              className="h-3.5 w-3.5 shrink-0 text-primary"
+              aria-hidden="true"
+            />
+            <SelectValue />
+          </span>
+        </SelectTrigger>
+        <SelectContent className="rounded-[8px] border-0 p-1">
+          {HISTORY_FILTERS.map((option) => (
+            <SelectItem
+              key={option.value}
+              value={option.value}
+              className="rounded-[6px] text-[11px] font-light"
+            >
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
 
       <div
         data-distribution-history-scroll
-        className="scrollbar-thin -mr-2 max-h-[420px] overflow-y-auto overscroll-contain pr-2 [scrollbar-gutter:stable]"
+        className="scrollbar-thin -mr-2 min-h-0 flex-1 overflow-y-auto pr-2 [scrollbar-gutter:stable] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/30"
         role="region"
-        aria-label="Histórico da distribuição"
+        aria-label="Histórico rolável da distribuição"
+        tabIndex={0}
       >
         {historyQuery.isPending ? (
           <div className="space-y-2 px-1" aria-label="Carregando histórico">
@@ -134,6 +212,10 @@ export function DistributionQueueChangeHistory({
           <div className="rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-4 text-[11px] leading-4 text-[var(--app-text-tertiary)]">
             Ainda não há alterações auditadas para esta distribuição.
           </div>
+        ) : visibleEvents.length === 0 ? (
+          <div className="rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-4 text-[11px] leading-4 text-[var(--app-text-tertiary)]">
+            Nenhuma alteração corresponde ao filtro selecionado.
+          </div>
         ) : (
           <>
             {historyQuery.isRefetchError && (
@@ -149,7 +231,7 @@ export function DistributionQueueChangeHistory({
               className="space-y-1"
               aria-label="Alterações recentes da distribuição"
             >
-              {events.map((event) => {
+              {visibleEvents.map((event) => {
                 const Icon = eventIcon(event);
                 const time = eventTime(event.created_at);
                 return (

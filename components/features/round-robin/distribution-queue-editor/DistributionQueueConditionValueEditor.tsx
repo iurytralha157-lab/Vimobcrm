@@ -61,6 +61,8 @@ function conditionOptionBadgeClass(selected: boolean) {
 
 const compactOptionListClassName =
   "scrollbar-thin flex max-h-[152px] min-h-10 min-w-0 flex-wrap content-start gap-1.5 overflow-y-auto rounded-[6px] bg-[var(--app-surface-soft)] p-2 [scrollbar-gutter:stable]";
+const textEntryClassName =
+  "h-10 border-0 bg-[var(--app-surface-solid)] text-[12px] shadow-none focus-visible:ring-1 focus-visible:ring-primary/30";
 
 function metaFormOptionClass(selected: boolean, canToggle: boolean) {
   return cn(
@@ -374,6 +376,7 @@ export function DistributionQueueConditionValueEditor({
           onChange={(event) =>
             onUpdate(condition.id, { values: [event.target.value] })
           }
+          className={textEntryClassName}
         />
       );
     case "whatsapp_message_contains": {
@@ -411,7 +414,10 @@ export function DistributionQueueConditionValueEditor({
             >
               <SelectTrigger
                 id={`whatsapp-session-${condition.id}`}
-                className={!condition.sessionId ? "border-destructive" : ""}
+                className={cn(
+                  textEntryClassName,
+                  !condition.sessionId && "ring-1 ring-destructive/50",
+                )}
               >
                 <SelectValue placeholder="Selecione uma conexão..." />
               </SelectTrigger>
@@ -454,6 +460,7 @@ export function DistributionQueueConditionValueEditor({
             onChange={(event) =>
               onUpdate(condition.id, { values: [event.target.value] })
             }
+            className={textEntryClassName}
           />
           {selectedSessionUnavailable ? (
             <p className="rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
@@ -525,6 +532,7 @@ export function DistributionQueueConditionValueEditor({
                 .filter(Boolean),
             })
           }
+          className={textEntryClassName}
         />
       );
     case "interest_property":

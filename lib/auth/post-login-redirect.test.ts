@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -7,6 +8,7 @@ import {
   getPostLoginPathFromSearchParams,
   getSafePostLoginPath,
   getSafeProtectedAppPath,
+  isInvitationPostLoginPath,
   isProtectedAppPath,
 } from './post-login-redirect';
 import {
@@ -19,6 +21,10 @@ import {
 } from './frontend-auth-reliability';
 
 const FALLBACK = '/inicio';
+const loginFormSource = readFileSync(
+  'components/features/auth/login-form.tsx',
+  'utf8',
+);
 
 test('preserva qualquer destino interno protegido com query e fragmento', () => {
   const destinations = [
@@ -83,6 +89,7 @@ test('permite somente o formato canonico de convite sem classifica-lo como rota 
   const invitationPath = `/convite/${token}`;
 
   assert.equal(getSafeInvitationPostLoginPath(invitationPath), invitationPath);
+  assert.equal(isInvitationPostLoginPath(invitationPath), true);
   assert.equal(getSafePostLoginPath(invitationPath, FALLBACK), invitationPath);
   assert.equal(isProtectedAppPath(invitationPath), false);
   assert.equal(
@@ -105,6 +112,7 @@ test('rejeita variacoes de convite que poderiam ampliar o redirecionamento publi
 
   for (const value of rejected) {
     assert.equal(getSafeInvitationPostLoginPath(value), null, value);
+    assert.equal(isInvitationPostLoginPath(value), false, value);
     assert.equal(getSafePostLoginPath(value, FALLBACK), FALLBACK, value);
   }
 });
@@ -161,6 +169,22 @@ test('resolve perfil antes das organizacoes para impedir desvio da selecao multi
   );
 
   assert.deepEqual(order, ['profile', 'organizations']);
+});
+
+test('login retorna ao convite canonico antes de exigir uma organizacao', () => {
+  const directInvitationRoute = loginFormSource.indexOf(
+    'if (isInvitationPostLoginPath(pendingPostLoginPath))',
+  );
+  const organizationRouting = loginFormSource.indexOf(
+    'const activeOrganizations = userOrganizations.filter',
+  );
+
+  assert.notEqual(directInvitationRoute, -1);
+  assert.ok(directInvitationRoute < organizationRouting);
+  assert.match(
+    loginFormSource.slice(directInvitationRoute, organizationRouting),
+    /router\.replace\(pendingPostLoginPath\);\s+return;/,
+  );
 });
 
 test('forca escolha de organizacao somente no login iniciado pelo formulario atual', () => {

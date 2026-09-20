@@ -574,6 +574,10 @@
     {
       "file": "20260920080434_freeze_legacy_whatsapp_ingress_for_online_cutover.sql",
       "sha256": "d30156d2115143fa31a566519a0cc40734341abf4d3af6d7420fb8f5e3eeb6b9"
+    },
+    {
+      "file": "20260920143000_harden_invitation_provisional_auth_profiles.sql",
+      "sha256": "af17d7fa2ec898e22dbc86cb710fd9b318644eef63bcc900495caeb1201f9cdd"
     }
   ]
 }

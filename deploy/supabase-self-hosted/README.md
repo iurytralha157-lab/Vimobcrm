@@ -50,7 +50,236 @@ Configuração de URL esperada, usando o domínio definitivo escolhido:
 SUPABASE_PUBLIC_URL=https://supabase.vimobcrm.com.br
 API_EXTERNAL_URL=https://supabase.vimobcrm.com.br/auth/v1
 SITE_URL=https://app.vimobcrm.com.br
+ADDITIONAL_REDIRECT_URLS=https://app.vimobcrm.com.br/reset-password,https://app.vimobcrm.com.br/login?emailConfirmation=success
 ```
+
+### Auth: SMTP e template de recuperação
+
+O bloco `[auth.email.template.recovery]` de `supabase/config.toml` configura
+somente o Supabase CLI local. Commitar `supabase/templates/recovery.html` não
+altera o Auth self-hosted nem o projeto gerenciado.
+
+No self-hosted atual, o GoTrue não lê templates diretamente de volumes
+montados. O arquivo precisa ser servido por HTTP e a URL deve responder a um
+`GET` feito de dentro da rede do serviço `auth`. A URL não precisa ser pública;
+um `templates-server` privado na mesma rede Docker é suficiente. Se a busca
+falhar ou o conteúdo não for um template Go válido, o Auth usa o template
+padrão, por isso a disponibilidade desse endpoint faz parte do cutover.
+
+Mantenha SMTP e a allowlist fora do Git no `.env` operacional da stack oficial.
+A linha abaixo representa apenas o conjunto mínimo conhecido pelo repositório.
+Antes de alterar produção, leia o valor vigente e **mescle** essas duas URLs com
+todas as entradas já configuradas; nunca substitua a allowlist inteira. O
+redirect de `/login?emailConfirmation=success` é usado pela confirmação e pelo
+reenvio do onboarding público e deve permanecer autorizado.
+
+```dotenv
+SMTP_ADMIN_EMAIL=no-reply@auth.vimobcrm.com.br
+SMTP_HOST=<host-smtp>
+SMTP_PORT=587
+SMTP_USER=<usuario-smtp>
+SMTP_PASS=<segredo-no-cofre>
+SMTP_SENDER_NAME=Vimob CRM
+SITE_URL=https://app.vimobcrm.com.br
+ADDITIONAL_REDIRECT_URLS=https://app.vimobcrm.com.br/reset-password,https://app.vimobcrm.com.br/login?emailConfirmation=success
+```
+
+No `environment` do serviço `auth`, preserve os mapeamentos SMTP/URL da stack
+oficial e acrescente as duas variáveis específicas do recovery:
+
+```yaml
+services:
+  auth:
+    environment:
+      GOTRUE_SITE_URL: ${SITE_URL}
+      GOTRUE_URI_ALLOW_LIST: ${ADDITIONAL_REDIRECT_URLS}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT}
+      GOTRUE_SMTP_USER: ${SMTP_USER}
+      GOTRUE_SMTP_PASS: ${SMTP_PASS}
+      GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME}
+      GOTRUE_MAILER_TEMPLATES_RECOVERY: http://templates-server/recovery.html
+      GOTRUE_MAILER_SUBJECTS_RECOVERY: Redefina sua senha no Vimob CRM
+```
+
+O endpoint `http://templates-server/recovery.html` acima é um contrato de rede,
+não uma aplicação automática deste repositório. Antes do restart controlado do
+Auth, publique exatamente `supabase/templates/recovery.html` nesse endpoint e
+confirme, a partir da rede/container do `auth`, resposta `200`, HTML íntegro e
+presença literal de `{{ .RedirectTo }}`, `{{ .TokenHash }}` e `type=recovery`.
+Não use `file://`, caminho de volume ou `localhost` apontando para outro
+container. Desative link tracking/click rewriting no provedor SMTP para não
+alterar o link de recuperação.
+
+Faça um canário com uma conta dedicada antes de liberar produção:
+
+1. Solicitar uma única recuperação em `https://app.vimobcrm.com.br/login`.
+2. Confirmar remetente/domínio, assunto, logo, faixa e botão laranja no e-mail
+   recebido, sem fallback para o template padrão nos logs do Auth.
+3. Inspecionar o destino do botão: ele deve começar em
+   `https://app.vimobcrm.com.br/reset-password`, ter um único `token_hash` e
+   `type=recovery`, sem o provedor de e-mail reescrever a URL.
+4. Abrir o link uma vez, definir uma senha nova e validar login com ela; a senha
+   anterior deve falhar e a reutilização do link deve ser recusada.
+5. Só então executar os canários restantes de Auth. Se qualquer etapa falhar,
+   interromper o cutover e manter a origem ativa.
+
+### Convites provisórios: ordem obrigatória do rollout
+
+A migration
+`supabase/migrations/20260920143000_harden_invitation_provisional_auth_profiles.sql`
+torna inativos perfis criados por convite até o aceite transacional. Por isso,
+ela **não pode anteceder a API compatível**: a API antiga interpreta qualquer
+linha de `auth.users` como conta pronta para login, enquanto o cliente expulsa
+perfis inativos. Aplicar o SQL primeiro recria exatamente o bloqueio que esta
+correção elimina.
+
+Ordem segura:
+
+1. Publicar uma imagem imutável da API que contenha a classificação
+   `admin_invitation`, a retomada de identidade provisória e o lock de aceite.
+2. Drenar as réplicas antigas e comprovar que todas executam o mesmo SHA. Se
+   isso não puder ser comprovado, pausar criação, reenvio e aceite de convites
+   durante a janela.
+3. Antes do SQL, ler o trigger esperado; a migration também falha de propósito
+   se ele estiver ausente, desabilitado ou apontar para outra função:
+
+```sql
+select
+  trigger.tgname,
+  trigger.tgenabled,
+  procedure_namespace.nspname as function_schema,
+  procedure.proname as function_name,
+  pg_catalog.pg_get_expr(trigger.tgqual, trigger.tgrelid) as when_predicate,
+  pg_catalog.pg_get_triggerdef(trigger.oid) as trigger_definition
+from pg_catalog.pg_trigger as trigger
+join pg_catalog.pg_class as relation on relation.oid = trigger.tgrelid
+join pg_catalog.pg_namespace as relation_namespace on relation_namespace.oid = relation.relnamespace
+join pg_catalog.pg_proc as procedure on procedure.oid = trigger.tgfoid
+join pg_catalog.pg_namespace as procedure_namespace on procedure_namespace.oid = procedure.pronamespace
+where relation_namespace.nspname = 'auth'
+  and relation.relname = 'users'
+  and trigger.tgname = 'on_auth_user_created'
+  and trigger.tgisinternal = false;
+```
+
+4. Pausar criação, reenvio e aceite de convites e drenar requisições em voo.
+   Mantenha esses três writers pausados desde antes do snapshot até o readback
+   com `mismatch_count = 0`; sem essa janela fechada, o CSV não é um ledger
+   exato do `UPDATE`.
+5. Gerar um snapshot dos IDs que o backfill pode inativar. Execute a consulta
+   abaixo com acesso administrativo somente leitura, exporte o resultado em CSV
+   para o cofre de artefatos da mudança e registre contagem e SHA-256 do arquivo.
+   Não prossiga sem revisar a lista; ela é o ledger exato para readback e eventual
+   rollback coordenado:
+
+```sql
+select
+  profile.id as user_id,
+  profile.is_active as was_active,
+  case
+    when btrim(coalesce(auth_user.raw_app_meta_data ->> 'provisioning_source', '')) = 'admin_invitation'
+      then 'admin_invitation'
+    else 'native_invite'
+  end as marker_kind,
+  btrim(coalesce(auth_user.raw_app_meta_data ->> 'invitation_id', '')) as invitation_id
+from public.users as profile
+join auth.users as auth_user on auth_user.id = profile.id
+where coalesce(profile.is_active, false) = true
+  and profile.organization_id is null
+  and coalesce(lower(nullif(btrim(profile.role), '')), 'user') = 'user'
+  and auth_user.deleted_at is null
+  and not exists (
+    select 1 from public.organization_members as membership
+    where membership.user_id = auth_user.id
+  )
+  and not exists (
+    select 1 from public.organizations as organization
+    where organization.created_by = auth_user.id
+  )
+  and not exists (
+    select 1 from public.onboarding_requests as onboarding_request
+    where onboarding_request.user_id = auth_user.id
+  )
+  and not exists (
+    select 1 from public.legal_consents as consent
+    where consent.user_id = auth_user.id
+  )
+  and (
+    (
+      btrim(coalesce(auth_user.raw_app_meta_data ->> 'provisioning_source', '')) = 'admin_invitation'
+      and btrim(coalesce(auth_user.raw_user_meta_data ->> 'provisioning_source', '')) = ''
+      and btrim(coalesce(auth_user.raw_app_meta_data ->> 'invitation_id', ''))
+        ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    )
+    or (
+      btrim(coalesce(auth_user.raw_app_meta_data ->> 'provisioning_source', '')) = ''
+      and btrim(coalesce(auth_user.raw_user_meta_data ->> 'provisioning_source', '')) = ''
+      and btrim(coalesce(auth_user.raw_app_meta_data ->> 'invitation_id', '')) = ''
+      and btrim(coalesce(auth_user.raw_user_meta_data ->> 'invitation_id', '')) = ''
+      and auth_user.invited_at is not null
+      and auth_user.email_confirmed_at is null
+      and auth_user.last_sign_in_at is null
+      and coalesce(auth_user.encrypted_password, '') = ''
+    )
+  )
+order by profile.id;
+```
+
+6. Validar a migration completa primeiro contra um clone descartável/full-chain
+   em PostgreSQL 17.x (preferencialmente o mesmo minor do destino, hoje 17.6).
+   PostgreSQL 15 não substitui esse gate de compatibilidade.
+7. Aplicar a migration uma única vez pelo runner oficial e registrar o
+   readback. Não aplicar manualmente apenas trechos do arquivo.
+8. Repetir a consulta do trigger e confirmar `tgenabled` em `O` ou `A`, função
+   `public.handle_new_auth_user`, `when_predicate` nulo e definição
+   `AFTER INSERT ... FOR EACH ROW`. Importe o CSV em uma tabela temporária e
+   faça o post-check objetivo:
+
+```sql
+create temp table invitation_profile_backfill_snapshot (
+  user_id uuid primary key,
+  was_active boolean not null,
+  marker_kind text not null,
+  invitation_id text not null
+) on commit preserve rows;
+
+-- No psql, importe o mesmo arquivo guardado no passo 5:
+-- \copy invitation_profile_backfill_snapshot from '/caminho/seguro/snapshot.csv' with (format csv, header true)
+
+select
+  count(*) as snapshot_count,
+  count(*) filter (
+    where profile.id is not null and profile.is_active = false
+  ) as inactive_count,
+  count(*) filter (
+    where profile.id is null or profile.is_active is distinct from false
+  ) as mismatch_count
+from invitation_profile_backfill_snapshot as snapshot
+left join public.users as profile on profile.id = snapshot.user_id;
+
+select snapshot.user_id, profile.is_active
+from invitation_profile_backfill_snapshot as snapshot
+left join public.users as profile on profile.id = snapshot.user_id
+where profile.id is null or profile.is_active is distinct from false
+order by snapshot.user_id;
+```
+
+   `mismatch_count` deve ser zero e a segunda consulta deve retornar zero linhas.
+   Nunca reative em massa apenas pela data: um rollback deve usar exclusivamente
+   os IDs desse snapshot e repetir as guardas atuais de ausência de membership,
+   organização, onboarding e consentimento.
+9. Com o readback limpo, liberar somente os canários e executá-los separadamente
+   antes de reabrir o fluxo geral:
+   convite novo, reenvio antes do aceite, retomada após falha parcial, conta já
+   existente e dois aceites concorrentes (um sucesso; o outro conflito/replay,
+   sem troca posterior de senha).
+
+A API nova tolera o trigger antigo na curta janela anterior ao SQL, pois faz a
+checagem e a inativação guardada antes de ativar membership. O caminho inverso
+não é compatível. Depois da migration, não faça rollback isolado para a API
+antiga; pause convites e siga um rollback coordenado ou corrija por roll-forward.
 
 ## Ordem de execução
 

@@ -934,6 +934,8 @@ func writeAdminError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusConflict, "invitation_user_already_member", "Este usuario ja esta cadastrado na sua imobiliaria.")
 	case errors.Is(err, ErrInvitationAlreadyPending):
 		httpserver.WriteError(w, r, http.StatusConflict, "invitation_already_pending", "Ja existe um convite pendente para este usuario nesta imobiliaria.")
+	case errors.Is(err, ErrInvitationInProgress):
+		httpserver.WriteError(w, r, http.StatusConflict, "invitation_operation_in_progress", "Este convite ja esta sendo processado. Aguarde e tente novamente.")
 	case errors.Is(err, ErrInvitationEmailMissing):
 		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, "invitation_email_missing", "Este convite nao possui um e-mail para reenvio.")
 	case errors.Is(err, ErrInvalidInput):

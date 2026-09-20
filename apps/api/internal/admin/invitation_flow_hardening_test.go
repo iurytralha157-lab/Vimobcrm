@@ -82,6 +82,24 @@ func TestNormalizeInvitationTokenAcceptsOnlyCanonical256BitHex(t *testing.T) {
 	}
 }
 
+func TestInvitationIdentityPoolSlotCapacityAlwaysReservesAConnection(t *testing.T) {
+	tests := []struct {
+		maxConns int32
+		want     int
+	}{
+		{maxConns: 0, want: 0},
+		{maxConns: 1, want: 0},
+		{maxConns: 2, want: 1},
+		{maxConns: 3, want: 2},
+		{maxConns: 8, want: 2},
+	}
+	for _, test := range tests {
+		if got := invitationIdentityPoolSlotCapacity(test.maxConns); got != test.want {
+			t.Fatalf("capacity for MaxConns=%d = %d, want %d", test.maxConns, got, test.want)
+		}
+	}
+}
+
 func TestInvitationCapabilityResponsesDisableCaching(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	setInvitationCapabilityResponseHeaders(recorder)
@@ -175,6 +193,32 @@ func TestInvitationCreationAndDeliverySourceContracts(t *testing.T) {
 			t.Fatalf("CreateInvitation is missing %q", required)
 		}
 	}
+	for _, required := range []string{
+		"repo.acquireInvitationIdentityLock(ctx, normalizedEmail)",
+		"repo.classifyInvitationIdentity(ctx, invitationID, normalizedEmail)",
+		"existingAccount = identity.requiresLogin()",
+	} {
+		if !strings.Contains(create, required) {
+			t.Fatalf("CreateInvitation is missing safe identity classification %q", required)
+		}
+	}
+	createLockIndex := strings.Index(create, "repo.acquireInvitationIdentityLock(ctx, normalizedEmail)")
+	createClassificationIndex := strings.Index(create, "repo.classifyInvitationIdentity(ctx, invitationID, normalizedEmail)")
+	createInsertIndex := strings.Index(create, "insert into public.invitations")
+	if createLockIndex == -1 || createClassificationIndex == -1 || createInsertIndex == -1 ||
+		createLockIndex >= createClassificationIndex || createClassificationIndex >= createInsertIndex {
+		t.Fatal("invitation creation must lock the e-mail before classification and insert")
+	}
+
+	resend := invitationFunctionSource(t, "repository.go", "ResendInvitation")
+	for _, required := range []string{
+		"repo.classifyInvitationIdentity(ctx, invitationID, normalizedEmail)",
+		"existingAccount := identity.requiresLogin()",
+	} {
+		if !strings.Contains(resend, required) {
+			t.Fatalf("ResendInvitation is missing safe identity classification %q", required)
+		}
+	}
 
 	prepare := invitationFunctionSource(t, "invitation_email.go", "prepareInvitationEmailDelivery")
 	for _, required := range []string{
@@ -192,6 +236,28 @@ func TestInvitationCreationAndDeliverySourceContracts(t *testing.T) {
 }
 
 func TestInvitationAcceptanceReplayAndActivationSourceContracts(t *testing.T) {
+	publicAcceptance := invitationFunctionSource(t, "invitation_accept.go", "AcceptInvitationPublic")
+	for _, required := range []string{
+		"repo.acquireInvitationIdentityLock(ctx, invitation.Email)",
+		"lockedInvitation, err := repo.invitationByTokenForAccept(ctx, token)",
+		"repo.classifyInvitationIdentity(ctx, invitation.ID, invitation.Email)",
+		"repo.updateResumableInvitationAuthUser(",
+		"repo.ensureInvitationProvisionalProfileInactive(",
+		"invitationIdentityReconciliationContext(ctx)",
+	} {
+		if !strings.Contains(publicAcceptance, required) {
+			t.Fatalf("public invitation acceptance is missing safe resume step %q", required)
+		}
+	}
+	lockIndex := strings.Index(publicAcceptance, "repo.acquireInvitationIdentityLock(ctx, invitation.Email)")
+	lockedLookupIndex := strings.LastIndex(publicAcceptance, "repo.invitationByTokenForAccept(ctx, token)")
+	classificationIndex := strings.Index(publicAcceptance, "repo.classifyInvitationIdentity(ctx, invitation.ID, invitation.Email)")
+	authMutationIndex := strings.Index(publicAcceptance, "repo.updateResumableInvitationAuthUser(")
+	if lockIndex == -1 || lockedLookupIndex == -1 || classificationIndex == -1 || authMutationIndex == -1 ||
+		lockIndex >= lockedLookupIndex || lockedLookupIndex >= classificationIndex || classificationIndex >= authMutationIndex {
+		t.Fatal("public acceptance must lock, re-read, classify, and only then mutate Auth")
+	}
+
 	lookup := invitationFunctionSource(t, "invitation_accept.go", "invitationByTokenForAccept")
 	for _, required := range []string{
 		"normalizeInvitationToken(token)",
@@ -213,6 +279,7 @@ func TestInvitationAcceptanceReplayAndActivationSourceContracts(t *testing.T) {
 
 	activation := invitationFunctionSource(t, "invitation_accept.go", "activateInvitationForUser")
 	for _, required := range []string{
+		"lockInvitationOwnedAuthIdentity(ctx, tx, invitation, userID)",
 		"when public.organization_members.is_active = true",
 		"and public.organization_members.deleted_at is null",
 		"then public.organization_members.role",
@@ -220,6 +287,17 @@ func TestInvitationAcceptanceReplayAndActivationSourceContracts(t *testing.T) {
 	} {
 		if !strings.Contains(activation, required) {
 			t.Fatalf("membership upsert is missing active-role preservation guard %q", required)
+		}
+	}
+
+	identityLock := invitationFunctionSource(t, "invitation_accept.go", "lockInvitationOwnedAuthIdentity")
+	for _, required := range []string{
+		"auth_user.raw_app_meta_data ->> 'provisioning_source' = 'admin_invitation'",
+		"auth_user.raw_app_meta_data ->> 'invitation_id' = $3",
+		"for update",
+	} {
+		if !strings.Contains(identityLock, required) {
+			t.Fatalf("provisional invitation activation lock is missing %q", required)
 		}
 	}
 
@@ -234,6 +312,40 @@ func TestInvitationAcceptanceReplayAndActivationSourceContracts(t *testing.T) {
 		if !strings.Contains(reconcile, required) {
 			t.Fatalf("activation reconciliation is missing consent evidence %q", required)
 		}
+	}
+}
+
+func TestInvitationAcceptanceAndResendShareCrossReplicaIdentityLock(t *testing.T) {
+	lock := invitationFunctionSource(t, "invitation_identity.go", "acquireInvitationIdentityLock")
+	for _, required := range []string{
+		"invitationIdentityLockPrefix + normalizedEmail",
+		"pg_catalog.pg_try_advisory_lock(",
+		"pg_catalog.pg_advisory_unlock(",
+		"acquireInvitationIdentityPoolSlot(ctx, pool)",
+		"closeInvitationIdentityLockConnection(connection)",
+		"ErrInvitationInProgress",
+	} {
+		if !strings.Contains(lock, required) {
+			t.Fatalf("invitation identity lock is missing %q", required)
+		}
+	}
+
+	resend := invitationFunctionSource(t, "repository.go", "ResendInvitation")
+	lockIndex := strings.Index(resend, "repo.acquireInvitationIdentityLock(ctx, normalizedEmail)")
+	lockedReadIndex := strings.LastIndex(resend, "from public.invitations")
+	tokenRotationIndex := strings.Index(resend, "newToken, err := randomInvitationToken()")
+	if lockIndex == -1 || lockedReadIndex == -1 || tokenRotationIndex == -1 ||
+		lockIndex >= lockedReadIndex || lockedReadIndex >= tokenRotationIndex {
+		t.Fatal("resend must lock and re-read the invitation before rotating its token")
+	}
+
+	authenticated := invitationFunctionSource(t, "invitation_accept.go", "AcceptInvitationAuthenticated")
+	authenticatedLockIndex := strings.Index(authenticated, "repo.acquireInvitationIdentityLock(ctx, invitation.Email)")
+	authenticatedLockedLookupIndex := strings.LastIndex(authenticated, "repo.invitationByTokenForAccept(ctx, token)")
+	authenticatedIdentityIndex := strings.Index(authenticated, "repo.userIdentity(ctx, userID)")
+	if authenticatedLockIndex == -1 || authenticatedLockedLookupIndex == -1 || authenticatedIdentityIndex == -1 ||
+		authenticatedLockIndex >= authenticatedLockedLookupIndex || authenticatedLockedLookupIndex >= authenticatedIdentityIndex {
+		t.Fatal("authenticated acceptance must share the identity lock and re-read before activation")
 	}
 }
 

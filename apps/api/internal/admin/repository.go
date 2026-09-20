@@ -333,48 +333,56 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 	if (role == "admin" || role == "manager") && !canCreatePrivilegedInvitation(tenantContext) {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
+	invitationID, err := randomUUIDString()
+	if err != nil {
+		return nil, err
+	}
 
-	var email *string
+	normalizedEmail, err := normalizeEmail(*request.Email)
+	if err != nil {
+		return nil, err
+	}
+	releaseIdentityLock, err := repo.acquireInvitationIdentityLock(ctx, normalizedEmail)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseIdentityLock()
+
+	email := &normalizedEmail
 	var recipientUserID *string
 	existingAccount := false
-	if request.Email != nil {
-		normalizedEmail, err := normalizeEmail(*request.Email)
-		if err != nil {
-			return nil, err
+	identity, identityErr := repo.classifyInvitationIdentity(ctx, invitationID, normalizedEmail)
+	if identityErr != nil {
+		return nil, identityErr
+	}
+	if identity.UserID != "" {
+		recipientUserID = &identity.UserID
+		existingAccount = identity.requiresLogin()
+		alreadyMember, memberErr := repo.userBelongsToOrganization(ctx, identity.UserID, resolvedOrganizationID)
+		if memberErr != nil {
+			return nil, memberErr
 		}
-		email = &normalizedEmail
-		existingUserID, lookupErr := repo.userIDByEmail(ctx, normalizedEmail)
-		if lookupErr == nil && existingUserID != "" {
-			existingAccount = true
-			recipientUserID = &existingUserID
-			alreadyMember, memberErr := repo.userBelongsToOrganization(ctx, existingUserID, resolvedOrganizationID)
-			if memberErr != nil {
-				return nil, memberErr
-			}
-			if alreadyMember {
-				return nil, ErrInvitationUserAlreadyMember
-			}
-		} else if lookupErr != nil && !errors.Is(lookupErr, pgx.ErrNoRows) {
-			return nil, lookupErr
+		if alreadyMember {
+			return nil, ErrInvitationUserAlreadyMember
 		}
+	}
 
-		if _, err := repo.db.Pool().Exec(ctx, `
+	if _, err := repo.db.Pool().Exec(ctx, `
 			delete from public.invitations
 			where organization_id = $1::uuid
 			  and lower(btrim(email)) = lower(btrim($2))
 			  and used_at is null
 			  and expires_at <= now()
 		`, resolvedOrganizationID, normalizedEmail); err != nil {
-			return nil, err
-		}
+		return nil, err
+	}
 
-		pending, pendingErr := repo.pendingInvitationExists(ctx, resolvedOrganizationID, normalizedEmail)
-		if pendingErr != nil {
-			return nil, pendingErr
-		}
-		if pending {
-			return nil, ErrInvitationAlreadyPending
-		}
+	pending, pendingErr := repo.pendingInvitationExists(ctx, resolvedOrganizationID, normalizedEmail)
+	if pendingErr != nil {
+		return nil, pendingErr
+	}
+	if pending {
+		return nil, ErrInvitationAlreadyPending
 	}
 	plaintextToken, err := randomInvitationToken()
 	if err != nil {
@@ -390,7 +398,8 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 			created_by,
 			expires_at,
 			token,
-			token_hash
+			token_hash,
+			id
 		)
 		values (
 			$1::uuid,
@@ -399,17 +408,17 @@ func (repo Repository) CreateInvitation(ctx context.Context, tenantContext tenan
 			$4::uuid,
 			coalesce($5::timestamptz, now() + interval '7 days'),
 			$6,
-			$7
+			$7,
+			$8::uuid
 		)
 		returning to_jsonb(invitations) - 'token' - 'token_hash'
-	`, resolvedOrganizationID, email, role, tenantContext.UserID, expiresAt, plaintextToken, tokenHash)
+	`, resolvedOrganizationID, email, role, tenantContext.UserID, expiresAt, plaintextToken, tokenHash, invitationID)
 	if err != nil {
 		if isPendingInvitationUniqueViolation(err) {
 			return nil, ErrInvitationAlreadyPending
 		}
 		return nil, err
 	}
-	invitationID, _ := item["id"].(string)
 	stripInvitationToken(item)
 
 	emailSent := false
@@ -521,13 +530,39 @@ func (repo Repository) ResendInvitation(ctx context.Context, tenantContext tenan
 		scopedOrganizationID = tenantContext.OrganizationID
 	}
 
-	var organizationID string
 	var email pgtype.Text
+	err := repo.db.Pool().QueryRow(ctx, `
+		select email
+		from public.invitations
+		where id = $1::uuid
+		  and used_at is null
+		  and ($2::uuid is null or organization_id = $2::uuid)
+	`, invitationID, scopedOrganizationID).Scan(&email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !email.Valid || strings.TrimSpace(email.String) == "" {
+		return nil, ErrInvitationEmailMissing
+	}
+	normalizedEmail, err := normalizeEmail(email.String)
+	if err != nil {
+		return nil, err
+	}
+	releaseIdentityLock, err := repo.acquireInvitationIdentityLock(ctx, normalizedEmail)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseIdentityLock()
+
+	var organizationID string
 	var role string
 	var previousToken string
 	var previousTokenHash string
 	var previousExpiresAt time.Time
-	err := repo.db.Pool().QueryRow(ctx, `
+	err = repo.db.Pool().QueryRow(ctx, `
 		select organization_id::text, email, coalesce(nullif(role, ''), 'user'), token, token_hash, expires_at
 		from public.invitations
 		where id = $1::uuid
@@ -550,29 +585,29 @@ func (repo Repository) ResendInvitation(ctx context.Context, tenantContext tenan
 	if !email.Valid || strings.TrimSpace(email.String) == "" {
 		return nil, ErrInvitationEmailMissing
 	}
+	lockedEmail, err := normalizeEmail(email.String)
+	if err != nil || lockedEmail != normalizedEmail {
+		return nil, ErrInvalidInput
+	}
 	if (role == "admin" || role == "manager") && !canCreatePrivilegedInvitation(tenantContext) {
 		return nil, tenant.ErrOrganizationAccessDenied
 	}
 
-	normalizedEmail, err := normalizeEmail(email.String)
+	identity, err := repo.classifyInvitationIdentity(ctx, invitationID, normalizedEmail)
 	if err != nil {
 		return nil, err
 	}
-	existingAccount := false
+	existingAccount := identity.requiresLogin()
 	var recipientUserID *string
-	existingUserID, lookupErr := repo.userIDByEmail(ctx, normalizedEmail)
-	if lookupErr == nil && existingUserID != "" {
-		existingAccount = true
-		recipientUserID = &existingUserID
-		alreadyMember, memberErr := repo.userBelongsToOrganization(ctx, existingUserID, organizationID)
+	if identity.UserID != "" {
+		recipientUserID = &identity.UserID
+		alreadyMember, memberErr := repo.userBelongsToOrganization(ctx, identity.UserID, organizationID)
 		if memberErr != nil {
 			return nil, memberErr
 		}
 		if alreadyMember {
 			return nil, ErrInvitationUserAlreadyMember
 		}
-	} else if lookupErr != nil && !errors.Is(lookupErr, pgx.ErrNoRows) {
-		return nil, lookupErr
 	}
 
 	organizationName, err := repo.organizationName(ctx, organizationID)
@@ -849,14 +884,7 @@ func (repo Repository) ShowInvitationByToken(ctx context.Context, token string) 
 			'role', i.role,
 			'organization_id', i.organization_id::text,
 			'organization_name', o.name,
-			'expires_at', i.expires_at,
-			'existing_account', exists (
-				select 1
-				from auth.users au
-				where lower(au.email) = lower(i.email)
-				  and au.deleted_at is null
-				limit 1
-			)
+			'expires_at', i.expires_at
 		)
 		from public.invitations i
 		join public.organizations o on o.id = i.organization_id
@@ -868,7 +896,17 @@ func (repo Repository) ShowInvitationByToken(ctx context.Context, token string) 
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
-	return item, err
+	if err != nil {
+		return nil, err
+	}
+	invitationID := strings.TrimSpace(stringValue(item["id"]))
+	email := strings.TrimSpace(stringValue(item["email"]))
+	identity, err := repo.classifyInvitationIdentity(ctx, invitationID, email)
+	if err != nil {
+		return nil, err
+	}
+	item["existing_account"] = identity.requiresLogin()
+	return item, nil
 }
 
 func (repo Repository) ShowMyOnboardingRequest(ctx context.Context, tenantContext tenant.Context) (map[string]any, error) {
@@ -1789,8 +1827,15 @@ func (repo Repository) queryJSONObject(ctx context.Context, sql string, args ...
 	return item, nil
 }
 
-func (repo Repository) createAuthUser(ctx context.Context, email string, password string, name string) (string, error) {
-	if repo.projectURL == "" || repo.apiKey == "" {
+func (repo Repository) createAuthUser(
+	ctx context.Context,
+	invitationID string,
+	email string,
+	password string,
+	name string,
+) (string, error) {
+	invitationID, valid := normalizeUUID(invitationID)
+	if !valid || repo.projectURL == "" || repo.apiKey == "" {
 		return "", ErrInvalidInput
 	}
 	payload, _ := json.Marshal(map[string]any{
@@ -1798,6 +1843,10 @@ func (repo Repository) createAuthUser(ctx context.Context, email string, passwor
 		"password":      password,
 		"email_confirm": true,
 		"user_metadata": map[string]any{"name": name},
+		"app_metadata": map[string]any{
+			"provisioning_source": "admin_invitation",
+			"invitation_id":       invitationID,
+		},
 	})
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, repo.projectURL+"/auth/v1/admin/users", bytes.NewReader(payload))
 	if err != nil {
@@ -1814,15 +1863,21 @@ func (repo Repository) createAuthUser(ctx context.Context, email string, passwor
 		return "", fmt.Errorf("auth admin create user failed: %s", strings.TrimSpace(string(raw)))
 	}
 	var parsed struct {
-		ID string `json:"id"`
+		ID          string         `json:"id"`
+		Email       string         `json:"email"`
+		AppMetadata map[string]any `json:"app_metadata"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return "", err
 	}
-	if parsed.ID == "" {
-		return "", ErrInvalidInput
+	userID, valid := normalizeUUID(parsed.ID)
+	if !valid ||
+		!strings.EqualFold(strings.TrimSpace(parsed.Email), strings.TrimSpace(email)) ||
+		stringValue(parsed.AppMetadata["provisioning_source"]) != "admin_invitation" ||
+		stringValue(parsed.AppMetadata["invitation_id"]) != invitationID {
+		return "", errors.New("auth invitation user response has an invalid contract")
 	}
-	return parsed.ID, nil
+	return userID, nil
 }
 
 func normalizeEmail(value string) (string, error) {

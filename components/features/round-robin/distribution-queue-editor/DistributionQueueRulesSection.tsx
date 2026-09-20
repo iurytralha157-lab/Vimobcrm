@@ -100,12 +100,26 @@ export function DistributionQueueRulesSection({
       open={open}
       onOpenChange={onToggle}
     >
-      <CollapsibleTrigger className="flex w-full items-center justify-between rounded-[6px] border-0 bg-[var(--app-surface-muted)] px-3 py-2.5 text-left transition-colors hover:bg-[var(--app-surface-hover)] data-[state=open]:bg-primary/10">
-        <div className="flex items-center gap-2">
-          <Filter className="h-4 w-4 text-primary" />
-          <span className="font-medium">Regras de entrada</span>
-          {conditions.length > 0 && (
-            <Badge variant="secondary" className="text-xs">
+      <CollapsibleTrigger className="flex w-full items-center justify-between rounded-[6px] border-0 bg-[var(--app-surface-muted)] px-3 py-2 text-left transition-colors hover:bg-[var(--app-surface-hover)] data-[state=open]:bg-primary/10">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[6px] bg-primary/50 text-white">
+            <Filter className="h-4 w-4" aria-hidden="true" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-medium">Regras de entrada</span>
+            <span className="block truncate text-[10px] font-light text-[var(--app-text-tertiary)]">
+              Defina quais leads entram nesta fila
+            </span>
+          </span>
+          {!hasValidCriteria ? (
+            <Badge className="h-5 shrink-0 rounded-[5px] border-0 bg-primary/15 px-1.5 text-[10px] font-light text-primary shadow-none hover:bg-primary/15">
+              Pendente
+            </Badge>
+          ) : (
+            <Badge
+              variant="secondary"
+              className="h-5 shrink-0 rounded-[5px] border-0 px-1.5 text-[10px] font-light"
+            >
               {conditions.length}
             </Badge>
           )}

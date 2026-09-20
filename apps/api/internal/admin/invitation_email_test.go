@@ -83,6 +83,34 @@ func TestInvitationEmailSendsResendIdempotencyHeader(t *testing.T) {
 	}
 }
 
+func TestInvitationEmailUsesCanonicalBrandShell(t *testing.T) {
+	t.Parallel()
+
+	repo := Repository{supportEmail: "suporte@example.com"}
+	html := repo.renderInvitationHTML(invitationEmailInput{
+		Email:            "convidado@example.com",
+		OrganizationName: "Imobiliária Exemplo",
+		Role:             "manager",
+		InviteURL:        "https://app.vimobcrm.com.br/convite/token-seguro",
+	})
+
+	for _, required := range []string{
+		`src="https://vimobcrm.com.br/images/logo-black.png"`,
+		`height:6px;background:#ff4529`,
+		`background:#fff0ed`,
+		`https://app.vimobcrm.com.br/convite/token-seguro`,
+		`Completar cadastro`,
+		`suporte@example.com`,
+	} {
+		if !strings.Contains(html, required) {
+			t.Fatalf("invitation email brand shell is missing %q", required)
+		}
+	}
+	if strings.Contains(html, `#c9361f`) {
+		t.Fatal("invitation email must use the canonical Vimob accent")
+	}
+}
+
 func TestInvitationEmailPersistsProviderAcceptanceBeforeReportingSent(t *testing.T) {
 	source, err := os.ReadFile("invitation_email.go")
 	if err != nil {

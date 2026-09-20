@@ -103,6 +103,10 @@ export function getSafeInvitationPostLoginPath(value: string | null | undefined)
   return value ? normalizeInvitationPostLoginPath(value) : null;
 }
 
+export function isInvitationPostLoginPath(value: string | null | undefined) {
+  return getSafeInvitationPostLoginPath(value) !== null;
+}
+
 export function getSafePostLoginPath(
   value: string | null | undefined,
   fallback: string,

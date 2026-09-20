@@ -36,10 +36,17 @@ export function DistributionQueueAutoTagsSection({
       open={open}
       onOpenChange={onToggle}
     >
-      <CollapsibleTrigger className="flex w-full items-center justify-between rounded-[6px] border-0 bg-[var(--app-surface-muted)] px-3 py-2.5 text-left transition-colors hover:bg-[var(--app-surface-hover)] data-[state=open]:bg-primary/10">
-        <div className="flex items-center gap-2">
-          <TagIcon className="h-4 w-4 text-primary" />
-          <span className="font-medium">Tags automáticas</span>
+      <CollapsibleTrigger className="flex w-full items-center justify-between rounded-[6px] border-0 bg-[var(--app-surface-muted)] px-3 py-2 text-left transition-colors hover:bg-[var(--app-surface-hover)] data-[state=open]:bg-primary/10">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[6px] bg-primary/50 text-white">
+            <TagIcon className="h-4 w-4" aria-hidden="true" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-medium">Tags automáticas</span>
+            <span className="block truncate text-[10px] font-light text-[var(--app-text-tertiary)]">
+              Marque o lead ao entrar
+            </span>
+          </span>
           {selectedTagIds.length > 0 && (
             <Badge
               variant="secondary"

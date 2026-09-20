@@ -14,7 +14,7 @@ import (
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/publicingress"
 )
 
-func TestInvitationIdentityLookupUsesCanonicalAuthIdentity(t *testing.T) {
+func TestBroadUserIDLookupRemainsCanonicalAuthOnly(t *testing.T) {
 	source, err := os.ReadFile("invitation_accept.go")
 	if err != nil {
 		t.Fatalf("read invitation acceptance source: %v", err)
@@ -79,16 +79,306 @@ func TestInvitationPreviewUsesCanonicalAuthIdentity(t *testing.T) {
 	}
 	preview := text[previewStart : previewStart+1+nextFunction]
 
-	if !strings.Contains(preview, "from auth.users") || !strings.Contains(preview, "deleted_at is null") {
-		t.Fatalf("invitation preview must resolve a live canonical Auth identity: %s", preview)
-	}
-	if strings.Contains(preview, "from public.users") {
-		t.Fatalf("invitation preview must not classify public profile rows as canonical accounts: %s", preview)
+	if !strings.Contains(preview, "repo.classifyInvitationIdentity(ctx, invitationID, email)") ||
+		!strings.Contains(preview, `item["existing_account"] = identity.requiresLogin()`) {
+		t.Fatalf("invitation preview must use the invitation-specific identity classifier: %s", preview)
 	}
 	if !strings.Contains(preview, "tokenHash := invitationTokenHash(token)") ||
 		!strings.Contains(preview, "where i.token_hash = $1") ||
 		strings.Contains(preview, "where i.token = $1") {
 		t.Fatalf("invitation preview must compare only the SHA-256 token hash: %s", preview)
+	}
+}
+
+func TestInvitationIdentityClassificationPreservesSafeProvisioningBoundary(t *testing.T) {
+	const invitationID = "11111111-1111-1111-1111-111111111111"
+	base := invitationIdentityFacts{
+		UserID: "22222222-2222-2222-2222-222222222222",
+	}
+
+	tests := []struct {
+		name  string
+		facts invitationIdentityFacts
+		want  invitationIdentityState
+	}{
+		{
+			name: "exact admin invitation marker is resumable even after auth creation confirmed email",
+			facts: func() invitationIdentityFacts {
+				facts := base
+				facts.AppProvisioningSource = "admin_invitation"
+				facts.BoundInvitationID = invitationID
+				facts.EmailConfirmed = true
+				facts.HasPassword = true
+				return facts
+			}(),
+			want: invitationIdentityResumableAdmin,
+		},
+		{
+			name: "marker from an interrupted older invitation is resumable",
+			facts: func() invitationIdentityFacts {
+				facts := base
+				facts.AppProvisioningSource = "admin_invitation"
+				facts.BoundInvitationID = "33333333-3333-3333-3333-333333333333"
+				return facts
+			}(),
+			want: invitationIdentityResumableAdmin,
+		},
+		{
+			name: "malformed admin invitation marker requires login",
+			facts: func() invitationIdentityFacts {
+				facts := base
+				facts.AppProvisioningSource = "admin_invitation"
+				facts.BoundInvitationID = "not-a-uuid"
+				return facts
+			}(),
+			want: invitationIdentityRequiresLogin,
+		},
+		{
+			name: "exact marker with any membership requires login",
+			facts: func() invitationIdentityFacts {
+				facts := base
+				facts.AppProvisioningSource = "admin_invitation"
+				facts.BoundInvitationID = invitationID
+				facts.HasMembership = true
+				return facts
+			}(),
+			want: invitationIdentityRequiresLogin,
+		},
+		{
+			name: "strict untouched native invite is resumable",
+			facts: func() invitationIdentityFacts {
+				facts := base
+				facts.Invited = true
+				return facts
+			}(),
+			want: invitationIdentityResumableLegacy,
+		},
+		{
+			name: "native invite with a password requires login",
+			facts: func() invitationIdentityFacts {
+				facts := base
+				facts.Invited = true
+				facts.HasPassword = true
+				return facts
+			}(),
+			want: invitationIdentityRequiresLogin,
+		},
+		{
+			name: "public onboarding is never adopted by invitation",
+			facts: func() invitationIdentityFacts {
+				facts := base
+				facts.UserProvisioningSource = "public_onboarding"
+				return facts
+			}(),
+			want: invitationIdentityRequiresLogin,
+		},
+		{
+			name: "admin marker cannot override public onboarding provenance",
+			facts: func() invitationIdentityFacts {
+				facts := base
+				facts.AppProvisioningSource = "admin_invitation"
+				facts.BoundInvitationID = invitationID
+				facts.UserProvisioningSource = "public_onboarding"
+				return facts
+			}(),
+			want: invitationIdentityRequiresLogin,
+		},
+		{
+			name: "native invite with dangling invitation binding requires login",
+			facts: func() invitationIdentityFacts {
+				facts := base
+				facts.Invited = true
+				facts.BoundInvitationID = "33333333-3333-3333-3333-333333333333"
+				return facts
+			}(),
+			want: invitationIdentityRequiresLogin,
+		},
+		{
+			name: "confirmed account requires login",
+			facts: func() invitationIdentityFacts {
+				facts := base
+				facts.EmailConfirmed = true
+				return facts
+			}(),
+			want: invitationIdentityRequiresLogin,
+		},
+		{
+			name: "legacy invite with onboarding footprint requires login",
+			facts: func() invitationIdentityFacts {
+				facts := base
+				facts.Invited = true
+				facts.HasOnboardingRequest = true
+				return facts
+			}(),
+			want: invitationIdentityRequiresLogin,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := classifyInvitationIdentityFacts(invitationID, test.facts); got != test.want {
+				t.Fatalf("classification = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestInvitationIdentityRequiresCurrentMarkerBeforeActivation(t *testing.T) {
+	const (
+		currentInvitationID = "11111111-1111-1111-1111-111111111111"
+		olderInvitationID   = "33333333-3333-3333-3333-333333333333"
+	)
+
+	identity := invitationIdentity{
+		UserID:            "22222222-2222-2222-2222-222222222222",
+		BoundInvitationID: olderInvitationID,
+		State:             invitationIdentityResumableAdmin,
+	}
+	if identity.ownedByInvitation(currentInvitationID) {
+		t.Fatal("a stale invitation marker must be rebound before activation")
+	}
+	identity.BoundInvitationID = currentInvitationID
+	if !identity.ownedByInvitation(currentInvitationID) {
+		t.Fatal("the exact current invitation marker must be accepted")
+	}
+}
+
+func TestCreateInvitationAuthUserBindsImmutableInvitationMetadata(t *testing.T) {
+	const (
+		invitationID = "11111111-1111-1111-1111-111111111111"
+		userID       = "22222222-2222-2222-2222-222222222222"
+		email        = "person@example.com"
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/auth/v1/admin/users" {
+			t.Fatalf("unexpected auth admin request: %s %s", r.Method, r.URL.Path)
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode auth create payload: %v", err)
+		}
+		appMetadata, _ := payload["app_metadata"].(map[string]any)
+		if appMetadata["provisioning_source"] != "admin_invitation" ||
+			appMetadata["invitation_id"] != invitationID {
+			t.Fatalf("invitation app_metadata = %#v", appMetadata)
+		}
+		if payload["email_confirm"] != true || payload["password"] != "StrongPassword!1" {
+			t.Fatalf("auth create contract = %#v", payload)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":           userID,
+			"email":        email,
+			"app_metadata": appMetadata,
+		})
+	}))
+	defer server.Close()
+
+	repo := Repository{
+		projectURL: server.URL,
+		apiKey:     "service-role-test-key",
+		httpClient: server.Client(),
+	}
+	got, err := repo.createAuthUser(
+		context.Background(),
+		invitationID,
+		email,
+		"StrongPassword!1",
+		"Pessoa Convidada",
+	)
+	if err != nil {
+		t.Fatalf("create invitation auth user: %v", err)
+	}
+	if got != userID {
+		t.Fatalf("created user id = %q, want %q", got, userID)
+	}
+}
+
+func TestResumableInvitationAuthUpdateIsBoundToExactIdentity(t *testing.T) {
+	const (
+		invitationID = "11111111-1111-1111-1111-111111111111"
+		userID       = "22222222-2222-2222-2222-222222222222"
+		email        = "person@example.com"
+		name         = "Pessoa Convidada"
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/auth/v1/admin/users/"+userID {
+			t.Fatalf("unexpected auth admin request: %s %s", r.Method, r.URL.Path)
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode auth update payload: %v", err)
+		}
+		appMetadata, _ := payload["app_metadata"].(map[string]any)
+		userMetadata, _ := payload["user_metadata"].(map[string]any)
+		if appMetadata["provisioning_source"] != "admin_invitation" ||
+			appMetadata["invitation_id"] != invitationID ||
+			userMetadata["name"] != name ||
+			payload["password"] != "StrongPassword!1" ||
+			payload["email_confirm"] != true {
+			t.Fatalf("auth update contract = %#v", payload)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":                 userID,
+			"email":              email,
+			"email_confirmed_at": "2026-09-20T12:00:00Z",
+			"app_metadata":       appMetadata,
+			"user_metadata":      userMetadata,
+		})
+	}))
+	defer server.Close()
+
+	repo := Repository{
+		projectURL: server.URL,
+		apiKey:     "service-role-test-key",
+		httpClient: server.Client(),
+	}
+	err := repo.updateResumableInvitationAuthUser(
+		context.Background(),
+		invitationIdentity{UserID: userID, State: invitationIdentityResumableLegacy},
+		invitationRecord{ID: invitationID, Email: email},
+		"StrongPassword!1",
+		name,
+	)
+	if err != nil {
+		t.Fatalf("update resumable invitation auth user: %v", err)
+	}
+}
+
+func TestInvitationProvisionalProfileMigrationPreservesOnboardingBoundary(t *testing.T) {
+	raw, err := os.ReadFile("../../../../supabase/migrations/20260920143000_harden_invitation_provisional_auth_profiles.sql")
+	if err != nil {
+		t.Fatalf("read invitation provisional profile migration: %v", err)
+	}
+	source := string(raw)
+	for _, required := range []string{
+		"app_provisioning_source = 'admin_invitation'",
+		"new.invited_at is not null",
+		"new.email_confirmed_at is null",
+		"new.last_sign_in_at is null",
+		"coalesce(new.encrypted_password, '') = ''",
+		"not provisional_invitation",
+		"when provisional_invitation",
+		"user_provisioning_source = ''",
+		"btrim(coalesce(new.raw_app_meta_data ->> 'invitation_id', ''))",
+		"~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'",
+		"from pg_catalog.pg_trigger as trigger",
+		"trigger.tgenabled in ('O', 'A')",
+		"trigger.tgqual is null",
+		"trigger.tgtype = 5",
+		"from public.organization_members as membership",
+		"from public.onboarding_requests as onboarding_request",
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("invitation provisional migration is missing %q", required)
+		}
+	}
+	if strings.Contains(source, "app_provisioning_source = 'public_onboarding'") ||
+		strings.Contains(source, "user_provisioning_source = 'public_onboarding'") {
+		t.Fatal("invitation migration must not change public onboarding lifecycle")
 	}
 }
 

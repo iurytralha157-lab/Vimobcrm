@@ -21,6 +21,7 @@ var exactUserErrorMessages = map[string]string{
 	"invitation_already_pending":           "Já existe um convite pendente para este usuário nesta imobiliária.",
 	"invitation_email_failed":              "Não foi possível enviar o convite por e-mail. Verifique a configuração de envio.",
 	"invitation_email_missing":             "Este convite não possui um e-mail para reenvio.",
+	"invitation_operation_in_progress":     "Este convite já está sendo processado. Aguarde e tente novamente.",
 	"invitation_user_already_member":       "Este usuário já está cadastrado na sua imobiliária.",
 	"lead_already_exists":                  "Este lead já está cadastrado.",
 	"lead_phone_conflict":                  "Já existe um lead cadastrado com este telefone.",

@@ -55,6 +55,7 @@ import {
 } from "@/lib/round-robin/distribution-queue-form";
 import type { DragEndEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
+import { cn } from "@/lib/utils";
 
 interface DistributionQueueEditorProps {
   open: boolean;
@@ -68,7 +69,7 @@ interface DistributionQueueEditorProps {
 }
 
 const EMPTY_RESTRICTION_IDS: string[] = [];
-const DEFAULT_PAGE_SECTION_IDS = ["basic", "members"];
+const DEFAULT_PAGE_SECTION_IDS = ["basic", "rules", "members"];
 
 function buildEditorFingerprint(formData: DistributionQueueFormData) {
   return JSON.stringify({
@@ -515,18 +516,6 @@ export function DistributionQueueEditor({
     }));
   };
 
-  const updateMemberTeam = (memberKey: string, teamId?: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      members: prev.members.map((member) => {
-        if (queueMemberKey(member) !== memberKey || member.teamId === teamId) {
-          return member;
-        }
-        return { ...member, id: undefined, teamId };
-      }),
-    }));
-  };
-
   const removeMember = (memberKey: string) => {
     setFormData((prev) => ({
       ...prev,
@@ -925,13 +914,7 @@ export function DistributionQueueEditor({
           existentes.
         </div>
       )}
-      <div
-        className={`min-w-0 px-2.5 py-2.5 sm:px-4 sm:py-4 [&_input]:rounded-[6px] [&_label]:text-[12px] [&_label]:font-light ${
-          presentation === "page"
-            ? "overflow-visible"
-            : "min-h-0 flex-1 overflow-y-auto overscroll-contain"
-        }`}
-      >
+      <div className="scrollbar-thin min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-2.5 py-2.5 sm:px-4 sm:py-4 [&_input]:rounded-[6px] [&_label]:text-[12px] [&_label]:font-light">
         <div className="grid grid-cols-1 gap-3 2xl:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)]">
           <div className="min-w-0 space-y-3">
             <p className="px-1 text-[10px] font-medium uppercase text-[var(--app-text-tertiary)]">
@@ -1044,7 +1027,6 @@ export function DistributionQueueEditor({
                 }
               }}
               onUpdateWeight={updateMemberWeight}
-              onUpdateTeam={updateMemberTeam}
               onRemove={removeMember}
             />
 
@@ -1125,9 +1107,12 @@ export function DistributionQueueEditor({
         </div>
       </div>
       <div
-        className={`shrink-0 border-t border-[var(--app-border)] bg-[var(--app-surface-solid)] px-3 py-3 sm:px-4 ${
-          presentation === "page" ? "sticky bottom-0 z-20" : ""
-        }`}
+        className={cn(
+          "shrink-0 bg-[var(--app-surface-solid)]",
+          presentation === "page"
+            ? "sticky bottom-0 z-20 mx-auto mb-2 flex w-[calc(100%_-_16px)] max-w-[680px] rounded-[8px] p-2 shadow-[0_-10px_30px_rgba(15,23,42,0.12)]"
+            : "border-t border-[var(--app-border)] px-3 py-3 sm:px-4",
+        )}
       >
         <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <p
@@ -1153,6 +1138,7 @@ export function DistributionQueueEditor({
           </p>
           <div className="grid w-full grid-cols-[minmax(0,3fr)_minmax(0,7fr)] gap-2 sm:w-[330px]">
             <Button
+              type="button"
               variant="outline"
               className="h-9 rounded-[6px] border-0 bg-[var(--app-surface-soft)] text-[12px] font-light shadow-none hover:bg-[var(--app-surface-hover)]"
               onClick={() => onOpenChange(false)}
@@ -1160,10 +1146,12 @@ export function DistributionQueueEditor({
               Cancelar
             </Button>
             <Button
+              type="button"
               data-tour="distribution-queue-save"
-              className="h-9 rounded-[6px] bg-primary text-[12px] font-light text-white shadow-none hover:bg-primary/90 disabled:bg-primary/50"
+              className="h-9 rounded-[6px] bg-primary text-[12px] font-light text-white shadow-none hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
               onClick={handleSave}
               disabled={!canSave}
+              aria-busy={saving}
             >
               {saving ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1182,7 +1170,7 @@ export function DistributionQueueEditor({
     return (
       <section
         data-tour="distribution-queue-editor"
-        className="flex min-w-0 w-full flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]"
+        className="flex h-full min-h-0 min-w-0 w-full flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)] text-[var(--app-text-primary)]"
       >
         {editorBody}
       </section>

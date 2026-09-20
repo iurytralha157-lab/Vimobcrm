@@ -8,6 +8,7 @@ import { DEFAULT_AUTHENTICATED_ROUTE } from "@/config/constants";
 import {
   getPostLoginPathFromSearchParams,
   getSafePostLoginPath,
+  isInvitationPostLoginPath,
 } from "@/lib/auth/post-login-redirect";
 import {
   EMAIL_CONFIRMATION_RESEND_WAIT_MS,
@@ -257,6 +258,16 @@ export function LoginForm() {
   useEffect(() => {
     if (!pendingPostLoginPath) return;
     if (!user) return;
+
+    // An invited account may not have an organization yet. Returning to the
+    // exact, validated invitation route lets that route create the membership;
+    // sending this user to organization selection first creates a dead end.
+    if (isInvitationPostLoginPath(pendingPostLoginPath)) {
+      if (!authInitialized || loading) return;
+      router.replace(pendingPostLoginPath);
+      return;
+    }
+
     if (shouldWaitForPostLoginRouting({
       authInitialized,
       authLoading: loading,
@@ -529,7 +540,9 @@ export function LoginForm() {
         return;
       }
 
-      setRecoveryMessage("Enviamos um link de recuperação para o seu e-mail.");
+      setRecoveryMessage(
+        "Se existir uma conta com esse e-mail, você receberá um link de recuperação.",
+      );
     } catch {
       setRecoveryError("Não foi possível enviar o link agora. Tente novamente em instantes.");
     } finally {
