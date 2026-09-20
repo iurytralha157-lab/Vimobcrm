@@ -2,12 +2,12 @@
 -- until the invitation activation transaction creates/reactivates membership.
 -- Public onboarding deliberately retains its existing lifecycle.
 
--- Do not silently apply on a drifted Auth schema. Replacing the function only
--- protects new identities when the enabled auth.users trigger still points to
--- this exact public function.
+-- Do not silently replace a conflicting Auth trigger. Self-hosted restores can
+-- omit triggers on auth.users even when the function survived the restore, so
+-- an absent canonical trigger is repaired below after the function is replaced.
 do $$
 begin
-  if not exists (
+  if exists (
     select 1
     from pg_catalog.pg_trigger as trigger
     join pg_catalog.pg_class as relation
@@ -20,17 +20,19 @@ begin
       on procedure_namespace.oid = procedure.pronamespace
     where trigger.tgname = 'on_auth_user_created'
       and trigger.tgisinternal = false
-      and trigger.tgenabled in ('O', 'A')
-      and trigger.tgqual is null
-      -- PostgreSQL trigger type bits: ROW (1) + INSERT (4), with neither
-      -- BEFORE (2) nor INSTEAD OF (64), means AFTER INSERT FOR EACH ROW.
-      and trigger.tgtype = 5
       and relation_namespace.nspname = 'auth'
       and relation.relname = 'users'
-      and procedure_namespace.nspname = 'public'
-      and procedure.proname = 'handle_new_auth_user'
+      and not (
+        trigger.tgenabled in ('O', 'A')
+        and trigger.tgqual is null
+        -- PostgreSQL trigger type bits: ROW (1) + INSERT (4), with neither
+        -- BEFORE (2) nor INSTEAD OF (64), means AFTER INSERT FOR EACH ROW.
+        and trigger.tgtype = 5
+        and procedure_namespace.nspname = 'public'
+        and procedure.proname = 'handle_new_auth_user'
+      )
   ) then
-    raise exception 'enabled auth.users.on_auth_user_created -> public.handle_new_auth_user trigger is required';
+    raise exception 'conflicting auth.users.on_auth_user_created trigger must be reconciled before this migration';
   end if;
 end;
 $$;
@@ -124,6 +126,13 @@ $$;
 
 revoke all on function public.handle_new_auth_user() from public, anon, authenticated;
 grant execute on function public.handle_new_auth_user() to service_role;
+
+-- Recreate the canonical trigger in the same migration. DROP/CREATE also
+-- normalizes a valid restored trigger without widening its execution surface.
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+after insert on auth.users
+for each row execute function public.handle_new_auth_user();
 
 -- Repair only identities that still have no CRM/onboarding footprint. Accepted
 -- invitations are excluded by membership/organization/consent evidence. An

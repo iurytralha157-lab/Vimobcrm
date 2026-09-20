@@ -369,6 +369,11 @@ func TestInvitationProvisionalProfileMigrationPreservesOnboardingBoundary(t *tes
 		"trigger.tgenabled in ('O', 'A')",
 		"trigger.tgqual is null",
 		"trigger.tgtype = 5",
+		"conflicting auth.users.on_auth_user_created trigger must be reconciled before this migration",
+		"drop trigger if exists on_auth_user_created on auth.users",
+		"create trigger on_auth_user_created",
+		"after insert on auth.users",
+		"for each row execute function public.handle_new_auth_user()",
 		"from public.organization_members as membership",
 		"from public.onboarding_requests as onboarding_request",
 	} {

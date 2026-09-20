@@ -142,8 +142,10 @@ Ordem segura:
 2. Drenar as réplicas antigas e comprovar que todas executam o mesmo SHA. Se
    isso não puder ser comprovado, pausar criação, reenvio e aceite de convites
    durante a janela.
-3. Antes do SQL, ler o trigger esperado; a migration também falha de propósito
-   se ele estiver ausente, desabilitado ou apontar para outra função:
+3. Antes do SQL, ler o trigger esperado. Em restores self-hosted, a ausência
+   completa do trigger canônico é reparada pela migration depois de substituir
+   a função. Se um trigger chamado `on_auth_user_created` existir desabilitado,
+   com predicado, evento ou função divergente, a migration falha de propósito:
 
 ```sql
 select
@@ -232,7 +234,8 @@ order by profile.id;
    PostgreSQL 15 não substitui esse gate de compatibilidade.
 7. Aplicar a migration uma única vez pelo runner oficial e registrar o
    readback. Não aplicar manualmente apenas trechos do arquivo.
-8. Repetir a consulta do trigger e confirmar `tgenabled` em `O` ou `A`, função
+8. Repetir a consulta do trigger e confirmar exatamente uma linha, `tgenabled`
+   em `O` ou `A`, função
    `public.handle_new_auth_user`, `when_predicate` nulo e definição
    `AFTER INSERT ... FOR EACH ROW`. Importe o CSV em uma tabela temporária e
    faça o post-check objetivo:
