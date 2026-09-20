@@ -1025,6 +1025,7 @@ func pipelineBoardLeadSelectFields(propertyVisibility string) string {
 		l.last_entry_at,
 		l.reentry_count,
 		l.whatsapp_avatar_url,
+		l.whatsapp_avatar_storage_path,
 		l.deal_status,
 		l.valor_interesse::double precision,
 		` + propertyID + ` as property_id,
@@ -1065,6 +1066,7 @@ func pipelineBoardLeadColumnFields() string {
 		last_entry_at,
 		reentry_count,
 		whatsapp_avatar_url,
+		whatsapp_avatar_storage_path,
 		deal_status,
 		valor_interesse,
 		property_id,
@@ -1082,7 +1084,7 @@ func scanPipelineBoardLead(row scanner, withTotal bool) (PipelineBoardLead, int6
 	var total int64
 	var phone, email, source, stageID, assignedUserID, pipelineID, message, organizationID pgtype.Text
 	var lastEntryAt, stageEnteredAt, boardOrderAt, wonAt, lostAt, firstResponseAt pgtype.Timestamptz
-	var whatsappAvatarURL, dealStatus, propertyID, lostReason, interestPropertyID pgtype.Text
+	var legacyWhatsAppAvatarURL, whatsappAvatarStoragePath, dealStatus, propertyID, lostReason, interestPropertyID pgtype.Text
 	var interestValue pgtype.Float8
 	var firstResponseSeconds pgtype.Int4
 	var firstResponseIsAutomation pgtype.Bool
@@ -1104,7 +1106,8 @@ func scanPipelineBoardLead(row scanner, withTotal bool) (PipelineBoardLead, int6
 		&organizationID,
 		&lastEntryAt,
 		&lead.ReentryCount,
-		&whatsappAvatarURL,
+		&legacyWhatsAppAvatarURL,
+		&whatsappAvatarStoragePath,
 		&dealStatus,
 		&interestValue,
 		&propertyID,
@@ -1134,7 +1137,8 @@ func scanPipelineBoardLead(row scanner, withTotal bool) (PipelineBoardLead, int6
 	lead.StageEnteredAt = pipelineTimePtr(stageEnteredAt)
 	lead.BoardOrderAt = pipelineTimePtr(boardOrderAt)
 	lead.LastEntryAt = pipelineTimePtr(lastEntryAt)
-	lead.WhatsAppAvatarURL = pipelineTextPtr(whatsappAvatarURL)
+	lead.WhatsAppAvatarURL = nil
+	lead.WhatsAppAvatarStoragePath = textPointer(whatsappAvatarStoragePath)
 	lead.DealStatus = textValueWithDefault(dealStatus, "open")
 	lead.PropertyID = pipelineTextPtr(propertyID)
 	lead.LostReason = pipelineTextPtr(lostReason)
@@ -1185,6 +1189,7 @@ func (repo Repository) attachPipelineBoardLeadEnrichments(ctx context.Context, t
 		lead.Tags = enrichment.Tags
 		lead.TasksCount = enrichment.TasksCount
 	}
+	repo.hydratePipelineBoardLeadAvatars(ctx, tenantContext.OrganizationID, leads)
 
 	return nil
 }

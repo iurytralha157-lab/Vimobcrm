@@ -115,6 +115,7 @@ export const pipelineBoardLeadSchema = z.object({
   board_sort_at: timestampSchema.nullable().optional(),
   board_order_at: timestampSchema.nullable().optional(),
   stage_entered_at: timestampSchema.nullable().optional(),
+  whatsapp_avatar_url: z.string().nullable().optional(),
 }).passthrough()
 export const pipelineBoardStageSchema = z.object({
   id: uuidSchema,

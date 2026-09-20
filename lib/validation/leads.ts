@@ -236,6 +236,8 @@ export const apiLeadSchema = z.object({
   name: z.string().min(1),
   email: z.string().optional(),
   phone: z.string().optional(),
+  whatsappAvatarUrl: z.string().optional(),
+  whatsappAvatarSyncedAt: timestampSchema.optional(),
   source: z.string(),
   status: z.string(),
   dealStatus: z.string(),

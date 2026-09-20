@@ -97,8 +97,11 @@ func TestInvitationEmailUsesCanonicalBrandShell(t *testing.T) {
 	for _, required := range []string{
 		`src="https://vimobcrm.com.br/images/logo-black.png"`,
 		`height:6px;background:#ff4529`,
+		`bgcolor="#d9341d"`,
 		`background:#fff0ed`,
 		`https://app.vimobcrm.com.br/convite/token-seguro`,
+		`Você foi convidado para Imobiliária Exemplo`,
+		`organização pelo Vimob CRM`,
 		`Completar cadastro`,
 		`suporte@example.com`,
 	} {
@@ -108,6 +111,11 @@ func TestInvitationEmailUsesCanonicalBrandShell(t *testing.T) {
 	}
 	if strings.Contains(html, `#c9361f`) {
 		t.Fatal("invitation email must use the canonical Vimob accent")
+	}
+	for _, untranslated := range []string{"Voce", "organizacao", "Ola,"} {
+		if strings.Contains(html, untranslated) {
+			t.Fatalf("invitation email contains untranslated Portuguese copy %q", untranslated)
+		}
 	}
 }
 

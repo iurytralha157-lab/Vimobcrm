@@ -13271,6 +13271,12 @@ components:
           type: string
         phone:
           type: string
+        whatsappAvatarUrl:
+          type: string
+          format: uri
+        whatsappAvatarSyncedAt:
+          type: string
+          format: date-time
         source:
           type: string
         status:
@@ -15123,6 +15129,9 @@ components:
         assigned_user_id:
           type: [string, "null"]
           format: uuid
+        whatsapp_avatar_url:
+          type: [string, "null"]
+          format: uri
         assignee:
           oneOf:
             - $ref: "#/components/schemas/UserSummary"

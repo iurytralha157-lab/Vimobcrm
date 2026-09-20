@@ -1,0 +1,38 @@
+services:
+  auth:
+    depends_on:
+      templates-server:
+        condition: service_healthy
+    environment:
+      GOTRUE_SITE_URL: ${SITE_URL:?configure SITE_URL}
+      GOTRUE_URI_ALLOW_LIST: ${ADDITIONAL_REDIRECT_URLS:?configure ADDITIONAL_REDIRECT_URLS}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:?configure SMTP_ADMIN_EMAIL}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:?configure SMTP_HOST}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-587}
+      GOTRUE_SMTP_USER: ${SMTP_USER:?configure SMTP_USER}
+      GOTRUE_SMTP_PASS: ${SMTP_PASS:?configure SMTP_PASS}
+      GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME:-Vimob CRM}
+      GOTRUE_MAILER_TEMPLATES_RECOVERY: http://templates-server/recovery.html
+      GOTRUE_MAILER_SUBJECTS_RECOVERY: Redefina sua senha no Vimob CRM
+
+  templates-server:
+    image: caddy:2.11.4-alpine@sha256:de23def33b17fb5d1290b0f6c2add1d70780e52341896c00a4c8a2a2fe9d355e
+    restart: unless-stopped
+    command: ["caddy", "file-server", "--root", "/templates", "--listen", ":80"]
+    volumes:
+      - type: bind
+        source: ${AUTH_EMAIL_TEMPLATES_DIR:?configure AUTH_EMAIL_TEMPLATES_DIR}
+        target: /templates
+        read_only: true
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          curl --fail --silent --show-error --output /dev/null http://127.0.0.1/recovery.html
+          && grep -F '{{ .RedirectTo }}' /templates/recovery.html > /dev/null
+          && grep -F '{{ .TokenHash }}' /templates/recovery.html > /dev/null
+          && grep -F 'type=recovery' /templates/recovery.html > /dev/null
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s

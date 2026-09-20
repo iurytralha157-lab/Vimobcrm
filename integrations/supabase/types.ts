@@ -6760,6 +6760,7 @@ export type Database = {
           utm_term: string | null
           valor_interesse: number | null
           visitor_session_id: string | null
+          whatsapp_avatar_storage_path: string | null
           whatsapp_avatar_synced_at: string | null
           whatsapp_avatar_url: string | null
           whatsapp_verified: boolean | null
@@ -6853,6 +6854,7 @@ export type Database = {
           utm_term?: string | null
           valor_interesse?: number | null
           visitor_session_id?: string | null
+          whatsapp_avatar_storage_path?: string | null
           whatsapp_avatar_synced_at?: string | null
           whatsapp_avatar_url?: string | null
           whatsapp_verified?: boolean | null
@@ -6946,6 +6948,7 @@ export type Database = {
           utm_term?: string | null
           valor_interesse?: number | null
           visitor_session_id?: string | null
+          whatsapp_avatar_storage_path?: string | null
           whatsapp_avatar_synced_at?: string | null
           whatsapp_avatar_url?: string | null
           whatsapp_verified?: boolean | null

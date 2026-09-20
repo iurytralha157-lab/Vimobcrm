@@ -59,6 +59,10 @@ O bloco `[auth.email.template.recovery]` de `supabase/config.toml` configura
 somente o Supabase CLI local. Commitar `supabase/templates/recovery.html` não
 altera o Auth self-hosted nem o projeto gerenciado.
 
+Um e-mail com assunto `Reset Your Password`, corpo `Follow this link...` ou a
+alternativa `enter the code` é evidência de fallback do GoTrue. Nesse estado, o
+cutover do template falhou mesmo que SMTP e remetente estejam funcionando.
+
 No self-hosted atual, o GoTrue não lê templates diretamente de volumes
 montados. O arquivo precisa ser servido por HTTP e a URL deve responder a um
 `GET` feito de dentro da rede do serviço `auth`. A URL não precisa ser pública;
@@ -66,15 +70,18 @@ um `templates-server` privado na mesma rede Docker é suficiente. Se a busca
 falhar ou o conteúdo não for um template Go válido, o Auth usa o template
 padrão, por isso a disponibilidade desse endpoint faz parte do cutover.
 
-Mantenha SMTP e a allowlist fora do Git no `.env` operacional da stack oficial.
-A linha abaixo representa apenas o conjunto mínimo conhecido pelo repositório.
+Use `auth-email.env.example` como checklist e mescle os valores no `.env`
+operacional da stack oficial; não use o arquivo de exemplo como fonte de
+segredos. A linha abaixo representa apenas o conjunto mínimo conhecido pelo
+repositório.
 Antes de alterar produção, leia o valor vigente e **mescle** essas duas URLs com
 todas as entradas já configuradas; nunca substitua a allowlist inteira. O
 redirect de `/login?emailConfirmation=success` é usado pela confirmação e pelo
 reenvio do onboarding público e deve permanecer autorizado.
 
 ```dotenv
-SMTP_ADMIN_EMAIL=no-reply@auth.vimobcrm.com.br
+AUTH_EMAIL_TEMPLATES_DIR=/opt/supabase/docker/volumes/templates
+SMTP_ADMIN_EMAIL=naoresponde@vimobcrm.com.br
 SMTP_HOST=<host-smtp>
 SMTP_PORT=587
 SMTP_USER=<usuario-smtp>
@@ -84,39 +91,78 @@ SITE_URL=https://app.vimobcrm.com.br
 ADDITIONAL_REDIRECT_URLS=https://app.vimobcrm.com.br/reset-password,https://app.vimobcrm.com.br/login?emailConfirmation=success
 ```
 
-No `environment` do serviço `auth`, preserve os mapeamentos SMTP/URL da stack
-oficial e acrescente as duas variáveis específicas do recovery:
+O override implantável é
+`deploy/supabase-self-hosted/docker-compose.vimob-auth-email.yml`. Ele preserva
+os mapeamentos SMTP/URL, acrescenta assunto e template de recovery e sobe um
+`templates-server` privado, sem porta publicada. A imagem do Caddy está fixada
+por versão e digest; atualizações devem passar por revisão explícita.
 
-```yaml
-services:
-  auth:
-    environment:
-      GOTRUE_SITE_URL: ${SITE_URL}
-      GOTRUE_URI_ALLOW_LIST: ${ADDITIONAL_REDIRECT_URLS}
-      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL}
-      GOTRUE_SMTP_HOST: ${SMTP_HOST}
-      GOTRUE_SMTP_PORT: ${SMTP_PORT}
-      GOTRUE_SMTP_USER: ${SMTP_USER}
-      GOTRUE_SMTP_PASS: ${SMTP_PASS}
-      GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME}
-      GOTRUE_MAILER_TEMPLATES_RECOVERY: http://templates-server/recovery.html
-      GOTRUE_MAILER_SUBJECTS_RECOVERY: Redefina sua senha no Vimob CRM
+Antes de validar o Compose, instale exatamente o arquivo versionado no diretório
+definido por `AUTH_EMAIL_TEMPLATES_DIR`:
+
+```sh
+install -d -m 0755 /opt/supabase/docker/volumes/templates
+install -m 0444 /caminho/do/checkout/supabase/templates/recovery.html \
+  /opt/supabase/docker/volumes/templates/recovery.html
 ```
 
-O endpoint `http://templates-server/recovery.html` acima é um contrato de rede,
-não uma aplicação automática deste repositório. Antes do restart controlado do
-Auth, publique exatamente `supabase/templates/recovery.html` nesse endpoint e
-confirme, a partir da rede/container do `auth`, resposta `200`, HTML íntegro e
-presença literal de `{{ .RedirectTo }}`, `{{ .TokenHash }}` e `type=recovery`.
-Não use `file://`, caminho de volume ou `localhost` apontando para outro
-container. Desative link tracking/click rewriting no provedor SMTP para não
-alterar o link de recuperação.
+Na raiz da stack oficial, valide e aplique o override. `config --quiet` evita
+imprimir `SMTP_PASS` nos logs; não publique a saída integral de `config`:
+
+```sh
+docker compose \
+  -f docker-compose.yml \
+  -f /caminho/do/checkout/deploy/supabase-self-hosted/docker-compose.vimob-auth-email.yml \
+  --env-file .env \
+  config --quiet
+
+docker compose \
+  -f docker-compose.yml \
+  -f /caminho/do/checkout/deploy/supabase-self-hosted/docker-compose.vimob-auth-email.yml \
+  --env-file .env \
+  up -d --force-recreate templates-server auth
+```
+
+Um simples `restart` não incorpora variáveis novas: `auth` precisa ser recriado.
+Antes do canário, faça o readback sem expor as credenciais SMTP:
+
+```sh
+AUTH_CONTAINER_ID="$(docker compose \
+  -f docker-compose.yml \
+  -f /caminho/do/checkout/deploy/supabase-self-hosted/docker-compose.vimob-auth-email.yml \
+  --env-file .env \
+  ps -q auth)"
+docker inspect "$AUTH_CONTAINER_ID" \
+  --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  | grep -E '^GOTRUE_MAILER_(TEMPLATES|SUBJECTS)_RECOVERY='
+
+docker compose \
+  -f docker-compose.yml \
+  -f /caminho/do/checkout/deploy/supabase-self-hosted/docker-compose.vimob-auth-email.yml \
+  --env-file .env \
+  exec -T templates-server \
+  curl --fail --silent --show-error http://127.0.0.1/recovery.html \
+  > /tmp/vimob-recovery-served.html
+
+sha256sum /tmp/vimob-recovery-served.html
+sha256sum /opt/supabase/docker/volumes/templates/recovery.html
+grep -F '{{ .RedirectTo }}' /tmp/vimob-recovery-served.html
+grep -F '{{ .TokenHash }}' /tmp/vimob-recovery-served.html
+grep -F 'type=recovery' /tmp/vimob-recovery-served.html
+```
+
+Os dois SHA-256 devem ser iguais. O endpoint
+`http://templates-server/recovery.html` é um contrato de rede: não use `file://`
+nem `localhost` no valor entregue ao Auth. Desative link tracking/click
+rewriting no provedor SMTP para não alterar o link de recuperação.
 
 Faça um canário com uma conta dedicada antes de liberar produção:
 
 1. Solicitar uma única recuperação em `https://app.vimobcrm.com.br/login`.
 2. Confirmar remetente/domínio, assunto, logo, faixa e botão laranja no e-mail
-   recebido, sem fallback para o template padrão nos logs do Auth.
+   recebido, todo o texto em português e ausência das frases de fallback
+   `Reset Your Password`, `Follow this link` e `enter the code`, inclusive nos
+   logs do Auth.
 3. Inspecionar o destino do botão: ele deve começar em
    `https://app.vimobcrm.com.br/reset-password`, ter um único `token_hash` e
    `type=recovery`, sem o provedor de e-mail reescrever a URL.

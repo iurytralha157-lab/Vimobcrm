@@ -428,15 +428,15 @@ func (repo Repository) renderInvitationHTML(input invitationEmailInput) string {
 	}
 	inviteURL := html.EscapeString(input.InviteURL)
 	supportEmail := html.EscapeString(firstNonEmpty(repo.supportEmail, repo.replyTo, "contato@vimobcrm.com.br"))
-	heading := fmt.Sprintf("Voce foi convidado para %s", organizationName)
-	body := fmt.Sprintf("Voce recebeu acesso como <strong>%s</strong>. Complete seu cadastro para entrar na organizacao pelo Vimob CRM.", roleLabel)
+	heading := fmt.Sprintf("Você foi convidado para %s", organizationName)
+	body := fmt.Sprintf("Você recebeu acesso como <strong>%s</strong>. Complete seu cadastro para entrar na organização pelo Vimob CRM.", roleLabel)
 	buttonLabel := "Completar cadastro"
 	if input.ExistingAccount {
-		body = fmt.Sprintf("Voce recebeu acesso como <strong>%s</strong>. Use sua conta Vimob atual para aceitar o convite e acessar esta organizacao.", roleLabel)
+		body = fmt.Sprintf("Você recebeu acesso como <strong>%s</strong>. Use sua conta Vimob atual para aceitar o convite e acessar esta organização.", roleLabel)
 		buttonLabel = "Entrar e aceitar"
 	}
 	if recipientName := html.EscapeString(strings.TrimSpace(input.RecipientName)); recipientName != "" {
-		body = fmt.Sprintf("Ola, <strong>%s</strong>.<br><br>%s", recipientName, body)
+		body = fmt.Sprintf("Olá, <strong>%s</strong>.<br><br>%s", recipientName, body)
 	}
 
 	return fmt.Sprintf(`<!doctype html>
@@ -478,8 +478,8 @@ func (repo Repository) renderInvitationHTML(input invitationEmailInput) string {
                       <p style="margin:0 0 16px;color:#151515;font-size:16px;line-height:1.65">%s</p>
                       <table role="presentation" cellpadding="0" cellspacing="0" style="margin:26px 0 24px">
                         <tr>
-                          <td bgcolor="#ff4529" style="border-radius:8px">
-                            <a href="%s" style="display:inline-block;padding:14px 22px;color:#ffffff;font-size:15px;font-weight:700;line-height:1;text-decoration:none;border-radius:8px;background:#ff4529">%s</a>
+                          <td bgcolor="#d9341d" style="border-radius:8px;mso-padding-alt:14px 22px">
+                            <a href="%s" style="display:inline-block;padding:14px 22px;color:#ffffff;font-size:15px;font-weight:700;line-height:1;text-decoration:none;border-radius:8px;background:#d9341d">%s</a>
                           </td>
                         </tr>
                       </table>

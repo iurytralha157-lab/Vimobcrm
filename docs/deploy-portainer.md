@@ -217,6 +217,23 @@ Mantenha `WHATSAPP_SESSION_SUPERVISOR_BATCH=10` no canario. O fallback interno d
 
 `WHATSAPP_MEDIA_WORKER_ENABLED` ativa a fila duravel de download sob demanda e fica desligado por padrao. Habilite-o somente depois de aposentar o worker Edge e aplicar `20260904225214_harden_whatsapp_media_queue.sql` seguido de `20260912152432_scale_whatsapp_media_queue_safely.sql`. O worker aceita tanto `*` quanto uma allowlist canario em `WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS`; o claim no banco impede que ele saia desse escopo. `WHATSAPP_MEDIA_WORKER_CONCURRENCY` controla slots globais entre replicas (padrao 4, maximo 16), com no maximo um download ativo por sessao. O advisory lock protege apenas a atribuicao curta do slot; nenhuma chamada HTTP segura transacao ou lock. `WHATSAPP_MEDIA_WORKER_INTERVAL` controla o polling e `WHATSAPP_MEDIA_WORKER_LEASE` recupera jobs abandonados. Mantenha `WEBHOOK_FILES=false` no Evolution Go para que videos e anexos sejam materializados somente pela fila cercada.
 
+O enriquecimento de avatar do lead nao exige uma variavel nova no Portainer. Aplique `20260920170647_add_durable_whatsapp_lead_avatar_enrichment.sql` **antes** da imagem de API que inicia o worker e mantenha `API_BACKGROUND_WORKERS_ENABLED=true`. A fila e backend-only e usa a mesma conexao PostgreSQL owner que os demais workers privados; nao conceda acesso a `service_role`, `authenticated` ou `anon`. O primeiro contato direto elegivel cria um job, uma segunda mensagem distinta libera a ultima tentativa e contatos posteriores nao voltam a consultar o provider. A chamada `/user/avatar` e o download ocorrem fora da transacao da mensagem, com uma tentativa ativa por sessao; grupos, newsletters e eventos sem binding ativo ficam fora. O orcamento fixo dessa lane e 90 segundos para `/user/avatar`, 150 segundos para processamento e 180 segundos de lease. Isso cobre o handler de 80 segundos do Evolution Go (incluindo o `sendIQ` de ate 75 segundos), mais download, upload, reconciliacao no Storage e finalizacao; nao reduza esses valores de forma independente. Cada replica da API mantem uma unica lane global serial e isolada para avatar; no pior caso do budget completo, espere cerca de 24 jobs por hora por replica, sem consumir concorrencia do webhook ou da outbox. Essa serializacao global evita ampliar pressao no provider nesta entrega; qualquer paralelismo futuro deve ser limitado entre sessoes e preservar uma unica tentativa ativa por sessao. A imagem e copiada para `whatsapp-media` privado e o banco guarda somente o object path; os endpoints autenticados entregam URL assinada com validade maxima de uma hora e nunca reutilizada quando restam menos de 15 minutos. Nao execute backfill em massa: os registros legados com URL externa sao reparados naturalmente no proximo contato.
+
+No canario, acompanhe apenas agregados e nunca imprima JID, telefone, URL assinada ou token:
+
+```sql
+select status, attempts, count(*)
+from private.whatsapp_avatar_jobs
+group by status, attempts
+order by status, attempts;
+
+select count(*) as leads_with_durable_whatsapp_avatar
+from public.leads
+where whatsapp_avatar_storage_path is not null;
+```
+
+Antes de ampliar o rollout, confirme que `attempts` nunca passa de 2, que jobs nao ficam em `processing` alem da lease e que o card recebe uma URL assinada depois do evento `lead.whatsapp_avatar_updated`. O rollback da imagem pode deixar jobs `pending`/`awaiting_next_contact` no banco sem perder mensagens; nao remova a migration nem torne o bucket publico.
+
 `DATABASE_URL` deve usar a conexao direta ou o pooler Supabase em modo sessao (porta 5432). Nao use o pooler transacional (porta 6543): a serializacao do lifecycle do WhatsApp e do sync de Marketing depende de advisory locks de sessao mantidos entre as consultas da operacao.
 
 ## Canary e rollback do WhatsApp

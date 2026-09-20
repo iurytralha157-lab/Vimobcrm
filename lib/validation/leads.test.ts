@@ -334,6 +334,8 @@ test('valida o contrato da lista de leads', () => {
       id: ID,
       organizationId: ORG_ID,
       name: 'Maria Silva',
+      whatsappAvatarUrl: 'https://cdn.example.com/avatar.jpg',
+      whatsappAvatarSyncedAt: '2026-09-20T15:30:00Z',
       source: 'manual',
       status: 'new',
       dealStatus: 'open',
@@ -348,6 +350,10 @@ test('valida o contrato da lista de leads', () => {
   })
 
   assert.equal(result.success, true)
+  if (result.success) {
+    assert.equal(result.data.data[0].whatsappAvatarUrl, 'https://cdn.example.com/avatar.jpg')
+    assert.equal(result.data.data[0].whatsappAvatarSyncedAt, '2026-09-20T15:30:00Z')
+  }
   assert.equal(apiLeadListResponseSchema.safeParse({ data: [], total: -1, limit: 50, offset: 0 }).success, false)
 })
 

@@ -121,6 +121,8 @@ type Contact struct {
 	CreativeInstagramURL   *string      `json:"creative_instagram_url"`
 	MetaPayloadJSON        *string      `json:"meta_payload_json"`
 	MetaRawPayloadJSON     *string      `json:"meta_raw_payload_json"`
+
+	WhatsAppAvatarStoragePath *string `json:"-"`
 }
 
 type ContactListFilter struct {
@@ -246,10 +248,20 @@ func cleanContactFilterValue(value string) string {
 }
 
 func (repo Repository) ListContacts(ctx context.Context, tenantContext tenant.Context, filter ContactListFilter) ([]Contact, error) {
+	var (
+		contacts []Contact
+		err      error
+	)
 	if filter.Mode == "compact" {
-		return repo.listContactsCompact(ctx, tenantContext, filter)
+		contacts, err = repo.listContactsCompact(ctx, tenantContext, filter)
+	} else {
+		contacts, err = repo.listContactsFull(ctx, tenantContext, filter)
 	}
-	return repo.listContactsFull(ctx, tenantContext, filter)
+	if err != nil {
+		return nil, err
+	}
+	repo.hydrateContactAvatars(ctx, tenantContext.OrganizationID, contacts)
+	return contacts, nil
 }
 
 func (repo Repository) countContacts(ctx context.Context, tenantContext tenant.Context, filter ContactListFilter) (int64, error) {
@@ -302,6 +314,7 @@ func (repo Repository) listContactsFull(ctx context.Context, tenantContext tenan
 			l.email,
 			coalesce(to_jsonb(l)->>'whatsapp', l.phone),
 			l.whatsapp_avatar_url,
+			l.whatsapp_avatar_storage_path,
 			l.pipeline_id::text,
 			p.name,
 			l.stage_id::text,
@@ -493,6 +506,7 @@ func (repo Repository) listContactsCompact(ctx context.Context, tenantContext te
 			l.email,
 			coalesce(to_jsonb(l)->>'whatsapp', l.phone),
 			l.whatsapp_avatar_url,
+			l.whatsapp_avatar_storage_path,
 			l.pipeline_id::text,
 			p.name,
 			l.stage_id::text,
@@ -805,7 +819,7 @@ func contactOrderBy(filter ContactListFilter) string {
 
 func scanContact(row scanner) (Contact, error) {
 	var contact Contact
-	var phone, email, whatsApp, avatar, pipelineID, pipelineName, stageID, stageName, stageColor pgtype.Text
+	var phone, email, whatsApp, legacyAvatar, avatarStoragePath, pipelineID, pipelineName, stageID, stageName, stageColor pgtype.Text
 	var assignedUserID, assigneeName, assigneeAvatar, slaStatus, preview, channel pgtype.Text
 	var sourceDetail, sourceSessionID, sourceWebhookID, visitorSessionID pgtype.Text
 	var priority, message, initialMessage, propertyCode, propertyID, interestPropertyID, interestPlanID pgtype.Text
@@ -830,7 +844,8 @@ func scanContact(row scanner) (Contact, error) {
 		&phone,
 		&email,
 		&whatsApp,
-		&avatar,
+		&legacyAvatar,
+		&avatarStoragePath,
 		&pipelineID,
 		&pipelineName,
 		&stageID,
@@ -930,7 +945,8 @@ func scanContact(row scanner) (Contact, error) {
 	contact.Phone = textPtr(phone)
 	contact.Email = textPtr(email)
 	contact.WhatsApp = textPtr(whatsApp)
-	contact.WhatsAppAvatarURL = textPtr(avatar)
+	contact.WhatsAppAvatarURL = nil
+	contact.WhatsAppAvatarStoragePath = textPointer(avatarStoragePath)
 	contact.PipelineID = textPtr(pipelineID)
 	contact.PipelineName = textPtr(pipelineName)
 	contact.StageID = textPtr(stageID)

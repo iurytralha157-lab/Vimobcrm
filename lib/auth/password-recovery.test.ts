@@ -36,6 +36,14 @@ const selfHostedSupabaseReadmeSource = readFileSync(
   'deploy/supabase-self-hosted/README.md',
   'utf8',
 )
+const selfHostedAuthEmailComposeSource = readFileSync(
+  'deploy/supabase-self-hosted/docker-compose.vimob-auth-email.yml',
+  'utf8',
+)
+const selfHostedAuthEmailEnvExampleSource = readFileSync(
+  'deploy/supabase-self-hosted/auth-email.env.example',
+  'utf8',
+)
 const recoveryTemplateLink =
   '{{ .RedirectTo }}?token_hash={{ .TokenHash }}&amp;type=recovery'
 
@@ -222,38 +230,106 @@ test('recovery email keeps the exact reset contract inside the canonical brand s
   const recoveryLinkOccurrences = recoveryEmailTemplateSource
     .split(recoveryTemplateLink)
     .length - 1
+  const templateVariables = Array.from(
+    recoveryEmailTemplateSource.matchAll(/{{\s*\.([A-Za-z][A-Za-z0-9]*)\s*}}/g),
+    (match) => match[1],
+  )
 
   assert.equal(recoveryLinkOccurrences, 3)
+  assert.deepEqual(
+    Array.from(new Set(templateVariables)).sort(),
+    ['RedirectTo', 'TokenHash'],
+  )
+  assert.match(recoveryEmailTemplateSource, /<html lang="pt-BR">/)
+  assert.match(recoveryEmailTemplateSource, /name="color-scheme" content="light"/)
+  assert.match(
+    recoveryEmailTemplateSource,
+    /Use o link seguro abaixo para criar uma nova senha\./,
+  )
   assert.match(
     recoveryEmailTemplateSource,
     /src="https:\/\/vimobcrm\.com\.br\/images\/logo-black\.png"/,
   )
-  assert.match(recoveryEmailTemplateSource, /max-width:640px/)
-  assert.match(recoveryEmailTemplateSource, /height:6px;background:#ff4529/)
-  assert.match(recoveryEmailTemplateSource, /background:#fff0ed/)
-  assert.match(recoveryEmailTemplateSource, /copie e cole este link no navegador/)
+  assert.match(recoveryEmailTemplateSource, /width="142" height="48"/)
+  assert.match(recoveryEmailTemplateSource, /max-width:600px/)
+  assert.match(recoveryEmailTemplateSource, /bgcolor="#ff4529" height="6"/)
+  assert.match(recoveryEmailTemplateSource, /bgcolor="#d9341d"/)
+  assert.match(recoveryEmailTemplateSource, /mso-padding-alt:15px 24px/)
+  assert.match(recoveryEmailTemplateSource, /Não foi você\?/)
+  assert.match(recoveryEmailTemplateSource, /copie e cole este endereço no navegador/)
+  assert.match(
+    recoveryEmailTemplateSource,
+    /https:\/\/app\.vimobcrm\.com\.br\/termos-de-uso/,
+  )
+  assert.match(
+    recoveryEmailTemplateSource,
+    /https:\/\/app\.vimobcrm\.com\.br\/politica-de-privacidade/,
+  )
   assert.doesNotMatch(recoveryEmailTemplateSource, /\.ConfirmationURL|\.SiteURL/)
+  assert.doesNotMatch(recoveryEmailTemplateSource, /{{\s*\.Token\s*}}/)
+  assert.doesNotMatch(
+    recoveryEmailTemplateSource,
+    /Reset Your Password|Reset password|Follow this link|Alternatively|enter the code/i,
+  )
+  assert.doesNotMatch(
+    recoveryEmailTemplateSource,
+    /https:\/\/vimobcrm\.com\.br\/(?:termos-de-uso|politica-de-privacidade)/,
+  )
   assert.doesNotMatch(recoveryEmailTemplateSource, /#c9361f/i)
 })
 
-test('recovery template configuration is explicit for local and self-hosted Auth', () => {
+test('recovery template has an executable local and self-hosted Auth contract', () => {
   assert.match(
     supabaseConfigSource,
     /\[auth\.email\.template\.recovery\]\s+subject = "Redefina sua senha no Vimob CRM"\s+content_path = "\.\/supabase\/templates\/recovery\.html"/,
   )
   assert.match(
-    selfHostedSupabaseReadmeSource,
+    selfHostedAuthEmailComposeSource,
     /GOTRUE_MAILER_TEMPLATES_RECOVERY:\s*http:\/\/templates-server\/recovery\.html/,
   )
   assert.match(
-    selfHostedSupabaseReadmeSource,
+    selfHostedAuthEmailComposeSource,
     /GOTRUE_MAILER_SUBJECTS_RECOVERY:\s*Redefina sua senha no Vimob CRM/,
+  )
+  assert.match(
+    selfHostedAuthEmailComposeSource,
+    /templates-server:\s+[\s\S]*?image:\s*caddy:2\.11\.4-alpine@sha256:[0-9a-f]{64}/,
+  )
+  assert.match(
+    selfHostedAuthEmailComposeSource,
+    /templates-server:\s+[\s\S]*?condition:\s*service_healthy/,
+  )
+  assert.match(
+    selfHostedAuthEmailComposeSource,
+    /source:\s*\$\{AUTH_EMAIL_TEMPLATES_DIR:\?configure AUTH_EMAIL_TEMPLATES_DIR}/,
+  )
+  assert.match(selfHostedAuthEmailComposeSource, /read_only:\s*true/)
+  assert.match(
+    selfHostedAuthEmailComposeSource,
+    /healthcheck:[\s\S]*?recovery\.html[\s\S]*?\{\{ \.RedirectTo \}\}[\s\S]*?\{\{ \.TokenHash \}\}[\s\S]*?type=recovery/,
+  )
+  assert.doesNotMatch(selfHostedAuthEmailComposeSource, /^\s+ports:/m)
+  assert.match(
+    selfHostedAuthEmailEnvExampleSource,
+    /^SMTP_ADMIN_EMAIL=naoresponde@vimobcrm\.com\.br$/m,
+  )
+  assert.match(
+    selfHostedAuthEmailEnvExampleSource,
+    /^SMTP_SENDER_NAME=Vimob CRM$/m,
   )
   assert.match(
     selfHostedSupabaseReadmeSource,
     /ADDITIONAL_REDIRECT_URLS=https:\/\/app\.vimobcrm\.com\.br\/reset-password,https:\/\/app\.vimobcrm\.com\.br\/login\?emailConfirmation=success/,
   )
   assert.match(selfHostedSupabaseReadmeSource, /nunca substitua a allowlist inteira/)
+  assert.match(selfHostedSupabaseReadmeSource, /config --quiet/)
+  assert.match(selfHostedSupabaseReadmeSource, /--force-recreate templates-server auth/)
+  assert.match(selfHostedSupabaseReadmeSource, /docker inspect "\$AUTH_CONTAINER_ID"/)
+  assert.match(selfHostedSupabaseReadmeSource, /Os dois SHA-256 devem ser iguais/)
+  assert.match(
+    selfHostedSupabaseReadmeSource,
+    /Reset Your Password[\s\S]*?Follow this link[\s\S]*?enter the code/,
+  )
 })
 
 test('recovery exits are bounded and always navigate from a finally block', () => {

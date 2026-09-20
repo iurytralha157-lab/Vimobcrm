@@ -99,6 +99,7 @@ test('valida os relogios separados no board da pipeline', () => {
         board_sort_at: '2026-07-12T16:00:00Z',
         board_order_at: '2026-07-12T15:30:00Z',
         stage_entered_at: '2026-07-12T14:00:00Z',
+        whatsapp_avatar_url: 'https://cdn.example.com/avatar.jpg',
       }],
       total_lead_count: 1,
       has_more: false,
@@ -109,6 +110,7 @@ test('valida os relogios separados no board da pipeline', () => {
   if (result.success) {
     assert.equal(result.data.data[0].is_qualified, true)
     assert.equal(result.data.data[0].leads[0].board_sort_at, '2026-07-12T16:00:00Z')
+    assert.equal(result.data.data[0].leads[0].whatsapp_avatar_url, 'https://cdn.example.com/avatar.jpg')
   }
 })
 

@@ -426,7 +426,6 @@ func evolutionActionMayCommitMutation(action string) bool {
 		"group.setName",
 		"group.setDescription",
 		"group.setPhoto",
-		"user.avatar",
 	)
 }
 
@@ -464,6 +463,9 @@ func evolutionActionMayRemainInFlight(action string) bool {
 func evolutionRequestTimeout(action string) time.Duration {
 	if stringIn(action, "message.downloadMedia", "message.downloadImage") {
 		return evolutionMediaRecoveryTimeout
+	}
+	if action == "user.avatar" {
+		return whatsappAvatarRequestTimeout
 	}
 	return 0
 }
@@ -605,6 +607,16 @@ func (client functionsClient) evolutionFetch(ctx context.Context, method string,
 	if options.RequestTimeout > 0 {
 		clonedClient := *httpClient
 		clonedClient.Timeout = options.RequestTimeout
+		// The shared Evolution transport deliberately gives ordinary calls only a
+		// short wait for response headers. Dedicated long-running reads must raise
+		// that transport fence too, without mutating the shared pool used by other
+		// workers. Close the clone's idle connections when this request completes.
+		if transport, ok := httpClient.Transport.(*http.Transport); ok && transport != nil {
+			clonedTransport := transport.Clone()
+			clonedTransport.ResponseHeaderTimeout = options.RequestTimeout
+			clonedClient.Transport = clonedTransport
+			defer clonedTransport.CloseIdleConnections()
+		}
 		httpClient = &clonedClient
 	}
 	client.runtimeStats.providerStarted(time.Now())

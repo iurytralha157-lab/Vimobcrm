@@ -370,6 +370,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		whatsappHandler.StartMediaWorker(ctx, logger)
 	})
 	backgroundWorkers.Run(func() {
+		whatsappHandler.StartAvatarWorker(ctx, logger)
+	})
+	backgroundWorkers.Run(func() {
 		whatsappHandler.StartSessionSupervisor(ctx, logger)
 	})
 	webhooksRepository := webhooks.NewRepository(postgres)

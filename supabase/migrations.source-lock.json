@@ -578,6 +578,10 @@
     {
       "file": "20260920143000_harden_invitation_provisional_auth_profiles.sql",
       "sha256": "5c5c2d971ec87ead66e407e581784bc5d8bfa7dc61b0f5237a5021f9d6440fd9"
+    },
+    {
+      "file": "20260920170647_add_durable_whatsapp_lead_avatar_enrichment.sql",
+      "sha256": "e59f705934522512a2bebe689cd4e1001370b9dcda15457e5d0b548befc40c2b"
     }
   ]
 }

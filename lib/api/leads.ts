@@ -45,6 +45,8 @@ type APILead = {
   name: string
   email?: string
   phone?: string
+  whatsappAvatarUrl?: string
+  whatsappAvatarSyncedAt?: string
   source: string
   status: string
   dealStatus: string
@@ -590,8 +592,9 @@ export function toLegacyLead(lead: APILead): LeadRow & {
     utm_term: null,
     valor_interesse: lead.interestValue ? Number(lead.interestValue) : null,
     visitor_session_id: null,
-    whatsapp_avatar_synced_at: null,
-    whatsapp_avatar_url: null,
+    whatsapp_avatar_storage_path: null,
+    whatsapp_avatar_synced_at: lead.whatsappAvatarSyncedAt ?? null,
+    whatsapp_avatar_url: lead.whatsappAvatarUrl ?? null,
     whatsapp_verified: null,
     won_at: null,
     stage: lead.stage

@@ -2,11 +2,13 @@ package leads
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -39,7 +41,7 @@ func (row nullableRequiredTextRow) Scan(destinations ...any) error {
 
 func TestScanPipelineBoardLeadDefaultsNullableRequiredText(t *testing.T) {
 	lead, _, err := scanPipelineBoardLead(nullableRequiredTextRow{
-		textIndexes: []int{4, 17}, // source and deal_status
+		textIndexes: []int{4, 18}, // source and deal_status
 	}, false)
 	if err != nil {
 		t.Fatalf("scan pipeline board lead: %v", err)
@@ -67,6 +69,97 @@ func TestScanLeadDefaultsNullableRequiredText(t *testing.T) {
 	}
 	if lead.DealStatus != "open" {
 		t.Fatalf("deal status = %q, want open", lead.DealStatus)
+	}
+}
+
+type leadAvatarRow struct {
+	legacyURL   string
+	storagePath string
+	syncedAt    time.Time
+}
+
+func (row leadAvatarRow) Scan(destinations ...any) error {
+	if len(destinations) < 9 {
+		return fmt.Errorf("lead scan has %d destinations, want at least 9", len(destinations))
+	}
+
+	for index, destination := range destinations {
+		value := reflect.ValueOf(destination)
+		if value.Kind() != reflect.Pointer || value.IsNil() {
+			return fmt.Errorf("destination %d has type %T, want non-nil pointer", index, destination)
+		}
+		value.Elem().Set(reflect.Zero(value.Elem().Type()))
+	}
+
+	legacyAvatarURL, ok := destinations[len(destinations)-10].(*pgtype.Text)
+	if !ok {
+		return fmt.Errorf("legacy avatar URL destination has type %T, want *pgtype.Text", destinations[len(destinations)-10])
+	}
+	avatarStoragePath, ok := destinations[len(destinations)-9].(*pgtype.Text)
+	if !ok {
+		return fmt.Errorf("avatar storage path destination has type %T, want *pgtype.Text", destinations[len(destinations)-9])
+	}
+	avatarSyncedAt, ok := destinations[len(destinations)-8].(*pgtype.Timestamptz)
+	if !ok {
+		return fmt.Errorf("avatar sync destination has type %T, want *pgtype.Timestamptz", destinations[len(destinations)-8])
+	}
+	*legacyAvatarURL = pgtype.Text{String: row.legacyURL, Valid: true}
+	*avatarStoragePath = pgtype.Text{String: row.storagePath, Valid: true}
+	*avatarSyncedAt = pgtype.Timestamptz{Time: row.syncedAt, Valid: true}
+	if total, ok := destinations[0].(*int64); ok {
+		*total = 1
+	}
+
+	return nil
+}
+
+func TestScanLeadWithTotalKeepsOnlyDurableWhatsAppAvatarReference(t *testing.T) {
+	syncedAt := time.Date(2026, time.September, 20, 15, 30, 0, 0, time.UTC)
+	storagePath := "orgs/22222222-2222-4222-8222-222222222222/profile-pictures/11111111-1111-4111-8111-111111111111/avatar.jpg"
+	lead, total, err := scanLeadWithTotal(leadAvatarRow{
+		legacyURL:   "https://pps.whatsapp.net/legacy.jpg",
+		storagePath: storagePath,
+		syncedAt:    syncedAt,
+	})
+	if err != nil {
+		t.Fatalf("scan lead with avatar: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("total = %d, want 1", total)
+	}
+	if lead.WhatsAppAvatarURL != nil {
+		t.Fatalf("legacy avatar URL leaked from scanner: %#v", lead.WhatsAppAvatarURL)
+	}
+	if lead.WhatsAppAvatarStoragePath == nil || *lead.WhatsAppAvatarStoragePath != storagePath {
+		t.Fatalf("avatar storage path = %#v, want %q", lead.WhatsAppAvatarStoragePath, storagePath)
+	}
+	if lead.WhatsAppAvatarSyncedAt == nil || !lead.WhatsAppAvatarSyncedAt.Equal(syncedAt) {
+		t.Fatalf("avatar synced at = %#v, want %s", lead.WhatsAppAvatarSyncedAt, syncedAt)
+	}
+
+	payload, err := json.Marshal(lead)
+	if err != nil {
+		t.Fatalf("marshal lead: %v", err)
+	}
+	var response map[string]any
+	if err := json.Unmarshal(payload, &response); err != nil {
+		t.Fatalf("unmarshal lead response: %v", err)
+	}
+	if _, exists := response["whatsappAvatarUrl"]; exists {
+		t.Fatalf("legacy avatar URL was serialized: %#v", response["whatsappAvatarUrl"])
+	}
+	if strings.Contains(string(payload), storagePath) || strings.Contains(string(payload), "whatsappAvatarStoragePath") {
+		t.Fatalf("internal avatar storage path was serialized: %s", payload)
+	}
+	if response["whatsappAvatarSyncedAt"] != syncedAt.Format(time.RFC3339) {
+		t.Fatalf("response avatar synced at = %#v, want %q", response["whatsappAvatarSyncedAt"], syncedAt.Format(time.RFC3339))
+	}
+
+	fields := leadSelectFields()
+	if !strings.Contains(fields, "l.whatsapp_avatar_url") ||
+		!strings.Contains(fields, "l.whatsapp_avatar_storage_path") ||
+		!strings.Contains(fields, "l.whatsapp_avatar_synced_at") {
+		t.Fatalf("lead select fields do not include the avatar read model columns: %s", fields)
 	}
 }
 

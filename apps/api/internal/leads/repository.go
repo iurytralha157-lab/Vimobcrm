@@ -39,6 +39,8 @@ type Repository struct {
 	notificationPush     *notificationPushClient
 	notificationStats    *notificationDispatchCounters
 	gamificationRecorder GamificationRecorder
+	whatsAppAvatarURLs   *boundedWhatsAppAvatarSignedURLCache
+	whatsAppAvatarSlots  chan struct{}
 }
 
 type scanner interface {
@@ -118,6 +120,8 @@ func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder
 		db:                   db,
 		gamificationRecorder: gamificationRecorder,
 		notificationStats:    &notificationDispatchCounters{},
+		whatsAppAvatarURLs:   newBoundedWhatsAppAvatarSignedURLCache(whatsAppAvatarSignedURLCacheMaxEntries),
+		whatsAppAvatarSlots:  make(chan struct{}, whatsAppAvatarSigningConcurrency),
 	}
 	if len(storageConfigs) > 0 {
 		repository.storage = newStorageClient(storageConfigs[0])
@@ -209,6 +213,7 @@ func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, f
 	if err := rows.Err(); err != nil {
 		return ListResponse{}, err
 	}
+	repo.hydrateLeadAvatars(ctx, tenantContext.OrganizationID, leads)
 
 	return ListResponse{
 		Data:   leads,
@@ -249,6 +254,7 @@ func (repo Repository) Get(ctx context.Context, tenantContext tenant.Context, le
 	if err != nil {
 		return Lead{}, err
 	}
+	repo.hydrateLeadAvatar(ctx, tenantContext.OrganizationID, &lead)
 
 	return lead, nil
 }
@@ -698,6 +704,7 @@ func (repo Repository) Update(ctx context.Context, tenantContext tenant.Context,
 	commitDuration = time.Since(commitStartedAt)
 
 	repo.dispatchDealStatusSideEffects(tenantContext, current, input)
+	repo.hydrateLeadAvatar(ctx, tenantContext.OrganizationID, &updatedLead)
 
 	return updatedLead, nil
 }
@@ -911,6 +918,7 @@ func (repo Repository) MoveStage(ctx context.Context, tenantContext tenant.Conte
 		return moveStageResult{}, err
 	}
 	repo.dispatchDealStatusSideEffects(tenantContext, current, statusInput)
+	repo.hydrateLeadAvatar(ctx, tenantContext.OrganizationID, &updatedLead)
 
 	return moveStageResult{Lead: updatedLead, StageChanged: stageChanged}, nil
 }
@@ -954,6 +962,7 @@ func (repo Repository) Assign(ctx context.Context, tenantContext tenant.Context,
 	if err := tx.Commit(ctx); err != nil {
 		return Lead{}, err
 	}
+	repo.hydrateLeadAvatar(ctx, tenantContext.OrganizationID, &updatedLead)
 
 	return updatedLead, nil
 }
@@ -4738,6 +4747,9 @@ func leadSelectFields() string {
 		l.board_order_at,
 		l.last_contact_at,
 		l.next_follow_up_at,
+		l.whatsapp_avatar_url,
+		l.whatsapp_avatar_storage_path,
+		l.whatsapp_avatar_synced_at,
 		s.id::text,
 		s.name,
 		s.color,
@@ -4772,6 +4784,8 @@ func scanLeadFields(row scanner, total *int64) (Lead, error) {
 	var cargo, empresa, profissao, endereco, bairro, numero, cep, cidade, uf, rendaFamiliar, faixaValorImovel pgtype.Text
 	var rawMetadata []byte
 	var stageEnteredAt, boardOrderAt, lastContactAt, nextFollowUpAt pgtype.Timestamptz
+	var legacyWhatsAppAvatarURL, whatsappAvatarStoragePath pgtype.Text
+	var whatsappAvatarSyncedAt pgtype.Timestamptz
 	var stageIDValue, stageName, stageColor, stageKey pgtype.Text
 	var assigneeID, assigneeName, assigneeAvatarURL pgtype.Text
 
@@ -4820,6 +4834,9 @@ func scanLeadFields(row scanner, total *int64) (Lead, error) {
 		&boardOrderAt,
 		&lastContactAt,
 		&nextFollowUpAt,
+		&legacyWhatsAppAvatarURL,
+		&whatsappAvatarStoragePath,
+		&whatsappAvatarSyncedAt,
 		&stageIDValue,
 		&stageName,
 		&stageColor,
@@ -4863,6 +4880,9 @@ func scanLeadFields(row scanner, total *int64) (Lead, error) {
 	lead.BoardOrderAt = timePtr(boardOrderAt)
 	lead.LastContactAt = timePtr(lastContactAt)
 	lead.NextFollowUpAt = timePtr(nextFollowUpAt)
+	lead.WhatsAppAvatarURL = nil
+	lead.WhatsAppAvatarStoragePath = textPointer(whatsappAvatarStoragePath)
+	lead.WhatsAppAvatarSyncedAt = timePtr(whatsappAvatarSyncedAt)
 	lead.AdditionalFields = additionalFields(cargo, empresa, profissao, endereco, bairro, numero, cep, cidade, uf, rendaFamiliar, faixaValorImovel)
 	mergeLeadProfileMetadata(lead.AdditionalFields, rawMetadata)
 

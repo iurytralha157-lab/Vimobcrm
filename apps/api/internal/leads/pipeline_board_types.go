@@ -103,6 +103,8 @@ type PipelineBoardLead struct {
 	LeadMeta                  []LeadEnrichmentMeta    `json:"lead_meta"`
 	Tags                      []LeadEnrichmentTag     `json:"tags"`
 	TasksCount                LeadEnrichmentTaskCount `json:"tasks_count"`
+
+	WhatsAppAvatarStoragePath *string `json:"-"`
 }
 
 type PipelineStageLeadsResponse struct {

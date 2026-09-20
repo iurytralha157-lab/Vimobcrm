@@ -71,6 +71,10 @@ type Lead struct {
 	LastContactAt        *time.Time   `json:"lastContactAt,omitempty"`
 	NextFollowUpAt       *time.Time   `json:"nextFollowUpAt,omitempty"`
 	AdditionalFields     LeadMetadata `json:"additionalFields,omitempty"`
+
+	WhatsAppAvatarURL         *string    `json:"whatsappAvatarUrl,omitempty"`
+	WhatsAppAvatarSyncedAt    *time.Time `json:"whatsappAvatarSyncedAt,omitempty"`
+	WhatsAppAvatarStoragePath *string    `json:"-"`
 }
 
 type LeadMetadata map[string]any
