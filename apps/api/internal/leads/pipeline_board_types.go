@@ -32,6 +32,8 @@ type PipelineBoardFilter struct {
 	Offset           int
 	Limit            int
 	Search           string
+	Unassigned       bool
+	TeamID           string
 	FilterUserID     string
 	FilterUserIDs    []string
 	FilterUserIDsSet bool
@@ -80,6 +82,7 @@ type PipelineBoardLead struct {
 	UpdatedAt                 time.Time               `json:"updated_at"`
 	StageID                   *string                 `json:"stage_id"`
 	AssignedUserID            *string                 `json:"assigned_user_id"`
+	TeamID                    *string                 `json:"team_id"`
 	PipelineID                *string                 `json:"pipeline_id"`
 	Message                   *string                 `json:"message"`
 	StageEnteredAt            *time.Time              `json:"stage_entered_at"`
@@ -199,6 +202,13 @@ func ParsePipelineBoardFilter(values url.Values) (PipelineBoardFilter, error) {
 	if err != nil {
 		return PipelineBoardFilter{}, err
 	}
+	unassigned := false
+	if rawUnassigned := strings.TrimSpace(values.Get("unassigned")); rawUnassigned != "" {
+		unassigned, err = strconv.ParseBool(rawUnassigned)
+		if err != nil {
+			return PipelineBoardFilter{}, fmt.Errorf("%w: invalid unassigned", ErrInvalidInput)
+		}
+	}
 
 	return PipelineBoardFilter{
 		PipelineID:       strings.TrimSpace(values.Get("pipelineId")),
@@ -207,6 +217,8 @@ func ParsePipelineBoardFilter(values url.Values) (PipelineBoardFilter, error) {
 		Offset:           offset,
 		Limit:            limit,
 		Search:           strings.TrimSpace(values.Get("search")),
+		Unassigned:       unassigned,
+		TeamID:           strings.TrimSpace(values.Get("teamId")),
 		FilterUserID:     strings.TrimSpace(values.Get("filterUserId")),
 		FilterUserIDs:    filterUserIDs,
 		FilterUserIDsSet: filterUserIDsSet,

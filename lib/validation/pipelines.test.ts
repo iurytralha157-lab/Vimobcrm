@@ -96,6 +96,7 @@ test('valida os relogios separados no board da pipeline', () => {
       is_qualified: true,
       leads: [{
         id: ID,
+        team_id: null,
         board_sort_at: '2026-07-12T16:00:00Z',
         board_order_at: '2026-07-12T15:30:00Z',
         stage_entered_at: '2026-07-12T14:00:00Z',
@@ -112,6 +113,20 @@ test('valida os relogios separados no board da pipeline', () => {
     assert.equal(result.data.data[0].leads[0].board_sort_at, '2026-07-12T16:00:00Z')
     assert.equal(result.data.data[0].leads[0].whatsapp_avatar_url, 'https://cdn.example.com/avatar.jpg')
   }
+})
+
+test('exige a equipe explicita no DTO do lead da pipeline', () => {
+  const result = pipelineBoardResponseSchema.safeParse({
+    data: [{
+      id: ID,
+      is_qualified: true,
+      leads: [{ id: ID }],
+      total_lead_count: 1,
+      has_more: false,
+    }],
+  })
+
+  assert.equal(result.success, false)
 })
 
 test('exige o marcador de qualificacao no board da pipeline', () => {

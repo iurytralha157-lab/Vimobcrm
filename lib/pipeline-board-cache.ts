@@ -6,6 +6,7 @@ export interface PipelineBoardLeadLike {
   id: string;
   stage_id?: string | null;
   assigned_user_id?: string | null;
+  team_id?: string | null;
   deal_status?: string | null;
   name?: string | null;
   email?: string | null;
@@ -33,8 +34,14 @@ export function pipelineLeadMatchesQueryKeyScope(
   queryKey: PipelineBoardQueryKey,
   lead: PipelineBoardLeadLike,
 ) {
+  const isUnassignedFilter = queryKey[15] === true;
   const filterUserId = typeof queryKey[3] === 'string' ? queryKey[3] : undefined;
-  if (filterUserId && filterUserId !== 'all' && filterUserId !== lead.assigned_user_id) {
+  if (
+    !isUnassignedFilter &&
+    filterUserId &&
+    filterUserId !== 'all' &&
+    filterUserId !== lead.assigned_user_id
+  ) {
     return false;
   }
 
@@ -100,11 +107,16 @@ export function pipelineLeadMatchesQueryKeyScope(
   }
 
   const serializedUserIds = typeof queryKey[13] === 'string' ? queryKey[13] : undefined;
-  if (serializedUserIds === '__none__') return false;
-  if (serializedUserIds) {
+  if (!isUnassignedFilter && serializedUserIds === '__none__') return false;
+  if (!isUnassignedFilter && serializedUserIds) {
     const visibleUserIds = new Set(serializedUserIds.split(',').filter(Boolean));
     if (!lead.assigned_user_id || !visibleUserIds.has(lead.assigned_user_id)) return false;
   }
+
+  if (isUnassignedFilter && lead.assigned_user_id !== null) return false;
+
+  const teamId = typeof queryKey[16] === 'string' ? queryKey[16] : undefined;
+  if (teamId && lead.team_id !== teamId) return false;
 
   return true;
 }

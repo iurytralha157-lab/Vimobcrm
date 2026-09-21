@@ -306,6 +306,7 @@ export function PipelineToolbar({
               onTeamChange={onTeamChange}
               userId={userId}
               onUserChange={onUserChange}
+              includeUnassignedUserOption
               source={source}
               onSourceChange={onSourceChange}
               campaignId={campaignId}

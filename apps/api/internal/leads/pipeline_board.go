@@ -876,7 +876,30 @@ func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFi
 			where = append(where, "l.stage_id in ("+uuidPlaceholders(start, normalized)+")")
 		}
 	}
-	if filter.FilterUserID != "" && filter.FilterUserID != "all" {
+	if strings.TrimSpace(filter.TeamID) != "" {
+		teamID, ok := normalizeUUID(filter.TeamID)
+		if !ok {
+			return nil, nil, fmt.Errorf("%w: teamId is invalid", ErrInvalidInput)
+		}
+		args = append(args, teamID)
+		index := len(args)
+		where = append(where, fmt.Sprintf(`(
+			nullif(to_jsonb(l)->>'team_id', '') = $%d::text
+			or (
+				nullif(to_jsonb(l)->>'team_id', '') is null
+				and exists (
+					select 1 from public.team_members tm
+					where tm.organization_id = l.organization_id
+					  and tm.team_id = $%d::uuid
+					  and tm.user_id = l.assigned_user_id
+					  and tm.is_active = true
+				)
+			)
+		)`, index, index))
+	}
+	if filter.Unassigned {
+		where = append(where, "l.assigned_user_id is null")
+	} else if filter.FilterUserID != "" && filter.FilterUserID != "all" {
 		value, ok := normalizeUUID(filter.FilterUserID)
 		if !ok {
 			return nil, nil, ErrInvalidInput
@@ -1017,6 +1040,7 @@ func pipelineBoardLeadSelectFields(propertyVisibility string) string {
 		l.updated_at,
 		l.stage_id::text,
 		l.assigned_user_id::text,
+		l.team_id::text,
 		l.pipeline_id::text,
 		l.message,
 		l.stage_entered_at,
@@ -1058,6 +1082,7 @@ func pipelineBoardLeadColumnFields() string {
 		updated_at,
 		stage_id,
 		assigned_user_id,
+		team_id,
 		pipeline_id,
 		message,
 		stage_entered_at,
@@ -1082,7 +1107,7 @@ func pipelineBoardLeadColumnFields() string {
 func scanPipelineBoardLead(row scanner, withTotal bool) (PipelineBoardLead, int64, error) {
 	var lead PipelineBoardLead
 	var total int64
-	var phone, email, source, stageID, assignedUserID, pipelineID, message, organizationID pgtype.Text
+	var phone, email, source, stageID, assignedUserID, teamID, pipelineID, message, organizationID pgtype.Text
 	var lastEntryAt, stageEnteredAt, boardOrderAt, wonAt, lostAt, firstResponseAt pgtype.Timestamptz
 	var legacyWhatsAppAvatarURL, whatsappAvatarStoragePath, dealStatus, propertyID, lostReason, interestPropertyID pgtype.Text
 	var interestValue pgtype.Float8
@@ -1099,6 +1124,7 @@ func scanPipelineBoardLead(row scanner, withTotal bool) (PipelineBoardLead, int6
 		&lead.UpdatedAt,
 		&stageID,
 		&assignedUserID,
+		&teamID,
 		&pipelineID,
 		&message,
 		&stageEnteredAt,
@@ -1131,6 +1157,7 @@ func scanPipelineBoardLead(row scanner, withTotal bool) (PipelineBoardLead, int6
 	lead.Source = textValueWithDefault(source, "manual")
 	lead.StageID = pipelineTextPtr(stageID)
 	lead.AssignedUserID = pipelineTextPtr(assignedUserID)
+	lead.TeamID = pipelineTextPtr(teamID)
 	lead.PipelineID = pipelineTextPtr(pipelineID)
 	lead.Message = pipelineTextPtr(message)
 	lead.OrganizationID = textValue(organizationID)

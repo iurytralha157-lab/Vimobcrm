@@ -14,6 +14,8 @@ export interface PipelineQueryKeyFilters {
   filterAd?: string | null;
   filterSource?: string | null;
   filterUserIds?: string[];
+  unassigned?: boolean;
+  teamId?: string | null;
 }
 
 function normalizePipelineQueryFilter(value?: string | null) {
@@ -56,5 +58,7 @@ export function stageWithLeadsQueryKey(params: {
     normalizePipelineQueryFilter(filters?.filterSource),
     normalizePipelineQueryUserIds(filters?.filterUserIds),
     resolvePipelineDateModeForRange(filters?.dateRange, filters?.dateMode),
+    filters?.unassigned ? true : undefined,
+    normalizePipelineQueryFilter(filters?.teamId),
   ] as const;
 }

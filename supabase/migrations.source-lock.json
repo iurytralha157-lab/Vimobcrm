@@ -582,6 +582,14 @@
     {
       "file": "20260920170647_add_durable_whatsapp_lead_avatar_enrichment.sql",
       "sha256": "e59f705934522512a2bebe689cd4e1001370b9dcda15457e5d0b548befc40c2b"
+    },
+    {
+      "file": "20260921115616_add_silent_historical_lead_import.sql",
+      "sha256": "e7a2d60a4c1af2dc2474c5210dd5814b99737fb168ba0963aac4a3b2f15ce549"
+    },
+    {
+      "file": "20260921132800_guard_historical_stage_clock.sql",
+      "sha256": "053b453ac616a26026253ee7b23bb9073633978f0da457a6cce489458f37c57a"
     }
   ]
 }

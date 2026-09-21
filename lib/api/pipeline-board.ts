@@ -19,6 +19,7 @@ import { sanitizeLeadMetaFiltersEnvelope } from './pipeline-board-meta-filters'
 
 export type PipelineBoardLead = {
   id: string
+  team_id: string | null
   [key: string]: unknown
 }
 

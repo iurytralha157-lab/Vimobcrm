@@ -96,6 +96,120 @@ func TestPipelineBoardTagFiltersKeepLegacyTagIDAndRejectInvalidLists(t *testing.
 	}
 }
 
+func TestPipelineBoardUnassignedFilterTakesPrecedenceOverUserFilters(t *testing.T) {
+	filter, err := ParsePipelineBoardFilter(map[string][]string{
+		"unassigned":    {"TRUE"},
+		"filterUserId":  {"10000000-0000-4000-8000-000000000002"},
+		"filterUserIds": {"10000000-0000-4000-8000-000000000002,10000000-0000-4000-8000-000000000003"},
+	})
+	if err != nil {
+		t.Fatalf("ParsePipelineBoardFilter() error = %v", err)
+	}
+	if !filter.Unassigned {
+		t.Fatal("Unassigned = false, want true")
+	}
+
+	where, args, err := buildPipelineLeadWhere(tenant.Context{
+		UserID:         "10000000-0000-4000-8000-000000000001",
+		OrganizationID: "20000000-0000-4000-8000-000000000001",
+		MemberRole:     "admin",
+	}, filter)
+	if err != nil {
+		t.Fatalf("buildPipelineLeadWhere() error = %v", err)
+	}
+
+	if len(args) != 4 {
+		t.Fatalf("buildPipelineLeadWhere() args = %#v, want only visibility args", args)
+	}
+	if len(where) != 3 {
+		t.Fatalf("buildPipelineLeadWhere() where = %#v, want organization, visibility, and unassigned predicates", where)
+	}
+	if !strings.Contains(where[1], "l.assigned_user_id = $3::uuid") {
+		t.Fatalf("buildPipelineLeadWhere() lost canonical visibility predicate: %#v", where)
+	}
+	if where[2] != "l.assigned_user_id is null" {
+		t.Fatalf("buildPipelineLeadWhere() where = %#v, want unassigned predicate after canonical visibility", where)
+	}
+}
+
+func TestPipelineBoardUnassignedFilterDisabledKeepsUserFilter(t *testing.T) {
+	filter, err := ParsePipelineBoardFilter(map[string][]string{
+		"unassigned":   {"false"},
+		"filterUserId": {"10000000-0000-4000-8000-000000000002"},
+	})
+	if err != nil {
+		t.Fatalf("ParsePipelineBoardFilter() error = %v", err)
+	}
+	if filter.Unassigned {
+		t.Fatal("Unassigned = true, want false")
+	}
+
+	where, args, err := buildPipelineLeadWhere(tenant.Context{
+		UserID:         "10000000-0000-4000-8000-000000000001",
+		OrganizationID: "20000000-0000-4000-8000-000000000001",
+		MemberRole:     "admin",
+	}, filter)
+	if err != nil {
+		t.Fatalf("buildPipelineLeadWhere() error = %v", err)
+	}
+
+	if len(args) != 5 || args[4] != "10000000-0000-4000-8000-000000000002" {
+		t.Fatalf("buildPipelineLeadWhere() args = %#v, want selected user", args)
+	}
+	if len(where) != 3 || where[2] != "l.assigned_user_id = $5::uuid" {
+		t.Fatalf("buildPipelineLeadWhere() where = %#v, want selected-user predicate", where)
+	}
+
+	if _, err := ParsePipelineBoardFilter(mapValues("unassigned", "not-a-boolean")); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ParsePipelineBoardFilter() invalid unassigned error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestPipelineBoardUnassignedFilterComposesWithTeam(t *testing.T) {
+	teamID := "30000000-0000-4000-8000-000000000001"
+	filter, err := ParsePipelineBoardFilter(map[string][]string{
+		"unassigned": {"true"},
+		"teamId":     {teamID},
+	})
+	if err != nil {
+		t.Fatalf("ParsePipelineBoardFilter() error = %v", err)
+	}
+	if filter.TeamID != teamID {
+		t.Fatalf("TeamID = %q, want %q", filter.TeamID, teamID)
+	}
+
+	where, args, err := buildPipelineLeadWhere(tenant.Context{
+		UserID:         "10000000-0000-4000-8000-000000000001",
+		OrganizationID: "20000000-0000-4000-8000-000000000001",
+		MemberRole:     "admin",
+	}, filter)
+	if err != nil {
+		t.Fatalf("buildPipelineLeadWhere() error = %v", err)
+	}
+
+	if len(args) != 5 || args[4] != teamID {
+		t.Fatalf("buildPipelineLeadWhere() args = %#v, want selected team", args)
+	}
+	joined := strings.Join(where, "\n")
+	if !strings.Contains(joined, "nullif(to_jsonb(l)->>'team_id', '') = $5::text") {
+		t.Fatalf("buildPipelineLeadWhere() missing direct team predicate: %s", joined)
+	}
+	if !strings.Contains(joined, "tm.team_id = $5::uuid") {
+		t.Fatalf("buildPipelineLeadWhere() missing legacy team membership fallback: %s", joined)
+	}
+	if !strings.Contains(joined, "tm.organization_id = l.organization_id") || !strings.Contains(joined, "tm.is_active = true") {
+		t.Fatalf("buildPipelineLeadWhere() team fallback is not tenant-safe and active-only: %s", joined)
+	}
+	if where[len(where)-1] != "l.assigned_user_id is null" {
+		t.Fatalf("buildPipelineLeadWhere() where = %#v, want unassigned predicate", where)
+	}
+
+	filter.TeamID = "not-a-uuid"
+	if _, _, err := buildPipelineLeadWhere(tenant.Context{}, filter); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("buildPipelineLeadWhere() invalid team error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestBuildDashboardLeadWhereMetaFiltersMatchIDOrName(t *testing.T) {
 	tenantContext := tenant.Context{
 		UserID:         "10000000-0000-0000-0000-000000000001",

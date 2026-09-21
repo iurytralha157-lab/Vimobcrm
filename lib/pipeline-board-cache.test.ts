@@ -285,6 +285,101 @@ test('atualizacao do detalhe respeita usuario, equipe e status da chave do board
   );
 });
 
+test('cache filtrado sem responsavel aceita apenas lead com atribuicao nula', () => {
+  const unassignedQueryKey = [
+    'stages-with-leads',
+    'org-1',
+    'pipeline-1',
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    true,
+  ] as const;
+
+  assert.equal(
+    pipelineLeadMatchesQueryKeyScope(unassignedQueryKey, {
+      id: 'lead-unassigned',
+      assigned_user_id: null,
+    }),
+    true,
+  );
+  assert.equal(
+    pipelineLeadMatchesQueryKeyScope(unassignedQueryKey, {
+      id: 'lead-assigned',
+      assigned_user_id: 'user-1',
+    }),
+    false,
+  );
+  assert.equal(
+    pipelineLeadMatchesQueryKeyScope(unassignedQueryKey, {
+      id: 'lead-without-assignment-field',
+    }),
+    false,
+  );
+
+  const unassignedQueryKeyWithLegacyUserFilter: unknown[] = [
+    ...unassignedQueryKey,
+  ];
+  unassignedQueryKeyWithLegacyUserFilter[3] = 'user-1';
+  assert.equal(
+    pipelineLeadMatchesQueryKeyScope(unassignedQueryKeyWithLegacyUserFilter, {
+      id: 'lead-unassigned-with-conflicting-user-filter',
+      assigned_user_id: null,
+    }),
+    true,
+  );
+
+  const teamUnassignedQueryKey = [...unassignedQueryKey, 'team-1'] as const;
+  assert.equal(
+    pipelineLeadMatchesQueryKeyScope(teamUnassignedQueryKey, {
+      id: 'lead-unassigned-team-1',
+      assigned_user_id: null,
+      team_id: 'team-1',
+    }),
+    true,
+  );
+  assert.equal(
+    pipelineLeadMatchesQueryKeyScope(teamUnassignedQueryKey, {
+      id: 'lead-unassigned-team-2',
+      assigned_user_id: null,
+      team_id: 'team-2',
+    }),
+    false,
+  );
+  assert.equal(
+    pipelineLeadMatchesQueryKeyScope(teamUnassignedQueryKey, {
+      id: 'lead-unassigned-without-team',
+      assigned_user_id: null,
+    }),
+    false,
+  );
+  assert.equal(
+    pipelineLeadMatchesQueryKeyScope(teamUnassignedQueryKey, {
+      id: 'lead-unassigned-null-team',
+      assigned_user_id: null,
+      team_id: null,
+    }),
+    false,
+  );
+  assert.equal(
+    pipelineLeadMatchesQueryKeyScope(teamUnassignedQueryKey, {
+      id: 'lead-now-assigned-team-1',
+      assigned_user_id: 'user-1',
+      team_id: 'team-1',
+    }),
+    false,
+  );
+});
+
 test('cache da pipeline preserva lead que tenha qualquer tag selecionada', () => {
   const queryKeyWithTags = [
     'stages-with-leads',

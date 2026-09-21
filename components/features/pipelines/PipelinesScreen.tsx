@@ -401,14 +401,18 @@ export default function Pipelines() {
     return [];
   }, [leadVisibility]);
   const hasUserScope = Array.isArray(scopedVisibleUserIds);
-  const selectedFilterUserId = filterUser === 'all' ? undefined : (filterUser || undefined);
+  const isUnassignedFilter = filterUser === 'unassigned';
+  const selectedFilterUserId = filterUser === 'all' || isUnassignedFilter
+    ? undefined
+    : (filterUser || undefined);
   const effectivePipelineFilterUserIds = useMemo(() => {
+    if (isUnassignedFilter) return undefined;
     if (!Array.isArray(selectedTeamUserIds)) return scopedVisibleUserIds;
     if (!Array.isArray(scopedVisibleUserIds)) return selectedTeamUserIds;
 
     const visibleUserIds = new Set(scopedVisibleUserIds);
     return selectedTeamUserIds.filter((userId) => visibleUserIds.has(userId));
-  }, [scopedVisibleUserIds, selectedTeamUserIds]);
+  }, [isUnassignedFilter, scopedVisibleUserIds, selectedTeamUserIds]);
   const selectedFilterUserAllowed = useMemo(() => {
     if (!selectedFilterUserId) return true;
     if (hasUserScope && !scopedVisibleUserIds.includes(selectedFilterUserId)) return false;
@@ -450,6 +454,8 @@ export default function Pipelines() {
     filterAd: filterAd && filterAd !== 'all' ? filterAd : undefined,
     filterSource: filterSource && filterSource !== 'all' ? filterSource : undefined,
     filterUserIds: effectivePipelineFilterUserIds,
+    unassigned: isUnassignedFilter,
+    teamId: isUnassignedFilter ? sharedFilters.teamId || undefined : undefined,
   }), [
     pipelineDateRange,
     filterTags,
@@ -460,6 +466,8 @@ export default function Pipelines() {
     filterAd,
     filterSource,
     effectivePipelineFilterUserIds,
+    isUnassignedFilter,
+    sharedFilters.teamId,
   ]);
   const pipelineBoardQueryKey = useMemo(
     () => stageWithLeadsQueryKey({
@@ -486,12 +494,16 @@ export default function Pipelines() {
         canViewAll: leadVisibility?.canViewAll ?? false,
         filterUserId: effectivePipelineFilterUser ?? null,
         filterUserIds: effectivePipelineFilterUserIds ?? null,
+        unassigned: isUnassignedFilter,
+        teamId: isUnassignedFilter ? sharedFilters.teamId : null,
       }),
     [
       activeOrganizationId,
       effectivePipelineFilterUser,
       effectivePipelineFilterUserIds,
+      isUnassignedFilter,
       leadVisibility?.canViewAll,
+      sharedFilters.teamId,
     ],
   );
   const previousBoardScopeRef = useRef<{

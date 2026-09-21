@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "db361052e60e88cdce00f99d1b6039d235fbcf3d0accf6aee1a4302c09aa421d",
+  "sourceDigestSha256": "a441d42e74b5b32b6daa39c77b81d068933c39d0af8ed55935f4c050d680ff48",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -15726,10 +15726,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:78f869f8a2a739b80658",
+          "id": "cta:f2c816351dde25f4aebf",
           "column": 13,
           "file": "components/features/pipelines/pipeline-screen/PipelineToolbar.tsx",
-          "line": 350,
+          "line": 351,
           "owner": "PipelineToolbar",
           "routes": [
             "/crm/pipelines"
@@ -33717,7 +33717,7 @@
         }
       ]
     },
-    "digestSha256": "d31b95c7c61b618ea055b01b1e05fd354d418f1e7e6e6d20692207aa3479385e"
+    "digestSha256": "e222e6d92337b92e66305234a8684a355e0ea1f854cad48526cb2540ecffbbe0"
   },
   "routes": [
     {

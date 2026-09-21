@@ -269,9 +269,9 @@ func (row pipelineBoardAvatarRow) Scan(destinations ...any) error {
 		return fmt.Errorf("pipeline lead scan has %d destinations", len(destinations))
 	}
 	*(destinations[0].(*string)) = avatarTestLeadID
-	*(destinations[13].(*pgtype.Text)) = pgtype.Text{String: avatarTestOrganizationID, Valid: true}
-	*(destinations[16].(*pgtype.Text)) = pgtype.Text{String: "https://pps.whatsapp.net/legacy.jpg", Valid: true}
-	*(destinations[17].(*pgtype.Text)) = pgtype.Text{String: row.storagePath, Valid: true}
+	*(destinations[14].(*pgtype.Text)) = pgtype.Text{String: avatarTestOrganizationID, Valid: true}
+	*(destinations[17].(*pgtype.Text)) = pgtype.Text{String: "https://pps.whatsapp.net/legacy.jpg", Valid: true}
+	*(destinations[18].(*pgtype.Text)) = pgtype.Text{String: row.storagePath, Valid: true}
 	return nil
 }
 

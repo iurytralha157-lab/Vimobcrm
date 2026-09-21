@@ -41,7 +41,7 @@ func (row nullableRequiredTextRow) Scan(destinations ...any) error {
 
 func TestScanPipelineBoardLeadDefaultsNullableRequiredText(t *testing.T) {
 	lead, _, err := scanPipelineBoardLead(nullableRequiredTextRow{
-		textIndexes: []int{4, 18}, // source and deal_status
+		textIndexes: []int{4, 19}, // source and deal_status
 	}, false)
 	if err != nil {
 		t.Fatalf("scan pipeline board lead: %v", err)

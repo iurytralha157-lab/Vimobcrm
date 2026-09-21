@@ -80,3 +80,17 @@ test('envia cursor keyset completo e preserva offset como fallback', () => {
   assert.equal(query.cursorBefore, '2026-09-08T10:30:00.000Z');
   assert.equal(query.cursorBeforeId, '11111111-1111-4111-8111-111111111111');
 });
+
+test('serializa o filtro sem responsavel sem ocupar o campo UUID do usuario', () => {
+  const query = buildPipelineBoardQuery({
+    filters: { unassigned: true, teamId: 'team-1' },
+  });
+  const inactiveQuery = buildPipelineBoardQuery({
+    filters: { unassigned: false },
+  });
+
+  assert.equal(query.filterUserId, undefined);
+  assert.equal(query.unassigned, true);
+  assert.equal(query.teamId, 'team-1');
+  assert.equal(inactiveQuery.unassigned, undefined);
+});

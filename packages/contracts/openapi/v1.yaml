@@ -173,6 +173,17 @@ paths:
           description: Comma-separated tag UUIDs. A lead matches when it has any selected tag.
           schema:
             type: string
+        - name: unassigned
+          in: query
+          description: When true, returns only leads without an assigned user.
+          schema:
+            type: boolean
+        - name: teamId
+          in: query
+          description: Restricts leads to the selected team; it can be combined with unassigned.
+          schema:
+            type: string
+            format: uuid
       responses:
         "200":
           description: Pipeline board data.
@@ -221,6 +232,17 @@ paths:
           description: Comma-separated tag UUIDs. A lead matches when it has any selected tag.
           schema:
             type: string
+        - name: unassigned
+          in: query
+          description: When true, returns only leads without an assigned user.
+          schema:
+            type: boolean
+        - name: teamId
+          in: query
+          description: Restricts leads to the selected team; it can be combined with unassigned.
+          schema:
+            type: string
+            format: uuid
       responses:
         "200":
           description: Stage lead page.
@@ -259,6 +281,17 @@ paths:
           description: Comma-separated tag UUIDs. A lead matches when it has any selected tag.
           schema:
             type: string
+        - name: unassigned
+          in: query
+          description: When true, returns only leads without an assigned user.
+          schema:
+            type: boolean
+        - name: teamId
+          in: query
+          description: Restricts leads to the selected team; it can be combined with unassigned.
+          schema:
+            type: string
+            format: uuid
       responses:
         "200":
           description: Counts keyed by stage id.
@@ -15109,7 +15142,7 @@ components:
           type: boolean
     PipelineBoardLead:
       type: object
-      required: [id, name, organization_id]
+      required: [id, name, organization_id, team_id]
       additionalProperties: true
       properties:
         id:
@@ -15127,6 +15160,9 @@ components:
           type: [string, "null"]
           format: uuid
         assigned_user_id:
+          type: [string, "null"]
+          format: uuid
+        team_id:
           type: [string, "null"]
           format: uuid
         whatsapp_avatar_url:

@@ -109,3 +109,21 @@ test('omite modo sem periodo e preserva compatibilidade operacional quando ha da
   assert.equal(originMode[14], 'origin');
   assert.notDeepEqual(operationalMode, originMode);
 });
+
+test('separa o cache completo do cache de leads sem responsavel', () => {
+  const base = {
+    organizationId: 'org-1',
+    pipelineId: 'pipeline-1',
+  };
+
+  const unrestricted = stageWithLeadsQueryKey(base);
+  const unassigned = stageWithLeadsQueryKey({
+    ...base,
+    filters: { unassigned: true, teamId: 'team-1' },
+  });
+
+  assert.notDeepEqual(unrestricted, unassigned);
+  assert.equal(unrestricted[15], undefined);
+  assert.equal(unassigned[15], true);
+  assert.equal(unassigned[16], 'team-1');
+});

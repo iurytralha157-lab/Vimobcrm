@@ -181,7 +181,7 @@ export function useStagesWithLeads(
         previousData,
         previousQuery?.queryKey,
         queryKey,
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
       ),
     enabled: isBoardEnabled,
     refetchOnMount: true,
@@ -386,6 +386,8 @@ export function useFilteredStageCounts({
   filterAd,
   filterSource,
   filterUserIds,
+  unassigned,
+  teamId,
 }: FilteredStageCountsParams) {
   const organizationId = useOrganizationId();
   const filters = {
@@ -399,6 +401,8 @@ export function useFilteredStageCounts({
     filterAd,
     filterSource,
     filterUserIds,
+    unassigned,
+    teamId,
   };
   const filterTagKey = Array.isArray(filterTags)
     ? [...new Set(filterTags.map((tagId) => tagId.trim()).filter(Boolean))]
@@ -424,6 +428,8 @@ export function useFilteredStageCounts({
       filterAd,
       filterSource,
       filterUserIds?.join(','),
+      unassigned || undefined,
+      teamId,
     ],
     enabled: Boolean(organizationId && pipelineId && stageIds.length > 0),
     staleTime: PIPELINE_BOARD_STALE_TIME_MS,

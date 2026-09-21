@@ -112,6 +112,7 @@ export const apiStageResponseSchema = apiEnvelopeSchema(apiStageSchema)
 
 export const pipelineBoardLeadSchema = z.object({
   id: uuidSchema,
+  team_id: uuidSchema.nullable(),
   board_sort_at: timestampSchema.nullable().optional(),
   board_order_at: timestampSchema.nullable().optional(),
   stage_entered_at: timestampSchema.nullable().optional(),

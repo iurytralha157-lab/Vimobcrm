@@ -1248,22 +1248,30 @@ func (repo Repository) buildDashboardLeadWhere(tenantContext tenant.Context, fil
 		if !ok {
 			return nil, nil, ErrInvalidInput
 		}
-		args = append(args, teamID)
-		index := len(args)
-		where = append(where, fmt.Sprintf(`(
-			nullif(to_jsonb(l)->>'team_id', '') = $%d::text
-			or (
-				nullif(to_jsonb(l)->>'team_id', '') is null
-				and exists (
-					select 1
-					from public.team_members dtm
-					where dtm.organization_id = l.organization_id
-					  and dtm.team_id = $%d::uuid
-					  and dtm.user_id = l.assigned_user_id
-					  and dtm.is_active = true
-				)
-			)
-		)`, index, index))
+		// Dashboard team filtering mirrors the pipeline: a lead belongs to the
+		// selected team when its current assignee is an active team member. The
+		// lead team_id is assignment provenance and can point to another queue
+		// context when a user participates in more than one team.
+		add(`exists (
+			select 1
+			from public.team_members dtm
+			join public.teams dt
+			  on dt.id = dtm.team_id
+			 and dt.organization_id = dtm.organization_id
+			 and dt.is_active = true
+			join public.users du
+			  on du.id = dtm.user_id
+			 and coalesce(du.is_active, false) = true
+			join public.organization_members dom
+			  on dom.organization_id = dtm.organization_id
+			 and dom.user_id = dtm.user_id
+			 and coalesce(dom.is_active, false) = true
+			 and dom.deleted_at is null
+			where dtm.organization_id = l.organization_id
+			  and dtm.team_id = $%d::uuid
+			  and dtm.user_id = l.assigned_user_id
+			  and coalesce(dtm.is_active, true) = true
+		)`, teamID)
 	}
 	if filter.Source != "" && filter.Source != "all" {
 		add("l.source = $%d", filter.Source)

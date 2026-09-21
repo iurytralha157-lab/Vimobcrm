@@ -6,7 +6,7 @@ import { reusePreviousDataWhenKeyPartsMatch } from './query-placeholder-safety';
 test('nao reutiliza cards da pipeline entre tenants, pipelines ou escopos de autorizacao', () => {
   const data = [{ id: 'lead-org-a' }];
   const current = ['stages-with-leads', 'org-b', 'pipeline-b', 'user-b', 'date', null, null, null, null, null, null, null, null, 'user-b', 'operational'];
-  const protectedIndexes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+  const protectedIndexes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 
   assert.equal(
     reusePreviousDataWhenKeyPartsMatch(data, ['stages-with-leads', 'org-a', 'pipeline-b', 'user-b', 'date', null, null, null, null, null, null, null, null, 'user-b'], current, protectedIndexes),
@@ -32,7 +32,7 @@ test('nao reutiliza cards quando data, busca ou modo mudam no mesmo escopo', () 
       data,
       previous,
       current,
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
     ),
     undefined,
   );
@@ -47,6 +47,38 @@ test('nao reutiliza opcoes de meta-filtros de outra organizacao', () => {
       ['shared-filter-lead-meta-filters', 'org-a', 'pipeline-1', 'from', 'to', 'operational'],
       ['shared-filter-lead-meta-filters', 'org-b', 'pipeline-1', 'from', 'to', 'operational'],
       [1],
+    ),
+    undefined,
+  );
+});
+
+test('nao reutiliza cards completos ao ativar o filtro sem responsavel', () => {
+  const data = [{ id: 'lead-assigned' }];
+  const previous = ['stages-with-leads', 'org-1', 'pipeline-1', undefined, null, null, null, null, null, null, null, null, null, null, null, undefined];
+  const current = ['stages-with-leads', 'org-1', 'pipeline-1', undefined, null, null, null, null, null, null, null, null, null, null, null, true];
+
+  assert.equal(
+    reusePreviousDataWhenKeyPartsMatch(
+      data,
+      previous,
+      current,
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+    ),
+    undefined,
+  );
+});
+
+test('nao reutiliza cards sem responsavel entre equipes diferentes', () => {
+  const data = [{ id: 'lead-team-a' }];
+  const previous = ['stages-with-leads', 'org-1', 'pipeline-1', undefined, null, null, null, null, null, null, null, null, null, null, null, true, 'team-a'];
+  const current = ['stages-with-leads', 'org-1', 'pipeline-1', undefined, null, null, null, null, null, null, null, null, null, null, null, true, 'team-b'];
+
+  assert.equal(
+    reusePreviousDataWhenKeyPartsMatch(
+      data,
+      previous,
+      current,
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
     ),
     undefined,
   );

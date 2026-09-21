@@ -14,6 +14,8 @@ export type PipelineBoardQueryFilters = {
   filterAd?: string;
   filterSource?: string;
   filterUserIds?: string[];
+  unassigned?: boolean;
+  teamId?: string;
 };
 
 export function buildPipelineBoardQuery(params: {
@@ -48,6 +50,8 @@ export function buildPipelineBoardQuery(params: {
     filterAd: filters?.filterAd,
     filterSource: filters?.filterSource,
     filterUserIds: serializeOptionalIds(filters?.filterUserIds),
+    unassigned: filters?.unassigned ? true : undefined,
+    teamId: filters?.teamId,
   };
 }
 

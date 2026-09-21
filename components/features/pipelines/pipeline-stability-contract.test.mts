@@ -29,6 +29,9 @@ const leadRealtimeSource = readRepoFile('contexts/LeadRealtimeBus.tsx');
 const backendRealtimeSource = readRepoFile('contexts/BackendRealtimeBus.tsx');
 const filterContextSource = readRepoFile('contexts/FilterContext.tsx');
 const screenSource = readRepoFile('components/features/pipelines/PipelinesScreen.tsx');
+const toolbarSource = readRepoFile(
+  'components/features/pipelines/pipeline-screen/PipelineToolbar.tsx',
+);
 const sharedFiltersComponentSource = readRepoFile('components/shared/SharedFilters.tsx');
 const boardSource = readRepoFile(
   'components/features/pipelines/pipeline-screen/PipelineBoard.tsx',
@@ -171,6 +174,18 @@ test('pipeline inicia sem período implícito e usa origem somente após aplica�
   assert.match(screenSource, /dateMode: pipelineDateRange \? 'origin' : undefined/);
   assert.doesNotMatch(screenSource, /pipelineDateMode/);
   assert.doesNotMatch(screenSource, /Operacional/);
+});
+
+test('pipeline traduz sem responsavel para filtro nulo sem enviar sentinel como UUID', () => {
+  assert.match(toolbarSource, /includeUnassignedUserOption/);
+  assert.match(screenSource, /const isUnassignedFilter = filterUser === 'unassigned'/);
+  assert.match(
+    screenSource,
+    /const selectedFilterUserId = filterUser === 'all' \|\| isUnassignedFilter/,
+  );
+  assert.match(screenSource, /if \(isUnassignedFilter\) return undefined/);
+  assert.match(screenSource, /unassigned: isUnassignedFilter/);
+  assert.match(screenSource, /teamId: isUnassignedFilter \? sharedFilters\.teamId/);
 });
 
 test('cabecalho da coluna mantem apenas o menu e cria lead pelo botao geral', () => {
