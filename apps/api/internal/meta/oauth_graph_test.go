@@ -19,10 +19,12 @@ var pinnedLegacyOAuthScopes = []string{
 	"public_profile",
 	"pages_show_list",
 	"pages_read_engagement",
+	"pages_manage_ads",
 	"pages_manage_metadata",
 	"pages_messaging",
 	"leads_retrieval",
 	"ads_read",
+	"ads_management",
 	"business_management",
 	"instagram_basic",
 	"instagram_manage_insights",
@@ -460,6 +462,15 @@ func TestOAuthScopeProfilesArePinnedToReviewedLists(t *testing.T) {
 	}
 }
 
+func TestOAuthLegacyLoginRequestsLeadFormsPermissions(t *testing.T) {
+	legacyScopes := OAuthScopes()
+	for _, required := range []string{"leads_retrieval", "pages_manage_ads", "ads_management"} {
+		if !slices.Contains(legacyScopes, required) {
+			t.Errorf("legacy OAuth scopes do not include %q: %#v", required, legacyScopes)
+		}
+	}
+}
+
 func TestOAuthAuthorizationURLUsesOneAppAndUnifiedScopes(t *testing.T) {
 	graph := newOAuthTestGraph(t, "http://127.0.0.1:9999", "123456789", "test-app-secret-value")
 	state := "11111111-1111-4111-8111-111111111111.abcdefghijklmnopqrstuvwxyzABCDEFGH123456789"
@@ -526,7 +537,7 @@ func TestOAuthMissingScopesUsesActiveLoginProfile(t *testing.T) {
 		t.Fatalf("Business Login incorrectly reports missing permissions: %#v", missing)
 	}
 
-	legacyOnly := []string{"business_management"}
+	legacyOnly := []string{"ads_management", "business_management"}
 	legacyClient := &oauthGraphClient{}
 	if missing := oauthMissingScopes(pinnedBusinessLoginOAuthScopes, legacyClient.loginScopes()); !slices.Equal(missing, legacyOnly) {
 		t.Fatalf("legacy profile distinction = %#v, want %#v", missing, legacyOnly)
