@@ -574,7 +574,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "77cf0683bbb6ec43304a75fc33086d46341fedc69cd124b1b5bf5cc92159f4d6",
-      "source_sha256": "800e8aa7791b49b52fb4a1e44888ceb4ca05baa98ddf3dd7dd25b9701e290d16"
+      "source_sha256": "caccb139681389fee40ead509f7a3df2e3dbd64fb658777a47f70845600f38a3"
     },
     {
       "slug": "public-api",
