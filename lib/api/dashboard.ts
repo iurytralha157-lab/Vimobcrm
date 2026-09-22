@@ -5,6 +5,8 @@ import {
   apiDashboardExtraCountsResponseSchema,
   apiDashboardFunnelSchema,
   apiDashboardFunnelResponseSchema,
+  apiDashboardLeadDistributionSchema,
+  apiDashboardLeadDistributionResponseSchema,
   apiDashboardRecentActivitiesSchema,
   apiDashboardRecentActivitiesResponseSchema,
   apiDashboardSourceSchema,
@@ -33,6 +35,7 @@ export type DashboardAPIFilters = {
   teamId?: string | null
   userId?: string | null
   source?: string | null
+  pageId?: string | null
   campaignId?: string | null
   adSetId?: string | null
   adId?: string | null
@@ -47,6 +50,7 @@ export type DashboardStatsResponse = z.infer<typeof apiDashboardStatsSchema>
 export type DashboardFunnelPoint = z.infer<typeof apiDashboardFunnelSchema>[number]
 export type DashboardSourcePoint = z.infer<typeof apiDashboardSourceSchema>[number]
 export type DashboardTopBrokersResponse = z.infer<typeof apiDashboardTopBrokersSchema>
+export type DashboardLeadDistributionResponse = z.infer<typeof apiDashboardLeadDistributionSchema>
 export type DashboardUpcomingTask = z.infer<typeof apiDashboardUpcomingTasksSchema>[number]
 export type DashboardExtraCounts = z.infer<typeof apiDashboardExtraCountsSchema>
 export type DashboardRecentActivity = z.infer<typeof apiDashboardRecentActivitiesSchema>[number]
@@ -127,6 +131,29 @@ export async function getDashboardTopBrokers(params: DashboardRequestContext & {
     signal: params.signal,
   })
   const validated = validateDomainResponse(apiDashboardTopBrokersResponseSchema, response, 'dashboard.top-brokers')
+
+  return validated.data
+}
+
+export async function getDashboardLeadDistribution(params: DashboardRequestContext & {
+  filters?: DashboardAPIFilters
+}) {
+  const organizationId = parseDashboardOrganizationId(params.organizationId, 'dashboard.lead-distribution')
+  const filters = parseDomainInput(
+    dashboardFiltersSchema,
+    normalizeDashboardFilters(params.filters),
+    'dashboard.lead-distribution',
+  )
+  const response = await vimobAPIRequest<unknown>('/v1/dashboard/lead-distribution', {
+    organizationId,
+    query: buildDashboardQuery(filters),
+    signal: params.signal,
+  })
+  const validated = validateDomainResponse(
+    apiDashboardLeadDistributionResponseSchema,
+    response,
+    'dashboard.lead-distribution',
+  )
 
   return validated.data
 }
@@ -226,6 +253,7 @@ function normalizeDashboardFilters(filters?: DashboardAPIFilters): DashboardAPIF
     teamId: normalizeDashboardFilterValue(filters?.teamId),
     userId: normalizeDashboardFilterValue(filters?.userId),
     source: normalizeDashboardFilterValue(filters?.source),
+    pageId: normalizeDashboardFilterValue(filters?.pageId),
     campaignId: normalizeDashboardFilterValue(filters?.campaignId),
     adSetId: normalizeDashboardFilterValue(filters?.adSetId),
     adId: normalizeDashboardFilterValue(filters?.adId),
@@ -245,6 +273,7 @@ export function getDashboardFiltersQueryKey(filters?: DashboardAPIFilters) {
     teamId: normalized.teamId ?? null,
     userId: normalized.userId ?? null,
     source: normalized.source ?? null,
+    pageId: normalized.pageId ?? null,
     campaignId: normalized.campaignId ?? null,
     adSetId: normalized.adSetId ?? null,
     adId: normalized.adId ?? null,
@@ -308,6 +337,7 @@ function buildDashboardQuery(filters?: DashboardAPIFilters) {
     teamId: filters?.teamId,
     userId: filters?.userId,
     source: filters?.source,
+    pageId: filters?.pageId,
     campaignId: filters?.campaignId,
     adSetId: filters?.adSetId,
     adId: filters?.adId,

@@ -50,6 +50,7 @@ type StageCountsResponse = {
 
 export type LeadMetaFiltersResponse = {
   sources: string[]
+  pages: Array<{ id: string; name: string }>
   campaigns: Array<{ id: string; name: string }>
   adsets: Array<{ id: string; name: string; campaignId: string }>
   ads: Array<{ id: string; name: string; adsetId: string; campaignId: string }>
@@ -130,6 +131,7 @@ export async function getLeadMetaFilters(params: {
   dateRange?: { from: Date; to: Date } | null
   dateMode?: PipelineDateMode
   pipelineId?: string | null
+  filterPage?: string | null
   signal?: AbortSignal
 }) {
   const response = await vimobAPIRequest<LeadMetaFiltersEnvelope>('/v1/lead-meta-filters', {
@@ -137,6 +139,7 @@ export async function getLeadMetaFilters(params: {
     signal: params.signal,
     query: {
       pipelineId: params.pipelineId,
+      filterPage: params.filterPage,
       dateFrom: params.dateRange?.from.toISOString(),
       dateTo: params.dateRange?.to.toISOString(),
       dateMode: resolvePipelineDateModeForRange(params.dateRange, params.dateMode),

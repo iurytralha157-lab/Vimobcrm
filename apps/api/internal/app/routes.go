@@ -354,6 +354,7 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 	mux.Handle("GET /v1/dashboard/funnel", withPermission(permissions.DashboardView, http.HandlerFunc(leadsHandler.ShowDashboardFunnel)))
 	mux.Handle("GET /v1/dashboard/sources", withPermission(permissions.DashboardView, http.HandlerFunc(leadsHandler.ShowDashboardSources)))
 	mux.Handle("GET /v1/dashboard/top-brokers", withPermission(permissions.DashboardView, http.HandlerFunc(leadsHandler.ShowDashboardTopBrokers)))
+	mux.Handle("GET /v1/dashboard/lead-distribution", withPermission(permissions.DashboardView, http.HandlerFunc(leadsHandler.ShowDashboardLeadDistribution)))
 	mux.Handle("GET /v1/dashboard/upcoming-tasks", withPermission(permissions.DashboardView, http.HandlerFunc(leadsHandler.ListDashboardUpcomingTasks)))
 	mux.Handle("GET /v1/dashboard/deals-evolution", withPermission(permissions.DashboardView, http.HandlerFunc(leadsHandler.ShowDashboardDealsEvolution)))
 	mux.Handle("GET /v1/dashboard/extra-counts", withPermission(permissions.DashboardView, http.HandlerFunc(leadsHandler.ShowDashboardExtraCounts)))

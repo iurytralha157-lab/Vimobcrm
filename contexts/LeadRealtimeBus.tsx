@@ -80,6 +80,7 @@ const LEAD_LIST_QUERY_KEYS = [
   "lead-sources-data",
   "deals-evolution",
   "dashboard-extra-counts",
+  "dashboard-lead-distribution",
   "dashboard-recent-activities",
   "recent-activities",
   "top-brokers",

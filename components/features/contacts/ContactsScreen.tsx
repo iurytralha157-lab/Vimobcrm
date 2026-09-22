@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import {
@@ -34,10 +34,6 @@ import { useTags } from "@/hooks/use-tags";
 import { useToast } from "@/hooks/use-toast";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { useOrganizationUsers } from "@/hooks/use-users";
-import {
-  getDateRangeFromPreset,
-  type DatePreset,
-} from "@/hooks/use-dashboard-filters";
 import { getErrorMessageOrFallback as getErrorMessage } from "@/lib/api/vimob-error";
 
 export default function Contacts() {
@@ -58,23 +54,17 @@ export default function Contacts() {
   const isMobile = useIsMobile();
   const { toast } = useToast();
   const [shouldLoadFilterOptions, setShouldLoadFilterOptions] = useState(false);
-  const [contactsDatePreset, setContactsDatePreset] =
-    useState<DatePreset | null>(null);
-  const [contactsCustomDateRange, setContactsCustomDateRange] = useState<{
-    from: Date;
-    to: Date;
-  } | null>(null);
-  const contactsDateRange = useMemo(() => {
-    if (!contactsDatePreset) return null;
-    if (contactsDatePreset === "custom") return contactsCustomDateRange;
-    return getDateRangeFromPreset(contactsDatePreset);
-  }, [contactsCustomDateRange, contactsDatePreset]);
   const [selectedPipeline, setSelectedPipeline] = useState<string>("all");
   const [selectedStage, setSelectedStage] = useState<string>("all");
   const { data: pipelines = [] } = usePipelines();
 
   const {
     filters: sharedFilters,
+    datePreset,
+    setDatePreset,
+    customDateRange,
+    setCustomDateRange,
+    clearDateFilter,
     setTeamId,
     userId: selectedAssignee,
     setUserId: setSelectedAssignee,
@@ -84,6 +74,8 @@ export default function Contacts() {
     setDealStatus: setSelectedDealStatus,
     source: selectedSource,
     setSource: setSelectedSource,
+    pageId,
+    setPageId,
     campaignId,
     setCampaignId,
     adSetId,
@@ -95,11 +87,13 @@ export default function Contacts() {
     clearFilters,
     hasActiveFilters: hasSharedActiveFilters,
     dynamicSources,
+    pages,
     campaigns,
     adSets,
     ads,
     tags: allTagsFromHook,
     isLoadingSources,
+    isLoadingPages,
     isLoadingCampaigns,
     isLoadingAdSets,
     isLoadingAds,
@@ -109,9 +103,9 @@ export default function Contacts() {
   } = useSharedFilters({
     loadDynamicOptions: shouldLoadFilterOptions,
     pipelineId: selectedPipeline !== "all" ? selectedPipeline : null,
-    dateMode: contactsDateRange ? "origin" : undefined,
-    dateRangeOverride: contactsDateRange,
+    dateMode: "origin",
   });
+  const contactsDateRange = sharedFilters.dateRange;
 
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [selectedContactId, setSelectedContactId] = useState<string | null>(
@@ -184,6 +178,7 @@ export default function Contacts() {
     assigneeId: selectedAssignee,
     tagIds: selectedTags,
     source: selectedSource,
+    pageId,
     campaignId,
     adSetId,
     adId,
@@ -267,8 +262,6 @@ export default function Contacts() {
 
   const handleClearFilters = () => {
     clearFilters();
-    setContactsDatePreset(null);
-    setContactsCustomDateRange(null);
     setSelectedPipeline("all");
     setSelectedStage("all");
     setLostLeadsView(false);
@@ -377,16 +370,15 @@ export default function Contacts() {
     };
 
   const toolbarFilters: ContactsToolbarFilters = {
-    datePreset: contactsDatePreset,
-    onDatePresetChange: handleFilterChange(setContactsDatePreset),
+    datePreset,
+    onDatePresetChange: handleFilterChange(setDatePreset),
     onClearDatePreset: () => {
-      setContactsDatePreset(null);
-      setContactsCustomDateRange(null);
+      clearDateFilter();
       setPage(1);
     },
     defaultDatePreset: null,
-    customDateRange: contactsCustomDateRange,
-    onCustomDateRangeChange: handleFilterChange(setContactsCustomDateRange),
+    customDateRange,
+    onCustomDateRangeChange: handleFilterChange(setCustomDateRange),
     teamId: sharedFilters.teamId,
     onTeamChange: handleFilterChange(setTeamId),
     userId: selectedAssignee,
@@ -406,6 +398,8 @@ export default function Contacts() {
     stages: filterStages,
     source: selectedSource,
     onSourceChange: handleFilterChange(setSelectedSource),
+    pageId: sharedFilters.pageId,
+    onPageChange: handleFilterChange(setPageId),
     campaignId: sharedFilters.campaignId,
     onCampaignChange: handleFilterChange(setCampaignId),
     adSetId: sharedFilters.adSetId,
@@ -427,11 +421,13 @@ export default function Contacts() {
     onClear: handleClearFilters,
     hasActiveFilters,
     dynamicSources,
+    pages,
     campaigns,
     adSets,
     ads,
     tags: allTagsFromHook,
     isLoadingSources,
+    isLoadingPages,
     isLoadingCampaigns,
     isLoadingAdSets,
     isLoadingAds,

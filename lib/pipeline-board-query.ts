@@ -9,6 +9,7 @@ export type PipelineBoardQueryFilters = {
   filterTags?: string[];
   filterDealStatus?: string;
   searchQuery?: string;
+  filterPage?: string;
   filterCampaign?: string;
   filterAdSet?: string;
   filterAd?: string;
@@ -45,6 +46,7 @@ export function buildPipelineBoardQuery(params: {
     filterTags: serializeSelectedIds(filters?.filterTags),
     filterDealStatus: filters?.filterDealStatus,
     search: filters?.searchQuery,
+    filterPage: filters?.filterPage,
     filterCampaign: filters?.filterCampaign,
     filterAdSet: filters?.filterAdSet,
     filterAd: filters?.filterAd,

@@ -19,7 +19,7 @@ func TestRoundRobinAvailabilityPredicateScheduleSemantics(t *testing.T) {
 		"availability_member.user_id = candidates.user_id",
 		"coalesce(availability_member.is_active, true) = true",
 		"candidates.team_member_id is null",
-		"or availability_member.id = candidates.team_member_id",
+		"availability_member.id = candidates.team_member_id",
 		"availability.day_of_week = extract(dow from now() at time zone 'america/sao_paulo')::int",
 		"availability.day_of_week = (extract(dow from now() at time zone 'america/sao_paulo')::int + 6) % 7",
 		"coalesce(availability.is_active, true) = true",
@@ -29,12 +29,15 @@ func TestRoundRobinAvailabilityPredicateScheduleSemantics(t *testing.T) {
 		t.Fatal("current-day schedule matching must cover normal and overnight start-day windows")
 	}
 
-	if strings.Count(predicate, "candidates.team_member_id is null") != 2 {
-		t.Fatal("direct-member scope must be applied to both schedule detection and current-window matching")
+	if strings.Count(predicate, "candidates.team_member_id is null") != 1 {
+		t.Fatal("direct queue members must have one unconditional eligibility branch")
 	}
 	flattenedPredicate := strings.Join(strings.Fields(predicate), " ")
-	if strings.Contains(flattenedPredicate, "candidates.team_member_id is null or not exists") {
-		t.Fatal("a null team_member_id must not be an unconditional 24-hour eligibility bypass")
+	if !strings.Contains(flattenedPredicate, "candidates.team_member_id is null or not exists") {
+		t.Fatal("a null team_member_id must bypass schedules inherited from unrelated teams")
+	}
+	if strings.Contains(flattenedPredicate, "candidates.team_member_id is null or availability_member.id") {
+		t.Fatal("team schedule lookups must be restricted to the candidate's exact membership")
 	}
 
 	matchStart := strings.Index(predicate, "\tor exists (")

@@ -184,6 +184,12 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: filterPage
+          in: query
+          description: Exact Facebook/Meta Page identifier carried by the same attribution entry as the other Meta filters.
+          schema:
+            type: string
+            maxLength: 255
       responses:
         "200":
           description: Pipeline board data.
@@ -243,6 +249,12 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: filterPage
+          in: query
+          description: Exact Facebook/Meta Page identifier carried by the same attribution entry as the other Meta filters.
+          schema:
+            type: string
+            maxLength: 255
       responses:
         "200":
           description: Stage lead page.
@@ -292,6 +304,12 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: filterPage
+          in: query
+          description: Exact Facebook/Meta Page identifier carried by the same attribution entry as the other Meta filters.
+          schema:
+            type: string
+            maxLength: 255
       responses:
         "200":
           description: Counts keyed by stage id.
@@ -308,7 +326,7 @@ paths:
                       format: int64
   /v1/lead-meta-filters:
     get:
-      summary: List campaign/adset/ad options from visible lead metadata
+      summary: List page/campaign/adset/ad options from visible lead attribution
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - name: dateFrom
@@ -321,6 +339,12 @@ paths:
           schema:
             type: string
             format: date-time
+        - name: filterPage
+          in: query
+          description: Restricts the returned campaign hierarchy to visible leads attributed to this exact Facebook/Meta Page identifier.
+          schema:
+            type: string
+            maxLength: 255
       responses:
         "200":
           description: Meta Ads filter options.
@@ -342,6 +366,7 @@ paths:
         - $ref: "#/components/parameters/DashboardTeamId"
         - $ref: "#/components/parameters/DashboardUserId"
         - $ref: "#/components/parameters/DashboardSource"
+        - $ref: "#/components/parameters/DashboardPageId"
         - $ref: "#/components/parameters/DashboardCampaignId"
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
@@ -368,6 +393,7 @@ paths:
         - $ref: "#/components/parameters/DashboardTeamId"
         - $ref: "#/components/parameters/DashboardUserId"
         - $ref: "#/components/parameters/DashboardSource"
+        - $ref: "#/components/parameters/DashboardPageId"
         - $ref: "#/components/parameters/DashboardCampaignId"
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
@@ -393,6 +419,7 @@ paths:
         - $ref: "#/components/parameters/DashboardTeamId"
         - $ref: "#/components/parameters/DashboardUserId"
         - $ref: "#/components/parameters/DashboardSource"
+        - $ref: "#/components/parameters/DashboardPageId"
         - $ref: "#/components/parameters/DashboardCampaignId"
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
@@ -417,6 +444,7 @@ paths:
         - $ref: "#/components/parameters/DashboardTeamId"
         - $ref: "#/components/parameters/DashboardUserId"
         - $ref: "#/components/parameters/DashboardSource"
+        - $ref: "#/components/parameters/DashboardPageId"
         - $ref: "#/components/parameters/DashboardCampaignId"
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
@@ -431,6 +459,44 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DashboardTopBrokersResponse"
+  /v1/dashboard/lead-distribution:
+    get:
+      summary: Get visible lead counts by assignee and assignment team
+      description: >-
+        Available only to organization owners, administrators and team leaders.
+        Both dimensions use the same visible lead cohort and created_at period as
+        the main lead KPI. Team buckets use the team recorded on the lead assignment,
+        so every lead belongs to exactly one team bucket; missing assignments are
+        returned as Sem responsável or Sem equipe. Each dimension returns at most
+        50 named entities and consolidates any positive remainder into Outros.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/DashboardDateFrom"
+        - $ref: "#/components/parameters/DashboardDateTo"
+        - $ref: "#/components/parameters/DashboardTeamId"
+        - $ref: "#/components/parameters/DashboardUserId"
+        - $ref: "#/components/parameters/DashboardSource"
+        - $ref: "#/components/parameters/DashboardPageId"
+        - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardAdSetId"
+        - $ref: "#/components/parameters/DashboardAdId"
+        - $ref: "#/components/parameters/DashboardTagId"
+        - $ref: "#/components/parameters/DashboardTagIds"
+        - $ref: "#/components/parameters/DashboardDealStatus"
+        - $ref: "#/components/parameters/DashboardSearchQuery"
+      responses:
+        "200":
+          description: Lead distribution across non-empty assignee and team buckets.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardLeadDistributionResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
   /v1/dashboard/upcoming-tasks:
     get:
       summary: Get upcoming open lead tasks
@@ -460,6 +526,7 @@ paths:
         - $ref: "#/components/parameters/DashboardTeamId"
         - $ref: "#/components/parameters/DashboardUserId"
         - $ref: "#/components/parameters/DashboardSource"
+        - $ref: "#/components/parameters/DashboardPageId"
         - $ref: "#/components/parameters/DashboardCampaignId"
         - $ref: "#/components/parameters/DashboardAdSetId"
         - $ref: "#/components/parameters/DashboardAdId"
@@ -480,13 +547,17 @@ paths:
       description: >-
         Returns daily paid-media facts joined to the last Meta attribution for each
         lead in the requested cohort. Both dates are required and the inclusive
-        range cannot exceed 366 calendar days.
+        range cannot exceed 366 calendar days. When pageId is selected, CRM leads
+        match the same last-touch entry, while paid metrics include only ad-level
+        facts explicitly associated with that Facebook Page; historical coverage
+        may therefore be partial.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/MarketingAnalyticsDateFrom"
         - $ref: "#/components/parameters/MarketingAnalyticsDateTo"
         - $ref: "#/components/parameters/MarketingAccountId"
         - $ref: "#/components/parameters/MarketingObjective"
+        - $ref: "#/components/parameters/AnalyticsPageId"
         - $ref: "#/components/parameters/AnalyticsCampaignId"
         - $ref: "#/components/parameters/AnalyticsAdSetId"
         - $ref: "#/components/parameters/AnalyticsAdId"
@@ -669,6 +740,12 @@ paths:
           schema:
             type: string
             maxLength: 80
+        - name: pageId
+          in: query
+          description: Exact Facebook/Meta Page identifier from the lead attribution entry.
+          schema:
+            type: string
+            maxLength: 255
         - name: campaignId
           in: query
           schema:
@@ -5784,14 +5861,26 @@ components:
     DashboardUserId:
       name: userId
       in: query
+      description: User UUID or unassigned for leads without a current assignee.
       schema:
-        type: string
-        format: uuid
+        oneOf:
+          - type: string
+            format: uuid
+          - type: string
+            const: unassigned
     DashboardSource:
       name: source
       in: query
       schema:
         type: string
+    DashboardPageId:
+      name: pageId
+      in: query
+      description: Exact Facebook/Meta Page identifier from the same attribution entry as campaign, ad set and ad.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
     DashboardCampaignId:
       name: campaignId
       in: query
@@ -5863,6 +5952,14 @@ components:
     AnalyticsCampaignId:
       name: campaignId
       in: query
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+    AnalyticsPageId:
+      name: pageId
+      in: query
+      description: Facebook Page ID for exact CRM attribution and page-scoped Meta facts.
       schema:
         type: string
         minLength: 1
@@ -14995,6 +15092,62 @@ components:
           type: number
         totalCommissions:
           type: number
+    DashboardLeadDistributionResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/DashboardLeadDistribution"
+    DashboardLeadDistribution:
+      type: object
+      required: [totalLeads, users, teams]
+      properties:
+        totalLeads:
+          type: integer
+          format: int64
+          minimum: 0
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardLeadDistributionUser"
+        teams:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardLeadDistributionTeam"
+    DashboardLeadDistributionUser:
+      type: object
+      required: [id, kind, name, avatarUrl, leadCount]
+      properties:
+        id:
+          type: [string, "null"]
+          format: uuid
+        kind:
+          type: string
+          enum: [entity, unassigned, other]
+        name:
+          type: string
+        avatarUrl:
+          type: [string, "null"]
+        leadCount:
+          type: integer
+          format: int64
+          minimum: 1
+    DashboardLeadDistributionTeam:
+      type: object
+      required: [id, kind, name, leadCount]
+      properties:
+        id:
+          type: [string, "null"]
+          format: uuid
+        kind:
+          type: string
+          enum: [entity, unassigned, other]
+        name:
+          type: string
+        leadCount:
+          type: integer
+          format: int64
+          minimum: 1
     DashboardUpcomingTasksResponse:
       type: object
       required: [data]
@@ -15109,6 +15262,10 @@ components:
           type: [string, "null"]
         ad_id:
           type: [string, "null"]
+        page_name:
+          type: [string, "null"]
+        page_id:
+          type: [string, "null"]
         platform:
           type: [string, "null"]
     PipelineBoardStage:
@@ -15188,8 +15345,12 @@ components:
             $ref: "#/components/schemas/LeadMeta"
     LeadMetaFilters:
       type: object
-      required: [campaigns, adsets, ads]
+      required: [pages, campaigns, adsets, ads, sources]
       properties:
+        pages:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeadMetaPageOption"
         campaigns:
           type: array
           items:
@@ -15202,6 +15363,18 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/LeadMetaAdOption"
+        sources:
+          type: array
+          items:
+            type: string
+    LeadMetaPageOption:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
     LeadMetaCampaignOption:
       type: object
       required: [id, name]

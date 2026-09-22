@@ -49,12 +49,13 @@ import {
 import {
   useCampaignInsights,
   type CampaignAggregated,
+  type CampaignInsightsFilters,
 } from "@/hooks/use-campaign-insights";
-import type { SharedFilters } from "@/hooks/use-shared-filters";
 import { MetaCreativePreview } from "./MetaCreativePreview";
+import { selectAttributedMetaEntities } from "./meta-campaign-dashboard-model";
 
 interface MetaCampaignDashboardProps {
-  filters: SharedFilters;
+  filters: CampaignInsightsFilters;
 }
 
 type RealCampaign = CampaignAggregated & {
@@ -105,8 +106,10 @@ function inferKind(objective?: string | null): MetaCampaignKind {
   return "lead_form";
 }
 
-function buildSnapshotFromDatabase(data: NonNullable<ReturnType<typeof useCampaignInsights>["data"]>): MetaCampaignSnapshot {
-  const campaigns: MetaCampaignPerformance[] = data.campaigns.map((campaign) => {
+function buildSnapshotFromDatabase(data: NonNullable<ReturnType<typeof useCampaignInsights>["data"]>, crmOnly = false): MetaCampaignSnapshot {
+  const campaigns: MetaCampaignPerformance[] = data.campaigns
+    .filter((campaign) => !crmOnly || campaign.leads_count > 0)
+    .map((campaign) => {
     const realCampaign = campaign as RealCampaign;
     return {
       id: campaign.campaign_id,
@@ -127,7 +130,7 @@ function buildSnapshotFromDatabase(data: NonNullable<ReturnType<typeof useCampai
       ctr: realCampaign.ctr || 0,
       cpl: campaign.cpl || 0,
       hookRate: realCampaign.hook_rate || 0,
-      adSets: campaign.adsets.map((adSet) => ({
+      adSets: campaign.adsets.filter((adSet) => !crmOnly || adSet.leads_count > 0).map((adSet) => ({
         id: adSet.adset_id,
         name: adSet.adset_name,
         status: "ACTIVE",
@@ -141,7 +144,7 @@ function buildSnapshotFromDatabase(data: NonNullable<ReturnType<typeof useCampai
         ctr: (adSet as typeof adSet & { ctr?: number | null }).ctr || 0,
         cpl: adSet.cpl || 0,
         hookRate: (adSet as typeof adSet & { hook_rate?: number | null }).hook_rate || 0,
-        creatives: adSet.ads.map((ad) => ({
+        creatives: adSet.ads.filter((ad) => !crmOnly || ad.leads_count > 0).map((ad) => ({
           id: ad.ad_id,
           name: ad.ad_name,
           type: ad.creative_video_url ? "video" : "image",
@@ -227,7 +230,7 @@ function CampaignStatusBadge({ status }: { status: MetaDeliveryStatus }) {
   );
 }
 
-function CreativeRow({ creative, maxLeads }: { creative: MetaCreativeAsset; maxLeads: number }) {
+function CreativeRow({ creative, maxLeads, showPaidMetrics }: { creative: MetaCreativeAsset; maxLeads: number; showPaidMetrics: boolean }) {
   const destination = getMetaCreativeDestination(creative);
   const leadShare = maxLeads > 0 ? (creative.leads / maxLeads) * 100 : 0;
 
@@ -240,11 +243,11 @@ function CreativeRow({ creative, maxLeads }: { creative: MetaCreativeAsset; maxL
           <p className="truncate text-[11px] text-muted-foreground">ID {creative.id}</p>
         </div>
       </div>
-      <span className="text-right">{formatCurrency(creative.spend)}</span>
+      <span className="text-right">{showPaidMetrics ? formatCurrency(creative.spend) : "—"}</span>
       <span className="text-right font-medium">{formatNumber(creative.leads)}</span>
-      <span className="text-right">{formatCurrency(creative.cpl)}</span>
-      <span className="text-right">{formatPercent(creative.ctr)}</span>
-      <span className="text-right">{formatPercent(creative.hookRate)}</span>
+      <span className="text-right">{showPaidMetrics ? formatCurrency(creative.cpl) : "—"}</span>
+      <span className="text-right">{showPaidMetrics ? formatPercent(creative.ctr) : "—"}</span>
+      <span className="text-right">{showPaidMetrics ? formatPercent(creative.hookRate) : "—"}</span>
       {destination ? (
         <Button asChild variant="ghost" size="icon" className="ml-auto h-8 w-8">
           <a href={destination} target="_blank" rel="noreferrer" aria-label={`Abrir ${creative.name}`}>
@@ -261,7 +264,7 @@ function CreativeRow({ creative, maxLeads }: { creative: MetaCreativeAsset; maxL
   );
 }
 
-function AdSetRow({ adSet }: { adSet: MetaCampaignPerformance["adSets"][number] }) {
+function AdSetRow({ adSet, showPaidMetrics }: { adSet: MetaCampaignPerformance["adSets"][number]; showPaidMetrics: boolean }) {
   const maxLeads = Math.max(...adSet.creatives.map((creative) => creative.leads), 1);
 
   return (
@@ -274,21 +277,21 @@ function AdSetRow({ adSet }: { adSet: MetaCampaignPerformance["adSets"][number] 
             <p className="truncate text-[11px] text-muted-foreground">Conjunto {adSet.id}</p>
           </div>
         </div>
-        <span className="text-right">{formatCurrency(adSet.spend)}</span>
+        <span className="text-right">{showPaidMetrics ? formatCurrency(adSet.spend) : "—"}</span>
         <span className="text-right font-medium">{formatNumber(adSet.leads)}</span>
-        <span className="text-right">{formatCurrency(adSet.cpl)}</span>
-        <span className="text-right">{formatPercent(adSet.ctr)}</span>
-        <span className="text-right">{formatPercent(adSet.hookRate)}</span>
+        <span className="text-right">{showPaidMetrics ? formatCurrency(adSet.cpl) : "—"}</span>
+        <span className="text-right">{showPaidMetrics ? formatPercent(adSet.ctr) : "—"}</span>
+        <span className="text-right">{showPaidMetrics ? formatPercent(adSet.hookRate) : "—"}</span>
         <span className="text-right font-medium text-emerald-500">{formatNumber(adSet.sales)}</span>
       </div>
       {adSet.creatives.map((creative) => (
-        <CreativeRow key={creative.id} creative={creative} maxLeads={maxLeads} />
+        <CreativeRow key={creative.id} creative={creative} maxLeads={maxLeads} showPaidMetrics={showPaidMetrics} />
       ))}
     </div>
   );
 }
 
-function CampaignAccordion({ campaign }: { campaign: MetaCampaignPerformance }) {
+function CampaignAccordion({ campaign, showPaidMetrics }: { campaign: MetaCampaignPerformance; showPaidMetrics: boolean }) {
   return (
     <AccordionItem value={campaign.id} className="border-white/[0.055]">
       <AccordionTrigger className="min-w-[860px] px-3 py-3 hover:no-underline">
@@ -296,27 +299,31 @@ function CampaignAccordion({ campaign }: { campaign: MetaCampaignPerformance }) 
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
               <span className="truncate font-normal">{campaign.name}</span>
-              <CampaignStatusBadge status={campaign.status} />
+              {showPaidMetrics && <CampaignStatusBadge status={campaign.status} />}
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-              <span>{kindLabel[campaign.kind]}</span>
-              <span>•</span>
-              <span>{campaign.objective}</span>
-              <span>•</span>
+              {showPaidMetrics && (
+                <>
+                  <span>{kindLabel[campaign.kind]}</span>
+                  <span>•</span>
+                  <span>{campaign.objective}</span>
+                  <span>•</span>
+                </>
+              )}
               <span>ID {campaign.id}</span>
             </div>
           </div>
-          <span className="text-right font-medium">{formatCurrency(campaign.spend)}</span>
+          <span className="text-right font-medium">{showPaidMetrics ? formatCurrency(campaign.spend) : "—"}</span>
           <span className="text-right font-medium">{formatNumber(campaign.leads)}</span>
-          <span className="text-right">{formatCurrency(campaign.cpl)}</span>
-          <span className="text-right">{formatPercent(campaign.ctr)}</span>
-          <span className="text-right">{formatPercent(campaign.hookRate)}</span>
+          <span className="text-right">{showPaidMetrics ? formatCurrency(campaign.cpl) : "—"}</span>
+          <span className="text-right">{showPaidMetrics ? formatPercent(campaign.ctr) : "—"}</span>
+          <span className="text-right">{showPaidMetrics ? formatPercent(campaign.hookRate) : "—"}</span>
           <span className="text-right font-normal text-emerald-500">{formatNumber(campaign.sales)}</span>
         </div>
       </AccordionTrigger>
       <AccordionContent className="pb-0">
         {campaign.adSets.map((adSet) => (
-          <AdSetRow key={adSet.id} adSet={adSet} />
+          <AdSetRow key={adSet.id} adSet={adSet} showPaidMetrics={showPaidMetrics} />
         ))}
       </AccordionContent>
     </AccordionItem>
@@ -324,14 +331,22 @@ function CampaignAccordion({ campaign }: { campaign: MetaCampaignPerformance }) 
 }
 
 export function MetaCampaignDashboard({ filters }: MetaCampaignDashboardProps) {
-  const { data, isLoading } = useCampaignInsights(filters);
+  const { data, isLoading, isError, refetch } = useCampaignInsights(filters);
+  const showPaidMetrics = !filters.pageId;
 
   const snapshot = useMemo(() => {
-    if (data?.campaigns?.length) return buildSnapshotFromDatabase(data);
+    if (data?.campaigns?.length) return buildSnapshotFromDatabase(data, Boolean(filters.pageId));
     return getEmptyMetaCampaignSnapshot();
-  }, [data]);
+  }, [data, filters.pageId]);
 
-  const creatives = useMemo(() => flattenMetaCreatives(snapshot.campaigns), [snapshot.campaigns]);
+  const attributedCampaigns = useMemo(
+    () => selectAttributedMetaEntities(snapshot.campaigns),
+    [snapshot.campaigns],
+  );
+  const creatives = useMemo(
+    () => selectAttributedMetaEntities(flattenMetaCreatives(snapshot.campaigns)),
+    [snapshot.campaigns],
+  );
   const bestCreative = creatives[0];
   const hasCampaigns = snapshot.campaigns.length > 0;
   const totals = useMemo(() => {
@@ -369,14 +384,27 @@ export function MetaCampaignDashboard({ filters }: MetaCampaignDashboardProps) {
     );
   }
 
+  if (isError && !data) {
+    return (
+      <div role="alert" className="app-card-soft space-y-3 p-4 text-sm text-muted-foreground">
+        <p>Não foi possível carregar os dados de campanhas para este filtro.</p>
+        <Button type="button" variant="outline" size="sm" onClick={() => void refetch()}>
+          Tentar novamente
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={hasCampaigns ? "default" : "outline"}>
-            {hasCampaigns ? "Dados sincronizados" : "Sem dados sincronizados"}
+            {filters.pageId
+              ? hasCampaigns ? "Leads atribuídos à página" : "Sem leads atribuídos à página"
+              : hasCampaigns ? "Dados sincronizados" : "Sem dados sincronizados"}
           </Badge>
-          {snapshot.generatedAt && (
+          {showPaidMetrics && snapshot.generatedAt && (
             <span className="text-xs text-muted-foreground">
               {new Intl.DateTimeFormat("pt-BR", {
                 day: "2-digit",
@@ -389,13 +417,19 @@ export function MetaCampaignDashboard({ filters }: MetaCampaignDashboardProps) {
         </div>
       </div>
 
+      {!showPaidMetrics && (
+        <p className="text-xs text-muted-foreground">
+          A página filtra os leads pela origem Meta. Gasto, CPL, CTR e Hook não são exibidos aqui porque a cobertura de métricas pagas por página pode ser parcial.
+        </p>
+      )}
+
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MetricBlock icon={BarChart3} label="Campanhas ativas" value={formatNumber(totals.activeCampaigns)} />
-        <MetricBlock icon={Banknote} label="Investimento" value={formatCurrency(totals.spend)} subValue={`Mês anterior ${formatCurrency(totals.previousSpend)}`} />
-        <MetricBlock icon={Users} label="Leads / CPL" value={formatNumber(totals.leads)} subValue={formatCurrency(totals.cpl)} />
+        <MetricBlock icon={BarChart3} label={filters.pageId ? "Campanhas com leads" : "Campanhas ativas"} value={formatNumber(filters.pageId ? attributedCampaigns.length : totals.activeCampaigns)} />
+        <MetricBlock icon={Banknote} label="Investimento" value={showPaidMetrics ? formatCurrency(totals.spend) : "—"} subValue={showPaidMetrics ? `Mês anterior ${formatCurrency(totals.previousSpend)}` : undefined} />
+        <MetricBlock icon={Users} label={showPaidMetrics ? "Leads / CPL" : "Leads"} value={formatNumber(totals.leads)} subValue={showPaidMetrics ? formatCurrency(totals.cpl) : undefined} />
         <MetricBlock icon={Trophy} label="Vendas atribuídas" value={formatNumber(totals.sales)} subValue={formatCurrency(totals.revenue)} tone="success" />
-        <MetricBlock icon={MousePointerClick} label="CTR médio" value={formatPercent(totals.ctr)} />
-        <MetricBlock icon={Zap} label="Hook rate" value={formatPercent(totals.hookRate)} />
+        <MetricBlock icon={MousePointerClick} label="CTR médio" value={showPaidMetrics ? formatPercent(totals.ctr) : "—"} />
+        <MetricBlock icon={Zap} label="Hook rate" value={showPaidMetrics ? formatPercent(totals.hookRate) : "—"} />
         <MetricBlock icon={Target} label="Melhor criativo" value={bestCreative?.name || "--"} subValue={bestCreative ? `${bestCreative.leads} leads` : undefined} tone="warning" />
         <MetricBlock icon={Percent} label="Criativos rastreados" value={formatNumber(creatives.length)} />
       </div>
@@ -405,14 +439,14 @@ export function MetaCampaignDashboard({ filters }: MetaCampaignDashboardProps) {
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
               <h3 className="text-[14px] font-normal">Evolução do período</h3>
-              <p className="text-xs text-muted-foreground">Leads e CPL diário</p>
+              <p className="text-xs text-muted-foreground">{showPaidMetrics ? "Leads e CPL diário" : "Leads por dia"}</p>
             </div>
           </div>
           {snapshot.daily.length > 0 ? (
             <ChartContainer
               config={{
                 leads: { label: "Leads", color: "hsl(var(--primary))" },
-                cpl: { label: "CPL", color: "hsl(var(--chart-5))" },
+                ...(showPaidMetrics ? { cpl: { label: "CPL", color: "hsl(var(--chart-5))" } } : {}),
               }}
               className="h-[260px] w-full aspect-auto"
             >
@@ -428,24 +462,26 @@ export function MetaCampaignDashboard({ filters }: MetaCampaignDashboardProps) {
                   fill="var(--color-leads)"
                   fillOpacity={0.18}
                 />
-                <Area
-                  type="monotone"
-                  dataKey="cpl"
-                  stroke="var(--color-cpl)"
-                  fill="var(--color-cpl)"
-                  fillOpacity={0.12}
-                />
+                {showPaidMetrics && (
+                  <Area
+                    type="monotone"
+                    dataKey="cpl"
+                    stroke="var(--color-cpl)"
+                    fill="var(--color-cpl)"
+                    fillOpacity={0.12}
+                  />
+                )}
               </AreaChart>
             </ChartContainer>
           ) : (
-            <EmptyState message="Nenhum dado de campanha sincronizado no período." />
+            <EmptyState message={filters.pageId ? "Nenhum lead Meta atribuído à página no período." : "Nenhum dado de campanha sincronizado no período."} />
           )}
         </div>
 
         <div className="app-card-soft p-4">
           <div className="mb-3">
             <h3 className="text-[14px] font-normal">Top criativos</h3>
-            <p className="text-xs text-muted-foreground">Score por lead, venda e CPL</p>
+            <p className="text-xs text-muted-foreground">{showPaidMetrics ? "Score por lead, venda e CPL" : "Score por lead e venda"}</p>
           </div>
           {creatives.length > 0 ? (
             <div className="space-y-3">
@@ -457,7 +493,7 @@ export function MetaCampaignDashboard({ filters }: MetaCampaignDashboardProps) {
                 <MetaCreativePreview creative={creative} showAction={false} size="sm" />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{creative.name}</p>
-                  <p className="text-xs text-muted-foreground">{creative.leads} leads · {formatCurrency(creative.cpl)}</p>
+                  <p className="text-xs text-muted-foreground">{creative.leads} leads{showPaidMetrics ? ` · ${formatCurrency(creative.cpl)}` : ""}</p>
                 </div>
                 {getMetaCreativeDestination(creative) && (
                   <Button asChild variant="ghost" size="icon" className="h-8 w-8">
@@ -488,12 +524,12 @@ export function MetaCampaignDashboard({ filters }: MetaCampaignDashboardProps) {
         {hasCampaigns ? (
           <Accordion type="multiple" defaultValue={snapshot.campaigns.slice(0, 1).map((campaign) => campaign.id)}>
             {snapshot.campaigns.map((campaign) => (
-              <CampaignAccordion key={campaign.id} campaign={campaign} />
+              <CampaignAccordion key={campaign.id} campaign={campaign} showPaidMetrics={showPaidMetrics} />
             ))}
           </Accordion>
         ) : (
           <div className="min-w-[860px] px-3 py-10 text-center text-sm text-muted-foreground">
-            Nenhuma campanha sincronizada no período selecionado.
+            {filters.pageId ? "Nenhum lead Meta atribuído à página no período selecionado." : "Nenhuma campanha sincronizada no período selecionado."}
           </div>
         )}
       </div>

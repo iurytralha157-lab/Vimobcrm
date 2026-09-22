@@ -69,6 +69,10 @@ func TestLeadMetaFiltersUseVisibleLeadPeriodAndDistinctHistoricalEntries(t *test
 		"select distinct",
 		"union all",
 		"raw_attribution",
+		"selectedPageID := normalizedLeadAttributionValue(filter.FilterPage)",
+		"or entry.page_id = $",
+		"or meta.page_id = $",
+		"where $`+fmt.Sprint(selectedPageIndex)+` = ''",
 		"entry.utm_campaign",
 		"entry.campaign_id",
 		"entry.adset_id",
@@ -84,6 +88,12 @@ func TestLeadMetaFiltersUseVisibleLeadPeriodAndDistinctHistoricalEntries(t *test
 		"performance.campaign_id = nullif(btrim(raw_attribution.campaign_id), '')",
 		"order by performance.metric_date desc, performance.fetched_at desc",
 		"from public.meta_campaign_insights mi",
+		"pageFilter.FilterPage = \"\"",
+		"entry.page_name",
+		"entry.page_id",
+		"meta.page_id",
+		"from public.meta_integrations integration",
+		"integration.organization_id = l.organization_id",
 		"select distinct nullif(btrim(l.source), '') as source",
 		"sourceArgs = append(sourceArgs, maxPipelineBoardSources)",
 		"order by source",
@@ -102,6 +112,30 @@ func TestLeadMetaFiltersUseVisibleLeadPeriodAndDistinctHistoricalEntries(t *test
 		if strings.Contains(functionSource, forbidden) {
 			t.Fatalf("meta-filter projection must not contain %q", forbidden)
 		}
+	}
+}
+
+func TestCollectLeadMetaPageOptionsRequiresStableIDAndStableOrdering(t *testing.T) {
+	pages := map[string]LeadMetaPageOption{}
+	collectLeadMetaPageOption(pages, "Página duplicada", "page-b")
+	collectLeadMetaPageOption(pages, "Página duplicada", "page-a")
+	collectLeadMetaPageOption(pages, "Sem id", "")
+	collectLeadMetaPageOption(pages, "", "page-c")
+
+	filters := LeadMetaFilters{Pages: make([]LeadMetaPageOption, 0, len(pages))}
+	for _, page := range pages {
+		filters.Pages = append(filters.Pages, page)
+	}
+	sortLeadMetaOptions(&filters)
+
+	if len(filters.Pages) != 3 {
+		t.Fatalf("pages = %#v, want three canonical page ids", filters.Pages)
+	}
+	if filters.Pages[0].ID != "page-c" || filters.Pages[0].Name != "page-c" {
+		t.Fatalf("empty page name did not fall back to id: %#v", filters.Pages)
+	}
+	if filters.Pages[1].ID != "page-a" || filters.Pages[2].ID != "page-b" {
+		t.Fatalf("duplicate names are not stably ordered by id: %#v", filters.Pages)
 	}
 }
 

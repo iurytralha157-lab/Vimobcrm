@@ -82,6 +82,7 @@ export const campaignInsightsQuerySchema = z
     source: optionalQueryText(120),
     accountId: optionalQueryText(255),
     objective: optionalQueryText(255),
+    pageId: optionalQueryText(255),
     campaignId: optionalQueryText(255),
     adSetId: optionalQueryText(255),
     adId: optionalQueryText(255),

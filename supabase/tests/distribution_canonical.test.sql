@@ -2628,9 +2628,9 @@ values
     true
   );
 
-select is(
-  (
-    select count(*)
+select ok(
+  exists (
+    select 1
     from private.pick_round_robin_ticket_candidate(
       'd1000000-0000-4000-8000-000000000001',
       'd7000000-0000-4000-8000-000000000006',
@@ -2639,10 +2639,12 @@ select is(
       1,
       '10:00:00'::time,
       1
-    )
+    ) as candidate
+    where candidate.user_id = 'd2000000-0000-4000-8000-000000000002'
+      and candidate.team_member_id is null
+      and candidate.availability_reason = 'no_team_schedule'
   ),
-  0::bigint,
-  'a direct queue member inherits team availability and is blocked outside its configured hours'
+  'a direct queue member remains eligible without inheriting schedules from other teams'
 );
 
 update public.member_availability
@@ -2654,7 +2656,7 @@ select is(
     select count(*)
     from private.pick_round_robin_ticket_candidate(
       'd1000000-0000-4000-8000-000000000001',
-      'd7000000-0000-4000-8000-000000000006',
+      'd7000000-0000-4000-8000-000000000007',
       'simple',
       false,
       1,
@@ -2663,7 +2665,7 @@ select is(
     )
   ),
   0::bigint,
-  'an entirely disabled configured schedule fails closed instead of becoming 24-hour availability'
+  'an entirely disabled exact team schedule fails closed instead of becoming 24-hour availability'
 );
 
 update public.member_availability
@@ -2679,7 +2681,7 @@ select is(
     select candidate.user_id
     from private.pick_round_robin_ticket_candidate(
       'd1000000-0000-4000-8000-000000000001',
-      'd7000000-0000-4000-8000-000000000006',
+      'd7000000-0000-4000-8000-000000000007',
       'simple',
       false,
       1,
@@ -2696,7 +2698,7 @@ select is(
     select candidate.user_id
     from private.pick_round_robin_ticket_candidate(
       'd1000000-0000-4000-8000-000000000001',
-      'd7000000-0000-4000-8000-000000000006',
+      'd7000000-0000-4000-8000-000000000007',
       'simple',
       false,
       1,
@@ -2713,7 +2715,7 @@ select is(
     select candidate.user_id
     from private.pick_round_robin_ticket_candidate(
       'd1000000-0000-4000-8000-000000000001',
-      'd7000000-0000-4000-8000-000000000006',
+      'd7000000-0000-4000-8000-000000000007',
       'simple',
       false,
       2,
@@ -2730,7 +2732,7 @@ select is(
     select candidate.user_id
     from private.pick_round_robin_ticket_candidate(
       'd1000000-0000-4000-8000-000000000001',
-      'd7000000-0000-4000-8000-000000000006',
+      'd7000000-0000-4000-8000-000000000007',
       'simple',
       false,
       2,
@@ -2747,7 +2749,7 @@ select is(
     select candidate.user_id
     from private.pick_round_robin_ticket_candidate(
       'd1000000-0000-4000-8000-000000000001',
-      'd7000000-0000-4000-8000-000000000006',
+      'd7000000-0000-4000-8000-000000000007',
       'simple',
       false,
       2,
@@ -2764,7 +2766,7 @@ select is(
     select candidate.user_id
     from private.pick_round_robin_ticket_candidate(
       'd1000000-0000-4000-8000-000000000001',
-      'd7000000-0000-4000-8000-000000000006',
+      'd7000000-0000-4000-8000-000000000007',
       'simple',
       false,
       2,
@@ -2781,7 +2783,7 @@ select is(
     select count(*)
     from private.pick_round_robin_ticket_candidate(
       'd1000000-0000-4000-8000-000000000001',
-      'd7000000-0000-4000-8000-000000000006',
+      'd7000000-0000-4000-8000-000000000007',
       'simple',
       false,
       2,
@@ -2798,7 +2800,7 @@ select is(
     select count(*)
     from private.pick_round_robin_ticket_candidate(
       'd1000000-0000-4000-8000-000000000001',
-      'd7000000-0000-4000-8000-000000000006',
+      'd7000000-0000-4000-8000-000000000007',
       'simple',
       false,
       2,
@@ -2819,7 +2821,7 @@ select is(
     select count(*)
     from private.pick_round_robin_ticket_candidate(
       'd1000000-0000-4000-8000-000000000001',
-      'd7000000-0000-4000-8000-000000000006',
+      'd7000000-0000-4000-8000-000000000007',
       'simple',
       false,
       2,
@@ -2836,7 +2838,7 @@ select is(
     select candidate.user_id
     from private.pick_round_robin_ticket_candidate(
       'd1000000-0000-4000-8000-000000000001',
-      'd7000000-0000-4000-8000-000000000006',
+      'd7000000-0000-4000-8000-000000000007',
       'simple',
       false,
       2,
@@ -2853,7 +2855,7 @@ select is(
     select candidate.user_id
     from private.pick_round_robin_ticket_candidate(
       'd1000000-0000-4000-8000-000000000001',
-      'd7000000-0000-4000-8000-000000000006',
+      'd7000000-0000-4000-8000-000000000007',
       'simple',
       true,
       2,
@@ -2939,7 +2941,7 @@ select ok(
       1
     )
   ),
-  'an unbound direct member may inherit another active membership schedule while a team-bound member remains exact'
+  'a direct member stays eligible while a team-bound member ignores another active team schedule'
 );
 
 select * from finish();

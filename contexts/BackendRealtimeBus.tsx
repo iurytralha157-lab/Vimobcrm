@@ -33,6 +33,7 @@ const DASHBOARD_REALTIME_QUERY_KEYS = [
   "lead-sources-data",
   "deals-evolution",
   "dashboard-extra-counts",
+  "dashboard-lead-distribution",
   "dashboard-recent-activities",
   "recent-activities",
   "top-brokers",

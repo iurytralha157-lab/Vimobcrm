@@ -21,6 +21,7 @@ export type ContactFilterModel = {
   assigneeId: string | null;
   tagIds: string[];
   source: string | null;
+  pageId: string | null;
   campaignId: string | null;
   adSetId: string | null;
   adId: string | null;
@@ -42,6 +43,7 @@ export type ContactExportFilters = Pick<
   | 'unassigned'
   | 'tagIds'
   | 'source'
+  | 'pageId'
   | 'campaignId'
   | 'adSetId'
   | 'adId'
@@ -58,6 +60,7 @@ export function buildContactListFilters({
   assigneeId,
   tagIds,
   source,
+  pageId,
   campaignId,
   adSetId,
   adId,
@@ -83,6 +86,7 @@ export function buildContactListFilters({
         ? [...new Set(tagIds.map((tagId) => tagId.trim()).filter(Boolean))].sort()
         : undefined,
     source: source && source !== 'all' ? source : undefined,
+    pageId: pageId && pageId !== 'all' ? pageId : undefined,
     campaignId: campaignId || undefined,
     adSetId: adSetId || undefined,
     adId: adId || undefined,
@@ -112,6 +116,7 @@ export function buildContactExportFilters(
     unassigned,
     tagIds,
     source,
+    pageId,
     campaignId,
     adSetId,
     adId,
@@ -129,6 +134,7 @@ export function buildContactExportFilters(
     unassigned,
     tagIds,
     source,
+    pageId,
     campaignId,
     adSetId,
     adId,

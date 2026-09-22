@@ -8,6 +8,12 @@ test('remove apenas opções meta vazias ou órfãs e preserva origens e campanh
   const sanitized = sanitizeLeadMetaFiltersEnvelope({
     data: {
       sources: ['manual', '', 'meta'],
+      pages: [
+        { id: 'page-1', name: 'Página principal' },
+        { id: '123456789012345', name: '' },
+        { id: '', name: 'Sem identidade' },
+        null,
+      ],
       campaigns: [
         { id: 'campaign-1', name: 'Campanha válida' },
         { id: '', name: 'Campanha sem id' },
@@ -29,6 +35,10 @@ test('remove apenas opções meta vazias ou órfãs e preserva origens e campanh
   assert.deepEqual(sanitized, {
     data: {
       sources: ['manual', 'meta'],
+      pages: [
+        { id: 'page-1', name: 'Página principal' },
+        { id: '123456789012345', name: '123456789012345' },
+      ],
       campaigns: [{ id: 'campaign-1', name: 'Campanha válida' }],
       adsets: [{ id: 'adset-1', name: 'Conjunto válido', campaignId: 'campaign-1' }],
       ads: [{ id: 'ad-1', name: 'Anúncio válido', adsetId: 'adset-1', campaignId: 'campaign-1' }],
@@ -41,6 +51,7 @@ test('não mascara tipos inválidos que o contrato Zod deve rejeitar', () => {
   const sanitized = sanitizeLeadMetaFiltersEnvelope({
     data: {
       sources: ['manual'],
+      pages: [],
       campaigns: [{ id: 123, name: 'Tipo inválido' }],
       adsets: [],
       ads: [],
@@ -48,4 +59,26 @@ test('não mascara tipos inválidos que o contrato Zod deve rejeitar', () => {
   })
 
   assert.equal(leadMetaFiltersResponseSchema.safeParse(sanitized).success, false)
+})
+
+test('mantém compatibilidade durante rollout quando a API antiga ainda não envia páginas', () => {
+  const sanitized = sanitizeLeadMetaFiltersEnvelope({
+    data: {
+      sources: ['manual'],
+      campaigns: [],
+      adsets: [],
+      ads: [],
+    },
+  })
+
+  assert.deepEqual(sanitized, {
+    data: {
+      sources: ['manual'],
+      pages: [],
+      campaigns: [],
+      adsets: [],
+      ads: [],
+    },
+  })
+  assert.equal(leadMetaFiltersResponseSchema.safeParse(sanitized).success, true)
 })

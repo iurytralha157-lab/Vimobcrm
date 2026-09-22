@@ -94,3 +94,15 @@ test('serializa o filtro sem responsavel sem ocupar o campo UUID do usuario', ()
   assert.equal(query.teamId, 'team-1');
   assert.equal(inactiveQuery.unassigned, undefined);
 });
+
+test('serializa a pagina Meta como identidade opaca sem alterar o valor', () => {
+  const query = buildPipelineBoardQuery({
+    filters: {
+      filterPage: '123456789012345',
+      filterCampaign: 'campaign-1',
+    },
+  });
+
+  assert.equal(query.filterPage, '123456789012345');
+  assert.equal(query.filterCampaign, 'campaign-1');
+});

@@ -168,28 +168,34 @@ func TestInitialDistributionMetadataFlagParsingIsSafe(t *testing.T) {
 		want           bool
 		wantAllow      bool
 		wantEntryEvent string
+		wantSource     string
 	}{
-		{name: "boolean true", raw: `{"initial_distribution_pending":true}`, want: true},
-		{name: "legacy string true", raw: `{"initial_distribution_pending":"yes"}`, want: true},
-		{name: "legacy numeric true", raw: `{"initial_distribution_pending":1}`, want: true},
-		{name: "assigned redistribution", raw: `{"initial_distribution_pending":true,"allow_assigned_redistribution":true}`, want: true, wantAllow: true},
-		{name: "entry event", raw: `{"initial_distribution_pending":true,"entry_event_id":" 11111111-1111-4111-8111-111111111111 "}`, want: true, wantEntryEvent: "11111111-1111-4111-8111-111111111111"},
-		{name: "invalid entry event UUID", raw: `{"initial_distribution_pending":true,"entry_event_id":"not-a-uuid"}`, want: true},
-		{name: "invalid entry event type", raw: `{"initial_distribution_pending":true,"entry_event_id":42}`, want: true},
-		{name: "allow without initial marker", raw: `{"allow_assigned_redistribution":true}`, wantAllow: true},
-		{name: "boolean false", raw: `{"initial_distribution_pending":false}`, want: false},
-		{name: "unknown value", raw: `{"initial_distribution_pending":"sometimes"}`, want: false},
-		{name: "non object", raw: `[]`, want: false},
-		{name: "invalid json", raw: `{`, want: false},
-		{name: "trailing json", raw: `{} {}`, want: false},
-		{name: "empty", raw: ``, want: false},
+		{name: "boolean true", raw: `{"initial_distribution_pending":true}`, want: true, wantSource: "whatsapp"},
+		{name: "legacy string true", raw: `{"initial_distribution_pending":"yes"}`, want: true, wantSource: "whatsapp"},
+		{name: "legacy numeric true", raw: `{"initial_distribution_pending":1}`, want: true, wantSource: "whatsapp"},
+		{name: "assigned redistribution", raw: `{"initial_distribution_pending":true,"allow_assigned_redistribution":true}`, want: true, wantAllow: true, wantSource: "whatsapp"},
+		{name: "entry event", raw: `{"initial_distribution_pending":true,"entry_event_id":" 11111111-1111-4111-8111-111111111111 "}`, want: true, wantEntryEvent: "11111111-1111-4111-8111-111111111111", wantSource: "whatsapp"},
+		{name: "Meta source", raw: `{"initial_distribution_pending":true,"source":"meta_lead_ads"}`, want: true, wantSource: "meta"},
+		{name: "managed WhatsApp source", raw: `{"initial_distribution_pending":true,"source":"managed_whatsapp"}`, want: true, wantSource: "whatsapp"},
+		{name: "unknown source stays isolated", raw: `{"initial_distribution_pending":true,"source":"Future_Channel"}`, want: true, wantSource: "future_channel"},
+		{name: "blank explicit source fails safe", raw: `{"initial_distribution_pending":true,"source":"   "}`, want: true, wantSource: "unknown"},
+		{name: "invalid explicit source fails safe", raw: `{"initial_distribution_pending":true,"source":42}`, want: true, wantSource: "unknown"},
+		{name: "invalid entry event UUID", raw: `{"initial_distribution_pending":true,"entry_event_id":"not-a-uuid"}`, want: true, wantSource: "whatsapp"},
+		{name: "invalid entry event type", raw: `{"initial_distribution_pending":true,"entry_event_id":42}`, want: true, wantSource: "whatsapp"},
+		{name: "allow without initial marker", raw: `{"allow_assigned_redistribution":true}`, wantAllow: true, wantSource: "whatsapp"},
+		{name: "boolean false", raw: `{"initial_distribution_pending":false}`, want: false, wantSource: "whatsapp"},
+		{name: "unknown value", raw: `{"initial_distribution_pending":"sometimes"}`, want: false, wantSource: "whatsapp"},
+		{name: "non object", raw: `[]`, want: false, wantSource: "whatsapp"},
+		{name: "invalid json", raw: `{`, want: false, wantSource: "whatsapp"},
+		{name: "trailing json", raw: `{} {}`, want: false, wantSource: "whatsapp"},
+		{name: "empty", raw: ``, want: false, wantSource: "whatsapp"},
 	}
 
 	for _, test := range tests {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			got, gotAllow, gotEntryEvent := redistributionJobMetadataFromJSON([]byte(test.raw))
+			got, gotAllow, gotEntryEvent, gotSource := redistributionJobMetadataFromJSON([]byte(test.raw))
 			if got != test.want {
 				t.Fatalf("initial distribution flag for %q = %t, want %t", test.raw, got, test.want)
 			}
@@ -198,6 +204,9 @@ func TestInitialDistributionMetadataFlagParsingIsSafe(t *testing.T) {
 			}
 			if gotEntryEvent != test.wantEntryEvent {
 				t.Fatalf("entryEventID(%q) = %q, want %q", test.raw, gotEntryEvent, test.wantEntryEvent)
+			}
+			if gotSource != test.wantSource {
+				t.Fatalf("source(%q) = %q, want %q", test.raw, gotSource, test.wantSource)
 			}
 		})
 	}
@@ -401,6 +410,89 @@ func TestManagedWhatsAppInitialDistributionEnqueuesAutoReplyInSameStore(t *testi
 		!strings.HasPrefix(store.operations[5], "query:") ||
 		!strings.HasPrefix(strings.ToLower(store.operations[6]), "exec:release savepoint managed_whatsapp_distribution_auto_reply") {
 		t.Fatalf("operation order = %#v, auto reply must be isolated in the same transactional store", store.operations)
+	}
+}
+
+func TestMetaInitialDistributionUsesMetaSourceAndSkipsWhatsAppAutoReply(t *testing.T) {
+	t.Parallel()
+
+	store := &redistributionQueryExecutor{rows: []pgx.Row{
+		redistributionBoolRow{value: true},
+		redistributionSelectionRow{
+			memberID: "44444444-4444-4444-8444-444444444444",
+			userID:   "55555555-5555-4555-8555-555555555555",
+		},
+		redistributionJSONRow{value: []byte(`{"success":true,"assigned_user_id":"55555555-5555-4555-8555-555555555555","distribution_event_id":"opaque-ledger-event:meta-attempt-1"}`)},
+	}}
+	job := redistributionJob{
+		ID:                         "11111111-1111-4111-8111-111111111111",
+		OrganizationID:             "22222222-2222-4222-8222-222222222222",
+		LeadID:                     "33333333-3333-4333-8333-333333333333",
+		RoundRobinID:               "66666666-6666-4666-8666-666666666666",
+		Source:                     "meta",
+		EntryEventID:               "77777777-7777-4777-8777-777777777777",
+		InitialDistributionPending: true,
+	}
+
+	err := (Repository{}).processManagedWhatsAppInitialDistribution(
+		context.Background(),
+		store,
+		job,
+		leadSnapshot{DealStatus: "open"},
+	)
+	if err != nil {
+		t.Fatalf("process Meta initial distribution: %v", err)
+	}
+	if len(store.queries) != 3 {
+		t.Fatalf("queries = %d, Meta retry must not enqueue WhatsApp auto reply", len(store.queries))
+	}
+	if source := store.queryArgs[2][5]; source != "meta" {
+		t.Fatalf("canonical Meta source = %#v, want meta", source)
+	}
+	if key := store.queryArgs[2][2]; key != "meta-pending:"+job.ID+":attempt_1" {
+		t.Fatalf("Meta retry idempotency key = %#v", key)
+	}
+	if strings.Contains(strings.Join(store.queries, "\n"), "enqueue_managed_whatsapp_distribution_auto_reply") {
+		t.Fatal("Meta initial assignment must never enqueue the managed WhatsApp auto reply")
+	}
+}
+
+func TestUnknownInitialDistributionSourceNeverEnqueuesWhatsAppAutoReply(t *testing.T) {
+	t.Parallel()
+
+	store := &redistributionQueryExecutor{}
+	job := redistributionJob{
+		OrganizationID: "22222222-2222-4222-8222-222222222222",
+		Source:         "future_channel",
+		EntryEventID:   "77777777-7777-4777-8777-777777777777",
+	}
+	err := (Repository{}).enqueueManagedWhatsAppDistributionAutoReply(
+		context.Background(),
+		store,
+		job,
+		"55555555-5555-4555-8555-555555555555",
+		"opaque-ledger-event:future-channel",
+	)
+	if err != nil {
+		t.Fatalf("skip unknown-source auto reply: %v", err)
+	}
+	if len(store.queries) != 0 || len(store.execSQL) != 0 {
+		t.Fatalf("unknown source reached WhatsApp auto reply path: queries=%#v execs=%#v", store.queries, store.execSQL)
+	}
+}
+
+func TestInitialDistributionIdempotencyKeySeparatesSources(t *testing.T) {
+	t.Parallel()
+
+	const jobID = "11111111-1111-4111-8111-111111111111"
+	if got := initialDistributionIdempotencyKey("managed_whatsapp", jobID, 2); got != "managed-whatsapp-pending:"+jobID+":attempt_2" {
+		t.Fatalf("managed WhatsApp key = %q", got)
+	}
+	if got := initialDistributionIdempotencyKey("meta_lead_ads", jobID, 2); got != "meta-pending:"+jobID+":attempt_2" {
+		t.Fatalf("Meta key = %q", got)
+	}
+	if got := initialDistributionIdempotencyKey("future_channel", jobID, 2); got != "initial-distribution-pending:"+jobID+":attempt_2" {
+		t.Fatalf("unknown-source key = %q", got)
 	}
 }
 
@@ -1294,9 +1386,9 @@ func TestNextRoundRobinMemberAvailabilityUsesConfiguredSchedule(t *testing.T) {
 		"left join public.teams direct_team",
 		"and (entries.team_id is null or (direct_team.id is not null and tm.id is not null))",
 		"availability_members as",
+		"availability_member.id = eligible.team_member_id",
 		"availability_member.user_id = eligible.user_id",
-		"where eligible.team_member_id is null",
-		"or availability_member.id = eligible.team_member_id",
+		"where eligible.team_member_id is not null",
 		"eligible.ignore_availability,\n\t\t\t\tavailability_member.id as team_member_id",
 		"from availability_members eligible",
 		"generate_series(0, 7)",
@@ -1320,6 +1412,10 @@ func TestNextRoundRobinMemberAvailabilityUsesConfiguredSchedule(t *testing.T) {
 	}
 	if strings.Contains(queryer.sql, "user_activity_sessions") {
 		t.Fatal("live browser presence must not be a hard eligibility requirement")
+	}
+	if strings.Contains(queryer.sql, "where eligible.team_member_id is null") ||
+		strings.Contains(queryer.sql, "or availability_member.id = eligible.team_member_id") {
+		t.Fatal("direct queue members must not inherit future availability from unrelated teams")
 	}
 }
 

@@ -135,6 +135,7 @@ type ContactListFilter struct {
 	TagID       string
 	TagIDs      []string
 	Source      string
+	PageID      string
 	CampaignID  string
 	AdSetID     string
 	AdID        string
@@ -182,6 +183,7 @@ func ParseContactListFilter(values url.Values) (ContactListFilter, error) {
 		TagID:       tagID,
 		TagIDs:      tagIDs,
 		Source:      trimMax(cleanContactFilterValue(values.Get("source")), 80),
+		PageID:      trimMax(cleanContactFilterValue(values.Get("pageId")), 255),
 		CampaignID:  trimMax(cleanContactFilterValue(values.Get("campaignId")), 120),
 		AdSetID:     trimMax(cleanContactFilterValue(values.Get("adSetId")), 120),
 		AdID:        trimMax(cleanContactFilterValue(values.Get("adId")), 120),
@@ -717,19 +719,11 @@ func buildContactWhere(tenantContext tenant.Context, filter ContactListFilter) (
 		if !ok {
 			return nil, nil, fmt.Errorf("%w: teamId is invalid", ErrInvalidInput)
 		}
-		args = append(args, teamID)
-		index := len(args)
-		where = append(where, fmt.Sprintf(`(
-			nullif(to_jsonb(l)->>'team_id', '') = $%d::text
-			or (
-				nullif(to_jsonb(l)->>'team_id', '') is null
-				and exists (
-					select 1 from public.team_members tm
-					where tm.team_id = $%d::uuid
-					  and tm.user_id = l.assigned_user_id
-				)
-			)
-		)`, index, index))
+		if filter.Unassigned {
+			add("l.team_id = $%d::uuid", teamID)
+		} else {
+			add(currentAssigneeTeamFilterSQL, teamID)
+		}
 	}
 	if strings.TrimSpace(filter.PipelineID) != "" {
 		pipelineID, ok := normalizeUUID(filter.PipelineID)
@@ -772,29 +766,17 @@ func buildContactWhere(tenantContext tenant.Context, filter ContactListFilter) (
 	if filter.DealStatus != "" {
 		add("l.deal_status = $%d", filter.DealStatus)
 	}
-	var occurredFrom any
-	var occurredTo any
+	addLeadAttributionFilterCondition(&args, &where, "l", "lm", leadAttributionFilter{
+		Page:     filter.PageID,
+		Campaign: filter.CampaignID,
+		AdSet:    filter.AdSetID,
+		Ad:       filter.AdID,
+	})
 	if filter.CreatedFrom != "" {
-		occurredFrom = filter.CreatedFrom
+		add("l.created_at >= $%d::timestamptz", filter.CreatedFrom)
 	}
 	if filter.CreatedTo != "" {
-		occurredTo = filter.CreatedTo
-	}
-	hasAttributionFilter := addLeadAttributionFilterCondition(&args, &where, "l", "lm", leadAttributionFilter{
-		Campaign:     filter.CampaignID,
-		AdSet:        filter.AdSetID,
-		Ad:           filter.AdID,
-		OccurredFrom: occurredFrom,
-		OccurredTo:   occurredTo,
-		DateCast:     "::timestamptz",
-	})
-	if !hasAttributionFilter {
-		if filter.CreatedFrom != "" {
-			add("l.created_at >= $%d::timestamptz", filter.CreatedFrom)
-		}
-		if filter.CreatedTo != "" {
-			add("l.created_at <= $%d::timestamptz", filter.CreatedTo)
-		}
+		add("l.created_at <= $%d::timestamptz", filter.CreatedTo)
 	}
 
 	return where, args, nil

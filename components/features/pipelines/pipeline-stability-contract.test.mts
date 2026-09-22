@@ -165,13 +165,10 @@ test('busca filtrada usa apenas a consulta canônica do board', () => {
   assert.match(screenSource, /serverSearchResults: \[\]/);
 });
 
-test('pipeline inicia sem período implícito e usa origem somente após aplicação', () => {
-  assert.match(
-    screenSource,
-    /useState<DatePreset \| null>\(null\)/,
-  );
-  assert.match(screenSource, /dateRangeOverride: pipelineDateRange/);
-  assert.match(screenSource, /dateMode: pipelineDateRange \? 'origin' : undefined/);
+test('pipeline usa o período compartilhado com semântica de origem', () => {
+  assert.doesNotMatch(screenSource, /pipelineDatePreset/);
+  assert.match(screenSource, /const pipelineDateRange = sharedFilters\.dateRange/);
+  assert.match(screenSource, /dateMode: 'origin'/);
   assert.doesNotMatch(screenSource, /pipelineDateMode/);
   assert.doesNotMatch(screenSource, /Operacional/);
 });

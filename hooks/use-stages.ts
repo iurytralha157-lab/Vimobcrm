@@ -47,6 +47,8 @@ type LeadTag = {
 
 type LeadMetaRow = {
   lead_id: string;
+  page_id?: string | null;
+  page_name?: string | null;
   campaign_name?: string | null;
   campaign_id?: string | null;
   adset_name?: string | null;
@@ -181,7 +183,7 @@ export function useStagesWithLeads(
         previousData,
         previousQuery?.queryKey,
         queryKey,
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
       ),
     enabled: isBoardEnabled,
     refetchOnMount: true,
@@ -330,6 +332,7 @@ export function useStagesWithLeads(
 export function useLeadMetaFilters(
   dateRange?: { from: Date; to: Date } | null,
   dateMode?: PipelineQueryFilters['dateMode'],
+  filterPage?: string | null,
 ) {
   const organizationId = useOrganizationId();
   const resolvedDateMode = resolvePipelineDateModeForRange(dateRange, dateMode);
@@ -341,14 +344,16 @@ export function useLeadMetaFilters(
       dateRange?.from?.toISOString(),
       dateRange?.to?.toISOString(),
       resolvedDateMode,
+      filterPage || undefined,
     ],
     enabled: Boolean(organizationId),
     queryFn: async ({ signal }) => {
-      if (!organizationId) return { sources: [], campaigns: [], adsets: [], ads: [] };
+      if (!organizationId) return { sources: [], pages: [], campaigns: [], adsets: [], ads: [] };
       return getLeadMetaFiltersFromAPI({
         organizationId,
         dateRange,
         dateMode: resolvedDateMode,
+        filterPage,
         signal,
       });
     },
@@ -366,8 +371,9 @@ export function useLeadMetaFilters(
           dateRange?.from?.toISOString(),
           dateRange?.to?.toISOString(),
           resolvedDateMode,
+          filterPage || undefined,
         ],
-        [1, 2, 3, 4],
+        [1, 2, 3, 4, 5],
       ),
   });
 }
@@ -381,6 +387,7 @@ export function useFilteredStageCounts({
   searchQuery,
   dateRange,
   dateMode,
+  filterPage,
   filterCampaign,
   filterAdSet,
   filterAd,
@@ -393,6 +400,7 @@ export function useFilteredStageCounts({
   const filters = {
     dateRange,
     dateMode,
+    filterPage,
     filterTags,
     filterDealStatus,
     searchQuery,
@@ -423,6 +431,7 @@ export function useFilteredStageCounts({
       dateRange?.from.toISOString(),
       dateRange?.to.toISOString(),
       dateMode,
+      filterPage,
       filterCampaign,
       filterAdSet,
       filterAd,

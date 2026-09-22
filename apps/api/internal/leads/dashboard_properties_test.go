@@ -44,6 +44,22 @@ func TestBuildDashboardPropertyWhereFiltersSelectedUserByResponsible(t *testing.
 	}
 }
 
+func TestBuildDashboardPropertyWhereSupportsUnassignedUser(t *testing.T) {
+	where, _, err := buildDashboardPropertyWhere(tenant.Context{
+		OrganizationID: "11111111-1111-1111-1111-111111111111",
+		UserID:         "22222222-2222-2222-2222-222222222222",
+		MemberRole:     "admin",
+	}, DashboardFilter{UserID: "unassigned"}, false)
+	if err != nil {
+		t.Fatalf("buildDashboardPropertyWhere returned error: %v", err)
+	}
+
+	selectedUserClause := where[len(where)-1]
+	if selectedUserClause != "p.responsible_user_id is null" {
+		t.Fatalf("unassigned user property clause = %q", selectedUserClause)
+	}
+}
+
 func TestPropertyUserVisibilityKeepsOwnCreatedAndResponsibleProperties(t *testing.T) {
 	clause := propertyUserVisibilitySQL("$2", "$3", "$4")
 	if !strings.Contains(clause, "p.responsible_user_id = $3::uuid") {

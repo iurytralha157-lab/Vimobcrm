@@ -428,6 +428,10 @@ const dashboardTextSchema = (max: number) => z.string().trim().min(1).max(max)
 const dashboardNullableTextSchema = (max: number) => dashboardTextSchema(max).nullable()
 const dashboardTimestampSchema = z.string().trim().datetime({ offset: true })
 const dashboardOptionalUuidFilterSchema = z.preprocess(emptyOrAllToNull, uuidSchema.nullish())
+const dashboardOptionalUserFilterSchema = z.preprocess(
+  emptyOrAllToNull,
+  z.union([uuidSchema, z.literal('unassigned')]).nullish(),
+)
 const dashboardOptionalTextFilterSchema = (max: number) => z.preprocess(emptyOrAllToNull, z.string().trim().max(max).nullish())
 const dashboardSearchSchema = z.preprocess(emptyToNull, z.string().trim().max(180).nullish())
 const dashboardDealStatusSchema = z.preprocess(
@@ -462,8 +466,9 @@ export const dashboardFiltersSchema = z.object({
   dateRange: dashboardDateRangeSchema.nullable().optional(),
   granularity: z.enum(['hour', 'day', 'week', 'month']).nullable().optional(),
   teamId: dashboardOptionalUuidFilterSchema,
-  userId: dashboardOptionalUuidFilterSchema,
+  userId: dashboardOptionalUserFilterSchema,
   source: dashboardOptionalTextFilterSchema(180),
+  pageId: dashboardOptionalTextFilterSchema(255),
   campaignId: dashboardOptionalTextFilterSchema(255),
   adSetId: dashboardOptionalTextFilterSchema(255),
   adId: dashboardOptionalTextFilterSchema(255),
@@ -569,6 +574,41 @@ export const apiDashboardTopBrokersSchema = z.object({
   brokers: z.array(apiDashboardTopBrokerSchema),
   isFallbackMode: z.boolean(),
 }).passthrough()
+const apiDashboardLeadDistributionUserSchema = z.object({
+  id: uuidSchema.nullable(),
+  kind: z.enum(['entity', 'unassigned', 'other']),
+  name: dashboardTextSchema(300),
+  avatarUrl: z.string().trim().max(2_048).nullable(),
+  leadCount: z.number().int().positive(),
+}).passthrough()
+const apiDashboardLeadDistributionTeamSchema = z.object({
+  id: uuidSchema.nullable(),
+  kind: z.enum(['entity', 'unassigned', 'other']),
+  name: dashboardTextSchema(300),
+  leadCount: z.number().int().positive(),
+}).passthrough()
+export const apiDashboardLeadDistributionSchema = z.object({
+  totalLeads: nonNegativeIntegerSchema,
+  users: z.array(apiDashboardLeadDistributionUserSchema),
+  teams: z.array(apiDashboardLeadDistributionTeamSchema),
+}).passthrough().superRefine((distribution, context) => {
+  const userTotal = distribution.users.reduce((total, item) => total + item.leadCount, 0)
+  const teamTotal = distribution.teams.reduce((total, item) => total + item.leadCount, 0)
+  if (userTotal !== distribution.totalLeads) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['users'],
+      message: 'A distribuição por usuário não fecha com o total de leads',
+    })
+  }
+  if (teamTotal !== distribution.totalLeads) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['teams'],
+      message: 'A distribuição por equipe não fecha com o total de leads',
+    })
+  }
+})
 export const apiDashboardUpcomingTasksSchema = z.array(z.object({
   id: uuidSchema,
   title: dashboardTextSchema(500),
@@ -600,6 +640,7 @@ export const apiDashboardStatsResponseSchema = apiEnvelopeSchema(apiDashboardSta
 export const apiDashboardFunnelResponseSchema = apiEnvelopeSchema(apiDashboardFunnelSchema)
 export const apiDashboardSourceResponseSchema = apiEnvelopeSchema(apiDashboardSourceSchema)
 export const apiDashboardTopBrokersResponseSchema = apiEnvelopeSchema(apiDashboardTopBrokersSchema)
+export const apiDashboardLeadDistributionResponseSchema = apiEnvelopeSchema(apiDashboardLeadDistributionSchema)
 export const apiDashboardUpcomingTasksResponseSchema = apiEnvelopeSchema(apiDashboardUpcomingTasksSchema)
 export const apiDashboardDealsEvolutionResponseSchema = apiEnvelopeSchema(apiDashboardDealsEvolutionSchema)
 export const apiDashboardExtraCountsResponseSchema = apiEnvelopeSchema(apiDashboardExtraCountsSchema)

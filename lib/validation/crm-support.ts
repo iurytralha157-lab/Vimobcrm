@@ -11,6 +11,7 @@ export const contactListQuerySchema = z.object({
   tagIds: z.array(uuidSchema).max(50).transform((tagIds) => Array.from(new Set(tagIds))).optional(),
   tagId: uuidSchema.optional(),
   source: z.string().trim().max(120).optional(),
+  pageId: z.string().trim().max(255).optional(),
   campaignId: z.string().trim().max(255).optional(),
   adSetId: z.string().trim().max(255).optional(),
   adId: z.string().trim().max(255).optional(),

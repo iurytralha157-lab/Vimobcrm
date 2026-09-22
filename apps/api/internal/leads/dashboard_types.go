@@ -22,6 +22,7 @@ type DashboardFilter struct {
 	TeamID         string
 	UserID         string
 	Source         string
+	PageID         string
 	CampaignID     string
 	AdSetID        string
 	AdID           string
@@ -133,6 +134,27 @@ type TopBrokersResult struct {
 	IsFallbackMode bool        `json:"isFallbackMode"`
 }
 
+type DashboardLeadDistributionUser struct {
+	ID        *string `json:"id"`
+	Kind      string  `json:"kind"`
+	Name      string  `json:"name"`
+	AvatarURL *string `json:"avatarUrl"`
+	LeadCount int64   `json:"leadCount"`
+}
+
+type DashboardLeadDistributionTeam struct {
+	ID        *string `json:"id"`
+	Kind      string  `json:"kind"`
+	Name      string  `json:"name"`
+	LeadCount int64   `json:"leadCount"`
+}
+
+type DashboardLeadDistribution struct {
+	TotalLeads int64                           `json:"totalLeads"`
+	Users      []DashboardLeadDistributionUser `json:"users"`
+	Teams      []DashboardLeadDistributionTeam `json:"teams"`
+}
+
 type UpcomingTask struct {
 	ID       string `json:"id"`
 	Title    string `json:"title"`
@@ -227,7 +249,7 @@ func ParseDashboardFilter(values url.Values) (DashboardFilter, error) {
 	if err != nil {
 		return DashboardFilter{}, err
 	}
-	userID, err := normalizeDashboardUUIDFilter("userId", values.Get("userId"))
+	userID, err := normalizeDashboardUserFilter(values.Get("userId"))
 	if err != nil {
 		return DashboardFilter{}, err
 	}
@@ -252,6 +274,10 @@ func ParseDashboardFilter(values url.Values) (DashboardFilter, error) {
 	}
 
 	source, err := normalizeDashboardTextFilter("source", values.Get("source"), 180)
+	if err != nil {
+		return DashboardFilter{}, err
+	}
+	pageID, err := normalizeDashboardTextFilter("pageId", values.Get("pageId"), 255)
 	if err != nil {
 		return DashboardFilter{}, err
 	}
@@ -283,6 +309,7 @@ func ParseDashboardFilter(values url.Values) (DashboardFilter, error) {
 		TeamID:         teamID,
 		UserID:         userID,
 		Source:         source,
+		PageID:         pageID,
 		CampaignID:     campaignID,
 		AdSetID:        adSetID,
 		AdID:           adID,
@@ -310,6 +337,14 @@ func normalizeDashboardUUIDFilter(name string, raw string) (string, error) {
 		return "", fmt.Errorf("%w: invalid %s", ErrInvalidInput, name)
 	}
 	return normalized, nil
+}
+
+func normalizeDashboardUserFilter(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if strings.EqualFold(value, "unassigned") {
+		return "unassigned", nil
+	}
+	return normalizeDashboardUUIDFilter("userId", value)
 }
 
 func normalizeDashboardTextFilter(name string, raw string, maxLength int) (string, error) {

@@ -23,6 +23,29 @@ type dashboardLeadWhereOptions struct {
 	ForceDealStatus string
 }
 
+const dashboardLeadDistributionEntityLimit = 50
+
+const currentAssigneeTeamFilterSQL = `exists (
+	select 1
+	from public.team_members dtm
+	join public.teams dt
+	  on dt.id = dtm.team_id
+	 and dt.organization_id = dtm.organization_id
+	 and dt.is_active = true
+	join public.users du
+	  on du.id = dtm.user_id
+	 and coalesce(du.is_active, false) = true
+	join public.organization_members dom
+	  on dom.organization_id = dtm.organization_id
+	 and dom.user_id = dtm.user_id
+	 and coalesce(dom.is_active, false) = true
+	 and dom.deleted_at is null
+	where dtm.organization_id = l.organization_id
+	  and dtm.team_id = $%[1]d::uuid
+	  and dtm.user_id = l.assigned_user_id
+	  and coalesce(dtm.is_active, true) = true
+)`
+
 type dashboardQueryer interface {
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
@@ -310,6 +333,174 @@ func (repo Repository) GetDashboardSources(ctx context.Context, tenantContext te
 	}
 
 	return result, rows.Err()
+}
+
+func (repo Repository) GetDashboardLeadDistribution(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) (DashboardLeadDistribution, error) {
+	result := DashboardLeadDistribution{
+		Users: []DashboardLeadDistributionUser{},
+		Teams: []DashboardLeadDistributionTeam{},
+	}
+	if !canViewDashboardLeadDistribution(tenantContext) {
+		return result, tenant.ErrOrganizationAccessDenied
+	}
+
+	where, args, err := repo.buildDashboardLeadWhere(
+		tenantContext,
+		filter,
+		dashboardLeadWhereOptions{DateColumn: "created_at"},
+	)
+	if err != nil {
+		return DashboardLeadDistribution{}, err
+	}
+
+	rows, err := repo.db.Pool().Query(ctx, dashboardLeadDistributionSQL(where), args...)
+	if err != nil {
+		return DashboardLeadDistribution{}, err
+	}
+	defer rows.Close()
+
+	var teamTotal int64
+	for rows.Next() {
+		var dimension string
+		var entityID pgtype.Text
+		var kind string
+		var name string
+		var avatar pgtype.Text
+		var leadCount int64
+		if err := rows.Scan(&dimension, &entityID, &kind, &name, &avatar, &leadCount); err != nil {
+			return DashboardLeadDistribution{}, err
+		}
+
+		id := pipelineTextPtr(entityID)
+		switch dimension {
+		case "user":
+			result.Users = append(result.Users, DashboardLeadDistributionUser{
+				ID:        id,
+				Kind:      kind,
+				Name:      name,
+				AvatarURL: pipelineTextPtr(avatar),
+				LeadCount: leadCount,
+			})
+			result.TotalLeads += leadCount
+		case "team":
+			result.Teams = append(result.Teams, DashboardLeadDistributionTeam{
+				ID:        id,
+				Kind:      kind,
+				Name:      name,
+				LeadCount: leadCount,
+			})
+			teamTotal += leadCount
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return DashboardLeadDistribution{}, err
+	}
+	if teamTotal != result.TotalLeads {
+		return DashboardLeadDistribution{}, fmt.Errorf(
+			"dashboard lead distribution did not reconcile: users=%d teams=%d",
+			result.TotalLeads,
+			teamTotal,
+		)
+	}
+
+	return result, nil
+}
+
+func canViewDashboardLeadDistribution(tenantContext tenant.Context) bool {
+	return tenantContext.HasRole("owner", "admin") || tenantContext.IsTeamLeader
+}
+
+func dashboardLeadDistributionSQL(where []string) string {
+	return `
+		with grouped_counts as (
+			select
+				case
+					when grouping(l.assigned_user_id) = 0 then 'user'
+					else 'team'
+				end as dimension,
+				case
+					when grouping(l.assigned_user_id) = 0 then l.assigned_user_id
+					else l.team_id
+				end as entity_id,
+				count(*)::bigint as lead_count
+			from public.leads l
+			where ` + strings.Join(where, " and ") + `
+			group by grouping sets ((l.assigned_user_id), (l.team_id))
+		), resolved_counts as (
+			select
+				gc.dimension,
+				gc.entity_id,
+				case
+					when gc.dimension = 'user' and gc.entity_id is null then 'Sem responsável'
+					when gc.dimension = 'team' and gc.entity_id is null then 'Sem equipe'
+					when gc.dimension = 'user' then coalesce(nullif(btrim(u.name), ''), 'Usuário indisponível')
+					else coalesce(nullif(btrim(t.name), ''), 'Equipe indisponível')
+				end as display_name,
+				case when gc.dimension = 'user' then u.avatar_url end as avatar_url,
+				gc.lead_count
+			from grouped_counts gc
+			left join public.users u
+			  on gc.dimension = 'user'
+			 and u.id = gc.entity_id
+			 and exists (
+				select 1
+				from public.organization_members om
+				where om.organization_id = $1::uuid
+				  and om.user_id = gc.entity_id
+			 )
+			left join public.teams t
+			  on gc.dimension = 'team'
+			 and t.organization_id = $1::uuid
+			 and t.id = gc.entity_id
+		), ranked_counts as (
+			select
+				rc.*,
+				sum(case when rc.entity_id is not null then 1 else 0 end) over (
+					partition by rc.dimension
+					order by rc.lead_count desc, rc.display_name, rc.entity_id
+					rows between unbounded preceding and current row
+				) as entity_rank
+			from resolved_counts rc
+		), bounded_counts as (
+			select
+				dimension,
+				entity_id,
+				case when entity_id is null then 'unassigned' else 'entity' end as kind,
+				display_name,
+				avatar_url,
+				lead_count
+			from ranked_counts
+			where entity_id is null
+			   or entity_rank <= ` + fmt.Sprint(dashboardLeadDistributionEntityLimit) + `
+
+			union all
+
+			select
+				dimension,
+				null::uuid as entity_id,
+				'other' as kind,
+				case
+					when dimension = 'user' then 'Outros corretores'
+					else 'Outras equipes'
+				end as display_name,
+				null::text as avatar_url,
+				sum(lead_count)::bigint as lead_count
+			from ranked_counts
+			where entity_id is not null
+			  and entity_rank > ` + fmt.Sprint(dashboardLeadDistributionEntityLimit) + `
+			group by dimension
+		)
+		select
+			dimension,
+			entity_id::text,
+			kind,
+			display_name,
+			avatar_url,
+			lead_count
+		from bounded_counts
+		where lead_count > 0
+		order by dimension, case when kind = 'other' then 1 else 0 end, lead_count desc, display_name
+	`
 }
 
 func (repo Repository) GetDashboardTopBrokers(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) (TopBrokersResult, error) {
@@ -1237,41 +1428,29 @@ func (repo Repository) buildDashboardLeadWhere(tenantContext tenant.Context, fil
 		}
 	}
 	if filter.UserID != "" && filter.UserID != "all" {
-		userID, ok := normalizeUUID(filter.UserID)
-		if !ok {
-			return nil, nil, ErrInvalidInput
+		if filter.UserID == "unassigned" {
+			where = append(where, "l.assigned_user_id is null")
+		} else {
+			userID, ok := normalizeUUID(filter.UserID)
+			if !ok {
+				return nil, nil, ErrInvalidInput
+			}
+			add("l.assigned_user_id = $%d::uuid", userID)
 		}
-		add("l.assigned_user_id = $%d::uuid", userID)
 	}
 	if filter.TeamID != "" && filter.TeamID != "all" {
 		teamID, ok := normalizeUUID(filter.TeamID)
 		if !ok {
 			return nil, nil, ErrInvalidInput
 		}
-		// Dashboard team filtering mirrors the pipeline: a lead belongs to the
-		// selected team when its current assignee is an active team member. The
-		// lead team_id is assignment provenance and can point to another queue
-		// context when a user participates in more than one team.
-		add(`exists (
-			select 1
-			from public.team_members dtm
-			join public.teams dt
-			  on dt.id = dtm.team_id
-			 and dt.organization_id = dtm.organization_id
-			 and dt.is_active = true
-			join public.users du
-			  on du.id = dtm.user_id
-			 and coalesce(du.is_active, false) = true
-			join public.organization_members dom
-			  on dom.organization_id = dtm.organization_id
-			 and dom.user_id = dtm.user_id
-			 and coalesce(dom.is_active, false) = true
-			 and dom.deleted_at is null
-			where dtm.organization_id = l.organization_id
-			  and dtm.team_id = $%d::uuid
-			  and dtm.user_id = l.assigned_user_id
-			  and coalesce(dtm.is_active, true) = true
-		)`, teamID)
+		// Match the pipeline's team semantics. A team-only filter follows the
+		// current active assignee membership. When "Sem responsavel" is selected
+		// explicitly, the recorded queue provenance is the only team signal.
+		if filter.UserID == "unassigned" {
+			add("l.team_id = $%d::uuid", teamID)
+		} else {
+			add(currentAssigneeTeamFilterSQL, teamID)
+		}
 	}
 	if filter.Source != "" && filter.Source != "all" {
 		add("l.source = $%d", filter.Source)
@@ -1314,6 +1493,7 @@ func (repo Repository) buildDashboardLeadWhere(tenantContext tenant.Context, fil
 	}
 
 	addLeadAttributionFilterCondition(&args, &where, "l", "dlm", leadAttributionFilter{
+		Page:     filter.PageID,
 		Campaign: filter.CampaignID,
 		AdSet:    filter.AdSetID,
 		Ad:       filter.AdID,
@@ -1344,13 +1524,17 @@ func buildDashboardPropertyWhere(tenantContext tenant.Context, filter DashboardF
 		}
 	}
 	if filter.UserID != "" && filter.UserID != "all" {
-		userID, ok := normalizeUUID(filter.UserID)
-		if !ok {
-			return nil, nil, ErrInvalidInput
+		if filter.UserID == "unassigned" {
+			where = append(where, "p.responsible_user_id is null")
+		} else {
+			userID, ok := normalizeUUID(filter.UserID)
+			if !ok {
+				return nil, nil, ErrInvalidInput
+			}
+			args = append(args, userID)
+			index := len(args)
+			where = append(where, fmt.Sprintf("p.responsible_user_id = $%d::uuid", index))
 		}
-		args = append(args, userID)
-		index := len(args)
-		where = append(where, fmt.Sprintf("p.responsible_user_id = $%d::uuid", index))
 	}
 	if filter.TeamID != "" && filter.TeamID != "all" {
 		teamID, ok := normalizeUUID(filter.TeamID)

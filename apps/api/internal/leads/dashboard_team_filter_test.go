@@ -46,7 +46,39 @@ func TestDashboardTeamFilterMatchesCurrentAssigneeTeamLikePipeline(t *testing.T)
 			t.Fatalf("team filter does not match the pipeline assignee scope %q: %s", fragment, teamClause)
 		}
 	}
+	if strings.Contains(teamClause, "l.assigned_user_id is null") || strings.Contains(teamClause, "l.team_id = $5::uuid") {
+		t.Fatalf("team-only filter must not include unassigned queue provenance: %s", teamClause)
+	}
 	if len(args) != 5 || args[4] != teamID {
 		t.Fatalf("team filter args = %#v, want selected team %q", args, teamID)
+	}
+}
+
+func TestDashboardTeamAndUnassignedFiltersUseQueueProvenance(t *testing.T) {
+	context := tenant.Context{
+		UserID:         "11111111-1111-4111-8111-111111111111",
+		OrganizationID: "22222222-2222-4222-8222-222222222222",
+		MemberRole:     "admin",
+	}
+	filter := DashboardFilter{
+		TeamID: "33333333-3333-4333-8333-333333333333",
+		UserID: "unassigned",
+	}
+
+	where, _, err := (Repository{}).buildDashboardLeadWhere(context, filter, dashboardLeadWhereOptions{})
+	if err != nil {
+		t.Fatalf("build dashboard lead where: %v", err)
+	}
+	query := strings.Join(where, " and ")
+	for _, fragment := range []string{
+		"l.assigned_user_id is null",
+		"l.team_id = $5::uuid",
+	} {
+		if !strings.Contains(query, fragment) {
+			t.Fatalf("team + unassigned predicate is missing %q: %s", fragment, query)
+		}
+	}
+	if strings.Contains(query, "from public.team_members dtm") {
+		t.Fatalf("team + unassigned must use queue provenance instead of current membership: %s", query)
 	}
 }

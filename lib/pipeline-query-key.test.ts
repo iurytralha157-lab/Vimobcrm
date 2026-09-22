@@ -127,3 +127,31 @@ test('separa o cache completo do cache de leads sem responsavel', () => {
   assert.equal(unassigned[15], true);
   assert.equal(unassigned[16], 'team-1');
 });
+
+test('separa a pagina Meta no cache sem deslocar os indices legados', () => {
+  const base = {
+    organizationId: 'org-1',
+    pipelineId: 'pipeline-1',
+  };
+
+  const unrestricted = stageWithLeadsQueryKey(base);
+  const pageA = stageWithLeadsQueryKey({
+    ...base,
+    filters: { filterPage: '123456789012345' },
+  });
+  const pageB = stageWithLeadsQueryKey({
+    ...base,
+    filters: { filterPage: '987654321098765' },
+  });
+  const allPages = stageWithLeadsQueryKey({
+    ...base,
+    filters: { filterPage: 'all' },
+  });
+
+  assert.equal(pageA[17], '123456789012345');
+  assert.equal(pageB[17], '987654321098765');
+  assert.notDeepEqual(pageA, pageB);
+  assert.deepEqual(unrestricted, allPages);
+  assert.equal(pageA[15], undefined);
+  assert.equal(pageA[16], undefined);
+});

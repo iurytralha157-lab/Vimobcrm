@@ -4,6 +4,7 @@ import {
   getDashboardDealsEvolution,
   getDashboardFiltersQueryKey,
   getDashboardFunnel,
+  getDashboardLeadDistribution,
   getDashboardOptionalIdQueryKey,
   getDashboardSources,
   getDashboardStats,
@@ -12,6 +13,7 @@ import {
   type DashboardDealsEvolutionPoint,
   type DashboardAPIFilters,
   type DashboardFunnelPoint,
+  type DashboardLeadDistributionResponse,
   type DashboardStatsResponse,
   type DashboardTopBrokersResponse,
   type DashboardUpcomingTask,
@@ -41,6 +43,15 @@ export function useDashboardQueryScope() {
     tenantContext,
   );
   const currentTenantContext = hasCurrentTenantContext ? tenantContext : null;
+  const normalizedMemberRole = currentTenantContext?.memberRole
+    ?.trim()
+    .toLowerCase();
+  const canViewLeadDistribution = Boolean(
+    currentTenantContext?.isSuperAdmin ?? isSuperAdmin,
+  ) ||
+    normalizedMemberRole === "owner" ||
+    normalizedMemberRole === "admin" ||
+    currentTenantContext?.isTeamLeader === true;
 
   return {
     organizationId,
@@ -61,6 +72,7 @@ export function useDashboardQueryScope() {
       isSuperAdmin: currentTenantContext?.isSuperAdmin ?? isSuperAdmin,
       impersonatedOrganizationId: impersonating?.orgId,
     }),
+    canViewLeadDistribution,
   };
 }
 
@@ -103,6 +115,7 @@ function getDashboardSourceLabel(value: string) {
 
 export type TopBroker = DashboardTopBrokersResponse["brokers"][number];
 export type TopBrokersResult = DashboardTopBrokersResponse;
+export type DashboardLeadDistribution = DashboardLeadDistributionResponse;
 export type UpcomingTask = DashboardUpcomingTask;
 
 export function useDashboardStats() {
@@ -266,6 +279,35 @@ export function useTopBrokers(filters?: DashboardAPIFilters) {
     enabled: isReady,
     queryFn: ({ signal }) =>
       getDashboardTopBrokers({ organizationId, filters, signal }),
+    staleTime: DASHBOARD_STALE_TIME_MS,
+  });
+}
+
+export function useDashboardLeadDistribution(
+  filters?: DashboardAPIFilters,
+  options: { enabled?: boolean } = {},
+) {
+  const {
+    organizationId,
+    currentUserId,
+    accessSignature,
+    isReady,
+    canViewLeadDistribution,
+  } = useDashboardQueryScope();
+  const filterKey = getDashboardFiltersQueryKey(filters);
+
+  return useQuery({
+    queryKey: [
+      "dashboard-lead-distribution",
+      organizationId,
+      currentUserId,
+      accessSignature,
+      filterKey,
+    ],
+    enabled:
+      isReady && canViewLeadDistribution && options.enabled !== false,
+    queryFn: ({ signal }) =>
+      getDashboardLeadDistribution({ organizationId, filters, signal }),
     staleTime: DASHBOARD_STALE_TIME_MS,
   });
 }

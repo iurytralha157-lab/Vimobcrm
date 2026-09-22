@@ -5,13 +5,26 @@ import { DatePreset, getDateRangeFromPreset } from '@/hooks/use-dashboard-filter
 type NullableFilter = string | null;
 
 const MAX_FILTER_TAGS = 50;
+const DATE_PRESET_VALUES = new Set<DatePreset>([
+  'today',
+  'yesterday',
+  'last7days',
+  'last30days',
+  'thisMonth',
+  'lastMonth',
+  'thisQuarter',
+  'thisYear',
+  'custom',
+]);
 
 interface PersistedFilterState {
-  datePreset: DatePreset;
+  version: 2;
+  datePreset: DatePreset | null;
   customDateRange: { from: string; to: string } | null;
   teamId: NullableFilter;
   userId: NullableFilter;
   source: NullableFilter;
+  pageId: NullableFilter;
   campaignId: NullableFilter;
   adSetId: NullableFilter;
   adId: NullableFilter;
@@ -24,18 +37,20 @@ interface PersistedFilterState {
 
 interface FilterContextType {
   isHydrated: boolean;
-  datePreset: DatePreset;
+  datePreset: DatePreset | null;
   customDateRange: { from: Date; to: Date } | null;
-  setDatePreset: (preset: DatePreset) => void;
+  setDatePreset: (preset: DatePreset | null) => void;
   setCustomDateRange: (range: { from: Date; to: Date } | null) => void;
   clearDateFilter: () => void;
-  activeDateRange: { from: Date; to: Date };
+  activeDateRange: { from: Date; to: Date } | null;
   teamId: NullableFilter;
   setTeamId: (teamId: NullableFilter) => void;
   userId: NullableFilter;
   setUserId: (userId: NullableFilter) => void;
   source: NullableFilter;
   setSource: (source: NullableFilter) => void;
+  pageId: NullableFilter;
+  setPageId: (pageId: NullableFilter) => void;
   campaignId: NullableFilter;
   setCampaignId: (campaignId: NullableFilter) => void;
   adSetId: NullableFilter;
@@ -54,11 +69,13 @@ interface FilterContextType {
 const FilterContext = createContext<FilterContextType | undefined>(undefined);
 
 const DEFAULT_FILTER_STATE: PersistedFilterState = {
-  datePreset: 'last30days',
+  version: 2,
+  datePreset: null,
   customDateRange: null,
   teamId: null,
   userId: null,
   source: null,
+  pageId: null,
   campaignId: null,
   adSetId: null,
   adId: null,
@@ -71,8 +88,23 @@ function normalizeNullable(value: unknown): NullableFilter {
   return typeof value === 'string' && value.trim() !== '' ? value : null;
 }
 
+function normalizePageId(value: unknown): NullableFilter {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return normalized && normalized !== 'all' && normalized.length <= 255
+    ? normalized
+    : null;
+}
+
 function normalizeSearch(value: unknown) {
   return typeof value === 'string' ? value : '';
+}
+
+function normalizeDatePreset(value: unknown): DatePreset | null {
+  if (value === null || value === undefined) return null;
+  return typeof value === 'string' && DATE_PRESET_VALUES.has(value as DatePreset)
+    ? (value as DatePreset)
+    : DEFAULT_FILTER_STATE.datePreset;
 }
 
 function normalizeTagIds(value: unknown, legacyValue?: unknown) {
@@ -101,13 +133,24 @@ function parsePersistedState(raw: string | null): PersistedFilterState {
 
   try {
     const parsed = JSON.parse(raw) as Partial<PersistedFilterState>;
+    const parsedDatePreset =
+      parsed.version === DEFAULT_FILTER_STATE.version
+        ? normalizeDatePreset(parsed.datePreset)
+        : null;
+    const hasValidCustomRange = Boolean(parseCustomDateRange(parsed.customDateRange ?? null));
+    const datePreset =
+      parsedDatePreset === 'custom' && !hasValidCustomRange
+        ? DEFAULT_FILTER_STATE.datePreset
+        : parsedDatePreset;
     return {
       ...DEFAULT_FILTER_STATE,
-      datePreset: parsed.datePreset || DEFAULT_FILTER_STATE.datePreset,
-      customDateRange: parsed.customDateRange || null,
+      datePreset,
+      customDateRange:
+        datePreset === 'custom' ? parsed.customDateRange ?? null : null,
       teamId: normalizeNullable(parsed.teamId),
       userId: normalizeNullable(parsed.userId),
       source: normalizeNullable(parsed.source),
+      pageId: normalizePageId(parsed.pageId),
       campaignId: normalizeNullable(parsed.campaignId),
       adSetId: normalizeNullable(parsed.adSetId),
       adId: normalizeNullable(parsed.adId),
@@ -142,11 +185,12 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
     return `vimob_period_filter_${user.id}_${activeOrganization.organizationId}`;
   }, [user?.id, activeOrganization.organizationId]);
 
-  const [datePreset, setDatePresetInternal] = useState<DatePreset>(DEFAULT_FILTER_STATE.datePreset);
+  const [datePreset, setDatePresetInternal] = useState<DatePreset | null>(DEFAULT_FILTER_STATE.datePreset);
   const [customDateRange, setCustomDateRangeInternal] = useState<{ from: Date; to: Date } | null>(null);
   const [teamId, setTeamIdInternal] = useState<NullableFilter>(null);
   const [userId, setUserIdInternal] = useState<NullableFilter>(null);
   const [source, setSourceInternal] = useState<NullableFilter>(null);
+  const [pageId, setPageIdInternal] = useState<NullableFilter>(null);
   const [campaignId, setCampaignIdInternal] = useState<NullableFilter>(null);
   const [adSetId, setAdSetIdInternal] = useState<NullableFilter>(null);
   const [adId, setAdIdInternal] = useState<NullableFilter>(null);
@@ -175,6 +219,7 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
     setTeamIdInternal(nextState.teamId);
     setUserIdInternal(nextState.userId);
     setSourceInternal(nextState.source);
+    setPageIdInternal(nextState.pageId);
     setCampaignIdInternal(nextState.campaignId);
     setAdSetIdInternal(nextState.adSetId);
     setAdIdInternal(nextState.adId);
@@ -208,7 +253,7 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
   }, [applyState, storageKey]);
 
   const setDatePreset = useCallback(
-    (preset: DatePreset) => {
+    (preset: DatePreset | null) => {
       setDatePresetInternal(preset);
       setCustomDateRangeInternal(null);
       persist({ datePreset: preset, customDateRange: null });
@@ -249,6 +294,15 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
     (value: NullableFilter) => {
       setSourceInternal(value);
       persist({ source: value });
+    },
+    [persist],
+  );
+
+  const setPageId = useCallback(
+    (value: NullableFilter) => {
+      const normalized = normalizePageId(value);
+      setPageIdInternal(normalized);
+      persist({ pageId: normalized });
     },
     [persist],
   );
@@ -314,14 +368,15 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
   }, [applyState, storageKey]);
 
   const clearDateFilter = useCallback(() => {
-    setDatePreset('last30days');
-    setCustomDateRange(null);
-  }, [setCustomDateRange, setDatePreset]);
+    setDatePreset(null);
+  }, [setDatePreset]);
 
   const activeDateRange = useMemo(() => {
+    if (!datePreset) return null;
     if (datePreset === 'custom' && customDateRange) {
       return customDateRange;
     }
+    if (datePreset === 'custom') return null;
     return getDateRangeFromPreset(datePreset);
   }, [datePreset, customDateRange]);
 
@@ -340,6 +395,8 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
       setUserId,
       source,
       setSource,
+      pageId,
+      setPageId,
       campaignId,
       setCampaignId,
       adSetId,
@@ -365,6 +422,7 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
       datePreset,
       dealStatus,
       hydratedStorageKey,
+      pageId,
       searchQuery,
       setAdId,
       setAdSetId,
@@ -373,6 +431,7 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
       setDatePreset,
       setDealStatus,
       setSearchQuery,
+      setPageId,
       setSource,
       setTagIds,
       setTeamId,

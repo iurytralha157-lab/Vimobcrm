@@ -128,6 +128,23 @@ func TestValidateCampaignInsightsValues(t *testing.T) {
 			},
 		},
 		{
+			name: "accepts Facebook Page ID",
+			values: url.Values{
+				"dateFrom": {"2026-07-01"},
+				"dateTo":   {"2026-07-31"},
+				"pageId":   {"123456789012345"},
+			},
+		},
+		{
+			name: "rejects oversized Facebook Page ID",
+			values: url.Values{
+				"dateFrom": {"2026-07-01"},
+				"dateTo":   {"2026-07-31"},
+				"pageId":   {strings.Repeat("1", 256)},
+			},
+			wantErr: true,
+		},
+		{
 			name: "rejects malformed multi-tag UUID filters",
 			values: url.Values{
 				"dateFrom": {"2026-07-01"},
@@ -370,6 +387,31 @@ func TestCampaignInsightsSupportsTenantScopedMarketingDimensionsAndReconciliatio
 		if !strings.Contains(query, required) {
 			t.Fatalf("campaign insights is missing dimension/reconciliation contract %q", required)
 		}
+	}
+}
+
+func TestCampaignInsightsFiltersPageOnCanonicalEntryAndPageScopedFacts(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("marketing_repository.go")
+	if err != nil {
+		t.Fatalf("read marketing_repository.go: %v", err)
+	}
+	query := string(source)
+	for _, required := range []string{
+		"nullif(entry.page_id, '') as page_id",
+		"or attribution.page_id = params.page_id",
+		"metric.level = 'ad'",
+		"metric.raw_actions->>'vimob_page_id' = params.page_id",
+		"integration.page_id = params.page_id",
+		"values.Get(\"pageId\")",
+	} {
+		if !strings.Contains(query, required) {
+			t.Fatalf("campaign insights is missing page attribution contract %q", required)
+		}
+	}
+	if strings.Index(query, "attributed_entries as (") > strings.Index(query, "filtered_attributions as (") {
+		t.Fatal("page filtering must not resurrect an older Meta attribution")
 	}
 }
 

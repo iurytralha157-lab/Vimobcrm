@@ -51,6 +51,97 @@ func TestBuildPipelineLeadWhereMetaFiltersMatchIDOrName(t *testing.T) {
 	}
 }
 
+func TestPageFilterParsingAndContactComposition(t *testing.T) {
+	pipelineFilter, err := ParsePipelineBoardFilter(mapValues("filterPage", " page-123 "))
+	if err != nil {
+		t.Fatalf("ParsePipelineBoardFilter() error = %v", err)
+	}
+	if pipelineFilter.FilterPage != "page-123" {
+		t.Fatalf("FilterPage = %q, want page-123", pipelineFilter.FilterPage)
+	}
+	if _, err := ParsePipelineBoardFilter(mapValues("filterPage", strings.Repeat("p", maxPipelineMetaFilterText+1))); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("oversized filterPage error = %v, want ErrInvalidInput", err)
+	}
+
+	contactFilter, err := ParseContactListFilter(mapValues("pageId", " page-123 "))
+	if err != nil {
+		t.Fatalf("ParseContactListFilter() error = %v", err)
+	}
+	if contactFilter.PageID != "page-123" {
+		t.Fatalf("PageID = %q, want page-123", contactFilter.PageID)
+	}
+	contactFilter.CampaignID = "campaign-123"
+
+	where, args, err := buildContactWhere(tenant.Context{
+		UserID:         "10000000-0000-0000-0000-000000000001",
+		OrganizationID: "20000000-0000-0000-0000-000000000001",
+		MemberRole:     "admin",
+	}, contactFilter)
+	if err != nil {
+		t.Fatalf("buildContactWhere() error = %v", err)
+	}
+	joined := strings.Join(where, "\n")
+	for _, want := range []string{
+		"entry.organization_id = $1::uuid",
+		"entry.page_id = $",
+		"entry.campaign_id = $",
+		"lm.page_id = $",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("buildContactWhere() SQL missing %q in:\n%s", want, joined)
+		}
+	}
+	if strings.Count(joined, "from public.lead_entry_events entry") != 1 {
+		t.Fatalf("page and campaign must compose in one historical-entry EXISTS:\n%s", joined)
+	}
+	if strings.Count(joined, "from public.lead_meta lm") != 1 {
+		t.Fatalf("page and campaign must compose in one legacy lead_meta EXISTS:\n%s", joined)
+	}
+	if strings.Contains(joined, "l.meta_campaign_id =") || strings.Contains(joined, "l.utm_campaign =") {
+		t.Fatalf("page composition must not mix the lead projection with another attribution origin:\n%s", joined)
+	}
+	if got := args[len(args)-2:]; got[0] != "page-123" || got[1] != "campaign-123" {
+		t.Fatalf("buildContactWhere() attribution args = %#v", got)
+	}
+}
+
+func TestLeadAttributionPageRequiresOneAtomicLegacyMetaRow(t *testing.T) {
+	args := []any{"20000000-0000-0000-0000-000000000001"}
+	conditions := []string{}
+	if !addLeadAttributionFilterCondition(&args, &conditions, "l", "lm", leadAttributionFilter{
+		Page:     "page-123",
+		Campaign: "campaign-123",
+		AdSet:    "adset-123",
+		Ad:       "ad-123",
+	}) {
+		t.Fatal("page attribution filter was not added")
+	}
+	if len(conditions) != 1 {
+		t.Fatalf("conditions = %#v, want one atomic attribution condition", conditions)
+	}
+	joined := conditions[0]
+	for _, want := range []string{
+		"entry.page_id = $",
+		"entry.campaign_id = $",
+		"entry.adset_id = $",
+		"entry.ad_id = $",
+		"lm.page_id = $",
+		"lm.campaign_id = $",
+		"lm.adset_id = $",
+		"lm.ad_id = $",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("atomic attribution SQL missing %q:\n%s", want, joined)
+		}
+	}
+	if strings.Count(joined, "from public.lead_meta lm") != 1 {
+		t.Fatalf("legacy fallback must use one lead_meta row:\n%s", joined)
+	}
+	if strings.Contains(joined, "l.meta_campaign_id =") || strings.Contains(joined, "l.meta_adset_id =") || strings.Contains(joined, "l.meta_ad_id =") {
+		t.Fatalf("atomic page fallback must not combine attribution from public.leads:\n%s", joined)
+	}
+}
+
 func TestPipelineBoardTagFiltersUseAnySelectedTag(t *testing.T) {
 	firstTagID := "30000000-0000-4000-8000-000000000001"
 	secondTagID := "30000000-0000-4000-8000-000000000002"

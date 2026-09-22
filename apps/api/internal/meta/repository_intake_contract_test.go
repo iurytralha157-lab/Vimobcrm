@@ -90,12 +90,16 @@ func TestMetaLeadPersistenceKeepsEntryDistributionAndNotificationAtomic(t *testi
 		"PreserveAssignee:   preserveAssignee",
 		"RoundRobinID:       destination.RoundRobinID",
 		"RoundRobinResolved: destination.RoundRobinResolved",
+		"repo.insertLeadRedistributionJob(ctx, tx, integration.OrganizationID, leadID, destination, change, distributionResult.Reason)",
 		"intake_scope_key",
 		"origin_round_robin_id",
 	} {
 		if !strings.Contains(persist, required) {
 			t.Fatalf("Meta distribution contract is missing %q", required)
 		}
+	}
+	if strings.Contains(persist, "destination.RoundRobinID != nil && destination.AssignedUserID != nil") {
+		t.Fatal("Meta persistence still suppresses the durable initial-distribution retry when no member is available")
 	}
 }
 

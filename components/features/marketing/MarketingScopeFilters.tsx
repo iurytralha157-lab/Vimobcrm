@@ -2,6 +2,7 @@
 
 import {
   BriefcaseBusiness,
+  Globe,
   Layers3,
   Megaphone,
   RotateCcw,
@@ -28,6 +29,9 @@ export interface MarketingScopeFiltersProps {
   accountId: string | null;
   onAccountChange: (value: string | null) => void;
   accounts: MarketingScopeFilterOption[];
+  pageId: string | null;
+  onPageChange: (value: string | null) => void;
+  pages: MarketingScopeFilterOption[];
   campaignId: string | null;
   onCampaignChange: (value: string | null) => void;
   campaigns: MarketingScopeFilterOption[];
@@ -39,6 +43,7 @@ export interface MarketingScopeFiltersProps {
   objectives: MarketingScopeFilterOption[];
   onClear: () => void;
   isLoading?: boolean;
+  pageOnly?: boolean;
   variant?: "default" | "macro" | "panel";
   className?: string;
 }
@@ -136,6 +141,9 @@ export function MarketingScopeFilters({
   accountId,
   onAccountChange,
   accounts,
+  pageId,
+  onPageChange,
+  pages,
   campaignId,
   onCampaignChange,
   campaigns,
@@ -147,11 +155,12 @@ export function MarketingScopeFilters({
   objectives,
   onClear,
   isLoading = false,
+  pageOnly = false,
   variant = "default",
   className,
 }: MarketingScopeFiltersProps) {
   const hasActiveScope = Boolean(
-    accountId || campaignId || adSetId || objective,
+    accountId || pageId || campaignId || adSetId || objective,
   );
   const isMacro = variant === "macro";
   const isPanel = variant === "panel";
@@ -168,50 +177,67 @@ export function MarketingScopeFilters({
         className,
       )}
     >
+      {!pageOnly ? (
+        <ScopeSelect
+          ariaLabel="Filtrar por conta de anúncios"
+          value={accountId}
+          onChange={onAccountChange}
+          options={accounts}
+          allLabel="Todas as contas"
+          icon={BriefcaseBusiness}
+          disabled={isLoading && accounts.length === 0}
+          variant={variant}
+          className={cn("w-[190px]", isMacro && "xl:flex-1", isPanel && "w-full")}
+        />
+      ) : null}
       <ScopeSelect
-        ariaLabel="Filtrar por conta de anúncios"
-        value={accountId}
-        onChange={onAccountChange}
-        options={accounts}
-        allLabel="Todas as contas"
-        icon={BriefcaseBusiness}
-        disabled={isLoading && accounts.length === 0}
+        ariaLabel="Filtrar por Página do Facebook"
+        value={pageId}
+        onChange={onPageChange}
+        options={pages}
+        allLabel="Todas as páginas"
+        icon={Globe}
+        disabled={isLoading && pages.length === 0}
         variant={variant}
-        className={cn("w-[190px]", isMacro && "xl:flex-1", isPanel && "w-full")}
+        className={cn("w-[210px]", isMacro && "xl:flex-1", isPanel && "w-full")}
       />
-      <ScopeSelect
-        ariaLabel="Filtrar por campanha"
-        value={campaignId}
-        onChange={onCampaignChange}
-        options={campaigns}
-        allLabel="Todas as campanhas"
-        icon={Megaphone}
-        disabled={isLoading && campaigns.length === 0}
-        variant={variant}
-        className={cn("w-[230px]", isMacro && "xl:flex-1", isPanel && "w-full")}
-      />
-      <ScopeSelect
-        ariaLabel="Filtrar por conjunto de anúncios"
-        value={adSetId}
-        onChange={onAdSetChange}
-        options={adSets}
-        allLabel="Todos os conjuntos"
-        icon={Layers3}
-        disabled={isLoading && adSets.length === 0}
-        variant={variant}
-        className={cn("w-[230px]", isMacro && "xl:flex-1", isPanel && "w-full")}
-      />
-      <ScopeSelect
-        ariaLabel="Filtrar por objetivo da campanha"
-        value={objective}
-        onChange={onObjectiveChange}
-        options={objectives}
-        allLabel="Todos os objetivos"
-        icon={Target}
-        disabled={isLoading && objectives.length === 0}
-        variant={variant}
-        className={cn("w-[190px]", isMacro && "xl:flex-1", isPanel && "w-full")}
-      />
+      {!pageOnly ? (
+        <>
+          <ScopeSelect
+            ariaLabel="Filtrar por campanha"
+            value={campaignId}
+            onChange={onCampaignChange}
+            options={campaigns}
+            allLabel="Todas as campanhas"
+            icon={Megaphone}
+            disabled={isLoading && campaigns.length === 0}
+            variant={variant}
+            className={cn("w-[230px]", isMacro && "xl:flex-1", isPanel && "w-full")}
+          />
+          <ScopeSelect
+            ariaLabel="Filtrar por conjunto de anúncios"
+            value={adSetId}
+            onChange={onAdSetChange}
+            options={adSets}
+            allLabel="Todos os conjuntos"
+            icon={Layers3}
+            disabled={isLoading && adSets.length === 0}
+            variant={variant}
+            className={cn("w-[230px]", isMacro && "xl:flex-1", isPanel && "w-full")}
+          />
+          <ScopeSelect
+            ariaLabel="Filtrar por objetivo da campanha"
+            value={objective}
+            onChange={onObjectiveChange}
+            options={objectives}
+            allLabel="Todos os objetivos"
+            icon={Target}
+            disabled={isLoading && objectives.length === 0}
+            variant={variant}
+            className={cn("w-[190px]", isMacro && "xl:flex-1", isPanel && "w-full")}
+          />
+        </>
+      ) : null}
 
       {hasActiveScope && !isPanel ? (
         <Button

@@ -205,6 +205,21 @@ func (repo Repository) attachLeadEnrichmentsBatch(
 			adset_id,
 			ad_name,
 			ad_id,
+			coalesce(
+				nullif(btrim(raw_payload->>'page_name'), ''),
+				nullif(btrim(raw_payload->>'pageName'), ''),
+				nullif(btrim(raw_payload#>>'{page,name}'), ''),
+				nullif(btrim(payload->>'page_name'), ''),
+				nullif(btrim(payload->>'pageName'), ''),
+				nullif(btrim(payload#>>'{page,name}'), ''),
+				(
+					select max(nullif(btrim(integration.page_name), ''))
+					from public.meta_integrations integration
+					where integration.organization_id = lead_meta.organization_id
+					  and integration.page_id = lead_meta.page_id
+				)
+			) as page_name,
+			page_id,
 			platform
 		from public.lead_meta
 		where organization_id = $1::uuid
@@ -213,8 +228,8 @@ func (repo Repository) attachLeadEnrichmentsBatch(
 	`, leadArgs...).Query(func(rows pgx.Rows) error {
 		for rows.Next() {
 			var meta LeadEnrichmentMeta
-			var campaignName, campaignID, adsetName, adsetID, adName, adID, platform pgtype.Text
-			if err := rows.Scan(&meta.LeadID, &campaignName, &campaignID, &adsetName, &adsetID, &adName, &adID, &platform); err != nil {
+			var campaignName, campaignID, adsetName, adsetID, adName, adID, pageName, pageID, platform pgtype.Text
+			if err := rows.Scan(&meta.LeadID, &campaignName, &campaignID, &adsetName, &adsetID, &adName, &adID, &pageName, &pageID, &platform); err != nil {
 				return err
 			}
 			if enrichment, ok := enrichments[meta.LeadID]; ok {
@@ -224,6 +239,8 @@ func (repo Repository) attachLeadEnrichmentsBatch(
 				meta.AdsetID = textPtr(adsetID)
 				meta.AdName = textPtr(adName)
 				meta.AdID = textPtr(adID)
+				meta.PageName = textPtr(pageName)
+				meta.PageID = textPtr(pageID)
 				meta.Platform = textPtr(platform)
 				enrichment.LeadMeta = append(enrichment.LeadMeta, meta)
 			}

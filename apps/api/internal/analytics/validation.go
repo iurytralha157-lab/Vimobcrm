@@ -131,6 +131,7 @@ func validateCampaignInsightsValues(values url.Values) error {
 		"source":     120,
 		"accountId":  255,
 		"objective":  255,
+		"pageId":     255,
 		"campaignId": 255,
 		"adSetId":    255,
 		"adId":       255,

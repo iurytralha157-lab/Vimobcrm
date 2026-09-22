@@ -16,6 +16,7 @@ import {
   useMetaIntegrations,
 } from "@/hooks/use-meta-integration";
 import type { SharedFilters } from "@/hooks/use-shared-filters";
+import type { DatePreset } from "@/hooks/use-dashboard-filters";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { isMetaIntegrationConnected } from "@/lib/integration-catalog";
 
@@ -257,7 +258,10 @@ function integrationHasAdAccount(integration: MetaIntegration) {
   );
 }
 
-export interface MarketingDashboardFilters extends SharedFilters {
+export interface MarketingDashboardFilters
+  extends Omit<SharedFilters, "datePreset" | "dateRange"> {
+  datePreset: DatePreset;
+  dateRange: { from: Date; to: Date };
   accountId?: string | null;
   objective?: string | null;
 }

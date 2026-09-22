@@ -9,6 +9,7 @@ export interface PipelineQueryKeyFilters {
   filterTags?: string[];
   filterDealStatus?: string | null;
   searchQuery?: string | null;
+  filterPage?: string | null;
   filterCampaign?: string | null;
   filterAdSet?: string | null;
   filterAd?: string | null;
@@ -60,5 +61,6 @@ export function stageWithLeadsQueryKey(params: {
     resolvePipelineDateModeForRange(filters?.dateRange, filters?.dateMode),
     filters?.unassigned ? true : undefined,
     normalizePipelineQueryFilter(filters?.teamId),
+    normalizePipelineQueryFilter(filters?.filterPage),
   ] as const;
 }

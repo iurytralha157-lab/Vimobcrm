@@ -33,6 +33,20 @@ function filterReferentialOrphans(
   })
 }
 
+function sanitizePageOptions(value: unknown) {
+  if (!Array.isArray(value)) return value
+
+  return value.flatMap((item) => {
+    if (item === null || item === undefined) return []
+    if (!isUnknownRecord(item)) return [item]
+
+    const id = typeof item.id === 'string' ? item.id.trim() : ''
+    if (!id) return []
+    const name = typeof item.name === 'string' ? item.name.trim() : ''
+    return [{ ...item, id, name: name || id }]
+  })
+}
+
 export function sanitizeLeadMetaFiltersEnvelope(response: unknown): unknown {
   if (!isUnknownRecord(response) || !isUnknownRecord(response.data)) return response
 
@@ -74,6 +88,9 @@ export function sanitizeLeadMetaFiltersEnvelope(response: unknown): unknown {
       sources: Array.isArray(data.sources)
         ? data.sources.filter((source) => !isMissingOrBlankText(source))
         : data.sources,
+      // Keep rolling deployments compatible with an API version that predates
+      // page options, while still rejecting malformed non-array values.
+      pages: data.pages === undefined ? [] : sanitizePageOptions(data.pages),
       campaigns,
       adsets,
       ads,

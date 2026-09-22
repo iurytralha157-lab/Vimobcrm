@@ -138,6 +138,33 @@ func TestPageScopedMarketingFactCarriesAuditableScopeMetadata(t *testing.T) {
 	}
 }
 
+func TestExclusiveAccountAdFactsCarryOnlyVerifiedPageIdentity(t *testing.T) {
+	target := marketingSyncTarget{PageID: "page-123"}
+	insight := map[string]any{"date_start": "2026-07-30", "ad_id": "ad-1", "spend": "15"}
+	for _, test := range []struct {
+		name     string
+		creative map[string]any
+		wantPage string
+	}{
+		{"matching story", map[string]any{"object_story_spec": map[string]any{"page_id": "page-123"}}, "page-123"},
+		{"matching story ID", map[string]any{"effective_object_story_id": "page-123_456"}, "page-123"},
+		{"foreign Page", map[string]any{"object_story_spec": map[string]any{"page_id": "page-456"}}, ""},
+		{"unknown Page", map[string]any{"name": "Creative"}, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			catalog := marketingSyncEntityCatalog{
+				Campaigns: map[string]map[string]any{}, Adsets: map[string]map[string]any{},
+				Ads:       map[string]map[string]any{"ad-1": {"id": "ad-1", "creative": map[string]any{"id": "creative-1"}}},
+				Creatives: map[string]map[string]any{"creative-1": test.creative},
+			}
+			row, ok := marketingSyncPerformanceRowFromInsight(insight, "ad", target, "act_123", map[string]any{}, catalog, time.Now())
+			if !ok || marketingSyncText(row.RawActions["vimob_page_id"]) != test.wantPage {
+				t.Fatalf("row page = %v, want %q, ok = %v", row.RawActions["vimob_page_id"], test.wantPage, ok)
+			}
+		})
+	}
+}
+
 func TestMarketingSyncSnapshotRequiresCompleteCollectionAndMapping(t *testing.T) {
 	complete := marketingSyncInsightResult{Items: []map[string]any{{"id": "1"}}, Complete: true}
 	if !marketingSyncInsightSnapshotComplete(complete, 1) {

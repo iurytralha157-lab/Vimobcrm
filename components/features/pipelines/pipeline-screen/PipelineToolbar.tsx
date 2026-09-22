@@ -39,7 +39,7 @@ type PipelineToolbarProps = {
   isRefreshing: boolean;
   hasCriticalLoadError: boolean;
   datePreset: DatePreset | null;
-  onDatePresetChange: (preset: DatePreset) => void;
+  onDatePresetChange: (preset: DatePreset | null) => void;
   onClearDatePreset: () => void;
   customDateRange: { from: Date; to: Date } | null;
   onCustomDateRangeChange: (range: { from: Date; to: Date } | null) => void;
@@ -49,6 +49,8 @@ type PipelineToolbarProps = {
   onUserChange: (userId: string | null) => void;
   source: string | null;
   onSourceChange: (source: string | null) => void;
+  pageId: string | null;
+  onPageChange: (id: string | null) => void;
   campaignId: string | null;
   onCampaignChange: (id: string | null) => void;
   adSetId: string | null;
@@ -64,11 +66,13 @@ type PipelineToolbarProps = {
   onClearFilters: () => void;
   hasActiveFilters: boolean;
   dynamicSources: SourceOption[];
+  pages: FilterOption[];
   campaigns: FilterOption[];
   adSets: FilterOption[];
   ads: FilterOption[];
   tags: TagOption[];
   isLoadingSources: boolean;
+  isLoadingPages: boolean;
   isLoadingCampaigns: boolean;
   isLoadingAdSets: boolean;
   isLoadingAds: boolean;
@@ -110,6 +114,8 @@ export function PipelineToolbar({
   onUserChange,
   source,
   onSourceChange,
+  pageId,
+  onPageChange,
   campaignId,
   onCampaignChange,
   adSetId,
@@ -125,11 +131,13 @@ export function PipelineToolbar({
   onClearFilters,
   hasActiveFilters,
   dynamicSources,
+  pages,
   campaigns,
   adSets,
   ads,
   tags,
   isLoadingSources,
+  isLoadingPages,
   isLoadingCampaigns,
   isLoadingAdSets,
   isLoadingAds,
@@ -309,6 +317,8 @@ export function PipelineToolbar({
               includeUnassignedUserOption
               source={source}
               onSourceChange={onSourceChange}
+              pageId={pageId}
+              onPageChange={onPageChange}
               campaignId={campaignId}
               onCampaignChange={onCampaignChange}
               adSetId={adSetId}
@@ -324,11 +334,13 @@ export function PipelineToolbar({
               onClear={onClearFilters}
               hasActiveFilters={hasActiveFilters}
               dynamicSources={dynamicSources}
+              pages={pages}
               campaigns={campaigns}
               adSets={adSets}
               ads={ads}
               tags={tags}
               isLoadingSources={isLoadingSources}
+              isLoadingPages={isLoadingPages}
               isLoadingCampaigns={isLoadingCampaigns}
               isLoadingAdSets={isLoadingAdSets}
               isLoadingAds={isLoadingAds}

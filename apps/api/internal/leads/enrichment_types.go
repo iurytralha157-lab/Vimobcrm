@@ -43,6 +43,8 @@ type LeadEnrichmentMeta struct {
 	AdsetID      *string `json:"adset_id"`
 	AdName       *string `json:"ad_name"`
 	AdID         *string `json:"ad_id"`
+	PageName     *string `json:"page_name"`
+	PageID       *string `json:"page_id"`
 	Platform     *string `json:"platform"`
 }
 

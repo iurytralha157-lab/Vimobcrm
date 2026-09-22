@@ -16,6 +16,7 @@ const (
 	defaultPipelineBoardLimit = 12
 	maxPipelineBoardLimit     = 100
 	maxPipelineBoardSources   = 500
+	maxPipelineMetaFilterText = 255
 )
 
 type PipelineBoardDateMode string
@@ -40,6 +41,7 @@ type PipelineBoardFilter struct {
 	FilterTag        string
 	FilterTags       []string
 	FilterDealStatus string
+	FilterPage       string
 	FilterCampaign   string
 	FilterAdSet      string
 	FilterAd         string
@@ -120,10 +122,16 @@ type PipelineStageCountsResponse struct {
 }
 
 type LeadMetaFilters struct {
+	Pages     []LeadMetaPageOption     `json:"pages"`
 	Campaigns []LeadMetaCampaignOption `json:"campaigns"`
 	Adsets    []LeadMetaAdsetOption    `json:"adsets"`
 	Ads       []LeadMetaAdOption       `json:"ads"`
 	Sources   []string                 `json:"sources"`
+}
+
+type LeadMetaPageOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type LeadMetaCampaignOption struct {
@@ -209,6 +217,10 @@ func ParsePipelineBoardFilter(values url.Values) (PipelineBoardFilter, error) {
 			return PipelineBoardFilter{}, fmt.Errorf("%w: invalid unassigned", ErrInvalidInput)
 		}
 	}
+	filterPage := strings.TrimSpace(values.Get("filterPage"))
+	if len(filterPage) > maxPipelineMetaFilterText {
+		return PipelineBoardFilter{}, fmt.Errorf("%w: filterPage is too long", ErrInvalidInput)
+	}
 
 	return PipelineBoardFilter{
 		PipelineID:       strings.TrimSpace(values.Get("pipelineId")),
@@ -225,6 +237,7 @@ func ParsePipelineBoardFilter(values url.Values) (PipelineBoardFilter, error) {
 		FilterTag:        filterTag,
 		FilterTags:       filterTags,
 		FilterDealStatus: strings.TrimSpace(values.Get("filterDealStatus")),
+		FilterPage:       filterPage,
 		FilterCampaign:   strings.TrimSpace(values.Get("filterCampaign")),
 		FilterAdSet:      strings.TrimSpace(values.Get("filterAdSet")),
 		FilterAd:         strings.TrimSpace(values.Get("filterAd")),
@@ -332,6 +345,14 @@ func pipelineIntPtr(value pgtype.Int4) *int {
 }
 
 func sortLeadMetaOptions(filters *LeadMetaFilters) {
+	sort.Slice(filters.Pages, func(i, j int) bool {
+		leftName := strings.ToLower(filters.Pages[i].Name)
+		rightName := strings.ToLower(filters.Pages[j].Name)
+		if leftName != rightName {
+			return leftName < rightName
+		}
+		return filters.Pages[i].ID < filters.Pages[j].ID
+	})
 	sort.Slice(filters.Campaigns, func(i, j int) bool {
 		return strings.ToLower(filters.Campaigns[i].Name) < strings.ToLower(filters.Campaigns[j].Name)
 	})

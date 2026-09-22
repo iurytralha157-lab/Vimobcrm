@@ -49,6 +49,7 @@ import { useOrganizationUsers } from "@/hooks/use-users";
 import { useAuth } from "@/contexts/AuthContext";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
+import { useFilters } from "@/contexts/FilterContext";
 import { DatePreset } from "@/hooks/use-dashboard-filters";
 import { DateFilterPopover } from "@/components/ui/date-filter-popover";
 import { BRAND_COLORS } from "@/config/brand-colors";
@@ -58,7 +59,7 @@ import { SearchableTagPicker } from "@/components/shared/SearchableTagPicker";
 
 interface SharedFiltersProps {
   datePreset: DatePreset | null;
-  onDatePresetChange: (preset: DatePreset) => void;
+  onDatePresetChange: (preset: DatePreset | null) => void;
   onClearDatePreset?: () => void;
   customDateRange: { from: Date; to: Date } | null;
   onCustomDateRangeChange: (range: { from: Date; to: Date } | null) => void;
@@ -82,6 +83,10 @@ interface SharedFiltersProps {
   dynamicSources?: { value: string; label: string }[];
   isLoadingSources?: boolean;
 
+  pageId: string | null;
+  onPageChange: (id: string | null) => void;
+  pages?: { id: string; name: string }[];
+  isLoadingPages?: boolean;
   campaignId: string | null;
   onCampaignChange: (id: string | null) => void;
   adSetId: string | null;
@@ -130,7 +135,7 @@ export function SharedFilters({
   onClearDatePreset,
   customDateRange,
   onCustomDateRangeChange,
-  defaultDatePreset = "last30days",
+  defaultDatePreset = null,
   teamId,
   onTeamChange,
   userId,
@@ -144,6 +149,8 @@ export function SharedFilters({
   stages = [],
   source,
   onSourceChange,
+  pageId,
+  onPageChange,
   campaignId,
   onCampaignChange,
   adSetId,
@@ -159,11 +166,13 @@ export function SharedFilters({
   onClear,
   hasActiveFilters,
   dynamicSources = [],
+  pages = [],
   campaigns = [],
   adSets = [],
   ads = [],
   tags = [],
   isLoadingSources = false,
+  isLoadingPages = false,
   isLoadingCampaigns = false,
   isLoadingAdSets = false,
   isLoadingAds = false,
@@ -184,17 +193,28 @@ export function SharedFilters({
   hasAdvancedContentFilters = false,
 }: SharedFiltersProps) {
   const { user, isSuperAdmin } = useAuth();
+  const { isHydrated: isFiltersHydrated } = useFilters();
   const { hasPermission } = useUserPermissions();
   const canViewAllLeads = isSuperAdmin || hasPermission("lead_view_all");
   const canViewTeamLeads = hasPermission("lead_view_team");
   const canUseScopeFilters = canViewAllLeads || canViewTeamLeads;
-  const { data: teams = [] } = useTeams({
-    enabled: loadDynamicOptions && canUseScopeFilters,
+  const hasPersistedScopeSelection = Boolean(
+    teamId ||
+    (userId && userId !== "all" && userId !== "unassigned"),
+  );
+  const shouldLoadScopeOptions =
+    isFiltersHydrated &&
+    canUseScopeFilters &&
+    (loadDynamicOptions || hasPersistedScopeSelection);
+  const teamsQuery = useTeams({
+    enabled: shouldLoadScopeOptions,
   });
-  const { data: users = [] } = useOrganizationUsers({
-    enabled: loadDynamicOptions && canUseScopeFilters,
+  const usersQuery = useOrganizationUsers({
+    enabled: shouldLoadScopeOptions,
     scope: "filters",
   });
+  const teams = useMemo(() => teamsQuery.data ?? [], [teamsQuery.data]);
+  const users = useMemo(() => usersQuery.data ?? [], [usersQuery.data]);
   const isMobile = useIsMobile();
   const useMobileIcons = isMobile && mobileIconOnly;
   const currentUserId = user?.id;
@@ -271,9 +291,9 @@ export function SharedFilters({
         onClearDatePreset();
         return;
       }
-      onDatePresetChange(defaultDatePreset || "last30days");
+      onDatePresetChange(null);
     },
-    [defaultDatePreset, onClearDatePreset, onDatePresetChange],
+    [onClearDatePreset, onDatePresetChange],
   );
 
   const handleClearFilters = useCallback(() => {
@@ -345,6 +365,12 @@ export function SharedFilters({
 
   useEffect(() => {
     if (
+      !isFiltersHydrated ||
+      !shouldLoadScopeOptions ||
+      teamsQuery.isFetching ||
+      usersQuery.isFetching ||
+      !teamsQuery.isSuccess ||
+      !usersQuery.isSuccess ||
       !showUserFilter ||
       !userId ||
       userId === "all" ||
@@ -358,9 +384,15 @@ export function SharedFilters({
   }, [
     availableUsers,
     includeUnassignedUserOption,
+    isFiltersHydrated,
     onUserChange,
+    shouldLoadScopeOptions,
     showUserFilter,
+    teamsQuery.isFetching,
+    teamsQuery.isSuccess,
     userId,
+    usersQuery.isFetching,
+    usersQuery.isSuccess,
   ]);
 
   const selectedUser = useMemo(
@@ -409,6 +441,7 @@ export function SharedFilters({
     pipelineId !== null ||
     stageId !== null ||
     source !== null ||
+    pageId !== null ||
     campaignId !== null ||
     adSetId !== null ||
     adId !== null ||
@@ -1000,6 +1033,34 @@ export function SharedFilters({
                       </div>
 
                       <div className="space-y-2">
+                        <Select
+                          value={pageId || "all"}
+                          disabled={isLoadingPages}
+                          onOpenChange={markInternalSelectInteraction}
+                          onValueChange={(value) =>
+                            onPageChange(value === "all" ? null : value)
+                          }
+                        >
+                          <SelectTrigger
+                            aria-label="Filtrar por página do Facebook"
+                            aria-busy={isLoadingPages}
+                            onPointerDown={markInternalSelectInteraction}
+                            className={cn(filterControlClass, pageId && "text-primary")}
+                          >
+                            <SelectValue
+                              placeholder={isLoadingPages ? "Carregando páginas..." : "Todas páginas"}
+                            />
+                          </SelectTrigger>
+                          <SelectContent className={filterSelectContentClass}>
+                            <SelectItem value="all">Todas páginas</SelectItem>
+                            {pages.map((page) => (
+                              <SelectItem key={page.id} value={page.id}>
+                                {page.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+
                         {/* Campaign */}
                         <div className="space-y-1">
                           <Popover

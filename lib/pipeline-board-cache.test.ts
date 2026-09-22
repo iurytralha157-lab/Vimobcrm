@@ -462,6 +462,60 @@ test('nao mantem card quando um filtro nao pode ser confirmado pelos dados do ca
   }), false);
 });
 
+test('pagina Meta no cache exige id exato e a mesma linha de atribuicao dos demais filtros', () => {
+  const pageAndCampaignKey = [
+    'stages-with-leads',
+    'org-1',
+    'pipeline-1',
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    'campaign-1',
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    '123456789012345',
+  ] as const;
+
+  assert.equal(
+    pipelineLeadMatchesQueryKeyScope(pageAndCampaignKey, {
+      id: 'lead-same-entry',
+      lead_meta: [{ page_id: '123456789012345', campaign_id: 'campaign-1' }],
+    }),
+    true,
+  );
+  assert.equal(
+    pipelineLeadMatchesQueryKeyScope(pageAndCampaignKey, {
+      id: 'lead-cross-entry',
+      lead_meta: [
+        { page_id: '123456789012345', campaign_id: 'campaign-2' },
+        { page_id: '987654321098765', campaign_id: 'campaign-1' },
+      ],
+    }),
+    false,
+  );
+  assert.equal(
+    pipelineLeadMatchesQueryKeyScope(pageAndCampaignKey, {
+      id: 'lead-page-name-only',
+      lead_meta: [{ page_name: '123456789012345', campaign_id: 'campaign-1' }],
+    }),
+    false,
+  );
+  assert.equal(
+    pipelineLeadMatchesQueryKeyScope(pageAndCampaignKey, {
+      id: 'lead-without-attribution',
+    }),
+    false,
+  );
+});
+
 test('filtro de origem do cache segue exatamente a coluna source do backend', () => {
   const filteredKey = [
     'stages-with-leads',

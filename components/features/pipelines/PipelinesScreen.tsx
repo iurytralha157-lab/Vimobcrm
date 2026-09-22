@@ -41,10 +41,6 @@ import {
 } from '@/components/features/pipelines/pipeline-screen';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSharedFilters } from '@/hooks/use-shared-filters';
-import {
-  getDateRangeFromPreset,
-  type DatePreset,
-} from '@/hooks/use-dashboard-filters';
 import { cn } from '@/lib/utils';
 import {
   useStages,
@@ -111,21 +107,16 @@ export default function Pipelines() {
   const [lostReasonLead, setLostReasonLead] = useState<PipelineLead | null>(null);
   const [pendingLostMove, setPendingLostMove] = useState<DropResult | null>(null);
   const [lostReasonPending, setLostReasonPending] = useState(false);
-  const [pipelineDatePreset, setPipelineDatePreset] = useState<DatePreset | null>(null);
-  const [pipelineCustomDateRange, setPipelineCustomDateRange] = useState<{
-    from: Date;
-    to: Date;
-  } | null>(null);
-  const pipelineDateRange = useMemo(() => {
-    if (!pipelineDatePreset) return null;
-    if (pipelineDatePreset === 'custom') return pipelineCustomDateRange;
-    return getDateRangeFromPreset(pipelineDatePreset);
-  }, [pipelineCustomDateRange, pipelineDatePreset]);
   const [newLeadDialogOpen, setNewLeadDialogOpen] = useState(false);
   const [newLeadStageId, setNewLeadStageId] = useState<string | null>(null);
   const [selectedPipelineId, setSelectedPipelineId] = useState<string | null>(null);
   const {
     filters: sharedFilters,
+    datePreset,
+    setDatePreset,
+    customDateRange,
+    setCustomDateRange,
+    clearDateFilter,
     setTeamId,
     userId: filterUser,
     setUserId: setFilterUser,
@@ -133,6 +124,8 @@ export default function Pipelines() {
     setTagIds: setFilterTags,
     dealStatus: filterDealStatus,
     setDealStatus: setFilterDealStatus,
+    pageId: filterPage,
+    setPageId: setFilterPage,
     campaignId: filterCampaign,
     setCampaignId: setFilterCampaign,
     adSetId: filterAdSet,
@@ -146,6 +139,7 @@ export default function Pipelines() {
     clearFilters,
     hasActiveFilters: hasSharedActiveFilters,
     dynamicSources,
+    pages,
     campaigns,
     adSets,
     ads,
@@ -163,6 +157,7 @@ export default function Pipelines() {
     hasDynamicOptionsError,
     isRetryingDynamicOptions,
     isLoadingSources,
+    isLoadingPages,
     isLoadingCampaigns,
     isLoadingAdSets,
     isLoadingAds,
@@ -170,19 +165,20 @@ export default function Pipelines() {
   } = useSharedFilters({
     loadDynamicOptions: shouldLoadFilterOptions,
     pipelineId: selectedPipelineId,
-    dateMode: pipelineDateRange ? 'origin' : undefined,
-    dateRangeOverride: pipelineDateRange,
+    dateMode: 'origin',
   });
+  const pipelineDateRange = sharedFilters.dateRange;
 
   const hasDynamicMetaFilterSelection = Boolean(
     (filterSource && filterSource !== 'all') ||
+    (filterPage && filterPage !== 'all') ||
     (filterCampaign && filterCampaign !== 'all') ||
     (filterAdSet && filterAdSet !== 'all') ||
     (filterAd && filterAd !== 'all'),
   );
   const hasDynamicTagFilterSelection = filterTags.length > 0;
   const hasHydratedDynamicFilterSelection = isFiltersHydrated && Boolean(
-    sharedFilters.teamId || hasDynamicMetaFilterSelection || hasDynamicTagFilterSelection,
+    sharedFilters.teamId || filterUser || hasDynamicMetaFilterSelection || hasDynamicTagFilterSelection,
   );
 
   useEffect(() => {
@@ -292,8 +288,6 @@ export default function Pipelines() {
       setLostReasonLead(null);
       setPendingLostMove(null);
       setLostReasonPending(false);
-      setPipelineDatePreset(null);
-      setPipelineCustomDateRange(null);
       setSettingsStage(null);
       setNewLeadDialogOpen(false);
       setNewPipelineDialogOpen(false);
@@ -424,9 +418,9 @@ export default function Pipelines() {
     : undefined;
 
   useEffect(() => {
-    if (!selectedFilterUserId || selectedFilterUserAllowed) return;
+    if (!isFiltersHydrated || !selectedFilterUserId || selectedFilterUserAllowed) return;
     setFilterUser(null);
-  }, [selectedFilterUserAllowed, selectedFilterUserId, setFilterUser]);
+  }, [isFiltersHydrated, selectedFilterUserAllowed, selectedFilterUserId, setFilterUser]);
 
   const {
     data: baseStages = [],
@@ -449,6 +443,7 @@ export default function Pipelines() {
     filterTags,
     filterDealStatus: filterDealStatus && filterDealStatus !== 'all' ? filterDealStatus : undefined,
     searchQuery: deferredSearchQuery || undefined,
+    filterPage: filterPage && filterPage !== 'all' ? filterPage : undefined,
     filterCampaign: filterCampaign && filterCampaign !== 'all' ? filterCampaign : undefined,
     filterAdSet: filterAdSet && filterAdSet !== 'all' ? filterAdSet : undefined,
     filterAd: filterAd && filterAd !== 'all' ? filterAd : undefined,
@@ -461,6 +456,7 @@ export default function Pipelines() {
     filterTags,
     filterDealStatus,
     deferredSearchQuery,
+    filterPage,
     filterCampaign,
     filterAdSet,
     filterAd,
@@ -1565,20 +1561,19 @@ export default function Pipelines() {
           isMobile={isMobile}
           isRefreshing={isRefreshing}
           hasCriticalLoadError={hasCriticalLoadError}
-          datePreset={pipelineDatePreset}
-          onDatePresetChange={setPipelineDatePreset}
-          onClearDatePreset={() => {
-            setPipelineDatePreset(null);
-            setPipelineCustomDateRange(null);
-          }}
-          customDateRange={pipelineCustomDateRange}
-          onCustomDateRangeChange={setPipelineCustomDateRange}
+          datePreset={datePreset}
+          onDatePresetChange={setDatePreset}
+          onClearDatePreset={clearDateFilter}
+          customDateRange={customDateRange}
+          onCustomDateRangeChange={setCustomDateRange}
           teamId={sharedFilters.teamId}
           onTeamChange={setTeamId}
           userId={filterUser}
           onUserChange={setFilterUser}
           source={filterSource}
           onSourceChange={setFilterSource}
+          pageId={filterPage}
+          onPageChange={setFilterPage}
           campaignId={filterCampaign}
           onCampaignChange={setFilterCampaign}
           adSetId={filterAdSet}
@@ -1591,18 +1586,16 @@ export default function Pipelines() {
           onDealStatusChange={setFilterDealStatus}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
-          onClearFilters={() => {
-            clearFilters();
-            setPipelineDatePreset(null);
-            setPipelineCustomDateRange(null);
-          }}
+          onClearFilters={clearFilters}
           hasActiveFilters={hasSharedActiveFilters}
           dynamicSources={dynamicSources}
+          pages={pages}
           campaigns={campaigns}
           adSets={adSets}
           ads={ads}
           tags={allTagsFromHook}
           isLoadingSources={isLoadingSources}
+          isLoadingPages={isLoadingPages}
           isLoadingCampaigns={isLoadingCampaigns}
           isLoadingAdSets={isLoadingAdSets}
           isLoadingAds={isLoadingAds}

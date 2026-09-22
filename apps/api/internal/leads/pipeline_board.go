@@ -3,6 +3,7 @@ package leads
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -13,6 +14,7 @@ import (
 )
 
 type leadAttributionFilter struct {
+	Page         string
 	Campaign     string
 	AdSet        string
 	Ad           string
@@ -34,10 +36,11 @@ func normalizedLeadAttributionValue(value string) string {
 // The current lead/lead_meta projection remains as a compatibility fallback for
 // old rows that predate entry-event enrichment.
 func addLeadAttributionFilterCondition(args *[]any, conditions *[]string, leadAlias string, metaAlias string, filter leadAttributionFilter) bool {
+	filter.Page = normalizedLeadAttributionValue(filter.Page)
 	filter.Campaign = normalizedLeadAttributionValue(filter.Campaign)
 	filter.AdSet = normalizedLeadAttributionValue(filter.AdSet)
 	filter.Ad = normalizedLeadAttributionValue(filter.Ad)
-	if filter.Campaign == "" && filter.AdSet == "" && filter.Ad == "" {
+	if filter.Page == "" && filter.Campaign == "" && filter.AdSet == "" && filter.Ad == "" {
 		return false
 	}
 
@@ -47,6 +50,8 @@ func addLeadAttributionFilterCondition(args *[]any, conditions *[]string, leadAl
 		"entry.is_countable = true",
 	}
 	legacyConditions := []string{}
+	atomicLegacyMetaConditions := []string{}
+	pageRequiresAtomicLegacyMeta := filter.Page != ""
 
 	addValue := func(value string, eventColumns []string, leadColumns []string, metaColumns []string) {
 		if value == "" {
@@ -61,13 +66,18 @@ func addLeadAttributionFilterCondition(args *[]any, conditions *[]string, leadAl
 		}
 		eventConditions = append(eventConditions, "("+strings.Join(eventMatches, " or ")+")")
 
-		legacyMatches := make([]string, 0, len(leadColumns)+1)
-		for _, column := range leadColumns {
-			legacyMatches = append(legacyMatches, fmt.Sprintf("%s.%s = $%d", leadAlias, column, index))
-		}
 		metaMatches := make([]string, 0, len(metaColumns))
 		for _, column := range metaColumns {
 			metaMatches = append(metaMatches, fmt.Sprintf("%s.%s = $%d", metaAlias, column, index))
+		}
+		if pageRequiresAtomicLegacyMeta {
+			atomicLegacyMetaConditions = append(atomicLegacyMetaConditions, "("+strings.Join(metaMatches, " or ")+")")
+			return
+		}
+
+		legacyMatches := make([]string, 0, len(leadColumns)+1)
+		for _, column := range leadColumns {
+			legacyMatches = append(legacyMatches, fmt.Sprintf("%s.%s = $%d", leadAlias, column, index))
 		}
 		legacyMatches = append(legacyMatches, fmt.Sprintf(`exists (
 			select 1
@@ -79,6 +89,11 @@ func addLeadAttributionFilterCondition(args *[]any, conditions *[]string, leadAl
 		legacyConditions = append(legacyConditions, "("+strings.Join(legacyMatches, " or ")+")")
 	}
 
+	addValue(filter.Page,
+		[]string{"page_id"},
+		nil,
+		[]string{"page_id"},
+	)
 	addValue(filter.Campaign,
 		[]string{"campaign_id", "campaign_name", "utm_campaign"},
 		[]string{"meta_campaign_id", "utm_campaign"},
@@ -94,6 +109,15 @@ func addLeadAttributionFilterCondition(args *[]any, conditions *[]string, leadAl
 		[]string{"meta_ad_id"},
 		[]string{"ad_id", "ad_name"},
 	)
+	if pageRequiresAtomicLegacyMeta {
+		legacyConditions = append(legacyConditions, fmt.Sprintf(`exists (
+			select 1
+			from public.lead_meta %s
+			where %s.organization_id = $1::uuid
+			  and %s.lead_id = %s.id
+			  and %s
+		)`, metaAlias, metaAlias, metaAlias, leadAlias, strings.Join(atomicLegacyMetaConditions, " and ")))
+	}
 
 	addDate := func(value any, operator string) {
 		if value == nil {
@@ -270,6 +294,10 @@ func (repo Repository) ListLeadMetaFilters(ctx context.Context, tenantContext te
 	if err != nil {
 		return LeadMetaFilters{}, err
 	}
+	selectedPageID := normalizedLeadAttributionValue(filter.FilterPage)
+	attributionArgs := append([]any{}, args...)
+	attributionArgs = append(attributionArgs, selectedPageID)
+	selectedPageIndex := len(attributionArgs)
 
 	rows, err := repo.db.Pool().Query(ctx, `
 		with visible_leads as (
@@ -325,6 +353,7 @@ func (repo Repository) ListLeadMetaFilters(ctx context.Context, tenantContext te
 			where entry.organization_id = l.organization_id
 			  and entry.lead_id = l.id
 			  and entry.is_countable = true
+			  and ($`+fmt.Sprint(selectedPageIndex)+` = '' or entry.page_id = $`+fmt.Sprint(selectedPageIndex)+`)
 			union all
 			select
 				coalesce(
@@ -344,6 +373,7 @@ func (repo Repository) ListLeadMetaFilters(ctx context.Context, tenantContext te
 			from public.lead_meta meta
 			where meta.organization_id = l.organization_id
 			  and meta.lead_id = l.id
+			  and ($`+fmt.Sprint(selectedPageIndex)+` = '' or meta.page_id = $`+fmt.Sprint(selectedPageIndex)+`)
 			union all
 			select
 				l.utm_campaign,
@@ -352,6 +382,7 @@ func (repo Repository) ListLeadMetaFilters(ctx context.Context, tenantContext te
 				l.meta_adset_id,
 				null::text,
 				l.meta_ad_id
+			where $`+fmt.Sprint(selectedPageIndex)+` = ''
 		) raw_attribution on true
 		left join lateral (
 			select
@@ -392,13 +423,14 @@ func (repo Repository) ListLeadMetaFilters(ctx context.Context, tenantContext te
 			where mi.organization_id = l.organization_id
 			  and mi.campaign_id = nullif(btrim(raw_attribution.campaign_id), '')
 		) mci on true
-	`, args...)
+	`, attributionArgs...)
 	if err != nil {
 		return LeadMetaFilters{}, err
 	}
 	defer rows.Close()
 
 	filters := LeadMetaFilters{
+		Pages:     []LeadMetaPageOption{},
 		Campaigns: []LeadMetaCampaignOption{},
 		Adsets:    []LeadMetaAdsetOption{},
 		Ads:       []LeadMetaAdOption{},
@@ -430,6 +462,10 @@ func (repo Repository) ListLeadMetaFilters(ctx context.Context, tenantContext te
 		return LeadMetaFilters{}, err
 	}
 	rows.Close()
+	filters.Pages, err = repo.listLeadMetaPageOptions(ctx, tenantContext, filter)
+	if err != nil {
+		return LeadMetaFilters{}, err
+	}
 
 	sourceArgs := append([]any{}, args...)
 	sourceArgs = append(sourceArgs, maxPipelineBoardSources)
@@ -473,6 +509,98 @@ func (repo Repository) ListLeadMetaFilters(ctx context.Context, tenantContext te
 	sortLeadMetaOptions(&filters)
 
 	return filters, nil
+}
+
+func (repo Repository) listLeadMetaPageOptions(ctx context.Context, tenantContext tenant.Context, filter PipelineBoardFilter) ([]LeadMetaPageOption, error) {
+	pageFilter := filter
+	pageFilter.FilterPage = ""
+	where, args, err := buildPipelineLeadWhere(tenantContext, pageFilter)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := repo.db.Pool().Query(ctx, `
+		with visible_leads as (
+			select l.id, l.organization_id
+			from public.leads l
+			where `+strings.Join(where, " and ")+`
+		)
+		select distinct
+			coalesce(
+				nullif(btrim(page_catalog.page_name), ''),
+				nullif(btrim(raw_page.page_name), ''),
+				nullif(btrim(raw_page.page_id), '')
+			) as page_name,
+			nullif(btrim(raw_page.page_id), '') as page_id
+		from visible_leads l
+		join lateral (
+			select entry.page_name, entry.page_id
+			from public.lead_entry_events entry
+			where entry.organization_id = l.organization_id
+			  and entry.lead_id = l.id
+			  and entry.is_countable = true
+			union all
+			select
+				coalesce(
+					nullif(btrim(meta.raw_payload->>'page_name'), ''),
+					nullif(btrim(meta.raw_payload->>'pageName'), ''),
+					nullif(btrim(meta.raw_payload#>>'{page,name}'), ''),
+					nullif(btrim(meta.payload->>'page_name'), ''),
+					nullif(btrim(meta.payload->>'pageName'), ''),
+					nullif(btrim(meta.payload#>>'{page,name}'), '')
+				),
+				meta.page_id
+			from public.lead_meta meta
+			where meta.organization_id = l.organization_id
+			  and meta.lead_id = l.id
+		) raw_page on nullif(btrim(raw_page.page_id), '') is not null
+		left join lateral (
+			select max(nullif(btrim(integration.page_name), '')) as page_name
+			from public.meta_integrations integration
+			where integration.organization_id = l.organization_id
+			  and integration.page_id = nullif(btrim(raw_page.page_id), '')
+		) page_catalog on true
+		order by page_name, page_id
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	pages := map[string]LeadMetaPageOption{}
+	for rows.Next() {
+		var pageName, pageID pgtype.Text
+		if err := rows.Scan(&pageName, &pageID); err != nil {
+			return nil, err
+		}
+		collectLeadMetaPageOption(pages, textValue(pageName), textValue(pageID))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	result := make([]LeadMetaPageOption, 0, len(pages))
+	for _, page := range pages {
+		result = append(result, page)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		leftName := strings.ToLower(result[i].Name)
+		rightName := strings.ToLower(result[j].Name)
+		if leftName != rightName {
+			return leftName < rightName
+		}
+		return result[i].ID < result[j].ID
+	})
+	return result, nil
+}
+
+func collectLeadMetaPageOption(pages map[string]LeadMetaPageOption, pageName string, pageID string) {
+	pageID = firstNonEmpty(pageID)
+	if pageID == "" {
+		return
+	}
+	pageName = firstNonEmpty(pageName, pageID)
+	pages[pageID] = LeadMetaPageOption{ID: pageID, Name: pageName}
 }
 
 func collectLeadMetaFilterOptions(
@@ -959,6 +1087,7 @@ func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFi
 	}
 
 	addLeadAttributionFilterCondition(&args, &where, "l", "lm", leadAttributionFilter{
+		Page:     filter.FilterPage,
 		Campaign: filter.FilterCampaign,
 		AdSet:    filter.FilterAdSet,
 		Ad:       filter.FilterAd,

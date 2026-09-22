@@ -590,6 +590,10 @@
     {
       "file": "20260921132800_guard_historical_stage_clock.sql",
       "sha256": "053b453ac616a26026253ee7b23bb9073633978f0da457a6cce489458f37c57a"
+    },
+    {
+      "file": "20260922120632_keep_direct_queue_members_outside_team_schedules.sql",
+      "sha256": "ca33eb83b53437f2d3eb01dfbc66ec870d01efc80cf185b5c507d9f2c9faf830"
     }
   ]
 }

@@ -28,6 +28,10 @@ type Repository struct {
 	client *http.Client
 }
 
+type metaRedistributionExecutor interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+}
+
 type duplicateLeadgenError struct {
 	leadID string
 }
@@ -1266,8 +1270,8 @@ func (repo Repository) persistLeadWithIdentityMode(ctx context.Context, webhookP
 	destination.StageID = distributionResult.StageID
 	destination.RoundRobinID = distributionResult.RoundRobinID
 	destination.RoundRobinMemberID = distributionResult.MemberID
-	if !reentry && destination.RoundRobinID != nil && destination.AssignedUserID != nil {
-		if err := repo.insertLeadRedistributionJob(ctx, tx, integration.OrganizationID, leadID, destination, change); err != nil {
+	if !reentry && destination.RoundRobinID != nil {
+		if err := repo.insertLeadRedistributionJob(ctx, tx, integration.OrganizationID, leadID, destination, change, distributionResult.Reason); err != nil {
 			return "", false, err
 		}
 	}
@@ -2689,9 +2693,15 @@ func (repo Repository) insertRoundRobinLog(ctx context.Context, tx pgx.Tx, organ
 	return nil
 }
 
-func (repo Repository) insertLeadRedistributionJob(ctx context.Context, tx pgx.Tx, organizationID string, leadID string, destination resolvedDestination, change leadgenChange) error {
-	if destination.RoundRobinID == nil || destination.AssignedUserID == nil {
+func (repo Repository) insertLeadRedistributionJob(ctx context.Context, executor metaRedistributionExecutor, organizationID string, leadID string, destination resolvedDestination, change leadgenChange, distributionReason string) error {
+	if destination.RoundRobinID == nil {
 		return nil
+	}
+	if destination.AssignedUserID == nil {
+		if distributionReason != "no_available_members" {
+			return nil
+		}
+		return repo.insertMetaInitialDistributionJob(ctx, executor, organizationID, leadID, destination, change)
 	}
 
 	settings := destination.RedistributionSettings
@@ -2712,7 +2722,7 @@ func (repo Repository) insertLeadRedistributionJob(ctx context.Context, tx pgx.T
 		maxAttempts = 0
 	}
 
-	_, err := tx.Exec(ctx, `
+	_, err := executor.Exec(ctx, `
 		insert into public.lead_redistribution_jobs (
 			organization_id,
 			lead_id,
@@ -2752,6 +2762,58 @@ func (repo Repository) insertLeadRedistributionJob(ctx context.Context, tx pgx.T
 		"form_id":    change.FormID,
 		"page_id":    change.PageID,
 		"member_id":  nullablePointer(destination.RoundRobinMemberID),
+	}))
+	return err
+}
+
+func (repo Repository) insertMetaInitialDistributionJob(ctx context.Context, executor metaRedistributionExecutor, organizationID string, leadID string, destination resolvedDestination, change leadgenChange) error {
+	if destination.RoundRobinID == nil {
+		return nil
+	}
+
+	settings := destination.RedistributionSettings
+	timeoutMinutes := min(10080, max(1, intSetting(settings, "redistribution_timeout_minutes", 20)))
+	warningMinutes := max(0, intSetting(settings, "redistribution_warning_minutes", 5))
+	warningMinutes = min(warningMinutes, timeoutMinutes-1)
+	maxAttempts := min(1000, max(0, intSetting(settings, "redistribution_max_attempts", 10)))
+
+	_, err := executor.Exec(ctx, `
+		insert into public.lead_redistribution_jobs (
+			organization_id,
+			lead_id,
+			round_robin_id,
+			original_assigned_user_id,
+			current_assigned_user_id,
+			max_attempts,
+			timeout_minutes,
+			warning_minutes,
+			enrolled_at,
+			due_at,
+			warning_due_at,
+			metadata
+		)
+		values (
+			$1::uuid,
+			$2::uuid,
+			$3::uuid,
+			null,
+			null,
+			$4,
+			$5,
+			$6,
+			now(),
+			now(),
+			null,
+			$7::jsonb
+		)
+		on conflict do nothing
+	`, organizationID, leadID, *destination.RoundRobinID, maxAttempts, timeoutMinutes, warningMinutes, jsonb(map[string]any{
+		"source":                        "meta_lead_ads",
+		"initial_distribution_pending":  true,
+		"allow_assigned_redistribution": false,
+		"leadgen_id":                    change.LeadgenID,
+		"form_id":                       change.FormID,
+		"page_id":                       change.PageID,
 	}))
 	return err
 }

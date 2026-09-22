@@ -60,20 +60,9 @@ func TestContactWhereCombinesSearchAndCreatedRange(t *testing.T) {
 	for _, testCase := range []struct {
 		name       string
 		campaignID string
-		fromSQL    string
-		toSQL      string
 	}{
-		{
-			name:    "lead creation range",
-			fromSQL: "l.created_at >= $",
-			toSQL:   "l.created_at <= $",
-		},
-		{
-			name:       "attribution occurrence range",
-			campaignID: "campaign-1",
-			fromSQL:    "entry.occurred_at >= $",
-			toSQL:      "entry.occurred_at <= $",
-		},
+		{name: "lead creation range"},
+		{name: "lead creation range with attribution", campaignID: "campaign-1"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			where, _, err := buildContactWhere(tenantContext, ContactListFilter{
@@ -87,12 +76,76 @@ func TestContactWhereCombinesSearchAndCreatedRange(t *testing.T) {
 			}
 
 			query := strings.Join(where, " ")
-			if !strings.Contains(query, testCase.fromSQL) {
+			if !strings.Contains(query, "l.created_at >= $") {
 				t.Fatalf("query does not combine search with lower date bound: %s", query)
 			}
-			if !strings.Contains(query, testCase.toSQL) {
+			if !strings.Contains(query, "l.created_at <= $") {
 				t.Fatalf("query does not combine search with upper date bound: %s", query)
 			}
+			if strings.Contains(query, "entry.occurred_at >=") || strings.Contains(query, "entry.occurred_at <=") {
+				t.Fatalf("contact period must use the same lead-origin date as pipeline and dashboard: %s", query)
+			}
 		})
+	}
+}
+
+func TestContactTeamFilterMatchesCurrentAssigneeTeam(t *testing.T) {
+	teamID := "33333333-3333-4333-8333-333333333333"
+	where, args, err := buildContactWhere(tenant.Context{
+		OrganizationID: "11111111-1111-4111-8111-111111111111",
+		UserID:         "22222222-2222-4222-8222-222222222222",
+		MemberRole:     "admin",
+	}, ContactListFilter{TeamID: teamID})
+	if err != nil {
+		t.Fatalf("buildContactWhere() error = %v", err)
+	}
+	query := strings.Join(where, " and ")
+	teamClause := where[len(where)-1]
+	for _, fragment := range []string{
+		"from public.team_members dtm",
+		"dtm.organization_id = l.organization_id",
+		"dtm.user_id = l.assigned_user_id",
+		"dt.is_active = true",
+		"coalesce(dom.is_active, false) = true",
+	} {
+		if !strings.Contains(query, fragment) {
+			t.Fatalf("contact team predicate is missing %q: %s", fragment, query)
+		}
+	}
+	if strings.Contains(teamClause, "to_jsonb(l)->>'team_id'") {
+		t.Fatalf("contact team filter must not use assignment provenance: %s", teamClause)
+	}
+	if strings.Contains(teamClause, "l.assigned_user_id is null") || strings.Contains(teamClause, "l.team_id = $5::uuid") {
+		t.Fatalf("contact team-only filter must not include unassigned queue provenance: %s", teamClause)
+	}
+	if args[len(args)-1] != teamID {
+		t.Fatalf("team filter argument = %#v, want %q", args[len(args)-1], teamID)
+	}
+}
+
+func TestContactTeamAndUnassignedFiltersUseQueueProvenance(t *testing.T) {
+	teamID := "33333333-3333-4333-8333-333333333333"
+	where, args, err := buildContactWhere(tenant.Context{
+		OrganizationID: "11111111-1111-4111-8111-111111111111",
+		UserID:         "22222222-2222-4222-8222-222222222222",
+		MemberRole:     "admin",
+	}, ContactListFilter{TeamID: teamID, Unassigned: true})
+	if err != nil {
+		t.Fatalf("buildContactWhere() error = %v", err)
+	}
+	query := strings.Join(where, " and ")
+	for _, fragment := range []string{
+		"l.team_id = $5::uuid",
+		"l.assigned_user_id is null",
+	} {
+		if !strings.Contains(query, fragment) {
+			t.Fatalf("contact team + unassigned predicate is missing %q: %s", fragment, query)
+		}
+	}
+	if strings.Contains(query, "from public.team_members dtm") {
+		t.Fatalf("contact team + unassigned must use queue provenance instead of current membership: %s", query)
+	}
+	if args[len(args)-1] != teamID {
+		t.Fatalf("team filter argument = %#v, want %q", args[len(args)-1], teamID)
 	}
 }

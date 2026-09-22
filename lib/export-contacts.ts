@@ -18,6 +18,7 @@ export interface ContactExportFilters {
   /** Legacy single-tag export filter kept for compatibility. */
   tagId?: string;
   source?: string;
+  pageId?: string;
   campaignId?: string;
   adSetId?: string;
   adId?: string;

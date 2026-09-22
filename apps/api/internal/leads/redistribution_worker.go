@@ -31,6 +31,7 @@ type redistributionJob struct {
 	OrganizationID              string
 	LeadID                      string
 	RoundRobinID                string
+	Source                      string
 	EntryEventID                string
 	CurrentAssignedUserID       string
 	AttemptCount                int
@@ -256,6 +257,7 @@ func (repo Repository) processManagedWhatsAppInitialDistribution(
 		return err
 	}
 
+	distributionSource := normalizeInitialDistributionSource(job.Source)
 	var rawResult []byte
 	err = store.QueryRow(ctx, `
 		select public.distribute_lead_from_backend(
@@ -270,10 +272,10 @@ func (repo Repository) processManagedWhatsAppInitialDistribution(
 	`,
 		job.OrganizationID,
 		job.LeadID,
-		fmt.Sprintf("managed-whatsapp-pending:%s:attempt_%d", job.ID, job.AttemptCount+1),
+		initialDistributionIdempotencyKey(distributionSource, job.ID, job.AttemptCount+1),
 		job.RoundRobinID,
 		false,
-		"whatsapp",
+		distributionSource,
 		attemptedAt,
 	).Scan(&rawResult)
 	if err != nil {
@@ -844,16 +846,16 @@ func scanRedistributionJobs(rows pgx.Rows) ([]redistributionJob, error) {
 		); err != nil {
 			return nil, err
 		}
-		job.InitialDistributionPending, job.AllowAssignedRedistribution, job.EntryEventID = redistributionJobMetadataFromJSON(rawMetadata)
+		job.InitialDistributionPending, job.AllowAssignedRedistribution, job.EntryEventID, job.Source = redistributionJobMetadataFromJSON(rawMetadata)
 		jobs = append(jobs, job)
 	}
 	return jobs, rows.Err()
 }
 
-func redistributionJobMetadataFromJSON(raw []byte) (bool, bool, string) {
+func redistributionJobMetadataFromJSON(raw []byte) (bool, bool, string, string) {
 	payload, err := decodeJSONObject(raw)
 	if err != nil {
-		return false, false, ""
+		return false, false, "", "whatsapp"
 	}
 	initialPending, initialPendingValid := parseFlexibleJSONBoolean(payload["initial_distribution_pending"])
 	allowAssigned, allowAssignedValid := parseFlexibleJSONBoolean(payload["allow_assigned_redistribution"])
@@ -873,7 +875,39 @@ func redistributionJobMetadataFromJSON(raw []byte) (bool, bool, string) {
 			}
 		}
 	}
-	return initialPending, allowAssigned, entryEventID
+
+	source := "whatsapp"
+	if rawSource, exists := payload["source"]; exists {
+		var value string
+		if json.Unmarshal(rawSource, &value) != nil || strings.TrimSpace(value) == "" {
+			source = "unknown"
+		} else {
+			source = normalizeInitialDistributionSource(value)
+		}
+	}
+	return initialPending, allowAssigned, entryEventID, source
+}
+
+func normalizeInitialDistributionSource(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "meta", "meta_lead_ads":
+		return "meta"
+	case "", "managed_whatsapp", "whatsapp":
+		return "whatsapp"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func initialDistributionIdempotencyKey(source string, jobID string, attempt int) string {
+	prefix := "initial-distribution-pending"
+	switch normalizeInitialDistributionSource(source) {
+	case "meta":
+		prefix = "meta-pending"
+	case "whatsapp":
+		prefix = "managed-whatsapp-pending"
+	}
+	return fmt.Sprintf("%s:%s:attempt_%d", prefix, jobID, attempt)
 }
 
 func (repo Repository) enqueueManagedWhatsAppDistributionAutoReply(
@@ -884,6 +918,9 @@ func (repo Repository) enqueueManagedWhatsAppDistributionAutoReply(
 	distributionEventID string,
 ) error {
 	if job.AllowAssignedRedistribution {
+		return nil
+	}
+	if normalizeInitialDistributionSource(job.Source) != "whatsapp" {
 		return nil
 	}
 	entryEventID, ok := normalizeUUID(job.EntryEventID)
@@ -1399,15 +1436,15 @@ func (repo Repository) nextRoundRobinMemberAvailability(
 				availability_member.id as team_member_id
 			from eligible
 			join public.team_members availability_member
-			  on availability_member.organization_id = eligible.organization_id
+			  on availability_member.id = eligible.team_member_id
+			 and availability_member.organization_id = eligible.organization_id
 			 and availability_member.user_id = eligible.user_id
 			 and coalesce(availability_member.is_active, true) = true
 			join public.teams availability_team
 			  on availability_team.id = availability_member.team_id
 			 and availability_team.organization_id = availability_member.organization_id
 			 and coalesce(availability_team.is_active, true) = true
-			where eligible.team_member_id is null
-			   or availability_member.id = eligible.team_member_id
+			where eligible.team_member_id is not null
 		),
 		clock as (
 			select

@@ -15,11 +15,12 @@ import { shouldRetryPipelineQuery } from '@/lib/pipeline-reliability';
 import { resolvePipelineFilterScopeState } from '@/lib/pipeline-filter-readiness';
 
 export interface SharedFilters {
-  datePreset: DatePreset;
-  dateRange: { from: Date; to: Date };
+  datePreset: DatePreset | null;
+  dateRange: { from: Date; to: Date } | null;
   teamId: string | null;
   userId: string | null;
   source: string | null;
+  pageId: string | null;
   campaignId: string | null;
   adSetId: string | null;
   adId: string | null;
@@ -77,7 +78,7 @@ function uniqueAdOptions(
   return Array.from(map.values());
 }
 
-const EMPTY_LEAD_META_FILTERS = { sources: [], campaigns: [], adsets: [], ads: [] };
+const EMPTY_LEAD_META_FILTERS = { sources: [], pages: [], campaigns: [], adsets: [], ads: [] };
 
 export function useSharedFilters(options?: {
   loadDynamicOptions?: boolean;
@@ -94,6 +95,7 @@ export function useSharedFilters(options?: {
     setDatePreset,
     customDateRange,
     setCustomDateRange,
+    clearDateFilter,
     activeDateRange: dateRange,
     teamId,
     setTeamId,
@@ -101,6 +103,8 @@ export function useSharedFilters(options?: {
     setUserId,
     source,
     setSource,
+    pageId,
+    setPageId,
     campaignId,
     setCampaignId,
     adSetId,
@@ -116,7 +120,19 @@ export function useSharedFilters(options?: {
     clearFilters,
   } = useFilters();
 
-  const shouldLoadDynamicOptions = options?.loadDynamicOptions ?? true;
+  const requestedDynamicOptions = options?.loadDynamicOptions ?? true;
+  const hasHydratedDynamicSelection = isFiltersHydrated && Boolean(
+    teamId ||
+    (userId && userId !== 'all' && userId !== 'unassigned') ||
+    (source && source !== 'all') ||
+    (pageId && pageId !== 'all') ||
+    (campaignId && campaignId !== 'all') ||
+    (adSetId && adSetId !== 'all') ||
+    (adId && adId !== 'all') ||
+    tagIds.length > 0
+  );
+  const shouldLoadDynamicOptions =
+    requestedDynamicOptions || hasHydratedDynamicSelection;
   const canUseTeamFilters = hasPermission('lead_view_all') || hasPermission('lead_view_team');
   const pipelineId = options?.pipelineId ?? null;
   const hasDateRangeOverride = Object.prototype.hasOwnProperty.call(
@@ -130,6 +146,7 @@ export function useSharedFilters(options?: {
   const previousTeamIdRef = useRef(teamId);
   const wasFiltersHydratedRef = useRef(false);
   const wasMetaFilterCascadeHydratedRef = useRef(false);
+  const previousPageIdRef = useRef(pageId);
   const previousCampaignIdRef = useRef(campaignId);
   const previousAdSetIdRef = useRef(adSetId);
   const dateFromStr = effectiveDateRange?.from.toISOString();
@@ -147,6 +164,7 @@ export function useSharedFilters(options?: {
       'shared-filter-lead-meta-filters',
       organizationId,
       pipelineId,
+      pageId,
       dateFromStr,
       dateToStr,
       dateMode,
@@ -157,6 +175,7 @@ export function useSharedFilters(options?: {
       dateRange: effectiveDateRange,
       dateMode,
       pipelineId,
+      filterPage: pageId,
       signal,
     }),
     staleTime: 1000 * 60 * 10,
@@ -227,6 +246,16 @@ export function useSharedFilters(options?: {
     () => (teamId ? teamsQuery.data?.find((item) => item.id === teamId) : undefined),
     [teamId, teamsQuery.data],
   );
+
+  const pages = useMemo(() => {
+    const options = new Map<string, string>();
+    (leadMetaFiltersQuery.data?.pages || []).forEach((item) => {
+      const id = item.id?.trim();
+      if (id) options.set(id, item.name?.trim() || id);
+    });
+    if (pageId && !options.has(pageId)) options.set(pageId, pageId);
+    return Array.from(options.entries()).map(([id, name]) => ({ id, name }));
+  }, [leadMetaFiltersQuery.data, pageId]);
   const teamFilterScope = resolvePipelineFilterScopeState({
     hasSelection: Boolean(teamId),
     loadEnabled:
@@ -315,12 +344,14 @@ export function useSharedFilters(options?: {
   useEffect(() => {
     if (!isFiltersHydrated) {
       wasMetaFilterCascadeHydratedRef.current = false;
+      previousPageIdRef.current = pageId;
       previousCampaignIdRef.current = campaignId;
       previousAdSetIdRef.current = adSetId;
       return;
     }
     if (!wasMetaFilterCascadeHydratedRef.current) {
       wasMetaFilterCascadeHydratedRef.current = true;
+      previousPageIdRef.current = pageId;
       previousCampaignIdRef.current = campaignId;
       previousAdSetIdRef.current = adSetId;
       return;
@@ -337,7 +368,27 @@ export function useSharedFilters(options?: {
     return () => {
       isActive = false;
     };
-  }, [adSetId, campaignId, isFiltersHydrated, setAdId, setAdSetId]);
+  }, [adSetId, campaignId, isFiltersHydrated, pageId, setAdId, setAdSetId]);
+
+  useEffect(() => {
+    if (!isFiltersHydrated || !wasMetaFilterCascadeHydratedRef.current) {
+      previousPageIdRef.current = pageId;
+      return;
+    }
+    if (previousPageIdRef.current === pageId) return;
+    previousPageIdRef.current = pageId;
+
+    let isActive = true;
+    queueMicrotask(() => {
+      if (!isActive) return;
+      setCampaignId(null);
+      setAdSetId(null);
+      setAdId(null);
+    });
+    return () => {
+      isActive = false;
+    };
+  }, [isFiltersHydrated, pageId, setAdId, setAdSetId, setCampaignId]);
 
   useEffect(() => {
     if (!isFiltersHydrated || !wasMetaFilterCascadeHydratedRef.current) {
@@ -386,6 +437,7 @@ export function useSharedFilters(options?: {
       teamId,
       userId,
       source,
+      pageId,
       campaignId,
       adSetId,
       adId,
@@ -393,20 +445,21 @@ export function useSharedFilters(options?: {
       dealStatus,
       searchQuery,
     }),
-    [datePreset, dateRange, teamId, userId, source, campaignId, adSetId, adId, tagIds, dealStatus, searchQuery],
+    [datePreset, dateRange, teamId, userId, source, pageId, campaignId, adSetId, adId, tagIds, dealStatus, searchQuery],
   );
 
   const hasActiveFilters =
     teamId !== null ||
     (userId !== null && userId !== 'all') ||
     source !== null ||
+    pageId !== null ||
     campaignId !== null ||
     adSetId !== null ||
     adId !== null ||
     tagIds.length > 0 ||
     dealStatus !== null ||
     searchQuery !== '' ||
-    (hasDateRangeOverride ? Boolean(effectiveDateRange) : datePreset !== 'last30days');
+    Boolean(effectiveDateRange);
 
   const isLoadingLeadMetaFilters = leadMetaFiltersQuery.isLoading || leadMetaFiltersQuery.isFetching;
   return {
@@ -415,12 +468,15 @@ export function useSharedFilters(options?: {
     setDatePreset,
     customDateRange,
     setCustomDateRange,
+    clearDateFilter,
     teamId,
     setTeamId,
     userId,
     setUserId,
     source,
     setSource,
+    pageId,
+    setPageId,
     campaignId,
     setCampaignId,
     adSetId,
@@ -436,6 +492,7 @@ export function useSharedFilters(options?: {
     clearFilters,
     hasActiveFilters,
     dynamicSources,
+    pages,
     campaigns,
     adSets,
     ads,
@@ -459,6 +516,7 @@ export function useSharedFilters(options?: {
       tagsQuery.isFetching ||
       (canUseTeamFilters && teamsQuery.isFetching),
     isLoadingSources: isLoadingLeadMetaFilters,
+    isLoadingPages: isLoadingLeadMetaFilters,
     isLoadingCampaigns: isLoadingLeadMetaFilters,
     isLoadingAdSets: isLoadingLeadMetaFilters,
     isLoadingAds: isLoadingLeadMetaFilters,

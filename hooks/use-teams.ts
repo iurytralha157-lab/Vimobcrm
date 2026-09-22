@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import {
   teamsAPI,
   type CreateTeamInput,
@@ -12,6 +17,38 @@ import { useAuth } from "@/contexts/AuthContext";
 import { shouldRetryPipelineQuery } from "@/lib/pipeline-reliability";
 
 export type { Team, TeamMember, TeamMemberInput };
+
+const TEAM_SCOPE_DEPENDENT_QUERY_KEYS = [
+  "filtered-stage-counts",
+  "contacts-list",
+  "dashboard-stats",
+  "enhanced-dashboard-stats",
+  "funnel-data",
+  "lead-sources-data",
+  "deals-evolution",
+  "dashboard-extra-counts",
+  "dashboard-lead-distribution",
+  "dashboard-recent-activities",
+  "recent-activities",
+  "top-brokers",
+  "upcoming-tasks",
+  "dashboard-alerts",
+  "lead-analytics",
+  "campaign-insights",
+  "gamification-overview",
+  "vgv-stats",
+  "vgv-by-broker",
+  "stage-vgv",
+] as const;
+
+function invalidateTeamScopeDependentQueries(queryClient: QueryClient) {
+  TEAM_SCOPE_DEPENDENT_QUERY_KEYS.forEach((queryKey) => {
+    void queryClient.invalidateQueries({
+      queryKey: [queryKey],
+      refetchType: "active",
+    });
+  });
+}
 
 export function useTeams(options?: {
   includeInactive?: boolean;
@@ -37,7 +74,7 @@ export function useTeam(
   teamId?: string | null,
   options?: { enabled?: boolean },
 ) {
-  const { activeOrganization, organization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId || null;
 
   return useQuery({
@@ -52,7 +89,7 @@ export function useTeamHistory(
   teamId?: string | null,
   options?: { enabled?: boolean },
 ) {
-  const { activeOrganization, organization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId || null;
 
   return useQuery({
@@ -70,7 +107,7 @@ export function useTeamDistributionStats(
   teamId?: string | null,
   options?: { enabled?: boolean },
 ) {
-  const { activeOrganization, organization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId || null;
 
   return useQuery({
@@ -89,7 +126,7 @@ export function useTeamDistributionStats(
 
 export function useCreateTeam() {
   const queryClient = useQueryClient();
-  const { activeOrganization, organization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId || null;
 
   return useMutation({
@@ -102,6 +139,7 @@ export function useCreateTeam() {
         { queryKey: ["stages-with-leads"] },
         { cancelRefetch: false },
       );
+      invalidateTeamScopeDependentQueries(queryClient);
       toast.success("Equipe criada!");
     },
   });
@@ -109,7 +147,7 @@ export function useCreateTeam() {
 
 export function useUpdateTeam() {
   const queryClient = useQueryClient();
-  const { activeOrganization, organization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId || null;
 
   return useMutation({
@@ -176,6 +214,7 @@ export function useUpdateTeam() {
         { queryKey: ["stages-with-leads"] },
         { cancelRefetch: false },
       );
+      invalidateTeamScopeDependentQueries(queryClient);
       queryClient.invalidateQueries({ queryKey: ["round-robins"] });
       toast.success("Equipe atualizada!");
     },
@@ -184,7 +223,7 @@ export function useUpdateTeam() {
 
 export function useDeleteTeam() {
   const queryClient = useQueryClient();
-  const { activeOrganization, organization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId || null;
 
   return useMutation({
@@ -196,6 +235,7 @@ export function useDeleteTeam() {
         { queryKey: ["stages-with-leads"] },
         { cancelRefetch: false },
       );
+      invalidateTeamScopeDependentQueries(queryClient);
       toast.success("Equipe excluida!");
     },
     onError: (error) => {
@@ -206,7 +246,7 @@ export function useDeleteTeam() {
 
 export function useUpdateTeamStatus() {
   const queryClient = useQueryClient();
-  const { activeOrganization, organization, profile } = useAuth();
+  const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId || null;
 
   return useMutation({
@@ -219,6 +259,7 @@ export function useUpdateTeamStatus() {
         { queryKey: ["stages-with-leads"] },
         { cancelRefetch: false },
       );
+      invalidateTeamScopeDependentQueries(queryClient);
       toast.success(
         variables.is_active ? "Equipe ativada!" : "Equipe desativada!",
       );

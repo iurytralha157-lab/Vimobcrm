@@ -19,18 +19,14 @@ const funnelSource = readRepoFile(
   'components/features/dashboard/SalesFunnelWithPipeline.tsx',
 );
 
-test('dashboard starts without an implicit period and applies origin only explicitly', () => {
-  assert.match(
-    dashboardScreenSource,
-    /useState<DatePreset \| null>\(null\)/,
-  );
-  assert.match(dashboardScreenSource, /dateRangeOverride: dashboardDateRange/);
-  assert.match(
-    dashboardScreenSource,
-    /dateMode: dashboardDateRange \? "origin" : undefined/,
-  );
+test('dashboard starts with all data and only applies the persisted shared period explicitly', () => {
+  assert.doesNotMatch(dashboardScreenSource, /dashboardDatePreset/);
+  assert.match(dashboardScreenSource, /datePreset,/);
+  assert.match(dashboardScreenSource, /const dashboardDateRange = filters\.dateRange/);
+  assert.match(dashboardScreenSource, /dateMode: "origin"/);
+  assert.match(dashboardScreenSource, /onClearDatePreset=\{clearDateFilter\}/);
   assert.match(dashboardScreenSource, /defaultDatePreset=\{null\}/);
-  assert.match(dashboardScreenSource, /"Todo o período"/);
+  assert.match(dashboardScreenSource, /"Todos os dados"/);
 });
 
 test('dashboard waits for persisted non-date filters before any aggregate query', () => {

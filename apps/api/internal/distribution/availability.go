@@ -3,14 +3,15 @@ package distribution
 // RoundRobinAvailabilityPredicateSQL filters a `candidates` CTE that exposes
 // organization_id, user_id and team_member_id. Team-backed candidates keep the
 // schedule of their specific membership. Direct queue members have no
-// team_member_id, so every active membership in the same active organization
-// team becomes a possible schedule source.
+// team_member_id and are therefore eligible independently of schedules from
+// other teams they may belong to.
 //
-// The first EXISTS intentionally has no availability.is_active predicate: once
-// a schedule was configured, even an entirely disabled week is a real schedule
-// and must not silently fall back to 24-hour distribution.
+// The configured-schedule lookup intentionally has no availability.is_active
+// predicate: once a schedule was configured, even an entirely disabled week is
+// a real schedule and must not silently fall back to 24-hour distribution.
 const RoundRobinAvailabilityPredicateSQL = `(
-	not exists (
+	candidates.team_member_id is null
+	or not exists (
 		select 1
 		from public.team_members availability_member
 		join public.teams availability_team
@@ -23,10 +24,7 @@ const RoundRobinAvailabilityPredicateSQL = `(
 		where availability_member.organization_id = candidates.organization_id
 		  and availability_member.user_id = candidates.user_id
 		  and coalesce(availability_member.is_active, true) = true
-		  and (
-			candidates.team_member_id is null
-			or availability_member.id = candidates.team_member_id
-		  )
+		  and availability_member.id = candidates.team_member_id
 	)
 	or exists (
 		select 1
@@ -41,10 +39,7 @@ const RoundRobinAvailabilityPredicateSQL = `(
 		where availability_member.organization_id = candidates.organization_id
 		  and availability_member.user_id = candidates.user_id
 		  and coalesce(availability_member.is_active, true) = true
-		  and (
-			candidates.team_member_id is null
-			or availability_member.id = candidates.team_member_id
-		  )
+		  and availability_member.id = candidates.team_member_id
 		  and coalesce(availability.is_active, true) = true
 		  and (
 			(

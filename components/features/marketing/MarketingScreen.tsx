@@ -22,6 +22,7 @@ import {
   useMarketingDashboard,
   useMarketingScopeFilters,
 } from "@/hooks/marketing";
+import { getDateRangeFromPreset } from "@/hooks/use-dashboard-filters";
 import { useSharedFilters } from "@/hooks/use-shared-filters";
 import { getMarketingDashboardErrorState } from "@/lib/analytics/marketing-dashboard-error";
 import { cn } from "@/lib/utils";
@@ -92,15 +93,23 @@ function MarketingSkeleton() {
 }
 
 export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
-  const sharedFilters = useSharedFilters({ loadDynamicOptions: false });
-  const marketingScope = useMarketingScopeFilters();
   const usesPaidMediaScope = activeTab !== "social";
+  const sharedFilters = useSharedFilters({ loadDynamicOptions: true });
+  const marketingScope = useMarketingScopeFilters();
+  const marketingDateRange = useMemo(
+    () =>
+      sharedFilters.filters.dateRange ?? getDateRangeFromPreset("last30days"),
+    [sharedFilters.filters.dateRange],
+  );
   const dashboardFilters = useMemo(
     () => ({
       ...sharedFilters.filters,
+      datePreset: sharedFilters.datePreset ?? "last30days",
+      dateRange: marketingDateRange,
       teamId: null,
       userId: null,
       source: null,
+      pageId: sharedFilters.filters.pageId,
       campaignId: usesPaidMediaScope
         ? sharedFilters.filters.campaignId
         : null,
@@ -115,6 +124,8 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
     [
       marketingScope.accountId,
       marketingScope.objective,
+      marketingDateRange,
+      sharedFilters.datePreset,
       sharedFilters.filters,
       usesPaidMediaScope,
     ],
@@ -174,6 +185,16 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
         : []),
     ]);
 
+    const pages = uniqueScopeOptions([
+      ...sharedFilters.pages.map((page) => ({
+        value: page.id,
+        label: page.name,
+      })),
+      ...(sharedFilters.pageId
+        ? [{ value: sharedFilters.pageId, label: sharedFilters.pageId }]
+        : []),
+    ]);
+
     const adSets = uniqueScopeOptions([
       ...(!marketingScope.accountId &&
       !marketingScope.objective &&
@@ -222,11 +243,13 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
         : []),
     ]);
 
-    return { accounts, campaigns, adSets, objectives };
+    return { accounts, pages, campaigns, adSets, objectives };
   }, [
     data,
     marketingScope.accountId,
     marketingScope.objective,
+    sharedFilters.pageId,
+    sharedFilters.pages,
     sharedFilters.adSetId,
     sharedFilters.adSets,
     sharedFilters.campaignId,
@@ -235,6 +258,7 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
 
   const clearMarketingScope = () => {
     marketingScope.clearScope();
+    sharedFilters.setPageId(null);
     sharedFilters.setCampaignId(null);
     sharedFilters.setAdSetId(null);
     sharedFilters.setAdId(null);
@@ -255,14 +279,16 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
   };
 
   const hasActiveMarketingScope = Boolean(
+    sharedFilters.pageId ||
     marketingScope.accountId ||
     sharedFilters.campaignId ||
     sharedFilters.adSetId ||
     marketingScope.objective,
   );
   const hasActiveMarketingFilters =
+    Boolean(sharedFilters.pageId) ||
     (usesPaidMediaScope && hasActiveMarketingScope) ||
-    sharedFilters.datePreset !== "last30days";
+    (sharedFilters.datePreset !== null && sharedFilters.datePreset !== "last30days");
   const clearAllMarketingFilters = () => {
     marketingScope.clearScope();
     sharedFilters.clearFilters();
@@ -409,8 +435,9 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
               </span>
             ) : null}
             <SharedFilters
-              datePreset={sharedFilters.datePreset}
+              datePreset={sharedFilters.datePreset ?? "last30days"}
               onDatePresetChange={sharedFilters.setDatePreset}
+              defaultDatePreset="last30days"
               customDateRange={sharedFilters.customDateRange}
               onCustomDateRangeChange={sharedFilters.setCustomDateRange}
               teamId={sharedFilters.teamId}
@@ -419,6 +446,8 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
               onUserChange={sharedFilters.setUserId}
               source={sharedFilters.source}
               onSourceChange={sharedFilters.setSource}
+              pageId={sharedFilters.pageId}
+              onPageChange={sharedFilters.setPageId}
               campaignId={sharedFilters.campaignId}
               onCampaignChange={sharedFilters.setCampaignId}
               adSetId={sharedFilters.adSetId}
@@ -434,11 +463,13 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
               onClear={clearAllMarketingFilters}
               hasActiveFilters={hasActiveMarketingFilters}
               dynamicSources={sharedFilters.dynamicSources}
+              pages={sharedFilters.pages}
               campaigns={sharedFilters.campaigns}
               adSets={sharedFilters.adSets}
               ads={sharedFilters.ads}
               tags={sharedFilters.tags}
               isLoadingSources={sharedFilters.isLoadingSources}
+              isLoadingPages={sharedFilters.isLoadingPages}
               isLoadingCampaigns={sharedFilters.isLoadingCampaigns}
               isLoadingAdSets={sharedFilters.isLoadingAdSets}
               isLoadingAds={sharedFilters.isLoadingAds}
@@ -448,38 +479,43 @@ export function MarketingScreen({ activeTab, tabHrefs }: MarketingScreenProps) {
               tourPrefix="marketing"
               advancedContentOnly
               hasAdvancedContentFilters={
-                usesPaidMediaScope && hasActiveMarketingScope
+                Boolean(sharedFilters.pageId) ||
+                (usesPaidMediaScope && hasActiveMarketingScope)
               }
               advancedContent={
-                usesPaidMediaScope ? (
-                  <MarketingScopeFilters
-                    accountId={marketingScope.accountId}
-                    onAccountChange={changeMarketingAccount}
-                    accounts={scopeOptions.accounts}
-                    campaignId={sharedFilters.campaignId}
-                    onCampaignChange={sharedFilters.setCampaignId}
-                    campaigns={scopeOptions.campaigns}
-                    adSetId={sharedFilters.adSetId}
-                    onAdSetChange={sharedFilters.setAdSetId}
-                    adSets={scopeOptions.adSets}
-                    objective={marketingScope.objective}
-                    onObjectiveChange={changeMarketingObjective}
-                    objectives={scopeOptions.objectives}
-                    onClear={clearMarketingScope}
-                    isLoading={model.insightsQuery.isLoading}
-                    variant="panel"
-                  />
-                ) : (
-                  <p className="rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 py-2 text-[11px] font-light leading-4 text-[var(--app-text-secondary)]">
-                    Nesta aba, o período é aplicado ao Instagram. Conta,
-                    campanha, conjunto e objetivo ficam preservados para as
-                    abas de mídia paga, mas não alteram os dados sociais.
-                  </p>
-                )
+                <MarketingScopeFilters
+                  accountId={marketingScope.accountId}
+                  onAccountChange={changeMarketingAccount}
+                  accounts={scopeOptions.accounts}
+                  pageId={sharedFilters.pageId}
+                  onPageChange={sharedFilters.setPageId}
+                  pages={scopeOptions.pages}
+                  campaignId={sharedFilters.campaignId}
+                  onCampaignChange={sharedFilters.setCampaignId}
+                  campaigns={scopeOptions.campaigns}
+                  adSetId={sharedFilters.adSetId}
+                  onAdSetChange={sharedFilters.setAdSetId}
+                  adSets={scopeOptions.adSets}
+                  objective={marketingScope.objective}
+                  onObjectiveChange={changeMarketingObjective}
+                  objectives={scopeOptions.objectives}
+                  onClear={clearMarketingScope}
+                  isLoading={model.insightsQuery.isLoading}
+                  pageOnly={!usesPaidMediaScope}
+                  variant="panel"
+                />
               }
             />
           </div>
         </div>
+
+        {usesPaidMediaScope && sharedFilters.pageId ? (
+          <p className="flex items-start gap-1.5 rounded-[6px] bg-[var(--app-surface-soft)] px-2.5 py-2 text-[10px] font-light leading-4 text-[var(--app-text-tertiary)]">
+            <CircleAlert className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+            As métricas pagas podem ficar parciais: o recorte por página considera
+            apenas anúncios cuja página foi identificada na sincronização.
+          </p>
+        ) : null}
 
         {hasStaleDataError ? (
           <div

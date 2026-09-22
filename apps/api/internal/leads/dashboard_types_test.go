@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
 const dashboardTestUUID = "11111111-1111-4111-8111-111111111111"
@@ -19,6 +21,7 @@ func TestParseDashboardFilterValidatesAndCanonicalizesInput(t *testing.T) {
 		"teamId":         {"  " + dashboardTestUUID + "  "},
 		"userId":         {dashboardTestUUID},
 		"source":         {" meta "},
+		"pageId":         {" page-123 "},
 		"campaignId":     {" campaign-123 "},
 		"adSetId":        {" adset-123 "},
 		"adId":           {" ad-123 "},
@@ -43,7 +46,7 @@ func TestParseDashboardFilterValidatesAndCanonicalizesInput(t *testing.T) {
 	if !reflect.DeepEqual(filter.TagIDs, []string{dashboardTestUUID}) {
 		t.Fatalf("legacy tagId was not preserved in tagIds: %#v", filter.TagIDs)
 	}
-	if filter.Source != "meta" || filter.CampaignID != "campaign-123" || filter.AdSetID != "adset-123" || filter.AdID != "ad-123" {
+	if filter.Source != "meta" || filter.PageID != "page-123" || filter.CampaignID != "campaign-123" || filter.AdSetID != "adset-123" || filter.AdID != "ad-123" {
 		t.Fatalf("text filters were not trimmed: %#v", filter)
 	}
 	if filter.SearchQuery != "Maria" {
@@ -74,6 +77,28 @@ func TestParseDashboardFilterPreservesDefaultsAndAllCompatibility(t *testing.T) 
 	}
 	if filter.IncludeDetails {
 		t.Fatal("dashboard details must remain opt-in")
+	}
+}
+
+func TestParseDashboardFilterPreservesUnassignedUser(t *testing.T) {
+	filter, err := ParseDashboardFilter(url.Values{"userId": {" unassigned "}})
+	if err != nil {
+		t.Fatalf("ParseDashboardFilter() error = %v", err)
+	}
+	if filter.UserID != "unassigned" {
+		t.Fatalf("userId = %q, want unassigned", filter.UserID)
+	}
+
+	where, _, err := (Repository{}).buildDashboardLeadWhere(
+		tenant.Context{OrganizationID: dashboardTestUUID, UserID: dashboardTestUUID},
+		filter,
+		dashboardLeadWhereOptions{DateColumn: "created_at"},
+	)
+	if err != nil {
+		t.Fatalf("buildDashboardLeadWhere() error = %v", err)
+	}
+	if !strings.Contains(strings.Join(where, " and "), "l.assigned_user_id is null") {
+		t.Fatalf("unassigned user predicate is missing: %#v", where)
 	}
 }
 
@@ -108,6 +133,9 @@ func TestParseDashboardFilterRejectsUnsafeOrAmbiguousInput(t *testing.T) {
 		},
 		"oversized campaign": {
 			"campaignId": {strings.Repeat("c", 256)},
+		},
+		"oversized page": {
+			"pageId": {strings.Repeat("p", 256)},
 		},
 		"oversized search": {
 			"searchQuery": {strings.Repeat("q", maxDashboardSearchLength+1)},

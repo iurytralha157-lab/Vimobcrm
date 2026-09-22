@@ -359,6 +359,26 @@ func marketingSyncOwnerIDsMatchTarget(ownerIDs map[string]struct{}, pageID, inst
 	return false
 }
 
+func marketingSyncCreativeHasPageID(creative map[string]any, pageID string) bool {
+	pageID = strings.TrimSpace(pageID)
+	if pageID == "" {
+		return false
+	}
+	story := marketingSyncRecord(creative["object_story_spec"])
+	for _, value := range []any{creative["page_id"], story["page_id"]} {
+		if marketingSyncText(value) == pageID {
+			return true
+		}
+	}
+	for _, key := range []string{"effective_object_story_id", "object_story_id"} {
+		storyID := strings.TrimSpace(marketingSyncText(creative[key]))
+		if separator := strings.IndexAny(storyID, "_:"); separator > 0 && storyID[:separator] == pageID {
+			return true
+		}
+	}
+	return false
+}
+
 func filterMarketingSyncInsightsToCatalog(items []map[string]any, scopedCatalog, accountCatalog marketingSyncEntityCatalog) ([]map[string]any, int) {
 	filtered := make([]map[string]any, 0, len(items))
 	missing := 0
@@ -529,6 +549,11 @@ func marketingSyncPerformanceRowFromInsight(insight map[string]any, level string
 		metrics.RawActions["vimob_scope"] = "page_asset"
 		metrics.RawActions["vimob_page_id"] = strings.TrimSpace(target.PageID)
 		metrics.RawActions["vimob_instagram_account_id"] = strings.TrimSpace(target.InstagramBusinessAccountID)
+	} else if level == "ad" && marketingSyncCreativeHasPageID(creative, target.PageID) {
+		// Account-wide facts may contain multiple Pages. Only ad-level rows with
+		// explicit creative evidence are safe to use in a Page-filtered report.
+		metrics.RawActions["vimob_scope"] = "verified_ad_page"
+		metrics.RawActions["vimob_page_id"] = strings.TrimSpace(target.PageID)
 	}
 	creativeAssets := resolveMarketingSyncCreativeAssets(ad, creative)
 	return marketingSyncPerformanceRow{

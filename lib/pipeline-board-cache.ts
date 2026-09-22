@@ -17,6 +17,8 @@ export interface PipelineBoardLeadLike {
   lost_at?: string | null;
   tags?: Array<{ id?: string | null }> | null;
   lead_meta?: Array<{
+    page_id?: string | null;
+    page_name?: string | null;
     campaign_id?: string | null;
     campaign_name?: string | null;
     adset_id?: string | null;
@@ -82,23 +84,21 @@ export function pipelineLeadMatchesQueryKeyScope(
     if (!searchable.includes(search)) return false;
   }
 
-  const metaFilters = [
-    { index: 9, values: ['campaign_id', 'campaign_name'] as const },
-    { index: 10, values: ['adset_id', 'adset_name'] as const },
-    { index: 11, values: ['ad_id', 'ad_name'] as const },
-  ];
-  for (const metaFilter of metaFilters) {
-    const expected = typeof queryKey[metaFilter.index] === 'string'
-      ? queryKey[metaFilter.index]
-      : undefined;
-    if (
-      expected &&
-      !lead.lead_meta?.some((meta) =>
-        metaFilter.values.some((field) => meta[field] === expected),
-      )
-    ) {
-      return false;
-    }
+  const expectedPageId = typeof queryKey[17] === 'string' ? queryKey[17] : undefined;
+  const expectedCampaign = typeof queryKey[9] === 'string' ? queryKey[9] : undefined;
+  const expectedAdSet = typeof queryKey[10] === 'string' ? queryKey[10] : undefined;
+  const expectedAd = typeof queryKey[11] === 'string' ? queryKey[11] : undefined;
+  if (expectedPageId || expectedCampaign || expectedAdSet || expectedAd) {
+    // Attribution filters must be proven by one enrichment row. Matching the
+    // page on one row and the campaign/ad on another could combine unrelated
+    // Meta reentries. Missing enrichment therefore fails closed until refetch.
+    const hasMatchingAttribution = lead.lead_meta?.some((meta) => (
+      (!expectedPageId || meta.page_id === expectedPageId) &&
+      (!expectedCampaign || meta.campaign_id === expectedCampaign || meta.campaign_name === expectedCampaign) &&
+      (!expectedAdSet || meta.adset_id === expectedAdSet || meta.adset_name === expectedAdSet) &&
+      (!expectedAd || meta.ad_id === expectedAd || meta.ad_name === expectedAd)
+    ));
+    if (!hasMatchingAttribution) return false;
   }
 
   const expectedSource = typeof queryKey[12] === 'string' ? queryKey[12] : undefined;

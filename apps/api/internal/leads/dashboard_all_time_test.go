@@ -60,6 +60,7 @@ func TestDashboardAllTimeLeadWhereKeepsTenantAndExplicitNonDateFilters(t *testin
 	filter := DashboardFilter{
 		UserID:      "22222222-2222-4222-8222-222222222222",
 		Source:      "meta",
+		PageID:      "page-123",
 		CampaignID:  "campaign-123",
 		TagID:       "33333333-3333-4333-8333-333333333333",
 		DealStatus:  "open",
@@ -127,6 +128,7 @@ func TestDashboardExplicitPeriodKeepsFiltersAndBuildsPreviousWindow(t *testing.T
 		DateFrom:   &from,
 		DateTo:     &to,
 		TeamID:     dashboardTestUUID,
+		PageID:     "page-123",
 		CampaignID: "campaign-123",
 	}
 
@@ -144,7 +146,7 @@ func TestDashboardExplicitPeriodKeepsFiltersAndBuildsPreviousWindow(t *testing.T
 	if !previous.DateTo.Equal(from) || !previous.DateFrom.Equal(from.Add(-to.Sub(from))) {
 		t.Fatalf("previous period = %v to %v", previous.DateFrom, previous.DateTo)
 	}
-	if previous.TeamID != filter.TeamID || previous.CampaignID != filter.CampaignID {
+	if previous.TeamID != filter.TeamID || previous.PageID != filter.PageID || previous.CampaignID != filter.CampaignID {
 		t.Fatalf("previous period lost non-date filters: %#v", previous)
 	}
 

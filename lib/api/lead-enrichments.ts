@@ -27,6 +27,8 @@ export type LeadEnrichmentProperty = {
 
 export type LeadEnrichmentMeta = {
   lead_id: string
+  page_id: string | null
+  page_name: string | null
   campaign_name: string | null
   campaign_id: string | null
   adset_name: string | null

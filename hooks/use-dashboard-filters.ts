@@ -26,6 +26,7 @@ export interface DashboardFilters {
   teamId: string | null;
   userId: string | null;
   source: string | null;
+  pageId?: string | null;
   campaignId: string | null;
   adSetId: string | null;
   adId: string | null;

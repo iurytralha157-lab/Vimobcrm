@@ -6,7 +6,7 @@ import { reusePreviousDataWhenKeyPartsMatch } from './query-placeholder-safety';
 test('nao reutiliza cards da pipeline entre tenants, pipelines ou escopos de autorizacao', () => {
   const data = [{ id: 'lead-org-a' }];
   const current = ['stages-with-leads', 'org-b', 'pipeline-b', 'user-b', 'date', null, null, null, null, null, null, null, null, 'user-b', 'operational'];
-  const protectedIndexes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+  const protectedIndexes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
 
   assert.equal(
     reusePreviousDataWhenKeyPartsMatch(data, ['stages-with-leads', 'org-a', 'pipeline-b', 'user-b', 'date', null, null, null, null, null, null, null, null, 'user-b'], current, protectedIndexes),
@@ -32,21 +32,30 @@ test('nao reutiliza cards quando data, busca ou modo mudam no mesmo escopo', () 
       data,
       previous,
       current,
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
     ),
     undefined,
   );
 });
 
-test('nao reutiliza opcoes de meta-filtros de outra organizacao', () => {
-  const options = { sources: ['meta'], campaigns: [], adsets: [], ads: [] };
+test('nao reutiliza opcoes de meta-filtros entre organizacoes ou paginas', () => {
+  const options = { sources: ['meta'], pages: [], campaigns: [], adsets: [], ads: [] };
 
   assert.equal(
     reusePreviousDataWhenKeyPartsMatch(
       options,
-      ['shared-filter-lead-meta-filters', 'org-a', 'pipeline-1', 'from', 'to', 'operational'],
-      ['shared-filter-lead-meta-filters', 'org-b', 'pipeline-1', 'from', 'to', 'operational'],
-      [1],
+      ['shared-filter-lead-meta-filters', 'org-a', 'pipeline-1', 'page-1', 'from', 'to', 'operational'],
+      ['shared-filter-lead-meta-filters', 'org-b', 'pipeline-1', 'page-1', 'from', 'to', 'operational'],
+      [1, 2, 3, 4, 5, 6],
+    ),
+    undefined,
+  );
+  assert.equal(
+    reusePreviousDataWhenKeyPartsMatch(
+      options,
+      ['shared-filter-lead-meta-filters', 'org-a', 'pipeline-1', 'page-1', 'from', 'to', 'operational'],
+      ['shared-filter-lead-meta-filters', 'org-a', 'pipeline-1', 'page-2', 'from', 'to', 'operational'],
+      [1, 2, 3, 4, 5, 6],
     ),
     undefined,
   );
@@ -62,7 +71,7 @@ test('nao reutiliza cards completos ao ativar o filtro sem responsavel', () => {
       data,
       previous,
       current,
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
     ),
     undefined,
   );
@@ -78,7 +87,7 @@ test('nao reutiliza cards sem responsavel entre equipes diferentes', () => {
       data,
       previous,
       current,
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
     ),
     undefined,
   );

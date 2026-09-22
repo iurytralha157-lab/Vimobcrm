@@ -16,6 +16,7 @@ export interface ContactListFilters {
   /** Legacy single-tag query kept for compatibility with older callers. */
   tagId?: string;
   source?: string;
+  pageId?: string;
   campaignId?: string;
   adSetId?: string;
   adId?: string;

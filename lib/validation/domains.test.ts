@@ -65,6 +65,7 @@ import {
   adminModuleAccessInputSchema,
   analyticsQuerySchema,
   apiDashboardStatsResponseSchema,
+  apiDashboardLeadDistributionResponseSchema,
   apiDashboardTopBrokersResponseSchema,
   dashboardDateRangeSchema,
   dashboardFiltersSchema,
@@ -868,6 +869,7 @@ test("cadencia le tarefa historica negativa sem liberar escrita negativa", () =>
       tasks: [
         {
           id: ID,
+          kind: "entity",
           cadence_template_id: ID,
           day_offset: -1,
           title: "Preparar atendimento",
@@ -1155,6 +1157,14 @@ test("suporte de CRM valida filtros, disponibilidade e distribuicao", () => {
   );
   assert.equal(
     contactListQuerySchema.safeParse({ tagIds: ["invalido"] }).success,
+    false,
+  );
+  assert.equal(
+    contactListQuerySchema.parse({ pageId: " page-123 " }).pageId,
+    "page-123",
+  );
+  assert.equal(
+    contactListQuerySchema.safeParse({ pageId: "p".repeat(256) }).success,
     false,
   );
   assert.equal(
@@ -1658,6 +1668,14 @@ test("admin e dashboard rejeitam referencias inseguras", () => {
     dashboardFiltersSchema.safeParse({ dealStatus: "deleted" }).success,
     false,
   );
+  assert.equal(
+    dashboardFiltersSchema.parse({ pageId: " 123456789 " }).pageId,
+    "123456789",
+  );
+  assert.equal(
+    dashboardFiltersSchema.safeParse({ pageId: "1".repeat(256) }).success,
+    false,
+  );
   assert.equal(dashboardLimitSchema.safeParse(50).success, true);
   assert.equal(dashboardLimitSchema.safeParse(51).success, false);
   assert.equal(
@@ -1893,6 +1911,7 @@ test("dashboard valida corretores e liga cache, tenant e cancelamento", () => {
     "teamId",
     "userId",
     "source",
+    "pageId",
     "campaignId",
     "adSetId",
     "adId",
@@ -1903,6 +1922,67 @@ test("dashboard valida corretores e liga cache, tenant e cancelamento", () => {
   ]) {
     assert.match(dashboardAPISource, new RegExp(`${key}:`));
   }
+});
+
+test("dashboard valida a distribuição não vazia por corretor e equipe", () => {
+  const valid = {
+    data: {
+      totalLeads: 5,
+      users: [
+        {
+          id: ID,
+          kind: "entity",
+          name: "Bruno Arena",
+          avatarUrl: null,
+          leadCount: 3,
+        },
+        {
+          id: null,
+          kind: "unassigned",
+          name: "Sem responsável",
+          avatarUrl: null,
+          leadCount: 2,
+        },
+      ],
+      teams: [
+        { id: ID, kind: "entity", name: "Equipe Dimittri", leadCount: 4 },
+        { id: null, kind: "unassigned", name: "Sem equipe", leadCount: 1 },
+      ],
+    },
+  };
+
+  assert.equal(apiDashboardLeadDistributionResponseSchema.safeParse(valid).success, true);
+  assert.equal(
+    apiDashboardLeadDistributionResponseSchema.safeParse({
+      data: {
+        ...valid.data,
+        users: [{ ...valid.data.users[0], leadCount: 0 }],
+      },
+    }).success,
+    false,
+  );
+  assert.equal(
+    apiDashboardLeadDistributionResponseSchema.safeParse({
+      data: {
+        ...valid.data,
+        totalLeads: 6,
+      },
+    }).success,
+    false,
+  );
+  assert.equal(
+    apiDashboardLeadDistributionResponseSchema.safeParse({
+      data: {
+        ...valid.data,
+        teams: [{ ...valid.data.teams[0], id: "not-a-uuid" }],
+      },
+    }).success,
+    false,
+  );
+  assert.equal(
+    dashboardFiltersSchema.safeParse({ userId: "unassigned" }).success,
+    true,
+  );
 });
 
 test("OpenAPI declara todos os campos sempre serializados pelo Dashboard", () => {

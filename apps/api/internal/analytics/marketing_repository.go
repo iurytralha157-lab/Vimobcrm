@@ -55,7 +55,10 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 				nullif($11, '') as deal_status,
 				nullif($12, '') as account_id,
 				nullif($13, '') as objective,
+				nullif($14, '') as page_id,
 				(
+					nullif($14, '') is not null
+					or
 					nullif($7, '') is not null
 					or nullif($8, '') is not null
 					or nullif($10, '') is not null
@@ -97,6 +100,13 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 			  and (params.account_id is null or metric.external_account_id = params.account_id)
 			  and (params.objective is null or metric.objective = params.objective)
 			  and (params.campaign_id is null or metric.campaign_id = params.campaign_id)
+			  and (
+			    params.page_id is null
+			    or (
+			      metric.level = 'ad'
+			      and metric.raw_actions->>'vimob_page_id' = params.page_id
+			    )
+			  )
 			  and (
 			    params.source is null
 			    or params.source in ('meta', 'meta_ads', 'facebook', 'instagram')
@@ -315,7 +325,8 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 				nullif(entry.adset_id, '') as adset_id,
 				nullif(entry.adset_name, '') as adset_name,
 				nullif(entry.ad_id, '') as ad_id,
-				nullif(entry.ad_name, '') as ad_name
+				nullif(entry.ad_name, '') as ad_name,
+				nullif(entry.page_id, '') as page_id
 			from public.lead_entry_events as entry
 			cross join time_bounds
 			where entry.organization_id = $1::uuid
@@ -348,6 +359,10 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 			 and lead.organization_id = $1::uuid
 			cross join params
 			where (
+			    params.page_id is null
+			    or attribution.page_id = params.page_id
+			  )
+			  and (
 			    params.campaign_id is null
 			    or attribution.campaign_id = params.campaign_id
 			  )
@@ -849,6 +864,15 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 			where social_day.organization_id = $1::uuid
 			  and (params.date_from is null or social_day.metric_date >= params.date_from)
 			  and (params.date_to is null or social_day.metric_date <= params.date_to)
+			  and (
+			    params.page_id is null
+			    or exists (
+			      select 1 from public.meta_integrations as integration
+			      where integration.organization_id = $1::uuid
+			        and integration.id = social_day.integration_id
+			        and integration.page_id = params.page_id
+			    )
+			  )
 		),
 		latest_social_profiles as (
 			select distinct on (social_day.provider, social_day.profile_id)
@@ -872,6 +896,15 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 			cross join params
 			where social_day.organization_id = $1::uuid
 			  and (params.date_to is null or social_day.metric_date <= params.date_to)
+			  and (
+			    params.page_id is null
+			    or exists (
+			      select 1 from public.meta_integrations as integration
+			      where integration.organization_id = $1::uuid
+			        and integration.id = social_day.integration_id
+			        and integration.page_id = params.page_id
+			    )
+			  )
 			order by
 				social_day.provider,
 				social_day.profile_id,
@@ -1339,6 +1372,22 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 					  and (params.adset_id is null or asset.adset_id = params.adset_id)
 					  and (params.ad_id is null or asset.ad_id = params.ad_id)
 					  and (
+					    params.page_id is null
+					    or (
+					      asset.source_kind = 'paid'
+					      and current_paid_ad.ad_id is not null
+					    )
+					    or (
+					      asset.source_kind <> 'paid'
+					      and exists (
+					        select 1 from public.meta_integrations as integration
+					        where integration.organization_id = $1::uuid
+					          and integration.id = asset.integration_id
+					          and integration.page_id = params.page_id
+					      )
+					    )
+					  )
+					  and (
 					    (
 					      asset.source_kind = 'paid'
 					      and asset.ad_id is not null
@@ -1575,5 +1624,6 @@ func (repo Repository) CampaignInsights(ctx context.Context, tenantContext tenan
 		values.Get("dealStatus"),
 		values.Get("accountId"),
 		values.Get("objective"),
+		values.Get("pageId"),
 	)
 }

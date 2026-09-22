@@ -47,6 +47,7 @@ test("consulta de Marketing usa datas civis e remove sentinelas antigas", () => 
     dateTo: "2026-07-31",
     accountId: "act_123456789",
     objective: "OUTCOME_LEADS",
+    pageId: "  123456789012345  ",
     teamId: "all",
     userId: null,
     source: "  meta  ",
@@ -56,11 +57,20 @@ test("consulta de Marketing usa datas civis e remove sentinelas antigas", () => 
   assert.equal(parsed.dateFrom, "2026-07-01");
   assert.equal(parsed.accountId, "act_123456789");
   assert.equal(parsed.objective, "OUTCOME_LEADS");
+  assert.equal(parsed.pageId, "123456789012345");
   assert.equal(parsed.dateTo, "2026-07-31");
   assert.equal(parsed.teamId, undefined);
   assert.equal(parsed.userId, undefined);
   assert.equal(parsed.source, "meta");
   assert.equal(parsed.dealStatus, undefined);
+  assert.equal(
+    campaignInsightsQuerySchema.safeParse({
+      dateFrom: "2026-07-01",
+      dateTo: "2026-07-31",
+      pageId: "1".repeat(256),
+    }).success,
+    false,
+  );
   assert.equal(
     campaignInsightsQuerySchema.safeParse({
       dateFrom: "2026-07-01T03:00:00.000Z",

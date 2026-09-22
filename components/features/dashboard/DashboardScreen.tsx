@@ -40,6 +40,7 @@ import {
 import { SalesFunnelWithPipeline } from "@/components/features/dashboard/SalesFunnelWithPipeline";
 import { DealsEvolutionChart } from "@/components/features/dashboard/DealsEvolutionChart";
 import { LeadSourcesChart } from "@/components/features/dashboard/LeadSourcesChart";
+import { LeadDistributionSection } from "@/components/features/dashboard/LeadDistributionSection";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -62,6 +63,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useSharedFilters } from "@/hooks/use-shared-filters";
 import {
   type EnhancedDashboardStats,
+  useDashboardLeadDistribution,
   useEnhancedDashboardStats,
   useDealsEvolutionData,
   useLeadSourcesData,
@@ -71,9 +73,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { SharedFilters } from "@/components/shared/SharedFilters";
 import {
   datePresetOptions,
-  getDateRangeFromPreset,
   sourceLabels,
-  type DatePreset,
 } from "@/hooks/use-dashboard-filters";
 import {
   getDashboardExtraCounts,
@@ -140,28 +140,24 @@ export default function Dashboard() {
   const [lostDialogOpen, setLostDialogOpen] = useState(false);
   const [wonDialogOpen, setWonDialogOpen] = useState(false);
   const [shouldLoadFilterOptions, setShouldLoadFilterOptions] = useState(false);
-  const [dashboardDatePreset, setDashboardDatePreset] =
-    useState<DatePreset | null>(null);
-  const [dashboardCustomDateRange, setDashboardCustomDateRange] = useState<{
-    from: Date;
-    to: Date;
-  } | null>(null);
-  const dashboardDateRange = useMemo(() => {
-    if (!dashboardDatePreset) return null;
-    if (dashboardDatePreset === "custom") return dashboardCustomDateRange;
-    return getDateRangeFromPreset(dashboardDatePreset);
-  }, [dashboardCustomDateRange, dashboardDatePreset]);
   const dashboardQueryScope = useDashboardQueryScope();
   const activeOrganizationId = dashboardQueryScope.organizationId;
 
   const {
     filters,
+    datePreset,
+    setDatePreset,
+    customDateRange,
+    setCustomDateRange,
+    clearDateFilter,
     teamId,
     setTeamId,
     userId,
     setUserId,
     source,
     setSource,
+    pageId,
+    setPageId,
     campaignId,
     setCampaignId,
     adSetId,
@@ -177,11 +173,13 @@ export default function Dashboard() {
     clearFilters,
     hasActiveFilters,
     dynamicSources,
+    pages,
     campaigns,
     adSets,
     ads,
     tags,
     isLoadingSources,
+    isLoadingPages,
     isLoadingCampaigns,
     isLoadingAdSets,
     isLoadingAds,
@@ -190,9 +188,9 @@ export default function Dashboard() {
     isFiltersHydrated,
   } = useSharedFilters({
     loadDynamicOptions: shouldLoadFilterOptions,
-    dateMode: dashboardDateRange ? "origin" : undefined,
-    dateRangeOverride: dashboardDateRange,
+    dateMode: "origin",
   });
+  const dashboardDateRange = filters.dateRange;
 
   // Mapeamento de strings de data para chaves de cache estáveis
   const dateFromStr = dashboardDateRange?.from.toISOString();
@@ -204,6 +202,7 @@ export default function Dashboard() {
       teamId: filters.teamId,
       userId: filters.userId,
       source: filters.source,
+      pageId: filters.pageId,
       campaignId: filters.campaignId,
       adSetId: filters.adSetId,
       adId: filters.adId,
@@ -240,6 +239,14 @@ export default function Dashboard() {
     useLeadSourcesData(dashboardFilters, undefined, {
       enabled: isFiltersHydrated,
     });
+  const {
+    data: leadDistribution,
+    isLoading: leadDistributionLoading,
+    isError: leadDistributionError,
+    refetch: refetchLeadDistribution,
+  } = useDashboardLeadDistribution(dashboardFilters, {
+    enabled: isFiltersHydrated,
+  });
   const hasOrganization = Boolean(activeOrganizationId);
 
   const {
@@ -258,6 +265,7 @@ export default function Dashboard() {
       filters.userId,
       filters.teamId,
       filters.source,
+      filters.pageId,
       filters.campaignId,
       filters.adSetId,
       filters.adId,
@@ -308,8 +316,8 @@ export default function Dashboard() {
     />
   );
   const periodLabel =
-    datePresetOptions.find((o) => o.value === dashboardDatePreset)?.label ||
-    "Todo o período";
+    datePresetOptions.find((o) => o.value === datePreset)?.label ||
+    "Todos os dados";
 
   const retryKpis = () => {
     void refetchStats();
@@ -363,21 +371,21 @@ export default function Dashboard() {
           data-tour="dashboard-filters"
         >
           <SharedFilters
-            datePreset={dashboardDatePreset}
-            onDatePresetChange={setDashboardDatePreset}
-            onClearDatePreset={() => {
-              setDashboardDatePreset(null);
-              setDashboardCustomDateRange(null);
-            }}
+            datePreset={datePreset}
+            onDatePresetChange={setDatePreset}
+            onClearDatePreset={clearDateFilter}
             defaultDatePreset={null}
-            customDateRange={dashboardCustomDateRange}
-            onCustomDateRangeChange={setDashboardCustomDateRange}
+            customDateRange={customDateRange}
+            onCustomDateRangeChange={setCustomDateRange}
             teamId={teamId}
             onTeamChange={setTeamId}
             userId={userId}
             onUserChange={setUserId}
+            includeUnassignedUserOption
             source={source}
             onSourceChange={setSource}
+            pageId={pageId}
+            onPageChange={setPageId}
             campaignId={campaignId}
             onCampaignChange={setCampaignId}
             adSetId={adSetId}
@@ -390,19 +398,16 @@ export default function Dashboard() {
             onDealStatusChange={setDealStatus}
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
-            onClear={() => {
-              clearFilters();
-              setDashboardDatePreset(null);
-              setDashboardCustomDateRange(null);
-            }}
+            onClear={clearFilters}
             hasActiveFilters={hasActiveFilters}
-            hideSearch
             dynamicSources={dynamicSources}
+            pages={pages}
             campaigns={campaigns}
             adSets={adSets}
             ads={ads}
             tags={tags}
             isLoadingSources={isLoadingSources}
+            isLoadingPages={isLoadingPages}
             isLoadingCampaigns={isLoadingCampaigns}
             isLoadingAdSets={isLoadingAdSets}
             isLoadingAds={isLoadingAds}
@@ -419,47 +424,63 @@ export default function Dashboard() {
         {isDashboardDesktop === null ? (
           <div className="min-h-[420px] flex-1 rounded-[8px] bg-[var(--app-surface-soft)]" />
         ) : isDashboardDesktop ? (
-          <div className="grid min-h-0 flex-1 grid-cols-12 gap-3 overflow-hidden">
-            <div className="col-span-8 flex min-h-0 flex-col gap-3">
-              <div className="shrink-0">
-                {kpisError ? (
-                  <DashboardDataError onRetry={retryKpis} />
-                ) : (
-                  <KPICardsGrid
-                    data={kpiData}
-                    isLoading={kpisLoading}
-                    periodLabel={periodLabel}
-                    propertyCount={propertyCount}
-                    siteVisits={siteVisits}
-                    scheduledVisits={scheduledVisitsCount}
-                    layout="top"
-                    onLostClick={() => setLostDialogOpen(true)}
-                    onWonClick={() => setWonDialogOpen(true)}
+          <div className="scrollbar-hidden min-h-0 flex-1 space-y-4 overflow-y-auto pb-5">
+            <div className="grid h-[calc(100dvh-9rem)] min-h-[620px] shrink-0 grid-cols-12 gap-3">
+              <div className="col-span-8 flex min-h-0 flex-col gap-3">
+                <div className="shrink-0">
+                  {kpisError ? (
+                    <DashboardDataError onRetry={retryKpis} />
+                  ) : (
+                    <KPICardsGrid
+                      data={kpiData}
+                      isLoading={kpisLoading}
+                      periodLabel={periodLabel}
+                      propertyCount={propertyCount}
+                      siteVisits={siteVisits}
+                      scheduledVisits={scheduledVisitsCount}
+                      layout="top"
+                      onLostClick={() => setLostDialogOpen(true)}
+                      onWonClick={() => setWonDialogOpen(true)}
+                    />
+                  )}
+                </div>
+
+                <div data-tour="dashboard-evolution" className="min-h-0 flex-1">
+                  <DealsEvolutionChart
+                    data={evolutionData}
+                    isLoading={evolutionDataLoading}
                   />
-                )}
+                </div>
               </div>
 
-              <div data-tour="dashboard-evolution" className="min-h-0 flex-1">
-                <DealsEvolutionChart
-                  data={evolutionData}
-                  isLoading={evolutionDataLoading}
-                />
+              <div className="col-span-4 flex min-h-0 flex-col gap-3">
+                <div data-tour="dashboard-funnel" className="h-[48%] min-h-0">
+                  {funnelComponent}
+                </div>
+                <div data-tour="dashboard-sources" className="h-[52%] min-h-0">
+                  <LeadSourcesChart
+                    data={sourcesData}
+                    isLoading={sourcesDataLoading}
+                    selectedSource={source}
+                    onSourceChange={setSource}
+                  />
+                </div>
               </div>
             </div>
 
-            <div className="col-span-4 flex min-h-0 flex-col gap-3">
-              <div data-tour="dashboard-funnel" className="h-[48%] min-h-0">
-                {funnelComponent}
-              </div>
-              <div data-tour="dashboard-sources" className="h-[52%] min-h-0">
-                <LeadSourcesChart
-                  data={sourcesData}
-                  isLoading={sourcesDataLoading}
-                  selectedSource={source}
-                  onSourceChange={setSource}
-                />
-              </div>
-            </div>
+            {dashboardQueryScope.canViewLeadDistribution ? (
+              <LeadDistributionSection
+                data={leadDistribution}
+                isLoading={
+                  !hasOrganization ||
+                  !isFiltersHydrated ||
+                  leadDistributionLoading
+                }
+                isError={leadDistributionError}
+                onRetry={() => void refetchLeadDistribution()}
+                scopeLabel={dashboardDateRange ? "no período" : "em todo o histórico"}
+              />
+            ) : null}
           </div>
         ) : (
           <div className="scrollbar-hidden min-h-0 flex-1 space-y-4 overflow-y-auto pb-5">
@@ -527,6 +548,20 @@ export default function Dashboard() {
                 </TabsContent>
               </Tabs>
             </section>
+
+            {dashboardQueryScope.canViewLeadDistribution ? (
+              <LeadDistributionSection
+                data={leadDistribution}
+                isLoading={
+                  !hasOrganization ||
+                  !isFiltersHydrated ||
+                  leadDistributionLoading
+                }
+                isError={leadDistributionError}
+                onRetry={() => void refetchLeadDistribution()}
+                scopeLabel={dashboardDateRange ? "no período" : "em todo o histórico"}
+              />
+            ) : null}
           </div>
         )}
       </div>
