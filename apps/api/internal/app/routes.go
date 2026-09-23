@@ -63,6 +63,7 @@ type routeDependencies struct {
 	leadsHandler             leads.Handler
 	meHandler                me.Handler
 	metaHandler              meta.Handler
+	metaLeadRecoveryHandler  meta.LeadRecoveryHTTPHandler
 	metaMarketingSyncHandler meta.MarketingSyncHTTPHandler
 	metaOAuthActionHandler   http.HandlerFunc
 	metaOAuthCallbackHandler http.HandlerFunc
@@ -105,6 +106,7 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 	leadsHandler := dependencies.leadsHandler
 	meHandler := dependencies.meHandler
 	metaHandler := dependencies.metaHandler
+	metaLeadRecoveryHandler := dependencies.metaLeadRecoveryHandler
 	metaMarketingSyncHandler := dependencies.metaMarketingSyncHandler
 	metaOAuthActionHandler := dependencies.metaOAuthActionHandler
 	metaOAuthCallbackHandler := dependencies.metaOAuthCallbackHandler
@@ -467,6 +469,8 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 	mux.Handle("POST /v1/integrations/meta/oauth/actions", withPermission(permissions.SettingsIntegrations, metaOAuthActionHandler))
 	mux.Handle("POST /v1/integrations/meta/marketing/sync", withModulePermission("campaigns", permissions.SettingsIntegrations, http.HandlerFunc(metaMarketingSyncHandler.Sync)))
 	mux.Handle("GET /v1/integrations/meta/pages/{pageId}/forms", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.ListMetaPageForms)))
+	mux.Handle("POST /v1/integrations/meta/pages/{pageId}/forms/{formId}/leads/recovery-preview", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(metaLeadRecoveryHandler.Preview)))
+	mux.Handle("POST /v1/integrations/meta/pages/{pageId}/forms/{formId}/leads/recover", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(metaLeadRecoveryHandler.Recover)))
 	mux.Handle("GET /v1/integrations/meta/oauth-flows/{id}", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.ShowMetaOAuthFlow)))
 	mux.Handle("GET /v1/integrations/meta/form-configs", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.ListMetaFormConfigs)))
 	mux.Handle("POST /v1/integrations/meta/form-configs", withPermission(permissions.SettingsIntegrations, http.HandlerFunc(integrationsHandler.SaveMetaFormConfig)))

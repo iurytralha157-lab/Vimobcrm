@@ -7,6 +7,10 @@ import {
   metaFormConfigInputSchema,
   metaMarketingSyncInputSchema,
   metaMarketingSyncResponseSchema,
+  metaLeadRecoveryPreviewInputSchema,
+  metaLeadRecoveryApplyInputSchema,
+  metaLeadRecoveryPreviewResponseSchema,
+  metaLeadRecoveryApplyResponseSchema,
   metaPageFormsActionResponseSchema,
   parseDomainInput,
   sendMetaMessageInputSchema,
@@ -23,6 +27,7 @@ const META_MARKETING_SYNC_TIMEOUT_MS = 150_000;
 // The connect action can use the backend's full 45-second budget while it
 // validates the Page, subscribes its webhook and persists the integration.
 const META_OAUTH_CONNECT_TIMEOUT_MS = 60_000;
+const META_LEAD_RECOVERY_TIMEOUT_MS = 90_000;
 
 export const metaIntegrationsAPI = {
   async metaOAuthAction<T>(body: Record<string, unknown>, organizationId?: string | null) {
@@ -112,6 +117,24 @@ export const metaIntegrationsAPI = {
       response,
       'integrations.meta.page-forms.list',
     );
+  },
+
+  async previewMetaLeadRecovery(pageId: string, formId: string, input: { date: string }, organizationId?: string | null) {
+    const body = parseDomainInput(metaLeadRecoveryPreviewInputSchema, input, 'integrations.meta.lead-recovery.preview');
+    const response = await vimobAPIRequest<unknown>(
+      `/v1/integrations/meta/pages/${encodeURIComponent(pageId)}/forms/${encodeURIComponent(formId)}/leads/recovery-preview`,
+      { method: 'POST', organizationId, body, timeoutMs: META_LEAD_RECOVERY_TIMEOUT_MS },
+    );
+    return validateDomainResponse(metaLeadRecoveryPreviewResponseSchema, response, 'integrations.meta.lead-recovery.preview');
+  },
+
+  async recoverMetaLead(pageId: string, formId: string, input: { date: string; leadgenId: string }, organizationId?: string | null) {
+    const body = parseDomainInput(metaLeadRecoveryApplyInputSchema, input, 'integrations.meta.lead-recovery.apply');
+    const response = await vimobAPIRequest<unknown>(
+      `/v1/integrations/meta/pages/${encodeURIComponent(pageId)}/forms/${encodeURIComponent(formId)}/leads/recover`,
+      { method: 'POST', organizationId, body, timeoutMs: META_LEAD_RECOVERY_TIMEOUT_MS },
+    );
+    return validateDomainResponse(metaLeadRecoveryApplyResponseSchema, response, 'integrations.meta.lead-recovery.apply');
   },
 
   async listMetaFormConfigs(integrationId?: string, organizationId?: string | null) {
