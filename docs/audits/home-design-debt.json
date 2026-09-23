@@ -1,19 +1,19 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "028355963fe07e9ad641749456be3b0255839d27eb8e369a70b972687ec66d11",
-  "surfaceInventoryDigestSha256": "a441d42e74b5b32b6daa39c77b81d068933c39d0af8ed55935f4c050d680ff48",
+  "sourceDigestSha256": "bdd1cf80f5c6a42766f135665ea45dd9f1e344c98f7b726e313d17badf518dd4",
+  "surfaceInventoryDigestSha256": "bd999c3cd119f6215349fe924b3dc2bbddb57296efb2b67526d08b1da309be2e",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 536,
+    "filesScanned": 537,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
-    "filesWithFindings": 41,
-    "findings": 112,
-    "protectedReachableFilesWithFindings": 40,
-    "protectedReachableFindings": 111,
+    "filesWithFindings": 42,
+    "findings": 113,
+    "protectedReachableFilesWithFindings": 41,
+    "protectedReachableFindings": 112,
     "bySurfaceScope": {
-      "protected-only": 102,
+      "protected-only": 103,
       "protected-and-public": 9,
       "public-only": 1,
       "infrastructure": 0
@@ -21,7 +21,7 @@
     "byPriority": {
       "P1": 55,
       "P2": 13,
-      "P3": 44
+      "P3": 45
     },
     "byRule": {
       "heavy-shadow": {
@@ -67,7 +67,7 @@
         "priority": "P2"
       },
       "uppercase-tracking": {
-        "count": 44,
+        "count": 45,
         "guidance": "Preferir texto natural em 10–12px e peso 300.",
         "label": "Caixa alta/tracking",
         "priority": "P3"
@@ -371,6 +371,14 @@
     },
     {
       "file": "components/features/admin/AdminNotificationSettingsContent.tsx",
+      "count": 1,
+      "score": 1,
+      "rules": {
+        "uppercase-tracking": 1
+      }
+    },
+    {
+      "file": "components/features/dashboard/LeadDistributionSection.tsx",
       "count": 1,
       "score": 1,
       "rules": {
@@ -708,6 +716,14 @@
       }
     },
     {
+      "file": "components/features/dashboard/LeadDistributionSection.tsx",
+      "count": 1,
+      "score": 1,
+      "rules": {
+        "uppercase-tracking": 1
+      }
+    },
+    {
       "file": "components/features/marketing/MarketingMediaGallery.tsx",
       "count": 1,
       "score": 1,
@@ -867,6 +883,15 @@
       "weight": 1
     },
     {
+      "file": "components/features/dashboard/LeadDistributionSection.tsx",
+      "line": 120,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
       "line": 1332,
       "match": "uppercase",
@@ -976,7 +1001,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 85,
+      "line": 90,
       "match": "rounded-[10px]",
       "priority": "P1",
       "rule": "oversized-radius",
@@ -985,7 +1010,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 85,
+      "line": 90,
       "match": "bg-[rgba(255,255,255,0.08)]",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -994,7 +1019,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 85,
+      "line": 90,
       "match": "#f8fafc",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1003,7 +1028,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 85,
+      "line": 90,
       "match": "bg-[rgba(255,255,255,0.13)]",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1012,7 +1037,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 85,
+      "line": 90,
       "match": "#cbd5e1",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1021,7 +1046,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 85,
+      "line": 90,
       "match": "#94a3b8",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1030,7 +1055,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 94,
+      "line": 99,
       "match": "#94a3b8",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1039,7 +1064,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 104,
+      "line": 109,
       "match": "shadow-xl",
       "priority": "P1",
       "rule": "heavy-shadow",
@@ -1048,7 +1073,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 104,
+      "line": 109,
       "match": "rounded-[10px]",
       "priority": "P1",
       "rule": "oversized-radius",
@@ -1057,7 +1082,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 104,
+      "line": 109,
       "match": "#172946",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1066,7 +1091,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 104,
+      "line": 109,
       "match": "#f8fafc",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1075,7 +1100,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 112,
+      "line": 117,
       "match": "#f8fafc",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1084,7 +1109,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 112,
+      "line": 117,
       "match": "bg-[rgba(255,255,255,0.1)]",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1093,7 +1118,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 112,
+      "line": 117,
       "match": "#f8fafc",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1102,7 +1127,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 124,
+      "line": 129,
       "match": "#f8fafc",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1111,7 +1136,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 124,
+      "line": 129,
       "match": "bg-[rgba(255,255,255,0.1)]",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1120,7 +1145,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 124,
+      "line": 129,
       "match": "#f8fafc",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1129,7 +1154,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 165,
+      "line": 174,
       "match": "rounded-[16px]",
       "priority": "P1",
       "rule": "oversized-radius",
@@ -1138,7 +1163,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 165,
+      "line": 174,
       "match": "#07142f",
       "priority": "P1",
       "rule": "hardcoded-color",
@@ -1147,7 +1172,7 @@
     },
     {
       "file": "components/features/marketing/MarketingScopeFilters.tsx",
-      "line": 165,
+      "line": 174,
       "match": "#07142f",
       "priority": "P1",
       "rule": "hardcoded-color",

@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "a441d42e74b5b32b6daa39c77b81d068933c39d0af8ed55935f4c050d680ff48",
+  "sourceDigestSha256": "bd999c3cd119f6215349fe924b3dc2bbddb57296efb2b67526d08b1da309be2e",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -1337,10 +1337,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:2aa316c184156c3da58b",
+          "id": "overlay:d2d5495aa50dc58c4df6",
           "column": 5,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1159,
+          "line": 1194,
           "owner": "LostDealsDialog",
           "routes": [
             "/dashboard"
@@ -1348,10 +1348,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:55d6c58aa8e83517d5c2",
+          "id": "overlay:cb67603b6dcc8474bab3",
           "column": 5,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1459,
+          "line": 1494,
           "owner": "WonDealsDialog",
           "routes": [
             "/dashboard"
@@ -2000,10 +2000,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:ed03ac796b18fe68ab92",
+          "id": "overlay:e09d107aa632d1776cbd",
           "column": 13,
           "file": "components/features/pipelines/pipeline-screen/PipelineToolbar.tsx",
-          "line": 156,
+          "line": 164,
           "owner": "PipelineToolbar",
           "routes": [
             "/crm/pipelines"
@@ -2011,10 +2011,10 @@
           "kind": "dropdownMenu"
         },
         {
-          "id": "overlay:4a74b991caac2aa81a41",
+          "id": "overlay:de09831f5596f3806359",
           "column": 17,
           "file": "components/features/pipelines/pipeline-screen/PipelineToolbar.tsx",
-          "line": 236,
+          "line": 244,
           "owner": "PipelineToolbar",
           "routes": [
             "/crm/pipelines"
@@ -4269,10 +4269,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:eb5df0dee467f73abaf6",
+          "id": "overlay:934460493177685e6ccc",
           "column": 9,
           "file": "components/shared/SharedFilters.tsx",
-          "line": 476,
+          "line": 509,
           "owner": "SharedFilters",
           "routes": [
             "/crm/contacts",
@@ -4283,10 +4283,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:3d79f856b7631b8c1bb8",
+          "id": "overlay:1af5778697383a398e5e",
           "column": 23,
           "file": "components/shared/SharedFilters.tsx",
-          "line": 716,
+          "line": 749,
           "owner": "SharedFilters",
           "routes": [
             "/crm/contacts",
@@ -4297,10 +4297,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:c01f02dd987f4c39cc69",
+          "id": "overlay:12c25986dad6d82af17c",
           "column": 27,
           "file": "components/shared/SharedFilters.tsx",
-          "line": 1005,
+          "line": 1066,
           "owner": "SharedFilters",
           "routes": [
             "/crm/contacts",
@@ -11179,10 +11179,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:4577f6d65f12804f6280",
+          "id": "cta:e0216ef260da9ca8a49c",
           "column": 9,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 602,
+          "line": 637,
           "owner": "DashboardDataError",
           "routes": [
             "/dashboard"
@@ -11191,10 +11191,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:423259e66d9d8dd22492",
+          "id": "cta:263df13d143ab995470a",
           "column": 9,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1102,
+          "line": 1137,
           "owner": "DashboardDealDetailsState",
           "routes": [
             "/dashboard"
@@ -11203,10 +11203,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:b179df5f7759ac36dd05",
+          "id": "cta:39bf52c591c2254584d4",
           "column": 23,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1406,
+          "line": 1441,
           "owner": "LostDealsDialog",
           "routes": [
             "/dashboard"
@@ -11215,16 +11215,28 @@
           "tag": "button"
         },
         {
-          "id": "cta:dc49e5334d24752e0e53",
+          "id": "cta:133c2a938469ea3db24e",
           "column": 23,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1741,
+          "line": 1776,
           "owner": "WonDealsDialog",
           "routes": [
             "/dashboard"
           ],
           "kind": "actionButton",
           "tag": "button"
+        },
+        {
+          "id": "cta:ac96a7c4241a55a9ce34",
+          "column": 11,
+          "file": "components/features/dashboard/LeadDistributionSection.tsx",
+          "line": 187,
+          "owner": "LeadDistributionSection",
+          "routes": [
+            "/dashboard"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
         },
         {
           "id": "cta:dfc4e2a93eb10ac059ec",
@@ -14865,10 +14877,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:645b59365a8563395299",
+          "id": "cta:9676a5c612eeb07524fe",
           "column": 9,
           "file": "components/features/marketing/MarketingScopeFilters.tsx",
-          "line": 217,
+          "line": 243,
           "owner": "MarketingScopeFilters",
           "routes": [
             "/marketing"
@@ -14877,10 +14889,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d67dd16c42a02f6d54e0",
+          "id": "cta:c0a0d7d19fa7eab0ca1b",
           "column": 21,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 290,
+          "line": 316,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -14890,10 +14902,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:f4bd5fdb67b6d9254674",
+          "id": "cta:dda9c79830509516644e",
           "column": 15,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 317,
+          "line": 343,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -14902,10 +14914,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:5ac98c77693fe56cfd48",
+          "id": "cta:19207f6caccc2a566874",
           "column": 17,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 337,
+          "line": 363,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -14915,10 +14927,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:f8de33ec2c90ddfc78b4",
+          "id": "cta:988452404f6d9d2f06a9",
           "column": 15,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 360,
+          "line": 386,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -14927,10 +14939,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2d5fcf4fc045ab7e6066",
+          "id": "cta:f449a38cec659c3f2d12",
           "column": 13,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 499,
+          "line": 535,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -14939,10 +14951,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:62c57bec508fa195816c",
+          "id": "cta:1655bbcacf6b35440d6a",
           "column": 19,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 527,
+          "line": 563,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -14951,10 +14963,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:4841f2f79b008daefece",
+          "id": "cta:c94260d3bf58238beb3f",
           "column": 19,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 536,
+          "line": 572,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -14963,10 +14975,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ad0bcc5429b1d2822b69",
+          "id": "cta:c57c0f67fc989d94533a",
           "column": 17,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 596,
+          "line": 632,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -14975,10 +14987,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:9b5896ba6c3d3170b4b4",
+          "id": "cta:bff79a061c745f21ce27",
           "column": 19,
           "file": "components/features/marketing/MarketingScreen.tsx",
-          "line": 617,
+          "line": 653,
           "owner": "MarketingScreen",
           "routes": [
             "/marketing"
@@ -14999,6 +15011,18 @@
           "href": "INTEGRATION_HREF",
           "kind": "internalDynamic",
           "tag": "Link"
+        },
+        {
+          "id": "cta:36b61615f39398794bd6",
+          "column": 9,
+          "file": "components/features/meta/MetaCampaignDashboard.tsx",
+          "line": 391,
+          "owner": "MetaCampaignDashboard",
+          "routes": [
+            "/marketing"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
         },
         {
           "id": "cta:32bc3731028641672cef",
@@ -15690,10 +15714,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2076f2d389017fbe6836",
+          "id": "cta:2a8d4807c05f08270941",
           "column": 17,
           "file": "components/features/pipelines/pipeline-screen/PipelineToolbar.tsx",
-          "line": 158,
+          "line": 166,
           "owner": "PipelineToolbar",
           "routes": [
             "/crm/pipelines"
@@ -15702,10 +15726,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:7dce55b832a6c372c35b",
+          "id": "cta:54286ca51da4e4b40f52",
           "column": 21,
           "file": "components/features/pipelines/pipeline-screen/PipelineToolbar.tsx",
-          "line": 238,
+          "line": 246,
           "owner": "PipelineToolbar",
           "routes": [
             "/crm/pipelines"
@@ -15714,10 +15738,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a5495b5a53a23084fa1b",
+          "id": "cta:10d30122ac6c248d6066",
           "column": 11,
           "file": "components/features/pipelines/pipeline-screen/PipelineToolbar.tsx",
-          "line": 279,
+          "line": 287,
           "owner": "PipelineToolbar",
           "routes": [
             "/crm/pipelines"
@@ -15726,10 +15750,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f2c816351dde25f4aebf",
+          "id": "cta:3b075dc4a071784bb5d9",
           "column": 13,
           "file": "components/features/pipelines/pipeline-screen/PipelineToolbar.tsx",
-          "line": 351,
+          "line": 363,
           "owner": "PipelineToolbar",
           "routes": [
             "/crm/pipelines"
@@ -28668,10 +28692,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:fa475e558db4527014e0",
+          "id": "cta:5e68136cd90e49d66eaa",
           "column": 13,
           "file": "components/shared/SharedFilters.tsx",
-          "line": 482,
+          "line": 515,
           "owner": "SharedFilters",
           "routes": [
             "/crm/contacts",
@@ -28683,10 +28707,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:14b601c35006daf54445",
+          "id": "cta:323d29cec3474a84b26e",
           "column": 19,
           "file": "components/shared/SharedFilters.tsx",
-          "line": 556,
+          "line": 589,
           "owner": "SharedFilters",
           "routes": [
             "/crm/contacts",
@@ -28698,10 +28722,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:59630a727519c15e7dad",
+          "id": "cta:0a773365d6cffa67983b",
           "column": 21,
           "file": "components/shared/SharedFilters.tsx",
-          "line": 577,
+          "line": 610,
           "owner": "SharedFilters",
           "routes": [
             "/crm/contacts",
@@ -28713,10 +28737,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:26a3fc7967fa372db1c0",
+          "id": "cta:b8198f05798c8c446eec",
           "column": 27,
           "file": "components/shared/SharedFilters.tsx",
-          "line": 722,
+          "line": 755,
           "owner": "SharedFilters",
           "routes": [
             "/crm/contacts",
@@ -28728,10 +28752,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:e581a5e87b2896c5ad04",
+          "id": "cta:d95820fd37d2e0b1c1c2",
           "column": 31,
           "file": "components/shared/SharedFilters.tsx",
-          "line": 1014,
+          "line": 1075,
           "owner": "SharedFilters",
           "routes": [
             "/crm/contacts",
@@ -28743,10 +28767,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f117c7c4e1a12b297c7d",
+          "id": "cta:198b1ecacf0f488a61ff",
           "column": 11,
           "file": "components/shared/SharedFilters.tsx",
-          "line": 1203,
+          "line": 1264,
           "owner": "SharedFilters",
           "routes": [
             "/crm/contacts",
@@ -29714,10 +29738,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:5747d773e0fedd8c1444",
+          "id": "control:5d6ae710c0698cbdf2bb",
           "column": 19,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 486,
+          "line": 507,
           "owner": "Dashboard",
           "routes": [
             "/dashboard"
@@ -29726,10 +29750,10 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:3b30e6503eb5080e278d",
+          "id": "control:27469d892aa91352cb0c",
           "column": 19,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 492,
+          "line": 513,
           "owner": "Dashboard",
           "routes": [
             "/dashboard"
@@ -29738,10 +29762,10 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:0c443691e6a8065f20fd",
+          "id": "control:f7645ea96d745dc4da59",
           "column": 19,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 498,
+          "line": 519,
           "owner": "Dashboard",
           "routes": [
             "/dashboard"
@@ -30849,10 +30873,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:a64640d418ade7d91f47",
+          "id": "control:76ef3f9e55890b3d8da9",
           "column": 23,
           "file": "components/features/pipelines/pipeline-screen/PipelineToolbar.tsx",
-          "line": 186,
+          "line": 194,
           "owner": "PipelineToolbar",
           "routes": [
             "/crm/pipelines"
@@ -30861,10 +30885,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:887d6561b10f80dedd9e",
+          "id": "control:3c509d734772601f96e1",
           "column": 25,
           "file": "components/features/pipelines/pipeline-screen/PipelineToolbar.tsx",
-          "line": 200,
+          "line": 208,
           "owner": "PipelineToolbar",
           "routes": [
             "/crm/pipelines"
@@ -30873,10 +30897,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:0684f7d67b458ca07382",
+          "id": "control:927910f36e15ba17d70f",
           "column": 21,
           "file": "components/features/pipelines/pipeline-screen/PipelineToolbar.tsx",
-          "line": 221,
+          "line": 229,
           "owner": "PipelineToolbar",
           "routes": [
             "/crm/pipelines"
@@ -30885,10 +30909,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:f97855f510c1e32c7b13",
+          "id": "control:b2e9e423044559fbce10",
           "column": 23,
           "file": "components/features/pipelines/pipeline-screen/PipelineToolbar.tsx",
-          "line": 254,
+          "line": 262,
           "owner": "PipelineToolbar",
           "routes": [
             "/crm/pipelines"
@@ -30897,10 +30921,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:3556fa5a114307c5326f",
+          "id": "control:fcd4e8e16e4bd5e9a494",
           "column": 23,
           "file": "components/features/pipelines/pipeline-screen/PipelineToolbar.tsx",
-          "line": 263,
+          "line": 271,
           "owner": "PipelineToolbar",
           "routes": [
             "/crm/pipelines"
@@ -33717,7 +33741,7 @@
         }
       ]
     },
-    "digestSha256": "e222e6d92337b92e66305234a8684a355e0ea1f854cad48526cb2540ecffbbe0"
+    "digestSha256": "a2a38c174331caa56220fb9ba1819c59efe2b85b34868d5dc33e93172d738f82"
   },
   "routes": [
     {
@@ -37345,6 +37369,15 @@
         "protected"
       ],
       "file": "components/features/dashboard/KPICards.tsx",
+      "routes": [
+        "/dashboard"
+      ]
+    },
+    {
+      "access": [
+        "protected"
+      ],
+      "file": "components/features/dashboard/LeadDistributionSection.tsx",
       "routes": [
         "/dashboard"
       ]
@@ -43286,9 +43319,9 @@
       "asChildButtonsWithUnrecognizedChild": 0,
       "asChildPrimitiveControlsExcluded": 83,
       "asChildPrimitiveControlsWithUnrecognizedChild": 0,
-      "ctasAll": 1368,
+      "ctasAll": 1370,
       "ctasByKind": {
-        "actionButton": 1212,
+        "actionButton": 1214,
         "external": 6,
         "internal": 31,
         "internalDynamic": 75,
@@ -43297,8 +43330,8 @@
       "forms": 49,
       "formsRouteReachable": 49,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1318,
-      "internalCtasRouteReachable": 1282,
+      "internalCtas": 1320,
+      "internalCtasRouteReachable": 1284,
       "overlays": 217,
       "overlaysByKind": {
         "alertDialog": 60,
@@ -43326,7 +43359,7 @@
     "protectedAccessChecksThreePersonas": 204,
     "renderableRouteViewportChecksDesktopAndMobile": 164,
     "routeReachableFormImplementations": 49,
-    "routeReachableInternalCtaImplementations": 1282,
+    "routeReachableInternalCtaImplementations": 1284,
     "routeReachableOverlayImplementations": 210,
     "routeReachableSupplementalOverlayAndTabControls": 272
   },
