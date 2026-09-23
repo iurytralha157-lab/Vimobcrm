@@ -45,6 +45,9 @@ jobs:
       - name: Test validation contracts
         run: npm run validation:test
 
+      - name: Test Meta Page confirmation contract
+        run: node --test scripts/tests/meta-connect-flow-ui.test.mjs
+
       - name: Test property media contracts
         run: npm run test:property-media
 

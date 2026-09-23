@@ -52,9 +52,33 @@ func TestOAuthConnectClaimIsTenantBoundPageScopedAndFinalizedOnlyAfterSuccess(t 
 	serviceSource := readOAuthSource(t, "oauth_service.go")
 	connect := oauthSourceSection(t, serviceSource, "func (service *oauthService) connectPage", "func (service *oauthService) updatePage")
 	persist := strings.Index(connect, "persistConnectedIntegration(")
-	finalizeAt := strings.Index(connect, "finishConnectFlow(ctx, auth, flowID, page.ID)")
+	finalizeAt := strings.Index(connect, "finishConnectFlow(finalizeContext, auth, flowID, page.ID)")
 	if persist < 0 || finalizeAt < persist {
 		t.Fatal("OAuth flow must be consumed only after the integration is durably persisted")
+	}
+	if !strings.Contains(connect[persist:finalizeAt], "context.WithoutCancel(ctx)") {
+		t.Fatal("flow finalization must survive a canceled browser request after integration persistence")
+	}
+}
+
+func TestOAuthEmptyLeadOnlySelectionIsAnArrayBeforePostgresJSONFunctions(t *testing.T) {
+	source := readOAuthSource(t, "oauth_postgres.go")
+	for _, contract := range []struct {
+		name  string
+		start string
+		end   string
+		list  string
+	}{
+		{"claim", "func (store oauthPostgresStore) claimConnectFlow", "func (store oauthPostgresStore) finishConnectFlow", "selectedAccounts"},
+		{"persist", "func (store oauthPostgresStore) persistConnectedIntegration", "func persistConnectedOAuthIntegration", "selected"},
+	} {
+		section := oauthSourceSection(t, source, contract.start, contract.end)
+		normalize := strings.Index(section, "if "+contract.list+" == nil {")
+		array := strings.Index(section, contract.list+" = []string{}")
+		marshal := strings.Index(section, "json.Marshal("+contract.list+")")
+		if normalize < 0 || array < normalize || marshal < array {
+			t.Fatalf("%s must serialize omitted ad-account selection as [] before passing it to PostgreSQL", contract.name)
+		}
 	}
 }
 
@@ -63,7 +87,7 @@ func TestOAuthConnectRejectsTokenWithoutLeadRetrievalBeforeProviderMutation(t *t
 	connect := oauthSourceSection(t, source, "func (service *oauthService) connectPage", "func (service *oauthService) updatePage")
 
 	requiredScope := strings.Index(connect, `slices.Contains(debug.Scopes, "leads_retrieval")`)
-	subscribe := strings.Index(connect, "subscribePageWebhook(")
+	subscribe := strings.Index(connect, "ensurePageLeadgenSubscription(ctx, page)")
 	persist := strings.Index(connect, "persistConnectedIntegration(")
 	if requiredScope < 0 || subscribe <= requiredScope || persist <= requiredScope {
 		t.Fatal("connect must reject a token without leads_retrieval before subscribing or persisting the Page")
@@ -92,7 +116,7 @@ func TestOAuthConnectProvesLeadFormsAccessBeforeProviderMutationOrHealthyPersist
 	connect := oauthSourceSection(t, source, "func (service *oauthService) connectPage", "func (service *oauthService) updatePage")
 
 	validate := strings.Index(connect, "validatePageLeadFormsAccess(ctx, page)")
-	subscribe := strings.Index(connect, "subscribePageWebhook(")
+	subscribe := strings.Index(connect, "ensurePageLeadgenSubscription(ctx, page)")
 	persist := strings.Index(connect, "persistConnectedIntegration(")
 	if validate < 0 || subscribe <= validate || persist <= validate {
 		t.Fatal("connect must prove /leadgen_forms access before subscribing or persisting the Page as healthy")
@@ -155,19 +179,6 @@ func TestOAuthCallbackStartsFreshSelectionWindowOnlyAfterValidClaim(t *testing.T
 	}
 }
 
-func TestOAuthRequestsInstagramMessagingPermission(t *testing.T) {
-	found := false
-	for _, scope := range OAuthScopes() {
-		if scope == "instagram_manage_messages" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatal("Instagram DM backend requires instagram_manage_messages")
-	}
-}
-
 func TestOAuthPersistenceUsesSeparateVaultBackedPageAndUserCredentials(t *testing.T) {
 	source := readOAuthSource(t, "oauth_postgres.go")
 	for _, required := range []string{
@@ -216,15 +227,27 @@ func TestOAuthHandlerNeverAcceptsProviderCredentialInputs(t *testing.T) {
 	}
 }
 
-func TestOAuthAdvancedAssetsFailClosedWhenMarketingModuleIsDisabled(t *testing.T) {
+func TestOAuthLeadFormsConnectLeavesAdvancedAssetsToMarketingActions(t *testing.T) {
 	source := readOAuthSource(t, "oauth_service.go")
 	connect := oauthSourceSection(t, source, "func (service *oauthService) connectPage", "func (service *oauthService) updatePage")
-	moduleCheck := strings.Index(connect, `moduleEnabled(ctx, auth.OrganizationID, "campaigns")`)
-	selectionClear := strings.Index(connect, "selected = nil")
-	claim := strings.Index(connect, "claimConnectFlow(")
-	persist := strings.Index(connect, "persistConnectedIntegration(")
-	if moduleCheck < 0 || selectionClear < moduleCheck || claim < selectionClear || persist < claim {
-		t.Fatal("connect must clear advanced ad-account selection before claiming or persisting the OAuth flow")
+	for _, forbidden := range []string{
+		`moduleEnabled(ctx, auth.OrganizationID, "campaigns")`,
+		"fetchAdAccounts(",
+		"parseOAuthSelectedAccounts(",
+	} {
+		if strings.Contains(connect, forbidden) {
+			t.Fatalf("Lead Forms confirmation must not depend on %q", forbidden)
+		}
+	}
+	for _, required := range []string{
+		"selected := []string{}",
+		"claimConnectFlow(ctx, auth, flowID, pageID, selected)",
+		"validatePageLeadFormsAccess(ctx, page)",
+		"ensurePageLeadgenSubscription(ctx, page)",
+	} {
+		if !strings.Contains(connect, required) {
+			t.Fatalf("Lead Forms confirmation is missing %q", required)
+		}
 	}
 
 	updateAccounts := oauthSourceSection(t, source, "func (service *oauthService) updateAdAccounts", "func (service *oauthService) loadOAuthPortfolio")
@@ -251,25 +274,21 @@ func TestOAuthAdvancedAssetsFailClosedWhenMarketingModuleIsDisabled(t *testing.T
 	}
 }
 
-func TestOAuthWebhookCompensationNeverBreaksAHealthyIntegration(t *testing.T) {
+func TestOAuthConnectChecksLiveLeadgenWithoutUnsubscribingSharedPages(t *testing.T) {
 	source := readOAuthSource(t, "oauth_service.go")
 	connect := oauthSourceSection(t, source, "func (service *oauthService) connectPage", "func (service *oauthService) updatePage")
-	providerState := strings.Index(connect, "pageSubscriptionState(")
-	providerSubscribe := strings.Index(connect, "subscribePageWebhook(")
-	if providerState < 0 || providerSubscribe < providerState {
-		t.Fatal("connect must inspect the shared Page subscription before mutating the provider")
-	}
-	if !strings.Contains(connect, "providerState.ConnectedCount == 0 || (requestedMessaging && !providerMessagingSubscribed)") {
-		t.Fatal("connect may only create the first Page subscription or perform a monotonic messaging upgrade")
-	}
+	liveCheck := strings.Index(connect, "ensurePageLeadgenSubscription(ctx, page)")
 	persist := strings.Index(connect, "persistConnectedIntegration(")
-	stateCheck := strings.Index(connect, "connectedPageIntegrationCount(")
-	compensate := strings.LastIndex(connect, "unsubscribePageWebhook(")
-	if persist < 0 || stateCheck < persist || compensate < stateCheck {
-		t.Fatal("connect compensation must check every tenant connection for the Page before unsubscribing")
+	if liveCheck < 0 || persist < liveCheck {
+		t.Fatal("connect must verify Meta's live leadgen subscription before persisting the Page")
 	}
 	if !strings.Contains(connect, "acquireMetaPageSubscriptionLock(") {
 		t.Fatal("connect must serialize provider subscription mutations across tenants")
+	}
+	for _, forbidden := range []string{"pageSubscriptionState(", "unsubscribePageWebhook("} {
+		if strings.Contains(connect, forbidden) {
+			t.Fatalf("connect must not trust local subscription state or remove a shared subscription: %s", forbidden)
+		}
 	}
 
 	disconnect := oauthSourceSection(t, source, "func (service *oauthService) disconnectPage", "func (service *oauthService) togglePage")

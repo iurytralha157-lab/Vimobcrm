@@ -196,7 +196,9 @@ func TestOAuthPostgresPageScopedUseAndVaultContract(t *testing.T) {
 	if _, err := store.claimConnectFlow(ctx, auth, flowID, pageID, []string{accountID}); oauthErrorCode(err) != "oauth_flow_not_available" {
 		t.Fatalf("same Page replay error = %v", err)
 	}
-	claimed, err = store.claimConnectFlow(ctx, auth, flowID, secondPageID, []string{accountID})
+	// The lead-only confirmation sends no ad-account selection. PostgreSQL's
+	// jsonb_array_elements_text requires [] rather than JSON null here.
+	claimed, err = store.claimConnectFlow(ctx, auth, flowID, secondPageID, nil)
 	if err != nil || claimed.UserToken != payload.UserToken {
 		t.Fatalf("second Page claim result = %#v, %v", claimed, err)
 	}
@@ -301,7 +303,7 @@ func TestOAuthPostgresPageScopedUseAndVaultContract(t *testing.T) {
 		identity,
 		debug,
 		payload.UserToken,
-		[]string{accountID},
+		nil,
 		oauthConnectionOptions{DefaultStatus: "novo"},
 		false,
 	)

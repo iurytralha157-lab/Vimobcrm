@@ -144,7 +144,13 @@ func (handler *OAuthHandler) Action(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), handler.actionTimeout)
+	operationContext := r.Context()
+	if action == "connect_page" {
+		// A Page subscription and its database write must finish even if the
+		// browser closes or a proxy abandons the response mid-confirmation.
+		operationContext = context.WithoutCancel(operationContext)
+	}
+	ctx, cancel := context.WithTimeout(operationContext, handler.actionTimeout)
 	defer cancel()
 	var result map[string]any
 	switch action {

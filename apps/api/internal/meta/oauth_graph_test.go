@@ -21,14 +21,10 @@ var pinnedLegacyOAuthScopes = []string{
 	"pages_read_engagement",
 	"pages_manage_ads",
 	"pages_manage_metadata",
-	"pages_messaging",
 	"leads_retrieval",
 	"ads_read",
 	"ads_management",
 	"business_management",
-	"instagram_basic",
-	"instagram_manage_insights",
-	"instagram_manage_messages",
 }
 
 var pinnedBusinessLoginOAuthScopes = []string{
@@ -39,10 +35,6 @@ var pinnedBusinessLoginOAuthScopes = []string{
 	"pages_show_list",
 	"pages_read_engagement",
 	"ads_read",
-	"instagram_basic",
-	"instagram_manage_insights",
-	"instagram_manage_messages",
-	"pages_messaging",
 }
 
 func TestOAuthGraphExchangesAndValidatesUnifiedPortfolio(t *testing.T) {
@@ -467,6 +459,11 @@ func TestOAuthLegacyLoginRequestsLeadFormsPermissions(t *testing.T) {
 	for _, required := range []string{"leads_retrieval", "pages_manage_ads", "ads_management"} {
 		if !slices.Contains(legacyScopes, required) {
 			t.Errorf("legacy OAuth scopes do not include %q: %#v", required, legacyScopes)
+		}
+	}
+	for _, scope := range append(legacyScopes, OAuthBusinessLoginScopes()...) {
+		if strings.HasPrefix(scope, "instagram_") || scope == "pages_messaging" {
+			t.Fatalf("Lead Forms login requested unrelated permission %q", scope)
 		}
 	}
 }

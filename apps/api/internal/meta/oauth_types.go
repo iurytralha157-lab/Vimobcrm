@@ -26,14 +26,10 @@ var oauthLegacyLoginScopes = []string{
 	"pages_read_engagement",
 	"pages_manage_ads",
 	"pages_manage_metadata",
-	"pages_messaging",
 	"leads_retrieval",
 	"ads_read",
 	"ads_management",
 	"business_management",
-	"instagram_basic",
-	"instagram_manage_insights",
-	"instagram_manage_messages",
 }
 
 var oauthBusinessLoginScopes = []string{
@@ -44,10 +40,6 @@ var oauthBusinessLoginScopes = []string{
 	"pages_show_list",
 	"pages_read_engagement",
 	"ads_read",
-	"instagram_basic",
-	"instagram_manage_insights",
-	"instagram_manage_messages",
-	"pages_messaging",
 }
 
 // OAuthConfig contains every server-side setting required by the native Meta
@@ -214,7 +206,10 @@ type oauthIntegration struct {
 }
 
 type oauthConnectionOptions struct {
-	PipelineID    *string
-	StageID       *string
-	DefaultStatus string
+	PipelineID            *string
+	StageID               *string
+	DefaultStatus         string
+	PipelineProvided      bool
+	StageProvided         bool
+	DefaultStatusProvided bool
 }

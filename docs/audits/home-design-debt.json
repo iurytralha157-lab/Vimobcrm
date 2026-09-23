@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "9530e053160f28425ccfeeb32d2efcb846f8e278b32b688990eded50a8e3c7e4",
-  "surfaceInventoryDigestSha256": "e0f1652c13ca0915ec5e4dad76540dc6a38b3a80c99fdce2bf9ba9b0f10ca435",
+  "sourceDigestSha256": "75f2435ae1f05519aac145a97ab816b8d6df3618e177a5fcb797f0178da9f903",
+  "surfaceInventoryDigestSha256": "b28bdd71c186a1b111a7a73ff4afa30e58033d0767f6053220173c604b582a5f",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
     "filesScanned": 537,
@@ -893,7 +893,7 @@
     },
     {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-      "line": 1420,
+      "line": 1416,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -902,7 +902,7 @@
     },
     {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-      "line": 1420,
+      "line": 1416,
       "match": "tracking-wide",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -911,7 +911,7 @@
     },
     {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-      "line": 1507,
+      "line": 1503,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -920,7 +920,7 @@
     },
     {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-      "line": 1507,
+      "line": 1503,
       "match": "tracking-wide",
       "priority": "P3",
       "rule": "uppercase-tracking",

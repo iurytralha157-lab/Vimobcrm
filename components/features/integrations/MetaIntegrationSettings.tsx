@@ -708,7 +708,7 @@ export function MetaIntegrationSettings({
   const loadFormsForIntegration = async (integration: MetaIntegration) => {
     if (!integration.page_id) {
       toast.error("Página sem identificador válido para buscar formulários.");
-      return;
+      return false;
     }
     const requestSequence = ++formsRequestSequenceRef.current;
     setSelectedIntegration(integration);
@@ -716,12 +716,14 @@ export function MetaIntegrationSettings({
     setFormsLoading(true);
     try {
       const result = await fetchForms.mutateAsync({ pageId: integration.page_id });
-      if (formsRequestSequenceRef.current !== requestSequence) return;
+      if (formsRequestSequenceRef.current !== requestSequence) return false;
       setForms(mergeFormsWithConfigured(result.forms || [], getConfiguredFormsForIntegration(integration.id)));
+      return true;
     } catch (error) {
-      if (formsRequestSequenceRef.current !== requestSequence) return;
+      if (formsRequestSequenceRef.current !== requestSequence) return false;
       setForms([]);
       setFormsLoadError(metaErrorMessage(error, "Não foi possível carregar os formulários desta página."));
+      return false;
     } finally {
       if (formsRequestSequenceRef.current === requestSequence) {
         setFormsLoading(false);
@@ -746,13 +748,11 @@ export function MetaIntegrationSettings({
     pageConfirmationInProgressRef.current = true;
     setPageConfirmationInProgress(true);
     try {
-      let result: Awaited<ReturnType<typeof connectPage.mutateAsync>> | null = null;
       let connectError: unknown = null;
       try {
-        result = await connectPage.mutateAsync({
+        await connectPage.mutateAsync({
           pageId: page.id,
           flowId: selectedAccount.flowId,
-          adAccountId: selectedAccount.adAccountId,
         });
       } catch (error) {
         connectError = error;
@@ -781,20 +781,16 @@ export function MetaIntegrationSettings({
         return;
       }
 
-      if (result?.missing_permissions.includes("ads_read")) {
-        toast.warning("Página conectada, mas o Meta não liberou ads_read. Reconecte a conta para ativar a sincronização da Dashboard de Marketing.");
-      } else if (result?.messenger_active === false) {
-        toast.success("A página foi conectada para leads. Mensagens do Messenger exigem permissão adicional.");
-      } else {
-        toast.success("Página conectada com sucesso!");
-      }
-
       const pendingOAuth = retainPendingOAuthPages(newOAuth, page.id);
       setNewOAuth(pendingOAuth);
       if (!pendingOAuth) setOAuthFlowExpiresAt(null);
       setSelectedAccountKey(pendingOAuth ? "new-oauth" : getIntegrationAccountKey(integration));
       setPendingPage(null);
-      await loadFormsForIntegration(integration);
+      if (await loadFormsForIntegration(integration)) {
+        toast.success("Página conectada e formulários carregados.");
+      } else {
+        toast.warning("Página conectada. Não foi possível carregar os formulários agora; tente abrir a página novamente.");
+      }
     } finally {
       pageConfirmationInProgressRef.current = false;
       setPageConfirmationInProgress(false);
