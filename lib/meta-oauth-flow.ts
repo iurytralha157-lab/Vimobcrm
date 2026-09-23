@@ -14,6 +14,7 @@ export function canUseMetaOAuthFlow(
       !flow.consumed_at &&
       Number.isFinite(expiresAt) &&
       expiresAt > now &&
+      flow.payload?.success === true &&
       flow.payload?.flow_id === flow.id &&
       flow.payload.pages.length > 0,
   );

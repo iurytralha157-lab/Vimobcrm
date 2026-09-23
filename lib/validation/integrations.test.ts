@@ -355,9 +355,23 @@ test("retorno OAuth Meta aceita somente o portfolio seguro do backend", () => {
   assert.equal(parsed.payload?.pages[0]?.name, "Pagina Vimob");
   assert.equal(canUseMetaOAuthFlow(parsed, safeFlow.organization_id, Date.parse("2026-09-23T15:00:00Z")), true);
   assert.equal(canUseMetaOAuthFlow(parsed, safeFlow.organization_id, Date.parse("2026-09-23T15:11:00Z")), false);
+  assert.equal(canUseMetaOAuthFlow(parsed, safeFlow.organization_id, Date.parse("2026-09-23T15:10:00Z")), false);
   assert.equal(canUseMetaOAuthFlow({ ...parsed, connectable: false }, safeFlow.organization_id, Date.parse("2026-09-23T15:00:00Z")), false);
   assert.equal(canUseMetaOAuthFlow({ ...parsed, consumed_at: "2026-09-23T15:01:00Z" }, safeFlow.organization_id, Date.parse("2026-09-23T15:00:00Z")), false);
   assert.equal(canUseMetaOAuthFlow(parsed, "10000000-0000-4000-8000-000000000004", Date.parse("2026-09-23T15:00:00Z")), false);
+  const invalidFlows: Array<[string, typeof parsed]> = [
+    ["pending", { ...parsed, status: "pending" }],
+    ["callback error", { ...parsed, status: "error" }],
+    ["already consumed", { ...parsed, status: "consumed" }],
+    ["no expiry", { ...parsed, expires_at: null }],
+    ["invalid expiry", { ...parsed, expires_at: "invalid" }],
+    ["wrong flow payload", { ...parsed, payload: { ...parsed.payload!, flow_id: "10000000-0000-4000-8000-000000000004" } }],
+    ["callback did not succeed", { ...parsed, payload: { ...parsed.payload!, success: false } }],
+    ["no available Page", { ...parsed, payload: { ...parsed.payload!, pages: [] } }],
+  ];
+  for (const [reason, flow] of invalidFlows) {
+    assert.equal(canUseMetaOAuthFlow(flow, safeFlow.organization_id, Date.parse("2026-09-23T15:00:00Z")), false, reason);
+  }
   assert.equal(canUseMetaOAuthFlow(metaOAuthFlowResultSchema.parse({ ...safeFlow, connectable: false, payload: null }), safeFlow.organization_id, Date.parse("2026-09-23T15:00:00Z")), false);
   assert.equal(metaOAuthFlowResultSchema.parse({ ...safeFlow, connectable: false, payload: null }).connectable, false);
   assert.equal(metaOAuthFlowResultSchema.parse({ ...safeFlow, connectable: undefined }).connectable, false);
@@ -1114,7 +1128,6 @@ test("tela Meta preserva autoria, métricas e linhas compactas na lista", () => 
     /format\(new Date\(config\.created_at\), "dd\/MM\/yyyy"/,
   );
   assert.match(source, /format\(new Date\(config\.created_at\), "HH:mm"/);
-  assert.match(source, /adAccountId: selectedAccount\.adAccountId/);
   assert.match(
     source,
     /if \(selectedAccount\?\.isNew\) \{\s*setSelectedIntegration\(null\);\s*setPendingPage\(page\);\s*return;\s*\}/,
@@ -1154,6 +1167,12 @@ test("conexão Meta traduz os códigos estáveis recebidos em code ou message", 
       "Não foi possível validar o acesso aos formulários de leads na Meta. Confira as permissões da página e tente novamente.",
     meta_webhook_subscription_failed:
       "Não foi possível ativar o envio de leads desta página na Meta. Confira o acesso à página e tente novamente.",
+    meta_webhook_subscription_check_failed:
+      "Não foi possível verificar na Meta se esta página está enviando leads. Tente novamente em instantes.",
+    meta_webhook_subscription_unverified:
+      "A Meta não confirmou a assinatura de leads desta página. Tente conectar novamente em instantes.",
+    meta_leadgen_subscription_missing:
+      "Esta página já tem outros eventos assinados na Meta, mas não está enviando leads. A assinatura precisa ser corrigida sem remover os outros eventos.",
     api_timeout:
       "A confirmação da página demorou. Atualize a lista para verificar se ela foi conectada antes de tentar novamente.",
   } as const;

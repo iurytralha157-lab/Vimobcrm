@@ -256,10 +256,20 @@ func (client *oauthGraphClient) fetchIdentity(ctx context.Context, token string)
 }
 
 func (client *oauthGraphClient) fetchManagedPages(ctx context.Context, token string) ([]oauthPage, error) {
-	items, err := client.graphCollection(ctx, "me/accounts", token, strings.Join([]string{
+	return client.fetchManagedPagesWithFields(ctx, token, strings.Join([]string{
 		"id", "name", "access_token", "picture.width(200).height(200){url}",
 		"instagram_business_account{id,username,name,profile_picture_url}",
 	}, ","))
+}
+
+// Lead Forms authorization only needs Page credentials. Instagram metadata and
+// ad-account discovery are separate capabilities and must not block lead intake.
+func (client *oauthGraphClient) fetchLeadFormsPages(ctx context.Context, token string) ([]oauthPage, error) {
+	return client.fetchManagedPagesWithFields(ctx, token, "id,name,access_token,picture.width(200).height(200){url}")
+}
+
+func (client *oauthGraphClient) fetchManagedPagesWithFields(ctx context.Context, token string, fields string) ([]oauthPage, error) {
+	items, err := client.graphCollection(ctx, "me/accounts", token, fields)
 	if err != nil {
 		return nil, err
 	}
@@ -290,6 +300,38 @@ func (client *oauthGraphClient) fetchManagedPages(ctx context.Context, token str
 		})
 	}
 	return pages, nil
+}
+
+// Fetch the Page selected from the callback portfolio directly with the
+// server-held user token. This avoids rediscovering every Page on confirmation.
+func (client *oauthGraphClient) fetchLeadFormsPage(ctx context.Context, userToken string, pageID string) (oauthPage, error) {
+	if !oauthNumericIDPattern.MatchString(pageID) {
+		return oauthPage{}, newOAuthFailure("invalid_meta_page_id", http.StatusBadRequest)
+	}
+	payload, err := client.graphRequest(ctx, http.MethodGet, pageID, userToken, map[string]string{
+		"fields": "id,name,access_token,picture.width(200).height(200){url}",
+	}, nil)
+	if err != nil {
+		return oauthPage{}, err
+	}
+	if oauthString(payload["id"]) != pageID {
+		return oauthPage{}, newOAuthFailure("meta_page_not_accessible", http.StatusForbidden)
+	}
+	pageToken, err := oauthRequiredUserToken(payload["access_token"])
+	if err != nil {
+		return oauthPage{}, newOAuthFailure("meta_page_not_accessible", http.StatusForbidden, err)
+	}
+	name := oauthString(payload["name"])
+	if name == "" {
+		name = "Pagina " + pageID
+	}
+	picture := oauthMap(oauthMap(payload["picture"])["data"])
+	return oauthPage{
+		ID:          pageID,
+		Name:        name,
+		AccessToken: pageToken,
+		PictureURL:  oauthHTTPSURLPointer(picture["url"]),
+	}, nil
 }
 
 func (client *oauthGraphClient) fetchAdAccounts(ctx context.Context, token string) ([]oauthAdAccount, error) {
@@ -367,6 +409,70 @@ func (client *oauthGraphClient) subscribePageWebhook(ctx context.Context, page o
 		return false, newOAuthFailure("meta_webhook_subscription_failed", http.StatusBadGateway)
 	}
 	return false, nil
+}
+
+// A local integration row does not prove that Meta still sends leadgen events.
+// Read the app's live subscription before confirming a Page connection. A
+// lead-only token must never replace existing messaging fields on the Page.
+func (client *oauthGraphClient) ensurePageLeadgenSubscription(ctx context.Context, page oauthPage) (bool, error) {
+	fields, found, err := client.pageSubscribedFields(ctx, page)
+	if err != nil {
+		return false, err
+	}
+	if !oauthContainsField(fields, "leadgen") {
+		if found && len(fields) > 0 {
+			return false, newOAuthFailure("meta_leadgen_subscription_missing", http.StatusConflict)
+		}
+		if _, err := client.subscribePageWebhook(ctx, page, false); err != nil {
+			return false, err
+		}
+		fields, found, err = client.pageSubscribedFields(ctx, page)
+		if err != nil {
+			return false, err
+		}
+		if !found || !oauthContainsField(fields, "leadgen") {
+			return false, newOAuthFailure("meta_webhook_subscription_unverified", http.StatusBadGateway)
+		}
+	}
+	return oauthContainsField(fields, "messages"), nil
+}
+
+func (client *oauthGraphClient) pageSubscribedFields(ctx context.Context, page oauthPage) ([]string, bool, error) {
+	items, err := client.graphCollection(ctx, page.ID+"/subscribed_apps", page.AccessToken, "id,subscribed_fields")
+	if err != nil {
+		return nil, false, newOAuthFailure("meta_webhook_subscription_check_failed", oauthErrorStatus(err), err)
+	}
+	for _, item := range items {
+		if oauthString(item["id"]) != client.appID {
+			continue
+		}
+		if item["subscribed_fields"] == nil {
+			return nil, true, nil
+		}
+		raw, ok := item["subscribed_fields"].([]any)
+		if !ok {
+			return nil, false, newOAuthFailure("meta_webhook_subscription_check_failed", http.StatusBadGateway)
+		}
+		fields := make([]string, 0, len(raw))
+		for _, value := range raw {
+			field := oauthString(value)
+			if field == "" {
+				return nil, false, newOAuthFailure("meta_webhook_subscription_check_failed", http.StatusBadGateway)
+			}
+			fields = append(fields, field)
+		}
+		return fields, true, nil
+	}
+	return nil, false, nil
+}
+
+func oauthContainsField(fields []string, field string) bool {
+	for _, candidate := range fields {
+		if candidate == field {
+			return true
+		}
+	}
+	return false
 }
 
 func (client *oauthGraphClient) unsubscribePageWebhook(ctx context.Context, pageID string, pageToken string) bool {

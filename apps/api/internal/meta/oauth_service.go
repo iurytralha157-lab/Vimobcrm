@@ -133,11 +133,7 @@ func (service *oauthService) completeCallback(ctx context.Context, state string,
 	if err != nil {
 		return result, err
 	}
-	marketingEnabled, err := service.store.moduleEnabled(ctx, flow.OrganizationID, "campaigns")
-	if err != nil {
-		return result, newOAuthFailure("meta_module_lookup_failed", http.StatusServiceUnavailable, err)
-	}
-	debug, identity, pages, accounts, err := service.loadOAuthPortfolio(ctx, userToken, marketingEnabled)
+	debug, identity, pages, err := service.loadOAuthPortfolio(ctx, userToken)
 	if err != nil {
 		return result, err
 	}
@@ -157,7 +153,7 @@ func (service *oauthService) completeCallback(ctx context.Context, state string,
 	if tokenExpiry == nil {
 		tokenExpiry = exchangedExpiry
 	}
-	payload := buildOAuthFlowPayload(userToken, tokenExpiry, debug.Scopes, identity, pages, accounts)
+	payload := buildOAuthFlowPayload(userToken, tokenExpiry, debug.Scopes, identity, pages, nil)
 	if err := service.store.finishCallbackSuccess(ctx, flow, payload); err != nil {
 		return result, err
 	}
@@ -182,25 +178,9 @@ func (service *oauthService) connectPage(ctx context.Context, auth oauthAuthCont
 	if err := service.store.validateDestination(ctx, auth.OrganizationID, options); err != nil {
 		return nil, err
 	}
-	selected, selectionSet, err := parseOAuthSelectedAccounts(body["selected_ad_accounts"], false)
-	if err != nil {
-		return nil, err
-	}
-	if !selectionSet {
-		if fallback, ok := NormalizeOAuthAdAccountID(oauthString(body["ad_account_id"])); ok {
-			selected = []string{fallback}
-		}
-	}
-	marketingEnabled, err := service.store.moduleEnabled(ctx, auth.OrganizationID, "campaigns")
-	if err != nil {
-		return nil, newOAuthFailure("meta_module_lookup_failed", http.StatusServiceUnavailable, err)
-	}
-	// Lead Forms are available to every organization. Never persist an
-	// advanced ad-account selection while the Marketing module is disabled,
-	// even when a crafted request includes account ids.
-	if !marketingEnabled {
-		selected = nil
-	}
+	// This action authorizes Lead Forms only. Ignore legacy ad-account inputs:
+	// account selection belongs to the separate Marketing management action.
+	selected := []string{}
 	payload, err := service.store.claimConnectFlow(ctx, auth, flowID, pageID, selected)
 	if err != nil {
 		return nil, err
@@ -218,33 +198,26 @@ func (service *oauthService) connectPage(ctx context.Context, auth oauthAuthCont
 	if err != nil {
 		return nil, newOAuthFailure("oauth_flow_payload_invalid", http.StatusConflict)
 	}
-	debug, identity, pages, accounts, err := service.loadOAuthPortfolio(ctx, userToken, marketingEnabled)
+	debug, err := service.graph.debugUserToken(ctx, userToken)
 	if err != nil {
 		return nil, err
 	}
-	if debug.UserID != identity.ID || (payload.FacebookUserID != "" && payload.FacebookUserID != identity.ID) {
+	if payload.FacebookUserID == "" || debug.UserID != payload.FacebookUserID {
 		return nil, newOAuthFailure("oauth_identity_mismatch", http.StatusForbidden)
 	}
 	if !slices.Contains(debug.Scopes, "leads_retrieval") {
 		return nil, newOAuthFailure("meta_leads_retrieval_required", http.StatusForbidden)
 	}
-	page, found := findOAuthPage(pages, pageID)
-	if !found {
+	if !slices.ContainsFunc(payload.Pages, func(candidate map[string]any) bool {
+		return oauthString(candidate["id"]) == pageID
+	}) {
 		return nil, newOAuthFailure("meta_page_not_accessible", http.StatusForbidden)
 	}
-	accessible := make(map[string]struct{}, len(accounts))
-	for _, account := range accounts {
-		accessible[account.ID] = struct{}{}
-	}
-	for _, accountID := range selected {
-		if _, ok := accessible[accountID]; !ok {
-			return nil, newOAuthFailure("ad_account_not_accessible", http.StatusForbidden)
-		}
-	}
-	conversationsEnabled, err := service.store.moduleEnabled(ctx, auth.OrganizationID, "whatsapp")
+	page, err := service.graph.fetchLeadFormsPage(ctx, userToken, pageID)
 	if err != nil {
-		return nil, newOAuthFailure("meta_module_lookup_failed", http.StatusServiceUnavailable, err)
+		return nil, err
 	}
+	identity := oauthIdentity{ID: debug.UserID, Name: payload.FacebookUserName}
 	if err := service.graph.validatePageLeadFormsAccess(ctx, page); err != nil {
 		return nil, err
 	}
@@ -253,21 +226,11 @@ func (service *oauthService) connectPage(ctx context.Context, auth oauthAuthCont
 		return nil, newOAuthFailure("meta_page_subscription_busy", http.StatusServiceUnavailable, err)
 	}
 	defer releasePageSubscription()
-	requestedMessaging := marketingEnabled && conversationsEnabled
-	providerState, err := service.store.pageSubscriptionState(ctx, page.ID)
+	// Local rows can outlive the Page's real webhook subscription. Verify the
+	// selected Page at Meta before reporting a successful connection.
+	providerMessagingSubscribed, err := service.graph.ensurePageLeadgenSubscription(ctx, page)
 	if err != nil {
-		return nil, newOAuthFailure("meta_page_subscription_state_failed", http.StatusServiceUnavailable, err)
-	}
-	providerMessagingSubscribed := providerState.MessagingSubscribed
-	// A Page subscription belongs to the Meta app, not to one CRM tenant. If
-	// another tenant already keeps the Page subscribed, a new leadgen-only
-	// connection must not overwrite its messaging fields. We only contact Meta
-	// for the first Page connection or for a monotonic messaging upgrade.
-	if providerState.ConnectedCount == 0 || (requestedMessaging && !providerMessagingSubscribed) {
-		providerMessagingSubscribed, err = service.graph.subscribePageWebhook(ctx, page, requestedMessaging)
-		if err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
 	integration, err := service.store.persistConnectedIntegration(
 		ctx,
@@ -281,24 +244,23 @@ func (service *oauthService) connectPage(ctx context.Context, auth oauthAuthCont
 		providerMessagingSubscribed,
 	)
 	if err != nil {
-		// Never unsubscribe a page that already has a connected row. A failed
-		// credential rotation must not silently stop lead delivery for the old
-		// healthy integration; only compensate a genuinely new subscription.
-		cleanupContext, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cleanupCancel()
-		if connectedCount, stateErr := service.store.connectedPageIntegrationCount(cleanupContext, page.ID); stateErr == nil && connectedCount == 0 {
-			_ = service.graph.unsubscribePageWebhook(cleanupContext, page.ID, page.AccessToken)
-		}
+		// A Page/app subscription may be shared by another organization or may
+		// have existed before this attempt. Never remove it on a database error.
 		return nil, err
 	}
-	if err := service.store.finishConnectFlow(ctx, auth, flowID, page.ID); err != nil {
+	// The integration may already be committed when the action deadline is
+	// reached. Finalize the flow with its own short budget so a canceled reply
+	// cannot leave the Page in oauth_connect_processing.
+	finalizeContext, finalizeCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer finalizeCancel()
+	if err := service.store.finishConnectFlow(finalizeContext, auth, flowID, page.ID); err != nil {
 		return nil, err
 	}
 	connectClaimed = false
 	return map[string]any{
 		"success":             true,
-		"marketing_active":    marketingEnabled,
-		"messenger_active":    requestedMessaging && providerMessagingSubscribed,
+		"marketing_active":    false,
+		"messenger_active":    false,
 		"integration":         integration,
 		"missing_permissions": oauthMissingScopes(debug.Scopes, service.graph.loginScopes()),
 	}, nil
@@ -582,11 +544,10 @@ func (service *oauthService) listAdAccounts(ctx context.Context, auth oauthAuthC
 	}, nil
 }
 
-func (service *oauthService) loadOAuthPortfolio(ctx context.Context, userToken string, includeAdAccounts bool) (oauthTokenDebug, oauthIdentity, []oauthPage, []oauthAdAccount, error) {
+func (service *oauthService) loadOAuthPortfolio(ctx context.Context, userToken string) (oauthTokenDebug, oauthIdentity, []oauthPage, error) {
 	var debug oauthTokenDebug
 	var identity oauthIdentity
 	var pages []oauthPage
-	var accounts []oauthAdAccount
 	group, groupContext := errgroup.WithContext(ctx)
 	group.Go(func() error {
 		var err error
@@ -600,20 +561,13 @@ func (service *oauthService) loadOAuthPortfolio(ctx context.Context, userToken s
 	})
 	group.Go(func() error {
 		var err error
-		pages, err = service.graph.fetchManagedPages(groupContext, userToken)
+		pages, err = service.graph.fetchLeadFormsPages(groupContext, userToken)
 		return err
 	})
-	if includeAdAccounts {
-		group.Go(func() error {
-			var err error
-			accounts, err = service.graph.fetchAdAccounts(groupContext, userToken)
-			return err
-		})
-	}
 	if err := group.Wait(); err != nil {
-		return oauthTokenDebug{}, oauthIdentity{}, nil, nil, err
+		return oauthTokenDebug{}, oauthIdentity{}, nil, err
 	}
-	return debug, identity, pages, accounts, nil
+	return debug, identity, pages, nil
 }
 
 func (service *oauthService) resolveIntegrationPage(ctx context.Context, integration oauthIntegration) (oauthPage, error) {
@@ -691,6 +645,9 @@ func buildOAuthFlowPayload(
 }
 
 func parseOAuthConnectionOptions(body map[string]any) (oauthConnectionOptions, error) {
+	_, pipelineProvided := body["pipeline_id"]
+	_, stageProvided := body["stage_id"]
+	_, defaultStatusProvided := body["default_status"]
 	pipelineID, err := oauthOptionalUUID(body["pipeline_id"], "invalid_pipeline_id")
 	if err != nil {
 		return oauthConnectionOptions{}, err
@@ -707,7 +664,11 @@ func parseOAuthConnectionOptions(body map[string]any) (oauthConnectionOptions, e
 	if status != nil {
 		defaultStatus = *status
 	}
-	return oauthConnectionOptions{PipelineID: pipelineID, StageID: stageID, DefaultStatus: defaultStatus}, nil
+	return oauthConnectionOptions{
+		PipelineID: pipelineID, StageID: stageID, DefaultStatus: defaultStatus,
+		PipelineProvided: pipelineProvided, StageProvided: stageProvided,
+		DefaultStatusProvided: defaultStatusProvided,
+	}, nil
 }
 
 func oauthRequiredStoredToken(value string) (string, error) {
