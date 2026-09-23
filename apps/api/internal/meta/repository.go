@@ -442,11 +442,6 @@ func (repo Repository) processLeadgenChange(ctx context.Context, webhookPayload 
 		result.Error = err.Error()
 		return result
 	}
-	if !recoveryRouteMatchesExpectedOrganization(change, integration.OrganizationID) {
-		result.Status = "skipped"
-		result.Error = "recovery route changed organization"
-		return result
-	}
 	result.OrganizationID = integration.OrganizationID
 
 	leadMatch, err := repo.findLeadByMetaLeadID(ctx, integration.OrganizationID, change.LeadgenID)
@@ -521,11 +516,6 @@ func (repo Repository) processLeadgenChange(ctx context.Context, webhookPayload 
 
 	leadID, reentry, err := repo.persistLead(ctx, webhookPayload, details, change, integration, formConfig, lead, "", pendingReentry)
 	if err != nil {
-		if errors.Is(err, errRecoveryAlreadyPresentAlias) {
-			result.Status = "already_present_alias"
-			result.Error = ""
-			return result
-		}
 		var duplicateErr duplicateLeadgenError
 		if errors.As(err, &duplicateErr) {
 			result.Status = "duplicate"
@@ -1039,27 +1029,6 @@ func (repo Repository) persistLeadWithIdentityMode(ctx context.Context, webhookP
 		return "", false, err
 	} else if duplicateLeadID != "" && (pendingReentry == nil || duplicateLeadID != pendingReentry.PlaceholderLeadID) {
 		return "", false, duplicateLeadgenError{leadID: duplicateLeadID}
-	}
-	if recoveryAliasGuardEnabled(change, lead) {
-		occurredAt, timeErr := parseRecoveryCreatedTime(change.CreatedTime)
-		if timeErr != nil {
-			return "", false, errRecoveryLeadMismatch
-		}
-		if _, err := tx.Exec(ctx, `
-			select pg_advisory_xact_lock(hashtextextended(
-				'lead-alias:meta:' || $1 || ':' || $2 || ':' || $3 || ':' ||
-				coalesce(normalize_phone($4), '') || ':' || lower(btrim(coalesce($5, ''))), 0
-			))
-		`, integration.OrganizationID, change.FormID, strconv.FormatInt(occurredAt.Unix(), 10), nullablePointer(lead.Phone), nullablePointer(lead.Email)); err != nil {
-			return "", false, err
-		}
-		alias, err := recoveryAliasExists(ctx, tx, integration.OrganizationID, change.FormID, occurredAt, change.LeadgenID, lead.Phone, lead.Email)
-		if err != nil {
-			return "", false, err
-		}
-		if alias {
-			return "", false, errRecoveryAlreadyPresentAlias
-		}
 	}
 
 	var destination resolvedDestination
