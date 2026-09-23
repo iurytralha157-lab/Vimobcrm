@@ -78,12 +78,15 @@ export function buildLeadHistory(
     const actorId = event.user_id || event.actor_user_id;
     const actor = actorId ? (userMap.get(actorId) || null) : null;
     const responseSeconds = metadataNumber(meta.response_seconds);
+    const isAttendanceJoin = event.event_type === 'whatsapp_attendance_joined';
 
     return {
       id: `timeline-${event.id}`,
       type: event.event_type,
-      label: buildLabel(event.event_type, meta),
-      content: buildContent(event.event_type, meta, formatters),
+      label: isAttendanceJoin
+        ? event.title?.trim() || `${actor?.name || 'Usuário'} entrou no atendimento`
+        : buildLabel(event.event_type, meta),
+      content: isAttendanceJoin ? undefined : buildContent(event.event_type, meta, formatters),
       timestamp: event.created_at || event.event_at || new Date().toISOString(),
       actor: actor ? { id: actor.id, name: actor.name, avatar_url: actor.avatar_url } : null,
       source: 'timeline' as const,

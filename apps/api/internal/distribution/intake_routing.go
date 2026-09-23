@@ -16,9 +16,13 @@ var ErrInvalidIntakeRouting = errors.New("invalid intake routing")
 // public.pick_round_robin_for_lead so intake identity and later distribution
 // cannot classify the same provider event into different queues.
 type IntakeContext struct {
-	OrganizationID       string
-	PipelineID           *string
-	Source               string
+	OrganizationID string
+	PipelineID     *string
+	Source         string
+	// RequireExplicitRule reserves this intake for a queue whose active rule
+	// actually matches. A generic ruleless queue or pipeline default must not
+	// take ownership of a WhatsApp campaign card by mere fallback.
+	RequireExplicitRule  bool
 	PropertyID           *string
 	InterestPropertyID   *string
 	TagIDs               []string
@@ -61,7 +65,8 @@ const resolveIntakeQueueIDSQL = `
 		  lower(coalesce($11, '')) as website_category,
 		  lower(nullif(btrim($12), '')) as utm_campaign,
 		  lower(nullif(btrim($13), '')) as lead_meta_campaign_name,
-		  lower(nullif(btrim($14), '')) as meta_campaign_id
+		  lower(nullif(btrim($14), '')) as meta_campaign_id,
+		  $15::boolean as require_explicit_rule
 	), locked_tags as materialized (
 		select tag.id
 		from intake_input as input
@@ -89,7 +94,8 @@ const resolveIntakeQueueIDSQL = `
 		  input.website_category,
 		  input.utm_campaign,
 		  input.lead_meta_campaign_name,
-		  input.meta_campaign_id
+		  input.meta_campaign_id,
+		  input.require_explicit_rule
 		from intake_input as input
 	), matched_queue as (
 		select queue.id
@@ -182,7 +188,7 @@ const resolveIntakeQueueIDSQL = `
 			  )
 		) as matched_rule on true
 		where matched_rule.matched_priority is not null
-		   or not rule_state.has_rules
+		   or (not lead.require_explicit_rule and not rule_state.has_rules)
 		order by
 		  (matched_rule.matched_priority is null) asc,
 		  (queue.pipeline_id is null) asc,
@@ -204,6 +210,7 @@ const resolveIntakeQueueIDSQL = `
 		select pipeline_state.default_round_robin_id
 		from pipeline_state
 		where pipeline_state.default_round_robin_id is not null
+		  and not (select require_explicit_rule from lead_context)
 		  and not exists (select 1 from matched_queue)
 	)
 	select
@@ -264,6 +271,7 @@ func ResolveIntakeDestination(ctx context.Context, queryer Queryer, input Intake
 		nullableText(input.UTMCampaign),
 		nullableText(input.LeadMetaCampaignName),
 		nullableText(input.MetaCampaignID),
+		input.RequireExplicitRule,
 	}
 	var selectedQueueID string
 	var pipelineValid bool

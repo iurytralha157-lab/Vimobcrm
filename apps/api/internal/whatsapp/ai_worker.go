@@ -198,10 +198,11 @@ func (handler Handler) processAIFollowUp(ctx context.Context, candidate aiFollow
 
 	clientMessageID := fmt.Sprintf("%s%s-%d", autoFollowUpMessagePrefix, candidate.LeadID, time.Now().UTC().Unix())
 	sendResponse, err := handler.repo.SendMessage(ctx, tenantContext, candidate.ConversationID, sendMessageInput{
-		Text:            output,
-		SendSessionID:   candidate.SessionID,
-		ClientMessageID: clientMessageID,
-		ExpectedLeadID:  candidate.LeadID,
+		Text:               output,
+		SendSessionID:      candidate.SessionID,
+		ClientMessageID:    clientMessageID,
+		ExpectedLeadID:     candidate.LeadID,
+		InternalAutomation: true,
 	})
 	if err != nil {
 		return err
@@ -248,6 +249,7 @@ func (repo Repository) enqueueAutoReplyJob(ctx context.Context, input autoReplyI
 			 and message.conversation_id = conversation.id
 			 and message.id = $4::uuid
 			 and message.lead_id = conversation.lead_id
+			 and message.capture_state is distinct from 'suppressed'
 			where conversation.organization_id = $1::uuid
 			  and conversation.session_id = $5::uuid
 			  and conversation.id = $6::uuid
@@ -394,11 +396,24 @@ func (repo Repository) lockDueAIFollowUps(ctx context.Context, limit int) ([]aiF
 			  and l.next_follow_up_at <= now()
 			  and lower(coalesce(ws.advanced_settings->>'ai_auto_reply_enabled', 'false')) in ('true', '1', 'yes', 'sim')
 			  and lower(coalesce(ws.advanced_settings->>'ai_follow_up_enabled', 'false')) in ('true', '1', 'yes', 'sim')
+			  and exists (
+			    select 1
+			    from public.whatsapp_conversation_lead_bindings binding
+			    join public.whatsapp_attendance_entries attendance
+			      on attendance.binding_id = binding.id
+			     and attendance.organization_id = binding.organization_id
+			    where binding.organization_id = l.organization_id
+			      and binding.conversation_id = wc.id
+			      and binding.session_id = ws.id
+			      and binding.lead_id = l.id
+			      and binding.active_to is null
+			  )
 			  and not exists (
 			    select 1
 			    from public.whatsapp_messages wm
 			    where wm.organization_id = l.organization_id
 			      and wm.lead_id = l.id
+			      and wm.capture_state is distinct from 'suppressed'
 			      and wm.from_me = true
 			      and coalesce(wm.sent_at, wm.created_at) > l.next_follow_up_at - interval '15 minutes'
 			      and coalesce(wm.metadata->>'ai_generated', 'false') <> 'true'

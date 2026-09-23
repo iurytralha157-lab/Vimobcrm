@@ -68,6 +68,26 @@ test('deduplica pelo fingerprint, mantém o registro mais completo e respeita a 
   assert.equal(history[1]?.content, 'Novo → Contato');
 });
 
+test('preserva o nome do participante no evento de entrada no atendimento', () => {
+  const raw: LeadHistoryRaw = {
+    timelineEvents: [{
+      id: 'attendance-entry-1',
+      event_type: 'whatsapp_attendance_joined',
+      title: 'Ana entrou no atendimento',
+      user_id: 'user-1',
+      created_at: '2026-09-23T12:00:00.000Z',
+      metadata: { attendance_entry_id: 'entry-1' },
+    }],
+    users: [{ id: 'user-1', name: 'Ana', avatar_url: null }],
+  };
+
+  const history = buildLeadHistory(raw, 'lead-1', formatters);
+
+  assert.equal(history[0]?.type, 'whatsapp_attendance_joined');
+  assert.equal(history[0]?.label, 'Ana entrou no atendimento');
+  assert.equal(history[0]?.content, undefined);
+});
+
 test('expande respostas e criativo Meta sem repetir campos padrao', () => {
   const raw: LeadHistoryRaw = {
     activityEvents: [{

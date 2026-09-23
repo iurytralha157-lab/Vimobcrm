@@ -23,6 +23,7 @@ var (
 	ErrProviderOutcomeUnknown     = errors.New("whatsapp provider outcome is unknown")
 	ErrFeatureUnavailable         = errors.New("whatsapp feature unavailable")
 	ErrConversationBindingChanged = errors.New("whatsapp conversation binding changed")
+	ErrAttendanceRequired         = errors.New("whatsapp attendance confirmation is required")
 )
 
 type Session struct {
@@ -244,6 +245,27 @@ type HistoryAccessResponse struct {
 	NextCursor    *string        `json:"nextCursor"`
 }
 
+type AttendanceEntry struct {
+	ID                    string    `json:"id"`
+	OrganizationID        string    `json:"-"`
+	ConversationID        string    `json:"-"`
+	SessionID             string    `json:"sessionId"`
+	LeadID                string    `json:"-"`
+	BindingID             string    `json:"-"`
+	UserID                string    `json:"userId"`
+	ActorNameSnapshot     string    `json:"userName"`
+	JoinedAt              time.Time `json:"joinedAt"`
+	EntrySource           string    `json:"entrySource"`
+	IngressSequenceCutoff int64     `json:"-"`
+}
+
+type AttendanceResponse struct {
+	Joined       bool              `json:"joined"`
+	CurrentEntry *AttendanceEntry  `json:"currentEntry"`
+	Entries      []AttendanceEntry `json:"entries"`
+	Created      bool              `json:"created"`
+}
+
 type Envelope[T any] struct {
 	Data T   `json:"data"`
 	Meta any `json:"meta,omitempty"`
@@ -382,15 +404,16 @@ type SendMessageRequest struct {
 }
 
 type sendMessageInput struct {
-	Text            string
-	MediaURL        string
-	MediaType       string
-	Base64          string
-	Mimetype        string
-	Filename        string
-	SendSessionID   string
-	ClientMessageID string
-	ExpectedLeadID  string
+	Text               string
+	MediaURL           string
+	MediaType          string
+	Base64             string
+	Mimetype           string
+	Filename           string
+	SendSessionID      string
+	ClientMessageID    string
+	ExpectedLeadID     string
+	InternalAutomation bool
 }
 
 type SendMessageResponse struct {
@@ -502,6 +525,16 @@ type StartConversationRequest struct {
 	LeadID                 string `json:"leadId,omitempty"`
 	LeadName               string `json:"leadName,omitempty"`
 	ExpectedPreviousLeadID string `json:"expectedPreviousLeadId"`
+}
+
+type AttendanceRequest struct {
+	ExpectedLeadID string `json:"expectedLeadId"`
+	SendSessionID  string `json:"sendSessionId"`
+}
+
+type attendanceInput struct {
+	ExpectedLeadID string
+	SendSessionID  string
 }
 
 func ParseConversationListFilter(values url.Values) (ConversationListFilter, error) {
@@ -690,6 +723,13 @@ func ParseHistoryAccessFilter(values url.Values) (HistoryAccessFilter, error) {
 	return filter, nil
 }
 
+func ParseAttendanceRequest(values url.Values) (attendanceInput, error) {
+	return (AttendanceRequest{
+		ExpectedLeadID: values.Get("expectedLeadId"),
+		SendSessionID:  values.Get("sendSessionId"),
+	}).Validate()
+}
+
 func (request CreateSessionRequest) Validate() (createSessionInput, error) {
 	displayName := strings.TrimSpace(request.DisplayName)
 	if len(displayName) < 2 {
@@ -785,6 +825,21 @@ func (request SendMessageRequest) Validate() (sendMessageInput, error) {
 	}
 
 	return input, nil
+}
+
+func (request AttendanceRequest) Validate() (attendanceInput, error) {
+	expectedLeadID, err := validateExpectedLeadID(request.ExpectedLeadID)
+	if err != nil {
+		return attendanceInput{}, err
+	}
+	sendSessionID, ok := normalizeUUID(strings.TrimSpace(request.SendSessionID))
+	if !ok {
+		return attendanceInput{}, fmt.Errorf("%w: sendSessionId is required and must be a valid UUID", ErrInvalidInput)
+	}
+	return attendanceInput{
+		ExpectedLeadID: expectedLeadID,
+		SendSessionID:  sendSessionID,
+	}, nil
 }
 
 func (request ReactToMessageRequest) Validate() (reactToMessageInput, error) {

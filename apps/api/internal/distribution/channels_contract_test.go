@@ -173,7 +173,7 @@ func TestCanonicalDistributionChannelContracts(t *testing.T) {
 		source := readSource(t, filepath.Join("..", "..", "..", "..", "supabase", "functions", "evolution-go-webhook", "index.ts"))
 		requireContains(t, source,
 			"async function processManagedWhatsAppLeadEntry",
-			`.rpc("process_managed_whatsapp_lead_entry"`,
+			`.rpc("process_managed_whatsapp_lead_entry_attendance"`,
 			"p_organization_id: session.organization_id",
 			"p_lead_id: lead.id",
 			"p_session_id: session.id",
@@ -188,7 +188,7 @@ func TestCanonicalDistributionChannelContracts(t *testing.T) {
 			"p_preserve_assignee: preserveAssignee",
 			"const idempotencyKey = `whatsapp-native:${await sha256Hex(stableKeyPayload)}`",
 		)
-		requireOrdered(t, source, `.rpc("upsert_whatsapp_webhook_lead"`, `.rpc("process_managed_whatsapp_lead_entry"`)
+		requireOrdered(t, source, `.rpc("upsert_whatsapp_webhook_lead"`, `.rpc("process_managed_whatsapp_lead_entry_attendance"`)
 		requireOrdered(t, source, `.rpc("upsert_whatsapp_webhook_lead"`, `.rpc("distribute_lead_from_backend"`)
 		requireAbsent(t, source,
 			"resolveRoundRobinAssignee",

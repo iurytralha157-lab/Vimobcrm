@@ -12,6 +12,49 @@ import (
 	"time"
 )
 
+func TestOutboxRequiresCapturedCurrentAttendanceBeforeProvider(t *testing.T) {
+	raw, err := os.ReadFile("outbox_worker.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	workerStart := strings.Index(source, "func (repo Repository) processClaimedWhatsAppOutbox(")
+	guard := strings.Index(source, "repo.whatsappOutboxAttendanceCurrent(ctx, item)")
+	providerStart := strings.Index(source, "repo.startWhatsAppOutboxProviderAttempt(ctx, item)")
+	if workerStart < 0 || guard < workerStart || providerStart < guard {
+		t.Fatal("outbox attendance gate must precede the provider boundary")
+	}
+	helperStart := strings.Index(source, "func (repo Repository) whatsappOutboxAttendanceCurrent(")
+	if helperStart < 0 {
+		t.Fatal("outbox attendance helper is missing")
+	}
+	helperEndOffset := strings.Index(source[helperStart:], "func finalizeAcceptedWhatsAppOutbox(")
+	if helperEndOffset <= 0 {
+		t.Fatal("outbox attendance helper boundary is missing")
+	}
+	helperEnd := helperStart + helperEndOffset
+	attendanceGate := source[helperStart:helperEnd]
+	for _, token := range []string{
+		"message.capture_state = 'captured'",
+		"binding.active_to is null",
+		"binding.stale = false",
+		"attendance.binding_id = binding.id",
+		"session.owner_user_id = attendance.user_id",
+		"session.provider = 'evolution_go'",
+		"coalesce(session.is_active, true) = true",
+		"coalesce(session.status, '') not in ('deleted', 'disabled')",
+		"coalesce(actor.is_active, false) = true",
+		"coalesce(member.is_active, true) = true",
+	} {
+		if !strings.Contains(attendanceGate, token) {
+			t.Fatalf("outbox attendance gate is missing %q", token)
+		}
+	}
+	if !strings.Contains(source[guard:providerStart], "return repo.failWhatsAppOutbox(ctx, item, ErrAttendanceRequired, true, false)") {
+		t.Fatal("failed attendance must stop before provider delivery")
+	}
+}
+
 func TestSendMessageCommitsDurableStoragePathWithoutSigningBeforeOutbox(t *testing.T) {
 	sourceBytes, err := os.ReadFile("message_operations.go")
 	if err != nil {

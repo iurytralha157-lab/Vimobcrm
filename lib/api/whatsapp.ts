@@ -9,6 +9,8 @@ import {
   sendWhatsAppMessageResponseSchema,
   startWhatsAppConversationInputSchema,
   validateDomainResponse,
+  whatsAppAttendanceRequestSchema,
+  whatsAppAttendanceResponseSchema,
   whatsAppAIAutoReplyInputSchema,
   whatsAppConversationResponseSchema,
   whatsAppConversationsResponseSchema,
@@ -267,6 +269,26 @@ export type SendWhatsAppMessageResult = Record<string, unknown> & {
   status?: string
   message?: WhatsAppMessage
   providerData?: Record<string, unknown>
+}
+
+export type WhatsAppAttendanceEntry = {
+  id: string
+  userId: string
+  userName: string
+  sessionId: string
+  joinedAt: string
+}
+
+export type WhatsAppAttendanceState = {
+  joined: boolean
+  currentEntry: WhatsAppAttendanceEntry | null
+  entries: WhatsAppAttendanceEntry[]
+  created?: boolean
+}
+
+export type WhatsAppAttendanceRequest = {
+  expectedLeadId: string
+  sendSessionId: string
 }
 
 export type ReactWhatsAppMessageInput = {
@@ -675,6 +697,57 @@ export const whatsappAPI = {
     })
     validateDomainResponse(sendWhatsAppMessageResponseSchema, response, 'whatsapp.messages.send')
     return response
+  },
+
+  async getConversationAttendance(
+    conversationId: string,
+    input: WhatsAppAttendanceRequest,
+    organizationId?: string | null,
+  ) {
+    const query = parseDomainInput(
+      whatsAppAttendanceRequestSchema,
+      input,
+      'whatsapp.attendance.get',
+    )
+    const response = await vimobAPIRequest<Envelope<WhatsAppAttendanceState>>(
+      `/v1/whatsapp/conversations/${conversationId}/attendance`,
+      {
+        organizationId,
+        query,
+      },
+    )
+    validateDomainResponse(
+      whatsAppAttendanceResponseSchema,
+      response,
+      'whatsapp.attendance.get',
+    )
+    return response.data
+  },
+
+  async joinConversationAttendance(
+    conversationId: string,
+    input: WhatsAppAttendanceRequest,
+    organizationId?: string | null,
+  ) {
+    const body = parseDomainInput(
+      whatsAppAttendanceRequestSchema,
+      input,
+      'whatsapp.attendance.join',
+    )
+    const response = await vimobAPIRequest<Envelope<WhatsAppAttendanceState>>(
+      `/v1/whatsapp/conversations/${conversationId}/attendance`,
+      {
+        method: 'POST',
+        organizationId,
+        body,
+      },
+    )
+    validateDomainResponse(
+      whatsAppAttendanceResponseSchema,
+      response,
+      'whatsapp.attendance.join',
+    )
+    return response.data
   },
 
   async reactToMessage(

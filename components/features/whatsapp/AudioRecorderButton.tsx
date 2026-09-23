@@ -6,7 +6,7 @@
  import { toast } from "@/hooks/use-toast";
 
  interface AudioRecorderButtonProps {
-   onSend: (base64: string, mimetype: string) => Promise<void>;
+   onSend: (base64: string, mimetype: string) => Promise<boolean | void>;
    disabled?: boolean;
    className?: string;
  }
@@ -68,8 +68,8 @@
 
       setIsSending(true);
       try {
-        await onSend(base64, mimeType || audioBlob?.type || "audio/webm");
-        clearRecording();
+        const sent = await onSend(base64, mimeType || audioBlob?.type || "audio/webm");
+        if (sent !== false) clearRecording();
       } catch (error) {
         console.error("Error sending audio:", error);
         const message = error instanceof Error ? error.message : "Não foi possível enviar o áudio";

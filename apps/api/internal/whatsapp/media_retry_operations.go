@@ -145,6 +145,7 @@ func (repo Repository) loadRetryMediaMessage(ctx context.Context, tenantContext 
 		  and `+conversationVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 		  and `+conversationMessageLeadMatchSQL()+`
 		  and wm.id = $5::uuid
+		  and wm.capture_state is distinct from 'suppressed'
 		limit 1
 	`, args...).Scan(
 		&message.ID,

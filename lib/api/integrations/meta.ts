@@ -20,6 +20,9 @@ import type { Envelope, IntegrationJSON } from './shared';
 // server bounds one window at 135 seconds. Keep the browser deadline slightly
 // above that contract instead of inheriting the generic 12-second API timeout.
 const META_MARKETING_SYNC_TIMEOUT_MS = 150_000;
+// The connect action can use the backend's full 45-second budget while it
+// validates the Page, subscribes its webhook and persists the integration.
+const META_OAUTH_CONNECT_TIMEOUT_MS = 60_000;
 
 export const metaIntegrationsAPI = {
   async metaOAuthAction<T>(body: Record<string, unknown>, organizationId?: string | null) {
@@ -27,6 +30,7 @@ export const metaIntegrationsAPI = {
       method: 'POST',
       organizationId,
       body,
+      ...(body.action === 'connect_page' ? { timeoutMs: META_OAUTH_CONNECT_TIMEOUT_MS } : {}),
     });
   },
 

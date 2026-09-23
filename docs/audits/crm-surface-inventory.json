@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "bd999c3cd119f6215349fe924b3dc2bbddb57296efb2b67526d08b1da309be2e",
+  "sourceDigestSha256": "2287be350e219035a74555ad1b2068cbb70099d9f674d39ed9758b8a2884cf0f",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -1054,10 +1054,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:85438fcbe7973293a594",
+          "id": "overlay:0510f605f3c7ef6b7b95",
           "column": 9,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 164,
+          "line": 171,
           "owner": "FloatingConversationFilters",
           "routes": [
             "/agenda",
@@ -1108,10 +1108,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:b3ed60f29248274a2cf4",
+          "id": "overlay:020526ebe093d7612d22",
           "column": 5,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1138,
+          "line": 1224,
           "owner": "SessionSelectorDialog",
           "routes": [
             "/agenda",
@@ -1162,10 +1162,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:f457c1689c478c36c971",
+          "id": "overlay:f1a5c849d5498e0be597",
           "column": 5,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1694,
+          "line": 1777,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -1337,10 +1337,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:d2d5495aa50dc58c4df6",
+          "id": "overlay:5a7b9a2190aee9c5dca1",
           "column": 5,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1194,
+          "line": 1192,
           "owner": "LostDealsDialog",
           "routes": [
             "/dashboard"
@@ -1348,10 +1348,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:cb67603b6dcc8474bab3",
+          "id": "overlay:0049ffda17c5e015d448",
           "column": 5,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1494,
+          "line": 1492,
           "owner": "WonDealsDialog",
           "routes": [
             "/dashboard"
@@ -1573,10 +1573,10 @@
           "kind": "popover"
         },
         {
-          "id": "overlay:283c5a85d3ebca30729a",
+          "id": "overlay:0954674d6114f8c5eaba",
           "column": 25,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 987,
+          "line": 1016,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -1584,10 +1584,10 @@
           "kind": "dropdownMenu"
         },
         {
-          "id": "overlay:2bdfdd1bab3c61ce296e",
+          "id": "overlay:c2f2f05f3cbf2eb9da08",
           "column": 7,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1032,
+          "line": 1061,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -1595,10 +1595,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:0a457cb35610a892fd4c",
+          "id": "overlay:4c13ea6b03720493a634",
           "column": 7,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1122,
+          "line": 1151,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -1606,10 +1606,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:3e6f2ab55fbe7945f92b",
+          "id": "overlay:7967b70c96a0d53f86c6",
           "column": 7,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1221,
+          "line": 1250,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -1617,10 +1617,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:7779c1d4a5d312b5df70",
+          "id": "overlay:a9200b05ab5ea2a4a0fd",
           "column": 7,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1249,
+          "line": 1278,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -1628,10 +1628,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:87268f4642171402f1e2",
+          "id": "overlay:ee2f6de14f3231307608",
           "column": 7,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1277,
+          "line": 1306,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -1639,10 +1639,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:e998399963a6a935ee9e",
+          "id": "overlay:27b3a652c44e5576d662",
           "column": 7,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1305,
+          "line": 1334,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -3710,6 +3710,60 @@
             "/suporte/[slug]"
           ],
           "kind": "dropdownMenu"
+        },
+        {
+          "id": "overlay:8b48ff14e7fdb5224c47",
+          "column": 5,
+          "file": "components/features/whatsapp/EnterAttendanceDialog.tsx",
+          "line": 33,
+          "owner": "EnterAttendanceDialog",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/rentals",
+            "/properties/settings",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "alertDialog"
         },
         {
           "id": "overlay:94029a4b53169e9c3c13",
@@ -9615,10 +9669,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:894e6b02e6f3cf77ef57",
+          "id": "cta:9698b8ccb9931f14ab9f",
           "column": 13,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 166,
+          "line": 173,
           "owner": "FloatingConversationFilters",
           "routes": [
             "/agenda",
@@ -9670,10 +9724,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:8c042d22bcc936e8063b",
+          "id": "cta:0a53a157615d38e27c6e",
           "column": 17,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 229,
+          "line": 236,
           "owner": "FloatingConversationFilters",
           "routes": [
             "/agenda",
@@ -9725,10 +9779,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:79a633d8d3029b01ddfc",
+          "id": "cta:8a6487c5beac21bcf87b",
           "column": 13,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1160,
+          "line": 1246,
           "owner": "SessionSelectorDialog",
           "routes": [
             "/agenda",
@@ -9780,10 +9834,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c561c589d207a6b8e591",
+          "id": "cta:b3e6cf0e7a6510c125aa",
           "column": 13,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1222,
+          "line": 1303,
           "owner": "FloatingChatHeader",
           "routes": [
             "/agenda",
@@ -9835,10 +9889,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:cd396d86201025355181",
+          "id": "cta:1d0b755687f162b075e8",
           "column": 17,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1270,
+          "line": 1351,
           "owner": "FloatingChatHeader",
           "routes": [
             "/agenda",
@@ -9890,10 +9944,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a23f540fcb27e78c13eb",
+          "id": "cta:045150ecc3b2dbe32cd5",
           "column": 21,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1312,
+          "line": 1393,
           "owner": "FloatingChatHeader",
           "routes": [
             "/agenda",
@@ -9945,10 +9999,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:73aefed6aea6dda7d14c",
+          "id": "cta:fe5041f9e4813da44760",
           "column": 19,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1330,
+          "line": 1411,
           "owner": "FloatingChatHeader",
           "routes": [
             "/agenda",
@@ -10000,10 +10054,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0bb58118e9e39ca11b6b",
+          "id": "cta:fcffb3b657705faa7d80",
           "column": 15,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1433,
+          "line": 1514,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -10055,10 +10109,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:cd74032cd64bd6981b44",
+          "id": "cta:e30cf3189275d31dc0a0",
           "column": 15,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1461,
+          "line": 1542,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -10110,10 +10164,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c58dd762e261a2ba9361",
+          "id": "cta:e262d1998aaedb42dd81",
           "column": 9,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1518,
+          "line": 1601,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -10165,10 +10219,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:9c8e83eb94d506200eeb",
+          "id": "cta:6c769ebb8907b789bf23",
           "column": 13,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1552,
+          "line": 1635,
           "owner": "renderMessageInput",
           "routes": [
             "/agenda",
@@ -10220,10 +10274,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:6eaf9b1f5444e763118c",
+          "id": "cta:4c331e7174cdf0ef131a",
           "column": 15,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1556,
+          "line": 1639,
           "owner": "renderMessageInput",
           "routes": [
             "/agenda",
@@ -10275,10 +10329,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:2d8a111e2858011e6777",
+          "id": "cta:bbd70164fe2cb796039d",
           "column": 15,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1598,
+          "line": 1681,
           "owner": "ConversationList",
           "routes": [
             "/agenda",
@@ -10330,10 +10384,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:42f08e6a30440704ef2c",
+          "id": "cta:3a1e900cfb1fe028391f",
           "column": 17,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1616,
+          "line": 1699,
           "owner": "ConversationList",
           "routes": [
             "/agenda",
@@ -10385,10 +10439,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:a3bc8e6c662eb53233d9",
+          "id": "cta:c88313a5e3b0826975b8",
           "column": 19,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1661,
+          "line": 1744,
           "owner": "ConversationList",
           "routes": [
             "/agenda",
@@ -11179,10 +11233,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:e0216ef260da9ca8a49c",
+          "id": "cta:e57ae635d8df2883b920",
           "column": 9,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 637,
+          "line": 635,
           "owner": "DashboardDataError",
           "routes": [
             "/dashboard"
@@ -11191,10 +11245,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:263df13d143ab995470a",
+          "id": "cta:f495a9a45543104ceb4e",
           "column": 9,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1137,
+          "line": 1135,
           "owner": "DashboardDealDetailsState",
           "routes": [
             "/dashboard"
@@ -11203,10 +11257,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:39bf52c591c2254584d4",
+          "id": "cta:6f499b0ad0d2500fb724",
           "column": 23,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1441,
+          "line": 1439,
           "owner": "LostDealsDialog",
           "routes": [
             "/dashboard"
@@ -11215,10 +11269,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:133c2a938469ea3db24e",
+          "id": "cta:cf57388d8ca4e40feb4a",
           "column": 23,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 1776,
+          "line": 1774,
           "owner": "WonDealsDialog",
           "routes": [
             "/dashboard"
@@ -11227,10 +11281,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:ac96a7c4241a55a9ce34",
+          "id": "cta:14021c8138dbc7ff3e6f",
           "column": 11,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 187,
+          "line": 178,
           "owner": "LeadDistributionSection",
           "routes": [
             "/dashboard"
@@ -13274,10 +13328,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:7575b9d4fa65e4eeb463",
+          "id": "cta:592d1aa7fe8f2da4f3ac",
           "column": 13,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 809,
+          "line": 838,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -13286,10 +13340,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2c383163f5a0a6816cfa",
+          "id": "cta:e5214b967b246d009b45",
           "column": 11,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 833,
+          "line": 862,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -13298,10 +13352,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f765f415cd9a29d76cf2",
+          "id": "cta:fe9db7d9e421a1448f94",
           "column": 11,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 842,
+          "line": 871,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -13310,10 +13364,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:9fbdfff037e324f8a7d0",
+          "id": "cta:493b377956ff562fce0f",
           "column": 29,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 989,
+          "line": 1018,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -13322,10 +13376,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:42f7a9b99650efb44e20",
+          "id": "cta:30e5cb83f005fd333309",
           "column": 23,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1054,
+          "line": 1083,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -13334,10 +13388,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:c0aaeae93c2022f657ae",
+          "id": "cta:2880923a18d35ec1fe0e",
           "column": 31,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1091,
+          "line": 1120,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -13346,20 +13400,8 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ef4236302b7638ab40dd",
+          "id": "cta:daffc0153d65a4d8774f",
           "column": 13,
-          "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1117,
-          "owner": "MetaIntegrationSettings",
-          "routes": [
-            "/settings/integrations/meta"
-          ],
-          "kind": "actionButton",
-          "tag": "Button"
-        },
-        {
-          "id": "cta:55ea3462e35f18e978a6",
-          "column": 17,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
           "line": 1146,
           "owner": "MetaIntegrationSettings",
@@ -13370,10 +13412,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0a9d4b73c5fc83dc0de2",
-          "column": 13,
+          "id": "cta:81dfba4336889674a4f8",
+          "column": 17,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1197,
+          "line": 1175,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -13382,10 +13424,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ca52e642d00603974d93",
+          "id": "cta:65ece77a399430adb4b4",
           "column": 13,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1205,
+          "line": 1226,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -13394,10 +13436,22 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f97eb645a75be5111ff7",
+          "id": "cta:3ca51d660fef6c52ebcb",
+          "column": 13,
+          "file": "components/features/integrations/MetaIntegrationSettings.tsx",
+          "line": 1234,
+          "owner": "MetaIntegrationSettings",
+          "routes": [
+            "/settings/integrations/meta"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:b9df2dbdf696975e9cab",
           "column": 15,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1323,
+          "line": 1352,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -13406,10 +13460,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:6c4462eee0e2eb1d2b20",
+          "id": "cta:2fd2b8462d6ec9c8e500",
           "column": 21,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1337,
+          "line": 1366,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -13418,10 +13472,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:df9f12bdb484f707c409",
+          "id": "cta:535e52df044d26eb7107",
           "column": 29,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1407,
+          "line": 1436,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -13430,10 +13484,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:299c279f37282bc221da",
+          "id": "cta:26e90bdf2057041f08ec",
           "column": 29,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1498,
+          "line": 1528,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -13442,10 +13496,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:4e461eabdcecd0e58704",
+          "id": "cta:0810ef336675d8310ee0",
           "column": 27,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1526,
+          "line": 1556,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -13454,10 +13508,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:4622e55ad1c9fe6d3a60",
+          "id": "cta:48879aebca2b21ccdb76",
           "column": 33,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1569,
+          "line": 1599,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -14706,10 +14760,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:d5d748195c7c260eee07",
+          "id": "cta:d3d545b97d8050e0ee81",
           "column": 15,
           "file": "components/features/leads/LeadUnifiedThread.tsx",
-          "line": 1113,
+          "line": 1190,
           "owner": "LeadUnifiedThread",
           "routes": [
             "/crm/contacts",
@@ -14719,10 +14773,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:2e24fc922e5491407568",
+          "id": "cta:9c838f6aa4ae6020b2f5",
           "column": 17,
           "file": "components/features/leads/LeadUnifiedThread.tsx",
-          "line": 1228,
+          "line": 1295,
           "owner": "LeadUnifiedThread",
           "routes": [
             "/crm/contacts",
@@ -25496,10 +25550,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:bf5abb11ae93c0d22ed2",
+          "id": "cta:cf910025ae2b5f620e2b",
           "column": 15,
           "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
-          "line": 104,
+          "line": 133,
           "owner": "ConversationMessages",
           "routes": [
             "/agenda",
@@ -25551,10 +25605,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:8d32e2fceac6c1ce013a",
+          "id": "cta:e5949beda7a8d61b74fa",
           "column": 15,
           "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
-          "line": 132,
+          "line": 161,
           "owner": "ConversationMessages",
           "routes": [
             "/agenda",
@@ -25606,10 +25660,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:23a0a33c87d19b3ecb8e",
+          "id": "cta:fbb53432002923b34586",
           "column": 9,
           "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
-          "line": 184,
+          "line": 219,
           "owner": "ConversationMessages",
           "routes": [
             "/agenda",
@@ -25777,6 +25831,116 @@
           "file": "components/features/whatsapp/conversations/MobileConversationHeader.tsx",
           "line": 74,
           "owner": "MobileConversationHeader",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/rentals",
+            "/properties/settings",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:d5ea7fd7f81f8afbc347",
+          "column": 11,
+          "file": "components/features/whatsapp/EnterAttendanceDialog.tsx",
+          "line": 65,
+          "owner": "EnterAttendanceDialog",
+          "routes": [
+            "/agenda",
+            "/automations",
+            "/crm/contacts",
+            "/crm/conversas",
+            "/crm/management",
+            "/crm/management/distribution/[id]/edit",
+            "/crm/management/distribution/new",
+            "/crm/management/teams/[id]/edit",
+            "/crm/management/teams/new",
+            "/crm/pipelines",
+            "/dashboard",
+            "/dashboard/site",
+            "/financeiro",
+            "/financeiro/comissoes",
+            "/financeiro/contas",
+            "/financeiro/contratos",
+            "/financeiro/contratos/[id]",
+            "/financeiro/corretor",
+            "/financeiro/dre",
+            "/financeiro/relatorios",
+            "/gamificacao",
+            "/help/[slug]",
+            "/inicio",
+            "/marketing",
+            "/notifications",
+            "/properties",
+            "/properties/[id]",
+            "/properties/[id]/edit",
+            "/properties/condominiums",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/locations",
+            "/properties/new",
+            "/properties/owners",
+            "/properties/rentals",
+            "/properties/settings",
+            "/settings",
+            "/settings/integrations/meta",
+            "/settings/integrations/whatsapp",
+            "/settings/site",
+            "/settings/users/[id]",
+            "/suporte",
+            "/suporte/[slug]"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:0548b840cf9274d1ba86",
+          "column": 11,
+          "file": "components/features/whatsapp/EnterAttendanceDialog.tsx",
+          "line": 73,
+          "owner": "EnterAttendanceDialog",
           "routes": [
             "/agenda",
             "/automations",
@@ -29364,10 +29528,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:21ea4cfb05a9ae0a4bf8",
+          "id": "control:41e352fc142d54d993d8",
           "column": 11,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1708,
+          "line": 1791,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -29419,10 +29583,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:73fa049f3a6b100d4db0",
+          "id": "control:fbb1738ff6db2f388bd4",
           "column": 11,
           "file": "components/features/chat/FloatingChat.tsx",
-          "line": 1709,
+          "line": 1792,
           "owner": "FloatingChat",
           "routes": [
             "/agenda",
@@ -29738,10 +29902,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:5d6ae710c0698cbdf2bb",
+          "id": "control:b7bb10b9ac1f749cb59a",
           "column": 19,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 507,
+          "line": 506,
           "owner": "Dashboard",
           "routes": [
             "/dashboard"
@@ -29750,10 +29914,10 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:27469d892aa91352cb0c",
+          "id": "control:e84c5e13e24965d5b152",
           "column": 19,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 513,
+          "line": 512,
           "owner": "Dashboard",
           "routes": [
             "/dashboard"
@@ -29762,10 +29926,10 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:f7645ea96d745dc4da59",
+          "id": "control:8310271567030806299d",
           "column": 19,
           "file": "components/features/dashboard/DashboardScreen.tsx",
-          "line": 519,
+          "line": 518,
           "owner": "Dashboard",
           "routes": [
             "/dashboard"
@@ -30335,10 +30499,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:18b6006eb6c2a3fa20f1",
+          "id": "control:a4e9c3ef73b6c16e9905",
           "column": 29,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 998,
+          "line": 1027,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -30347,10 +30511,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:b6688663859db59bf9a9",
+          "id": "control:beb85e6406f0e5b9e4d8",
           "column": 29,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1001,
+          "line": 1030,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -30359,52 +30523,16 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:7c7e278988fcb0a18526",
+          "id": "control:90a107c21f178c7e789b",
           "column": 29,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1018,
+          "line": 1047,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
           ],
           "kind": "DropdownMenuItem",
           "tag": "DropdownMenuItem"
-        },
-        {
-          "id": "control:d58d41acdc1f73c8ac00",
-          "column": 13,
-          "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1233,
-          "owner": "MetaIntegrationSettings",
-          "routes": [
-            "/settings/integrations/meta"
-          ],
-          "kind": "AlertDialogCancel",
-          "tag": "AlertDialogCancel"
-        },
-        {
-          "id": "control:dcc3de99845a6bd96470",
-          "column": 13,
-          "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1234,
-          "owner": "MetaIntegrationSettings",
-          "routes": [
-            "/settings/integrations/meta"
-          ],
-          "kind": "AlertDialogAction",
-          "tag": "AlertDialogAction"
-        },
-        {
-          "id": "control:8a0cc5e797978d7f1b87",
-          "column": 13,
-          "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1261,
-          "owner": "MetaIntegrationSettings",
-          "routes": [
-            "/settings/integrations/meta"
-          ],
-          "kind": "AlertDialogCancel",
-          "tag": "AlertDialogCancel"
         },
         {
           "id": "control:7f22ec51328d60f23f88",
@@ -30415,14 +30543,26 @@
           "routes": [
             "/settings/integrations/meta"
           ],
+          "kind": "AlertDialogCancel",
+          "tag": "AlertDialogCancel"
+        },
+        {
+          "id": "control:9cacd707656e966af744",
+          "column": 13,
+          "file": "components/features/integrations/MetaIntegrationSettings.tsx",
+          "line": 1263,
+          "owner": "MetaIntegrationSettings",
+          "routes": [
+            "/settings/integrations/meta"
+          ],
           "kind": "AlertDialogAction",
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:4f50d0fc2939d5865b61",
+          "id": "control:9da0e22bf39d5460b037",
           "column": 13,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1289,
+          "line": 1290,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -30431,10 +30571,34 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:9da0e22bf39d5460b037",
+          "id": "control:9a523682fe7d4779ce57",
           "column": 13,
           "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-          "line": 1290,
+          "line": 1291,
+          "owner": "MetaIntegrationSettings",
+          "routes": [
+            "/settings/integrations/meta"
+          ],
+          "kind": "AlertDialogAction",
+          "tag": "AlertDialogAction"
+        },
+        {
+          "id": "control:a51e3e8ae9f03f16d162",
+          "column": 13,
+          "file": "components/features/integrations/MetaIntegrationSettings.tsx",
+          "line": 1318,
+          "owner": "MetaIntegrationSettings",
+          "routes": [
+            "/settings/integrations/meta"
+          ],
+          "kind": "AlertDialogCancel",
+          "tag": "AlertDialogCancel"
+        },
+        {
+          "id": "control:fe6098e5397e6fdc2918",
+          "column": 13,
+          "file": "components/features/integrations/MetaIntegrationSettings.tsx",
+          "line": 1319,
           "owner": "MetaIntegrationSettings",
           "routes": [
             "/settings/integrations/meta"
@@ -33741,7 +33905,7 @@
         }
       ]
     },
-    "digestSha256": "a2a38c174331caa56220fb9ba1819c59efe2b85b34868d5dc33e93172d738f82"
+    "digestSha256": "206c5f94eb1d414c52ad0034d6c7b354c0e33e4f8fa792360e6a5f9184951fd2"
   },
   "routes": [
     {
@@ -41062,6 +41226,59 @@
         "protected",
         "public"
       ],
+      "file": "components/features/whatsapp/AttendanceTimelineEvents.tsx",
+      "routes": [
+        "/agenda",
+        "/automations",
+        "/crm/contacts",
+        "/crm/conversas",
+        "/crm/management",
+        "/crm/management/distribution/[id]/edit",
+        "/crm/management/distribution/new",
+        "/crm/management/teams/[id]/edit",
+        "/crm/management/teams/new",
+        "/crm/pipelines",
+        "/dashboard",
+        "/dashboard/site",
+        "/financeiro",
+        "/financeiro/comissoes",
+        "/financeiro/contas",
+        "/financeiro/contratos",
+        "/financeiro/contratos/[id]",
+        "/financeiro/corretor",
+        "/financeiro/dre",
+        "/financeiro/relatorios",
+        "/gamificacao",
+        "/help/[slug]",
+        "/inicio",
+        "/marketing",
+        "/notifications",
+        "/properties",
+        "/properties/[id]",
+        "/properties/[id]/edit",
+        "/properties/condominiums",
+        "/properties/developments",
+        "/properties/developments/[id]",
+        "/properties/launches",
+        "/properties/locations",
+        "/properties/new",
+        "/properties/owners",
+        "/properties/rentals",
+        "/properties/settings",
+        "/settings",
+        "/settings/integrations/meta",
+        "/settings/integrations/whatsapp",
+        "/settings/site",
+        "/settings/users/[id]",
+        "/suporte",
+        "/suporte/[slug]"
+      ]
+    },
+    {
+      "access": [
+        "protected",
+        "public"
+      ],
       "file": "components/features/whatsapp/AudioRecorderButton.tsx",
       "routes": [
         "/agenda",
@@ -41567,6 +41784,59 @@
         "public"
       ],
       "file": "components/features/whatsapp/DateSeparator.tsx",
+      "routes": [
+        "/agenda",
+        "/automations",
+        "/crm/contacts",
+        "/crm/conversas",
+        "/crm/management",
+        "/crm/management/distribution/[id]/edit",
+        "/crm/management/distribution/new",
+        "/crm/management/teams/[id]/edit",
+        "/crm/management/teams/new",
+        "/crm/pipelines",
+        "/dashboard",
+        "/dashboard/site",
+        "/financeiro",
+        "/financeiro/comissoes",
+        "/financeiro/contas",
+        "/financeiro/contratos",
+        "/financeiro/contratos/[id]",
+        "/financeiro/corretor",
+        "/financeiro/dre",
+        "/financeiro/relatorios",
+        "/gamificacao",
+        "/help/[slug]",
+        "/inicio",
+        "/marketing",
+        "/notifications",
+        "/properties",
+        "/properties/[id]",
+        "/properties/[id]/edit",
+        "/properties/condominiums",
+        "/properties/developments",
+        "/properties/developments/[id]",
+        "/properties/launches",
+        "/properties/locations",
+        "/properties/new",
+        "/properties/owners",
+        "/properties/rentals",
+        "/properties/settings",
+        "/settings",
+        "/settings/integrations/meta",
+        "/settings/integrations/whatsapp",
+        "/settings/site",
+        "/settings/users/[id]",
+        "/suporte",
+        "/suporte/[slug]"
+      ]
+    },
+    {
+      "access": [
+        "protected",
+        "public"
+      ],
+      "file": "components/features/whatsapp/EnterAttendanceDialog.tsx",
       "routes": [
         "/agenda",
         "/automations",
@@ -43319,9 +43589,9 @@
       "asChildButtonsWithUnrecognizedChild": 0,
       "asChildPrimitiveControlsExcluded": 83,
       "asChildPrimitiveControlsWithUnrecognizedChild": 0,
-      "ctasAll": 1370,
+      "ctasAll": 1372,
       "ctasByKind": {
-        "actionButton": 1214,
+        "actionButton": 1216,
         "external": 6,
         "internal": 31,
         "internalDynamic": 75,
@@ -43330,17 +43600,17 @@
       "forms": 49,
       "formsRouteReachable": 49,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1320,
-      "internalCtasRouteReachable": 1284,
-      "overlays": 217,
+      "internalCtas": 1322,
+      "internalCtasRouteReachable": 1286,
+      "overlays": 218,
       "overlaysByKind": {
-        "alertDialog": 60,
+        "alertDialog": 61,
         "dialog": 79,
         "dropdownMenu": 30,
         "popover": 35,
         "sheet": 13
       },
-      "overlaysRouteReachable": 210,
+      "overlaysRouteReachable": 211,
       "supplementalControls": 279,
       "supplementalControlsByKind": {
         "AlertDialogAction": 58,
@@ -43359,8 +43629,8 @@
     "protectedAccessChecksThreePersonas": 204,
     "renderableRouteViewportChecksDesktopAndMobile": 164,
     "routeReachableFormImplementations": 49,
-    "routeReachableInternalCtaImplementations": 1284,
-    "routeReachableOverlayImplementations": 210,
+    "routeReachableInternalCtaImplementations": 1286,
+    "routeReachableOverlayImplementations": 211,
     "routeReachableSupplementalOverlayAndTabControls": 272
   },
   "diagnostics": {

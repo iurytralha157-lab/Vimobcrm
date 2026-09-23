@@ -142,7 +142,7 @@ test("WhatsApp reentry processing returns before the new-lead path", () => {
   const processor = evolutionWebhook.indexOf(
     '.rpc("process_whatsapp_lead_reentry_from_backend"',
   );
-  const reentryReturn = evolutionWebhook.indexOf("return;", processor);
+  const reentryReturn = evolutionWebhook.indexOf("return binding;", processor);
   const newLeadPath = evolutionWebhook.indexOf(
     "// Determinar usuário responsável",
     processor,

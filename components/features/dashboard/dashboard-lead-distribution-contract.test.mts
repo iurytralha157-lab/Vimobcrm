@@ -41,15 +41,15 @@ test("dashboard renders responsive broker and team cards below the primary chart
   assert.match(distributionSource, /Leads por corretor/);
   assert.match(distributionSource, /Leads por equipe/);
   assert.match(distributionSource, /grid-cols-1 gap-3 lg:grid-cols-2/);
-  assert.match(distributionSource, /Quantidade por responsável atual/);
-  assert.match(distributionSource, /entradas diretas ficam em Sem equipe/);
+  assert.doesNotMatch(distributionSource, /<h2/);
+  assert.doesNotMatch(distributionSource, /Responsáveis atuais e equipe registrada na atribuição/);
+  assert.doesNotMatch(distributionSource, /Quantidade por responsável atual/);
+  assert.doesNotMatch(distributionSource, /entradas diretas ficam em Sem equipe/);
+  assert.doesNotMatch(distributionSource, /scopeLabel/);
   assert.match(distributionSource, /role="progressbar"/);
   assert.match(distributionSource, /filter\(\(row\) => row\.kind === "entity"\)/);
   assert.match(distributionSource, /teamEntityRanks\.get\(row\.id\)/);
-  assert.match(
-    dashboardSource,
-    /scopeLabel=\{dashboardDateRange \? "no período" : "em todo o histórico"\}/,
-  );
+  assert.doesNotMatch(dashboardSource, /scopeLabel=/);
 });
 
 test("lead distribution cache is invalidated by lead realtime events", () => {

@@ -52,6 +52,18 @@ const corsHeaders = {
 
 type JsonRecord = Record<string, any>;
 
+type WhatsAppMessageCaptureState = "legacy" | "captured" | "suppressed";
+
+type WhatsAppAttendanceCaptureDecision = {
+  captureState: WhatsAppMessageCaptureState;
+  reason: string;
+  bindingId: string | null;
+  attendanceEntryId: string | null;
+  ingressSequence: number | null;
+  inboxCreatedAt: string | null;
+  messageFingerprint: string;
+};
+
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const EVOLUTION_GO_API_URL = (Deno.env.get("EVOLUTION_GO_API_URL") || "").replace(/\/+$/, "");
 const EVOLUTION_GO_API_KEY = Deno.env.get("EVOLUTION_GO_API_KEY") || "";
@@ -160,6 +172,64 @@ function terminalLeadResolutionQuarantineReason(metadata: unknown) {
     || quarantine.retryable !== false
   ) return null;
   return cleanText(quarantine.reason) || "whatsapp_lead_resolution_ambiguous";
+}
+
+function persistedWhatsAppMessageCaptureState(
+  storedMessage: JsonRecord | null | undefined,
+): WhatsAppMessageCaptureState | null {
+  if (!storedMessage) return null;
+  const value = cleanText(storedMessage.capture_state);
+  if (!value) return "legacy";
+  if (["legacy", "captured", "suppressed"].includes(value)) {
+    return value as WhatsAppMessageCaptureState;
+  }
+  throw new Error("whatsapp_message_capture_state_invalid");
+}
+
+function attendanceCaptureMetadata(
+  decision: WhatsAppAttendanceCaptureDecision,
+) {
+  return {
+    version: 1,
+    state: decision.captureState,
+    reason: decision.reason,
+    binding_id: decision.bindingId,
+    attendance_entry_id: decision.attendanceEntryId,
+    ingress_sequence: decision.ingressSequence,
+    inbox_created_at: decision.inboxCreatedAt,
+    message_fingerprint: decision.messageFingerprint,
+  };
+}
+
+function redactedSuppressedMessageMetadata(
+  metadata: unknown,
+  providerMessageId: string,
+  decision: WhatsAppAttendanceCaptureDecision | null = null,
+  completed = false,
+) {
+  const root = isRecord(metadata) ? metadata : {};
+  const existingCapture = isRecord(root.whatsapp_attendance_capture)
+    ? root.whatsapp_attendance_capture
+    : null;
+  const quarantine = isRecord(root.lead_resolution_quarantine)
+    ? root.lead_resolution_quarantine
+    : null;
+  const safeMetadata = {
+    source: "evolution_go_webhook",
+    whatsapp_event_binding_is_current: false,
+    whatsapp_attendance_capture: decision
+      ? attendanceCaptureMetadata(decision)
+      : (existingCapture || {
+        version: 1,
+        state: "suppressed",
+        reason: "persisted_suppression",
+      }),
+    ...(quarantine ? { lead_resolution_quarantine: quarantine } : {}),
+  };
+  const existingState = storedEvolutionGoEffectState(metadata, providerMessageId);
+  return completed || existingState === "completed"
+    ? completedEvolutionGoEffectMetadata(safeMetadata, providerMessageId)
+    : pendingEvolutionGoEffectMetadata(safeMetadata, providerMessageId);
 }
 
 function normalizeDigits(value: unknown) {
@@ -418,18 +488,27 @@ function sessionAllowsLifecycleUpdates(session: JsonRecord) {
   return enabled !== false && normalizeText(enabled).trim().toLowerCase() !== "false";
 }
 
-function parseTimestamp(value: unknown) {
-  if (!value) return new Date().toISOString();
-  if (value instanceof Date) return value.toISOString();
+function parseProviderTimestamp(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? value.toISOString() : null;
+  }
   if (typeof value === "number") {
-    return new Date(value < 10_000_000_000 ? value * 1000 : value).toISOString();
+    if (!Number.isFinite(value)) return null;
+    const parsed = new Date(value < 10_000_000_000 ? value * 1000 : value);
+    return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
   }
   if (isRecord(value)) {
     const seconds = firstPresent(value.seconds, value.Seconds, value._seconds);
-    if (seconds) return parseTimestamp(Number(seconds));
+    if (seconds !== null && seconds !== undefined && seconds !== "") {
+      return parseProviderTimestamp(Number(seconds));
+    }
+  }
+  if (typeof value === "string" && /^\d+(?:\.\d+)?$/.test(value.trim())) {
+    return parseProviderTimestamp(Number(value.trim()));
   }
   const parsed = new Date(String(value));
-  return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
 }
 
 function stableHash(input: string) {
@@ -1376,7 +1455,7 @@ async function reconcileHandledWhatsAppMessageTransport(
   for (const providerIdentityColumn of ["message_id", "provider_message_id"]) {
     const { data, error } = await supabase
       .from("whatsapp_messages")
-      .select("id, media_url, media_mime_type, media_storage_path, media_status, media_error, media_size")
+      .select("id, conversation_id, lead_id, message_id, capture_state, metadata, media_url, media_mime_type, media_storage_path, media_status, media_error, media_size")
       .eq("organization_id", session.organization_id)
       .eq("session_id", session.id)
       .eq(providerIdentityColumn, message.messageId)
@@ -1389,6 +1468,14 @@ async function reconcileHandledWhatsAppMessageTransport(
     }
   }
   if (!existing?.id) return;
+  if (persistedWhatsAppMessageCaptureState(existing) === "suppressed") {
+    await redactSuppressedStoredMessage(
+      session,
+      existing,
+      message.messageId,
+    );
+    return;
+  }
 
   const existingStoragePath = normalizeText(existing.media_storage_path).trim() || null;
   if (existingStoragePath) return;
@@ -1534,7 +1621,14 @@ function normalizeMessage(message: any, currentEnvelope: JsonRecord | null = nul
     fromMe ? null : remoteJid,
   ), false);
 
-  const timestamp = parseTimestamp(firstPresent(info.Timestamp, info.timestamp, message.messageTimestamp, message.timestamp, message.createdAt));
+  const providerOccurredAt = parseProviderTimestamp(firstPresent(
+    info.Timestamp,
+    info.timestamp,
+    message.messageTimestamp,
+    message.timestamp,
+    message.createdAt,
+  ));
+  const timestamp = providerOccurredAt || new Date().toISOString();
   // PostgreSQL text cannot contain NUL. Preserve every other byte-equivalent
   // character, including leading/trailing whitespace used by the lifecycle
   // fingerprint, while matching the native Go parser's sanitation.
@@ -1630,6 +1724,7 @@ function normalizeMessage(message: any, currentEnvelope: JsonRecord | null = nul
     fromMe,
     isGroup,
     sentAt: timestamp,
+    providerOccurredAt,
     messageType: deletedMessageId ? "deleted_event" : (isReaction ? "reaction" : messageType),
     content: deletedMessageId ? null : (isReaction ? normalizeText(firstPresent(reactionPayload?.text, reactionPayload?.emoji)) : content),
     mediaUrl,
@@ -1686,11 +1781,14 @@ function detectCampaign(content: string | null) {
   return match?.[1]?.trim() || null;
 }
 
-function detectPropertyCode(message: ReturnType<typeof normalizeMessage>) {
+function detectPropertyCode(
+  message: ReturnType<typeof normalizeMessage>,
+  includeMessageContent = true,
+) {
   if (!message) return null;
   const referral: JsonRecord = isRecord(message.referral) ? message.referral : {};
   const text = [
-    message.content,
+    includeMessageContent ? message.content : null,
     referral.headline,
     referral.body,
     referral.source_url,
@@ -1713,13 +1811,17 @@ function detectPropertyCode(message: ReturnType<typeof normalizeMessage>) {
   return match?.[1]?.trim() || null;
 }
 
-function campaignLabelForMessage(message: ReturnType<typeof normalizeMessage>, rule?: JsonRecord | null) {
+function campaignLabelForMessage(
+  message: ReturnType<typeof normalizeMessage>,
+  rule?: JsonRecord | null,
+  includeMessageContent = true,
+) {
   if (!message) return null;
   return cleanText(firstPresent(
     rule?.campaign_label,
     message.referral?.headline,
     message.referral?.body,
-    detectCampaign(message.content),
+    includeMessageContent ? detectCampaign(message.content) : null,
   ));
 }
 
@@ -1743,7 +1845,9 @@ function clickToWhatsAppAdConfirmationMethod(message: ReturnType<typeof normaliz
 function whatsappAttribution(message: ReturnType<typeof normalizeMessage>) {
   if (!message?.referral) return null;
   const referral = message.referral;
-  const propertyCode = detectPropertyCode(message);
+  // Attribution is persisted on browser-visible lead/activity projections.
+  // Never derive one of its fields from pre-attendance message plaintext.
+  const propertyCode = detectPropertyCode(message, false);
   const confirmationMethod = clickToWhatsAppAdConfirmationMethod(message);
   const attribution = {
     source: "whatsapp",
@@ -2074,33 +2178,37 @@ async function findLeadByPhone(
 }
 
 async function resolveActiveSessionOwner(session: JsonRecord) {
-  const candidates = unique([
-    optionalUuid(session.owner_user_id),
-    optionalUuid(session.created_by),
-  ].filter(Boolean) as string[]);
+  // The creator is not necessarily the current owner of this connection.
+  // Never assign a campaign lead to a different person as a fallback. A
+  // durable campaign event may be processed after the session disconnects;
+  // that must not erase the active owner's assignment on a no-queue card.
+  // Automatic attendance is separately proved by the database RPC.
+  const ownerUserId = optionalUuid(session.owner_user_id);
+  if (
+    !ownerUserId
+    || session.is_active === false
+    || ["disabled", "deleted"].includes(normalizeText(session.status).trim().toLowerCase())
+    || normalizeText(session.provider).trim().toLowerCase() !== "evolution_go"
+  ) return null;
 
-  for (const userId of candidates) {
-    const [{ data: user, error: userError }, { data: membership, error: membershipError }] = await Promise.all([
-      supabase
-        .from("users")
-        .select("id")
-        .eq("id", userId)
-        .or("is_active.is.null,is_active.eq.true")
-        .maybeSingle(),
-      supabase
-        .from("organization_members")
-        .select("user_id")
-        .eq("organization_id", session.organization_id)
-        .eq("user_id", userId)
-        .or("is_active.is.null,is_active.eq.true")
-        .maybeSingle(),
-    ]);
-    if (userError) throw userError;
-    if (membershipError) throw membershipError;
-    if (user?.id && membership?.user_id) return userId;
-  }
-
-  return null;
+  const [{ data: user, error: userError }, { data: membership, error: membershipError }] = await Promise.all([
+    supabase
+      .from("users")
+      .select("id")
+      .eq("id", ownerUserId)
+      .or("is_active.is.null,is_active.eq.true")
+      .maybeSingle(),
+    supabase
+      .from("organization_members")
+      .select("user_id")
+      .eq("organization_id", session.organization_id)
+      .eq("user_id", ownerUserId)
+      .or("is_active.is.null,is_active.eq.true")
+      .maybeSingle(),
+  ]);
+  if (userError) throw userError;
+  if (membershipError) throw membershipError;
+  return user?.id && membership?.user_id ? ownerUserId : null;
 }
 
 async function loadScopedWhatsAppLead(
@@ -2385,11 +2493,14 @@ async function ensureLead(
   const avatarUrl = message.avatarUrl || existing?.whatsapp_avatar_url || null;
   const attribution = whatsappAttribution(message);
   const ctwaClid = cleanText(message.referral?.ctwa_clid);
-  const propertyCode = detectPropertyCode(message);
+  // Lead/card projections may exist before anyone enters attendance. Only
+  // referral evidence, never message body text, may populate these fields.
+  const propertyCode = detectPropertyCode(message, false);
   const property = await resolvePropertyByCode(session.organization_id, propertyCode);
   const campaignLabel = campaignLabelForMessage(
     message,
     managedMessageDistribution ? rule : null,
+    false,
   );
   if (existing) {
     if (managedMessageDistribution) {
@@ -2475,6 +2586,9 @@ async function ensureLead(
   const targetStageId = null;
   const targetTeamId = null;
   const ownerUserId = await resolveActiveSessionOwner(session);
+  if (!ownerUserId) {
+    throw new Error("ctwa_session_owner_unavailable");
+  }
   const assignedUserId = managedMessageDistribution || targetRoundRobinId ? null : ownerUserId;
   const sourceLabel = "WhatsApp Meta Ads";
 
@@ -2488,6 +2602,8 @@ async function ensureLead(
       p_whatsapp_avatar_synced_at: avatarUrl ? now : null,
       p_source_detail: campaignLabel || sourceLabel,
       p_source_session_id: session.id,
+      // The database validates the managed keyword against these transient
+      // values, then its late BEFORE INSERT guard removes both before storage.
       p_initial_message: message.content,
       p_message: message.content,
       p_property_code: propertyCode,
@@ -2788,10 +2904,11 @@ async function processManagedWhatsAppLeadEntry(
   lead: JsonRecord | null,
   rule: JsonRecord | null,
   message: ReturnType<typeof normalizeMessage>,
+  suppressLeadMessage: boolean,
 ) {
   if (!lead?.id || !message || !rule?.id) return null;
 
-  const { data, error } = await supabase.rpc("process_managed_whatsapp_lead_entry", {
+  const { data, error } = await supabase.rpc("process_managed_whatsapp_lead_entry_attendance", {
     p_organization_id: session.organization_id,
     p_lead_id: lead.id,
     p_session_id: session.id,
@@ -2799,6 +2916,7 @@ async function processManagedWhatsAppLeadEntry(
     p_provider_message_id: message.messageId,
     p_message: message.content,
     p_occurred_at: message.sentAt,
+    p_suppress_lead_message: suppressLeadMessage,
   });
   if (error) throw error;
   if (!data?.handled) {
@@ -3137,7 +3255,7 @@ async function recoverPersistedNonManagedWhatsAppMessage(
 
   let { data: storedMessage, error: messageError } = await supabase
     .from("whatsapp_messages")
-    .select("conversation_id, lead_id, provider_message_id, message_id, content, sent_at, received_at, created_at, remote_jid, sender_jid, sender_name, from_me, direction, message_type, metadata")
+    .select("id, conversation_id, lead_id, provider_message_id, message_id, capture_state, content, sent_at, received_at, created_at, remote_jid, sender_jid, sender_name, from_me, direction, message_type, metadata")
     .eq("organization_id", session.organization_id)
     .eq("session_id", session.id)
     .eq("message_id", message.messageId)
@@ -3146,7 +3264,7 @@ async function recoverPersistedNonManagedWhatsAppMessage(
   if (!storedMessage) {
     ({ data: storedMessage, error: messageError } = await supabase
       .from("whatsapp_messages")
-      .select("conversation_id, lead_id, provider_message_id, message_id, content, sent_at, received_at, created_at, remote_jid, sender_jid, sender_name, from_me, direction, message_type, metadata")
+      .select("id, conversation_id, lead_id, provider_message_id, message_id, capture_state, content, sent_at, received_at, created_at, remote_jid, sender_jid, sender_name, from_me, direction, message_type, metadata")
       .eq("organization_id", session.organization_id)
       .eq("session_id", session.id)
       .eq("provider_message_id", message.messageId)
@@ -3154,6 +3272,14 @@ async function recoverPersistedNonManagedWhatsAppMessage(
     if (messageError) throw messageError;
   }
   if (!storedMessage?.conversation_id) return;
+  if (persistedWhatsAppMessageCaptureState(storedMessage) === "suppressed") {
+    await redactSuppressedStoredMessage(
+      session,
+      storedMessage,
+      message.messageId,
+    );
+    return;
+  }
 
   const { data: conversation, error: conversationError } = await supabase
     .from("whatsapp_conversations")
@@ -4173,6 +4299,266 @@ async function activateWhatsAppConversationLeadBinding(
   };
 }
 
+async function resolveWhatsAppAttendanceCapture(
+  session: JsonRecord,
+  conversation: JsonRecord,
+  eventLeadId: string | null,
+  eventBindingIsCurrent: boolean,
+  ingress: WhatsAppIngressRoutingSnapshot | null,
+  message: ReturnType<typeof normalizeMessage>,
+  resolvedLead: JsonRecord | null,
+  storedMessage: JsonRecord | null,
+): Promise<WhatsAppAttendanceCaptureDecision> {
+  const derivedMessageFingerprint = await sha256Hex(
+    `${session.organization_id}\u001f${session.id}\u001f${message?.messageId || ""}\u001f${message?.content || ""}`,
+  );
+  const persistedFingerprint = cleanText(
+    storedMessage?.metadata?.whatsapp_attendance_capture?.message_fingerprint,
+  );
+  const messageFingerprint = persistedFingerprint
+    && /^[0-9a-f]{64}$/.test(persistedFingerprint)
+    ? persistedFingerprint
+    : derivedMessageFingerprint;
+
+  // An already persisted classification is permanent. In particular, an
+  // attendance entry created after a suppressed delivery must never make its
+  // retry rehydrate content, metadata, preview or media.
+  const persistedState = persistedWhatsAppMessageCaptureState(storedMessage);
+  if (persistedState) {
+    return {
+      captureState: persistedState,
+      reason: `persisted_${persistedState}`,
+      bindingId: null,
+      attendanceEntryId: null,
+      ingressSequence: ingress?.ingressSequence || null,
+      inboxCreatedAt: null,
+      messageFingerprint,
+    };
+  }
+
+  if (!eventBindingIsCurrent || !eventLeadId || !conversation?.id) {
+    return {
+      captureState: "suppressed",
+      reason: "current_binding_not_proven",
+      bindingId: null,
+      attendanceEntryId: null,
+      ingressSequence: ingress?.ingressSequence || null,
+      inboxCreatedAt: null,
+      messageFingerprint,
+    };
+  }
+  if (!ingress?.inboxEventKey || !Number.isSafeInteger(ingress.ingressSequence)) {
+    return {
+      captureState: "suppressed",
+      reason: "durable_ingress_fence_missing",
+      bindingId: null,
+      attendanceEntryId: null,
+      ingressSequence: ingress?.ingressSequence || null,
+      inboxCreatedAt: null,
+      messageFingerprint,
+    };
+  }
+  // sentAt has an operational fallback for legacy storage/id generation. The
+  // attendance fence may use only an actual, valid provider timestamp.
+  const providerOccurredAt = cleanText(message?.providerOccurredAt);
+  if (!providerOccurredAt || !Number.isFinite(Date.parse(providerOccurredAt))) {
+    return {
+      captureState: "suppressed",
+      reason: "provider_occurrence_time_missing",
+      bindingId: null,
+      attendanceEntryId: null,
+      ingressSequence: ingress.ingressSequence,
+      inboxCreatedAt: null,
+      messageFingerprint,
+    };
+  }
+
+  const { data: activeBinding, error: bindingError } = await supabase
+    .from("whatsapp_conversation_lead_bindings")
+    .select("id")
+    .eq("organization_id", session.organization_id)
+    .eq("conversation_id", conversation.id)
+    .eq("session_id", session.id)
+    .eq("lead_id", eventLeadId)
+    .eq("stale", false)
+    .is("active_to", null)
+    .maybeSingle();
+  if (bindingError) throw bindingError;
+  const bindingId = optionalUuid(activeBinding?.id);
+  if (
+    !bindingId
+    || (
+      ingress.activeBindingId
+      && ingress.activeBindingId !== bindingId
+      // A new contextual card deliberately replaces the ingress-time binding.
+      // The CAS result and the exact active lead/binding above prove the new
+      // destination; organic traffic must still match the old binding.
+      && ingress.contextKind !== "contextual_intake"
+    )
+  ) {
+    return {
+      captureState: "suppressed",
+      reason: "active_binding_changed",
+      bindingId,
+      attendanceEntryId: null,
+      ingressSequence: ingress.ingressSequence,
+      inboxCreatedAt: null,
+      messageFingerprint,
+    };
+  }
+
+  const { data: inbox, error: inboxError } = await supabase
+    .from("whatsapp_webhook_inbox")
+    .select("created_at")
+    .eq("organization_id", session.organization_id)
+    .eq("session_id", session.id)
+    .eq("event_key", ingress.inboxEventKey)
+    .maybeSingle();
+  if (inboxError) throw inboxError;
+  const inboxCreatedAt = cleanText(inbox?.created_at);
+  if (!inboxCreatedAt || !Number.isFinite(Date.parse(inboxCreatedAt))) {
+    return {
+      captureState: "suppressed",
+      reason: "durable_inbox_time_missing",
+      bindingId,
+      attendanceEntryId: null,
+      ingressSequence: ingress.ingressSequence,
+      inboxCreatedAt: null,
+      messageFingerprint,
+    };
+  }
+  if (
+    Date.parse(providerOccurredAt)
+      > Date.parse(inboxCreatedAt)
+  ) {
+    return {
+      captureState: "suppressed",
+      reason: "provider_occurrence_after_ingress",
+      bindingId,
+      attendanceEntryId: null,
+      ingressSequence: ingress.ingressSequence,
+      inboxCreatedAt,
+      messageFingerprint,
+    };
+  }
+
+  // Attendance belongs to the current owner of this connection, not merely
+  // to someone who owned it when they entered. Re-read after the ingress and
+  // binding checks so an ownership transfer or offboarding does not let the
+  // previous attendee capture the new owner's traffic. A disconnected but
+  // still active session is valid for delayed inbox processing.
+  const { data: currentSession, error: currentSessionError } = await supabase
+    .from("whatsapp_sessions")
+    .select("owner_user_id, is_active, provider, status")
+    .eq("organization_id", session.organization_id)
+    .eq("id", session.id)
+    .maybeSingle();
+  if (currentSessionError) throw currentSessionError;
+  const attendanceOwnerId = currentSession
+    ? await resolveActiveSessionOwner({ ...session, ...currentSession })
+    : null;
+  if (!attendanceOwnerId) {
+    return {
+      captureState: "suppressed",
+      reason: "current_session_owner_inactive_or_missing",
+      bindingId,
+      attendanceEntryId: null,
+      ingressSequence: ingress.ingressSequence,
+      inboxCreatedAt,
+      messageFingerprint,
+    };
+  }
+
+  const initialProviderEventId = cleanText(
+    resolvedLead?.metadata?.whatsapp_initial_provider_event_id,
+  );
+  if (
+    eventLeadId === optionalUuid(resolvedLead?.id)
+    && !message.fromMe
+    && !message.isGroup
+    && message.messageType !== "reaction"
+    && !message.providerMessageIdSynthetic
+    && isConfirmedClickToWhatsAppAd(message)
+    && ingress.contextKind === "contextual_intake"
+    && initialProviderEventId === `${session.id}:${message.messageId}`
+  ) {
+    // A lead created by this CTWA provider event starts attendance on the
+    // receiving WhatsApp automatically. The service-only RPC checks private
+    // lead-insert provenance, the durable ingress and the current binding;
+    // mutable metadata by itself never authorizes capture. Retries are safe.
+    const { data: autoEntryId, error: autoEntryError } = await supabase.rpc(
+      "auto_enter_whatsapp_ctwa_attendance",
+      {
+        p_organization_id: session.organization_id,
+        p_conversation_id: conversation.id,
+        p_session_id: session.id,
+        p_lead_id: eventLeadId,
+        p_binding_id: bindingId,
+        p_provider_message_id: message.messageId,
+        p_ingress_sequence: ingress.ingressSequence,
+        p_provider_occurred_at: providerOccurredAt,
+      },
+    );
+    if (autoEntryError) throw autoEntryError;
+    if (autoEntryId !== null && !optionalUuid(autoEntryId)) {
+      throw new Error("whatsapp_ctwa_auto_attendance_result_invalid");
+    }
+  }
+
+  const attendanceScope = () => supabase
+    .from("whatsapp_attendance_entries")
+    .select("id, bootstrap_provider_message_id, bootstrap_ingress_sequence")
+    .eq("organization_id", session.organization_id)
+    .eq("conversation_id", conversation.id)
+    .eq("session_id", session.id)
+    .eq("lead_id", eventLeadId)
+    .eq("binding_id", bindingId)
+    .eq("user_id", attendanceOwnerId);
+  const [manualResult, autoResult] = await Promise.all([
+    attendanceScope()
+      .eq("entry_source", "manual")
+      .lte("joined_at", inboxCreatedAt)
+      .lte("joined_at", providerOccurredAt)
+      .lt("ingress_sequence_cutoff", ingress.ingressSequence)
+      .order("joined_at", { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+    attendanceScope()
+      .eq("entry_source", "ctwa_auto")
+      .lte("bootstrap_ingress_sequence", ingress.ingressSequence)
+      .lte("bootstrap_provider_occurred_at", providerOccurredAt)
+      .lte("bootstrap_inbox_created_at", inboxCreatedAt)
+      .order("bootstrap_ingress_sequence", { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+  if (manualResult.error) throw manualResult.error;
+  if (autoResult.error) throw autoResult.error;
+  const autoEntry = autoResult.data;
+  const autoEntryId = optionalUuid(autoEntry?.id);
+  const autoEntryEffective = Boolean(autoEntryId) && (
+    Number(autoEntry?.bootstrap_ingress_sequence) < ingress.ingressSequence
+    || (
+      Number(autoEntry?.bootstrap_ingress_sequence) === ingress.ingressSequence
+      && cleanText(autoEntry?.bootstrap_provider_message_id) === message.messageId
+    )
+  );
+  const attendanceEntryId = optionalUuid(manualResult.data?.id)
+    || (autoEntryEffective ? autoEntryId : null);
+
+  return {
+    captureState: attendanceEntryId ? "captured" : "suppressed",
+    reason: attendanceEntryId
+      ? "attendance_entry_effective_for_ingress"
+      : "attendance_entry_not_effective",
+    bindingId,
+    attendanceEntryId,
+    ingressSequence: ingress.ingressSequence,
+    inboxCreatedAt,
+    messageFingerprint,
+  };
+}
+
 async function findStoredMessage(
   session: JsonRecord,
   message: ReturnType<typeof normalizeMessage>,
@@ -4180,7 +4566,7 @@ async function findStoredMessage(
   return await findMessageByProviderIdentity(
     session,
     message,
-    "id, conversation_id, lead_id, metadata",
+    "id, conversation_id, lead_id, capture_state, metadata",
   );
 }
 
@@ -4208,11 +4594,62 @@ async function findMessageByProviderIdentity(
   return matches.values().next().value || null;
 }
 
+async function redactSuppressedStoredMessage(
+  session: JsonRecord,
+  storedMessage: JsonRecord,
+  providerMessageId: string,
+  decision: WhatsAppAttendanceCaptureDecision | null = null,
+  completed = false,
+) {
+  if (
+    !storedMessage?.id
+    || persistedWhatsAppMessageCaptureState(storedMessage) !== "suppressed"
+  ) {
+    return storedMessage;
+  }
+  const metadata = redactedSuppressedMessageMetadata(
+    storedMessage.metadata,
+    providerMessageId,
+    decision,
+    completed,
+  );
+  const { data, error } = await supabase
+    .from("whatsapp_messages")
+    .update({
+      content: null,
+      media_url: null,
+      media_mime_type: null,
+      media_storage_path: null,
+      media_status: null,
+      media_error: null,
+      media_size: null,
+      sender_jid: null,
+      sender_name: null,
+      sender_user_id: null,
+      reaction_to_message_id: null,
+      reaction_emoji: null,
+      reaction_sender_jid: null,
+      reaction_sender_name: null,
+      metadata,
+    })
+    .eq("organization_id", session.organization_id)
+    .eq("session_id", session.id)
+    .eq("id", storedMessage.id)
+    .eq("capture_state", "suppressed")
+    .select("id, conversation_id, lead_id, capture_state, metadata")
+    .maybeSingle();
+  if (error || !data?.id) {
+    throw error || new Error("suppressed_whatsapp_message_redaction_lost_ownership");
+  }
+  return { ...storedMessage, ...data };
+}
+
 async function insertMessage(
   session: JsonRecord,
   conversation: JsonRecord,
   lead: JsonRecord | null,
   message: ReturnType<typeof normalizeMessage>,
+  captureDecision: WhatsAppAttendanceCaptureDecision,
   leadResolutionQuarantineReason: string | null = null,
   allowMediaEffects = true,
 ) {
@@ -4224,18 +4661,31 @@ async function insertMessage(
   const existing = await findMessageByProviderIdentity(
     session,
     message,
-    "id, conversation_id, lead_id, media_storage_path, media_status, media_error, metadata",
+    "id, conversation_id, lead_id, capture_state, media_storage_path, media_status, media_error, metadata",
   );
+  const existingCaptureState = persistedWhatsAppMessageCaptureState(existing);
+  const captureState = existingCaptureState || captureDecision.captureState;
+  if (!existing && captureState === "legacy") {
+    throw new Error("new_whatsapp_message_cannot_be_legacy");
+  }
+  const captureSuppressed = captureState === "suppressed";
+  const existingCaptureMetadata = isRecord(existing?.metadata?.whatsapp_attendance_capture)
+    ? existing.metadata.whatsapp_attendance_capture
+    : null;
+  const captureAudit = existingCaptureMetadata
+    || attendanceCaptureMetadata(captureDecision);
 
   // Quarantine persists only neutral provider evidence. It must never start a
   // media download/storage side effect for whichever card currently owns the
   // physical conversation.
-  const isMedia = allowMediaEffects && !leadResolutionQuarantineReason
+  const isMedia = !captureSuppressed && allowMediaEffects && !leadResolutionQuarantineReason
     && ["image", "video", "audio", "document", "sticker"].includes(message.messageType);
   const media = isMedia && !existing?.media_storage_path
     ? await storeInboundMedia({ session, message })
     : null;
-  const mediaStoragePath = media?.path || existing?.media_storage_path || null;
+  const mediaStoragePath = captureSuppressed
+    ? null
+    : (media?.path || existing?.media_storage_path || null);
   const mediaStatus = isMedia
     ? (mediaStoragePath ? "ready" : (media?.status || "pending"))
     : null;
@@ -4243,49 +4693,77 @@ async function insertMessage(
     ? (media?.error || "media_download_pending")
     : null;
 
+  const capturedMetadata = pendingEvolutionGoEffectMetadata({
+    source: "evolution_go_webhook",
+    whatsapp_event_binding_is_current: allowMediaEffects
+      && !leadResolutionQuarantineReason,
+    whatsapp_attendance_capture: captureAudit,
+    ...(leadResolutionQuarantineReason
+      ? {
+        lead_resolution_quarantine: {
+          reason: leadResolutionQuarantineReason,
+          terminal: true,
+          retryable: false,
+          recorded_at: new Date().toISOString(),
+        },
+      }
+      : {}),
+    whatsapp_attribution: whatsappAttribution(message),
+    whatsapp_referral: message.referral,
+    raw: message.raw,
+  }, message.messageId);
+  // Suppressed payloads must be safe at the first INSERT boundary. A later
+  // UPDATE cannot undo Realtime/logical-replication disclosure or a crash
+  // between requests, so raw/referral/content/media never enter this row.
+  const persistedMetadata = captureSuppressed
+    ? redactedSuppressedMessageMetadata(
+      {
+        source: "evolution_go_webhook",
+        whatsapp_event_binding_is_current: false,
+        whatsapp_attendance_capture: captureAudit,
+        ...(leadResolutionQuarantineReason
+          ? {
+            lead_resolution_quarantine: {
+              reason: leadResolutionQuarantineReason,
+              terminal: true,
+              retryable: false,
+              recorded_at: new Date().toISOString(),
+            },
+          }
+          : {}),
+      },
+      message.messageId,
+      captureDecision,
+    )
+    : capturedMetadata;
   const row = {
     organization_id: session.organization_id,
     conversation_id: conversation.id,
     session_id: session.id,
     lead_id: eventLeadId,
+    capture_state: captureState,
     message_id: message.messageId,
     provider_message_id: message.messageId,
     from_me: message.fromMe,
     message_type: message.messageType,
-    content: message.content,
-    media_url: !allowMediaEffects || leadResolutionQuarantineReason ? null : message.mediaUrl,
-    media_mime_type: !allowMediaEffects || leadResolutionQuarantineReason ? null : (media?.contentType || message.mediaMimeType),
+    content: captureSuppressed ? null : message.content,
+    media_url: captureSuppressed || !allowMediaEffects || leadResolutionQuarantineReason ? null : message.mediaUrl,
+    media_mime_type: captureSuppressed || !allowMediaEffects || leadResolutionQuarantineReason ? null : (media?.contentType || message.mediaMimeType),
     media_storage_path: mediaStoragePath,
     media_status: mediaStatus,
     media_error: mediaError,
-    media_size: !allowMediaEffects || leadResolutionQuarantineReason ? null : (media?.size || message.mediaSize),
+    media_size: captureSuppressed || !allowMediaEffects || leadResolutionQuarantineReason ? null : (media?.size || message.mediaSize),
     remote_jid: conversation.remote_jid || message.remoteJid,
-    sender_jid: message.senderJid,
-    sender_name: message.senderName,
-    reaction_to_message_id: message.reactionToMessageId,
-    reaction_emoji: message.reactionEmoji,
-    reaction_sender_jid: message.senderJid,
-    reaction_sender_name: message.senderName,
+    sender_jid: captureSuppressed ? null : message.senderJid,
+    sender_name: captureSuppressed ? null : message.senderName,
+    reaction_to_message_id: captureSuppressed ? null : message.reactionToMessageId,
+    reaction_emoji: captureSuppressed ? null : message.reactionEmoji,
+    reaction_sender_jid: captureSuppressed ? null : message.senderJid,
+    reaction_sender_name: captureSuppressed ? null : message.senderName,
     status: message.fromMe ? "sent" : "received",
     sent_at: message.sentAt,
     received_at: message.fromMe ? null : new Date().toISOString(),
-    metadata: pendingEvolutionGoEffectMetadata({
-      source: "evolution_go_webhook",
-      whatsapp_event_binding_is_current: allowMediaEffects && !leadResolutionQuarantineReason,
-      ...(leadResolutionQuarantineReason
-        ? {
-          lead_resolution_quarantine: {
-            reason: leadResolutionQuarantineReason,
-            terminal: true,
-            retryable: false,
-            recorded_at: new Date().toISOString(),
-          },
-        }
-        : {}),
-      whatsapp_attribution: whatsappAttribution(message),
-      whatsapp_referral: message.referral,
-      raw: message.raw,
-    }, message.messageId),
+    metadata: persistedMetadata,
   };
 
   if (existing) {
@@ -4301,9 +4779,34 @@ async function insertMessage(
 	if (!eventLeadId && existingLeadId) {
 	  throw new Error("whatsapp_message_quarantine_identity_conflict");
 	}
-    const { data, error } = await supabase
-      .from("whatsapp_messages")
-      .update({
+    const update = captureSuppressed
+      ? {
+        lead_id: existingLeadId || eventLeadId,
+        capture_state: "suppressed",
+        media_url: null,
+        media_mime_type: null,
+        media_storage_path: null,
+        media_status: null,
+        media_error: null,
+        media_size: null,
+        sender_jid: null,
+        sender_name: null,
+        sender_user_id: null,
+        reaction_to_message_id: null,
+        reaction_emoji: null,
+        reaction_sender_jid: null,
+        reaction_sender_name: null,
+        // Never copy content/raw/referral from a retry. This also repairs a row
+        // written by an interrupted older invocation before doing more work.
+        content: null,
+        metadata: redactedSuppressedMessageMetadata(
+          existing.metadata,
+          message.messageId,
+          captureDecision,
+        ),
+        updated_at: undefined,
+      }
+      : {
         // Provider replay is immutable identity-wise. A legacy NULL may be
         // filled only with the event's ledgered card; a non-NULL identity is
         // never moved to another conversation/card.
@@ -4311,6 +4814,7 @@ async function insertMessage(
         metadata: pendingEvolutionGoEffectMetadata({
           ...(isRecord(existing.metadata) ? existing.metadata : {}),
           source: "evolution_go_webhook",
+          whatsapp_attendance_capture: captureAudit,
           ...(leadResolutionQuarantineReason
             ? {
               lead_resolution_quarantine: {
@@ -4329,7 +4833,10 @@ async function insertMessage(
         media_status: mediaStatus || existing.media_status || null,
         media_error: mediaStoragePath ? null : (mediaError || existing.media_error || null),
         updated_at: undefined,
-      })
+      };
+    const { data, error } = await supabase
+      .from("whatsapp_messages")
+      .update(update)
       .eq("organization_id", session.organization_id)
       .eq("session_id", session.id)
       .eq("id", existing.id)
@@ -4355,6 +4862,16 @@ async function completeStoredMessageEffects(
   providerMessageId: string,
 ) {
   if (!storedMessage?.id) throw new Error("Stored message is missing");
+  if (persistedWhatsAppMessageCaptureState(storedMessage) === "suppressed") {
+    await redactSuppressedStoredMessage(
+      session,
+      storedMessage,
+      providerMessageId,
+      null,
+      true,
+    );
+    return;
+  }
   const metadata = completedEvolutionGoEffectMetadata(
     storedMessage.metadata,
     providerMessageId,
@@ -4378,7 +4895,7 @@ async function markMessageDeleted(session: JsonRecord, message: ReturnType<typeo
 
   const { data: target, error: targetError } = await supabase
     .from("whatsapp_messages")
-    .select("id, conversation_id, lead_id, sent_at, metadata")
+    .select("id, conversation_id, lead_id, message_id, sent_at, capture_state, metadata")
     .eq("organization_id", session.organization_id)
     .eq("session_id", session.id)
     .eq("message_id", message.deletedMessageId)
@@ -4387,6 +4904,32 @@ async function markMessageDeleted(session: JsonRecord, message: ReturnType<typeo
   if (!target) return false;
 
   const deletedAt = new Date().toISOString();
+  if (persistedWhatsAppMessageCaptureState(target) === "suppressed") {
+    const safeBase = await redactSuppressedStoredMessage(
+      session,
+      target,
+      message.deletedMessageId,
+    );
+    const { error: suppressedDeleteError } = await supabase
+      .from("whatsapp_messages")
+      .update({
+        message_type: "deleted",
+        metadata: {
+          ...(isRecord(safeBase.metadata) ? safeBase.metadata : {}),
+          deleted: true,
+          deleted_at: deletedAt,
+          // Provider identity is operational; raw deletion payload is never
+          // retained for a suppressed target.
+          deletion_event: { message_id: message.messageId },
+        },
+      })
+      .eq("organization_id", session.organization_id)
+      .eq("session_id", session.id)
+      .eq("id", target.id)
+      .eq("capture_state", "suppressed");
+    if (suppressedDeleteError) throw suppressedDeleteError;
+    return true;
+  }
   const originalMetadata = isRecord(target.metadata) ? target.metadata : {};
   const { error: updateError } = await supabase
     .from("whatsapp_messages")
@@ -4595,9 +5138,9 @@ async function logInbound(session: JsonRecord, conversation: JsonRecord, lead: J
     "inbound_log",
   );
   const managedMessageDistribution = rule?.__managed_whatsapp_message_distribution === true;
-  const messageFingerprint = managedMessageDistribution
-    ? await sha256Hex(`${session.organization_id}\u001f${session.id}\u001f${message.messageId}\u001f${message.content || ""}`)
-    : null;
+  const messageFingerprint = await sha256Hex(
+    `${session.organization_id}\u001f${session.id}\u001f${message.messageId}\u001f${message.content || ""}`,
+  );
   const details = {
     remote_jid: conversation.remote_jid || message.remoteJid,
     message_id: message.messageId,
@@ -4606,9 +5149,9 @@ async function logInbound(session: JsonRecord, conversation: JsonRecord, lead: J
     managed_whatsapp_message_distribution: managedMessageDistribution,
     target_round_robin_id: managedMessageDistribution ? (rule?.target_round_robin_id || null) : null,
     message_fingerprint: messageFingerprint,
-    campaign_label: campaignLabelForMessage(message, rule),
+    campaign_label: campaignLabelForMessage(message, rule, false),
     whatsapp_attribution: whatsappAttribution(message),
-    property_code: detectPropertyCode(message),
+    property_code: detectPropertyCode(message, false),
   };
   const { data: existing, error: lookupError } = await supabase
     .from("whatsapp_inbound_logs")
@@ -4794,13 +5337,22 @@ async function handleMessages(
         continue;
       }
 
-      const storedBeforeProcessing = await findStoredMessage(session, message);
+      let storedBeforeProcessing = await findStoredMessage(session, message);
       if (storedBeforeProcessing) {
         const state = storedEvolutionGoEffectState(
           storedBeforeProcessing.metadata,
           message.messageId,
         );
         if (state === "completed") {
+          if (persistedWhatsAppMessageCaptureState(storedBeforeProcessing) === "suppressed") {
+            storedBeforeProcessing = await redactSuppressedStoredMessage(
+              session,
+              storedBeforeProcessing,
+              message.messageId,
+              null,
+              true,
+            );
+          }
           await reconcileHandledWhatsAppMessageTransport(session, message);
           if (storedBeforeProcessing.conversation_id) {
             await releaseConversationMessageEffect(
@@ -5137,6 +5689,17 @@ async function handleMessages(
       const attachedLead = eventLeadId
         ? (optionalUuid(lead?.id) === eventLeadId ? lead : { id: eventLeadId })
         : null;
+      const captureDecision = await resolveWhatsAppAttendanceCapture(
+        session,
+        conversation,
+        eventLeadId,
+        eventBindingIsCurrent,
+        ingressRoutingSnapshot,
+        message,
+        lead,
+        storedBeforeProcessing,
+      );
+      const captureSuppressed = captureDecision.captureState === "suppressed";
       // Persist the selected rule before the message write. A managed retry can
       // then recover the immutable lead and queue context after later failures.
       if (!leadResolutionQuarantineReason && eventBindingIsCurrent) {
@@ -5147,6 +5710,7 @@ async function handleMessages(
         conversation,
         attachedLead,
         message,
+        captureDecision,
         leadResolutionQuarantineReason,
         eventBindingIsCurrent,
       );
@@ -5189,8 +5753,10 @@ async function handleMessages(
         continue;
       }
 
-      eventBindingIsCurrent = eventBindingIsCurrent
-        && await updateConversationAfterMessage(session, conversation, eventLeadId, message);
+      if (!captureSuppressed) {
+        eventBindingIsCurrent = eventBindingIsCurrent
+          && await updateConversationAfterMessage(session, conversation, eventLeadId, message);
+      }
       if (managedRuleMatched && !attachedLead?.id) {
         throw new Error("managed_whatsapp_lead_identity_unresolved");
       }
@@ -5210,20 +5776,33 @@ async function handleMessages(
       }
 
       let autoReplyTriggered = false;
-      if (eventBindingIsCurrent && eventLeadId && result.inserted && !managedMessageDistribution && !isReactionEvent) {
+      if (
+        !captureSuppressed
+        && eventBindingIsCurrent
+        && eventLeadId
+        && result.inserted
+        && !managedMessageDistribution
+        && !isReactionEvent
+      ) {
         await triggerAutoReply(session, conversation, result.message, message, eventLeadId);
         autoReplyTriggered = true;
       }
 
       if (managedMessageDistribution) {
         if (!managedEntryAlreadyHandled || managedEntryWasPending) {
-          await processManagedWhatsAppLeadEntry(session, attachedLead, rule, message);
+          await processManagedWhatsAppLeadEntry(
+            session,
+            attachedLead,
+            rule,
+            message,
+            captureSuppressed,
+          );
         }
         await enrichManagedWhatsAppLeadEntryAttribution(session, attachedLead?.id, message);
       }
       // Keep the local durability contract: the API request is awaited and its
       // idempotent queue write must succeed before the message ledger is final.
-      if (eventBindingIsCurrent && eventLeadId && !autoReplyTriggered) {
+      if (!captureSuppressed && eventBindingIsCurrent && eventLeadId && !autoReplyTriggered) {
         await triggerAutoReply(session, conversation, result.message, message, eventLeadId);
       }
       await completeStoredMessageEffects(

@@ -447,14 +447,16 @@ func TestEvolutionGoEdgeUsesProviderCTWASignalBeforeManagedRoutingOrLeadCreation
 		"async function resolvePropertyByCode(",
 	))
 	for _, fragment := range []string{
-		"optionalUuid(session.owner_user_id)",
-		"optionalUuid(session.created_by)",
+		"const ownerUserId = optionalUuid(session.owner_user_id)",
 		`.from("users")`,
 		`.from("organization_members")`,
 		`.eq("organization_id", session.organization_id)`,
-		"if (user?.id && membership?.user_id) return userId",
+		"return user?.id && membership?.user_id ? ownerUserId : null",
 	} {
 		requireCTWAContractContains(t, ownerFallback, fragment)
+	}
+	if strings.Contains(ownerFallback, "optionalUuid(session.created_by)") {
+		t.Fatal("CTWA owner fallback must not silently attribute a different session creator")
 	}
 	activeOwnerFilters := strings.Count(ownerFallback, `.eq("is_active", true)`) +
 		strings.Count(ownerFallback, `.or("is_active.is.null,is_active.eq.true")`)
@@ -642,7 +644,7 @@ func TestEvolutionGoEdgePersistsCTWAAttributionAcrossManagedRetryLifecycle(t *te
 		"async function resolveGroupName(",
 	))
 	for _, fragment := range []string{
-		"provider_message_id, message_id, content, sent_at, received_at, created_at, remote_jid, sender_jid, sender_name, from_me, direction, message_type, metadata",
+		"id, conversation_id, lead_id, provider_message_id, message_id, capture_state, content, sent_at, received_at, created_at, remote_jid, sender_jid, sender_name, from_me, direction, message_type, metadata",
 		"const storedMetadata = isRecord(storedMessage.metadata)",
 		"const storedAttribution = isRecord(storedMetadata.whatsapp_attribution)",
 		"const persistedMessage = { ...message",

@@ -23,7 +23,7 @@ type ConversationComposerProps = {
   onStartAutomation: () => void;
   onCancelAutomation: () => void;
   isCancellingAutomation: boolean;
-  onSendAudio: (base64: string, mimetype: string) => Promise<void>;
+  onSendAudio: (base64: string, mimetype: string) => Promise<boolean | void>;
 };
 
 export function ConversationComposer({

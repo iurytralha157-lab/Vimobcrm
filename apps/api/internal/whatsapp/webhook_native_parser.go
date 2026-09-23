@@ -26,6 +26,7 @@ type nativeEvolutionMessage struct {
 	FromMe                             bool
 	IsGroup                            bool
 	SentAt                             time.Time
+	ProviderTimestampMissing           bool
 	MediaURL                           string
 	MediaBase64                        string
 	MediaMimeType                      string
@@ -276,6 +277,7 @@ func normalizeNativeEvolutionMessageWithEnvelope(raw map[string]any, envelope ma
 	if sentAt.IsZero() {
 		sentAt = nativeTimestamp(nativeFirstValue(raw, "messageTimestamp", "timestamp", "createdAt", "created_at"))
 	}
+	providerTimestampMissing := sentAt.IsZero()
 	if sentAt.IsZero() {
 		sentAt = time.Now().UTC()
 	}
@@ -362,6 +364,7 @@ func normalizeNativeEvolutionMessageWithEnvelope(raw map[string]any, envelope ma
 		FromMe:                             fromMe,
 		IsGroup:                            identity.IsGroup,
 		SentAt:                             sentAt.UTC(),
+		ProviderTimestampMissing:           providerTimestampMissing,
 		MediaURL:                           mediaURL,
 		MediaBase64:                        mediaBase64,
 		MediaMimeType:                      mediaMimeType,
@@ -388,7 +391,7 @@ func normalizeNativeEvolutionMessageWithEnvelope(raw map[string]any, envelope ma
 		CampaignShowAdAttribution:          showAdAttribution,
 		CampaignShowAdAttributionInvalid:   showAdAttributionInvalid,
 		CampaignCTWAProofConflict:          ctwaProofConflict,
-		CampaignPropertyCode:               nativeCampaignPropertyCode(content, referralSourceURL),
+		CampaignPropertyCode:               nativeCampaignPropertyCode(referralSourceURL),
 		UnsupportedID:                      unsupportedIdentity,
 		UnsupportedMessage:                 len(protocolMessage) > 0 && !isDeletion,
 		Raw:                                raw,
@@ -922,7 +925,10 @@ func nativeIsDeletionProtocolType(value string) bool {
 
 var nativePropertyCodePattern = regexp.MustCompile(`(?i)\b(?:cod(?:igo)?|im[oó]vel|ref)\s*[:#-]?\s*([a-z0-9][a-z0-9._/-]{1,40})\b`)
 
-func nativeCampaignPropertyCode(content string, sourceURL string) string {
+// A property code copied out of the lead's message body would become visible
+// on the lead card before anyone entered attendance. Only provider referral
+// metadata may populate this persistent CTWA attribution field.
+func nativeCampaignPropertyCode(sourceURL string) string {
 	if parsed, err := url.Parse(strings.TrimSpace(sourceURL)); err == nil {
 		for _, key := range []string{"property_code", "codigo", "cod", "imovel", "ref", "utm_content"} {
 			if value := strings.TrimSpace(parsed.Query().Get(key)); value != "" {
@@ -933,7 +939,7 @@ func nativeCampaignPropertyCode(content string, sourceURL string) string {
 			}
 		}
 	}
-	if match := nativePropertyCodePattern.FindStringSubmatch(content + " " + sourceURL); len(match) > 1 {
+	if match := nativePropertyCodePattern.FindStringSubmatch(sourceURL); len(match) > 1 {
 		return strings.TrimSpace(match[1])
 	}
 	return ""

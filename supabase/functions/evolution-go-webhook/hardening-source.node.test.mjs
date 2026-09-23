@@ -142,3 +142,123 @@ test("Evolution Go Info/Message envelopes remain recognized", () => {
   assert.match(source, /payload\?\.Message/);
   assert.match(source, /data\?\.Message/);
 });
+
+test("suppressed attendance rows are redacted before the first canonical insert", () => {
+  const start = source.indexOf("async function insertMessage(");
+  const end = source.indexOf("async function completeStoredMessageEffects(", start);
+  assert.ok(start > 0 && end > start);
+
+  const insert = source.slice(start, end);
+  assert.match(insert, /content: captureSuppressed \? null : message\.content/);
+  assert.match(
+    insert,
+    /const persistedMetadata = captureSuppressed[\s\S]*?redactedSuppressedMessageMetadata/,
+  );
+  assert.match(insert, /metadata: persistedMetadata/);
+  assert.match(insert, /\.from\("whatsapp_messages"\)[\s\S]*?\.insert\(row\)/);
+  assert.doesNotMatch(
+    insert.slice(insert.indexOf("const persistedMetadata"), insert.indexOf("const row")),
+    /captureSuppressed[\s\S]*?(?:raw: message\.raw|whatsapp_referral: message\.referral)/,
+  );
+});
+
+test("attendance uses only a valid original provider occurrence timestamp", () => {
+  const normalizeStart = source.indexOf("function normalizeMessage(");
+  const normalizeEnd = source.indexOf("function previewForMessage(", normalizeStart);
+  const resolverStart = source.indexOf("async function resolveWhatsAppAttendanceCapture(");
+  const resolverEnd = source.indexOf("async function findStoredMessage(", resolverStart);
+  assert.ok(normalizeStart > 0 && normalizeEnd > normalizeStart);
+  assert.ok(resolverStart > 0 && resolverEnd > resolverStart);
+
+  const normalize = source.slice(normalizeStart, normalizeEnd);
+  const resolver = source.slice(resolverStart, resolverEnd);
+  assert.match(normalize, /const providerOccurredAt = parseProviderTimestamp/);
+  assert.match(normalize, /sentAt: timestamp,[\s\S]*?providerOccurredAt/);
+  assert.match(resolver, /cleanText\(message\?\.providerOccurredAt\)/);
+  assert.match(resolver, /reason: "provider_occurrence_time_missing"/);
+  assert.match(resolver, /reason: "provider_occurrence_after_ingress"/);
+  assert.match(
+    resolver,
+    /Date\.parse\(providerOccurredAt\)[\s\S]*?> Date\.parse\(inboxCreatedAt\)/,
+  );
+  assert.match(resolver, /\.lte\("joined_at", providerOccurredAt\)/);
+  assert.doesNotMatch(resolver, /cleanText\(message\?\.sentAt\)/);
+});
+
+test("CTWA initial card joins attendance before its first message is classified", () => {
+  const start = source.indexOf("async function resolveWhatsAppAttendanceCapture(");
+  const end = source.indexOf("async function findStoredMessage(", start);
+  assert.ok(start > 0 && end > start);
+  const resolver = source.slice(start, end);
+  const persisted = resolver.indexOf("const persistedState = persistedWhatsAppMessageCaptureState(storedMessage)");
+  const binding = resolver.indexOf("const { data: activeBinding");
+  const inbox = resolver.indexOf("const { data: inbox");
+  const bootstrap = resolver.indexOf('"auto_enter_whatsapp_ctwa_attendance"');
+  const attendance = resolver.indexOf('const attendanceScope = () => supabase');
+  assert.ok(persisted > 0 && persisted < binding && binding < inbox && inbox < bootstrap && bootstrap < attendance);
+  assert.match(resolver, /initialProviderEventId === `\$\{session\.id\}:\$\{message\.messageId\}`/);
+  assert.match(resolver, /isConfirmedClickToWhatsAppAd\(message\)/);
+  assert.match(resolver, /!message\.fromMe[\s\S]*?!message\.isGroup[\s\S]*?!message\.providerMessageIdSynthetic/);
+  assert.match(resolver, /ingress\.contextKind === "contextual_intake"/);
+  assert.match(resolver, /p_binding_id: bindingId/);
+  assert.match(resolver, /p_ingress_sequence: ingress\.ingressSequence/);
+  assert.match(resolver, /p_provider_occurred_at: providerOccurredAt/);
+});
+
+test("manual capture retains its cutoff and auto capture uses first-event provenance", () => {
+  const start = source.indexOf("async function resolveWhatsAppAttendanceCapture(");
+  const end = source.indexOf("async function findStoredMessage(", start);
+  const resolver = source.slice(start, end);
+  assert.match(resolver, /\.eq\("entry_source", "manual"\)[\s\S]*?\.lte\("joined_at", inboxCreatedAt\)[\s\S]*?\.lte\("joined_at", providerOccurredAt\)[\s\S]*?\.lt\("ingress_sequence_cutoff", ingress\.ingressSequence\)/);
+  assert.match(resolver, /\.eq\("entry_source", "ctwa_auto"\)[\s\S]*?\.lte\("bootstrap_ingress_sequence", ingress\.ingressSequence\)[\s\S]*?\.lte\("bootstrap_provider_occurred_at", providerOccurredAt\)[\s\S]*?\.lte\("bootstrap_inbox_created_at", inboxCreatedAt\)/);
+  assert.match(resolver, /Number\(autoEntry\?\.bootstrap_ingress_sequence\) < ingress\.ingressSequence/);
+  assert.match(resolver, /Number\(autoEntry\?\.bootstrap_ingress_sequence\) === ingress\.ingressSequence[\s\S]*?cleanText\(autoEntry\?\.bootstrap_provider_message_id\) === message\.messageId/);
+  assert.match(resolver, /ingress\.contextKind !== "contextual_intake"/);
+});
+
+test("attendance capture follows the current active session owner", () => {
+  const start = source.indexOf("async function resolveWhatsAppAttendanceCapture(");
+  const end = source.indexOf("async function findStoredMessage(", start);
+  const resolver = source.slice(start, end);
+  const currentSession = resolver.indexOf('.from("whatsapp_sessions")');
+  const bootstrap = resolver.indexOf('"auto_enter_whatsapp_ctwa_attendance"');
+  const attendance = resolver.indexOf('const attendanceScope = () => supabase');
+  assert.ok(currentSession > 0 && currentSession < bootstrap && bootstrap < attendance);
+  assert.match(resolver, /\.select\("owner_user_id, is_active, provider, status"\)/);
+  assert.match(resolver, /resolveActiveSessionOwner\(\{ \.\.\.session, \.\.\.currentSession \}\)/);
+  assert.match(resolver, /reason: "current_session_owner_inactive_or_missing"/);
+  assert.match(resolver, /\.eq\("user_id", attendanceOwnerId\)/);
+  assert.doesNotMatch(resolver, /currentSession\.status\s*===\s*"connected"/);
+});
+
+test("owner fallback uses only the active WhatsApp owner even after disconnect", () => {
+  const start = source.indexOf("async function resolveActiveSessionOwner(");
+  const end = source.indexOf("async function loadScopedWhatsAppLead(", start);
+  const resolver = source.slice(start, end);
+  assert.match(resolver, /optionalUuid\(session\.owner_user_id\)/);
+  assert.match(resolver, /session\.is_active === false/);
+  assert.match(resolver, /session\.provider[\s\S]*?"evolution_go"/);
+  assert.match(resolver, /\["disabled", "deleted"\]\.includes\(normalizeText\(session\.status\)/);
+  assert.match(resolver, /organization_members/);
+  assert.doesNotMatch(resolver, /session\.created_by/);
+  assert.doesNotMatch(resolver, /session\.status\s*===\s*"connected"/);
+  const ensureLead = source.slice(
+    source.indexOf("async function ensureLead("),
+    source.indexOf("async function processManagedWhatsAppLeadEntry("),
+  );
+  assert.match(ensureLead, /if \(!ownerUserId\) \{[\s\S]*?ctwa_session_owner_unavailable/);
+});
+
+test("pre-attendance lead projections derive campaign and property only from referral", () => {
+  const start = source.indexOf("async function ensureLead(");
+  const end = source.indexOf("async function processManagedWhatsAppLeadEntry(", start);
+  assert.ok(start > 0 && end > start);
+
+  const intake = source.slice(start, end);
+  assert.match(intake, /detectPropertyCode\(message, false\)/);
+  assert.match(
+    intake,
+    /campaignLabelForMessage\([\s\S]*?managedMessageDistribution \? rule : null,[\s\S]*?false,/,
+  );
+  assert.match(source, /const propertyCode = detectPropertyCode\(message, false\);/);
+});

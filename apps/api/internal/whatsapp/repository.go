@@ -573,6 +573,7 @@ func (repo Repository) ListMessages(ctx context.Context, tenantContext tenant.Co
 	where := []string{
 		"wm.organization_id = $1::uuid",
 		"wm.conversation_id = $2::uuid",
+		"wm.capture_state is distinct from 'suppressed'",
 		conversationMessageLeadMatchSQL(),
 	}
 	if filter.ExpectedLeadID != "" {
@@ -896,6 +897,7 @@ func (repo Repository) GetMessageMediaURL(ctx context.Context, tenantContext ten
 		where wm.organization_id = $1::uuid
 		  and wc.organization_id = $1::uuid
 		  and wm.id = $5::uuid
+		  and wm.capture_state is distinct from 'suppressed'
 		  and `+messageMediaVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
 		limit 1
 	`, args...).Scan(

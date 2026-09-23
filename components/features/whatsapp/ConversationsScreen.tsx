@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { ConversationHeader } from "@/components/features/whatsapp/ConversationHeader";
 import { ConversationLeadPanel, ConversationUnregisteredPanel } from "@/components/features/whatsapp/ConversationLeadPanel";
+import { EnterAttendanceDialog } from "@/components/features/whatsapp/EnterAttendanceDialog";
 import {
   ConversationComposer,
   ConversationEmptyState,
@@ -27,6 +28,7 @@ import { normalizeSearchText } from "@/lib/search-text";
 import { useWhatsAppConversation, useWhatsAppConversationForLead, useWhatsAppConversationSnapshot, useWhatsAppConversations, useSendWhatsAppMessage, useReactToWhatsAppMessage, useMarkConversationAsRead, useWhatsAppLeadRealtime, useArchiveConversation, useDeleteConversation, useLinkConversationToLead, type WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
 import { useWhatsAppMessagesPaginated } from "@/hooks/use-whatsapp-messages-paginated";
 import { useAccessibleSessions } from "@/hooks/use-accessible-sessions";
+import { useWhatsAppAttendanceGate, type WhatsAppAttendanceTarget } from "@/hooks/use-whatsapp-attendance";
 import { getWhatsAppSendFailureStatus, resolveWhatsAppConversationSessionFilter } from "@/lib/whatsapp-query-cache";
 import { useRouter } from "next/navigation";
 import { toast } from "@/hooks/use-toast";
@@ -709,7 +711,32 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     () => getWhatsAppMessageInputState(selectedConversation, selectedSessionId, sessions),
     [selectedConversation, selectedSessionId, sessions],
   );
-  const messageInputDisabled = !canOperateWhatsApp || (activePlatform === "whatsapp"
+  const selectedAttendanceTarget = useMemo<WhatsAppAttendanceTarget | null>(() => {
+    if (
+      activePlatform !== "whatsapp"
+      || !selectedConversation?.id
+      || !selectedLeadId
+      || selectedConversation.historical_lead_view
+      || !whatsappMessageInputState.sendSessionId
+    ) {
+      return null;
+    }
+    return {
+      conversationId: selectedConversation.id,
+      expectedLeadId: selectedLeadId,
+      sendSessionId: whatsappMessageInputState.sendSessionId,
+    };
+  }, [
+    activePlatform,
+    selectedConversation,
+    selectedLeadId,
+    whatsappMessageInputState.sendSessionId,
+  ]);
+  const attendanceGate = useWhatsAppAttendanceGate(selectedAttendanceTarget, {
+    enabled: activePlatform === "whatsapp" && Boolean(selectedAttendanceTarget),
+    identityKey: `${activeTenantKey}:${selectedConversationId || "none"}:${selectedLeadId || "none"}:${whatsappMessageInputState.sendSessionId || "none"}`,
+  });
+  const messageInputDisabled = attendanceGate.isResolving || !canOperateWhatsApp || (activePlatform === "whatsapp"
     ? whatsappMessageInputState.disabled
     : sendMetaMessage.isPending);
   const messageInputPlaceholder = activePlatform === "whatsapp"
@@ -730,16 +757,19 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
 
     const textToSend = messageText.trim();
     const metaIdempotencyKey = activePlatform === 'whatsapp' ? null : createUUID();
-    setMessageText("");
 
     try {
       if (activePlatform === 'whatsapp') {
+        const joined = await attendanceGate.ensureJoined();
+        if (!joined) return;
+        setMessageText("");
         await sendTextMessage.mutateAsync({
           conversation: selectedConversation,
           text: textToSend,
           sendSessionId: whatsappMessageInputState.sendSessionId,
         });
       } else {
+        setMessageText("");
         await sendMetaMessage.mutateAsync({
           conversationId: selectedConversation.id,
           text: textToSend,
@@ -763,16 +793,19 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   };
 
   const handleSendAudio = async (base64: string, mimetype: string) => {
-    if (!canOperateWhatsApp || activePlatform !== "whatsapp" || !selectedConversation) return;
-    if (sendMediaMessage.isPending) return;
+    if (!canOperateWhatsApp || activePlatform !== "whatsapp" || !selectedConversation) return false;
+    if (sendMediaMessage.isPending) return false;
     if (whatsappMessageInputState.disabled) {
       toast({
         title: "Audio nao enviado",
         description: whatsappMessageInputState.placeholder,
         variant: "destructive",
       });
-      return;
+      return false;
     }
+
+    const joined = await attendanceGate.ensureJoined();
+    if (!joined) return false;
 
     await sendMediaMessage.mutateAsync({
       conversation: selectedConversation,
@@ -789,6 +822,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
       title: "Áudio enviado",
       description: "Sua mensagem de voz foi enviada"
     });
+    return true;
   };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -816,6 +850,11 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
+      return;
+    }
+    const joined = await attendanceGate.ensureJoined();
+    if (!joined) {
+      e.target.value = "";
       return;
     }
     try {
@@ -864,6 +903,24 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+  };
+  const handleReactToMessage = async (targetMessage: WhatsAppMessage, emoji: string) => {
+    if (activePlatform !== "whatsapp" || !selectedConversation) return;
+    const reactionSessionId = targetMessage.session_id || selectedConversation.session_id;
+    if (!selectedLeadId || !reactionSessionId) return;
+    const joined = await attendanceGate.ensureJoined({
+      target: {
+        conversationId: selectedConversation.id,
+        expectedLeadId: selectedLeadId,
+        sendSessionId: reactionSessionId,
+      },
+    });
+    if (!joined) return;
+    await reactToMessage.mutateAsync({
+      conversation: selectedConversation,
+      targetMessage,
+      emoji,
+    });
   };
   const handleArchive = (conv: WhatsAppConversation) => {
 	if (!canOperateWhatsApp || conv.historical_lead_view) return;
@@ -979,23 +1036,29 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   };
 
   const conversationOverlays = (
-    <ConversationOverlays
-      canCreateLeads={canCreateLeads}
-      createLeadOpen={createLeadOpen}
-      onCreateLeadOpenChange={setCreateLeadOpen}
-      createLeadContact={createLeadContact}
-      onLeadSaved={() => void refreshSelectedWhatsAppConversation()}
-      selectedLeadId={selectedLeadId}
-      selectedConversation={selectedConversation}
-      showAutomationDialog={showAutomationDialog}
-      onAutomationDialogOpenChange={setShowAutomationDialog}
-      pendingDeleteConversation={pendingDeleteConversation}
-      isDeletingConversation={deleteConversation.isPending}
-      onDeleteDialogOpenChange={(open) => {
-        if (!open && !deleteConversation.isPending) setPendingDeleteConversation(null);
-      }}
-      onConfirmDeleteConversation={() => void confirmDeleteConversation()}
-    />
+    <>
+      <ConversationOverlays
+        canCreateLeads={canCreateLeads}
+        createLeadOpen={createLeadOpen}
+        onCreateLeadOpenChange={setCreateLeadOpen}
+        createLeadContact={createLeadContact}
+        onLeadSaved={() => void refreshSelectedWhatsAppConversation()}
+        selectedLeadId={selectedLeadId}
+        selectedConversation={selectedConversation}
+        showAutomationDialog={showAutomationDialog}
+        onAutomationDialogOpenChange={setShowAutomationDialog}
+        pendingDeleteConversation={pendingDeleteConversation}
+        isDeletingConversation={deleteConversation.isPending}
+        onDeleteDialogOpenChange={(open) => {
+          if (!open && !deleteConversation.isPending) setPendingDeleteConversation(null);
+        }}
+        onConfirmDeleteConversation={() => void confirmDeleteConversation()}
+      />
+      <EnterAttendanceDialog
+        {...attendanceGate.dialogProps}
+        contactName={selectedConversation?.lead?.name || selectedConversation?.contact_name}
+      />
+    </>
   );
 
   // Mobile: Show either conversation list OR chat (not both)
@@ -1032,11 +1095,8 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 selectedLeadId={selectedLeadId}
                 onRetryMedia={retryMediaDownload}
                 reactionsByMessageId={reactionsByMessageId}
-                onReact={(targetMessage, emoji) => reactToMessage.mutateAsync({
-                  conversation: selectedConversation,
-                  targetMessage,
-                  emoji,
-                })}
+                attendanceEntries={attendanceGate.entries}
+                onReact={handleReactToMessage}
                 reactingMessageId={reactToMessage.isPending
                   ? reactToMessage.variables?.targetMessage.id ?? null
                   : null}
@@ -1255,11 +1315,8 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 selectedLeadId={selectedLeadId}
                 onRetryMedia={retryMediaDownload}
                 reactionsByMessageId={reactionsByMessageId}
-                onReact={(targetMessage, emoji) => reactToMessage.mutateAsync({
-                  conversation: selectedConversation,
-                  targetMessage,
-                  emoji,
-                })}
+                attendanceEntries={attendanceGate.entries}
+                onReact={handleReactToMessage}
                 reactingMessageId={reactToMessage.isPending
                   ? reactToMessage.variables?.targetMessage.id ?? null
                   : null}

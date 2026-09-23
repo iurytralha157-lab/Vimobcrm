@@ -196,6 +196,20 @@ func TestNativeEvolutionFixtures(t *testing.T) {
 		}
 	})
 
+	t.Run("missing provider timestamp fails closed for attendance", func(t *testing.T) {
+		message, ok := normalizeNativeEvolutionMessage(map[string]any{
+			"Info": map[string]any{"Sender": "5511999991111@s.whatsapp.net"},
+			"key": map[string]any{
+				"id":        "provider-without-timestamp",
+				"remoteJid": "5511999991111@s.whatsapp.net",
+			},
+			"Message": map[string]any{"conversation": "mensagem antiga"},
+		})
+		if !ok || !message.ProviderTimestampMissing {
+			t.Fatalf("message without provider time was not marked unsafe: %#v, %v", message, ok)
+		}
+	})
+
 	t.Run("button click is a real lead message", func(t *testing.T) {
 		payload, err := decodeNativeEvolutionPayload([]byte(`{
 			"event":"ButtonClick",
@@ -1770,7 +1784,7 @@ func TestNativeProcessorKeepsOutboxBeforeMessageLockOrder(t *testing.T) {
 	}
 	messageProcessorBody := source[messageProcessorStart:statusStart]
 	outboundLock := strings.Index(messageProcessorBody, "lockNativeOutboundOutbox(ctx, tx, session, message.ProviderMessageID)")
-	messageInsert := strings.Index(messageProcessorBody, "insertNativeEvolutionMessage(ctx, tx, session, conversation, message)")
+	messageInsert := strings.Index(messageProcessorBody, "insertNativeEvolutionMessage(ctx, tx, session, conversation, message,")
 	if outboundLock < 0 || messageInsert < 0 || outboundLock >= messageInsert {
 		t.Fatal("outgoing webhook must lock its outbox row before any duplicate message lock")
 	}

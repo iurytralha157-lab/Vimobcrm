@@ -96,6 +96,7 @@ test("claim is tied to the canonical inbound row and insert ownership", async ()
     /\.eq\("organization_id", input\.organizationId\)/,
     /\.eq\("session_id", input\.sessionId\)/,
     /\.eq\("conversation_id", input\.conversationId\)/,
+    /\.eq\("capture_state", "captured"\)/,
     /\.eq\("message_id", input\.providerMessageId\)/,
     /\.eq\("from_me", false\)/,
     /\.eq\("message_type", "text"\)/,
@@ -106,6 +107,25 @@ test("claim is tied to the canonical inbound row and insert ownership", async ()
   assert.match(claim, /ignoreDuplicates: true/);
   assert.match(claim, /\.select\("id"\)\s*\.maybeSingle\(\)/s);
   assert.match(claim, /inserted\?\.id === id/);
+});
+
+test("AI never reads or claims a suppressed pre-attendance message", async () => {
+  const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
+  for (const [start, end, predicate] of [
+    ["async function getInboundMessageIdentity", "async function claimAIResponse", /\.eq\("capture_state", "captured"\)/],
+    ["async function claimAIResponse", "function responseClaimMetadata", /\.eq\("capture_state", "captured"\)/],
+    ["async function getCompactHistory", "function buildSystemPrompt", /\.or\("capture_state\.is\.null,capture_state\.neq\.suppressed"\)/],
+    ["async function detectHumanTakeover", "function isAutomationSenderName", /\.or\("capture_state\.is\.null,capture_state\.neq\.suppressed"\)/],
+  ]) {
+    const from = source.indexOf(start);
+    const to = source.indexOf(end, from + start.length);
+    assert.ok(from >= 0 && to > from, `${start} source range missing`);
+    assert.match(
+      source.slice(from, to),
+      predicate,
+      `${start} must reject suppressed rows while keeping legacy history`,
+    );
+  }
 });
 
 test("completion keeps tenant/session ownership and outbox IDs are deterministic", async () => {
@@ -156,12 +176,9 @@ test("multi-chunk outbox stops on a canonical takeover and records suppression",
     /return \{ kind: "suppressed", reason: pauseReason, queuedChunks \}/,
   );
   assert.match(outbox, /return \{ kind: "queued", queuedChunks \}/);
-  assert.match(outbox, /conversationUpdate\.eq\("last_message_at"/);
-  assert.match(outbox, /conversationUpdate\.is\("last_message_at", null\)/);
-  assert.match(outbox, /conversationUpdate\.eq\("last_message"/);
-  assert.match(outbox, /conversationUpdate\.is\("last_message", null\)/);
-  assert.match(outbox, /conversationUpdateError/);
-  assert.match(outbox, /Conversation changed before AI outbox finalization/);
+  assert.doesNotMatch(outbox, /\.from\("whatsapp_messages"\)/);
+  assert.doesNotMatch(outbox, /\.from\("whatsapp_conversations"\)/);
+  assert.match(outbox, /delivery worker alone may create canonical history/);
 
   for (const resultName of ["handoffOutboxResult", "outboxResult"]) {
     const resultCheck = handler.indexOf(

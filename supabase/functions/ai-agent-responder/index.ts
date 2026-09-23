@@ -598,6 +598,7 @@ async function getInboundMessageIdentity(supabase: any, input: {
       .eq("organization_id", input.organizationId)
       .eq("session_id", input.sessionId)
       .eq("conversation_id", input.conversationId)
+      .eq("capture_state", "captured")
       .eq(column, input.providerMessageId)
       .eq("from_me", false)
       .eq("message_type", "text")
@@ -638,6 +639,7 @@ async function claimAIResponse(supabase: any, input: {
     .eq("organization_id", input.organizationId)
     .eq("session_id", input.sessionId)
     .eq("conversation_id", input.conversationId)
+    .eq("capture_state", "captured")
     .eq("message_id", input.providerMessageId)
     .eq("from_me", false)
     .eq("message_type", "text")
@@ -1673,6 +1675,7 @@ async function getCompactHistory(
     .eq("organization_id", organizationId)
     .eq("conversation_id", conversationId)
     .eq("lead_id", currentLeadId)
+    .or("capture_state.is.null,capture_state.neq.suppressed")
     .eq("message_type", "text")
     .order("sent_at", { ascending: false })
     .limit(limit);
@@ -1873,8 +1876,6 @@ async function insertOutboxMessage(
   const currentLeadId = requireCurrentLeadId(conversation.lead_id);
 
   const chunks = splitAssistantMessages(content);
-  let lastContent = chunks[chunks.length - 1] || content;
-  let lastSentAt = new Date().toISOString();
   let queuedChunks = 0;
 
   for (const [chunkIndex, chunk] of chunks.entries()) {
@@ -1882,10 +1883,6 @@ async function insertOutboxMessage(
       responseClaimId,
       chunkIndex,
     );
-    const now = new Date().toISOString();
-    lastContent = chunk;
-    lastSentAt = now;
-
     // A response can contain several WhatsApp messages. Re-read the canonical
     // takeover state immediately before every individual outbox insert so a
     // human takeover between chunks stops the remaining response.
@@ -1915,63 +1912,12 @@ async function insertOutboxMessage(
       throw error;
     }
 
-    const { error: historyError } = await supabase
-      .from("whatsapp_messages")
-      .upsert({
-        conversation_id: conversation.id,
-        session_id: conversation.session_id,
-        organization_id: organizationId,
-        lead_id: currentLeadId,
-        message_id: clientMessageId,
-        client_message_id: clientMessageId,
-        from_me: true,
-        content: chunk,
-        message_type: "text",
-        remote_jid: conversation.remote_jid,
-        status: "pending",
-        sent_at: now,
-        sender_name: "Jhenny",
-      }, { onConflict: "session_id,message_id" });
-
-    if (historyError) {
-      console.error("[ai-agent-responder] Error inserting optimistic AI history:", historyError);
-      throw historyError;
-    }
     queuedChunks += 1;
   }
 
-  let conversationUpdate = supabase
-    .from("whatsapp_conversations")
-    .update({
-      last_message: lastContent,
-      last_message_at: lastSentAt,
-      unread_count: 0,
-      updated_at: lastSentAt,
-    })
-    .eq("id", conversation.id)
-    .eq("organization_id", organizationId)
-    .eq("session_id", conversation.session_id);
-
-  conversationUpdate = conversationUpdate.eq("lead_id", currentLeadId);
-
-  // Optimistic history inserts can touch conversation.updated_at through a
-  // trigger, so use the inbound last-message snapshot as the CAS token. A
-  // human/manual or concurrent response changes this snapshot and prevents
-  // the AI from overwriting the newer conversation preview.
-  conversationUpdate = conversation.last_message_at
-    ? conversationUpdate.eq("last_message_at", conversation.last_message_at)
-    : conversationUpdate.is("last_message_at", null);
-  conversationUpdate = conversation.last_message !== null &&
-      conversation.last_message !== undefined
-    ? conversationUpdate.eq("last_message", conversation.last_message)
-    : conversationUpdate.is("last_message", null);
-
-  const { data: updatedConversation, error: conversationUpdateError } =
-    await conversationUpdate.select("id").maybeSingle();
-  if (conversationUpdateError) throw conversationUpdateError;
-  if (updatedConversation?.id !== conversation.id) {
-    throw new Error("Conversation changed before AI outbox finalization");
-  }
+  // The delivery worker alone may create canonical history and project a
+  // preview, after rechecking this outbox against the exact joined binding.
+  // Optimistic plaintext would be committed before that attendance proof.
 
   try {
     await fetch(`${privateWorker.supabaseUrl}/functions/v1/message-sender`, {
@@ -2176,6 +2122,7 @@ async function detectHumanTakeover(
     .eq("organization_id", organizationId)
     .eq("conversation_id", conversationId)
     .eq("lead_id", currentLeadId)
+    .or("capture_state.is.null,capture_state.neq.suppressed")
     .eq("from_me", true)
     .not("sender_name", "is", null)
     .gte("sent_at", since)

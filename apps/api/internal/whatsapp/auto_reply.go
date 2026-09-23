@@ -186,10 +186,11 @@ func (handler Handler) runAutoReplyNow(ctx context.Context, input autoReplyInput
 
 	clientMessageID := autoReplyClientMessagePrefix + replyContext.Message.ID
 	sendResponse, err := handler.repo.SendMessage(ctx, replyContext.Tenant, replyContext.Conversation.ID, sendMessageInput{
-		Text:            output,
-		SendSessionID:   replyContext.Session.ID,
-		ClientMessageID: clientMessageID,
-		ExpectedLeadID:  pointerValue(replyContext.Conversation.LeadID),
+		Text:               output,
+		SendSessionID:      replyContext.Session.ID,
+		ClientMessageID:    clientMessageID,
+		ExpectedLeadID:     pointerValue(replyContext.Conversation.LeadID),
+		InternalAutomation: true,
 	})
 	if errors.Is(err, ErrConversationNotFound) {
 		return AutoReplyResponse{OK: true, Skipped: true, Reason: "binding_changed"}, nil
@@ -298,6 +299,7 @@ func (repo Repository) loadAutoReplyContext(ctx context.Context, input autoReply
 			  and event_message.conversation_id = wc.id
 			  and event_message.session_id = wc.session_id
 			  and event_message.lead_id = wc.lead_id
+			  and event_message.capture_state is distinct from 'suppressed'
 		  )
 		  and wc.deleted_at is null
 		limit 1
@@ -317,6 +319,7 @@ func (repo Repository) loadAutoReplyContext(ctx context.Context, input autoReply
 		  and wm.conversation_id = $3::uuid
 		  and wm.session_id = $4::uuid
 		  and wm.lead_id = $5::uuid
+		  and wm.capture_state is distinct from 'suppressed'
 		limit 1
 	`, session.OrganizationID, input.MessageID, conversation.ID, session.ID, input.ExpectedLeadID))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -406,6 +409,7 @@ func autoReplyExistsWithQuerier(ctx context.Context, querier autoReplyExistsQuer
 			from public.whatsapp_messages
 			where organization_id = $1::uuid
 			  and conversation_id = $2::uuid
+			  and capture_state is distinct from 'suppressed'
 			  and (
 			    (
 			      from_me = true

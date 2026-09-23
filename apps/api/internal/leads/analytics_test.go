@@ -1,10 +1,29 @@
 package leads
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 )
+
+func TestLeadHistoryDoesNotExposeManagedMessageFingerprint(t *testing.T) {
+	source, err := os.ReadFile("analytics.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"'metadata', e.metadata - 'message_fingerprint'",
+		"coalesce(e.metadata, '{}'::jsonb) - 'message_fingerprint'",
+		"'metadata', e.metadata - 'message_fingerprint'",
+		"'payload', e.payload - 'message_fingerprint'",
+	} {
+		if !strings.Contains(string(source), required) {
+			t.Fatalf("lead history query lost fingerprint redaction: %s", required)
+		}
+	}
+}
 
 type historyJSONRow struct {
 	raw []byte

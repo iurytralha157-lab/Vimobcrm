@@ -200,6 +200,7 @@ async function filterRedistributableLeads(
       .from("whatsapp_messages")
       .select("lead_id, created_at, from_me, sender_user_id")
       .in("lead_id", queueLeadIds)
+      .or("capture_state.is.null,capture_state.neq.suppressed")
       .gte("created_at", earliestActivityBoundary),
   ]);
 

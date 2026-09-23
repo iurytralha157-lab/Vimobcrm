@@ -711,6 +711,16 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 		recordWhatsAppOutboxDeliveryFailure(lane)
 		return repo.failWhatsAppOutbox(ctx, item, fmt.Errorf("invalid outbox payload"), true, false)
 	}
+	attended, err := repo.whatsappOutboxAttendanceCurrent(ctx, item)
+	if err != nil {
+		return err
+	}
+	if !attended {
+		// Pre-migration and suppressed queued work must not cross the provider
+		// boundary merely because it was already in a durable outbox.
+		recordWhatsAppOutboxDeliveryFailure(lane)
+		return repo.failWhatsAppOutbox(ctx, item, ErrAttendanceRequired, true, false)
+	}
 	permanentSessionFailure, sessionErr := repo.validateWhatsAppOutboxSession(ctx, item)
 	if sessionErr != nil {
 		recordWhatsAppOutboxDeliveryFailure(lane)
@@ -838,6 +848,56 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 	}
 	recordWhatsAppOutboxSent(lane)
 	return nil
+}
+
+func (repo Repository) whatsappOutboxAttendanceCurrent(ctx context.Context, item pendingWhatsAppOutbox) (bool, error) {
+	var attended bool
+	err := repo.db.Pool().QueryRow(ctx, `
+		select exists (
+			select 1
+			from public.whatsapp_messages as message
+			join public.whatsapp_conversations as conversation
+			  on conversation.id = message.conversation_id
+			 and conversation.organization_id = message.organization_id
+			 and conversation.session_id = message.session_id
+			 and conversation.lead_id = message.lead_id
+			 and conversation.deleted_at is null
+			join public.whatsapp_conversation_lead_bindings as binding
+			  on binding.organization_id = message.organization_id
+			 and binding.conversation_id = message.conversation_id
+			 and binding.session_id = message.session_id
+			 and binding.lead_id = message.lead_id
+			 and binding.active_to is null
+			 and binding.stale = false
+			join public.whatsapp_attendance_entries as attendance
+			  on attendance.organization_id = binding.organization_id
+			 and attendance.conversation_id = binding.conversation_id
+			 and attendance.session_id = binding.session_id
+			 and attendance.lead_id = binding.lead_id
+			 and attendance.binding_id = binding.id
+			join public.whatsapp_sessions as session
+			  on session.organization_id = attendance.organization_id
+			 and session.id = attendance.session_id
+			 and session.owner_user_id = attendance.user_id
+			 and session.provider = 'evolution_go'
+			 and coalesce(session.is_active, true) = true
+			 and coalesce(session.status, '') not in ('deleted', 'disabled')
+			join public.users as actor
+			  on actor.id = attendance.user_id
+			 and actor.organization_id = attendance.organization_id
+			 and coalesce(actor.is_active, false) = true
+			join public.organization_members as member
+			  on member.organization_id = attendance.organization_id
+			 and member.user_id = attendance.user_id
+			 and coalesce(member.is_active, true) = true
+			where message.id = $1::uuid
+			  and message.organization_id = $2::uuid
+			  and message.session_id = $3::uuid
+			  and message.conversation_id = $4::uuid
+			  and message.capture_state = 'captured'
+		)
+	`, item.MessageRowID, item.OrganizationID, item.SessionID, item.ConversationID).Scan(&attended)
+	return attended, err
 }
 
 func finalizeAcceptedWhatsAppOutbox(
@@ -1495,6 +1555,7 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 			from public.whatsapp_messages as message
 			where message.id = $1::uuid
 			  and message.organization_id = $2::uuid
+			  and message.capture_state is distinct from 'suppressed'
 			  and message.lead_id = lead.id
 			  and lead.organization_id = message.organization_id
 		`, canonicalMessageID, item.OrganizationID); err != nil {
@@ -1525,6 +1586,7 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 			from public.whatsapp_messages as message
 			where message.id = $1::uuid
 			  and message.organization_id = $2::uuid
+			  and message.capture_state is distinct from 'suppressed'
 			  and timeline.organization_id = message.organization_id
 			  and timeline.lead_id = message.lead_id
 			  and timeline.metadata->>'outbox_id' = $3
@@ -1561,6 +1623,7 @@ func (repo Repository) completeWhatsAppOutbox(ctx context.Context, item pendingW
 				from public.whatsapp_messages as message
 				where message.id = $1::uuid
 				  and message.organization_id = $2::uuid
+				  and message.capture_state is distinct from 'suppressed'
 				  and message.lead_id is not null
 			`, canonicalMessageID, item.OrganizationID, item.ID, providerMessageID, item.ClientMessageID); err != nil {
 				return err

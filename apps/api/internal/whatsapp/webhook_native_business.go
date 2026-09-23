@@ -410,17 +410,19 @@ func resolveNativeLeadAssignment(ctx context.Context, tx pgx.Tx, session nativeE
 }
 
 func resolveNativeActiveSessionOwner(ctx context.Context, tx pgx.Tx, session nativeEvolutionSession) (string, error) {
-	for _, candidate := range uniqueStrings(session.OwnerUserID, session.CreatedBy) {
-		if candidate == "" {
-			continue
-		}
-		valid, err := nativeOrganizationUserExists(ctx, tx, session.OrganizationID, candidate)
-		if err != nil {
-			return "", err
-		}
-		if valid {
-			return candidate, nil
-		}
+	// A session creator is not necessarily its current owner. Only the active
+	// current owner may receive a no-queue CTWA card or be recorded as its
+	// creator. Connected-at-card-creation is captured by the SQL origin proof;
+	// a transient disconnect must not block creation of the lead itself.
+	if strings.TrimSpace(session.OwnerUserID) == "" {
+		return "", nil
+	}
+	valid, err := nativeOrganizationUserExists(ctx, tx, session.OrganizationID, session.OwnerUserID)
+	if err != nil {
+		return "", err
+	}
+	if valid {
+		return session.OwnerUserID, nil
 	}
 	return "", nil
 }
@@ -525,6 +527,7 @@ func applyNativeInboundBusinessEffects(
 	message nativeEvolutionMessage,
 	messageRowID string,
 	rule nativeInboundRule,
+	suppressLeadMessage bool,
 ) error {
 	// A conversation has one current binding, while a replayed provider event
 	// can still belong to an older logical card. All immutable event effects use
@@ -601,7 +604,7 @@ func applyNativeInboundBusinessEffects(
 	}
 	if !message.IsCTWAAd {
 		if rule.ManagedMessageDistribution {
-			return processNativeManagedWhatsAppLeadEntry(ctx, tx, session, conversation, message, rule)
+			return processNativeManagedWhatsAppLeadEntry(ctx, tx, session, conversation, message, rule, suppressLeadMessage)
 		}
 		return nil
 	}
@@ -697,7 +700,7 @@ func applyNativeInboundBusinessEffects(
 		return err
 	}
 	if rule.ManagedMessageDistribution {
-		return processNativeManagedWhatsAppLeadEntry(ctx, tx, session, conversation, message, rule)
+		return processNativeManagedWhatsAppLeadEntry(ctx, tx, session, conversation, message, rule, suppressLeadMessage)
 	}
 	return nil
 }
@@ -734,6 +737,7 @@ const nativeHandledMessageTransportReconcileQuery = `
 	    updated_at = now()
 	where message.organization_id = $1::uuid
 	  and message.session_id = $2::uuid
+	  and message.capture_state is distinct from 'suppressed'
 	  and (message.provider_message_id = $3 or message.message_id = $3)
 	  and coalesce(message.from_me, false) = false
 	  and lower(coalesce(message.direction, 'inbound')) <> 'outbound'
@@ -803,20 +807,22 @@ func processNativeManagedWhatsAppLeadEntry(
 	conversation nativeEvolutionConversation,
 	message nativeEvolutionMessage,
 	rule nativeInboundRule,
+	suppressLeadMessage bool,
 ) error {
 	var result []byte
 	if err := tx.QueryRow(ctx, `
-		select public.process_managed_whatsapp_lead_entry(
+		select public.process_managed_whatsapp_lead_entry_attendance(
 			p_organization_id => $1::uuid,
 			p_lead_id => $2::uuid,
 			p_session_id => $3::uuid,
 			p_rule_id => $4::uuid,
 			p_provider_message_id => $5,
 			p_message => $6,
-			p_occurred_at => $7::timestamptz
+			p_occurred_at => $7::timestamptz,
+			p_suppress_lead_message => $8::boolean
 		)
 	`, session.OrganizationID, conversation.LeadID, session.ID, rule.ID,
-		message.ProviderMessageID, message.Content, message.SentAt).Scan(&result); err != nil {
+		message.ProviderMessageID, message.Content, message.SentAt, suppressLeadMessage).Scan(&result); err != nil {
 		return err
 	}
 	if err := validateNativeManagedWhatsAppLeadEntryResult(result); err != nil {

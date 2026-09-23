@@ -214,3 +214,35 @@ test('the remaining internal caller keeps its POST legacy-service-role contract'
   assert.match(call, /Authorization:\s*`Bearer \$\{[^}]+\}`/)
   assert.match(call, /body:\s*JSON\.stringify\(/)
 })
+
+test('legacy outbox requires exact joined card before history, provider and preview', async () => {
+  const source = await readRepositoryFile('supabase/functions/message-sender/index.ts')
+  const loopStart = source.indexOf('for (const owned of ownedMessages)')
+  const providerCall = source.indexOf('const data = provider === "evolution_go"', loopStart)
+  const guardedFlow = source.slice(loopStart, providerCall)
+  const proof = source.slice(
+    source.indexOf('async function loadOutboundAttendanceEntry'),
+    source.indexOf('async function updateConversationPreviewIfSnapshotCurrent'),
+  )
+
+  ordered(guardedFlow, [
+    'await loadOutboundBindingSnapshot(supabase, message)',
+    'await loadOutboundAttendanceEntry(',
+    'await ensurePendingMessageHistory(',
+    'makeDispatchingLeaseMarker(',
+  ])
+  for (const field of ['organization_id', 'conversation_id', 'session_id', 'lead_id', 'binding_id']) {
+    assert.match(proof, new RegExp(`\\.eq\\("${field}"`))
+  }
+  assert.match(proof, /\.from\("whatsapp_sessions"\)[\s\S]*?\.select\("owner_user_id, is_active, status"\)/)
+  assert.match(proof, /message\.created_by[\s\S]*?ownerUserId\.toLowerCase\(\)/)
+  assert.match(proof, /\.from\("users"\)/)
+  assert.match(proof, /\.from\("organization_members"\)/)
+  assert.match(proof, /\.eq\("user_id", ownerUserId\)/)
+  assert.match(proof, /Date\.parse\(message\.created_at\)/)
+  assert.match(proof, /Number\.isFinite\(queuedAt\)/)
+  assert.match(proof, /\.lt\("joined_at", new Date\(queuedAt\)\.toISOString\(\)\)/)
+  assert.match(source, /capture_state: "captured"/)
+  assert.match(source, /existing\.capture_state !== "captured"/)
+  assert.match(source, /attendance_entry_id: attendanceEntryId/)
+})

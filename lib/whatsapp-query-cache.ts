@@ -217,6 +217,17 @@ export const whatsappQueryKeys = {
     conversationId,
     leadId ?? MISSING_SCOPE_VALUE,
   ] as const,
+  attendance: (
+    scope: WhatsAppQueryScope,
+    conversationId: string | null,
+    expectedLeadId: string | null,
+    sendSessionId: string | null,
+  ) => [
+    ...scopedPrefix('whatsapp-attendance', scope),
+    conversationId,
+    expectedLeadId ?? MISSING_SCOPE_VALUE,
+    sendSessionId ?? MISSING_SCOPE_VALUE,
+  ] as const,
   messagesScope: (scope: WhatsAppQueryScope) =>
     scopedPrefix('whatsapp-messages', scope),
   messagesForConversation: (scope: WhatsAppQueryScope, conversationId: string) => [
@@ -282,6 +293,7 @@ const WHATSAPP_QUERY_ROOTS = new Set([
   'whatsapp-conversation',
   'whatsapp-conversation-snapshot',
   'whatsapp-conversation-history',
+  'whatsapp-attendance',
   'whatsapp-messages',
   'whatsapp-messages-paginated',
   'lead-messages',

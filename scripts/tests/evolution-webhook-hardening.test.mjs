@@ -90,7 +90,10 @@ test("legacy handler rejects the canonical Go worker contract before privileged 
   assert.ok(bodyRead > adminKey);
   assert.match(source.slice(workerRejection, adminKey), /status: 409/);
   assert.doesNotMatch(source.slice(adminKey), /usesInternalWorkerLease|deliveryContract/);
-  assert.doesNotMatch(source, /\.from\("whatsapp_webhook_inbox"\)/);
+  assert.doesNotMatch(
+    source.slice(workerRejection, adminKey),
+    /\.from\("whatsapp_webhook_inbox"\)/,
+  );
 });
 
 test("direct callback sessions are active Evolution rows revalidated before effects", async () => {
@@ -158,4 +161,59 @@ test("outbound echo records first response once with the canonical contract", as
     /body: JSON\.stringify\(\{\s*lead_id: conversation\.lead_id,\s*channel: "whatsapp",\s*actor_user_id: session\.owner_user_id \|\| null,\s*is_automation: isAutomationMessage,\s*organization_id: session\.organization_id,\s*\}\)/,
   );
   assert.doesNotMatch(source, /external_message_id:\s*messageId/);
+});
+
+test("direct Evolution callback admits messages only after exact attendance entry", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const handler = source.slice(source.indexOf("async function handleMessagesUpsert"));
+  const gate = source.slice(
+    source.indexOf("async function resolveLegacyAttendanceCapture"),
+    source.indexOf("Deno.serve(async (req) =>"),
+  );
+
+  assert.match(gate, /\.from\("whatsapp_conversation_lead_bindings"\)/);
+  for (const identity of ["organization_id", "conversation_id", "session_id", "lead_id", "binding_id"]) {
+    assert.match(gate, new RegExp(`\\.eq\\("${identity}"`));
+  }
+  assert.match(gate, /\.from\("whatsapp_webhook_inbox"\)[\s\S]*?\.select\("created_at"\)/);
+  assert.match(gate, /\.lte\("joined_at", providerOccurredAt\)/);
+  assert.match(gate, /\.lte\("joined_at", inboxAcceptedAt\)/);
+  assert.match(gate, /providerOccurredByInboxAcceptance\(providerOccurredAt, inboxAcceptedAt\)/);
+  assert.match(gate, /!leadId \|\| !bindingIsCurrent \|\| !providerOccurredAt/);
+  const ownerRecheck = gate.indexOf('const { data: currentSession, error: currentSessionError }');
+  const activeOwner = gate.indexOf('.from("users")', ownerRecheck);
+  const activeMembership = gate.indexOf('.from("organization_members")', activeOwner);
+  const entryLookup = gate.indexOf('.from("whatsapp_attendance_entries")', activeMembership);
+  assert.ok(ownerRecheck > gate.indexOf('providerOccurredByInboxAcceptance(providerOccurredAt, inboxAcceptedAt)'));
+  assert.ok(activeOwner > ownerRecheck);
+  assert.ok(activeMembership > activeOwner);
+  assert.ok(entryLookup > activeMembership);
+  assert.match(gate, /\.from\("whatsapp_sessions"\)[\s\S]*?\.eq\("provider", "evolution"\)[\s\S]*?\.eq\("is_active", true\)/);
+  assert.match(gate, /\.from\("users"\)[\s\S]*?\.eq\("id", ownerUserId\)[\s\S]*?\.eq\("is_active", true\)/);
+  assert.match(gate, /\.from\("organization_members"\)[\s\S]*?\.eq\("user_id", ownerUserId\)/);
+  assert.match(gate, /memberResult\.data\.is_active === false/);
+  assert.match(gate, /\.eq\("binding_id", binding\.id\)\s*\.eq\("user_id", ownerUserId\)/);
+  assert.match(gate, /const resumedCaptured = Boolean\([\s\S]*?existingCaptureState === "captured"/);
+  assert.match(gate, /existingCaptureMetadata\?\.attendance_capture\?\.entry_id/);
+  assert.match(gate, /existingCaptureMetadata\?\.whatsapp_attendance_capture\?\.attendance_entry_id/);
+  assert.match(gate, /!resumedCaptured \|\| entry\.id === persistedEntryId/);
+  assert.doesNotMatch(gate, /existingCaptureState === "captured" \|\| existingCaptureState === "suppressed"/);
+  assert.match(handler, /\.select\("id, conversation_id, lead_id, sender_name, client_message_id, capture_state, metadata"\)/);
+  assert.match(handler, /existingAutomationMsg\?\.capture_state,\s*existingAutomationMsg\?\.id,\s*existingAutomationMsg\?\.metadata/);
+  assert.match(handler, /normalizeEvolutionProviderOccurredAt\(\s*messageData\.messageTimestamp/);
+  const captureDecision = handler.indexOf('const capture = await resolveLegacyAttendanceCapture(');
+  const previewProjection = handler.indexOf('last_message: content', captureDecision);
+  const mediaWork = handler.indexOf('// Process media if exists', captureDecision);
+  const canonicalWrite = handler.indexOf('.from("whatsapp_messages")', mediaWork);
+  assert.ok(captureDecision >= 0 && previewProjection > captureDecision);
+  assert.ok(mediaWork > captureDecision && canonicalWrite > mediaWork);
+  assert.match(handler, /capture_state: capture\.state/);
+  assert.match(handler, /content: captured \? content : ""/);
+  assert.match(handler, /if \(captured && messageType !== "text"\)/);
+  assert.match(handler, /if \(captured && !fromMe && messageLeadId/);
+  assert.match(handler, /if \(captured && fromMe && !isGroup/);
+  assert.match(handler, /if \(captured && !fromMe && !isGroup/);
+  assert.match(handler, /last_message: null,[\s\S]*last_message_preview: null/);
+  assert.match(handler, /message: null,\s*initial_message: null/);
+  assert.doesNotMatch(handler, /first_message: firstMessage/);
 });

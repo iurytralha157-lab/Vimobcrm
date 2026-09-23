@@ -47,6 +47,7 @@ func reactionTargetAuthorizationSQL(canViewOwn bool) string {
 		  and wc.id = $5::uuid
 		  and wm.id = $6::uuid
 		  and wc.lead_id = $7::uuid
+		  and wm.capture_state is distinct from 'suppressed'
 		  and wc.deleted_at is null
 		  and ` + conversationMessageLeadMatchSQL() + `
 		  and wm.message_type <> 'reaction'
@@ -150,6 +151,21 @@ func (repo Repository) ReactToMessage(
 		return ReactToMessageResponse{}, err
 	}
 
+	bindingID, err := attendanceBindingID(ctx, tx, tenantContext.OrganizationID,
+		target.ConversationID, target.SessionID, target.LeadID)
+	if err != nil {
+		return ReactToMessageResponse{}, err
+	}
+	attendanceEntryID, err := currentAttendanceEntry(ctx, tx, tenantContext.OrganizationID,
+		target.ConversationID, target.SessionID, target.LeadID, bindingID,
+		tenantContext.UserID)
+	if err != nil {
+		return ReactToMessageResponse{}, err
+	}
+	if attendanceEntryID == "" {
+		return ReactToMessageResponse{}, ErrAttendanceRequired
+	}
+
 	actorJID, validActorJID := canonicalWhatsAppSelfJID(target.SessionPhone)
 	if !validActorJID {
 		return ReactToMessageResponse{}, fmt.Errorf("%w: connected WhatsApp session has no phone number", ErrInvalidReference)
@@ -168,13 +184,20 @@ func (repo Repository) ReactToMessage(
 			message_id, client_message_id, from_me, direction, content, message_type,
 			reaction_to_message_id, reaction_emoji, reaction_sender_jid,
 			reaction_sender_name, remote_jid, sender_jid, sender_name, status, sent_at,
-			metadata
+			metadata, capture_state
 		) values (
 			$1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid,
 			$6, $7, true, 'outbound', nullif($8, ''), 'reaction',
 			$9, nullif($8, ''), $10, nullif($11, ''), $12, $10,
 			nullif($11, ''), 'queued', now(),
-			jsonb_build_object('delivery', 'outbox', 'intent', 'reaction')
+			jsonb_build_object(
+			  'delivery', 'outbox',
+			  'intent', 'reaction',
+			  'attendance_entry_id', $13::uuid,
+			  'whatsapp_attendance_capture', jsonb_build_object(
+			    'state', 'captured', 'attendance_entry_id', $13::uuid
+			  )
+			), 'captured'
 		)
 		on conflict (organization_id, session_id, client_message_id)
 		  where client_message_id is not null
@@ -182,7 +205,7 @@ func (repo Repository) ReactToMessage(
 		returning id::text
 	`, tenantContext.OrganizationID, target.ConversationID, target.SessionID, target.LeadID,
 		tenantContext.UserID, providerRequestID, input.ClientReactionID, input.Emoji,
-		target.ProviderMessageID, actorJID, senderName, target.RemoteJID).Scan(&reactionRowID)
+		target.ProviderMessageID, actorJID, senderName, target.RemoteJID, attendanceEntryID).Scan(&reactionRowID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		existing, existingErr := scanMessage(tx.QueryRow(ctx, `
 			select `+messageSelectFields()+`

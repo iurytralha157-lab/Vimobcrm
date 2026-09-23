@@ -17,6 +17,10 @@ import {
 } from "./request-security.ts";
 import { privateWorkerRequestHeaders } from "../_shared/private-worker-auth.ts";
 import { buildDistributionIdempotencyKey } from "../_shared/distribution-idempotency.ts";
+import {
+  normalizeEvolutionProviderOccurredAt,
+  providerOccurredByInboxAcceptance,
+} from "./provider-timestamp.ts";
 
 const MAGIC_BYTES: Record<string, string[]> = {
   "image/jpeg": ["FFD8FF"],
@@ -424,6 +428,150 @@ async function activateLegacyWhatsAppConversationLeadBinding(
     eventLeadId: data.lead_id as string,
     activeLeadId: data.active_lead_id as string,
     isCurrent: data.is_current === true,
+  };
+}
+
+type LegacyAttendanceCapture = {
+  state: "captured" | "suppressed" | "legacy";
+  attendanceEntryId: string | null;
+  bindingId: string | null;
+};
+
+// The direct Evolution callback has a durable inbox claim but does not create a
+// routing snapshot. Its two independent time fences (provider occurrence and
+// inbox acceptance) must both precede the explicit card/session entry. Missing
+// identity or timestamps suppress capture; a phone match alone never grants it.
+async function resolveLegacyAttendanceCapture(
+  supabase: any,
+  session: any,
+  conversation: any,
+  leadId: string | null,
+  bindingIsCurrent: boolean,
+  providerOccurredAt: string | null,
+  claim: OwnedEvolutionMessageClaim,
+  existingCaptureState: string | null | undefined,
+  existingMessageId: string | null | undefined,
+  existingCaptureMetadata: any,
+): Promise<LegacyAttendanceCapture> {
+  const resumedCaptured = Boolean(
+    claim.resumed && existingMessageId && existingCaptureState === "captured",
+  );
+  const persistedEntryId = String(
+    existingCaptureMetadata?.attendance_capture?.entry_id ||
+      existingCaptureMetadata?.whatsapp_attendance_capture?.attendance_entry_id ||
+      existingCaptureMetadata?.attendance_entry_id || "",
+  ).trim();
+  if (claim.resumed && existingMessageId) {
+    if (existingCaptureState === "suppressed") {
+      return { state: existingCaptureState, attendanceEntryId: null, bindingId: null };
+    }
+    if (existingCaptureState === null || existingCaptureState === "legacy") {
+      // Rows persisted before the capture migration retain their legacy state.
+      return { state: "legacy", attendanceEntryId: null, bindingId: null };
+    }
+    if (!resumedCaptured) throw new Error("legacy_whatsapp_capture_state_invalid");
+    if (!persistedEntryId) {
+      // An old captured row remains historical, but it cannot replay effects
+      // without proving that its original entry still belongs to this owner.
+      return { state: "suppressed", attendanceEntryId: null, bindingId: null };
+    }
+  }
+  if (!leadId || !bindingIsCurrent || !providerOccurredAt) {
+    return { state: "suppressed", attendanceEntryId: null, bindingId: null };
+  }
+
+  const { data: binding, error: bindingError } = await supabase
+    .from("whatsapp_conversation_lead_bindings")
+    .select("id")
+    .eq("organization_id", session.organization_id)
+    .eq("conversation_id", conversation.id)
+    .eq("session_id", session.id)
+    .eq("lead_id", leadId)
+    .eq("stale", false)
+    .is("active_to", null)
+    .maybeSingle();
+  if (bindingError) throw bindingError;
+  if (!binding?.id) {
+    return { state: "suppressed", attendanceEntryId: null, bindingId: null };
+  }
+
+  const { data: inbox, error: inboxError } = await supabase
+    .from("whatsapp_webhook_inbox")
+    .select("created_at")
+    .eq("id", claim.claimId)
+    .eq("organization_id", session.organization_id)
+    .eq("session_id", session.id)
+    .maybeSingle();
+  if (inboxError) throw inboxError;
+  const inboxAcceptedAt = typeof inbox?.created_at === "string"
+    ? inbox.created_at
+    : null;
+  if (!providerOccurredByInboxAcceptance(providerOccurredAt, inboxAcceptedAt)) {
+    return { state: "suppressed", attendanceEntryId: null, bindingId: binding.id };
+  }
+
+  // The entry belongs to the current owner of this WhatsApp session, not to
+  // someone who owned it when they joined. Check this before the caller writes
+  // a conversation preview or stores any media.
+  const { data: currentSession, error: currentSessionError } = await supabase
+    .from("whatsapp_sessions")
+    .select("owner_user_id")
+    .eq("organization_id", session.organization_id)
+    .eq("id", session.id)
+    .eq("provider", "evolution")
+    .eq("is_active", true)
+    .neq("status", "deleted")
+    .neq("status", "disabled")
+    .maybeSingle();
+  if (currentSessionError) throw currentSessionError;
+  const ownerUserId = currentSession?.owner_user_id || null;
+  if (!ownerUserId) {
+    return { state: "suppressed", attendanceEntryId: null, bindingId: binding.id };
+  }
+
+  const [ownerResult, memberResult] = await Promise.all([
+    supabase.from("users")
+      .select("id")
+      .eq("id", ownerUserId)
+      .eq("organization_id", session.organization_id)
+      .eq("is_active", true)
+      .maybeSingle(),
+    supabase.from("organization_members")
+      .select("user_id, is_active")
+      .eq("organization_id", session.organization_id)
+      .eq("user_id", ownerUserId)
+      .maybeSingle(),
+  ]);
+  if (ownerResult.error) throw ownerResult.error;
+  if (memberResult.error) throw memberResult.error;
+  if (!ownerResult.data?.id || !memberResult.data?.user_id ||
+      memberResult.data.is_active === false) {
+    return { state: "suppressed", attendanceEntryId: null, bindingId: binding.id };
+  }
+
+  const { data: entry, error: entryError } = await supabase
+    .from("whatsapp_attendance_entries")
+    .select("id")
+    .eq("organization_id", session.organization_id)
+    .eq("conversation_id", conversation.id)
+    .eq("session_id", session.id)
+    .eq("lead_id", leadId)
+    .eq("binding_id", binding.id)
+    .eq("user_id", ownerUserId)
+    .lte("joined_at", providerOccurredAt)
+    .lte("joined_at", inboxAcceptedAt)
+    .order("joined_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (entryError) throw entryError;
+  const capturedEntryId = entry?.id &&
+      (!resumedCaptured || entry.id === persistedEntryId)
+    ? entry.id
+    : null;
+  return {
+    state: capturedEntryId ? "captured" : "suppressed",
+    attendanceEntryId: capturedEntryId,
+    bindingId: binding.id,
   };
 }
 
@@ -964,7 +1112,7 @@ async function handleMessagesUpsert(
       const { data: existingAutomationMsg, error: existingMessageError } =
         await supabase
           .from("whatsapp_messages")
-		  .select("id, conversation_id, lead_id, sender_name, client_message_id")
+		  .select("id, conversation_id, lead_id, sender_name, client_message_id, capture_state, metadata")
 		  .eq("organization_id", session.organization_id)
           .eq("session_id", session.id)
           .eq("message_id", messageId)
@@ -1156,9 +1304,10 @@ async function handleMessagesUpsert(
       }
 
       // Get timestamp
-      const timestamp = messageData.messageTimestamp ||
-        Math.floor(Date.now() / 1000);
-      const messageDate = new Date(Number(timestamp) * 1000).toISOString();
+      const providerOccurredAt = normalizeEvolutionProviderOccurredAt(
+        messageData.messageTimestamp,
+      );
+      const messageDate = providerOccurredAt || new Date().toISOString();
 
       let messageLeadId: string | null = null;
       let messageBindingIsCurrent = true;
@@ -1201,9 +1350,10 @@ async function handleMessagesUpsert(
             contact_name: initialContactName,
             contact_phone: contactPhone,
             is_group: isGroup,
-            last_message: content,
-            last_message_at: messageDate,
-            unread_count: fromMe ? 0 : 1,
+            last_message: null,
+            last_message_preview: null,
+            last_message_at: null,
+            unread_count: 0,
           })
           .select()
           .single();
@@ -1245,11 +1395,12 @@ async function handleMessagesUpsert(
               conversation,
               contactName,
               contactPhone,
-              content,
               messageId,
               isFromFacebookAds,
               adSource,
-              { rule: matchedRule, adContext, utm },
+              // UTM tokens extracted from message text are routing evidence,
+              // not pre-attendance lead history or attribution payload.
+              { rule: matchedRule, adContext, utm: {} },
             );
             if (leadResolution && "quarantined" in leadResolution && leadResolution.quarantined) {
               leadResolutionQuarantineReason = leadResolution.reason || "whatsapp_lead_resolution_ambiguous";
@@ -1300,8 +1451,6 @@ async function handleMessagesUpsert(
         }
       } else {
         // Update existing conversation
-        const unreadIncrement = fromMe ? 0 : 1;
-
         // ===== FIX: Only update name if it's a received message with a real name =====
         // Don't overwrite with phone number or our own name
         let updatedContactName = conversation.contact_name;
@@ -1322,11 +1471,6 @@ async function handleMessagesUpsert(
           .update({
             remote_jid: remoteJid,
             contact_name: updatedContactName,
-            last_message: content,
-            last_message_at: messageDate,
-            unread_count: fromMe
-              ? 0
-              : (conversation.unread_count || 0) + unreadIncrement,
           })
           .eq("id", conversation.id);
 
@@ -1389,11 +1533,10 @@ async function handleMessagesUpsert(
               conversation,
               contactName,
               contactPhone,
-              content,
               messageId,
               isFromFacebookAds,
               adSource,
-              { rule: matchedRule, adContext, utm },
+              { rule: matchedRule, adContext, utm: {} },
             );
             if (leadResolution && "quarantined" in leadResolution && leadResolution.quarantined) {
               leadResolutionQuarantineReason = leadResolution.reason || "whatsapp_lead_resolution_ambiguous";
@@ -1443,35 +1586,56 @@ async function handleMessagesUpsert(
       if (!messageLeadId && !leadResolutionQuarantineReason) {
         messageLeadId = conversation.lead_id || null;
       }
-      if (previousConversationSummary && (!messageBindingIsCurrent || leadResolutionQuarantineReason)) {
-        // A historical replay or quarantined identity belongs to no current
-        // card summary. Undo the eager legacy preview/unread mutation without
-        // touching a newer concurrently persisted message.
-        await supabase
-          .from("whatsapp_conversations")
-          .update(previousConversationSummary)
-          .eq("organization_id", session.organization_id)
-          .eq("id", conversation.id)
-          .eq("last_message_at", messageDate);
-	  } else if (
-		messageBindingIsCurrent
-		&& messageLeadId
-		&& previousConversationLeadId !== messageLeadId
-	  ) {
-		// A card switch starts a fresh operational summary. The previous card's
-		// unread badge/preview must never be inherited, while this event becomes
-		// the first current message of the newly activated card.
-		await supabase
-		  .from("whatsapp_conversations")
-		  .update({
-			last_message: content,
-			last_message_preview: content,
-			last_message_at: messageDate,
-			unread_count: fromMe ? 0 : 1,
-		  })
-		  .eq("organization_id", session.organization_id)
-		  .eq("id", conversation.id)
-		  .eq("lead_id", messageLeadId);
+      if (!ownedClaim) throw new EvolutionMessageClaimError();
+      const capture = await resolveLegacyAttendanceCapture(
+        supabase,
+        session,
+        conversation,
+        leadResolutionQuarantineReason ? null : messageLeadId,
+        messageBindingIsCurrent,
+        providerOccurredAt,
+        ownedClaim,
+        existingAutomationMsg?.capture_state,
+        existingAutomationMsg?.id,
+        existingAutomationMsg?.metadata,
+      );
+      const captured = capture.state === "captured";
+      const switchedCard = previousConversationLeadId !== messageLeadId;
+      if (
+        capture.state !== "legacy" && messageLeadId && messageBindingIsCurrent &&
+        !leadResolutionQuarantineReason
+      ) {
+        if (captured) {
+          const { error: summaryError } = await supabase
+            .from("whatsapp_conversations")
+            .update({
+              last_message: content,
+              last_message_preview: content,
+              last_message_at: messageDate,
+              unread_count: fromMe ? 0 : switchedCard
+                ? 1
+                : (previousConversationSummary?.unread_count || 0) + 1,
+            })
+            .eq("organization_id", session.organization_id)
+            .eq("id", conversation.id)
+            .eq("lead_id", messageLeadId);
+          if (summaryError) throw summaryError;
+        } else if (switchedCard) {
+          // Never carry the previous card's preview into a new card, even
+          // when the new card has no attendance participant yet.
+          const { error: resetError } = await supabase
+            .from("whatsapp_conversations")
+            .update({
+              last_message: null,
+              last_message_preview: null,
+              last_message_at: null,
+              unread_count: 0,
+            })
+            .eq("organization_id", session.organization_id)
+            .eq("id", conversation.id)
+            .eq("lead_id", messageLeadId);
+          if (resetError) throw resetError;
+        }
       }
 
       // Process media if exists - download and store permanently
@@ -1481,7 +1645,7 @@ async function handleMessagesUpsert(
       let mediaStoragePath: string | null = null;
       const normalizedMimeType = normalizeMimeType(mediaMimeType);
 
-      if (messageType !== "text") {
+      if (captured && messageType !== "text") {
         try {
           // Log media processing attempt
           console.log(
@@ -1626,16 +1790,19 @@ async function handleMessagesUpsert(
             lead_id: leadResolutionQuarantineReason ? null : messageLeadId,
             message_id: messageId,
             from_me: fromMe,
-            content,
-            message_type: messageType,
-            media_url: permanentMediaUrl || null,
-            media_mime_type: normalizedMimeType || null,
-            media_status: mediaStatusForInsert,
-            media_storage_path: mediaStoragePath,
+            capture_state: capture.state,
+            content: captured ? content : "",
+            message_type: captured ? messageType : "text",
+            media_url: captured ? permanentMediaUrl || null : null,
+            media_mime_type: captured ? normalizedMimeType || null : null,
+            media_status: captured ? mediaStatusForInsert : null,
+            media_storage_path: captured ? mediaStoragePath : null,
             status: fromMe ? "sent" : "received",
             sent_at: messageDate,
-            sender_jid: senderJid,
-            sender_name: isAutomationMessage ? "Automação" : senderName,
+            sender_jid: captured ? senderJid : null,
+            sender_name: captured
+              ? (isAutomationMessage ? "Automação" : senderName)
+              : null,
             metadata: leadResolutionQuarantineReason
               ? {
                 lead_resolution_quarantine: {
@@ -1643,6 +1810,13 @@ async function handleMessagesUpsert(
                   terminal: true,
                   retryable: false,
                   recorded_at: new Date().toISOString(),
+                },
+              }
+              : captured
+              ? {
+                attendance_capture: {
+                  entry_id: capture.attendanceEntryId,
+                  binding_id: capture.bindingId,
                 },
               }
               : {},
@@ -1675,7 +1849,7 @@ async function handleMessagesUpsert(
         );
 
         // ===== TIMELINE LOGGING: Log incoming messages to lead_timeline_events =====
-        if (!fromMe && messageLeadId && !leadResolutionQuarantineReason) {
+        if (captured && !fromMe && messageLeadId && !leadResolutionQuarantineReason) {
           try {
             await supabase.from("lead_timeline_events").insert({
               organization_id: session.organization_id,
@@ -1702,7 +1876,7 @@ async function handleMessagesUpsert(
         }
 
         // If media failed to download, create a job for the media-worker
-        if (mediaStatusForInsert === "pending" && insertedMessage?.id) {
+        if (captured && mediaStatusForInsert === "pending" && insertedMessage?.id) {
           console.log(`Creating media job for message ${insertedMessage.id}`);
           const { error: jobError } = await supabase.from("media_jobs").insert({
             organization_id: session.organization_id,
@@ -1761,7 +1935,7 @@ async function handleMessagesUpsert(
         }
 
         // ===== FIRST RESPONSE TRACKING: Track when broker sends message via native WhatsApp =====
-        if (fromMe && !isGroup && conversation.lead_id) {
+        if (captured && fromMe && !isGroup && conversation.lead_id) {
           // If this is a manual message (fromMe = true and not from automation), stop any active automations
           if (!isAutomationMessage) {
             console.log(
@@ -1811,7 +1985,7 @@ async function handleMessagesUpsert(
         // trigger. `zz_automation_inbound_message` enqueues the durable event
         // exactly once; the retired event-shaped POST to automation-trigger is
         // intentionally not repeated here (that worker only accepts batch_size).
-        if (!fromMe && !isGroup && !leadResolutionQuarantineReason && messageBindingIsCurrent) {
+        if (captured && !fromMe && !isGroup && !leadResolutionQuarantineReason && messageBindingIsCurrent) {
           // ===== AI AGENT: Auto-respond to incoming text messages =====
           if (messageType === "text" && content) {
             try {
@@ -2461,7 +2635,6 @@ async function createLeadFromConversation(
   conversation: any,
   contactName: string,
   contactPhone: string,
-  firstMessage: string,
   providerMessageId: string,
   isFromAds: boolean = false,
   adSource: string | null = null,
@@ -2545,7 +2718,7 @@ async function createLeadFromConversation(
             from_ads: isFromAds,
             ad_source: adSource || null,
             phone: contactPhone,
-            first_message: firstMessage,
+            first_message: null,
             provider_message_id: providerMessageId,
             campaign_name: campaignName,
             utm_source: hubCtx?.utm?.utm_source || null,
@@ -2702,8 +2875,11 @@ async function createLeadFromConversation(
         organization_id: session.organization_id,
         name: contactName,
         phone: contactPhone,
-        message: firstMessage,
-        initial_message: firstMessage,
+        // The inbound text has not been admitted to this new card yet.
+        // Rule matching happened in memory before the insert; never persist
+        // plaintext in lead fields that administrators can read or subscribe.
+        message: null,
+        initial_message: null,
         source: leadSource,
         pipeline_id: pipelineId,
         stage_id: stage.id,
@@ -2790,7 +2966,7 @@ async function createLeadFromConversation(
             p_entry_subtype: "whatsapp_reentry",
             p_metadata: {
               phone: contactPhone,
-              first_message: firstMessage,
+              first_message: null,
               provider_message_id: providerMessageId,
               inbound_rule_id: rule?.id || null,
               queue_scope_compatibility_fallback: isLegacyPhoneConflict,

@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { integrationsAPI } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
-import { metaConnectErrorMessage } from "@/lib/meta-connect-error";
 import { toast } from "sonner";
 import {
   metaAdAccountsActionResponseSchema,
@@ -92,21 +91,9 @@ export function useMetaConnectPage() {
         ad_account_id: adAccountId,
         selected_ad_accounts: selectedAdAccountIds,
       }, organizationId).then((result) => metaConnectPageActionResponseSchema.parse(result)),
-    onSuccess: (data) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["meta-integrations"] });
       queryClient.invalidateQueries({ queryKey: ["meta-form-configs"] });
-      if (data.missing_permissions.includes("ads_read")) {
-        toast.warning(
-          "Página conectada, mas o Meta não liberou ads_read. Reconecte a conta para ativar a sincronização da Dashboard de Marketing.",
-        );
-      } else if (data.messenger_active === false) {
-        toast.success("A página foi conectada para leads. Mensagens do Messenger exigem permissão adicional.");
-      } else {
-        toast.success("Página conectada com sucesso!");
-      }
-    },
-    onError: (error: unknown) => {
-      toast.error(`Erro ao conectar página: ${metaConnectErrorMessage(error)}`);
     },
   });
 }

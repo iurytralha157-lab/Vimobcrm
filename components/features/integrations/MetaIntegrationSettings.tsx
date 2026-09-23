@@ -62,6 +62,7 @@ import { cn } from "@/lib/utils";
 import { normalizeSearchText } from "@/lib/search-text";
 import { useAuth } from "@/contexts/AuthContext";
 import { VimobAPIError } from "@/lib/api/vimob-client";
+import { metaConnectErrorMessage } from "@/lib/meta-connect-error";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import {
@@ -292,6 +293,7 @@ export function MetaIntegrationSettings({
   const [forms, setForms] = useState<MetaForm[]>([]);
   const [formsLoading, setFormsLoading] = useState(false);
   const [formsLoadError, setFormsLoadError] = useState<string | null>(null);
+  const [pageConfirmationInProgress, setPageConfirmationInProgress] = useState(false);
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [editingForm, setEditingForm] = useState<MetaForm | null>(null);
   const [editingConfig, setEditingConfig] = useState<MetaFormConfig | undefined>();
@@ -302,6 +304,7 @@ export function MetaIntegrationSettings({
   const handledOAuthStatusRef = useRef<string | number | null>(null);
   const handledOAuthMessageRef = useRef<string | number | null>(null);
   const formsRequestSequenceRef = useRef(0);
+  const pageConfirmationInProgressRef = useRef(false);
 
   const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId;
@@ -682,34 +685,60 @@ export function MetaIntegrationSettings({
   };
 
   const connectAndLoadPage = async (page: MetaPage) => {
+    if (pageConfirmationInProgressRef.current) return;
     if (!selectedAccount?.flowId) {
       toast.error("A autorização expirou. Conecte a conta Meta novamente.");
       return;
     }
 
-    const result = await connectPage.mutateAsync({
-      pageId: page.id,
-      flowId: selectedAccount.flowId,
-      adAccountId: selectedAccount.adAccountId,
-    });
+    pageConfirmationInProgressRef.current = true;
+    setPageConfirmationInProgress(true);
+    try {
+      let result: Awaited<ReturnType<typeof connectPage.mutateAsync>> | null = null;
+      let connectError: unknown = null;
+      try {
+        result = await connectPage.mutateAsync({
+          pageId: page.id,
+          flowId: selectedAccount.flowId,
+          adAccountId: selectedAccount.adAccountId,
+        });
+      } catch (error) {
+        connectError = error;
+      }
 
-    const refreshed = await refetchIntegrations();
-    const integration = (refreshed.data || []).find((item) => item.page_id === page.id);
-    const pendingOAuth = retainPendingOAuthPages(newOAuth, page.id);
-    if (integration) {
+      // A network failure or a failed flow finalization may happen after the
+      // integration was saved. Check the server state before reporting an outcome.
+      const refreshed = await refetchIntegrations();
+      const integration = refreshed.isSuccess
+        ? (refreshed.data || []).find((item) => item.page_id === page.id && item.is_connected === true)
+        : undefined;
+      if (connectError && !integration) {
+        toast.error(`Erro ao conectar página: ${metaConnectErrorMessage(connectError)}`);
+        return;
+      }
+      if (!integration) {
+        toast.warning("A conexão foi enviada, mas não foi possível confirmar a página no CRM. Atualize a lista antes de tentar novamente.");
+        return;
+      }
+
+      if (connectError) {
+        toast.warning("A página consta conectada no CRM, mas a nova autorização não pôde ser confirmada. Confira os formulários antes de tentar novamente.");
+      } else if (result?.missing_permissions.includes("ads_read")) {
+        toast.warning("Página conectada, mas o Meta não liberou ads_read. Reconecte a conta para ativar a sincronização da Dashboard de Marketing.");
+      } else if (result?.messenger_active === false) {
+        toast.success("A página foi conectada para leads. Mensagens do Messenger exigem permissão adicional.");
+      } else {
+        toast.success("Página conectada com sucesso!");
+      }
+
+      const pendingOAuth = retainPendingOAuthPages(newOAuth, page.id);
       setNewOAuth(pendingOAuth);
       setSelectedAccountKey(pendingOAuth ? "new-oauth" : getIntegrationAccountKey(integration));
       setPendingPage(null);
       await loadFormsForIntegration(integration);
-    } else if (result?.success) {
-      setNewOAuth(pendingOAuth);
-      setSelectedAccountKey(pendingOAuth ? "new-oauth" : "");
-      setPendingPage(null);
-      toast.success(
-        pendingOAuth
-          ? "Página conectada. Você pode vincular outra página desta conta."
-          : "Página conectada. Reabra o wizard se os formulários não aparecerem agora.",
-      );
+    } finally {
+      pageConfirmationInProgressRef.current = false;
+      setPageConfirmationInProgress(false);
     }
   };
 
@@ -1413,6 +1442,7 @@ export function MetaIntegrationSettings({
                                 active && "bg-primary/10 ring-1 ring-inset ring-primary/30",
                               )}
                               onClick={() => handleSelectPage(page)}
+                              disabled={pageConfirmationInProgress}
                             >
                               <div className="flex min-w-0 items-start gap-2.5">
                                 <Avatar className="h-9 w-9 shrink-0"><AvatarImage src={picture || undefined} /><AvatarFallback>{name?.[0] || "F"}</AvatarFallback></Avatar>
@@ -1463,7 +1493,7 @@ export function MetaIntegrationSettings({
                       </div>
                     </div>
                     <ScrollArea className="h-[460px] pr-2">
-                      {formsLoading || connectPage.isPending ? (
+                      {formsLoading || pageConfirmationInProgress ? (
                         <div className="flex h-40 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin" /></div>
                       ) : pendingPage ? (
                         <div className="flex min-h-[300px] items-center justify-center p-3">
@@ -1498,9 +1528,9 @@ export function MetaIntegrationSettings({
                             <Button
                               className="h-9 w-full rounded-[6px] text-[12px] font-light shadow-none"
                               onClick={() => connectAndLoadPage(pendingPage)}
-                              disabled={connectPage.isPending}
+                              disabled={pageConfirmationInProgress}
                             >
-                              {connectPage.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                              {pageConfirmationInProgress && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                               {pendingPageIntegration
                                 ? "Atualizar conexão da página"
                                 : "Confirmar e conectar página"}

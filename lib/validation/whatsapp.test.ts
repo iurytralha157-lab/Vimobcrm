@@ -10,6 +10,8 @@ import {
   sendWhatsAppMessageInputSchema,
   startWhatsAppConversationInputSchema,
   whatsAppConversationResponseSchema,
+  whatsAppAttendanceRequestSchema,
+  whatsAppAttendanceResponseSchema,
   whatsAppHistoryResponseSchema,
   whatsAppMessagesResponseSchema,
   whatsAppSessionStatusesResponseSchema,
@@ -132,6 +134,38 @@ test('exige texto ou midia no envio', () => {
 	assert.equal(sendWhatsAppMessageInputSchema.safeParse({ text: '', mediaUrl: 'https://example.com/foto.jpg', expectedLeadId: ID }).success, true)
 	assert.equal(sendWhatsAppMessageInputSchema.safeParse({ text: '', expectedLeadId: ID }).success, false)
 	assert.equal(sendWhatsAppMessageInputSchema.safeParse({ text: 'Ola' }).success, false)
+})
+
+test('valida consulta e entrada no atendimento por card e sessao', () => {
+	const emojiDisplayName = '😀'.repeat(180)
+	assert.equal(whatsAppAttendanceRequestSchema.safeParse({
+		expectedLeadId: ID,
+		sendSessionId: ORG_ID,
+	}).success, true)
+	assert.equal(whatsAppAttendanceRequestSchema.safeParse({
+		expectedLeadId: ID,
+	}).success, false)
+
+	assert.equal(whatsAppAttendanceResponseSchema.safeParse({
+		data: {
+			joined: true,
+			currentEntry: {
+				id: ID,
+				userId: USER_ID,
+				userName: emojiDisplayName,
+				sessionId: ORG_ID,
+				joinedAt: '2026-09-23T12:00:00.000Z',
+			},
+			entries: [{
+				id: ID,
+				userId: USER_ID,
+				userName: emojiDisplayName,
+				sessionId: ORG_ID,
+				joinedAt: '2026-09-23T12:00:00.000Z',
+			}],
+			created: true,
+		},
+	}).success, true)
 })
 
 test('valida lista de sessoes e cota', () => {

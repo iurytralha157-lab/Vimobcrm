@@ -16,6 +16,8 @@ export type HistoryActor = {
 export type TimelineEventRow = {
   id: string;
   event_type: string;
+  title?: string | null;
+  description?: string | null;
   metadata?: HistoryMetadata | null;
   user_id?: string | null;
   actor_user_id?: string | null;

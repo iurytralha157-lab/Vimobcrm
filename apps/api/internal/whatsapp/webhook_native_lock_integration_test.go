@@ -288,7 +288,7 @@ func TestNativeTransportIdentityCollisionFailsClosedAcrossRebind(t *testing.T) {
 		ReactionTargetID:  reactionIdentity,
 		ReactionEmoji:     "👍",
 		SentAt:            time.Now().UTC(),
-	})
+	}, time.Now().UTC(), nil)
 	_ = reactionTx.Rollback(context.Background())
 	if !errors.Is(reactionErr, errNativeEvolutionTransportIdentityConflict) {
 		t.Fatalf("cross-card reaction error = %v, want transport identity conflict", reactionErr)
@@ -527,11 +527,11 @@ func TestNativeMessageMutationLockOrderWithRebindAndFinalizer(t *testing.T) {
 		insert into public.whatsapp_messages (
 			organization_id, conversation_id, session_id, lead_id,
 			provider_message_id, message_id, from_me, direction,
-			message_type, content, remote_jid, status, sent_at
+			message_type, content, remote_jid, status, sent_at, capture_state
 		) values (
 			$1::uuid, $2::uuid, $3::uuid, $4::uuid,
 			$5, $5, false, 'inbound', 'text', 'delete target',
-			'5511999910101@s.whatsapp.net', 'received', now()
+			'5511999910101@s.whatsapp.net', 'received', now(), 'captured'
 		)
 		returning id::text
 	`, organizationID, conversationID, sessionID, leadAID, suffix+"-delete-target").Scan(&deletionTargetID); err != nil {
@@ -591,14 +591,33 @@ func TestNativeMessageMutationLockOrderWithRebindAndFinalizer(t *testing.T) {
 		insert into public.whatsapp_messages (
 			organization_id, conversation_id, session_id, lead_id,
 			provider_message_id, message_id, from_me, direction,
-			message_type, content, remote_jid, status, sent_at
+			message_type, content, remote_jid, status, sent_at, capture_state
 		) values (
 			$1::uuid, $2::uuid, $3::uuid, $4::uuid,
 			$5, $5, false, 'inbound', 'text', 'reaction target',
-			'5511999910101@s.whatsapp.net', 'received', now()
+			'5511999910101@s.whatsapp.net', 'received', now(), 'captured'
 		)
 		returning id::text
 	`, organizationID, conversationID, sessionID, leadBID, suffix+"-reaction-target").Scan(&reactionTargetID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		insert into public.whatsapp_attendance_entries (
+			organization_id, conversation_id, session_id, lead_id,
+			binding_id, user_id, actor_name_snapshot, joined_at,
+			ingress_sequence_cutoff
+		)
+		select $1::uuid, $2::uuid, $3::uuid, $4::uuid,
+		       binding.id, $5::uuid, 'Lock test actor',
+		       now() - interval '1 minute', 0
+		from public.whatsapp_conversation_lead_bindings binding
+		where binding.organization_id = $1::uuid
+		  and binding.conversation_id = $2::uuid
+		  and binding.session_id = $3::uuid
+		  and binding.lead_id = $4::uuid
+		  and binding.active_to is null
+		on conflict do nothing
+	`, organizationID, conversationID, sessionID, leadBID, userID); err != nil {
 		t.Fatal(err)
 	}
 	clientMessageID := suffix + "-client"
@@ -680,7 +699,7 @@ func TestNativeMessageMutationLockOrderWithRebindAndFinalizer(t *testing.T) {
 			ReactionTargetID:  suffix + "-reaction-target",
 			ReactionEmoji:     "👍",
 			SentAt:            time.Now().UTC(),
-		})
+		}, time.Now().UTC(), nil)
 		if reactionErr == nil {
 			reactionErr = reactionTx.Commit(ctx)
 		}

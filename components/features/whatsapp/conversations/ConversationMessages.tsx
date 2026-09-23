@@ -1,12 +1,14 @@
-import { useState, type RefObject, type UIEventHandler } from "react";
+import { useMemo, useState, type RefObject, type UIEventHandler } from "react";
 import { ArrowDown, Loader2, MessageSquare } from "lucide-react";
 
 import { DateSeparator, shouldShowDateSeparator } from "@/components/features/whatsapp/DateSeparator";
 import { MessageBubble } from "@/components/features/whatsapp/MessageBubble";
 import { MessageErrorBoundary } from "@/components/features/whatsapp/MessageErrorBoundary";
+import { AttendanceTimelineEvents } from "@/components/features/whatsapp/AttendanceTimelineEvents";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
+import type { WhatsAppAttendanceEntry } from "@/lib/api/whatsapp";
 import { canReactToWhatsAppMessage, type GroupedWhatsAppReaction } from "@/lib/whatsapp-reactions";
 import { cn } from "@/lib/utils";
 
@@ -38,7 +40,12 @@ type ConversationMessagesProps = {
   reactionsByMessageId: Map<string, GroupedWhatsAppReaction[]>;
   onReact: (message: WhatsAppMessage, emoji: string) => Promise<unknown>;
   reactingMessageId?: string | null;
+  attendanceEntries?: WhatsAppAttendanceEntry[];
 };
+
+type ConversationTimelineItem =
+  | { kind: "message"; id: string; timestamp: string; message: DisplayMessage }
+  | { kind: "attendance"; id: string; timestamp: string; entry: WhatsAppAttendanceEntry };
 
 export function ConversationMessages({
   layout,
@@ -61,6 +68,7 @@ export function ConversationMessages({
   reactionsByMessageId,
   onReact,
   reactingMessageId,
+  attendanceEntries = [],
 }: ConversationMessagesProps) {
   const isMobile = layout === "mobile";
   const [scrollState, setScrollState] = useState({
@@ -69,6 +77,27 @@ export function ConversationMessages({
   });
   const showScrollToLatest = scrollState.conversationId === conversation.id
     && scrollState.awayFromBottom;
+  const timelineItems = useMemo<ConversationTimelineItem[]>(() => {
+    const messageItems: ConversationTimelineItem[] = messages.map((message) => ({
+      kind: "message",
+      id: `message-${message.id}`,
+      timestamp: message.sent_at,
+      message,
+    }));
+    if (activePlatform !== "whatsapp") return messageItems;
+
+    return [
+      ...messageItems,
+      ...attendanceEntries.map((entry): ConversationTimelineItem => ({
+        kind: "attendance",
+        id: `attendance-${entry.id}`,
+        timestamp: entry.joinedAt,
+        entry,
+      })),
+    ].sort((left, right) => (
+      new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime()
+    ));
+  }, [activePlatform, attendanceEntries, messages]);
 
   const handleScrollCapture: UIEventHandler<HTMLDivElement> = (event) => {
     const target = event.currentTarget.querySelector<HTMLElement>("[data-radix-scroll-area-viewport]")
@@ -131,50 +160,56 @@ export function ConversationMessages({
               </div>
               <Button size="sm" variant="secondary" onClick={onRetryMessages}>Tentar novamente</Button>
             </div>
-          ) : messages.length === 0 ? (
+          ) : timelineItems.length === 0 ? (
             <div className={cn("flex flex-col items-center justify-center py-12", isMobile && "text-center")}>
               <MessageSquare className="w-8 h-8 text-muted-foreground mb-2" />
               <p className="text-sm text-muted-foreground">Nenhuma mensagem</p>
             </div>
-          ) : messages.map((message, index) => {
-            const previousMessage = index > 0 ? messages[index - 1] : null;
-            const showSeparator = shouldShowDateSeparator(message.sent_at, previousMessage?.sent_at || null);
+          ) : timelineItems.map((item, index) => {
+            const previousItem = index > 0 ? timelineItems[index - 1] : null;
+            const showSeparator = shouldShowDateSeparator(item.timestamp, previousItem?.timestamp || null);
             return (
-              <MessageErrorBoundary key={message.id} messageId={message.id}>
-                {showSeparator && <DateSeparator date={new Date(message.sent_at)} />}
-                <MessageBubble
-                  content={message.content}
-                  messageType={message.message_type}
-                  mediaUrl={message.media_url}
-                  mediaMimeType={message.media_mime_type}
-                  mediaStatus={message.media_status ?? null}
-                  mediaError={message.media_error ?? null}
-                  fromMe={message.from_me}
-                  status={message.status ?? "sent"}
-                  sentAt={message.sent_at}
-                  senderName={message.sender_name ?? null}
-                  isGroup={conversation.is_group}
-                  onRetryMedia={canOperateWhatsApp ? () => onRetryMedia(message.id) : undefined}
-                  messageId={message.id}
-                  leadId={canOperateLeads ? selectedLeadId || "" : ""}
-                  leadName={conversation.lead?.name || conversation.contact_name || "Contato"}
-                  contactAvatarUrl={getConversationAvatarUrl(conversation)}
-                  conversationRemoteJid={conversation.remote_jid}
-                  conversationSessionId={conversation.session_id}
-                  reactionPickerPosition="outside"
-                  reactions={(message.message_id ? reactionsByMessageId.get(message.message_id) : undefined)
-                    || reactionsByMessageId.get(message.id)
-                    || []}
-                  onReact={activePlatform === "whatsapp"
-                    && canOperateWhatsApp
-                    && Boolean(conversation.session_id)
-                    && Boolean(message.session_id)
-                    && canReactToWhatsAppMessage(message)
-                    ? (emoji) => onReact(message as WhatsAppMessage, emoji)
-                    : undefined}
-                  isReacting={reactingMessageId === message.id}
-                />
-              </MessageErrorBoundary>
+              <div key={item.id}>
+                {showSeparator && <DateSeparator date={new Date(item.timestamp)} />}
+                {item.kind === "attendance" ? (
+                  <AttendanceTimelineEvents entries={[item.entry]} />
+                ) : (
+                  <MessageErrorBoundary messageId={item.message.id}>
+                    <MessageBubble
+                      content={item.message.content}
+                      messageType={item.message.message_type}
+                      mediaUrl={item.message.media_url}
+                      mediaMimeType={item.message.media_mime_type}
+                      mediaStatus={item.message.media_status ?? null}
+                      mediaError={item.message.media_error ?? null}
+                      fromMe={item.message.from_me}
+                      status={item.message.status ?? "sent"}
+                      sentAt={item.message.sent_at}
+                      senderName={item.message.sender_name ?? null}
+                      isGroup={conversation.is_group}
+                      onRetryMedia={canOperateWhatsApp ? () => onRetryMedia(item.message.id) : undefined}
+                      messageId={item.message.id}
+                      leadId={canOperateLeads ? selectedLeadId || "" : ""}
+                      leadName={conversation.lead?.name || conversation.contact_name || "Contato"}
+                      contactAvatarUrl={getConversationAvatarUrl(conversation)}
+                      conversationRemoteJid={conversation.remote_jid}
+                      conversationSessionId={conversation.session_id}
+                      reactionPickerPosition="outside"
+                      reactions={(item.message.message_id ? reactionsByMessageId.get(item.message.message_id) : undefined)
+                        || reactionsByMessageId.get(item.message.id)
+                        || []}
+                      onReact={activePlatform === "whatsapp"
+                        && canOperateWhatsApp
+                        && Boolean(conversation.session_id)
+                        && Boolean(item.message.session_id)
+                        && canReactToWhatsAppMessage(item.message)
+                        ? (emoji) => onReact(item.message as WhatsAppMessage, emoji)
+                        : undefined}
+                      isReacting={reactingMessageId === item.message.id}
+                    />
+                  </MessageErrorBoundary>
+                )}
+              </div>
             );
           })}
           <div ref={messagesEndRef} />

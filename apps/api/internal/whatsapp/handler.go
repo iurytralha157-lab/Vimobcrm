@@ -409,6 +409,60 @@ func (handler Handler) StartConversation(w http.ResponseWriter, r *http.Request)
 	httpserver.WriteJSON(w, http.StatusCreated, Envelope[Conversation]{Data: conversation})
 }
 
+func (handler Handler) GetConversationAttendance(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := requireTenant(w, r)
+	if !ok {
+		return
+	}
+	input, err := ParseAttendanceRequest(r.URL.Query())
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+	response, err := handler.repo.GetConversationAttendance(
+		r.Context(),
+		tenantContext,
+		r.PathValue("id"),
+		input,
+	)
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, Envelope[AttendanceResponse]{Data: response})
+}
+
+func (handler Handler) JoinConversationAttendance(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := requireTenant(w, r)
+	if !ok {
+		return
+	}
+	var request AttendanceRequest
+	if !decodeWhatsAppJSON(w, r, &request, 1<<16) {
+		return
+	}
+	input, err := request.Validate()
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+	response, err := handler.repo.JoinConversationAttendance(
+		r.Context(),
+		tenantContext,
+		r.PathValue("id"),
+		input,
+	)
+	if err != nil {
+		writeWhatsAppError(w, r, err)
+		return
+	}
+	status := http.StatusOK
+	if response.Created {
+		status = http.StatusCreated
+	}
+	httpserver.WriteJSON(w, status, Envelope[AttendanceResponse]{Data: response})
+}
+
 func (handler Handler) FindConversation(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := requireTenant(w, r)
 	if !ok {
@@ -998,6 +1052,8 @@ func writeWhatsAppError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusNotFound, "whatsapp_conversation_not_found", "WhatsApp conversation was not found.")
 	case errors.Is(err, ErrConversationBindingChanged):
 		httpserver.WriteError(w, r, http.StatusConflict, "whatsapp_conversation_binding_changed", "The WhatsApp conversation was linked to another lead. Refresh and try again.")
+	case errors.Is(err, ErrAttendanceRequired):
+		httpserver.WriteError(w, r, http.StatusConflict, "whatsapp_attendance_required", "Confirme o início do atendimento antes de enviar mensagens por este WhatsApp.")
 	case errors.Is(err, ErrMessageNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, "whatsapp_message_not_found", "WhatsApp message was not found.")
 	case errors.Is(err, ErrProviderFailed):

@@ -53,6 +53,22 @@ func TestWhatsAppConversationSnapshotRouteUsesViewPermission(t *testing.T) {
 	}
 }
 
+func TestWhatsAppAttendanceRoutesUseReadAndOperatePermissions(t *testing.T) {
+	raw, err := os.ReadFile("routes.go")
+	if err != nil {
+		t.Fatalf("read routes.go: %v", err)
+	}
+	source := string(raw)
+	for _, expected := range []string{
+		`mux.Handle("GET /v1/whatsapp/conversations/{id}/attendance", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.GetConversationAttendance)))`,
+		`mux.Handle("POST /v1/whatsapp/conversations/{id}/attendance", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.JoinConversationAttendance)))`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("WhatsApp attendance route has the wrong permission contract: %s", expected)
+		}
+	}
+}
+
 func TestWhatsAppSessionStatusesRouteUsesViewPermission(t *testing.T) {
 	raw, err := os.ReadFile("routes.go")
 	if err != nil {

@@ -123,6 +123,19 @@ test('segrega o historico paginado da conversa pelo card esperado', () => {
   )
 })
 
+test('segrega o atendimento por tenant, conversa, card e WhatsApp selecionado', () => {
+  const keyA = whatsappQueryKeys.attendance(scopeA, 'conversation-a', 'lead-a', 'session-a')
+  const otherTenant = whatsappQueryKeys.attendance(scopeB, 'conversation-a', 'lead-a', 'session-a')
+  const otherCard = whatsappQueryKeys.attendance(scopeA, 'conversation-a', 'lead-b', 'session-a')
+  const otherSession = whatsappQueryKeys.attendance(scopeA, 'conversation-a', 'lead-a', 'session-b')
+
+  assert.notDeepEqual(keyA, otherTenant)
+  assert.notDeepEqual(keyA, otherCard)
+  assert.notDeepEqual(keyA, otherSession)
+  assert.equal(isWhatsAppQueryKeyForScope(keyA, scopeA), true)
+  assert.equal(isWhatsAppQueryKeyForScope(keyA, scopeB), false)
+})
+
 test('reconcilia o envio nas consultas simples e paginadas da conversa ativa', () => {
   const conversationIds = ['conversation-a', 'conversation-canonical']
   const simpleKey = whatsappQueryKeys.messages(scopeA, {

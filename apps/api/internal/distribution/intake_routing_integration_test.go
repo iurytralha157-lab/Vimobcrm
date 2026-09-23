@@ -212,6 +212,47 @@ func TestResolveIntakeDestinationAgainstLocalPostgres(t *testing.T) {
 		t.Fatalf("resolve pipeline fallback: %v", err)
 	}
 	assertIntakeQueue(t, fallback, fallbackQueue, "keep_assignee")
+
+	// An active ruleless queue and a pipeline default are deliberate fallbacks
+	// for ordinary intake, but neither can claim a campaign from a connected
+	// WhatsApp account without a matching distribution rule.
+	genericQueue := insertQueue("Generic queue", "redistribute")
+	generic, err := ResolveIntakeDestination(ctx, tx, IntakeContext{
+		OrganizationID: organizationID,
+		PipelineID:     &pipelineID,
+		Source:         "whatsapp",
+	})
+	if err != nil {
+		t.Fatalf("resolve generic queue: %v", err)
+	}
+	assertIntakeQueue(t, generic, genericQueue, "redistribute")
+	withoutRule, err := ResolveIntakeDestination(ctx, tx, IntakeContext{
+		OrganizationID:      organizationID,
+		PipelineID:          &pipelineID,
+		Source:              "whatsapp",
+		RequireExplicitRule: true,
+	})
+	if err != nil {
+		t.Fatalf("resolve WhatsApp campaign without matching rule: %v", err)
+	}
+	if !withoutRule.Resolved || withoutRule.RoundRobinID != nil {
+		t.Fatalf("generic/default queue claimed WhatsApp campaign: %#v", withoutRule)
+	}
+
+	sessionID := "88888888-8888-4888-8888-888888888888"
+	filteredQueue := insertQueue("WhatsApp session filter", "keep_assignee")
+	insertRule(filteredQueue, "whatsapp_session", sessionID, 500)
+	withRule, err := ResolveIntakeDestination(ctx, tx, IntakeContext{
+		OrganizationID:      organizationID,
+		PipelineID:          &pipelineID,
+		Source:              "whatsapp",
+		SourceSessionID:     &sessionID,
+		RequireExplicitRule: true,
+	})
+	if err != nil {
+		t.Fatalf("resolve WhatsApp campaign with matching rule: %v", err)
+	}
+	assertIntakeQueue(t, withRule, filteredQueue, "keep_assignee")
 }
 
 func assertIntakeQueue(t *testing.T, destination IntakeDestination, queueID string, reentryBehavior string) {

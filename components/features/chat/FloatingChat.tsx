@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 import { useWhatsAppConversations, useWhatsAppUnreadCount, useSendWhatsAppMessage, useReactToWhatsAppMessage, useMarkConversationAsRead, useWhatsAppLeadRealtime, useArchiveConversation, useDeleteConversation, useLinkConversationToLead, WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
 import { useWhatsAppMessagesPaginated } from "@/hooks/use-whatsapp-messages-paginated";
 import { useAccessibleSessions } from "@/hooks/use-accessible-sessions";
+import { useWhatsAppAttendanceGate, type WhatsAppAttendanceTarget } from "@/hooks/use-whatsapp-attendance";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { WhatsAppSession } from "@/hooks/use-whatsapp-sessions";
 import { getWhatsAppStartErrorMessage, useStartConversation, useFindConversationByPhone } from "@/hooks/use-start-conversation";
@@ -35,6 +36,8 @@ import { AudioRecorderButton } from "@/components/features/whatsapp/AudioRecorde
 import { MessageBubble } from "@/components/features/whatsapp/MessageBubble";
 import { MessageErrorBoundary } from "@/components/features/whatsapp/MessageErrorBoundary";
 import { StartAutomationDialog } from "@/components/features/whatsapp/StartAutomationDialog";
+import { AttendanceTimelineEvents } from "@/components/features/whatsapp/AttendanceTimelineEvents";
+import { EnterAttendanceDialog } from "@/components/features/whatsapp/EnterAttendanceDialog";
 import {
   captureConversationListReturnPosition,
   ConversationListItem,
@@ -57,7 +60,7 @@ import {
   TooltipTrigger
 } from "@/components/ui/tooltip";
 import { useAuth } from "@/contexts/AuthContext";
-import { whatsappAPI } from "@/lib/api/whatsapp";
+import { whatsappAPI, type WhatsAppAttendanceEntry } from "@/lib/api/whatsapp";
 import {
   getWhatsAppConversationDraftKey,
   getWhatsAppConversationMessageScope,
@@ -127,6 +130,10 @@ type FloatingConversationFiltersProps = {
   onShowArchivedChange: (value: boolean) => void;
   onClearFilters: () => void;
 };
+
+type FloatingTimelineItem =
+  | { kind: "message"; id: string; timestamp: string; message: WhatsAppMessage }
+  | { kind: "attendance"; id: string; timestamp: string; entry: WhatsAppAttendanceEntry };
 
 function FloatingConversationFilters({
   sessions,
@@ -502,6 +509,55 @@ export function FloatingChat() {
   const findConversation = useFindConversationByPhone();
   const hasWhatsAppAccess = Boolean(sessions?.length);
   const router = useRouter();
+  const isReadOnlyMode = !canMutateActiveConversation;
+  const whatsappMessageInputState = getWhatsAppMessageInputState(
+    activeConversation,
+    selectedSessionId,
+    sessions,
+  );
+  const activeAttendanceTarget = useMemo<WhatsAppAttendanceTarget | null>(() => {
+    if (
+      !activeConversationId
+      || !activeConversationLeadId
+      || activeConversation?.historical_lead_view
+      || !whatsappMessageInputState.sendSessionId
+    ) {
+      return null;
+    }
+    return {
+      conversationId: activeConversationId,
+      expectedLeadId: activeConversationLeadId,
+      sendSessionId: whatsappMessageInputState.sendSessionId,
+    };
+  }, [
+    activeConversation?.historical_lead_view,
+    activeConversationId,
+    activeConversationLeadId,
+    whatsappMessageInputState.sendSessionId,
+  ]);
+  const attendanceGate = useWhatsAppAttendanceGate(activeAttendanceTarget, {
+    enabled: chatVisible && Boolean(activeAttendanceTarget),
+    identityKey: `${activeTenantKey}:${activeConversationId || "none"}:${activeConversationLeadId || "none"}:${whatsappMessageInputState.sendSessionId || "none"}`,
+  });
+  const messageInputDisabled = attendanceGate.isResolving
+    || isReadOnlyMode
+    || whatsappMessageInputState.disabled;
+  const floatingTimelineItems = useMemo<FloatingTimelineItem[]>(() => [
+    ...visibleMessages.map((message): FloatingTimelineItem => ({
+      kind: "message",
+      id: `message-${message.id}`,
+      timestamp: message.sent_at,
+      message: message as WhatsAppMessage,
+    })),
+    ...attendanceGate.entries.map((entry): FloatingTimelineItem => ({
+      kind: "attendance",
+      id: `attendance-${entry.id}`,
+      timestamp: entry.joinedAt,
+      entry,
+    })),
+  ].sort((left, right) => (
+    new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime()
+  )), [attendanceGate.entries, visibleMessages]);
 
   useWhatsAppLeadRealtime(
     shouldSyncFloatingChat,
@@ -989,8 +1045,10 @@ export function FloatingChat() {
       return;
     }
 
+    const joined = await attendanceGate.ensureJoined();
+    if (!joined) return;
 
-    // Limpa o campo IMEDIATAMENTE (UX otimista)
+    // O rascunho só é limpo depois que a entrada no atendimento foi confirmada.
     setMessageText("");
 
     try {
@@ -1014,15 +1072,18 @@ export function FloatingChat() {
   };
 
   const handleSendAudio = async (base64: string, mimetype: string) => {
-    if (!canMutateActiveConversation || !activeConversation) return;
+    if (!canMutateActiveConversation || !activeConversation) return false;
     if (whatsappMessageInputState.disabled || isReadOnlyMode) {
       toast({
         title: "Audio nao enviado",
         description: isReadOnlyMode ? "Você tem acesso somente leitura a esta conversa." : whatsappMessageInputState.placeholder,
         variant: "destructive",
       });
-      return;
+      return false;
     }
+
+    const joined = await attendanceGate.ensureJoined();
+    if (!joined) return false;
 
     try {
       await sendMessage.mutateAsync({
@@ -1040,8 +1101,10 @@ export function FloatingChat() {
         title: "Áudio enviado",
         description: "Sua mensagem de voz foi enviada"
       });
+      return true;
     } catch {
       // A mutação é a única responsável pelo aviso de falha.
+      return false;
     }
   };
 
@@ -1066,6 +1129,11 @@ export function FloatingChat() {
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
+      return;
+    }
+    const joined = await attendanceGate.ensureJoined();
+    if (!joined) {
+      e.target.value = "";
       return;
     }
     let processedFile: File;
@@ -1119,6 +1187,24 @@ export function FloatingChat() {
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+  };
+  const handleReactToMessage = async (message: WhatsAppMessage, emoji: string) => {
+    if (!activeConversation || !activeConversationLeadId) return;
+    const reactionSessionId = message.session_id || activeConversation.session_id;
+    if (!reactionSessionId) return;
+    const joined = await attendanceGate.ensureJoined({
+      target: {
+        conversationId: activeConversation.id,
+        expectedLeadId: activeConversationLeadId,
+        sendSessionId: reactionSessionId,
+      },
+    });
+    if (!joined) return;
+    await reactToMessage.mutateAsync({
+      conversation: activeConversation,
+      targetMessage: message,
+      emoji,
+    });
   };
   const connectedSessions = sessions?.filter(s => s.status === "connected") || [];
   const activeConversationFilterCount = [
@@ -1188,11 +1274,6 @@ export function FloatingChat() {
   // IMPORTANTE: usuarios SEM sessao WhatsApp ainda podem abrir o chat para
   // visualizar o historico de mensagens de leads (somente leitura).
   if (!chatVisible) return null;
-
-  // A visualização do histórico é independente da permissão de operação.
-  const isReadOnlyMode = !canMutateActiveConversation;
-  const whatsappMessageInputState = getWhatsAppMessageInputState(activeConversation, selectedSessionId, sessions);
-  const messageInputDisabled = isReadOnlyMode || whatsappMessageInputState.disabled;
 
   // Shared content components
   const FloatingChatHeader = ({
@@ -1461,53 +1542,55 @@ export function FloatingChat() {
               <Button type="button" size="sm" variant="secondary" onClick={() => void refetchMessages()}>
                 Tentar novamente
               </Button>
-            </div> : messages?.length === 0 ? <div className="flex flex-col items-center justify-center py-12">
+            </div> : floatingTimelineItems.length === 0 ? <div className="flex flex-col items-center justify-center py-12">
               <MessageCircle className="h-10 w-10 text-muted-foreground mb-3" />
               <p className="text-muted-foreground text-sm">Nenhuma mensagem</p>
               <p className="text-xs text-muted-foreground">Envie uma mensagem para começar</p>
             </div> : <div className="flex flex-col gap-2">
-              {visibleMessages?.map((msg, index) => {
-                const previousMsg = index > 0 ? visibleMessages[index - 1] : null;
-                const showSeparator = shouldShowDateSeparator(msg.sent_at, previousMsg?.sent_at || null);
+              {floatingTimelineItems.map((item, index) => {
+                const previousItem = index > 0 ? floatingTimelineItems[index - 1] : null;
+                const showSeparator = shouldShowDateSeparator(item.timestamp, previousItem?.timestamp || null);
                 return (
-                  <MessageErrorBoundary key={msg.id} messageId={msg.id}>
-                    {showSeparator && <DateSeparator date={new Date(msg.sent_at)} />}
-                    <MessageBubble
-                      content={msg.content}
-                      messageType={msg.message_type}
-                      mediaUrl={msg.media_url ?? null}
-                      mediaMimeType={msg.media_mime_type ?? null}
-                      mediaStatus={msg.media_status as 'pending' | 'ready' | 'failed' | null}
-                      mediaError={msg.media_error ?? null}
-                      mediaSize={msg.media_size}
-                      fromMe={msg.from_me}
-                      status={msg.status ?? ''}
-                      sentAt={msg.sent_at}
-                      senderName={msg.sender_name ?? null}
-                      isGroup={activeConversation!.is_group}
-                      onRetryMedia={canMutateActiveConversation ? () => retryMediaDownload(msg.id) : undefined}
-                      messageId={msg.id}
-                      leadId={canOperateLeads ? activeConversation!.lead?.id || activeConversation!.lead_id || '' : ''}
-                      leadName={activeConversation!.lead?.name || activeConversation!.contact_name || ''}
-                      contactAvatarUrl={getConversationAvatarUrl(activeConversation)}
-                      conversationRemoteJid={activeConversation!.remote_jid ?? null}
-                      conversationSessionId={activeConversation!.session_id ?? null}
-                      reactionPickerPosition="outside"
-                      reactions={reactionsByMessageId.get(msg.message_id) || reactionsByMessageId.get(msg.id) || []}
-                      onReact={canMutateActiveConversation
-                        && Boolean(activeConversation?.session_id)
-                        && Boolean(msg.session_id)
-                        && canReactToWhatsAppMessage(msg)
-                        ? (emoji) => reactToMessage.mutateAsync({
-                            conversation: activeConversation!,
-                            targetMessage: msg as WhatsAppMessage,
-                            emoji,
-                          })
-                        : undefined}
-                      isReacting={reactToMessage.isPending
-                        && reactToMessage.variables?.targetMessage.id === msg.id}
-                    />
-                  </MessageErrorBoundary>
+                  <div key={item.id}>
+                    {showSeparator && <DateSeparator date={new Date(item.timestamp)} />}
+                    {item.kind === "attendance" ? (
+                      <AttendanceTimelineEvents entries={[item.entry]} />
+                    ) : (
+                      <MessageErrorBoundary messageId={item.message.id}>
+                        <MessageBubble
+                          content={item.message.content}
+                          messageType={item.message.message_type}
+                          mediaUrl={item.message.media_url ?? null}
+                          mediaMimeType={item.message.media_mime_type ?? null}
+                          mediaStatus={item.message.media_status as 'pending' | 'ready' | 'failed' | null}
+                          mediaError={item.message.media_error ?? null}
+                          mediaSize={item.message.media_size}
+                          fromMe={item.message.from_me}
+                          status={item.message.status ?? ''}
+                          sentAt={item.message.sent_at}
+                          senderName={item.message.sender_name ?? null}
+                          isGroup={activeConversation!.is_group}
+                          onRetryMedia={canMutateActiveConversation ? () => retryMediaDownload(item.message.id) : undefined}
+                          messageId={item.message.id}
+                          leadId={canOperateLeads ? activeConversation!.lead?.id || activeConversation!.lead_id || '' : ''}
+                          leadName={activeConversation!.lead?.name || activeConversation!.contact_name || ''}
+                          contactAvatarUrl={getConversationAvatarUrl(activeConversation)}
+                          conversationRemoteJid={activeConversation!.remote_jid ?? null}
+                          conversationSessionId={activeConversation!.session_id ?? null}
+                          reactionPickerPosition="outside"
+                          reactions={reactionsByMessageId.get(item.message.message_id) || reactionsByMessageId.get(item.message.id) || []}
+                          onReact={canMutateActiveConversation
+                            && Boolean(activeConversation?.session_id)
+                            && Boolean(item.message.session_id)
+                            && canReactToWhatsAppMessage(item.message)
+                            ? (emoji) => handleReactToMessage(item.message, emoji)
+                            : undefined}
+                          isReacting={reactToMessage.isPending
+                            && reactToMessage.variables?.targetMessage.id === item.message.id}
+                        />
+                      </MessageErrorBoundary>
+                    )}
+                  </div>
                 );
               })}
               <div ref={messagesEndRef} />
@@ -1721,6 +1804,12 @@ export function FloatingChat() {
       </AlertDialogContent>
     </AlertDialog>
   );
+  const enterAttendanceDialog = (
+    <EnterAttendanceDialog
+      {...attendanceGate.dialogProps}
+      contactName={activeContactName}
+    />
+  );
 
   // Mobile version - fullscreen fixed container (stable bottom input)
   if (isMobile) {
@@ -1728,6 +1817,7 @@ export function FloatingChat() {
       <>
         {SessionSelectorDialog()}
         {deleteConversationDialog}
+        {enterAttendanceDialog}
         {activeLeadId && canMutateActiveConversation && (
           <StartAutomationDialog
             open={showAutomationDialog}
@@ -1779,6 +1869,7 @@ export function FloatingChat() {
     <>
       {SessionSelectorDialog()}
       {deleteConversationDialog}
+      {enterAttendanceDialog}
       {activeLeadId && canMutateActiveConversation && (
         <StartAutomationDialog
           open={showAutomationDialog}

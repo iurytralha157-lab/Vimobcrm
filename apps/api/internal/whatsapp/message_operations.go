@@ -39,6 +39,33 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 	if session.Status != "connected" {
 		return SendMessageResponse{}, fmt.Errorf("%w: WhatsApp desconectado. Reconecte ou selecione uma conexao ativa.", ErrInvalidInput)
 	}
+	if !input.InternalAutomation {
+		// Reject before base64 media is uploaded. The transaction below repeats
+		// this check under the conversation/card lock before the outbox write.
+		var joined bool
+		err = repo.db.Pool().QueryRow(ctx, `
+			select exists (
+				select 1
+				from public.whatsapp_attendance_entries entry
+				join public.whatsapp_conversation_lead_bindings binding
+				  on binding.id = entry.binding_id
+				 and binding.organization_id = entry.organization_id
+				where entry.organization_id = $1::uuid
+				  and entry.conversation_id = $2::uuid
+				  and entry.session_id = $3::uuid
+				  and entry.lead_id = $4::uuid
+				  and entry.user_id = $5::uuid
+				  and binding.active_to is null
+			)
+		`, tenantContext.OrganizationID, conversation.ID, session.ID,
+			input.ExpectedLeadID, tenantContext.UserID).Scan(&joined)
+		if err != nil {
+			return SendMessageResponse{}, err
+		}
+		if !joined {
+			return SendMessageResponse{}, ErrAttendanceRequired
+		}
+	}
 
 	conversation.Session = &SessionLite{
 		ID:             session.ID,
@@ -196,6 +223,25 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 		return SendMessageResponse{}, fmt.Errorf("%w: identidade da conversa mudou; recarregue antes de enviar", ErrInvalidReference)
 	}
 	conversation.LeadID = &lockedLeadID
+	bindingID, err := attendanceBindingID(ctx, tx, session.OrganizationID, conversation.ID, session.ID, lockedLeadID)
+	if err != nil {
+		return SendMessageResponse{}, err
+	}
+	attendanceEntryID := ""
+	if input.InternalAutomation {
+		attendanceEntryID, err = anyCurrentAttendanceEntry(ctx, tx, session.OrganizationID, conversation.ID, session.ID, lockedLeadID, bindingID)
+	} else {
+		attendanceEntryID, err = currentAttendanceEntry(ctx, tx, session.OrganizationID, conversation.ID, session.ID, lockedLeadID, bindingID, tenantContext.UserID)
+	}
+	if err != nil {
+		return SendMessageResponse{}, err
+	}
+	if attendanceEntryID == "" {
+		// Automation has no human sender to confirm on its own. It may only
+		// participate after a person joined this exact card/session binding.
+		return SendMessageResponse{}, ErrAttendanceRequired
+	}
+	captureState := "captured"
 
 	var messageRowID string
 	err = tx.QueryRow(ctx, `
@@ -219,7 +265,8 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 			status,
 			sent_at,
 			sender_name,
-			metadata
+			metadata,
+			capture_state
 		)
 		values (
 			$1::uuid,
@@ -241,13 +288,21 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 			'queued',
 			now(),
 			nullif($15, ''),
-			$16::jsonb
+			$16::jsonb,
+			$17
 		)
 		on conflict (organization_id, session_id, client_message_id)
 		  where client_message_id is not null
 		do nothing
 		returning id::text
-	`, session.OrganizationID, conversation.ID, session.ID, lockedLeadID, tenantContext.UserID, providerRequestID, clientMessageID, actualContent, messageType, storedMediaURL, input.Mimetype, mediaStatus, storedMediaPath, lockedRemoteJID, senderName, jsonb(map[string]any{"delivery": "outbox"})).Scan(&messageRowID)
+	`, session.OrganizationID, conversation.ID, session.ID, lockedLeadID, tenantContext.UserID, providerRequestID, clientMessageID, actualContent, messageType, storedMediaURL, input.Mimetype, mediaStatus, storedMediaPath, lockedRemoteJID, senderName, jsonb(map[string]any{
+		"delivery":            "outbox",
+		"attendance_entry_id": attendanceEntryID,
+		"whatsapp_attendance_capture": map[string]any{
+			"state":               "captured",
+			"attendance_entry_id": attendanceEntryID,
+		},
+	}), captureState).Scan(&messageRowID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var existingConversationID, existingLeadID, existingContent, existingMessageType, existingRemoteJID string
 		var existingMediaURL, existingMimeType string
@@ -335,19 +390,21 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 		}
 	}
 
-	_, err = tx.Exec(ctx, `
-		update public.whatsapp_conversations
-		set last_message = $3,
-		    last_message_at = now(),
-		    unread_count = 0,
-		    updated_at = now()
-		where organization_id = $1::uuid
-		  and id = $2::uuid
-		  and session_id = $4::uuid
-		  and lead_id = $5::uuid
-	`, session.OrganizationID, conversation.ID, outgoingLastMessage(messageType, actualContent, senderName, conversation.IsGroup), session.ID, lockedLeadID)
-	if err != nil {
-		return SendMessageResponse{}, err
+	if captureState == "captured" {
+		_, err = tx.Exec(ctx, `
+			update public.whatsapp_conversations
+			set last_message = $3,
+			    last_message_at = now(),
+			    unread_count = 0,
+			    updated_at = now()
+			where organization_id = $1::uuid
+			  and id = $2::uuid
+			  and session_id = $4::uuid
+			  and lead_id = $5::uuid
+		`, session.OrganizationID, conversation.ID, outgoingLastMessage(messageType, actualContent, senderName, conversation.IsGroup), session.ID, lockedLeadID)
+		if err != nil {
+			return SendMessageResponse{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return SendMessageResponse{}, err
@@ -447,6 +504,7 @@ func (repo Repository) MarkAsSeenOnWhatsApp(ctx context.Context, tenantContext t
 		  and conversation_id = $2::uuid
 		  and session_id = $3::uuid
 		  and `+messageLeadPredicate+`
+		  and capture_state is distinct from 'suppressed'
 		  and from_me = false
 		order by coalesce(sent_at, created_at) desc
 		limit 20
@@ -606,6 +664,7 @@ func (repo Repository) listLeadHistoryConversations(ctx context.Context, tenantC
 		  from public.whatsapp_messages wm
 		  where wm.organization_id = $1::uuid
 		    and wm.conversation_id = wc.id
+		    and wm.capture_state is distinct from 'suppressed'
 		    and `+leadHistoryMessageLeadMatchSQL()+`
 		  order by coalesce(wm.sent_at, wm.created_at) desc, wm.id desc
 		  limit 1
@@ -636,6 +695,7 @@ func (repo Repository) listLeadHistoryConversations(ctx context.Context, tenantC
 		      where wm.organization_id = $1::uuid
 		        and wm.conversation_id = wc.id
 		        and wm.lead_id = $5::uuid
+		        and wm.capture_state is distinct from 'suppressed'
 		    )
 		  )
 		order by history.message_at desc nulls last, wc.created_at desc
@@ -666,6 +726,7 @@ func (repo Repository) listLeadHistoryMessages(ctx context.Context, tenantContex
 	where := []string{
 		"wm.organization_id = $1::uuid",
 		"wc.organization_id = $1::uuid",
+		"wm.capture_state is distinct from 'suppressed'",
 		leadHistoryVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext)),
 		leadHistoryMessageLeadMatchSQL(),
 	}

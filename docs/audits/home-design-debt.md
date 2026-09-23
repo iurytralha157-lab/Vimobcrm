@@ -6,13 +6,13 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 
 ## Resumo
 
-- Arquivos analisados: 537
-- Arquivos com achados: 42
-- Achados: 113
-- Arquivos protegidos/mistos com achados: 41
-- Achados alcançáveis pelo CRM protegido: 112
-- Distribuição por superfície: protected-only 103, protected-and-public 9, public-only 1, infraestrutura 0
-- P1: 55
+- Arquivos analisados: 539
+- Arquivos com achados: 43
+- Achados: 114
+- Arquivos protegidos/mistos com achados: 42
+- Achados alcançáveis pelo CRM protegido: 113
+- Distribuição por superfície: protected-only 103, protected-and-public 10, public-only 1, infraestrutura 0
+- P1: 56
 - P2: 13
 - P3: 45
 
@@ -20,7 +20,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 
 | Prioridade | Regra | Quantidade | Direção |
 | --- | --- | ---: | --- |
-| P1 | Sombra forte | 15 | Usar shadow-none ou a sombra sutil dos pop-ups globais. |
+| P1 | Sombra forte | 16 | Usar shadow-none ou a sombra sutil dos pop-ups globais. |
 | P2 | Sombra fora do padrão | 6 | Blocos Home não usam sombra; validar se a elevação é realmente necessária. |
 | P1 | Raio acima de 8px | 5 | Blocos usam 8px; controles 6px; microelementos 4px. |
 | P1 | Tipografia pesada | 2 | Texto normal usa 300; títulos usam 400. |
@@ -60,6 +60,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/settings/UserPermissionsScreen.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/teams/TeamEditorScreen.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/whatsapp/conversations/ConversationMessages.tsx` | 4 | 1 | heavy-shadow: 1 |
+| `components/features/whatsapp/EnterAttendanceDialog.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/schedule/dashboard/AgendaEventsPanel.tsx` | 3 | 2 | uppercase-tracking: 1, aggressive-motion: 1 |
 | `components/features/schedule/dashboard/AgendaUpcomingEventsPanel.tsx` | 3 | 2 | uppercase-tracking: 1, aggressive-motion: 1 |
 | `components/features/marketing/MarketingTabViews.tsx` | 3 | 1 | oversized-radius: 1 |
@@ -106,6 +107,7 @@ Ele prioriza candidatos a revisão; não substitui inspeção renderizada. Cores
 | `components/features/settings/UserPermissionsScreen.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/teams/TeamEditorScreen.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/whatsapp/conversations/ConversationMessages.tsx` | 4 | 1 | heavy-shadow: 1 |
+| `components/features/whatsapp/EnterAttendanceDialog.tsx` | 4 | 1 | heavy-shadow: 1 |
 | `components/features/schedule/dashboard/AgendaEventsPanel.tsx` | 3 | 2 | uppercase-tracking: 1, aggressive-motion: 1 |
 | `components/features/schedule/dashboard/AgendaUpcomingEventsPanel.tsx` | 3 | 2 | uppercase-tracking: 1, aggressive-motion: 1 |
 | `components/features/auth/AuthSplitLayout.tsx` | 3 | 1 | oversized-radius: 1 |

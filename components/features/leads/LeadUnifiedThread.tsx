@@ -7,6 +7,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { MessageBubble as WhatsAppMessageBubble } from '@/components/features/whatsapp/MessageBubble';
 import { MessageErrorBoundary } from '@/components/features/whatsapp/MessageErrorBoundary';
 import { AudioRecorderButton } from '@/components/features/whatsapp/AudioRecorderButton';
+import { EnterAttendanceDialog } from '@/components/features/whatsapp/EnterAttendanceDialog';
 import { cn } from '@/lib/utils';
 import { getSafeHttpUrl } from '@/lib/safe-http-url';
 import { formatBRLCurrencyWithDefaultDecimals } from '@/lib/utils/formatting';
@@ -22,6 +23,7 @@ import {
 } from '@/hooks/use-whatsapp-conversations';
 import { useLeadMessages } from '@/hooks/use-lead-messages';
 import { useStartConversation } from '@/hooks/use-start-conversation';
+import { useWhatsAppAttendanceGate, type WhatsAppAttendanceTarget } from '@/hooks/use-whatsapp-attendance';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserPermissions } from '@/hooks/use-user-permissions';
 import { useOrganizationModules } from '@/hooks/use-organization-modules';
@@ -839,7 +841,21 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       !leadHasNoWhatsApp &&
       !whatsappMessageInputState.disabled,
   );
-  const isSendingMessage = sendMessage.isPending || startConversation.isPending;
+  const attendanceTarget = useMemo<WhatsAppAttendanceTarget | null>(() => {
+    if (!conversation?.id || !whatsappMessageInputState.sendSessionId) return null;
+    return {
+      conversationId: conversation.id,
+      expectedLeadId: leadId,
+      sendSessionId: whatsappMessageInputState.sendSessionId,
+    };
+  }, [conversation, leadId, whatsappMessageInputState.sendSessionId]);
+  const attendanceGate = useWhatsAppAttendanceGate(attendanceTarget, {
+    enabled: canViewWhatsApp && Boolean(attendanceTarget),
+    identityKey: `${activeOrganization.organizationId || "none"}:${leadId}:${whatsappMessageInputState.sendSessionId || "none"}`,
+  });
+  const isSendingMessage = sendMessage.isPending
+    || startConversation.isPending
+    || attendanceGate.isResolving;
   const inputPlaceholder = !hasWhatsAppModule
     ? 'Módulo de WhatsApp indisponível'
     : !canOperateWhatsApp
@@ -983,14 +999,39 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     });
   };
 
+  const ensureConversationAndAttendanceForSend = async () => {
+    let targetConversation = conversation;
+    const joined = await attendanceGate.ensureJoined({
+      target: attendanceTarget,
+      prepareTarget: targetConversation
+        ? undefined
+        : async () => {
+            targetConversation = await ensureConversationForSend();
+            const sendSessionId = targetConversation.session_id
+              || whatsappMessageInputState.sendSessionId;
+            if (!sendSessionId) {
+              throw new Error('Não foi possível identificar o WhatsApp selecionado.');
+            }
+            return {
+              conversationId: targetConversation.id,
+              expectedLeadId: leadId,
+              sendSessionId,
+            };
+          },
+    });
+
+    return joined ? targetConversation : null;
+  };
+
   const handleSend = async () => {
     const content = text.trim();
     if (!content || !canSendMessage || isSendingMessage) return;
 
-    setText('');
     try {
-      const targetConversation = await ensureConversationForSend();
+      const targetConversation = await ensureConversationAndAttendanceForSend();
+      if (!targetConversation) return;
 
+      setText('');
       await sendMessage.mutateAsync({
         conversation: targetConversation,
         text: content,
@@ -1006,10 +1047,11 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       toast.error('Áudio não enviado', {
         description: inputPlaceholder,
       });
-      return;
+      return false;
     }
 
-    const targetConversation = await ensureConversationForSend();
+    const targetConversation = await ensureConversationAndAttendanceForSend();
+    if (!targetConversation) return false;
     await sendMessage.mutateAsync({
       conversation: targetConversation,
       text: '',
@@ -1020,6 +1062,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       previewMediaUrl: `data:${mimetype || 'audio/webm'};base64,${base64}`,
       sendSessionId: whatsappMessageInputState.sendSessionId,
     });
+    return true;
   };
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1034,6 +1077,12 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       return;
     }
 
+    const targetConversation = await ensureConversationAndAttendanceForSend();
+    if (!targetConversation) {
+      event.target.value = '';
+      return;
+    }
+
     try {
       const processedFile = await compressOutboundImageFile(
         file,
@@ -1041,8 +1090,6 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       );
       const base64 = await blobToBase64(processedFile);
       const mediaType = getOutboundMessageMediaKind(processedFile.type);
-      const targetConversation = await ensureConversationForSend();
-
       await sendMessage.mutateAsync({
         conversation: targetConversation,
         text: processedFile.name,
@@ -1062,6 +1109,31 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
+  };
+
+  const handleReactToMessage = async (message: WhatsAppMessage, emoji: string) => {
+    const reactionSessionId = message.session_id || conversation?.session_id;
+    if (!reactionSessionId) return;
+    const joined = await attendanceGate.ensureJoined({
+      target: {
+        conversationId: message.conversation_id,
+        expectedLeadId: leadId,
+        sendSessionId: reactionSessionId,
+      },
+    });
+    if (!joined) return;
+
+    await reactToMessage.mutateAsync({
+      conversation: {
+        ...(conversation || {}),
+        id: message.conversation_id,
+        session_id: reactionSessionId,
+        lead_id: leadId,
+        remote_jid: message.remote_jid || conversation?.remote_jid || '',
+      } as WhatsAppConversation,
+      targetMessage: message,
+      emoji,
+    });
   };
 
   const retryMediaDownload = async (messageId: string) => {
@@ -1098,7 +1170,12 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   const isLoading = (loadingHistory && history.length === 0) || (loadingMessages && messages.length === 0);
 
   return (
-    <section className="lead-thread-panel flex h-full min-h-0 flex-col bg-transparent p-3">
+    <>
+      <EnterAttendanceDialog
+        {...attendanceGate.dialogProps}
+        contactName={leadName}
+      />
+      <section className="lead-thread-panel flex h-full min-h-0 flex-col bg-transparent p-3">
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[8px] bg-[var(--app-surface-soft)]">
         <div ref={threadScrollRef} className="lead-thread-scroll flex-1 space-y-3 overflow-y-auto px-1 pb-3 pt-3">
           {isLoading && (
@@ -1176,17 +1253,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
                         || reactionsByMessageId.get(item.message.id)
                         || []}
                       onReact={!readOnly && canOperateWhatsApp && item.message.session_id
-                        ? (emoji) => reactToMessage.mutateAsync({
-                        conversation: {
-                          ...(conversation || {}),
-                          id: item.message.conversation_id,
-                          session_id: conversation?.session_id ?? item.message.session_id,
-                          lead_id: leadId,
-                          remote_jid: item.message.remote_jid || conversation?.remote_jid || '',
-                        } as WhatsAppConversation,
-                        targetMessage: item.message as WhatsAppMessage,
-                        emoji,
-                      })
+                        ? (emoji) => handleReactToMessage(item.message as WhatsAppMessage, emoji)
                         : undefined}
                       isReacting={reactToMessage.isPending}
                     />
@@ -1244,6 +1311,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
           </div>
         </div>}
       </div>
-    </section>
+      </section>
+    </>
   );
 }

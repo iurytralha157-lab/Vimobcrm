@@ -784,10 +784,6 @@ func (store oauthPostgresStore) persistConnectedIntegration(
 		    updated_at = $13
 		where integration.organization_id = $1::uuid and integration.page_id = $2
 		returning ` + oauthPublicIntegrationJSON
-	if result, err := store.integrationJSON(ctx, updateSQL, arguments...); err == nil && result != nil {
-		return result, nil
-	}
-
 	insertSQL := `
 		insert into public.meta_integrations as integration (
 			organization_id, page_id, page_name, page_picture_url,
@@ -804,13 +800,42 @@ func (store oauthPostgresStore) persistConnectedIntegration(
 			'healthy', $14, $15, $16, $17, $18, $19::jsonb, $20::text[], $13, $13
 		)
 		returning ` + oauthPublicIntegrationJSON
-	result, err := store.integrationJSON(ctx, insertSQL, arguments...)
+	return persistConnectedOAuthIntegration(
+		func() (map[string]any, error) {
+			return store.integrationJSON(ctx, updateSQL, arguments...)
+		},
+		func() (map[string]any, error) {
+			return store.integrationJSON(ctx, insertSQL, arguments...)
+		},
+	)
+}
+
+// Only an UPDATE with no matching row may become an INSERT. In particular, a
+// failed credential rotation must preserve its own error instead of being
+// hidden by the unique violation from inserting the already-existing Page.
+func persistConnectedOAuthIntegration(
+	update func() (map[string]any, error),
+	insert func() (map[string]any, error),
+) (map[string]any, error) {
+	result, err := update()
+	if err != nil {
+		return nil, newOAuthFailure("meta_integration_write_failed", http.StatusInternalServerError, err)
+	}
+	if result != nil {
+		return result, nil
+	}
+
+	result, err = insert()
 	if err == nil && result != nil {
 		return result, nil
 	}
 	var pgError *pgconn.PgError
 	if errors.As(err, &pgError) && pgError.Code == "23505" {
-		if raced, updateErr := store.integrationJSON(ctx, updateSQL, arguments...); updateErr == nil && raced != nil {
+		raced, updateErr := update()
+		if updateErr != nil {
+			return nil, newOAuthFailure("meta_integration_write_failed", http.StatusInternalServerError, updateErr)
+		}
+		if raced != nil {
 			return raced, nil
 		}
 		if pgError.ConstraintName == "uq_meta_integrations_connected_page_owner" ||

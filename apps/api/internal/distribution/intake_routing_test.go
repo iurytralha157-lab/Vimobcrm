@@ -112,11 +112,14 @@ func TestResolveIntakeDestinationFreezesQueueAndReentryBehavior(t *testing.T) {
 	if len(stub.calls) != 3 {
 		t.Fatalf("query calls = %d, want 3", len(stub.calls))
 	}
-	if len(stub.calls[0].args) != 14 {
-		t.Fatalf("resolver argument count = %d, want 14", len(stub.calls[0].args))
+	if len(stub.calls[0].args) != 15 {
+		t.Fatalf("resolver argument count = %d, want 15", len(stub.calls[0].args))
 	}
 	if stub.calls[0].args[1] != pipelineID || stub.calls[0].args[3] != propertyID || stub.calls[0].args[7] != webhookID {
 		t.Fatalf("resolver lost exact intake context: %#v", stub.calls[0].args)
+	}
+	if stub.calls[0].args[14] != false {
+		t.Fatalf("non-WhatsApp intake unexpectedly requires an explicit rule: %#v", stub.calls[0].args)
 	}
 	if !strings.Contains(stub.calls[1].sql, "for share") || strings.Contains(stub.calls[1].sql, "for key share") {
 		t.Fatal("resolved queue is not locked before intake identity is used")
@@ -144,6 +147,35 @@ func TestResolveIntakeDestinationSupportsDeliberatelyUnscopedIntake(t *testing.T
 	}
 	if len(stub.calls) != 1 {
 		t.Fatalf("unscoped resolver query calls = %d, want 1", len(stub.calls))
+	}
+}
+
+func TestResolveIntakeDestinationCanRequireExplicitMatchingRule(t *testing.T) {
+	t.Parallel()
+	stub := &intakeRoutingQueryer{rows: []pgx.Row{
+		intakeRoutingRow{values: []any{"", true, []string{}}},
+	}}
+	destination, err := ResolveIntakeDestination(t.Context(), stub, IntakeContext{
+		OrganizationID:      "11111111-1111-4111-8111-111111111111",
+		Source:              "whatsapp",
+		RequireExplicitRule: true,
+	})
+	if err != nil {
+		t.Fatalf("ResolveIntakeDestination() error = %v", err)
+	}
+	if !destination.Resolved || destination.RoundRobinID != nil {
+		t.Fatalf("unmatched WhatsApp campaign selected a queue: %#v", destination)
+	}
+	if len(stub.calls) != 1 || len(stub.calls[0].args) != 15 || stub.calls[0].args[14] != true {
+		t.Fatalf("explicit-rule requirement was not sent to the resolver: %#v", stub.calls)
+	}
+	for _, fragment := range []string{
+		"(not lead.require_explicit_rule and not rule_state.has_rules)",
+		"not (select require_explicit_rule from lead_context)",
+	} {
+		if !strings.Contains(stub.calls[0].sql, fragment) {
+			t.Fatalf("explicit-rule resolver is missing %q", fragment)
+		}
 	}
 }
 

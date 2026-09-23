@@ -1,31 +1,31 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "bdd1cf80f5c6a42766f135665ea45dd9f1e344c98f7b726e313d17badf518dd4",
-  "surfaceInventoryDigestSha256": "bd999c3cd119f6215349fe924b3dc2bbddb57296efb2b67526d08b1da309be2e",
+  "sourceDigestSha256": "c3ffe65a352e8cdff73614915b85c418841b3f777a9ba92761a14ea9bb83a551",
+  "surfaceInventoryDigestSha256": "2287be350e219035a74555ad1b2068cbb70099d9f674d39ed9758b8a2884cf0f",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 537,
+    "filesScanned": 539,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
-    "filesWithFindings": 42,
-    "findings": 113,
-    "protectedReachableFilesWithFindings": 41,
-    "protectedReachableFindings": 112,
+    "filesWithFindings": 43,
+    "findings": 114,
+    "protectedReachableFilesWithFindings": 42,
+    "protectedReachableFindings": 113,
     "bySurfaceScope": {
       "protected-only": 103,
-      "protected-and-public": 9,
+      "protected-and-public": 10,
       "public-only": 1,
       "infrastructure": 0
     },
     "byPriority": {
-      "P1": 55,
+      "P1": 56,
       "P2": 13,
       "P3": 45
     },
     "byRule": {
       "heavy-shadow": {
-        "count": 15,
+        "count": 16,
         "guidance": "Usar shadow-none ou a sombra sutil dos pop-ups globais.",
         "label": "Sombra forte",
         "priority": "P1"
@@ -273,6 +273,14 @@
     },
     {
       "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
+      }
+    },
+    {
+      "file": "components/features/whatsapp/EnterAttendanceDialog.tsx",
       "count": 1,
       "score": 4,
       "rules": {
@@ -626,6 +634,14 @@
       }
     },
     {
+      "file": "components/features/whatsapp/EnterAttendanceDialog.tsx",
+      "count": 1,
+      "score": 4,
+      "rules": {
+        "heavy-shadow": 1
+      }
+    },
+    {
       "file": "components/features/schedule/dashboard/AgendaEventsPanel.tsx",
       "count": 2,
       "score": 3,
@@ -785,7 +801,7 @@
     },
     {
       "file": "components/features/chat/FloatingChat.tsx",
-      "line": 187,
+      "line": 194,
       "match": "shadow-[0_8px_24px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",
@@ -794,7 +810,7 @@
     },
     {
       "file": "components/features/chat/FloatingChat.tsx",
-      "line": 1524,
+      "line": 1607,
       "match": "shadow-[0_4px_12px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",
@@ -884,7 +900,7 @@
     },
     {
       "file": "components/features/dashboard/LeadDistributionSection.tsx",
-      "line": 120,
+      "line": 112,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -893,7 +909,7 @@
     },
     {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-      "line": 1332,
+      "line": 1361,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -902,7 +918,7 @@
     },
     {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-      "line": 1332,
+      "line": 1361,
       "match": "tracking-wide",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -911,7 +927,7 @@
     },
     {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-      "line": 1384,
+      "line": 1413,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -920,7 +936,7 @@
     },
     {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-      "line": 1384,
+      "line": 1413,
       "match": "tracking-wide",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1667,8 +1683,17 @@
     },
     {
       "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
-      "line": 190,
+      "line": 225,
       "match": "shadow-[0_4px_12px_rgba",
+      "priority": "P1",
+      "rule": "heavy-shadow",
+      "surfaceScope": "protected-and-public",
+      "weight": 4
+    },
+    {
+      "file": "components/features/whatsapp/EnterAttendanceDialog.tsx",
+      "line": 34,
+      "match": "shadow-lg",
       "priority": "P1",
       "rule": "heavy-shadow",
       "surfaceScope": "protected-and-public",

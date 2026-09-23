@@ -582,6 +582,8 @@ func registerRoutes(mux *http.ServeMux, dependencies routeDependencies) {
 	mux.Handle("GET /v1/whatsapp/conversations/{id}/snapshot", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ShowConversationSnapshot)))
 	mux.Handle("GET /v1/whatsapp/conversations/{id}", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ShowConversation)))
 	mux.Handle("GET /v1/whatsapp/conversations/{id}/messages", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.ListMessages)))
+	mux.Handle("GET /v1/whatsapp/conversations/{id}/attendance", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.GetConversationAttendance)))
+	mux.Handle("POST /v1/whatsapp/conversations/{id}/attendance", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.JoinConversationAttendance)))
 	mux.Handle("GET /v1/whatsapp/messages/{id}/media-url", withModulePermission("whatsapp", permissions.WhatsAppView, http.HandlerFunc(whatsappHandler.GetMessageMediaURL)))
 	mux.Handle("POST /v1/whatsapp/conversations/{id}/send-message", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.SendMessage)))
 	mux.Handle("POST /v1/whatsapp/conversations/{id}/messages/{messageId}/reaction", withModulePermission("whatsapp", permissions.WhatsAppOperate, http.HandlerFunc(whatsappHandler.ReactToMessage)))

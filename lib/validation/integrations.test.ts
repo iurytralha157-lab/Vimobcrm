@@ -44,6 +44,7 @@ import {
   metaPublicIntegrationSchema,
 } from "./integrations";
 import { metaConnectErrorMessage } from "../meta-connect-error";
+import { DEFAULT_PUBLIC_ERROR_MESSAGE, VimobAPIError } from "../api/vimob-error";
 
 test("identificadores Google sao normalizados e validados por provedor", () => {
   assert.equal(
@@ -1141,7 +1142,11 @@ test("conexão Meta traduz os códigos estáveis recebidos em code ou message", 
     meta_leads_retrieval_required:
       "A Meta não liberou a leitura dos leads. Autorize leads_retrieval e conecte a página novamente.",
     meta_lead_forms_access_failed:
-      "A Meta não liberou o acesso aos formulários de leads. Revise as permissões da página e conecte-a novamente.",
+      "Não foi possível validar o acesso aos formulários de leads na Meta. Confira as permissões da página e tente novamente.",
+    meta_webhook_subscription_failed:
+      "Não foi possível ativar o envio de leads desta página na Meta. Confira o acesso à página e tente novamente.",
+    api_timeout:
+      "A confirmação da página demorou. Atualize a lista para verificar se ela foi conectada antes de tentar novamente.",
   } as const;
 
   for (const [stableError, friendlyMessage] of Object.entries(expectedMessages)) {
@@ -1150,7 +1155,17 @@ test("conexão Meta traduz os códigos estáveis recebidos em code ou message", 
       friendlyMessage,
     );
     assert.equal(metaConnectErrorMessage(new Error(stableError)), friendlyMessage);
+    const maskedAPIError = new VimobAPIError(stableError, { code: "api_error", status: 502 });
+    assert.equal(maskedAPIError.message, DEFAULT_PUBLIC_ERROR_MESSAGE);
+    assert.equal(
+      metaConnectErrorMessage(maskedAPIError),
+      friendlyMessage,
+    );
   }
+  assert.equal(
+    metaConnectErrorMessage(new VimobAPIError("provider-secret", { code: "api_error", status: 502 })),
+    DEFAULT_PUBLIC_ERROR_MESSAGE,
+  );
   assert.equal(metaConnectErrorMessage(new Error("Falha específica")), "Falha específica");
   assert.equal(metaConnectErrorMessage(null), "Não foi possível conectar esta página.");
 });

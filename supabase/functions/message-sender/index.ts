@@ -238,7 +238,7 @@ async function findMessageHistory(
 ) {
   let query = supabase
     .from("whatsapp_messages")
-    .select("id, conversation_id, status, message_id, provider_message_id")
+    .select("id, conversation_id, status, message_id, provider_message_id, capture_state, metadata")
     .eq("organization_id", message.organization_id)
     .eq("session_id", message.session_id);
 
@@ -258,6 +258,7 @@ function isConfirmedPendingHistory(
   stableProviderRequestId: string,
 ) {
   return !!history?.id && history.status === "pending" &&
+    history.capture_state === "captured" &&
     history.message_id === stableProviderRequestId &&
     !history.provider_message_id;
 }
@@ -266,6 +267,7 @@ async function ensurePendingMessageHistory(
   supabase: any,
   message: any,
   stableProviderRequestId: string,
+  attendanceEntryId: string,
 ) {
   const messageOrganizationId = message.organization_id;
   // `outbox_messages.lead_id` is the immutable delivery snapshot. Falling
@@ -288,6 +290,7 @@ async function ensurePendingMessageHistory(
     media_mime_type: message.media_mime_type,
     sender_name: getOutboxSenderName(message),
     status: "pending",
+    capture_state: "captured",
   };
 
   let existing = await findMessageHistory(
@@ -304,8 +307,9 @@ async function ensurePendingMessageHistory(
         ...pendingValues,
         session_id: message.session_id,
         client_message_id: message.client_message_id || null,
+        metadata: { attendance_entry_id: attendanceEntryId },
       })
-      .select("id, conversation_id, status, message_id, provider_message_id")
+      .select("id, conversation_id, status, message_id, provider_message_id, capture_state")
       .maybeSingle();
 
     if (!insertError && isConfirmedPendingHistory(inserted, stableProviderRequestId)) {
@@ -351,6 +355,13 @@ async function ensurePendingMessageHistory(
       true,
     );
   }
+  if (existing.capture_state !== "captured") {
+    throw new ManualReconciliationRequiredError(
+      "history-attendance-capture-mismatch",
+      "Existing CRM history cannot be promoted from a suppressed or legacy capture state",
+      true,
+    );
+  }
   if (existing.provider_message_id) {
     throw new ManualReconciliationRequiredError(
       "history-provider-outcome-already-recorded",
@@ -368,12 +379,19 @@ async function ensurePendingMessageHistory(
 
   const { data: updated, error: updateError } = await supabase
     .from("whatsapp_messages")
-    .update(pendingValues)
+    .update({
+      ...pendingValues,
+      metadata: {
+        ...(existing.metadata && typeof existing.metadata === "object" ? existing.metadata : {}),
+        attendance_entry_id: attendanceEntryId,
+      },
+    })
     .eq("id", existing.id)
     .eq("organization_id", messageOrganizationId)
     .eq("session_id", message.session_id)
+    .eq("capture_state", "captured")
     .eq("status", "pending")
-    .select("id, status, message_id, provider_message_id")
+    .select("id, status, message_id, provider_message_id, capture_state")
     .maybeSingle();
   if (
     updateError ||
@@ -438,6 +456,116 @@ async function loadOutboundBindingSnapshot(
       "Legacy outbox delivery no longer matches the active WhatsApp card",
     );
   }
+}
+
+async function loadOutboundAttendanceEntry(
+  supabase: any,
+  message: any,
+  binding: WhatsAppConversationBindingSnapshot,
+): Promise<string> {
+  if (!binding.bindingId || !binding.leadId || !binding.sessionId) {
+    throw new ManualReconciliationRequiredError(
+      "attendance-card-binding-required",
+      "Outbound WhatsApp delivery requires a joined lead card binding",
+    );
+  }
+  const queuedAt = typeof message.created_at === "string"
+    ? Date.parse(message.created_at)
+    : Number.NaN;
+  if (!Number.isFinite(queuedAt)) {
+    throw new ManualReconciliationRequiredError(
+      "attendance-outbox-time-missing",
+      "Outbound WhatsApp work has no durable creation time",
+    );
+  }
+
+  // A queued message must not inherit an entry from the previous owner after
+  // this WhatsApp session is transferred. Resolve the current owner again at
+  // the pre-provider boundary, including system-created outbox work.
+  const { data: currentSession, error: sessionError } = await supabase
+    .from("whatsapp_sessions")
+    .select("owner_user_id, is_active, status")
+    .eq("organization_id", binding.organizationId)
+    .eq("id", binding.sessionId)
+    .maybeSingle();
+  if (sessionError) {
+    throw new ManualReconciliationRequiredError(
+      "attendance-owner-unavailable",
+      `Unable to verify the current WhatsApp owner: ${sessionError.message}`,
+    );
+  }
+  const ownerUserId = typeof currentSession?.owner_user_id === "string"
+    ? currentSession.owner_user_id
+    : null;
+  if (
+    !ownerUserId
+    || currentSession?.is_active === false
+    || ["disabled", "deleted"].includes(String(currentSession?.status || "").toLowerCase())
+    || (message.created_by && String(message.created_by).toLowerCase() !== ownerUserId.toLowerCase())
+  ) {
+    throw new ManualReconciliationRequiredError(
+      "attendance-owner-changed",
+      "The WhatsApp owner changed or is inactive; the queued message needs manual reconciliation",
+    );
+  }
+  const [ownerResult, membershipResult] = await Promise.all([
+    supabase.from("users")
+      .select("id")
+      .eq("id", ownerUserId)
+      .eq("organization_id", binding.organizationId)
+      .eq("is_active", true)
+      .maybeSingle(),
+    supabase.from("organization_members")
+      .select("user_id, is_active")
+      .eq("organization_id", binding.organizationId)
+      .eq("user_id", ownerUserId)
+      .maybeSingle(),
+  ]);
+  if (ownerResult.error || membershipResult.error) {
+    throw new ManualReconciliationRequiredError(
+      "attendance-owner-unavailable",
+      "Unable to verify the active WhatsApp owner and organization membership",
+    );
+  }
+  if (!ownerResult.data?.id || !membershipResult.data?.user_id ||
+      membershipResult.data.is_active === false) {
+    throw new ManualReconciliationRequiredError(
+      "attendance-owner-changed",
+      "The WhatsApp owner is no longer active in this organization",
+    );
+  }
+
+  const query = supabase
+    .from("whatsapp_attendance_entries")
+    .select("id, joined_at")
+    .eq("organization_id", binding.organizationId)
+    .eq("conversation_id", binding.conversationId)
+    .eq("session_id", binding.sessionId)
+    .eq("lead_id", binding.leadId)
+    .eq("binding_id", binding.bindingId)
+    .eq("user_id", ownerUserId)
+    // A queued pre-attendance effect cannot be laundered into captured history
+    // merely because someone joined before this legacy worker claimed it.
+    .lt("joined_at", new Date(queuedAt).toISOString());
+  // Human-created work must still belong to this owner; system-created work
+  // may run only after the current owner joined this binding.
+  const { data, error } = await query
+    .order("joined_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    throw new ManualReconciliationRequiredError(
+      "attendance-proof-unavailable",
+      `Unable to verify WhatsApp attendance: ${error.message}`,
+    );
+  }
+  if (!data?.id) {
+    throw new ManualReconciliationRequiredError(
+      "attendance-required",
+      "No confirmed WhatsApp attendance entry owns this outbound card",
+    );
+  }
+  return data.id;
 }
 
 async function updateConversationPreviewIfSnapshotCurrent(
@@ -1064,6 +1192,7 @@ Deno.serve(async (req) => {
       let provider: WhatsAppProvider | null = null;
       let pendingHistoryId: string | null = null;
       let bindingSnapshot: WhatsAppConversationBindingSnapshot | null = null;
+      let attendanceEntryId: string | null = null;
       try {
         // Check session is connected
         if (message.session?.status !== "connected") {
@@ -1083,6 +1212,11 @@ Deno.serve(async (req) => {
         // the immutable outbox lead instead of inheriting mutable conversation
         // state. A linked row without a current ledger entry is quarantined.
         bindingSnapshot = await loadOutboundBindingSnapshot(supabase, message);
+        attendanceEntryId = await loadOutboundAttendanceEntry(
+          supabase,
+          message,
+          bindingSnapshot,
+        );
 
         // A client retry can create more than one legacy outbox row. Resolve
         // one deterministic logical owner before either history or provider
@@ -1116,6 +1250,7 @@ Deno.serve(async (req) => {
           supabase,
           message,
           stableProviderRequestId,
+          attendanceEntryId,
         );
         pendingHistoryId = pendingHistory.id;
         // Message-insert triggers may legitimately touch the conversation's

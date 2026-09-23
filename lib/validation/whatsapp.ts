@@ -56,6 +56,30 @@ export const sendWhatsAppMessageInputSchema = z.object({
   'Informe texto ou midia',
 )
 
+export const whatsAppAttendanceRequestSchema = z.object({
+	expectedLeadId: uuidSchema,
+	sendSessionId: uuidSchema,
+}).strict()
+
+export const whatsAppAttendanceEntrySchema = z.object({
+	id: uuidSchema,
+	userId: uuidSchema,
+	userName: z.string().trim().min(1),
+	sessionId: uuidSchema,
+	joinedAt: timestampSchema,
+}).strict()
+
+export const whatsAppAttendanceStateSchema = z.object({
+	joined: z.boolean(),
+	currentEntry: whatsAppAttendanceEntrySchema.nullable(),
+	entries: z.array(whatsAppAttendanceEntrySchema),
+	created: z.boolean().optional(),
+}).strict()
+
+export const whatsAppAttendanceResponseSchema = apiEnvelopeSchema(
+	whatsAppAttendanceStateSchema,
+)
+
 export const whatsAppSessionSchema = z.object({
   id: uuidSchema,
   organization_id: uuidSchema,

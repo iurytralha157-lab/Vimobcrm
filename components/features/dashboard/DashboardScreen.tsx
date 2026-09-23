@@ -478,7 +478,6 @@ export default function Dashboard() {
                 }
                 isError={leadDistributionError}
                 onRetry={() => void refetchLeadDistribution()}
-                scopeLabel={dashboardDateRange ? "no período" : "em todo o histórico"}
               />
             ) : null}
           </div>
@@ -559,7 +558,6 @@ export default function Dashboard() {
                 }
                 isError={leadDistributionError}
                 onRetry={() => void refetchLeadDistribution()}
-                scopeLabel={dashboardDateRange ? "no período" : "em todo o histórico"}
               />
             ) : null}
           </div>

@@ -11,7 +11,6 @@ type LeadDistributionSectionProps = {
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
-  scopeLabel: string;
 };
 
 type DistributionRow = {
@@ -48,13 +47,11 @@ function DistributionSkeleton() {
 
 function DistributionCard({
   title,
-  description,
   rows,
   variant,
   isLoading,
 }: {
   title: string;
-  description: string;
   rows: DistributionRow[];
   variant: "user" | "team";
   isLoading: boolean;
@@ -71,17 +68,12 @@ function DistributionCard({
     <Card className="flex min-h-[360px] flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
       <CardHeader className="shrink-0 px-4 pb-2 pt-4">
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <CardTitle className="flex items-center gap-2 text-[14px] font-light text-[var(--app-text-primary)]">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
-                <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-              </span>
-              {title}
-            </CardTitle>
-            <p className="ml-10 mt-1 text-[11px] font-light leading-4 text-[var(--app-text-tertiary)]">
-              {description}
-            </p>
-          </div>
+          <CardTitle className="flex min-w-0 items-center gap-2 text-[14px] font-light text-[var(--app-text-primary)]">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+              <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+            </span>
+            {title}
+          </CardTitle>
           {!isLoading && rows.length > 0 ? (
             <span className="shrink-0 rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-1 text-[10px] font-light text-[var(--app-text-secondary)]">
               {rows.length} {rows.length === 1 ? "grupo" : "grupos"}
@@ -170,7 +162,6 @@ export function LeadDistributionSection({
   isLoading,
   isError,
   onRetry,
-  scopeLabel,
 }: LeadDistributionSectionProps) {
   if (isError) {
     return (
@@ -201,37 +192,18 @@ export function LeadDistributionSection({
 
   const users = data?.users ?? [];
   const teams = data?.teams ?? [];
-  const totalLeads = data?.totalLeads ?? 0;
 
   return (
-    <section data-tour="dashboard-lead-distribution" className="space-y-3">
-      <div className="flex flex-wrap items-end justify-between gap-2 px-0.5">
-        <div>
-          <h2 className="text-[15px] font-normal text-[var(--app-text-primary)]">
-            Distribuição de leads
-          </h2>
-          <p className="mt-0.5 text-[11px] font-light text-[var(--app-text-tertiary)]">
-            Responsáveis atuais e equipe registrada na atribuição
-          </p>
-        </div>
-        {!isLoading ? (
-          <span className="text-[11px] font-light text-[var(--app-text-secondary)]">
-            {totalLeads.toLocaleString("pt-BR")} {totalLeads === 1 ? "lead" : "leads"} {scopeLabel}
-          </span>
-        ) : null}
-      </div>
-
+    <section data-tour="dashboard-lead-distribution">
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <DistributionCard
           title="Leads por corretor"
-          description="Quantidade por responsável atual"
           rows={users}
           variant="user"
           isLoading={isLoading}
         />
         <DistributionCard
           title="Leads por equipe"
-          description="Equipe da atribuição; entradas diretas ficam em Sem equipe"
           rows={teams}
           variant="team"
           isLoading={isLoading}
