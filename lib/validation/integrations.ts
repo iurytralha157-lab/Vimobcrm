@@ -287,30 +287,6 @@ export const toggleMetaFormConfigInputSchema = z.object({
   isActive: z.boolean(),
 }).strict()
 export const deleteMetaFormConfigInputSchema = toggleMetaFormConfigInputSchema.omit({ isActive: true })
-
-const metaRecoveryIDSchema = z.string().trim().regex(/^\d{5,32}$/)
-export const metaLeadRecoveryPreviewInputSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-}).strict()
-export const metaLeadRecoveryApplyInputSchema = metaLeadRecoveryPreviewInputSchema.extend({
-  leadgenId: metaRecoveryIDSchema,
-}).strict()
-export const metaLeadRecoveryStatusSchema = z.enum([
-  'ready', 'possible_reentry', 'already_ingested', 'already_present_alias',
-  'test_lead', 'incomplete', 'processed',
-])
-export const metaLeadRecoveryPreviewResponseSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  items: z.array(z.object({
-    leadgenId: metaRecoveryIDSchema,
-    occurredAt: z.string().datetime({ offset: true }),
-    status: metaLeadRecoveryStatusSchema,
-  }).strict()).max(1_000),
-}).strict()
-export const metaLeadRecoveryApplyResponseSchema = z.object({
-  status: metaLeadRecoveryStatusSchema,
-  reentry: z.boolean(),
-}).strict()
 export const sendMetaMessageInputSchema = z.object({
   text: z.string().trim().min(1).max(2_000),
   idempotencyKey: uuidSchema,
