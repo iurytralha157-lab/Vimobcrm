@@ -41,19 +41,60 @@ func TestMetaOAuthFlowProjectionIncludesSafeInstagramAssetOnly(t *testing.T) {
 		t.Fatal("Meta OAuth flow projection section was not found")
 	}
 	projection := source[start : start+end]
+	clientProjection := strings.SplitN(projection, "cross join lateral (", 2)[0]
 	for _, required := range []string{
 		"'instagram_business_account'",
 		"'{instagram_business_account,id}'",
 		"'{instagram_business_account,username}'",
 	} {
-		if !strings.Contains(projection, required) {
+		if !strings.Contains(clientProjection, required) {
 			t.Fatalf("safe Instagram projection is missing %q", required)
 		}
 	}
 	for _, forbidden := range []string{"access_token", "user_token", "secret_ref", "decrypted_secret"} {
-		if strings.Contains(projection, forbidden) {
+		if strings.Contains(clientProjection, forbidden) {
 			t.Fatalf("browser OAuth projection exposes credential field %q", forbidden)
 		}
+	}
+}
+
+func TestMetaOAuthFlowProjectionOnlyOffersConnectablePages(t *testing.T) {
+	raw, err := os.ReadFile("repository.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(raw)
+	start := strings.Index(source, "func (repo Repository) GetMetaOAuthFlow")
+	if start < 0 {
+		t.Fatal("Meta OAuth flow projection section was not found")
+	}
+	end := strings.Index(source[start:], "func (repo Repository) ClaimMetaOAuthConnectPayload")
+	if end < 0 {
+		t.Fatal("Meta OAuth flow projection section was not found")
+	}
+	projection := source[start : start+end]
+	for _, required := range []string{
+		"'connectable', readiness.connectable",
+		"case when readiness.connectable then jsonb_strip_nulls(jsonb_build_object(",
+		"mof.status = 'success'",
+		"mof.consumed_at is null",
+		"mof.expires_at > now()",
+		"mof.payload->'success' = 'true'::jsonb",
+		`mof.payload->'granted_scopes' @> '["leads_retrieval"]'::jsonb`,
+		"jsonb_typeof(page->'id') = 'string'",
+		"jsonb_typeof(page->'name') = 'string'",
+		"not (mof.payload ? 'user_token')",
+		"secret.id = private.meta_oauth_flow_transient_secret_id(mof.payload)",
+		"secret.name = 'meta-oauth-flow:' || mof.id::text",
+		"nullif(btrim(secret.decrypted_secret), '') is not null",
+		"where connected.page_id = page->>'id'",
+	} {
+		if !strings.Contains(projection, required) {
+			t.Fatalf("Meta OAuth readiness projection is missing %q", required)
+		}
+	}
+	if strings.Count(projection, "where connected.page_id = page->>'id'") != 2 {
+		t.Fatal("already connected pages must be excluded from readiness and the returned page list")
 	}
 }
 

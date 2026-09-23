@@ -84,8 +84,47 @@ func TestOAuthPostgresPageScopedUseAndVaultContract(t *testing.T) {
 	if err := store.claimCallback(ctx, flow); err != nil {
 		t.Fatal(err)
 	}
+	// The OAuth state was valid when claimed, but portfolio discovery can run
+	// past its original deadline. Completing the callback starts a fresh Page
+	// selection window instead of exposing an already expired success result.
+	if _, err := database.Pool().Exec(ctx, `
+		update public.meta_oauth_flows
+		set expires_at = now() - interval '1 minute'
+		where id = $1::uuid
+	`, flowID); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.finishCallbackSuccess(ctx, flow, payload); err != nil {
 		t.Fatal(err)
+	}
+	var selectionWindowValid bool
+	if err := database.Pool().QueryRow(ctx, `
+		select status = 'success'
+		   and expires_at > now() + interval '9 minutes'
+		   and expires_at <= now() + interval '10 minutes'
+		from public.meta_oauth_flows
+		where id = $1::uuid
+	`, flowID).Scan(&selectionWindowValid); err != nil || !selectionWindowValid {
+		t.Fatalf("callback did not start a new 10-minute Page selection window: %v, %v", selectionWindowValid, err)
+	}
+	expiredBeforeClaimID, err := randomOAuthUUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiredBeforeClaim := oauthFlow{
+		ID: expiredBeforeClaimID, OrganizationID: organizationID, UserID: userID,
+		NonceHash: hashOAuthNonce(strings.Repeat("e", 43)),
+		ReturnURL: "http://localhost:3000/integrations",
+		ExpiresAt: time.Now().UTC().Add(-time.Minute),
+	}
+	if err := store.createFlow(ctx, expiredBeforeClaim); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, _ = database.Pool().Exec(context.Background(), `delete from public.meta_oauth_flows where id = $1::uuid`, expiredBeforeClaimID)
+	}()
+	if err := store.claimCallback(ctx, expiredBeforeClaim); oauthErrorCode(err) != "oauth_state_already_used" {
+		t.Fatalf("expired OAuth state must not be revived: %v", err)
 	}
 	var plaintextInPayload bool
 	var referenceInPayload bool

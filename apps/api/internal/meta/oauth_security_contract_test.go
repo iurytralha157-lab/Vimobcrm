@@ -73,6 +73,20 @@ func TestOAuthConnectRejectsTokenWithoutLeadRetrievalBeforeProviderMutation(t *t
 	}
 }
 
+func TestOAuthCallbackRejectsTokenWithoutLeadRetrievalBeforeOfferingPages(t *testing.T) {
+	source := readOAuthSource(t, "oauth_service.go")
+	callback := oauthSourceSection(t, source, "func (service *oauthService) completeCallback", "func (service *oauthService) connectPage")
+
+	requiredScope := strings.Index(callback, `slices.Contains(debug.Scopes, "leads_retrieval")`)
+	finish := strings.Index(callback, "finishCallbackSuccess(ctx, flow, payload)")
+	if requiredScope < 0 || finish <= requiredScope {
+		t.Fatal("callback must reject a token without leads_retrieval before offering Pages")
+	}
+	if !strings.Contains(callback, `newOAuthFailure("meta_leads_retrieval_required", http.StatusForbidden)`) {
+		t.Fatal("callback must return the stable meta_leads_retrieval_required error")
+	}
+}
+
 func TestOAuthConnectProvesLeadFormsAccessBeforeProviderMutationOrHealthyPersistence(t *testing.T) {
 	source := readOAuthSource(t, "oauth_service.go")
 	connect := oauthSourceSection(t, source, "func (service *oauthService) connectPage", "func (service *oauthService) updatePage")
@@ -113,6 +127,31 @@ func TestOAuthCallbackStoresTransientUserTokenOnlyInVault(t *testing.T) {
 	}
 	if strings.Contains(string(raw), "must-never-serialize") || strings.Contains(string(raw), "user_token") {
 		t.Fatalf("token-bearing in-memory payload serialized credentials: %s", raw)
+	}
+}
+
+func TestOAuthCallbackStartsFreshSelectionWindowOnlyAfterValidClaim(t *testing.T) {
+	source := readOAuthSource(t, "oauth_postgres.go")
+	claim := oauthSourceSection(t, source, "func (store oauthPostgresStore) claimCallback", "func (store oauthPostgresStore) finishCallbackError")
+	finish := oauthSourceSection(t, source, "func (store oauthPostgresStore) finishCallbackSuccess", "func (store oauthPostgresStore) claimConnectFlow")
+	for _, required := range []string{
+		"status = 'pending'",
+		"consumed_at is null",
+		"expires_at > now()",
+	} {
+		if !strings.Contains(claim, required) {
+			t.Fatalf("OAuth callback claim must reject expired or consumed state: missing %q", required)
+		}
+	}
+	for _, required := range []string{
+		"expires_at = now() + interval '10 minutes'",
+		"status = 'error'",
+		"error_message = 'oauth_callback_processing'",
+		"tx.Commit(ctx)",
+	} {
+		if !strings.Contains(finish, required) {
+			t.Fatalf("successful callback must atomically start a fresh selection window: missing %q", required)
+		}
 	}
 }
 
