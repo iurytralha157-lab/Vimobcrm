@@ -43,7 +43,8 @@ import {
   metaPageFormsActionResponseSchema,
   metaPublicIntegrationSchema,
 } from "./integrations";
-import { metaConnectErrorMessage } from "../meta-connect-error";
+import { isMetaOAuthFlowUnavailableError, metaConnectErrorMessage } from "../meta-connect-error";
+import { canUseMetaOAuthFlow } from "../meta-oauth-flow";
 import { DEFAULT_PUBLIC_ERROR_MESSAGE, VimobAPIError } from "../api/vimob-error";
 
 test("identificadores Google sao normalizados e validados por provedor", () => {
@@ -329,6 +330,8 @@ test("retorno OAuth Meta aceita somente o portfolio seguro do backend", () => {
     organization_id: "10000000-0000-4000-8000-000000000002",
     user_id: "10000000-0000-4000-8000-000000000003",
     status: "success",
+    connectable: true,
+    expires_at: "2026-09-23T15:10:00Z",
     payload: {
       flow_id: "10000000-0000-4000-8000-000000000001",
       success: true,
@@ -348,10 +351,16 @@ test("retorno OAuth Meta aceita somente o portfolio seguro do backend", () => {
     },
   };
 
-  assert.equal(
-    metaOAuthFlowResultSchema.parse(safeFlow).payload?.pages[0]?.name,
-    "Pagina Vimob",
-  );
+  const parsed = metaOAuthFlowResultSchema.parse(safeFlow);
+  assert.equal(parsed.payload?.pages[0]?.name, "Pagina Vimob");
+  assert.equal(canUseMetaOAuthFlow(parsed, safeFlow.organization_id, Date.parse("2026-09-23T15:00:00Z")), true);
+  assert.equal(canUseMetaOAuthFlow(parsed, safeFlow.organization_id, Date.parse("2026-09-23T15:11:00Z")), false);
+  assert.equal(canUseMetaOAuthFlow({ ...parsed, connectable: false }, safeFlow.organization_id, Date.parse("2026-09-23T15:00:00Z")), false);
+  assert.equal(canUseMetaOAuthFlow({ ...parsed, consumed_at: "2026-09-23T15:01:00Z" }, safeFlow.organization_id, Date.parse("2026-09-23T15:00:00Z")), false);
+  assert.equal(canUseMetaOAuthFlow(parsed, "10000000-0000-4000-8000-000000000004", Date.parse("2026-09-23T15:00:00Z")), false);
+  assert.equal(canUseMetaOAuthFlow(metaOAuthFlowResultSchema.parse({ ...safeFlow, connectable: false, payload: null }), safeFlow.organization_id, Date.parse("2026-09-23T15:00:00Z")), false);
+  assert.equal(metaOAuthFlowResultSchema.parse({ ...safeFlow, connectable: false, payload: null }).connectable, false);
+  assert.equal(metaOAuthFlowResultSchema.parse({ ...safeFlow, connectable: undefined }).connectable, false);
   assert.throws(() =>
     metaOAuthFlowResultSchema.parse({
       ...safeFlow,
@@ -1168,4 +1177,7 @@ test("conexão Meta traduz os códigos estáveis recebidos em code ou message", 
   );
   assert.equal(metaConnectErrorMessage(new Error("Falha específica")), "Falha específica");
   assert.equal(metaConnectErrorMessage(null), "Não foi possível conectar esta página.");
+  assert.equal(isMetaOAuthFlowUnavailableError(new Error("oauth_flow_not_available")), true);
+  assert.equal(isMetaOAuthFlowUnavailableError({ code: "oauth_flow_not_available" }), true);
+  assert.equal(isMetaOAuthFlowUnavailableError(new Error("meta_request_timeout")), false);
 });

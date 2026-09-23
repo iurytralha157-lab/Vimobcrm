@@ -285,7 +285,11 @@ func (store oauthPostgresStore) finishCallbackSuccess(ctx context.Context, flow 
 	}
 	command, err := tx.Exec(ctx, `
 		update public.meta_oauth_flows
-		set status = 'success', payload = $3::jsonb, error_message = null, updated_at = now()
+		set status = 'success',
+		    payload = $3::jsonb,
+		    error_message = null,
+		    expires_at = now() + interval '10 minutes',
+		    updated_at = now()
 		where id = $1::uuid
 		  and nonce = $2
 		  and status = 'error'

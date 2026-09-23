@@ -563,8 +563,9 @@ func (repo Repository) GetMetaOAuthFlow(ctx context.Context, tenantContext tenan
 			'organization_id', mof.organization_id::text,
 			'user_id', mof.user_id::text,
 			'status', mof.status,
+			'connectable', readiness.connectable,
 			'payload',
-				jsonb_strip_nulls(jsonb_build_object(
+				case when readiness.connectable then jsonb_strip_nulls(jsonb_build_object(
 					'flow_id',
 					mof.id::text,
 					'success',
@@ -632,8 +633,20 @@ func (repo Repository) GetMetaOAuthFlow(ctx context.Context, tenantContext tenan
 								else '[]'::jsonb
 							end
 						) as page
+						where jsonb_typeof(page->'id') = 'string'
+						  and jsonb_typeof(page->'name') = 'string'
+						  and nullif(btrim(page->>'id'), '') is not null
+						  and nullif(btrim(page->>'name'), '') is not null
+						  and not exists (
+							select 1
+							from jsonb_array_elements_text(
+								case when jsonb_typeof(mof.payload->'connected_page_ids') = 'array'
+									then mof.payload->'connected_page_ids' else '[]'::jsonb end
+							) as connected(page_id)
+							where connected.page_id = page->>'id'
+						  )
 					), '[]'::jsonb)
-				)),
+				)) else null end,
 			'error_message', mof.error_message,
 			'expires_at', mof.expires_at,
 			'consumed_at', mof.consumed_at,
@@ -641,6 +654,43 @@ func (repo Repository) GetMetaOAuthFlow(ctx context.Context, tenantContext tenan
 			'updated_at', mof.updated_at
 		))
 		from public.meta_oauth_flows mof
+		cross join lateral (
+			select coalesce(
+				mof.status = 'success'
+				and mof.consumed_at is null
+				and mof.expires_at > now()
+				and jsonb_typeof(mof.payload) = 'object'
+				and mof.payload->'success' = 'true'::jsonb
+				and mof.payload->'granted_scopes' @> '["leads_retrieval"]'::jsonb
+				and not (mof.payload ? 'user_token')
+				and exists (
+					select 1
+					from vault.decrypted_secrets as secret
+					where secret.id = private.meta_oauth_flow_transient_secret_id(mof.payload)
+					  and secret.name = 'meta-oauth-flow:' || mof.id::text
+					  and nullif(btrim(secret.decrypted_secret), '') is not null
+				)
+				and exists (
+					select 1
+					from jsonb_array_elements(
+						case when jsonb_typeof(mof.payload->'pages') = 'array'
+							then mof.payload->'pages' else '[]'::jsonb end
+					) as page
+					where jsonb_typeof(page->'id') = 'string'
+					  and jsonb_typeof(page->'name') = 'string'
+					  and nullif(btrim(page->>'id'), '') is not null
+					  and nullif(btrim(page->>'name'), '') is not null
+					  and not exists (
+						select 1
+						from jsonb_array_elements_text(
+							case when jsonb_typeof(mof.payload->'connected_page_ids') = 'array'
+								then mof.payload->'connected_page_ids' else '[]'::jsonb end
+						) as connected(page_id)
+						where connected.page_id = page->>'id'
+					  )
+				), false
+			) as connectable
+		) as readiness
 		where mof.id = $2::uuid
 		  and mof.organization_id = $1::uuid
 		  and mof.user_id = $3::uuid
