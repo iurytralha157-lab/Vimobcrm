@@ -792,9 +792,13 @@ $old$;
      )
 $new$;
 begin
-  v_definition := pg_catalog.pg_get_functiondef(
-    'public.handle_managed_whatsapp_message_lead(uuid)'::regprocedure
-  );
+  v_definition := replace(replace(
+    pg_catalog.pg_get_functiondef(
+      'public.handle_managed_whatsapp_message_lead(uuid)'::regprocedure
+    ),
+    E'\r\n',
+    E'\n'
+  ), E'\r', E'\n');
   v_updated := replace(v_definition, v_old, v_new);
   if v_updated = v_definition then
     raise exception using
@@ -815,9 +819,13 @@ declare
   v_old text;
   v_new text;
 begin
-  v_definition := pg_catalog.pg_get_functiondef(
-    'public.lookup_managed_whatsapp_lead_entry(uuid,uuid,text,text)'::regprocedure
-  );
+  v_definition := replace(replace(
+    pg_catalog.pg_get_functiondef(
+      'public.lookup_managed_whatsapp_lead_entry(uuid,uuid,text,text)'::regprocedure
+    ),
+    E'\r\n',
+    E'\n'
+  ), E'\r', E'\n');
 
   v_old := $old$
        or coalesce(v_pending_lead.initial_message, '')
@@ -933,9 +941,13 @@ declare
   v_old text;
   v_new text;
 begin
-  v_definition := pg_catalog.pg_get_functiondef(
-    'public.process_managed_whatsapp_lead_entry(uuid,uuid,uuid,uuid,text,text,timestamp with time zone)'::regprocedure
-  );
+  v_definition := replace(replace(
+    pg_catalog.pg_get_functiondef(
+      'public.process_managed_whatsapp_lead_entry(uuid,uuid,uuid,uuid,text,text,timestamp with time zone)'::regprocedure
+    ),
+    E'\r\n',
+    E'\n'
+  ), E'\r', E'\n');
 
   v_old := $old$
       and coalesce(message.content, '') is not distinct from coalesce(p_message, '')
@@ -995,9 +1007,13 @@ declare
   v_old text;
   v_new text;
 begin
-  v_definition := pg_catalog.pg_get_functiondef(
-    'public.enqueue_managed_whatsapp_distribution_auto_reply(uuid,uuid,uuid,text)'::regprocedure
-  );
+  v_definition := replace(replace(
+    pg_catalog.pg_get_functiondef(
+      'public.enqueue_managed_whatsapp_distribution_auto_reply(uuid,uuid,uuid,text)'::regprocedure
+    ),
+    E'\r\n',
+    E'\n'
+  ), E'\r', E'\n');
 
   v_old := $old$
   if not found
@@ -1112,9 +1128,13 @@ declare
   v_old text;
   v_new text;
 begin
-  v_definition := pg_catalog.pg_get_functiondef(
-    'public.enqueue_automation_whatsapp_outbox(uuid,uuid,text,text,text,uuid,uuid,text,text,text,text,text,bigint,text)'::regprocedure
-  );
+  v_definition := replace(replace(
+    pg_catalog.pg_get_functiondef(
+      'public.enqueue_automation_whatsapp_outbox(uuid,uuid,text,text,text,uuid,uuid,text,text,text,text,text,bigint,text)'::regprocedure
+    ),
+    E'\r\n',
+    E'\n'
+  ), E'\r', E'\n');
 
   v_old := $old$
   if not found
