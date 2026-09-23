@@ -79,11 +79,13 @@ type webhookEventJob struct {
 }
 
 type leadgenChange struct {
-	PageID      string
-	FormID      string
-	LeadgenID   string
-	CreatedTime string
-	Raw         map[string]any
+	PageID                 string
+	FormID                 string
+	LeadgenID              string
+	CreatedTime            string
+	Raw                    map[string]any
+	Recovery               bool
+	RecoveryOrganizationID string
 }
 
 type fieldData struct {

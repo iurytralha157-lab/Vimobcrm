@@ -14,6 +14,7 @@ import {
   Plus,
   Search,
   Settings,
+  RotateCcw,
   Trash2,
   Unplug,
 } from "lucide-react";
@@ -87,6 +88,7 @@ import {
   useToggleFormConfig,
 } from "@/hooks/use-meta-forms";
 import { MetaFormConfigDialog } from "./MetaFormConfigDialog";
+import { MetaLeadRecoveryDialog } from "./MetaLeadRecoveryDialog";
 
 interface OAuthPayload {
   pages?: MetaPage[];
@@ -305,6 +307,7 @@ export function MetaIntegrationSettings({
   const [disconnectTarget, setDisconnectTarget] = useState<AccountGroup | null>(null);
   const [configToDelete, setConfigToDelete] = useState<MetaFormConfig | null>(null);
   const [formToDeactivate, setFormToDeactivate] = useState<MetaFormConfig | null>(null);
+  const [recoveryTarget, setRecoveryTarget] = useState<{ config: MetaFormConfig; integration: MetaIntegration } | null>(null);
   const handledOAuthStatusRef = useRef<string | number | null>(null);
   const handledOAuthMessageRef = useRef<string | number | null>(null);
   const formsRequestSequenceRef = useRef(0);
@@ -1082,6 +1085,11 @@ export function MetaIntegrationSettings({
                             <DropdownMenuItem onClick={() => openConfig(buildConfigForm(config), config, integration)}>
                               <Settings className="mr-2 h-4 w-4" />Editar configuração
                             </DropdownMenuItem>
+                            {config.is_active && integration?.page_id && (
+                              <DropdownMenuItem onClick={() => setRecoveryTarget({ config, integration })}>
+                                <RotateCcw className="mr-2 h-4 w-4" />Recuperar leads do dia
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem
                               onClick={() => {
                                 if (config.is_active) {
@@ -1720,6 +1728,17 @@ export function MetaIntegrationSettings({
         integrationId={selectedIntegration?.id || editingConfig?.integration_id || ""}
         pageName={selectedIntegration?.page_name || integrationById.get(editingConfig?.integration_id || "")?.page_name}
       />
+      {recoveryTarget && (
+        <MetaLeadRecoveryDialog
+          open
+          onOpenChange={(open) => { if (!open) setRecoveryTarget(null); }}
+          pageId={recoveryTarget.integration.page_id || ""}
+          pageName={recoveryTarget.integration.page_name || "Página Meta"}
+          formId={recoveryTarget.config.form_id}
+          formName={recoveryTarget.config.form_name || recoveryTarget.config.form_id}
+          organizationId={organizationId || ""}
+        />
+      )}
     </div>
   );
 }

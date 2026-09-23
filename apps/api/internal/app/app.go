@@ -385,7 +385,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		publicapi.NewRepository(postgres),
 		webhooksRepository,
 	).WithPublicClientIPResolver(publicClientIPResolver)
-	metaHandler := meta.NewHandler(meta.NewRepository(postgres, meta.Config{
+	metaRepository := meta.NewRepository(postgres, meta.Config{
 		AppSecret:                               cfg.Meta.AppSecret,
 		WebhookVerifyToken:                      cfg.Meta.WebhookVerifyToken,
 		GraphVersion:                            cfg.Meta.GraphVersion,
@@ -397,7 +397,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		ConversionFeedbackRequestTimeout:        cfg.Meta.ConversionFeedbackRequestTimeout,
 		ConversionFeedbackPartnerAgent:          cfg.Meta.ConversionFeedbackPartnerAgent,
 		ConversionFeedbackAppSecretProofEnabled: cfg.Meta.ConversionFeedbackAppSecretProofEnabled,
-	}), realtimeHub)
+	})
+	metaHandler := meta.NewHandler(metaRepository, realtimeHub)
+	metaLeadRecoveryHandler := meta.NewLeadRecoveryHTTPHandler(metaRepository, realtimeHub)
 	backgroundWorkers.Run(func() {
 		if cfg.Meta.WebhookWorkerEnabled {
 			metaHandler.StartWebhookWorker(ctx, logger)
@@ -457,6 +459,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		leadsHandler:             leadsHandler,
 		meHandler:                meHandler,
 		metaHandler:              metaHandler,
+		metaLeadRecoveryHandler:  metaLeadRecoveryHandler,
 		metaMarketingSyncHandler: metaMarketingSyncHandler,
 		metaOAuthActionHandler:   metaOAuthActionHandler,
 		metaOAuthCallbackHandler: metaOAuthCallbackHandler,
