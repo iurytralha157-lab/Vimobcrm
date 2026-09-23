@@ -70,26 +70,20 @@ export function useMetaConnectPage() {
       pipelineId,
       stageId,
       defaultStatus,
-      adAccountId,
-      selectedAdAccountIds,
     }: {
       pageId: string;
       flowId: string;
       pipelineId?: string | null;
       stageId?: string | null;
       defaultStatus?: string | null;
-      adAccountId?: string;
-      selectedAdAccountIds?: string[];
     }) =>
       invokeMeta<unknown>({
         action: "connect_page",
         page_id: pageId,
         flow_id: flowId,
-        pipeline_id: pipelineId || null,
-        stage_id: stageId || null,
-        default_status: defaultStatus || null,
-        ad_account_id: adAccountId,
-        selected_ad_accounts: selectedAdAccountIds,
+        ...(pipelineId !== undefined ? { pipeline_id: pipelineId } : {}),
+        ...(stageId !== undefined ? { stage_id: stageId } : {}),
+        ...(defaultStatus !== undefined ? { default_status: defaultStatus } : {}),
       }, organizationId).then((result) => metaConnectPageActionResponseSchema.parse(result)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["meta-integrations"] });

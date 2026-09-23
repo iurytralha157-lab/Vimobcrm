@@ -62,7 +62,8 @@ import { cn } from "@/lib/utils";
 import { normalizeSearchText } from "@/lib/search-text";
 import { useAuth } from "@/contexts/AuthContext";
 import { VimobAPIError } from "@/lib/api/vimob-client";
-import { metaConnectErrorMessage } from "@/lib/meta-connect-error";
+import { isMetaOAuthFlowUnavailableError, metaConnectErrorMessage } from "@/lib/meta-connect-error";
+import { canUseMetaOAuthFlow } from "@/lib/meta-oauth-flow";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import {
@@ -298,6 +299,9 @@ export function MetaIntegrationSettings({
   const [editingForm, setEditingForm] = useState<MetaForm | null>(null);
   const [editingConfig, setEditingConfig] = useState<MetaFormConfig | undefined>();
   const [newOAuth, setNewOAuth] = useState<OAuthPayload | null>(null);
+  const [oauthFlowExpiresAt, setOAuthFlowExpiresAt] = useState<string | null>(null);
+  const [oauthAuthorizationUnavailable, setOAuthAuthorizationUnavailable] = useState(false);
+  const [oauthRecoveryFlowId, setOAuthRecoveryFlowId] = useState<string | null>(null);
   const [disconnectTarget, setDisconnectTarget] = useState<AccountGroup | null>(null);
   const [configToDelete, setConfigToDelete] = useState<MetaFormConfig | null>(null);
   const [formToDeactivate, setFormToDeactivate] = useState<MetaFormConfig | null>(null);
@@ -341,11 +345,26 @@ export function MetaIntegrationSettings({
   });
   const updateAdAccounts = useMetaUpdateAdAccounts();
 
-  const openOAuthWizard = useCallback((payload: OAuthPayload | null | undefined, message: string) => {
+  const showOAuthAuthorizationUnavailable = useCallback(() => {
+    setNewOAuth(null);
+    setOAuthFlowExpiresAt(null);
+    setOAuthAuthorizationUnavailable(true);
+    setOAuthRecoveryFlowId(null);
+    setSelectedAccountKey("");
+    setPendingPage(null);
+    setSelectedIntegration(null);
+    setWizardOpen(true);
+    setAccountModalOpen(false);
+  }, []);
+
+  const openOAuthWizard = useCallback((payload: OAuthPayload | null | undefined, expiresAt: string, message: string) => {
     const normalized = normalizeOAuthPayload(payload);
     if (!normalized?.pages?.length) return false;
 
     setNewOAuth(normalized);
+    setOAuthFlowExpiresAt(expiresAt);
+    setOAuthAuthorizationUnavailable(false);
+    setOAuthRecoveryFlowId(null);
     setSelectedAccountKey("new-oauth");
     setPendingPage(null);
     setFormsLoadError(null);
@@ -363,33 +382,56 @@ export function MetaIntegrationSettings({
       if (status.flowId) {
         try {
           const flow = await getOAuthFlow.mutateAsync(status.flowId);
-          if (openOAuthWizard(flow.payload, "Conta do Facebook autorizada. Escolha a página para concluir.")) {
+          if (canUseMetaOAuthFlow(flow, organizationId) &&
+              openOAuthWizard(flow.payload, flow.expires_at ?? "", "Conta do Facebook autorizada. Escolha a página para concluir.")) {
             await refetchConfigs();
             return;
           }
         } catch (error) {
           console.error("Unable to load Meta OAuth flow result", error);
+          if (error instanceof VimobAPIError && (error.status === 404 || error.status === 410)) {
+            showOAuthAuthorizationUnavailable();
+            toast.warning("Esta autorização da Meta não está mais disponível. Autorize a conta novamente.");
+            return;
+          }
+          setNewOAuth(null);
+          setOAuthFlowExpiresAt(null);
+          setOAuthAuthorizationUnavailable(false);
+          setOAuthRecoveryFlowId(status.flowId);
+          setSelectedAccountKey("");
+          setPendingPage(null);
+          setWizardOpen(true);
+          setAccountModalOpen(false);
+          toast.error("Não foi possível verificar a autorização da Meta. Tente verificar novamente.");
+          return;
         }
       }
 
-      setNewOAuth(null);
-      setSelectedAccountKey("");
-      setAccountSearch("");
-      setWizardOpen(false);
-      setAccountModalOpen(true);
-      const [integrationsResult] = await Promise.all([refetchIntegrations(), refetchConfigs()]);
-      if ((integrationsResult.data || []).length > 0) {
-        toast.success("Conta do Facebook reconectada com sucesso.");
-      } else {
-        toast.warning("Conta do Facebook autorizada, mas nenhuma página foi vinculada ainda. Escolha uma página para concluir.");
-      }
+      showOAuthAuthorizationUnavailable();
+      await Promise.all([refetchIntegrations(), refetchConfigs()]);
+      toast.warning("Esta autorização da Meta não pode mais conectar páginas. Autorize a conta novamente.");
       return;
     }
 
     if (status.error) {
-      toast.error(`Erro ao reconectar Facebook: ${status.error}`);
+      if (status.error === "meta_leads_retrieval_required" ||
+          isMetaOAuthFlowUnavailableError(new Error(status.error))) {
+        showOAuthAuthorizationUnavailable();
+      }
+      toast.error(`Erro ao reconectar Facebook: ${metaConnectErrorMessage(new Error(status.error))}`);
     }
-  }, [getOAuthFlow, openOAuthWizard, refetchConfigs, refetchIntegrations]);
+  }, [getOAuthFlow, openOAuthWizard, organizationId, refetchConfigs, refetchIntegrations, showOAuthAuthorizationUnavailable]);
+
+  useEffect(() => {
+    if (!newOAuth || !oauthFlowExpiresAt || pageConfirmationInProgress) return;
+    const remaining = Date.parse(oauthFlowExpiresAt) - Date.now();
+    if (remaining <= 0) {
+      queueMicrotask(showOAuthAuthorizationUnavailable);
+      return;
+    }
+    const timer = window.setTimeout(showOAuthAuthorizationUnavailable, remaining);
+    return () => window.clearTimeout(timer);
+  }, [newOAuth, oauthFlowExpiresAt, pageConfirmationInProgress, showOAuthAuthorizationUnavailable]);
 
   useEffect(() => {
     if (oauthStatus !== undefined) return;
@@ -430,11 +472,11 @@ export function MetaIntegrationSettings({
   }, [handleOAuthStatusResult, oauthStatus]);
 
   useEffect(() => {
-    if (!oauthPayload) return;
+    if (!oauthPayload?.flow_id) return;
     queueMicrotask(() => {
-      openOAuthWizard(oauthPayload, "Conta do Facebook autorizada. Escolha a página para concluir.");
+      void handleOAuthStatusResult({ status: "success", flowId: oauthPayload.flow_id });
     });
-  }, [oauthPayload, openOAuthWizard]);
+  }, [handleOAuthStatusResult, oauthPayload]);
 
   useEffect(() => {
     if (!oauthStatus) return;
@@ -473,7 +515,10 @@ export function MetaIntegrationSettings({
       }
 
       if (!event.data || event.data.type !== "META_OAUTH_SUCCESS") return;
-      if (openOAuthWizard(event.data.data || null, "Conta do Facebook autorizada. Escolha a página para concluir.")) return;
+      if (event.data.data?.flow_id) {
+        void handleOAuthStatusResult({ status: "success", flowId: event.data.data.flow_id });
+        return;
+      }
       toast.error("O retorno da Meta não possui um fluxo seguro válido. Inicie a conexão novamente.");
     };
 
@@ -509,7 +554,7 @@ export function MetaIntegrationSettings({
       window.removeEventListener("storage", handleStorage);
       channel?.close();
     };
-  }, [handleOAuthStatusResult, listenForOAuthMessages, oauthPayload, openOAuthWizard]);
+  }, [handleOAuthStatusResult, listenForOAuthMessages, oauthPayload]);
 
   const accounts = useMemo<AccountGroup[]>(() => {
     const grouped = new Map<string, AccountGroup>();
@@ -663,7 +708,7 @@ export function MetaIntegrationSettings({
   const loadFormsForIntegration = async (integration: MetaIntegration) => {
     if (!integration.page_id) {
       toast.error("Página sem identificador válido para buscar formulários.");
-      return;
+      return false;
     }
     const requestSequence = ++formsRequestSequenceRef.current;
     setSelectedIntegration(integration);
@@ -671,12 +716,14 @@ export function MetaIntegrationSettings({
     setFormsLoading(true);
     try {
       const result = await fetchForms.mutateAsync({ pageId: integration.page_id });
-      if (formsRequestSequenceRef.current !== requestSequence) return;
+      if (formsRequestSequenceRef.current !== requestSequence) return false;
       setForms(mergeFormsWithConfigured(result.forms || [], getConfiguredFormsForIntegration(integration.id)));
+      return true;
     } catch (error) {
-      if (formsRequestSequenceRef.current !== requestSequence) return;
+      if (formsRequestSequenceRef.current !== requestSequence) return false;
       setForms([]);
       setFormsLoadError(metaErrorMessage(error, "Não foi possível carregar os formulários desta página."));
+      return false;
     } finally {
       if (formsRequestSequenceRef.current === requestSequence) {
         setFormsLoading(false);
@@ -687,33 +734,46 @@ export function MetaIntegrationSettings({
   const connectAndLoadPage = async (page: MetaPage) => {
     if (pageConfirmationInProgressRef.current) return;
     if (!selectedAccount?.flowId) {
-      toast.error("A autorização expirou. Conecte a conta Meta novamente.");
+      showOAuthAuthorizationUnavailable();
+      toast.error("A autorização expirou. Autorize a conta Meta novamente.");
+      return;
+    }
+    if (selectedAccount.flowId !== newOAuth?.flow_id ||
+        !oauthFlowExpiresAt || Date.parse(oauthFlowExpiresAt) <= Date.now()) {
+      showOAuthAuthorizationUnavailable();
+      toast.error("A autorização expirou. Autorize a conta Meta novamente.");
       return;
     }
 
     pageConfirmationInProgressRef.current = true;
     setPageConfirmationInProgress(true);
     try {
-      let result: Awaited<ReturnType<typeof connectPage.mutateAsync>> | null = null;
       let connectError: unknown = null;
       try {
-        result = await connectPage.mutateAsync({
+        await connectPage.mutateAsync({
           pageId: page.id,
           flowId: selectedAccount.flowId,
-          adAccountId: selectedAccount.adAccountId,
         });
       } catch (error) {
         connectError = error;
       }
 
       // A network failure or a failed flow finalization may happen after the
-      // integration was saved. Check the server state before reporting an outcome.
+      // integration was saved. Readback distinguishes a missing Page from an
+      // ambiguous update, but an existing row cannot prove credential rotation.
       const refreshed = await refetchIntegrations();
       const integration = refreshed.isSuccess
         ? (refreshed.data || []).find((item) => item.page_id === page.id && item.is_connected === true)
         : undefined;
-      if (connectError && !integration) {
-        toast.error(`Erro ao conectar página: ${metaConnectErrorMessage(connectError)}`);
+      if (connectError) {
+        if (isMetaOAuthFlowUnavailableError(connectError)) {
+          showOAuthAuthorizationUnavailable();
+          toast.error(`Erro ao conectar página: ${metaConnectErrorMessage(connectError)}`);
+        } else if (integration) {
+          toast.warning("A página consta conectada, mas não foi possível confirmar esta autorização. Verifique a conexão na lista antes de tentar novamente.");
+        } else {
+          toast.error(`Erro ao conectar página: ${metaConnectErrorMessage(connectError)}`);
+        }
         return;
       }
       if (!integration) {
@@ -721,21 +781,16 @@ export function MetaIntegrationSettings({
         return;
       }
 
-      if (connectError) {
-        toast.warning("A página consta conectada no CRM, mas a nova autorização não pôde ser confirmada. Confira os formulários antes de tentar novamente.");
-      } else if (result?.missing_permissions.includes("ads_read")) {
-        toast.warning("Página conectada, mas o Meta não liberou ads_read. Reconecte a conta para ativar a sincronização da Dashboard de Marketing.");
-      } else if (result?.messenger_active === false) {
-        toast.success("A página foi conectada para leads. Mensagens do Messenger exigem permissão adicional.");
-      } else {
-        toast.success("Página conectada com sucesso!");
-      }
-
       const pendingOAuth = retainPendingOAuthPages(newOAuth, page.id);
       setNewOAuth(pendingOAuth);
+      if (!pendingOAuth) setOAuthFlowExpiresAt(null);
       setSelectedAccountKey(pendingOAuth ? "new-oauth" : getIntegrationAccountKey(integration));
       setPendingPage(null);
-      await loadFormsForIntegration(integration);
+      if (await loadFormsForIntegration(integration)) {
+        toast.success("Página conectada e formulários carregados.");
+      } else {
+        toast.warning("Página conectada. Não foi possível carregar os formulários agora; tente abrir a página novamente.");
+      }
     } finally {
       pageConfirmationInProgressRef.current = false;
       setPageConfirmationInProgress(false);
@@ -1404,7 +1459,42 @@ export function MetaIntegrationSettings({
             </aside>
 
             <main className="min-w-0 space-y-3 overflow-y-auto p-3 pr-12">
-              {!selectedAccount ? (
+              {oauthAuthorizationUnavailable || oauthRecoveryFlowId ? (
+                <div className="flex min-h-[300px] items-center justify-center">
+                  <div className="app-card w-full max-w-md space-y-4 p-5 text-center" role="status">
+                    <AlertCircle className="mx-auto h-7 w-7 text-primary" />
+                    <div>
+                      <p className="text-sm font-medium">
+                        {oauthRecoveryFlowId ? "Não foi possível verificar a autorização" : "Autorização da Meta indisponível"}
+                      </p>
+                      <p className="mt-2 text-xs text-[var(--app-text-secondary)]">
+                        {oauthRecoveryFlowId
+                          ? "A consulta falhou. Verifique novamente antes de escolher uma página."
+                          : "Esta autorização expirou ou não pode ser usada. Autorize a conta Meta novamente para conectar as páginas."}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      className="w-full"
+                      disabled={oauthRecoveryFlowId ? getOAuthFlow.isPending : getAuthUrl.isPending}
+                      onClick={() => {
+                        if (oauthRecoveryFlowId) {
+                          void handleOAuthStatusResult({ status: "success", flowId: oauthRecoveryFlowId });
+                        } else {
+                          void openOAuth();
+                        }
+                      }}
+                    >
+                      {oauthRecoveryFlowId ? "Verificar autorização novamente" : "Autorizar conta Meta novamente"}
+                    </Button>
+                    {oauthRecoveryFlowId && (
+                      <Button type="button" variant="outline" className="w-full" disabled={getAuthUrl.isPending} onClick={() => void openOAuth()}>
+                        Autorizar conta Meta novamente
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ) : !selectedAccount ? (
                 <Alert><AlertCircle className="h-4 w-4" /><AlertDescription>Conecte ou selecione uma conta do Facebook para continuar.</AlertDescription></Alert>
               ) : (
                 <>

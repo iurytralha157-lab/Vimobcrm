@@ -375,6 +375,7 @@ export const metaOAuthFlowResultSchema = z.object({
   organization_id: uuidSchema,
   user_id: uuidSchema,
   status: z.string().trim().min(1).max(32),
+  connectable: z.boolean().optional().default(false),
   payload: metaOAuthPayloadSchema.nullish(),
   error_message: z.string().trim().max(255).nullish(),
   expires_at: z.string().trim().max(64).nullish(),

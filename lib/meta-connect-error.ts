@@ -7,6 +7,12 @@ const META_CONNECT_ERROR_MESSAGES = {
     "Não foi possível validar o acesso aos formulários de leads na Meta. Confira as permissões da página e tente novamente.",
   meta_webhook_subscription_failed:
     "Não foi possível ativar o envio de leads desta página na Meta. Confira o acesso à página e tente novamente.",
+  meta_webhook_subscription_check_failed:
+    "Não foi possível verificar na Meta se esta página está enviando leads. Tente novamente em instantes.",
+  meta_webhook_subscription_unverified:
+    "A Meta não confirmou a assinatura de leads desta página. Tente conectar novamente em instantes.",
+  meta_leadgen_subscription_missing:
+    "Esta página já tem outros eventos assinados na Meta, mas não está enviando leads. A assinatura precisa ser corrigida sem remover os outros eventos.",
   meta_page_subscription_busy:
     "Outra conexão desta página está em andamento. Aguarde um instante, atualize a lista e tente novamente se necessário.",
   meta_request_timeout:
@@ -41,6 +47,10 @@ function stableMetaConnectErrorCode(error: unknown): MetaConnectErrorCode | null
   }
 
   return null;
+}
+
+export function isMetaOAuthFlowUnavailableError(error: unknown) {
+  return stableMetaConnectErrorCode(error) === "oauth_flow_not_available";
 }
 
 export function metaConnectErrorMessage(error: unknown) {
