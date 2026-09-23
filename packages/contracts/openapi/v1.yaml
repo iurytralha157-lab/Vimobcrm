@@ -359,6 +359,10 @@ paths:
   /v1/dashboard/stats:
     get:
       summary: Get dashboard KPI stats for visible leads
+      description: >-
+        The optional period selects leads by their created_at (origin date).
+        Open, won and lost totals reflect the selected leads' current deal status.
+        Won conversion time still measures the interval from creation to closing.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/DashboardDateFrom"
@@ -461,14 +465,18 @@ paths:
                 $ref: "#/components/schemas/DashboardTopBrokersResponse"
   /v1/dashboard/lead-distribution:
     get:
-      summary: Get visible lead counts by assignee and assignment team
+      summary: Get visible lead counts by current assignee and current team membership
       description: >-
         Available only to organization owners, administrators and team leaders.
-        Both dimensions use the same visible lead cohort and created_at period as
-        the main lead KPI. Team buckets use the team recorded on the lead assignment,
-        so every lead belongs to exactly one team bucket; missing assignments are
-        returned as Sem responsável or Sem equipe. Each dimension returns at most
-        50 named entities and consolidates any positive remainder into Outros.
+        Both dimensions select visible leads by created_at (origin date). User
+        counts respect every dashboard filter, including teamId, and include
+        eligible active users with zero leads. The team dimension ignores only
+        teamId and preserves the other filters. It attributes each lead to every
+        active team of its current assignee, including leads assigned directly
+        to that assignee. A lead can therefore count in multiple teams. Active
+        authorized teams appear with zero when they have no matching leads.
+        totalLeads is the sum of user buckets and need not equal the sum of team
+        buckets. Leads without an assignee appear as Sem responsável in users.
       parameters:
         - $ref: "#/components/parameters/OrganizationIdHeader"
         - $ref: "#/components/parameters/DashboardDateFrom"
@@ -486,11 +494,52 @@ paths:
         - $ref: "#/components/parameters/DashboardSearchQuery"
       responses:
         "200":
-          description: Lead distribution across non-empty assignee and team buckets.
+          description: Lead distribution by current assignee and active team membership.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/DashboardLeadDistributionResponse"
+        "400":
+          $ref: "#/components/responses/APIError"
+        "401":
+          $ref: "#/components/responses/APIError"
+        "403":
+          $ref: "#/components/responses/APIError"
+  /v1/dashboard/first-contact:
+    get:
+      summary: Get first human contact and redistribution performance
+      description: >-
+        Available only to organization owners, administrators and team leaders.
+        All dashboard filters, including dateFrom and dateTo, select the visible
+        lead cohort by the lead's created_at (origin date). The average is based
+        on recorded human first contacts, grouped by the responding broker;
+        leads without a valid recorded human first response are excluded from the average.
+        A prior automated response can prevent a later human action from appearing
+        in this write-once metric. Redistribution counts
+        include successful automatic transfers away from and to each broker.
+        No individual lead details are returned.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationIdHeader"
+        - $ref: "#/components/parameters/DashboardDateFrom"
+        - $ref: "#/components/parameters/DashboardDateTo"
+        - $ref: "#/components/parameters/DashboardTeamId"
+        - $ref: "#/components/parameters/DashboardUserId"
+        - $ref: "#/components/parameters/DashboardSource"
+        - $ref: "#/components/parameters/DashboardPageId"
+        - $ref: "#/components/parameters/DashboardCampaignId"
+        - $ref: "#/components/parameters/DashboardAdSetId"
+        - $ref: "#/components/parameters/DashboardAdId"
+        - $ref: "#/components/parameters/DashboardTagId"
+        - $ref: "#/components/parameters/DashboardTagIds"
+        - $ref: "#/components/parameters/DashboardDealStatus"
+        - $ref: "#/components/parameters/DashboardSearchQuery"
+      responses:
+        "200":
+          description: First contact and redistribution aggregates for the selected lead cohort.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardFirstContactResponse"
         "400":
           $ref: "#/components/responses/APIError"
         "401":
@@ -15106,12 +15155,15 @@ components:
           type: integer
           format: int64
           minimum: 0
+          description: Exact sum of user buckets after all dashboard filters, including teamId.
         users:
           type: array
+          description: Current assignees with zero counts where eligible, plus Sem responsável if applicable.
           items:
             $ref: "#/components/schemas/DashboardLeadDistributionUser"
         teams:
           type: array
+          description: Active authorized teams; each count follows current assignee membership and ignores only teamId.
           items:
             $ref: "#/components/schemas/DashboardLeadDistributionTeam"
     DashboardLeadDistributionUser:
@@ -15123,7 +15175,7 @@ components:
           format: uuid
         kind:
           type: string
-          enum: [entity, unassigned, other]
+          enum: [entity, unassigned]
         name:
           type: string
         avatarUrl:
@@ -15131,23 +15183,128 @@ components:
         leadCount:
           type: integer
           format: int64
-          minimum: 1
+          minimum: 0
     DashboardLeadDistributionTeam:
       type: object
       required: [id, kind, name, leadCount]
       properties:
         id:
-          type: [string, "null"]
+          type: string
           format: uuid
         kind:
           type: string
-          enum: [entity, unassigned, other]
+          const: entity
         name:
           type: string
         leadCount:
           type: integer
           format: int64
-          minimum: 1
+          minimum: 0
+    DashboardFirstContactResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/DashboardFirstContact"
+    DashboardFirstContact:
+      type: object
+      required: [leadCount, contactedLeads, averageResponseSeconds, redistributedLeads, redistributionEvents, brokers, sources]
+      properties:
+        leadCount:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Visible leads in the origin-date cohort after all dashboard filters.
+        contactedLeads:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Leads in the cohort with a recorded human first response.
+        averageResponseSeconds:
+          type: [number, "null"]
+          minimum: 0
+          description: Average seconds to human first response; null when no eligible response exists.
+        redistributedLeads:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Distinct leads in the cohort with at least one successful automatic redistribution.
+        redistributionEvents:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Successful automatic transfers; one lead can contribute more than one event.
+        brokers:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardFirstContactBroker"
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardFirstContactSource"
+    DashboardFirstContactBroker:
+      type: object
+      required: [id, name, avatarUrl, leadCount, contactedLeads, averageResponseSeconds, redistributedAway, redistributedReceived]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        avatarUrl:
+          type: [string, "null"]
+        leadCount:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Cohort leads currently assigned to this broker.
+        contactedLeads:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Human first contacts performed by this broker, even after reassignment.
+        averageResponseSeconds:
+          type: [number, "null"]
+          minimum: 0
+          description: Mean response time for first contacts performed by this broker.
+        redistributedAway:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Distinct cohort leads transferred away from this broker.
+        redistributedReceived:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Distinct cohort leads received by this broker through redistribution.
+    DashboardFirstContactSource:
+      type: object
+      required: [source, leadCount, contactedLeads, averageResponseSeconds, redistributedLeads, redistributionEvents]
+      properties:
+        source:
+          type: string
+          description: Source value for the cohort; blank origins appear as Sem origem.
+        leadCount:
+          type: integer
+          format: int64
+          minimum: 0
+        contactedLeads:
+          type: integer
+          format: int64
+          minimum: 0
+        averageResponseSeconds:
+          type: [number, "null"]
+          minimum: 0
+        redistributedLeads:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Distinct redistributed leads from this source.
+        redistributionEvents:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Successful automatic transfer events from this source.
     DashboardUpcomingTasksResponse:
       type: object
       required: [data]

@@ -66,6 +66,7 @@ import {
   analyticsQuerySchema,
   apiDashboardStatsResponseSchema,
   apiDashboardLeadDistributionResponseSchema,
+  apiDashboardFirstContactResponseSchema,
   apiDashboardTopBrokersResponseSchema,
   dashboardDateRangeSchema,
   dashboardFiltersSchema,
@@ -1956,7 +1957,17 @@ test("dashboard valida a distribuição não vazia por corretor e equipe", () =>
     apiDashboardLeadDistributionResponseSchema.safeParse({
       data: {
         ...valid.data,
-        users: [{ ...valid.data.users[0], leadCount: 0 }],
+        // Uma pessoa em duas equipes e o filtro de equipe ignorado neste gráfico.
+        teams: [{ ...valid.data.teams[0], leadCount: 8 }],
+      },
+    }).success,
+    true,
+  );
+  assert.equal(
+    apiDashboardLeadDistributionResponseSchema.safeParse({
+      data: {
+        ...valid.data,
+        users: [{ ...valid.data.users[0], leadCount: -1 }],
       },
     }).success,
     false,
@@ -1973,6 +1984,16 @@ test("dashboard valida a distribuição não vazia por corretor e equipe", () =>
   assert.equal(
     apiDashboardLeadDistributionResponseSchema.safeParse({
       data: {
+        totalLeads: 0,
+        users: [{ ...valid.data.users[0], leadCount: 0 }],
+        teams: [{ ...valid.data.teams[0], leadCount: 0 }],
+      },
+    }).success,
+    true,
+  );
+  assert.equal(
+    apiDashboardLeadDistributionResponseSchema.safeParse({
+      data: {
         ...valid.data,
         teams: [{ ...valid.data.teams[0], id: "not-a-uuid" }],
       },
@@ -1982,6 +2003,49 @@ test("dashboard valida a distribuição não vazia por corretor e equipe", () =>
   assert.equal(
     dashboardFiltersSchema.safeParse({ userId: "unassigned" }).success,
     true,
+  );
+});
+
+test("dashboard valida média de contato e redistribuições por corretor e origem", () => {
+  const valid = {
+    data: {
+      leadCount: 4,
+      contactedLeads: 2,
+      averageResponseSeconds: 350,
+      redistributedLeads: 1,
+      redistributionEvents: 2,
+      brokers: [{
+        id: ID,
+        name: "Corretor",
+        avatarUrl: null,
+        leadCount: 3,
+        contactedLeads: 2,
+        averageResponseSeconds: 350,
+        redistributedAway: 2,
+        redistributedReceived: 1,
+      }],
+      sources: [{
+        source: "meta",
+        leadCount: 4,
+        contactedLeads: 2,
+        averageResponseSeconds: 350,
+        redistributedLeads: 1,
+        redistributionEvents: 2,
+      }],
+    },
+  };
+  assert.equal(apiDashboardFirstContactResponseSchema.safeParse(valid).success, true);
+  assert.equal(
+    apiDashboardFirstContactResponseSchema.safeParse({
+      data: { ...valid.data, brokers: [{ ...valid.data.brokers[0], averageResponseSeconds: -1 }] },
+    }).success,
+    false,
+  );
+  assert.equal(
+    apiDashboardFirstContactResponseSchema.safeParse({
+      data: { ...valid.data, sources: [{ ...valid.data.sources[0], redistributionEvents: -1 }] },
+    }).success,
+    false,
   );
 });
 

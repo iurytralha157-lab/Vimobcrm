@@ -117,6 +117,30 @@ func (handler Handler) ShowDashboardLeadDistribution(w http.ResponseWriter, r *h
 	httpserver.WriteJSON(w, http.StatusOK, map[string]DashboardLeadDistribution{"data": data})
 }
 
+func (handler Handler) ShowDashboardFirstContact(w http.ResponseWriter, r *http.Request) {
+	tenantContext, ok := dashboardTenantContext(w, r)
+	if !ok {
+		return
+	}
+	if !canViewDashboardLeadDistribution(tenantContext) {
+		httpserver.WriteError(w, r, http.StatusForbidden, "permission_denied", "You do not have permission to view first contact performance.")
+		return
+	}
+
+	filter, err := ParseDashboardFilter(r.URL.Query())
+	if err != nil {
+		writeLeadError(w, r, err)
+		return
+	}
+
+	data, err := handler.repo.GetDashboardFirstContact(r.Context(), tenantContext, filter)
+	if err != nil {
+		writeLeadError(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, http.StatusOK, map[string]DashboardFirstContact{"data": data})
+}
+
 func (handler Handler) ListDashboardUpcomingTasks(w http.ResponseWriter, r *http.Request) {
 	tenantContext, ok := dashboardTenantContext(w, r)
 	if !ok {

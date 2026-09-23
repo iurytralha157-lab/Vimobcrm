@@ -155,6 +155,36 @@ type DashboardLeadDistribution struct {
 	Teams      []DashboardLeadDistributionTeam `json:"teams"`
 }
 
+type DashboardFirstContactBroker struct {
+	ID                     string   `json:"id"`
+	Name                   string   `json:"name"`
+	AvatarURL              *string  `json:"avatarUrl"`
+	LeadCount              int64    `json:"leadCount"`
+	ContactedLeads         int64    `json:"contactedLeads"`
+	AverageResponseSeconds *float64 `json:"averageResponseSeconds"`
+	RedistributedAway      int64    `json:"redistributedAway"`
+	RedistributedReceived  int64    `json:"redistributedReceived"`
+}
+
+type DashboardFirstContactSource struct {
+	Source                 string   `json:"source"`
+	LeadCount              int64    `json:"leadCount"`
+	ContactedLeads         int64    `json:"contactedLeads"`
+	AverageResponseSeconds *float64 `json:"averageResponseSeconds"`
+	RedistributedLeads     int64    `json:"redistributedLeads"`
+	RedistributionEvents   int64    `json:"redistributionEvents"`
+}
+
+type DashboardFirstContact struct {
+	LeadCount              int64                         `json:"leadCount"`
+	ContactedLeads         int64                         `json:"contactedLeads"`
+	AverageResponseSeconds *float64                      `json:"averageResponseSeconds"`
+	RedistributedLeads     int64                         `json:"redistributedLeads"`
+	RedistributionEvents   int64                         `json:"redistributionEvents"`
+	Brokers                []DashboardFirstContactBroker `json:"brokers"`
+	Sources                []DashboardFirstContactSource `json:"sources"`
+}
+
 type UpcomingTask struct {
 	ID       string `json:"id"`
 	Title    string `json:"title"`

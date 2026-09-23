@@ -145,6 +145,10 @@ func (service *oauthService) completeCallback(ctx context.Context, state string,
 		err = newOAuthFailure("oauth_identity_mismatch", http.StatusForbidden)
 		return result, err
 	}
+	if !slices.Contains(debug.Scopes, "leads_retrieval") {
+		err = newOAuthFailure("meta_leads_retrieval_required", http.StatusForbidden)
+		return result, err
+	}
 	if len(pages) == 0 {
 		err = newOAuthFailure("meta_no_managed_pages", http.StatusBadRequest)
 		return result, err

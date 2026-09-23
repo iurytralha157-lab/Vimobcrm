@@ -41,6 +41,7 @@ import { SalesFunnelWithPipeline } from "@/components/features/dashboard/SalesFu
 import { DealsEvolutionChart } from "@/components/features/dashboard/DealsEvolutionChart";
 import { LeadSourcesChart } from "@/components/features/dashboard/LeadSourcesChart";
 import { LeadDistributionSection } from "@/components/features/dashboard/LeadDistributionSection";
+import { FirstContactDialog } from "@/components/features/dashboard/FirstContactDialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -64,12 +65,14 @@ import { useSharedFilters } from "@/hooks/use-shared-filters";
 import {
   type EnhancedDashboardStats,
   useDashboardLeadDistribution,
+  useDashboardFirstContact,
   useEnhancedDashboardStats,
   useDealsEvolutionData,
   useLeadSourcesData,
   useDashboardQueryScope,
 } from "@/hooks/use-dashboard-stats";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useTeams } from "@/hooks/use-teams";
 import { SharedFilters } from "@/components/shared/SharedFilters";
 import {
   datePresetOptions,
@@ -139,6 +142,7 @@ export default function Dashboard() {
   const [mobileChartTab, setMobileChartTab] = useState("funnel");
   const [lostDialogOpen, setLostDialogOpen] = useState(false);
   const [wonDialogOpen, setWonDialogOpen] = useState(false);
+  const [firstContactDialogOpen, setFirstContactDialogOpen] = useState(false);
   const [shouldLoadFilterOptions, setShouldLoadFilterOptions] = useState(false);
   const dashboardQueryScope = useDashboardQueryScope();
   const activeOrganizationId = dashboardQueryScope.organizationId;
@@ -247,6 +251,18 @@ export default function Dashboard() {
   } = useDashboardLeadDistribution(dashboardFilters, {
     enabled: isFiltersHydrated,
   });
+  const {
+    data: firstContactData,
+    isLoading: firstContactLoading,
+    isError: firstContactError,
+    refetch: refetchFirstContact,
+  } = useDashboardFirstContact(dashboardFilters, {
+    enabled: isFiltersHydrated && firstContactDialogOpen,
+  });
+  const distributionOptionsEnabled =
+    isFiltersHydrated && dashboardQueryScope.canViewLeadDistribution;
+  const teamsQuery = useTeams({ enabled: distributionOptionsEnabled });
+  const availableTeams = teamsQuery.data;
   const hasOrganization = Boolean(activeOrganizationId);
 
   const {
@@ -441,6 +457,7 @@ export default function Dashboard() {
                       layout="top"
                       onLostClick={() => setLostDialogOpen(true)}
                       onWonClick={() => setWonDialogOpen(true)}
+                      onFirstContactClick={dashboardQueryScope.canViewLeadDistribution ? () => setFirstContactDialogOpen(true) : undefined}
                     />
                   )}
                 </div>
@@ -478,6 +495,11 @@ export default function Dashboard() {
                 }
                 isError={leadDistributionError}
                 onRetry={() => void refetchLeadDistribution()}
+                organizationId={activeOrganizationId}
+                currentUserId={dashboardQueryScope.currentUserId}
+                availableTeams={availableTeams?.filter((team) => team.is_active !== false)}
+                teamsError={teamsQuery.isError}
+                onRetryTeams={() => void teamsQuery.refetch()}
               />
             ) : null}
           </div>
@@ -496,6 +518,7 @@ export default function Dashboard() {
                   siteVisits={siteVisits}
                   onLostClick={() => setLostDialogOpen(true)}
                   onWonClick={() => setWonDialogOpen(true)}
+                  onFirstContactClick={dashboardQueryScope.canViewLeadDistribution ? () => setFirstContactDialogOpen(true) : undefined}
                 />
               )}
             </section>
@@ -558,6 +581,11 @@ export default function Dashboard() {
                 }
                 isError={leadDistributionError}
                 onRetry={() => void refetchLeadDistribution()}
+                organizationId={activeOrganizationId}
+                currentUserId={dashboardQueryScope.currentUserId}
+                availableTeams={availableTeams?.filter((team) => team.is_active !== false)}
+                teamsError={teamsQuery.isError}
+                onRetryTeams={() => void teamsQuery.refetch()}
               />
             ) : null}
           </div>
@@ -590,6 +618,16 @@ export default function Dashboard() {
           setWonDialogOpen(false);
           router.push(`/crm/pipelines?lead=${leadId}`);
         }}
+      />
+
+      <FirstContactDialog
+        open={firstContactDialogOpen}
+        onOpenChange={setFirstContactDialogOpen}
+        data={firstContactData}
+        isLoading={firstContactLoading}
+        isError={firstContactError}
+        onRetry={() => void refetchFirstContact()}
+        periodLabel={periodLabel}
       />
     </AppLayout>
   );
@@ -654,6 +692,7 @@ interface KPICardsGridProps {
   layout?: "top" | "side";
   onLostClick?: () => void;
   onWonClick?: () => void;
+  onFirstContactClick?: () => void;
 }
 
 function KPICardsGrid({
@@ -666,6 +705,7 @@ function KPICardsGrid({
   layout = "top",
   onLostClick,
   onWonClick,
+  onFirstContactClick,
 }: KPICardsGridProps) {
   if (isLoading) {
     const isSide = layout === "side";
@@ -754,7 +794,7 @@ function KPICardsGrid({
       rateLabel: "conversão",
       rateVariant: "auto",
       icon: Trophy,
-      tooltip: `Ganhos fechados no período, independente da data de entrada do lead - ${periodLabel}`,
+      tooltip: `Leads captados no período que estão ganhos - ${periodLabel}`,
       format: "number",
       color: "won",
       iconColor: "rgb(16, 185, 129)",
@@ -792,9 +832,11 @@ function KPICardsGrid({
       title: "1º Contato",
       value: data.avgResponseTime,
       icon: Clock,
-      tooltip: "Tempo médio até a primeira ligação ou mensagem",
+      tooltip: "Média da primeira resposta humana registrada; leads sem medida válida ficam fora da média",
       format: "time",
       color: "response",
+      onClick: onFirstContactClick,
+      interactive: Boolean(onFirstContactClick),
       compact: true,
       tourTarget: "dashboard-kpi-first-contact",
     },
@@ -1202,7 +1244,7 @@ function LostDealsDialog({
             <span>Perdidos - Motivos de Perda</span>
           </DialogTitle>
           <DialogDescription className="pl-[42px] text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
-            {totalLost} perdidos em {periodLabel.toLowerCase()}
+            {totalLost} leads captados em {periodLabel.toLowerCase()} que estão perdidos
             {topReason ? ` | principal motivo: ${topReason.label}` : ""}
           </DialogDescription>
         </DialogHeader>
@@ -1254,7 +1296,7 @@ function LostDealsDialog({
                     Distribuição dos motivos
                   </h3>
                   <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
-                    Maiores causas de perda no período filtrado.
+                    Maiores causas de perda dos leads captados no período filtrado.
                   </p>
                 </div>
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
@@ -1502,7 +1544,7 @@ function WonDealsDialog({
             <span>Ganhos - Tempo de Conversão</span>
           </DialogTitle>
           <DialogDescription className="pl-[42px] text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
-            {totalWon} ganhos em {periodLabel.toLowerCase()}
+            {totalWon} leads captados em {periodLabel.toLowerCase()} que estão ganhos
             {averageDays !== null && averageDays !== undefined
               ? ` | média: ${averageDays} dias`
               : ""}
@@ -1562,7 +1604,7 @@ function WonDealsDialog({
                   <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
                     {wonDetailsTruncated
                       ? "A origem considera os registros recentes exibidos; o tempo de conversão considera o total."
-                      : "Pizza por origem e tempo até o ganho no período filtrado."}
+                      : "Pizza por origem e tempo até o ganho dos leads captados no período filtrado."}
                   </p>
                 </div>
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
@@ -1577,7 +1619,7 @@ function WonDealsDialog({
                 />
               ) : sourceBuckets.length === 0 ? (
                 <div className="rounded-[8px] bg-[var(--app-surface-solid)] p-4 text-center text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
-                  Nenhum ganho fechado nesse período.
+                  Nenhum lead captado nesse período está ganho.
                 </div>
               ) : (
                 <div className="grid min-w-0 gap-3 md:grid-cols-[190px_minmax(0,1fr)] md:items-center">
@@ -1713,7 +1755,7 @@ function WonDealsDialog({
                 />
               ) : wonDeals.length === 0 ? (
                 <div className="rounded-[8px] bg-[var(--app-surface-solid)] p-4 text-center text-[12px] font-light leading-[18px] text-[var(--app-text-secondary)]">
-                  Nenhum ganho fechado nesse período.
+                  Nenhum lead captado nesse período está ganho.
                 </div>
               ) : (
                 <div className="dashboard-dialog-list overflow-hidden rounded-[8px] bg-[var(--app-surface-solid)]">

@@ -43,6 +43,10 @@ function stableMetaConnectErrorCode(error: unknown): MetaConnectErrorCode | null
   return null;
 }
 
+export function isMetaOAuthFlowUnavailableError(error: unknown) {
+  return stableMetaConnectErrorCode(error) === "oauth_flow_not_available";
+}
+
 export function metaConnectErrorMessage(error: unknown) {
   const stableCode = stableMetaConnectErrorCode(error);
   if (stableCode) return META_CONNECT_ERROR_MESSAGES[stableCode];

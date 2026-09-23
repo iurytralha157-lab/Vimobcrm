@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
@@ -32,6 +33,50 @@ func TestDashboardLeadDistributionIsRestrictedToManagement(t *testing.T) {
 	}
 }
 
+func TestDashboardTeamDistributionIgnoresOnlyTeamFilter(t *testing.T) {
+	dateFrom := time.Date(2026, time.September, 22, 0, 0, 0, 0, time.UTC)
+	dateTo := dateFrom.Add(24 * time.Hour)
+	filter := DashboardFilter{
+		DateFrom: &dateFrom, DateTo: &dateTo, TeamID: dashboardTestUUID,
+		UserID: "22222222-2222-4222-8222-222222222222", Source: "meta",
+		PageID: "page-1", PipelineID: "33333333-3333-4333-8333-333333333333",
+	}
+	teamFilter := dashboardTeamDistributionFilter(filter)
+	if teamFilter.TeamID != "" || filter.TeamID != dashboardTestUUID {
+		t.Fatalf("team filter must be removed only from copy: original=%#v team=%#v", filter, teamFilter)
+	}
+	if teamFilter.DateFrom != filter.DateFrom || teamFilter.DateTo != filter.DateTo ||
+		teamFilter.UserID != filter.UserID || teamFilter.Source != filter.Source ||
+		teamFilter.PageID != filter.PageID || teamFilter.PipelineID != filter.PipelineID {
+		t.Fatalf("team distribution lost shared filters: %#v", teamFilter)
+	}
+}
+
+func TestDashboardTeamListScopeMatchesTeamReadVisibility(t *testing.T) {
+	manager := tenant.Context{MemberRole: "manager", IsTeamLeader: true, Permissions: []string{permissions.TeamView}}
+	if dashboardTeamListScoped(manager) {
+		t.Fatal("manager with team_view must see all active teams, even when leading one")
+	}
+	leader := tenant.Context{MemberRole: "user", IsTeamLeader: true, Permissions: []string{permissions.TeamView}}
+	if !dashboardTeamListScoped(leader) {
+		t.Fatal("team leader must remain limited to LedTeamIDs")
+	}
+	if dashboardTeamListScoped(tenant.Context{MemberRole: "admin"}) {
+		t.Fatal("admin must see all active teams")
+	}
+}
+
+func TestDashboardBrokerZeroScopeFollowsLeadVisibility(t *testing.T) {
+	manager := tenant.Context{MemberRole: "manager", IsTeamLeader: true, Permissions: []string{permissions.LeadViewAll}}
+	if dashboardBrokerListScoped(manager) {
+		t.Fatal("manager with lead_view_all may see all active brokers with zero leads")
+	}
+	leader := tenant.Context{MemberRole: "user", IsTeamLeader: true, Permissions: []string{permissions.LeadViewTeam}}
+	if !dashboardBrokerListScoped(leader) {
+		t.Fatal("leader without lead_view_all must restrict zero-lead brokers to LedUserIDs")
+	}
+}
+
 func TestDashboardLeadDistributionHandlerRejectsRegularMemberBeforeQuerying(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/v1/dashboard/lead-distribution?userId=not-a-uuid", nil)
 	request = request.WithContext(tenant.ContextWithTenant(request.Context(), tenant.Context{
@@ -52,30 +97,32 @@ func TestDashboardLeadDistributionHandlerRejectsRegularMemberBeforeQuerying(t *t
 	}
 }
 
-func TestDashboardLeadDistributionUsesOneReconciliableLeadAggregation(t *testing.T) {
-	query := dashboardLeadDistributionSQL([]string{"l.organization_id = $1::uuid", "l.created_at >= $5"})
-
+func TestDashboardLeadDistributionUsesCurrentActiveMembershipAndIncludesZeroTeams(t *testing.T) {
+	userQuery := dashboardLeadDistributionUserSQL([]string{"l.organization_id = $1::uuid", "l.created_at >= $5"}, 5)
+	teamQuery := dashboardLeadDistributionTeamSQL([]string{"l.organization_id = $1::uuid", "l.created_at >= $5"}, 5)
 	for _, fragment := range []string{
-		"from public.leads l",
-		"group by grouping sets ((l.assigned_user_id), (l.team_id))",
-		"when grouping(l.assigned_user_id) = 0 then 'user'",
-		"when gc.dimension = 'user' and gc.entity_id is null then 'Sem responsável'",
-		"when gc.dimension = 'team' and gc.entity_id is null then 'Sem equipe'",
-		"entity_rank <= 50",
-		"'other' as kind",
-		"Outros corretores",
-		"Outras equipes",
-		"where lead_count > 0",
-		"l.created_at >= $5",
+		"from public.leads l", "group by assigned_user_id", "full join counts c",
+		"'Sem responsável'", "coalesce(c.lead_count, 0)",
+		"u.id = any($9::uuid[])", "l.created_at >= $5",
+		"om.organization_id = $1::uuid and om.user_id = u.id",
 	} {
-		if !strings.Contains(query, fragment) {
-			t.Fatalf("lead distribution query is missing %q: %s", fragment, query)
+		if !strings.Contains(userQuery, fragment) {
+			t.Fatalf("broker distribution query is missing %q: %s", fragment, userQuery)
 		}
 	}
-	if strings.Contains(query, "join public.team_members") {
-		t.Fatalf("lead distribution must not fan out a lead across current team memberships: %s", query)
+	for _, fragment := range []string{
+		"from public.leads l", "join public.team_members tm",
+		"tm.user_id = f.assigned_user_id", "coalesce(tm.is_active, true) = true",
+		"coalesce(u.is_active, false) = true", "om.deleted_at is null",
+		"t.is_active = true", "t.id = any($7::uuid[])",
+		"count(distinct f.id)", "left join counts c", "coalesce(c.lead_count, 0)",
+		"l.created_at >= $5",
+	} {
+		if !strings.Contains(teamQuery, fragment) {
+			t.Fatalf("team distribution query is missing %q: %s", fragment, teamQuery)
+		}
 	}
-	if strings.Count(query, "from public.leads l") != 1 {
-		t.Fatalf("lead distribution must scan the filtered lead cohort once: %s", query)
+	if strings.Contains(teamQuery, "l.team_id") || strings.Contains(teamQuery, "limit 50") {
+		t.Fatalf("team distribution must use current membership without truncation: %s", teamQuery)
 	}
 }

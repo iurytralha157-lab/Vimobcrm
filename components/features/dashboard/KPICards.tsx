@@ -72,6 +72,7 @@ interface KPICardsProps {
   siteVisits?: number;
   onLostClick?: () => void;
   onWonClick?: () => void;
+  onFirstContactClick?: () => void;
 }
 
 interface KPICardItemProps {
@@ -276,6 +277,7 @@ export function KPICards({
   siteVisits,
   onLostClick,
   onWonClick,
+  onFirstContactClick,
 }: KPICardsProps) {
   if (isLoading) {
     const topSkeletonTours = [
@@ -362,7 +364,7 @@ export function KPICards({
       rateVariant: "auto",
       rateLabel: "conversão",
       icon: Trophy,
-      tooltip: `Ganhos fechados no período, independente da data de entrada do lead - ${periodLabel}`,
+      tooltip: `Leads captados no período que estão ganhos - ${periodLabel}`,
       format: "number",
       accentColor: "won",
       iconColor: "rgb(16, 185, 129)",
@@ -403,9 +405,11 @@ export function KPICards({
       title: "1º Contato",
       value: data.avgResponseTime,
       icon: Clock,
-      tooltip: "Tempo médio até a primeira ligação ou mensagem",
+      tooltip: "Média da primeira resposta humana registrada; leads sem medida válida ficam fora da média",
       format: "time",
       accentColor: "response",
+      onClick: onFirstContactClick,
+      interactive: Boolean(onFirstContactClick),
       tourTarget: "dashboard-kpi-first-contact",
       compact: true,
     },

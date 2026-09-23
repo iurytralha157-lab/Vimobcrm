@@ -37,6 +37,7 @@ test("OpenAPI exposes the Facebook Page filter on every shared Meta-filter surfa
     "/v1/dashboard/sources",
     "/v1/dashboard/top-brokers",
     "/v1/dashboard/lead-distribution",
+    "/v1/dashboard/first-contact",
     "/v1/dashboard/deals-evolution",
   ]) {
     assert.equal(

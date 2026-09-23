@@ -579,13 +579,13 @@ const apiDashboardLeadDistributionUserSchema = z.object({
   kind: z.enum(['entity', 'unassigned', 'other']),
   name: dashboardTextSchema(300),
   avatarUrl: z.string().trim().max(2_048).nullable(),
-  leadCount: z.number().int().positive(),
+  leadCount: nonNegativeIntegerSchema,
 }).passthrough()
 const apiDashboardLeadDistributionTeamSchema = z.object({
   id: uuidSchema.nullable(),
   kind: z.enum(['entity', 'unassigned', 'other']),
   name: dashboardTextSchema(300),
-  leadCount: z.number().int().positive(),
+  leadCount: nonNegativeIntegerSchema,
 }).passthrough()
 export const apiDashboardLeadDistributionSchema = z.object({
   totalLeads: nonNegativeIntegerSchema,
@@ -593,7 +593,6 @@ export const apiDashboardLeadDistributionSchema = z.object({
   teams: z.array(apiDashboardLeadDistributionTeamSchema),
 }).passthrough().superRefine((distribution, context) => {
   const userTotal = distribution.users.reduce((total, item) => total + item.leadCount, 0)
-  const teamTotal = distribution.teams.reduce((total, item) => total + item.leadCount, 0)
   if (userTotal !== distribution.totalLeads) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -601,14 +600,36 @@ export const apiDashboardLeadDistributionSchema = z.object({
       message: 'A distribuição por usuário não fecha com o total de leads',
     })
   }
-  if (teamTotal !== distribution.totalLeads) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['teams'],
-      message: 'A distribuição por equipe não fecha com o total de leads',
-    })
-  }
 })
+// A pessoa pode participar de várias equipes ativas; cada equipe inclui seus leads.
+// A soma das equipes, portanto, não precisa coincidir com o total único de leads.
+const apiDashboardFirstContactBrokerSchema = z.object({
+  id: uuidSchema,
+  name: dashboardTextSchema(300),
+  avatarUrl: z.string().trim().max(2_048).nullable(),
+  leadCount: nonNegativeIntegerSchema,
+  contactedLeads: nonNegativeIntegerSchema,
+  averageResponseSeconds: dashboardNonNegativeNumberSchema.nullable(),
+  redistributedAway: nonNegativeIntegerSchema,
+  redistributedReceived: nonNegativeIntegerSchema,
+}).passthrough()
+const apiDashboardFirstContactSourceSchema = z.object({
+  source: dashboardTextSchema(180),
+  leadCount: nonNegativeIntegerSchema,
+  contactedLeads: nonNegativeIntegerSchema,
+  averageResponseSeconds: dashboardNonNegativeNumberSchema.nullable(),
+  redistributedLeads: nonNegativeIntegerSchema,
+  redistributionEvents: nonNegativeIntegerSchema,
+}).passthrough()
+export const apiDashboardFirstContactSchema = z.object({
+  leadCount: nonNegativeIntegerSchema,
+  contactedLeads: nonNegativeIntegerSchema,
+  averageResponseSeconds: dashboardNonNegativeNumberSchema.nullable(),
+  redistributedLeads: nonNegativeIntegerSchema,
+  redistributionEvents: nonNegativeIntegerSchema,
+  brokers: z.array(apiDashboardFirstContactBrokerSchema),
+  sources: z.array(apiDashboardFirstContactSourceSchema),
+}).passthrough()
 export const apiDashboardUpcomingTasksSchema = z.array(z.object({
   id: uuidSchema,
   title: dashboardTextSchema(500),
@@ -641,6 +662,7 @@ export const apiDashboardFunnelResponseSchema = apiEnvelopeSchema(apiDashboardFu
 export const apiDashboardSourceResponseSchema = apiEnvelopeSchema(apiDashboardSourceSchema)
 export const apiDashboardTopBrokersResponseSchema = apiEnvelopeSchema(apiDashboardTopBrokersSchema)
 export const apiDashboardLeadDistributionResponseSchema = apiEnvelopeSchema(apiDashboardLeadDistributionSchema)
+export const apiDashboardFirstContactResponseSchema = apiEnvelopeSchema(apiDashboardFirstContactSchema)
 export const apiDashboardUpcomingTasksResponseSchema = apiEnvelopeSchema(apiDashboardUpcomingTasksSchema)
 export const apiDashboardDealsEvolutionResponseSchema = apiEnvelopeSchema(apiDashboardDealsEvolutionSchema)
 export const apiDashboardExtraCountsResponseSchema = apiEnvelopeSchema(apiDashboardExtraCountsSchema)

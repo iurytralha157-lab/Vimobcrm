@@ -23,7 +23,9 @@ type dashboardLeadWhereOptions struct {
 	ForceDealStatus string
 }
 
-const dashboardLeadDistributionEntityLimit = 50
+func dashboardDealCohortOptions(status string) dashboardLeadWhereOptions {
+	return dashboardLeadWhereOptions{DateColumn: "created_at", ForceDealStatus: status}
+}
 
 const currentAssigneeTeamFilterSQL = `exists (
 	select 1
@@ -344,7 +346,7 @@ func (repo Repository) GetDashboardLeadDistribution(ctx context.Context, tenantC
 		return result, tenant.ErrOrganizationAccessDenied
 	}
 
-	where, args, err := repo.buildDashboardLeadWhere(
+	userWhere, userArgs, err := repo.buildDashboardLeadWhere(
 		tenantContext,
 		filter,
 		dashboardLeadWhereOptions{DateColumn: "created_at"},
@@ -352,154 +354,177 @@ func (repo Repository) GetDashboardLeadDistribution(ctx context.Context, tenantC
 	if err != nil {
 		return DashboardLeadDistribution{}, err
 	}
+	teamFilter := dashboardTeamDistributionFilter(filter)
+	teamWhere, teamArgs, err := repo.buildDashboardLeadWhere(
+		tenantContext,
+		teamFilter,
+		dashboardLeadWhereOptions{DateColumn: "created_at"},
+	)
+	if err != nil {
+		return DashboardLeadDistribution{}, err
+	}
+	brokerLeaderScoped := dashboardBrokerListScoped(tenantContext)
+	// Managers with team_view retain the same organization-wide read scope as
+	// GET /v1/teams, even if they also lead an individual team.
+	teamLeaderScoped := dashboardTeamListScoped(tenantContext)
+	userSQL := dashboardLeadDistributionUserSQL(userWhere, len(userArgs))
+	userArgs = append(userArgs, filter.TeamID, filter.UserID, brokerLeaderScoped, tenantContext.LedUserIDs)
+	teamSQL := dashboardLeadDistributionTeamSQL(teamWhere, len(teamArgs))
+	teamArgs = append(teamArgs, teamLeaderScoped, tenantContext.LedTeamIDs)
 
-	rows, err := repo.db.Pool().Query(ctx, dashboardLeadDistributionSQL(where), args...)
+	tx, err := repo.db.Pool().BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return DashboardLeadDistribution{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	rows, err := tx.Query(ctx, userSQL, userArgs...)
 	if err != nil {
 		return DashboardLeadDistribution{}, err
 	}
 	defer rows.Close()
-
-	var teamTotal int64
 	for rows.Next() {
-		var dimension string
 		var entityID pgtype.Text
 		var kind string
 		var name string
 		var avatar pgtype.Text
 		var leadCount int64
-		if err := rows.Scan(&dimension, &entityID, &kind, &name, &avatar, &leadCount); err != nil {
+		if err := rows.Scan(&entityID, &kind, &name, &avatar, &leadCount); err != nil {
 			return DashboardLeadDistribution{}, err
 		}
-
-		id := pipelineTextPtr(entityID)
-		switch dimension {
-		case "user":
-			result.Users = append(result.Users, DashboardLeadDistributionUser{
-				ID:        id,
-				Kind:      kind,
-				Name:      name,
-				AvatarURL: pipelineTextPtr(avatar),
-				LeadCount: leadCount,
-			})
-			result.TotalLeads += leadCount
-		case "team":
-			result.Teams = append(result.Teams, DashboardLeadDistributionTeam{
-				ID:        id,
-				Kind:      kind,
-				Name:      name,
-				LeadCount: leadCount,
-			})
-			teamTotal += leadCount
-		}
+		result.Users = append(result.Users, DashboardLeadDistributionUser{
+			ID:        pipelineTextPtr(entityID),
+			Kind:      kind,
+			Name:      name,
+			AvatarURL: pipelineTextPtr(avatar),
+			LeadCount: leadCount,
+		})
+		result.TotalLeads += leadCount
 	}
 	if err := rows.Err(); err != nil {
 		return DashboardLeadDistribution{}, err
 	}
-	if teamTotal != result.TotalLeads {
-		return DashboardLeadDistribution{}, fmt.Errorf(
-			"dashboard lead distribution did not reconcile: users=%d teams=%d",
-			result.TotalLeads,
-			teamTotal,
-		)
+	rows.Close()
+
+	teamRows, err := tx.Query(ctx, teamSQL, teamArgs...)
+	if err != nil {
+		return DashboardLeadDistribution{}, err
+	}
+	defer teamRows.Close()
+	for teamRows.Next() {
+		var id, name string
+		var leadCount int64
+		if err := teamRows.Scan(&id, &name, &leadCount); err != nil {
+			return DashboardLeadDistribution{}, err
+		}
+		result.Teams = append(result.Teams, DashboardLeadDistributionTeam{
+			ID: &id, Kind: "entity", Name: name, LeadCount: leadCount,
+		})
+	}
+	if err := teamRows.Err(); err != nil {
+		return DashboardLeadDistribution{}, err
+	}
+	teamRows.Close()
+	if err := tx.Commit(ctx); err != nil {
+		return DashboardLeadDistribution{}, err
 	}
 
 	return result, nil
+}
+
+func dashboardTeamDistributionFilter(filter DashboardFilter) DashboardFilter {
+	filter.TeamID = ""
+	return filter
+}
+
+func dashboardTeamListScoped(tenantContext tenant.Context) bool {
+	if tenantContext.IsSuperAdmin || tenantContext.HasRole("owner", "admin") {
+		return false
+	}
+	return !(tenantContext.HasRole("manager") && tenantContext.HasPermission(permissions.TeamView))
+}
+
+func dashboardBrokerListScoped(tenantContext tenant.Context) bool {
+	return !canViewAllLeads(tenantContext)
 }
 
 func canViewDashboardLeadDistribution(tenantContext tenant.Context) bool {
 	return tenantContext.HasRole("owner", "admin") || tenantContext.IsTeamLeader
 }
 
-func dashboardLeadDistributionSQL(where []string) string {
+func dashboardLeadDistributionUserSQL(where []string, argCount int) string {
+	teamID := fmt.Sprintf("$%d", argCount+1)
+	userID := fmt.Sprintf("$%d", argCount+2)
+	leaderScoped := fmt.Sprintf("$%d", argCount+3)
+	ledUserIDs := fmt.Sprintf("$%d", argCount+4)
 	return `
-		with grouped_counts as (
-			select
-				case
-					when grouping(l.assigned_user_id) = 0 then 'user'
-					else 'team'
-				end as dimension,
-				case
-					when grouping(l.assigned_user_id) = 0 then l.assigned_user_id
-					else l.team_id
-				end as entity_id,
-				count(*)::bigint as lead_count
+		with filtered as (
+			select l.assigned_user_id
 			from public.leads l
 			where ` + strings.Join(where, " and ") + `
-			group by grouping sets ((l.assigned_user_id), (l.team_id))
-		), resolved_counts as (
-			select
-				gc.dimension,
-				gc.entity_id,
-				case
-					when gc.dimension = 'user' and gc.entity_id is null then 'Sem responsável'
-					when gc.dimension = 'team' and gc.entity_id is null then 'Sem equipe'
-					when gc.dimension = 'user' then coalesce(nullif(btrim(u.name), ''), 'Usuário indisponível')
-					else coalesce(nullif(btrim(t.name), ''), 'Equipe indisponível')
-				end as display_name,
-				case when gc.dimension = 'user' then u.avatar_url end as avatar_url,
-				gc.lead_count
-			from grouped_counts gc
-			left join public.users u
-			  on gc.dimension = 'user'
-			 and u.id = gc.entity_id
-			 and exists (
-				select 1
-				from public.organization_members om
-				where om.organization_id = $1::uuid
-				  and om.user_id = gc.entity_id
-			 )
-			left join public.teams t
-			  on gc.dimension = 'team'
-			 and t.organization_id = $1::uuid
-			 and t.id = gc.entity_id
-		), ranked_counts as (
-			select
-				rc.*,
-				sum(case when rc.entity_id is not null then 1 else 0 end) over (
-					partition by rc.dimension
-					order by rc.lead_count desc, rc.display_name, rc.entity_id
-					rows between unbounded preceding and current row
-				) as entity_rank
-			from resolved_counts rc
-		), bounded_counts as (
-			select
-				dimension,
-				entity_id,
-				case when entity_id is null then 'unassigned' else 'entity' end as kind,
-				display_name,
-				avatar_url,
-				lead_count
-			from ranked_counts
-			where entity_id is null
-			   or entity_rank <= ` + fmt.Sprint(dashboardLeadDistributionEntityLimit) + `
-
-			union all
-
-			select
-				dimension,
-				null::uuid as entity_id,
-				'other' as kind,
-				case
-					when dimension = 'user' then 'Outros corretores'
-					else 'Outras equipes'
-				end as display_name,
-				null::text as avatar_url,
-				sum(lead_count)::bigint as lead_count
-			from ranked_counts
-			where entity_id is not null
-			  and entity_rank > ` + fmt.Sprint(dashboardLeadDistributionEntityLimit) + `
-			group by dimension
+		), counts as (
+			select assigned_user_id, count(*)::bigint as lead_count
+			from filtered
+			group by assigned_user_id
+		), eligible as (
+			select distinct u.id, u.name, u.avatar_url
+			from public.organization_members om
+			join public.users u on u.id = om.user_id and coalesce(u.is_active, false) = true
+			where om.organization_id = $1::uuid
+			  and coalesce(om.is_active, false) = true and om.deleted_at is null
+			  and (` + userID + `::text in ('', 'all') or u.id::text = ` + userID + `::text)
+			  and (not ` + leaderScoped + `::boolean or u.id = any(` + ledUserIDs + `::uuid[]))
+			  and (` + teamID + `::text in ('', 'all') or exists (
+				select 1 from public.team_members tm
+				join public.teams t on t.id = tm.team_id and t.organization_id = tm.organization_id and t.is_active = true
+				where tm.organization_id = om.organization_id and tm.user_id = u.id
+				  and tm.team_id::text = ` + teamID + `::text
+				  and coalesce(tm.is_active, true) = true
+			  ))
 		)
 		select
-			dimension,
-			entity_id::text,
-			kind,
-			display_name,
-			avatar_url,
-			lead_count
-		from bounded_counts
-		where lead_count > 0
-		order by dimension, case when kind = 'other' then 1 else 0 end, lead_count desc, display_name
+			coalesce(e.id, c.assigned_user_id)::text as id,
+			case when coalesce(e.id, c.assigned_user_id) is null then 'unassigned' else 'entity' end as kind,
+			case when coalesce(e.id, c.assigned_user_id) is null then 'Sem responsável'
+			     else coalesce(nullif(btrim(e.name), ''), nullif(btrim(u.name), ''), 'Usuário indisponível') end as name,
+			coalesce(e.avatar_url, u.avatar_url) as avatar_url,
+			coalesce(c.lead_count, 0)::bigint as lead_count
+		from eligible e
+		full join counts c on c.assigned_user_id = e.id
+		left join public.users u on u.id = c.assigned_user_id
+		  and exists (select 1 from public.organization_members om where om.organization_id = $1::uuid and om.user_id = u.id)
+		order by lead_count desc, name, id
+	`
+}
+
+func dashboardLeadDistributionTeamSQL(where []string, argCount int) string {
+	leaderScoped := fmt.Sprintf("$%d", argCount+1)
+	ledTeamIDs := fmt.Sprintf("$%d", argCount+2)
+	return `
+		with filtered as (
+			select l.id, l.assigned_user_id
+			from public.leads l
+			where ` + strings.Join(where, " and ") + `
+		), eligible as (
+			select t.id, t.name
+			from public.teams t
+			where t.organization_id = $1::uuid and t.is_active = true
+			  and (not ` + leaderScoped + `::boolean or t.id = any(` + ledTeamIDs + `::uuid[]))
+		), counts as (
+			select tm.team_id, count(distinct f.id)::bigint as lead_count
+			from filtered f
+			join public.team_members tm on tm.organization_id = $1::uuid
+			  and tm.user_id = f.assigned_user_id and coalesce(tm.is_active, true) = true
+			join eligible e on e.id = tm.team_id
+			join public.users u on u.id = tm.user_id and coalesce(u.is_active, false) = true
+			join public.organization_members om on om.organization_id = tm.organization_id
+			  and om.user_id = tm.user_id and coalesce(om.is_active, false) = true and om.deleted_at is null
+			group by tm.team_id
+		)
+		select e.id::text, e.name, coalesce(c.lead_count, 0)::bigint
+		from eligible e
+		left join counts c on c.team_id = e.id
+		order by lead_count desc, e.name, e.id
 	`
 }
 
@@ -998,7 +1023,11 @@ func (repo Repository) dashboardAggregate(ctx context.Context, queryer dashboard
 			count(*)::bigint,
 			count(*) filter (where coalesce(l.deal_status, 'open') not in ('won', 'lost'))::bigint,
 			count(*) filter (where l.deal_status = 'lost')::bigint,
-			avg(l.first_response_seconds)::double precision
+			avg(l.first_response_seconds) filter (
+				where l.first_response_actor_user_id is not null
+				  and coalesce(l.first_response_is_automation, false) = false
+				  and l.first_response_seconds >= 0
+			)::double precision
 		from public.leads l
 		where `+strings.Join(where, " and "),
 		args...,
@@ -1015,10 +1044,7 @@ func (repo Repository) dashboardAggregate(ctx context.Context, queryer dashboard
 }
 
 func (repo Repository) dashboardWonSummary(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) (dashboardWonSummary, error) {
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{
-		DateColumn:      "won_at",
-		ForceDealStatus: "won",
-	})
+	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardDealCohortOptions("won"))
 	if err != nil {
 		return dashboardWonSummary{}, err
 	}
@@ -1092,10 +1118,7 @@ func (repo Repository) dashboardWonSummary(ctx context.Context, queryer dashboar
 }
 
 func (repo Repository) dashboardLostReasonSummary(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) ([]LostReasonBucket, int64, error) {
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{
-		DateExpression:  "coalesce(l.lost_at, l.created_at)",
-		ForceDealStatus: "lost",
-	})
+	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardDealCohortOptions("lost"))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1131,10 +1154,7 @@ func (repo Repository) dashboardLostReasonSummary(ctx context.Context, queryer d
 }
 
 func (repo Repository) dashboardWonCount(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) (int64, error) {
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{
-		DateColumn:      "won_at",
-		ForceDealStatus: "won",
-	})
+	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardDealCohortOptions("won"))
 	if err != nil {
 		return 0, err
 	}
@@ -1151,10 +1171,7 @@ func (repo Repository) dashboardWonCount(ctx context.Context, queryer dashboardQ
 }
 
 func (repo Repository) dashboardLostCount(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) (int64, error) {
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{
-		DateExpression:  "coalesce(l.lost_at, l.created_at)",
-		ForceDealStatus: "lost",
-	})
+	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardDealCohortOptions("lost"))
 	if err != nil {
 		return 0, err
 	}
@@ -1188,10 +1205,7 @@ func (repo Repository) dashboardDealDetails(ctx context.Context, queryer dashboa
 }
 
 func (repo Repository) dashboardWonDeals(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) ([]WonDealDetail, error) {
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{
-		DateColumn:      "won_at",
-		ForceDealStatus: "won",
-	})
+	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardDealCohortOptions("won"))
 	if err != nil {
 		return nil, err
 	}
@@ -1264,10 +1278,7 @@ func (repo Repository) dashboardWonDeals(ctx context.Context, queryer dashboardQ
 }
 
 func (repo Repository) dashboardLostDeals(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) ([]LostDealDetail, error) {
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{
-		DateExpression:  "coalesce(l.lost_at, l.created_at)",
-		ForceDealStatus: "lost",
-	})
+	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardDealCohortOptions("lost"))
 	if err != nil {
 		return nil, err
 	}
@@ -1286,7 +1297,7 @@ func (repo Repository) dashboardLostDeals(ctx context.Context, queryer dashboard
 		from public.leads l
 		left join public.users u on u.id = l.assigned_user_id
 		where `+strings.Join(where, " and ")+`
-		order by coalesce(l.lost_at, l.created_at) desc, l.created_at desc, l.id desc
+		order by l.created_at desc, l.id desc
 		`+limitClause+`
 	`, args...)
 	if err != nil {

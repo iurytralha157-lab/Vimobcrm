@@ -5,6 +5,7 @@ import {
   getDashboardFiltersQueryKey,
   getDashboardFunnel,
   getDashboardLeadDistribution,
+  getDashboardFirstContact,
   getDashboardOptionalIdQueryKey,
   getDashboardSources,
   getDashboardStats,
@@ -14,6 +15,7 @@ import {
   type DashboardAPIFilters,
   type DashboardFunnelPoint,
   type DashboardLeadDistributionResponse,
+  type DashboardFirstContactResponse,
   type DashboardStatsResponse,
   type DashboardTopBrokersResponse,
   type DashboardUpcomingTask,
@@ -116,6 +118,7 @@ function getDashboardSourceLabel(value: string) {
 export type TopBroker = DashboardTopBrokersResponse["brokers"][number];
 export type TopBrokersResult = DashboardTopBrokersResponse;
 export type DashboardLeadDistribution = DashboardLeadDistributionResponse;
+export type DashboardFirstContact = DashboardFirstContactResponse;
 export type UpcomingTask = DashboardUpcomingTask;
 
 export function useDashboardStats() {
@@ -308,6 +311,34 @@ export function useDashboardLeadDistribution(
       isReady && canViewLeadDistribution && options.enabled !== false,
     queryFn: ({ signal }) =>
       getDashboardLeadDistribution({ organizationId, filters, signal }),
+    staleTime: DASHBOARD_STALE_TIME_MS,
+  });
+}
+
+export function useDashboardFirstContact(
+  filters?: DashboardAPIFilters,
+  options: { enabled?: boolean } = {},
+) {
+  const {
+    organizationId,
+    currentUserId,
+    accessSignature,
+    isReady,
+    canViewLeadDistribution,
+  } = useDashboardQueryScope();
+  const filterKey = getDashboardFiltersQueryKey(filters);
+
+  return useQuery({
+    queryKey: [
+      "dashboard-first-contact",
+      organizationId,
+      currentUserId,
+      accessSignature,
+      filterKey,
+    ],
+    enabled: isReady && canViewLeadDistribution && options.enabled !== false,
+    queryFn: ({ signal }) =>
+      getDashboardFirstContact({ organizationId, filters, signal }),
     staleTime: DASHBOARD_STALE_TIME_MS,
   });
 }
