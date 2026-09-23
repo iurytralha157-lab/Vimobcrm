@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -109,5 +110,49 @@ func TestPersistConnectedOAuthIntegrationOnlyInsertsAfterMissingUpdate(t *testin
 				t.Fatalf("error %v does not preserve cause %v", err, test.wantCause)
 			}
 		})
+	}
+}
+
+func TestOAuthReconnectKeepsOmittedRoutingAndAdAccounts(t *testing.T) {
+	omitted, err := parseOAuthConnectionOptions(map[string]any{})
+	if err != nil || omitted.PipelineProvided || omitted.StageProvided || omitted.DefaultStatusProvided || omitted.DefaultStatus != "novo" {
+		t.Fatalf("omitted connection options = (%#v, %v)", omitted, err)
+	}
+	const pipelineID = "11111111-1111-4111-8111-111111111111"
+	const stageID = "22222222-2222-4222-8222-222222222222"
+	explicit, err := parseOAuthConnectionOptions(map[string]any{
+		"pipeline_id": pipelineID, "stage_id": stageID, "default_status": "novo",
+	})
+	if err != nil || !explicit.PipelineProvided || !explicit.StageProvided || !explicit.DefaultStatusProvided ||
+		explicit.PipelineID == nil || *explicit.PipelineID != pipelineID ||
+		explicit.StageID == nil || *explicit.StageID != stageID || explicit.DefaultStatus != "novo" {
+		t.Fatalf("explicit connection options = (%#v, %v)", explicit, err)
+	}
+
+	source := readOAuthSource(t, "oauth_postgres.go")
+	persist := oauthSourceSection(t, source, "func (store oauthPostgresStore) persistConnectedIntegration", "func persistConnectedOAuthIntegration")
+	update := oauthSourceSection(t, persist, "updateSQL := `", "insertSQL := `")
+	for _, assignment := range []string{
+		"pipeline_id = case when $21::boolean then $7::uuid else integration.pipeline_id end",
+		"stage_id = case when $22::boolean then $8::uuid else integration.stage_id end",
+		"default_status = case when $23::boolean then $9 else integration.default_status end",
+		"ad_account_id = case when $24::boolean then $10 else integration.ad_account_id end",
+		"when $24::boolean then $11::jsonb",
+		"else integration.selected_ad_accounts",
+	} {
+		if !strings.Contains(update, assignment) {
+			t.Fatalf("reconnect UPDATE must preserve omitted settings: missing %q", assignment)
+		}
+	}
+	for _, flag := range []string{
+		"options.PipelineProvided", "options.StageProvided", "options.DefaultStatusProvided", "len(selected) > 0",
+	} {
+		if !strings.Contains(persist, flag) {
+			t.Fatalf("reconnect UPDATE must bind %q", flag)
+		}
+	}
+	if !strings.Contains(persist, "store.integrationJSON(ctx, updateSQL, updateArguments...)") ||
+		!strings.Contains(persist, "store.integrationJSON(ctx, insertSQL, arguments...)") {
+		t.Fatal("UPDATE must receive presence flags while INSERT keeps default values")
 	}
 }

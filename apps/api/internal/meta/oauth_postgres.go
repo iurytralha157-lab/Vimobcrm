@@ -311,6 +311,9 @@ func (store oauthPostgresStore) claimConnectFlow(
 	pageID string,
 	selectedAccounts []string,
 ) (oauthFlowPayload, error) {
+	if selectedAccounts == nil {
+		selectedAccounts = []string{}
+	}
 	selectedJSON, marshalErr := json.Marshal(selectedAccounts)
 	if marshalErr != nil {
 		return oauthFlowPayload{}, newOAuthFailure("invalid_ad_account_selection", http.StatusBadRequest, marshalErr)
@@ -725,6 +728,9 @@ func (store oauthPostgresStore) persistConnectedIntegration(
 	options oauthConnectionOptions,
 	messengerActive bool,
 ) (map[string]any, error) {
+	if selected == nil {
+		selected = []string{}
+	}
 	selectedJSON, _ := json.Marshal(selected)
 	integrationType := "facebook"
 	if page.InstagramBusinessAccountID != nil {
@@ -759,19 +765,28 @@ func (store oauthPostgresStore) persistConnectedIntegration(
 		string(subscribedFieldsJSON),
 		grantedScopes,
 	}
+	updateArguments := append(append([]any(nil), arguments...),
+		options.PipelineProvided,
+		options.StageProvided,
+		options.DefaultStatusProvided,
+		len(selected) > 0,
+	)
 	updateSQL := `
 		update public.meta_integrations as integration
 		set page_name = $3,
 		    page_picture_url = $4,
 		    access_token = $5,
 		    user_access_token = $6,
-		    pipeline_id = $7::uuid,
-		    stage_id = $8::uuid,
-		    default_status = $9,
+		    pipeline_id = case when $21::boolean then $7::uuid else integration.pipeline_id end,
+		    stage_id = case when $22::boolean then $8::uuid else integration.stage_id end,
+		    default_status = case when $23::boolean then $9 else integration.default_status end,
 		    is_connected = true,
 		    last_error = null,
-		    ad_account_id = $10,
-		    selected_ad_accounts = $11::jsonb,
+		    ad_account_id = case when $24::boolean then $10 else integration.ad_account_id end,
+		    selected_ad_accounts = case
+		        when $24::boolean then $11::jsonb
+		        else integration.selected_ad_accounts
+		    end,
 		    token_status = 'active',
 		    token_expires_at = $12,
 		    last_validated_at = $13,
@@ -779,9 +794,13 @@ func (store oauthPostgresStore) persistConnectedIntegration(
 		    health_status = 'healthy',
 		    facebook_user_id = $14,
 		    facebook_user_name = $15,
-		    instagram_business_account_id = $16,
-		    instagram_username = $17,
-		    integration_type = $18,
+		    instagram_business_account_id = coalesce($16, integration.instagram_business_account_id),
+		    instagram_username = coalesce($17, integration.instagram_username),
+		    integration_type = case
+		        when $18 = 'facebook' and integration.integration_type = 'facebook_instagram'
+		            then integration.integration_type
+		        else $18
+		    end,
 		    subscribed_fields = $19::jsonb,
 		    granted_scopes = $20::text[],
 		    subscription_reconciled_at = $13,
@@ -806,7 +825,7 @@ func (store oauthPostgresStore) persistConnectedIntegration(
 		returning ` + oauthPublicIntegrationJSON
 	return persistConnectedOAuthIntegration(
 		func() (map[string]any, error) {
-			return store.integrationJSON(ctx, updateSQL, arguments...)
+			return store.integrationJSON(ctx, updateSQL, updateArguments...)
 		},
 		func() (map[string]any, error) {
 			return store.integrationJSON(ctx, insertSQL, arguments...)
