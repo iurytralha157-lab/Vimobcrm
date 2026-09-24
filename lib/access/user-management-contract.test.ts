@@ -189,8 +189,14 @@ test('membership removida nao reabre acesso por tenant, troca de organizacao ou 
   const migrationSource = readSource(
     'supabase/migrations/20260827000000_distinguish_disabled_and_deleted_organization_members.sql',
   )
+  const ledUsersScope = tenantSource.match(/led_users as \(([\s\S]*?)\),\s*led_pipelines as \(/)?.[1]
 
-  assert.equal((tenantSource.match(/om\.deleted_at is null/g) ?? []).length, 3)
+  assert.ok(ledUsersScope)
+  assert.match(
+    ledUsersScope,
+    /join public\.organization_members om[\s\S]*?om\.organization_id = member\.organization_id[\s\S]*?om\.user_id = member\.user_id[\s\S]*?om\.is_active = true[\s\S]*?om\.deleted_at is null/,
+  )
+  assert.equal((tenantSource.replace(ledUsersScope, '').match(/om\.deleted_at is null/g) ?? []).length, 3)
   assert.equal((meSource.match(/deleted_at is null/g) ?? []).length, 2)
   assert.match(migrationSource, /private\.is_org_member\(session\.organization_id\)/)
   assert.match(

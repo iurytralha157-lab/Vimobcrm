@@ -52,7 +52,7 @@ test("papel manager nao ignora uma permissao efetiva negada", () => {
 });
 
 const readWorkspaceFile = (path: string) =>
-  readFileSync(resolve(process.cwd(), path), "utf8");
+  readFileSync(resolve(process.cwd(), path), "utf8").replace(/\r\n?/g, "\n");
 
 test("navegacao segmentada de imoveis cobre as sete rotas e destaca a rota ativa", () => {
   const source = readWorkspaceFile(
@@ -238,8 +238,8 @@ test("formulario decide acesso somente com policy ativa e nao grava localidades 
     ),
   );
   assert.ok(
-    formSource.includes(
-      "catalogLocationIdForMutation(\n          neighborhoods,\n          formData.neighborhood_id",
+    /neighborhood_id:\s*catalogLocationIdForMutation\(\s*neighborhoods,\s*formData\.neighborhood_id,?\s*\)/.test(
+      formSource,
     ),
   );
 });
