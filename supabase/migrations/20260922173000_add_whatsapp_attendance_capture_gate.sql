@@ -1002,15 +1002,61 @@ $patch_process$;
 -- table default intentionally remains suppressed for every unclassified write.
 do $patch_managed_auto_reply$
 declare
+  v_auto_reply regprocedure;
+  v_related_trigger_count integer;
+  v_valid_trigger_count integer;
   v_definition text;
   v_updated text;
   v_old text;
   v_new text;
 begin
+  v_auto_reply := pg_catalog.to_regprocedure(
+    'public.enqueue_managed_whatsapp_distribution_auto_reply(uuid,uuid,uuid,text)'
+  );
+
+  select
+    count(*),
+    count(*) filter (
+      where trigger_state.tgenabled in ('O', 'A')
+        and (
+          (
+            trigger_state.tgname = 'trg_reserve_managed_whatsapp_distribution_auto_reply'
+            and trigger_state.tgfoid = pg_catalog.to_regprocedure(
+              'private.reserve_managed_whatsapp_distribution_auto_reply_from_entry()'
+            )::oid
+          )
+          or (
+            trigger_state.tgname = 'trg_enqueue_managed_whatsapp_auto_reply'
+            and trigger_state.tgfoid = pg_catalog.to_regprocedure(
+              'private.enqueue_managed_whatsapp_auto_reply_from_entry()'
+            )::oid
+          )
+        )
+    )
+  into v_related_trigger_count, v_valid_trigger_count
+  from pg_catalog.pg_trigger as trigger_state
+  where trigger_state.tgrelid = 'public.lead_entry_events'::regclass
+    and trigger_state.tgname in (
+      'trg_reserve_managed_whatsapp_distribution_auto_reply',
+      'trg_enqueue_managed_whatsapp_auto_reply'
+    )
+    and not trigger_state.tgisinternal;
+
+  -- Some deployed databases deliberately have no managed auto-reply. Keep
+  -- that feature absent while installing the attendance gate for messages.
+  if v_auto_reply is null and v_related_trigger_count = 0 then
+    return;
+  end if;
+
+  if v_auto_reply is null
+     or v_related_trigger_count <> 2
+     or v_valid_trigger_count <> 2 then
+    raise exception using errcode = '55000',
+      message = 'managed_whatsapp_auto_reply_installation_inconsistent';
+  end if;
+
   v_definition := replace(replace(
-    pg_catalog.pg_get_functiondef(
-      'public.enqueue_managed_whatsapp_distribution_auto_reply(uuid,uuid,uuid,text)'::regprocedure
-    ),
+    pg_catalog.pg_get_functiondef(v_auto_reply),
     E'\r\n',
     E'\n'
   ), E'\r', E'\n');

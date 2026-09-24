@@ -535,27 +535,62 @@ select ok(
   'managed intake verifies redacted canonical rows without weakening collision checks'
 );
 
+with managed_auto_reply_state as (
+  select
+    pg_catalog.to_regprocedure(
+      'public.enqueue_managed_whatsapp_distribution_auto_reply(uuid,uuid,uuid,text)'
+    ) as function_oid,
+    count(trigger_state.oid) as related_trigger_count,
+    count(trigger_state.oid) filter (
+      where trigger_state.tgenabled in ('O', 'A')
+        and (
+          (
+            trigger_state.tgname = 'trg_reserve_managed_whatsapp_distribution_auto_reply'
+            and trigger_state.tgfoid = pg_catalog.to_regprocedure(
+              'private.reserve_managed_whatsapp_distribution_auto_reply_from_entry()'
+            )::oid
+          )
+          or (
+            trigger_state.tgname = 'trg_enqueue_managed_whatsapp_auto_reply'
+            and trigger_state.tgfoid = pg_catalog.to_regprocedure(
+              'private.enqueue_managed_whatsapp_auto_reply_from_entry()'
+            )::oid
+          )
+        )
+    ) as valid_trigger_count
+  from pg_catalog.pg_trigger as trigger_state
+  where trigger_state.tgrelid = 'public.lead_entry_events'::regclass
+    and trigger_state.tgname in (
+      'trg_reserve_managed_whatsapp_distribution_auto_reply',
+      'trg_enqueue_managed_whatsapp_auto_reply'
+    )
+    and not trigger_state.tgisinternal
+)
 select ok(
-  position(
-    $$whatsapp_attendance_required$$
-    in pg_catalog.pg_get_functiondef(
-      'public.enqueue_managed_whatsapp_distribution_auto_reply(uuid,uuid,uuid,text)'::regprocedure
-    )
-  ) > 0
-  and position(
-    $$attended_message.capture_state = 'captured'$$
-    in pg_catalog.pg_get_functiondef(
-      'public.enqueue_managed_whatsapp_distribution_auto_reply(uuid,uuid,uuid,text)'::regprocedure
-    )
-  ) > 0
-  and position(
-    $$'captured',$$
-    in pg_catalog.pg_get_functiondef(
-      'public.enqueue_managed_whatsapp_distribution_auto_reply(uuid,uuid,uuid,text)'::regprocedure
-    )
-  ) > 0,
-  'managed auto-reply cannot enqueue or expose a preview before exact attendance'
-);
+  (
+    function_oid is null
+    and related_trigger_count = 0
+  )
+  or (
+    function_oid is not null
+    and related_trigger_count = 2
+    and valid_trigger_count = 2
+    and position(
+      $$whatsapp_attendance_required$$
+      in pg_catalog.pg_get_functiondef(function_oid)
+    ) > 0
+    and position(
+      $$attended_message.capture_state = 'captured'$$
+      in pg_catalog.pg_get_functiondef(function_oid)
+    ) > 0
+    and position(
+      $$'captured',$$
+      in pg_catalog.pg_get_functiondef(function_oid)
+    ) > 0
+  ),
+  'managed auto-reply stays absent or requires exact attendance before enqueue'
+)
+from managed_auto_reply_state;
 
 select ok(
   position(
