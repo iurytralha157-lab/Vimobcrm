@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/authorization"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -298,6 +299,51 @@ func TestPipelineBoardUnassignedFilterComposesWithTeam(t *testing.T) {
 	filter.TeamID = "not-a-uuid"
 	if _, _, err := buildPipelineLeadWhere(tenant.Context{}, filter); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("buildPipelineLeadWhere() invalid team error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestPipelineBoardLeaderSeesBrokerLeadsFromFourTeams(t *testing.T) {
+	brokerID := "10000000-0000-4000-8000-000000000002"
+	ledTeamID := "30000000-0000-4000-8000-000000000001"
+	leader := tenant.Context{
+		UserID:         "10000000-0000-4000-8000-000000000001",
+		OrganizationID: "20000000-0000-4000-8000-000000000001",
+		MemberRole:     "user",
+		Permissions:    []string{"lead_view_team"},
+		LedTeamIDs:     []string{ledTeamID},
+		LedUserIDs:     []string{brokerID},
+		IsTeamLeader:   true,
+	}
+
+	for _, leadTeamID := range []string{
+		ledTeamID,
+		"30000000-0000-4000-8000-000000000002",
+		"30000000-0000-4000-8000-000000000003",
+		"30000000-0000-4000-8000-000000000004",
+	} {
+		if !authorization.CanViewLead(leader, authorization.LeadResource{AssignedUserID: brokerID, TeamID: leadTeamID}) {
+			t.Errorf("leader cannot see led broker's lead from team %s", leadTeamID)
+		}
+	}
+	if authorization.CanViewLead(leader, authorization.LeadResource{
+		AssignedUserID: "10000000-0000-4000-8000-000000000003",
+		TeamID:         "30000000-0000-4000-8000-000000000002",
+	}) {
+		t.Fatal("leader must not see a foreign broker's lead")
+	}
+
+	where, args, err := buildPipelineLeadWhere(leader, PipelineBoardFilter{
+		FilterUserIDsSet: true,
+		FilterUserIDs:    []string{brokerID},
+	})
+	if err != nil {
+		t.Fatalf("buildPipelineLeadWhere() error = %v", err)
+	}
+	if len(args) != 5 || args[4] != brokerID || len(where) != 3 {
+		t.Fatalf("broker scope must apply to board and stage counts: where = %#v, args = %#v", where, args)
+	}
+	if where[2] != "l.assigned_user_id in ($5::uuid)" {
+		t.Fatalf("selected team must filter by its broker, not by each lead's source team: %s", where[2])
 	}
 }
 

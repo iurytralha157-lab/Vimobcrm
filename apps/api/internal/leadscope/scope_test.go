@@ -30,9 +30,21 @@ func TestLeadVisibilitySQLUsesRequestedAliasForOwnAndTeam(t *testing.T) {
 		"to_jsonb(candidate)->>'team_id'",
 		"leader.organization_id = candidate.organization_id",
 		"member.user_id = candidate.assigned_user_id",
+		"coalesce(team.is_active, true) = true",
+		"broker.is_active, false",
+		"broker_membership.organization_id = member.organization_id",
+		"broker_membership.user_id = member.user_id",
+		"broker_membership.is_active, false",
+		"broker_membership.deleted_at is null",
 	} {
 		if !strings.Contains(clause, required) {
 			t.Fatalf("lead scope missing %q: %s", required, clause)
 		}
+	}
+	if strings.Contains(clause, "nullif(to_jsonb(candidate)->>'team_id', '') is null") {
+		t.Fatal("an explicit foreign team must not hide a lead assigned to a broker in a led team")
+	}
+	if strings.Contains(clause, "broker.organization_id = member.organization_id") {
+		t.Fatal("a broker's primary profile organization must not replace active membership in the lead organization")
 	}
 }

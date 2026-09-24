@@ -185,6 +185,14 @@ test('pipeline traduz sem responsavel para filtro nulo sem enviar sentinel como 
   assert.match(screenSource, /teamId: isUnassignedFilter \? sharedFilters\.teamId/);
 });
 
+test('lider filtra os leads dos corretores da equipe sem limitar a equipe de origem', () => {
+  assert.match(screenSource, /const effectivePipelineFilterUserIds = useMemo\(/);
+  assert.match(screenSource, /return selectedTeamUserIds\.filter\(\(userId\) => visibleUserIds\.has\(userId\)\)/);
+  assert.match(screenSource, /filterUserIds: effectivePipelineFilterUserIds/);
+  assert.match(screenSource, /teamId: isUnassignedFilter \? sharedFilters\.teamId \|\| undefined : undefined/);
+  assert.match(screenSource, /loadMoreLeads\.mutate\([\s\S]*?filters: pipelineBoardFilters/);
+});
+
 test('cabecalho da coluna mantem apenas o menu e cria lead pelo botao geral', () => {
   assert.match(boardSource, /aria-label=\{`Configurar coluna \$\{stage\.name\}`\}/);
   assert.doesNotMatch(boardSource, /pipeline-column-new-lead/);

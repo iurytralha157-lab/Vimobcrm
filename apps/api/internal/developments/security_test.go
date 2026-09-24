@@ -34,6 +34,17 @@ func TestReservationLeadVisibilityUsesCanonicalOwnTeamAllScopes(t *testing.T) {
 			want:  true,
 		},
 		{
+			name: "led broker's lead from another team",
+			context: tenant.Context{
+				UserID:      "leader",
+				LedTeamIDs:  []string{"team-1"},
+				LedUserIDs:  []string{"user-2"},
+				Permissions: []string{permissions.LeadViewTeam},
+			},
+			scope: reservationLeadScope{AssignedUserID: "user-2", TeamID: "team-2"},
+			want:  true,
+		},
+		{
 			name: "foreign lead",
 			context: tenant.Context{
 				UserID:      "user-1",
@@ -104,6 +115,18 @@ func TestReservationOperationCapabilityCombinesManagementAndLeadVisibility(t *te
 		Reservation{LeadID: &leadID},
 	) {
 		t.Fatal("lead visibility alone must not grant reservation management")
+	}
+	if canOperateReservation(
+		tenant.Context{
+			UserID:      "leader",
+			LedTeamIDs:  []string{"team-1"},
+			LedUserIDs:  []string{"user-2"},
+			Permissions: []string{permissions.PropertyManage, permissions.LeadViewTeam},
+		},
+		reservationLeadScope{AssignedUserID: "user-2", TeamID: "team-2"},
+		Reservation{LeadID: &leadID},
+	) {
+		t.Fatal("reading a broker's cross-team lead must not grant reservation management")
 	}
 }
 

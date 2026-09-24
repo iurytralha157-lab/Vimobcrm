@@ -94,7 +94,7 @@ func TestWhatsAppBindingAccessIsFailClosed(t *testing.T) {
 		"coalesce(ws.status, '') <> 'deleted'",
 		"for update of wc",
 		"requireUnlinked",
-		"authorization.CanViewLead",
+		"authorization.CanUseLeadForMutation",
 		"textValue(sessionOwnerID) != tenantContext.UserID",
 		"canManageWhatsAppLeadBinding",
 		"whatsAppConversationIdentityCandidates",

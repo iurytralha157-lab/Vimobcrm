@@ -1670,7 +1670,7 @@ func (repo Repository) registerReentry(ctx context.Context, tenantContext tenant
 		return CreateResult{}, errLeadIntakeRetry
 	}
 	existingLead = *currentLead
-	canViewExisting := authorization.CanViewLead(tenantContext, authorization.LeadResource{
+	canViewExisting := authorization.CanUseLeadForMutation(tenantContext, authorization.LeadResource{
 		AssignedUserID: existingLead.AssignedUserID,
 		TeamID:         existingLead.TeamID,
 	})
@@ -4385,7 +4385,7 @@ func (repo Repository) authorizeWhatsAppConversationLeadBinding(
 			  and lead.id = $2::uuid
 			for share of lead
 		`, tenantContext.OrganizationID, currentLeadID.String).Scan(&assignedUserID, &teamID)
-		if errors.Is(err, pgx.ErrNoRows) || (err == nil && !authorization.CanViewLead(tenantContext, authorization.LeadResource{
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && !authorization.CanUseLeadForMutation(tenantContext, authorization.LeadResource{
 			AssignedUserID: textValue(assignedUserID),
 			TeamID:         textValue(teamID),
 		})) {

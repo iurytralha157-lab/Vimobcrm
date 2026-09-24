@@ -643,9 +643,14 @@ func (repo Repository) applyTeamLeadershipScope(ctx context.Context, tenantConte
 			from public.team_members member
 			join led_teams lt on lt.team_id = member.team_id
 			join public.users u on u.id = member.user_id
+			join public.organization_members om
+			  on om.organization_id = member.organization_id
+			 and om.user_id = member.user_id
+			 and om.is_active = true
+			 and om.deleted_at is null
 			where member.organization_id = $1::uuid
 			  and coalesce(member.is_active, true) = true
-			  and coalesce(u.is_active, true) = true
+			  and coalesce(u.is_active, false) = true
 			union
 			select $2::uuid
 		),

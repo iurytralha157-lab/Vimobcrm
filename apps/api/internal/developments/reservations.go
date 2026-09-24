@@ -72,7 +72,10 @@ func canOperateReservation(
 	reservation Reservation,
 ) bool {
 	return canManage(tenantContext) &&
-		(reservation.LeadID == nil || canViewReservationLead(tenantContext, scope))
+		(reservation.LeadID == nil || authorization.CanUseLeadForMutation(tenantContext, authorization.LeadResource{
+			AssignedUserID: scope.AssignedUserID,
+			TeamID:         scope.TeamID,
+		}))
 }
 
 func redactReservationLead(tenantContext tenant.Context, scope reservationLeadScope, reservation *Reservation) {

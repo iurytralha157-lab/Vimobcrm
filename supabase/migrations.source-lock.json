@@ -598,6 +598,10 @@
     {
       "file": "20260922173000_add_whatsapp_attendance_capture_gate.sql",
       "sha256": "f99303836ab67d55a43f46d7eca6f5cfda4a99ef98a85deb8fac6b6d4f6e4b47"
+    },
+    {
+      "file": "20260924142938_align_lead_visibility_with_active_broker_teams.sql",
+      "sha256": "48bf675c8b92da7edc2137086dee376e2cd05f4841a71ba0d162611ce2274a18"
     }
   ]
 }

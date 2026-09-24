@@ -477,6 +477,89 @@ test.describe.serial('cadastro e edicao completa de imoveis por perfil', () => {
   test('administrador percorre todas as abas, cria e edita', async ({
     browser,
   }) => runLifecycle(browser, 'admin'));
+  test('falha no upload mantém fotos para retry sem recriar imóvel', async ({
+    browser,
+  }) => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    let propertyID = '';
+    let propertyPostCount = 0;
+    let uploadIntentCount = 0;
+    let failUploadIntents = true;
+    try {
+      await signInAs(page, 'admin');
+      await page.route('**/v1/properties', async (route) => {
+        if (route.request().method() === 'POST') propertyPostCount += 1;
+        await route.continue();
+      });
+      await page.route('**/v1/properties/*/assets/upload-intents', async (route) => {
+        if (route.request().method() !== 'POST') {
+          await route.continue();
+          return;
+        }
+        uploadIntentCount += 1;
+        if (failUploadIntents) {
+          await route.fulfill({
+            status: 500,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              error: {
+                code: 'property_operation_failed',
+                message: 'Falha simulada no upload',
+              },
+            }),
+          });
+          return;
+        }
+        await route.continue();
+      });
+
+      const suffix = `retry-${Date.now()}`;
+      await page.goto('/properties/new');
+      await fillCreationForm(page, `Imovel E2E ${suffix}`, suffix);
+      const createdResponsePromise = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === '/v1/properties' &&
+          response.request().method() === 'POST',
+      );
+      await page.getByRole('button', { name: 'Cadastrar', exact: true }).click();
+      const createdResponse = await createdResponsePromise;
+      const createdBody = await createdResponse.text();
+      expect(createdResponse.ok(), createdBody).toBeTruthy();
+      propertyID = (JSON.parse(createdBody) as PropertyPayload).data.id;
+
+      await expect(page.getByRole('heading', { name: 'Imóvel cadastrado; fotos pendentes' })).toBeVisible();
+      await expect(page.locator('form [role="alert"]')).toContainText(
+        'O imóvel foi criado, mas o envio das fotos não foi confirmado.',
+      );
+      await expect(page.getByAltText('Imagem principal')).toHaveAttribute('src', /^blob:/);
+      await expect(page.getByAltText('Foto 1')).toHaveAttribute('src', /^blob:/);
+      expect(propertyPostCount).toBe(1);
+
+      const firstAttemptIntents = uploadIntentCount;
+      failUploadIntents = false;
+      await page.getByRole('button', { name: 'Reenviar fotos' }).click();
+      await expect(page).toHaveURL(/\/properties$/, { timeout: 120_000 });
+      expect(propertyPostCount).toBe(1);
+      expect(uploadIntentCount).toBeGreaterThan(firstAttemptIntents);
+
+      const workspaceResponse = await authenticatedAPIRequest(
+        page,
+        'GET',
+        `/v1/properties/${propertyID}/workspace`,
+      );
+      expect(workspaceResponse.ok(), await workspaceResponse.text()).toBeTruthy();
+      const workspace = (await workspaceResponse.json()) as {
+        data: { assets: Array<{ asset_type: string }> };
+      };
+      expect(workspace.data.assets.filter((asset) => asset.asset_type === 'photo').length).toBeGreaterThanOrEqual(2);
+    } finally {
+      if (propertyID) {
+        await deletePropertyAtLatestVersion(page, propertyID).catch(() => undefined);
+      }
+      await context.close();
+    }
+  });
   test('lider bloqueado por padrao e funcional com property_manage', async ({
     browser,
   }) => runLifecycle(browser, 'leader'));
