@@ -238,32 +238,6 @@ export function PipelineBoard({
           </div>
         )}
 
-        {isMobile && filteredStages.length > 1 && hasPreviousMobileStage && (
-          <button
-            type="button"
-            aria-label="Ver coluna anterior"
-            className="absolute left-2 top-1/2 z-20 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-[6px] border-0 bg-primary/50 text-primary-foreground shadow-none outline-none transition-colors hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary/35"
-            onClick={() => onMobileStageNavigation('previous')}
-          >
-            <ChevronLeft className="h-3.5 w-3.5" />
-          </button>
-        )}
-
-        {isMobile && filteredStages.length > 1 && (
-          <button
-            type="button"
-            aria-label="Ver próxima coluna"
-            className={cn(
-              'absolute right-2 top-1/2 z-20 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-[6px] border-0 bg-primary/50 text-primary-foreground shadow-none outline-none transition-colors hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary/35',
-              !hasNextMobileStage && 'cursor-not-allowed opacity-35 hover:bg-primary/50',
-            )}
-            onClick={() => onMobileStageNavigation('next')}
-            disabled={!hasNextMobileStage}
-          >
-            <ChevronRight className="h-3.5 w-3.5" />
-          </button>
-        )}
-
         <DragDropContext
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
@@ -287,7 +261,7 @@ export function PipelineBoard({
                     isMobile ? 'w-full min-w-0' : 'w-[280px] sm:w-72',
                   )}
                 >
-                  <div className="flex items-center justify-between border-b border-[var(--app-border)] px-3 py-2">
+                  <div className="flex shrink-0 items-center justify-between border-b border-[var(--app-border)] px-3 py-2">
                     <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
                       <div
                         className="h-2.5 w-2.5 shrink-0 rounded-full"
@@ -391,7 +365,7 @@ export function PipelineBoard({
                         </TooltipProvider>
                       ) : null}
                     </div>
-                    <div className="flex items-center gap-1">
+                    <div className="flex shrink-0 items-center gap-1">
                       <Button
                         data-tour={
                           stageIndex === 0 ? 'pipeline-column-settings' : undefined
@@ -399,11 +373,36 @@ export function PipelineBoard({
                         aria-label={`Configurar coluna ${stage.name}`}
                         variant="ghost"
                         size="icon"
-                        className="h-6 w-6 shrink-0 rounded-[6px] text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground"
+                        className={cn(
+                          'shrink-0 rounded-[6px] text-muted-foreground hover:bg-[var(--app-surface-hover)] hover:text-foreground',
+                          isMobile ? 'h-10 w-10' : 'h-6 w-6',
+                        )}
                         onClick={() => onOpenStageSettings(stage)}
                       >
                         <MoreHorizontal className="h-4 w-4" />
                       </Button>
+                      {isMobile && filteredStages.length > 1 && (
+                        <>
+                          <button
+                            type="button"
+                            aria-label="Ver coluna anterior"
+                            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground outline-none transition-colors hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary/35 disabled:cursor-not-allowed disabled:opacity-35"
+                            onClick={() => onMobileStageNavigation('previous')}
+                            disabled={!hasPreviousMobileStage}
+                          >
+                            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Ver próxima coluna"
+                            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground outline-none transition-colors hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary/35 disabled:cursor-not-allowed disabled:opacity-35"
+                            onClick={() => onMobileStageNavigation('next')}
+                            disabled={!hasNextMobileStage}
+                          >
+                            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
 
