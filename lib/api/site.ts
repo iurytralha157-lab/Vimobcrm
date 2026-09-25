@@ -39,6 +39,7 @@ export interface OrganizationSite {
   site_title: string | null
   site_description: string | null
   logo_url: string | null
+  footer_logo_url: string | null
   favicon_url: string | null
   primary_color: string | null
   secondary_color: string | null
@@ -112,7 +113,7 @@ export interface SiteSearchFilter {
   created_at: string | null
 }
 
-export type SiteAssetType = 'logo' | 'favicon' | 'about' | 'hero' | 'banner' | 'watermark'
+export type SiteAssetType = 'logo' | 'footer_logo' | 'favicon' | 'about' | 'hero' | 'banner' | 'watermark'
 
 export const siteAPI = {
   async getSite(organizationId?: string | null) {

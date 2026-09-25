@@ -7,7 +7,7 @@ import (
 func scanSite(row siteScanner) (OrganizationSite, error) {
 	var item OrganizationSite
 	var maintenanceMessage, subdomain, customDomain, domainVerifiedAt, siteTitle, siteDescription pgtype.Text
-	var logoURL, faviconURL, primaryColor, secondaryColor, accentColor pgtype.Text
+	var logoURL, footerLogoURL, faviconURL, primaryColor, secondaryColor, accentColor pgtype.Text
 	var whatsapp, phone, email, address, city, state pgtype.Text
 	var instagram, facebook, youtube, linkedin pgtype.Text
 	var aboutTitle, aboutText, aboutImageURL pgtype.Text
@@ -33,6 +33,7 @@ func scanSite(row siteScanner) (OrganizationSite, error) {
 		&siteTitle,
 		&siteDescription,
 		&logoURL,
+		&footerLogoURL,
 		&faviconURL,
 		&primaryColor,
 		&secondaryColor,
@@ -94,6 +95,7 @@ func scanSite(row siteScanner) (OrganizationSite, error) {
 	item.SiteTitle = textPointer(siteTitle)
 	item.SiteDescription = textPointer(siteDescription)
 	item.LogoURL = textPointer(logoURL)
+	item.FooterLogoURL = textPointer(footerLogoURL)
 	item.FaviconURL = textPointer(faviconURL)
 	item.PrimaryColor = textPointer(primaryColor)
 	item.SecondaryColor = textPointer(secondaryColor)

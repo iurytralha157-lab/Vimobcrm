@@ -8865,6 +8865,7 @@ export type Database = {
           email: string | null
           facebook: string | null
           favicon_url: string | null
+          footer_logo_url: string | null
           google_ads_id: string | null
           google_analytics_id: string | null
           google_search_console_verification: string | null
@@ -8926,6 +8927,7 @@ export type Database = {
           email?: string | null
           facebook?: string | null
           favicon_url?: string | null
+          footer_logo_url?: string | null
           google_ads_id?: string | null
           google_analytics_id?: string | null
           google_search_console_verification?: string | null
@@ -8987,6 +8989,7 @@ export type Database = {
           email?: string | null
           facebook?: string | null
           favicon_url?: string | null
+          footer_logo_url?: string | null
           google_ads_id?: string | null
           google_analytics_id?: string | null
           google_search_console_verification?: string | null

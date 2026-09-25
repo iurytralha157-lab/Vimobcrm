@@ -775,6 +775,7 @@ export const realtimeEventSchema = z
 
 const siteAssetTypeSchema = z.enum([
   "logo",
+  "footer_logo",
   "favicon",
   "about",
   "hero",
@@ -835,6 +836,10 @@ const organizationSiteSchema = z
     domain_verification_token: uuidSchema,
     site_title: z.string().trim().max(180).nullable(),
     site_description: z.string().trim().max(500).nullable(),
+    footer_logo_url: z.string().trim().url().max(2_000).refine((value) => {
+      const url = new URL(value);
+      return (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password;
+    }, "Use uma URL HTTP(S) válida").nullable().optional(),
     google_analytics_id: siteGoogleAnalyticsIdSchema,
     google_search_console_verification:
       siteGoogleSearchConsoleVerificationSchema.optional(),

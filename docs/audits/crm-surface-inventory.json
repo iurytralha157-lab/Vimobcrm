@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "02a7fc4e42e23f65a920b0bf739d3e470d99b8eb09e52f935247727f014b9f72",
+  "sourceDigestSha256": "c3edeb25983731821fcf3623a9a889b1123cdb79ed9564595a167804cf46eca6",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -3419,10 +3419,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:48311bb33dc533e4f47d",
+          "id": "overlay:ee1da9f3a9361f44f3d4",
           "column": 7,
           "file": "components/features/site/SiteGeneralDashboard.tsx",
-          "line": 426,
+          "line": 434,
           "owner": "SiteGeneralDashboard",
           "routes": [
             "/settings/site"
@@ -3430,10 +3430,10 @@
           "kind": "alertDialog"
         },
         {
-          "id": "overlay:3917bb9d77e8309c330f",
+          "id": "overlay:2d9fb97e92ced04d2f72",
           "column": 7,
           "file": "components/features/site/SiteSettingsScreen.tsx",
-          "line": 1266,
+          "line": 1270,
           "owner": "SiteSettings",
           "routes": [
             "/settings/site"
@@ -19808,10 +19808,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:c75c2c27942e7a7d2e0c",
+          "id": "cta:c35dd7df9c0dc6883baf",
           "column": 7,
           "file": "components/features/public-site/PublicSiteShell.tsx",
-          "line": 101,
+          "line": 103,
           "owner": "PublicSiteShell",
           "routes": [
             "/",
@@ -19827,10 +19827,10 @@
           "tag": "a"
         },
         {
-          "id": "cta:f7bd2772c028e50e3018",
+          "id": "cta:7fbaff3aa68214f9bf61",
           "column": 11,
           "file": "components/features/public-site/PublicSiteShell.tsx",
-          "line": 110,
+          "line": 112,
           "owner": "PublicSiteShell",
           "routes": [
             "/",
@@ -19846,10 +19846,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:eec462b32c0b366252cc",
+          "id": "cta:99d853da721540a5e587",
           "column": 13,
           "file": "components/features/public-site/PublicSiteShell.tsx",
-          "line": 143,
+          "line": 145,
           "owner": "PublicSiteShell",
           "routes": [
             "/",
@@ -19865,10 +19865,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:7fe0e85f35df4c1f2035",
+          "id": "cta:8d55c379fcd3d2b456e9",
           "column": 13,
           "file": "components/features/public-site/PublicSiteShell.tsx",
-          "line": 150,
+          "line": 152,
           "owner": "PublicSiteShell",
           "routes": [
             "/",
@@ -19884,10 +19884,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:9c6230d8ab760637b3dd",
+          "id": "cta:4de1c9c08956eac6fa47",
           "column": 15,
           "file": "components/features/public-site/PublicSiteShell.tsx",
-          "line": 171,
+          "line": 173,
           "owner": "PublicSiteShell",
           "routes": [
             "/",
@@ -19903,10 +19903,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:6c5351213aecb48a47e8",
+          "id": "cta:33f078eefa47151408e9",
           "column": 15,
           "file": "components/features/public-site/PublicSiteShell.tsx",
-          "line": 177,
+          "line": 179,
           "owner": "PublicSiteShell",
           "routes": [
             "/",
@@ -19922,10 +19922,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:e744458035f177128550",
+          "id": "cta:4a3f473e5df21647f6c2",
           "column": 17,
           "file": "components/features/public-site/PublicSiteShell.tsx",
-          "line": 233,
+          "line": 235,
           "owner": "PublicSiteShell",
           "routes": [
             "/",
@@ -19941,10 +19941,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:d44e3347d022ab979ce3",
+          "id": "cta:448ed2d1c7b4dca08fd5",
           "column": 5,
           "file": "components/features/public-site/PublicSiteShell.tsx",
-          "line": 414,
+          "line": 416,
           "owner": "SiteMenuLink",
           "routes": [
             "/",
@@ -23929,10 +23929,34 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0afcb8a9f648f7e5d882",
+          "id": "cta:1cecfb5de2b63714e697",
+          "column": 7,
+          "file": "components/features/site/SiteFooterLogoUpload.tsx",
+          "line": 58,
+          "owner": "SiteFooterLogoUpload",
+          "routes": [
+            "/settings/site"
+          ],
+          "kind": "actionButton",
+          "tag": "button"
+        },
+        {
+          "id": "cta:91b2dff36438ffafa633",
+          "column": 11,
+          "file": "components/features/site/SiteFooterLogoUpload.tsx",
+          "line": 93,
+          "owner": "SiteFooterLogoUpload",
+          "routes": [
+            "/settings/site"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:1c0262f57bb59a085e0c",
           "column": 17,
           "file": "components/features/site/SiteGeneralDashboard.tsx",
-          "line": 144,
+          "line": 147,
           "owner": "SiteGeneralDashboard",
           "routes": [
             "/settings/site"
@@ -23941,10 +23965,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:be1037adccb2858c16d2",
+          "id": "cta:a4875a1c4f854700927b",
           "column": 15,
           "file": "components/features/site/SiteGeneralDashboard.tsx",
-          "line": 158,
+          "line": 161,
           "owner": "SiteGeneralDashboard",
           "routes": [
             "/settings/site"
@@ -23953,10 +23977,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:ac376081a3cc1407443e",
+          "id": "cta:95057c74d262e172b9c9",
           "column": 17,
           "file": "components/features/site/SiteGeneralDashboard.tsx",
-          "line": 169,
+          "line": 172,
           "owner": "SiteGeneralDashboard",
           "routes": [
             "/settings/site"
@@ -23965,10 +23989,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:1533a792f02bfe3e73e6",
+          "id": "cta:f549dc3dc2c94b5f5d18",
           "column": 13,
           "file": "components/features/site/SiteGeneralDashboard.tsx",
-          "line": 218,
+          "line": 221,
           "owner": "SiteGeneralDashboard",
           "routes": [
             "/settings/site"
@@ -23977,10 +24001,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:9083cba5d30a24910f19",
+          "id": "cta:1d8f52ec8ac7496ad1da",
           "column": 17,
           "file": "components/features/site/SiteGeneralDashboard.tsx",
-          "line": 332,
+          "line": 335,
           "owner": "SiteGeneralDashboard",
           "routes": [
             "/settings/site"
@@ -24001,10 +24025,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:de1854c97567ec67cd46",
+          "id": "cta:0d9c9b179f8a68176c95",
           "column": 13,
           "file": "components/features/site/SiteSettingsScreen.tsx",
-          "line": 477,
+          "line": 478,
           "owner": "SiteSettings",
           "routes": [
             "/settings/site"
@@ -24013,10 +24037,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:727d2558628c40fc6fa5",
+          "id": "cta:ec70f5242570cb02c78f",
           "column": 15,
           "file": "components/features/site/SiteSettingsScreen.tsx",
-          "line": 498,
+          "line": 499,
           "owner": "SiteSettings",
           "routes": [
             "/settings/site"
@@ -24025,10 +24049,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:667453a4e37ab8a4239a",
+          "id": "cta:0b2ceca7335629d1d450",
           "column": 23,
           "file": "components/features/site/SiteSettingsScreen.tsx",
-          "line": 521,
+          "line": 522,
           "owner": "SiteSettings",
           "routes": [
             "/settings/site"
@@ -24037,10 +24061,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:c9e9ef9356e4a6868771",
+          "id": "cta:3ef4e0477f3c3b6df568",
           "column": 19,
           "file": "components/features/site/SiteSettingsScreen.tsx",
-          "line": 569,
+          "line": 570,
           "owner": "SiteSettings",
           "routes": [
             "/settings/site"
@@ -24049,10 +24073,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f26680eb4315012690da",
+          "id": "cta:78ea4cade7acb08595c4",
           "column": 19,
           "file": "components/features/site/SiteSettingsScreen.tsx",
-          "line": 582,
+          "line": 583,
           "owner": "SiteSettings",
           "routes": [
             "/settings/site"
@@ -24061,10 +24085,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:4a59bec0b1da924d3460",
+          "id": "cta:a33bfd96b0654a4ca615",
           "column": 31,
           "file": "components/features/site/SiteSettingsScreen.tsx",
-          "line": 704,
+          "line": 708,
           "owner": "SiteSettings",
           "routes": [
             "/settings/site"
@@ -24073,10 +24097,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:3a3ea364fb10964f57d0",
+          "id": "cta:83d796190dd71705697e",
           "column": 31,
           "file": "components/features/site/SiteSettingsScreen.tsx",
-          "line": 720,
+          "line": 724,
           "owner": "SiteSettings",
           "routes": [
             "/settings/site"
@@ -24085,10 +24109,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:e54fc381b867890875cc",
+          "id": "cta:7eeeac44e283d575fcb2",
           "column": 33,
           "file": "components/features/site/SiteSettingsScreen.tsx",
-          "line": 914,
+          "line": 918,
           "owner": "SiteSettings",
           "routes": [
             "/settings/site"
@@ -24097,10 +24121,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:5a5da99c62e70e5597b4",
+          "id": "cta:539befab4fdd44e6983e",
           "column": 27,
           "file": "components/features/site/SiteSettingsScreen.tsx",
-          "line": 1172,
+          "line": 1176,
           "owner": "SiteSettings",
           "routes": [
             "/settings/site"
@@ -32674,10 +32698,10 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:08bb8dcbb99c3f0e5ac1",
+          "id": "control:2200d1f5aef16319cff1",
           "column": 13,
           "file": "components/features/site/SiteGeneralDashboard.tsx",
-          "line": 435,
+          "line": 443,
           "owner": "SiteGeneralDashboard",
           "routes": [
             "/settings/site"
@@ -32686,10 +32710,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:ca665cd7a2e27dca052a",
+          "id": "control:04a8d6ef0196e1261b69",
           "column": 13,
           "file": "components/features/site/SiteGeneralDashboard.tsx",
-          "line": 436,
+          "line": 444,
           "owner": "SiteGeneralDashboard",
           "routes": [
             "/settings/site"
@@ -32698,10 +32722,10 @@
           "tag": "AlertDialogAction"
         },
         {
-          "id": "control:a71d13666fde6413d2d5",
+          "id": "control:1b5013a8e2975cd46400",
           "column": 13,
           "file": "components/features/site/SiteSettingsScreen.tsx",
-          "line": 1281,
+          "line": 1285,
           "owner": "SiteSettings",
           "routes": [
             "/settings/site"
@@ -32710,10 +32734,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:fbaaf69183a4ed322c4c",
+          "id": "control:2104b286a527a07b5b3e",
           "column": 13,
           "file": "components/features/site/SiteSettingsScreen.tsx",
-          "line": 1282,
+          "line": 1286,
           "owner": "SiteSettings",
           "routes": [
             "/settings/site"
@@ -34067,7 +34091,7 @@
         }
       ]
     },
-    "digestSha256": "e97a79d4673a34c202b1fb9e912e7bd03cabec2b8f2564350396e7072e98f81a"
+    "digestSha256": "98e5b28d5b7d14593e1d23c222c4ed1b2efc800f808529b484cdd5c9ae2a7d5e"
   },
   "routes": [
     {
@@ -41312,6 +41336,15 @@
       "access": [
         "protected"
       ],
+      "file": "components/features/site/SiteFooterLogoUpload.tsx",
+      "routes": [
+        "/settings/site"
+      ]
+    },
+    {
+      "access": [
+        "protected"
+      ],
       "file": "components/features/site/SiteGeneralDashboard.tsx",
       "routes": [
         "/settings/site"
@@ -43760,9 +43793,9 @@
       "asChildButtonsWithUnrecognizedChild": 0,
       "asChildPrimitiveControlsExcluded": 83,
       "asChildPrimitiveControlsWithUnrecognizedChild": 0,
-      "ctasAll": 1383,
+      "ctasAll": 1385,
       "ctasByKind": {
-        "actionButton": 1226,
+        "actionButton": 1228,
         "external": 6,
         "internal": 31,
         "internalDynamic": 75,
@@ -43771,8 +43804,8 @@
       "forms": 50,
       "formsRouteReachable": 50,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1332,
-      "internalCtasRouteReachable": 1296,
+      "internalCtas": 1334,
+      "internalCtasRouteReachable": 1298,
       "overlays": 220,
       "overlaysByKind": {
         "alertDialog": 61,
@@ -43800,7 +43833,7 @@
     "protectedAccessChecksThreePersonas": 204,
     "renderableRouteViewportChecksDesktopAndMobile": 164,
     "routeReachableFormImplementations": 50,
-    "routeReachableInternalCtaImplementations": 1296,
+    "routeReachableInternalCtaImplementations": 1298,
     "routeReachableOverlayImplementations": 213,
     "routeReachableSupplementalOverlayAndTabControls": 272
   },

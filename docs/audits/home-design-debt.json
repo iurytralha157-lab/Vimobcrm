@@ -1,10 +1,10 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "f8ae22d313b3c0b67e7ad013f4e7425e97bb0ccb73e149fd1bf0115d01c5f4c3",
-  "surfaceInventoryDigestSha256": "02a7fc4e42e23f65a920b0bf739d3e470d99b8eb09e52f935247727f014b9f72",
+  "sourceDigestSha256": "5afbaae0f31f9352632aacd44188b2c4007b7f3b44077b5554325323263d5736",
+  "surfaceInventoryDigestSha256": "c3edeb25983731821fcf3623a9a889b1123cdb79ed9564595a167804cf46eca6",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 540,
+    "filesScanned": 541,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {

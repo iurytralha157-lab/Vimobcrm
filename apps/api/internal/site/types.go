@@ -33,6 +33,7 @@ type OrganizationSite struct {
 	SiteTitle                       *string          `json:"site_title"`
 	SiteDescription                 *string          `json:"site_description"`
 	LogoURL                         *string          `json:"logo_url"`
+	FooterLogoURL                   *string          `json:"footer_logo_url"`
 	FaviconURL                      *string          `json:"favicon_url"`
 	PrimaryColor                    *string          `json:"primary_color"`
 	SecondaryColor                  *string          `json:"secondary_color"`

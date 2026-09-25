@@ -30,6 +30,19 @@ Isso permite cache no servidor, contrato publico controlado e uma tela de fallba
 - `POST /v1/public/site/contact`
 - `POST /v1/public/tracking/events`
 
+## Logos
+
+O campo `logo_url` continua sendo a logo do cabecalho. O rodape usa
+`footer_logo_url` quando preenchido e volta a usar `logo_url` quando o campo
+esta vazio. O editor em **Configuracoes > Site > Geral > Identidade do site**
+permite enviar, trocar e remover a imagem do rodape separadamente. O salvamento
+so e confirmado apos nova leitura da configuracao pela API.
+
+A migracao `20260925161307_add_public_site_footer_logo.sql` deve ser aplicada
+antes de publicar a API Go atualizada: as consultas administrativas selecionam
+a nova coluna explicitamente. A migracao tambem atualiza o RPC legado
+`resolve_site_domain`, que monta o JSON do site campo a campo.
+
 ## Deploy e DNS
 
 1. O dominio do cliente deve apontar para o deploy do Next.js web, nao para Supabase.
@@ -46,6 +59,23 @@ O modelo recomendado para dominios de clientes e usar um Cloudflare Worker como 
 Fluxo:
 
 Visitante -> Cloudflare Worker -> `app.vimobcrm.com.br` -> Vimob API Go -> Supabase
+
+### House 92 (25/09/2026)
+
+`www.house92.com.br/*` usa o Worker `small-silence-f944`. No deploy observado,
+`X-Forwarded-Host` nao chega a rota inicial do Next; por isso esse Worker
+encaminha as paginas publicas para `/sites/house92` no app. Ele nao encaminha
+cookies ou `Authorization` e atende verificacao de dominio, `robots.txt`,
+`sitemap.xml` e favicon no proprio Worker. Os links internos ainda podem mostrar
+`/sites/house92` na barra de enderecos. Nao substituir esse Worker pelo exemplo
+generico antes de corrigir e validar o host original no proxy do app.
+
+O dominio raiz redireciona para `https://www.house92.com.br` por regras 301 de
+HTTP e HTTPS, preservando caminho e consulta. Seus registros A/AAAA usam
+enderecos reservados apenas para manter o proxy Cloudflare ativo; MX e demais
+registros de e-mail continuam independentes. A API precisa manter
+`https://www.house92.com.br` em `API_CORS_ALLOWED_ORIGINS` para contato,
+favoritos e tracking no navegador.
 
 O Worker nao deve consultar `/v1/public/site/resolve` antes de renderizar. Essa decisao fica com o Next.js, que recebe o dominio original em `X-Forwarded-Host`. Assim evitamos falso `site nao encontrado` quando a API oscila por alguns segundos.
 

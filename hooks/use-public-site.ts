@@ -13,6 +13,7 @@ export interface PublicSiteConfig {
   site_title: string;
   site_description: string | null;
   logo_url: string | null;
+  footer_logo_url?: string | null;
   favicon_url: string | null;
   primary_color: string;
   secondary_color: string;

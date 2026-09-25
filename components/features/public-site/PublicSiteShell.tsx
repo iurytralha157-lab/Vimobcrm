@@ -11,6 +11,7 @@ import {
   getPublicEmailHref,
   getPublicPhoneHref,
   getSiteDescription,
+  getSiteFooterLogoUrl,
   getSiteTitle,
   getThemeTokens,
   normalizePublicExternalUrl,
@@ -48,6 +49,7 @@ export function PublicSiteShell({
   const desktopNavItems = buildDesktopNavItems(navItems);
   const title = getSiteTitle(site);
   const logoUrl = normalizePublicImageUrl(site.logo_url);
+  const footerLogoUrl = getSiteFooterLogoUrl(site);
   const logoWidth = normalizeLogoDimension(site.logo_width, 176);
   const logoHeight = normalizeLogoDimension(site.logo_height, 48);
   const phoneHref = getPublicPhoneHref(site.phone);
@@ -205,9 +207,9 @@ export function PublicSiteShell({
       <footer className="bg-[var(--site-secondary)] text-[var(--site-secondary-fg)]">
         <div className="mx-auto grid w-full max-w-7xl gap-8 px-4 py-10 sm:px-6 md:grid-cols-2 lg:grid-cols-4 lg:px-8">
           <section>
-            {logoUrl ? (
+            {footerLogoUrl ? (
               <img
-                src={logoUrl}
+                src={footerLogoUrl}
                 alt={title}
                 width={logoWidth}
                 height={logoHeight}

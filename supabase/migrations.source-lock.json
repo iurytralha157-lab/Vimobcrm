@@ -602,6 +602,10 @@
     {
       "file": "20260924142938_align_lead_visibility_with_active_broker_teams.sql",
       "sha256": "48bf675c8b92da7edc2137086dee376e2cd05f4841a71ba0d162611ce2274a18"
+    },
+    {
+      "file": "20260925161307_add_public_site_footer_logo.sql",
+      "sha256": "4b75557205af16b7ddb8c1bf36c78d576a004c52fd8d72d0729b7d52d367d35e"
     }
   ]
 }

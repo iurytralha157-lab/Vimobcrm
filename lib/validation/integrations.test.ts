@@ -123,6 +123,15 @@ test("contrato generico do site valida os tres identificadores Google", () => {
   );
 });
 
+test("logo opcional do rodapé aceita URL segura ou remoção", () => {
+  const logo = "https://cdn.example.com/footer.png";
+  assert.equal(organizationSiteMutationSchema.parse({ footer_logo_url: logo }).footer_logo_url, logo);
+  assert.equal(organizationSiteMutationSchema.parse({ footer_logo_url: null }).footer_logo_url, null);
+  for (const unsafe of ["javascript:alert(1)", "data:image/svg+xml,<svg/>", "https://user:password@example.com/logo.png"]) {
+    assert.equal(organizationSiteMutationSchema.safeParse({ footer_logo_url: unsafe }).success, false);
+  }
+});
+
 test("configuracao por tenant do Grupo OLX nao aceita a credencial global do CRM", () => {
   const validInput = {
     settings: {

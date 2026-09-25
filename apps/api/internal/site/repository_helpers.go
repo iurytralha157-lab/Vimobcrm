@@ -130,7 +130,7 @@ func parsePublicBool(value string) (bool, bool) {
 
 func isAllowedAssetType(value string) bool {
 	switch value {
-	case "logo", "favicon", "about", "hero", "banner", "watermark":
+	case "logo", "footer_logo", "favicon", "about", "hero", "banner", "watermark":
 		return true
 	default:
 		return false

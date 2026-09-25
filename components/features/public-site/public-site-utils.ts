@@ -142,6 +142,10 @@ export function normalizePublicImageUrl(value?: string | null, fallback = "") {
   }
 }
 
+export function getSiteFooterLogoUrl(site: Pick<PublicSiteConfig, "logo_url" | "footer_logo_url">) {
+  return normalizePublicImageUrl(site.footer_logo_url) || normalizePublicImageUrl(site.logo_url);
+}
+
 function normalizeStorageImagePath(value: string) {
   const trimmed = value.trim();
   if (!trimmed || trimmed.startsWith("//")) return null;
