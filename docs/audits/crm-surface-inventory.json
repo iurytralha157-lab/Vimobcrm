@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "c3edeb25983731821fcf3623a9a889b1123cdb79ed9564595a167804cf46eca6",
+  "sourceDigestSha256": "9bf42ccb6d7ac5e1faa1b6a9fc801f3eb8d805e371e302bc401d6b1a068978f6",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -15794,34 +15794,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:59d5013a6d8fd0f51ce6",
-          "column": 11,
-          "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 242,
-          "owner": "PipelineBoard",
-          "routes": [
-            "/crm/pipelines"
-          ],
-          "kind": "actionButton",
-          "tag": "button"
-        },
-        {
-          "id": "cta:fb1839c7fbba94b47c36",
-          "column": 11,
-          "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 253,
-          "owner": "PipelineBoard",
-          "routes": [
-            "/crm/pipelines"
-          ],
-          "kind": "actionButton",
-          "tag": "button"
-        },
-        {
-          "id": "cta:85a771f8d7167620a48c",
+          "id": "cta:21a2f4c612d6be9a0073",
           "column": 25,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 323,
+          "line": 297,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -15830,8 +15806,32 @@
           "tag": "button"
         },
         {
-          "id": "cta:75712005e6cc8fa84561",
+          "id": "cta:3c65ce295648731ba3a2",
           "column": 23,
+          "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
+          "line": 369,
+          "owner": "PipelineBoard",
+          "routes": [
+            "/crm/pipelines"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:1fa36526437c0f9181bc",
+          "column": 27,
+          "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
+          "line": 386,
+          "owner": "PipelineBoard",
+          "routes": [
+            "/crm/pipelines"
+          ],
+          "kind": "actionButton",
+          "tag": "button"
+        },
+        {
+          "id": "cta:7aa5224657a348e123cf",
+          "column": 27,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
           "line": 395,
           "owner": "PipelineBoard",
@@ -15839,13 +15839,13 @@
             "/crm/pipelines"
           ],
           "kind": "actionButton",
-          "tag": "Button"
+          "tag": "button"
         },
         {
-          "id": "cta:ba50c37197f9819e2ac7",
+          "id": "cta:e5f8c54f409c6d1b9163",
           "column": 23,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 456,
+          "line": 455,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -15854,10 +15854,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:2bd015ddd33a85804a75",
+          "id": "cta:879f9ad836f96d0a657e",
           "column": 17,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 477,
+          "line": 476,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -34091,7 +34091,7 @@
         }
       ]
     },
-    "digestSha256": "98e5b28d5b7d14593e1d23c222c4ed1b2efc800f808529b484cdd5c9ae2a7d5e"
+    "digestSha256": "b806174467effbc1e4f9d0979caaa7440e6e8006e959b0ff6fb6093ca27bf805"
   },
   "routes": [
     {

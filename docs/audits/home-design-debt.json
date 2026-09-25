@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "5afbaae0f31f9352632aacd44188b2c4007b7f3b44077b5554325323263d5736",
-  "surfaceInventoryDigestSha256": "c3edeb25983731821fcf3623a9a889b1123cdb79ed9564595a167804cf46eca6",
+  "sourceDigestSha256": "d7ab39cdb97276e7cc90d8a9d13de48063ebf27bc84573f8a08b157b75f1f3bc",
+  "surfaceInventoryDigestSha256": "9bf42ccb6d7ac5e1faa1b6a9fc801f3eb8d805e371e302bc401d6b1a068978f6",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
     "filesScanned": 541,
