@@ -275,6 +275,22 @@ func TestLeadVisibilityCanDisableOwnLeadBranch(t *testing.T) {
 	}
 }
 
+func TestLeadVisibilityFollowsCurrentAssigneeAndUnassignedQueue(t *testing.T) {
+	query := leadVisibilitySQL(true)
+	for _, fragment := range []string{
+		"l.assigned_user_id is null",
+		"to_jsonb(l)->>'team_id'",
+		"member.user_id = l.assigned_user_id",
+	} {
+		if !strings.Contains(query, fragment) {
+			t.Fatalf("lead visibility is missing %q", fragment)
+		}
+	}
+	if strings.Contains(query, "nullif(to_jsonb(l)->>'team_id', '') is null") {
+		t.Fatal("assignee team access must not depend on an absent queue team")
+	}
+}
+
 func TestCreateOwnWhatsAppSessionAllowsOrganizationMemberWithModule(t *testing.T) {
 	broker := tenant.Context{
 		OrganizationID: "20000000-0000-0000-0000-000000000001",

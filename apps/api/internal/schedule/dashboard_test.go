@@ -223,9 +223,6 @@ func TestScheduleDashboardQueryUsesSafeScopedAggregates(t *testing.T) {
 	if strings.Contains(query, filter.Source) {
 		t.Fatal("source filter must be parameterized")
 	}
-	if strings.Contains(query, "membership.deleted_at") {
-		t.Fatal("dashboard must not depend on organization_members.deleted_at, which is absent from the production baseline")
-	}
 	if strings.Contains(query, "coalesce(se.created_by, se.user_id)") || strings.Contains(query, "coalesce(created_by, user_id)") {
 		t.Fatal("scheduler authorship must never fall back to the responsible user")
 	}

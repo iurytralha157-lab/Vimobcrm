@@ -160,6 +160,8 @@ type DashboardFirstContactBroker struct {
 	Name                   string   `json:"name"`
 	AvatarURL              *string  `json:"avatarUrl"`
 	LeadCount              int64    `json:"leadCount"`
+	ReceivedLeads          int64    `json:"receivedLeads"`
+	HandledLeads           int64    `json:"handledLeads"`
 	ContactedLeads         int64    `json:"contactedLeads"`
 	AverageResponseSeconds *float64 `json:"averageResponseSeconds"`
 	RedistributedAway      int64    `json:"redistributedAway"`
@@ -183,6 +185,22 @@ type DashboardFirstContact struct {
 	RedistributionEvents   int64                         `json:"redistributionEvents"`
 	Brokers                []DashboardFirstContactBroker `json:"brokers"`
 	Sources                []DashboardFirstContactSource `json:"sources"`
+}
+
+type DashboardFirstContactLead struct {
+	ID              string  `json:"id"`
+	Name            string  `json:"name"`
+	Source          string  `json:"source"`
+	CreatedAt       string  `json:"createdAt"`
+	RespondedAt     string  `json:"respondedAt"`
+	ResponseSeconds int64   `json:"responseSeconds"`
+	CurrentOwner    *string `json:"currentOwner"`
+}
+
+type DashboardFirstContactLeadPage struct {
+	Total   int64                       `json:"total"`
+	Items   []DashboardFirstContactLead `json:"items"`
+	HasMore bool                        `json:"hasMore"`
 }
 
 type UpcomingTask struct {

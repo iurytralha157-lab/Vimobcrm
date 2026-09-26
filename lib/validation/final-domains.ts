@@ -465,6 +465,7 @@ export const dashboardDateRangeSchema = z.object({
 export const dashboardFiltersSchema = z.object({
   dateRange: dashboardDateRangeSchema.nullable().optional(),
   granularity: z.enum(['hour', 'day', 'week', 'month']).nullable().optional(),
+  pipelineId: dashboardOptionalUuidFilterSchema,
   teamId: dashboardOptionalUuidFilterSchema,
   userId: dashboardOptionalUserFilterSchema,
   source: dashboardOptionalTextFilterSchema(180),
@@ -608,6 +609,8 @@ const apiDashboardFirstContactBrokerSchema = z.object({
   name: dashboardTextSchema(300),
   avatarUrl: z.string().trim().max(2_048).nullable(),
   leadCount: nonNegativeIntegerSchema,
+  receivedLeads: nonNegativeIntegerSchema,
+  handledLeads: nonNegativeIntegerSchema,
   contactedLeads: nonNegativeIntegerSchema,
   averageResponseSeconds: dashboardNonNegativeNumberSchema.nullable(),
   redistributedAway: nonNegativeIntegerSchema,
@@ -630,6 +633,20 @@ export const apiDashboardFirstContactSchema = z.object({
   brokers: z.array(apiDashboardFirstContactBrokerSchema),
   sources: z.array(apiDashboardFirstContactSourceSchema),
 }).passthrough()
+export const apiDashboardFirstContactLeadPageSchema = z.object({
+  total: nonNegativeIntegerSchema,
+  items: z.array(z.object({
+    id: uuidSchema,
+    name: dashboardTextSchema(300),
+    source: dashboardTextSchema(180),
+    createdAt: dashboardTimestampSchema,
+    respondedAt: dashboardTimestampSchema,
+    responseSeconds: nonNegativeIntegerSchema,
+    currentOwner: dashboardTextSchema(300).nullable(),
+  }).passthrough()),
+  hasMore: z.boolean(),
+}).passthrough()
+export const apiDashboardFirstContactLeadPageResponseSchema = apiEnvelopeSchema(apiDashboardFirstContactLeadPageSchema)
 export const apiDashboardUpcomingTasksSchema = z.array(z.object({
   id: uuidSchema,
   title: dashboardTextSchema(500),

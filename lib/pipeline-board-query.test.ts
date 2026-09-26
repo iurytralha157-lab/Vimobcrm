@@ -95,6 +95,21 @@ test('serializa o filtro sem responsavel sem ocupar o campo UUID do usuario', ()
   assert.equal(inactiveQuery.unassigned, undefined);
 });
 
+test('filtro de equipe não exige corretor e mantém a escolha explícita de usuário', () => {
+  const teamQuery = buildPipelineBoardQuery({ filters: { teamId: 'team-1' } });
+  const brokerQuery = buildPipelineBoardQuery({
+    filterUserId: 'broker-1',
+    filters: { teamId: 'team-1' },
+  });
+
+  assert.equal(teamQuery.teamId, 'team-1');
+  assert.equal(teamQuery.filterUserIds, undefined);
+  assert.equal(teamQuery.filterUserId, undefined);
+  assert.equal(brokerQuery.teamId, 'team-1');
+  assert.equal(brokerQuery.filterUserId, 'broker-1');
+  assert.equal(brokerQuery.filterUserIds, undefined);
+});
+
 test('serializa a pagina Meta como identidade opaca sem alterar o valor', () => {
   const query = buildPipelineBoardQuery({
     filters: {

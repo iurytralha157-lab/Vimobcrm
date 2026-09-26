@@ -14,6 +14,7 @@ import { usePipelines } from '@/hooks/use-stages';
 import { useFunnelData } from '@/hooks/use-dashboard-stats';
 import type { DashboardAPIFilters } from '@/lib/api/dashboard';
 import { useAuth } from '@/contexts/AuthContext';
+import { DashboardChartError } from './DashboardChartError';
 
 const funnelGradients = [
   'from-primary to-primary/80',
@@ -29,6 +30,8 @@ const funnelGradients = [
 interface SalesFunnelWithPipelineProps {
   filters?: DashboardAPIFilters;
   enabled?: boolean;
+  pipelineId?: string | null;
+  onPipelineChange?: (pipelineId: string | null) => void;
 }
 
 function FunnelSkeleton() {
@@ -51,10 +54,17 @@ function FunnelSkeleton() {
 export function SalesFunnelWithPipeline({
   filters,
   enabled = true,
+  pipelineId,
+  onPipelineChange,
 }: SalesFunnelWithPipelineProps) {
   const { activeOrganization } = useAuth();
   const organizationId = activeOrganization.organizationId ?? null;
-  const { data: pipelines = [] } = usePipelines();
+  const {
+    data: pipelines = [],
+    isLoading: pipelinesLoading,
+    isError: pipelinesError,
+    refetch: refetchPipelines,
+  } = usePipelines();
   const [manualPipelineSelection, setManualPipelineSelection] = useState<{
     organizationId: string | null;
     pipelineId: string | null;
@@ -62,19 +72,20 @@ export function SalesFunnelWithPipeline({
   const manualPipelineId = manualPipelineSelection.organizationId === organizationId
     ? manualPipelineSelection.pipelineId
     : null;
+  const activePipelineId = onPipelineChange ? pipelineId ?? null : manualPipelineId;
 
   const selectedPipelineId = useMemo(
-    () => manualPipelineId || pipelines.find((p) => p.is_default)?.id || pipelines[0]?.id || null,
-    [manualPipelineId, pipelines]
+    () => activePipelineId || pipelines.find((p) => p.is_default)?.id || pipelines[0]?.id || null,
+    [activePipelineId, pipelines]
   );
 
-  const { data: funnelData = [], isLoading: funnelLoading } = useFunnelData(
+  const { data: funnelData = [], isLoading: funnelLoading, isError: funnelError, refetch: refetchFunnel } = useFunnelData(
     filters,
-    manualPipelineId,
+    activePipelineId,
     { enabled },
   );
 
-  const isLoading = !organizationId || !enabled || funnelLoading;
+  const isLoading = !organizationId || !enabled || pipelinesLoading || funnelLoading;
   const maxStages = Math.max(funnelData.length, 1);
 
   return (
@@ -92,10 +103,11 @@ export function SalesFunnelWithPipeline({
               <Select
                 value={selectedPipelineId || ''}
                 onValueChange={(pipelineId) => {
-                  setManualPipelineSelection({
-                    organizationId,
-                    pipelineId,
-                  });
+                  if (onPipelineChange) {
+                    onPipelineChange(pipelineId);
+                  } else {
+                    setManualPipelineSelection({ organizationId, pipelineId });
+                  }
                 }}
               >
                 <SelectTrigger className="h-8 w-[140px] rounded-[6px] border-0 bg-[var(--app-surface-soft)] px-2.5 text-[12px] font-light text-[var(--app-text-primary)] shadow-none transition-colors hover:bg-[var(--app-surface-hover)] focus:ring-1 focus:ring-primary/30">
@@ -117,6 +129,16 @@ export function SalesFunnelWithPipeline({
       <CardContent className="app-scrollbar pt-0 pb-4 flex-1 min-h-0 overflow-y-auto px-4 transition-colors">
         {isLoading ? (
           <FunnelSkeleton />
+        ) : pipelinesError ? (
+          <DashboardChartError
+            message="Não foi possível carregar os funis de vendas."
+            onRetry={() => void refetchPipelines()}
+          />
+        ) : funnelError ? (
+          <DashboardChartError
+            message="Não foi possível carregar o funil de vendas."
+            onRetry={() => void refetchFunnel()}
+          />
         ) : funnelData.length === 0 ? (
           <div className="flex h-full min-h-[180px] flex-col items-center justify-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-[6px] bg-primary/50 text-white">

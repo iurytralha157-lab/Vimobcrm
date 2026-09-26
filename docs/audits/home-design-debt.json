@@ -1,19 +1,19 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "d7ab39cdb97276e7cc90d8a9d13de48063ebf27bc84573f8a08b157b75f1f3bc",
-  "surfaceInventoryDigestSha256": "9bf42ccb6d7ac5e1faa1b6a9fc801f3eb8d805e371e302bc401d6b1a068978f6",
+  "sourceDigestSha256": "299d552d548deeb1a17cf6ff2a6064f0b610ada7c8bb322ffd81a991e2667864",
+  "surfaceInventoryDigestSha256": "6815e2e1f9934a18d132cd72615cf1b3fa0a20bbf33716faba67db04567f67d4",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 541,
+    "filesScanned": 543,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
     "filesWithFindings": 43,
-    "findings": 114,
+    "findings": 115,
     "protectedReachableFilesWithFindings": 42,
-    "protectedReachableFindings": 113,
+    "protectedReachableFindings": 114,
     "bySurfaceScope": {
-      "protected-only": 103,
+      "protected-only": 104,
       "protected-and-public": 10,
       "public-only": 1,
       "infrastructure": 0
@@ -21,7 +21,7 @@
     "byPriority": {
       "P1": 56,
       "P2": 13,
-      "P3": 45
+      "P3": 46
     },
     "byRule": {
       "heavy-shadow": {
@@ -67,7 +67,7 @@
         "priority": "P2"
       },
       "uppercase-tracking": {
-        "count": 45,
+        "count": 46,
         "guidance": "Preferir texto natural em 10–12px e peso 300.",
         "label": "Caixa alta/tracking",
         "priority": "P3"
@@ -338,6 +338,14 @@
       }
     },
     {
+      "file": "components/features/dashboard/LeadDistributionSection.tsx",
+      "count": 2,
+      "score": 2,
+      "rules": {
+        "uppercase-tracking": 2
+      }
+    },
+    {
       "file": "components/features/round-robin/DistributionQueueEditor.tsx",
       "count": 2,
       "score": 2,
@@ -379,14 +387,6 @@
     },
     {
       "file": "components/features/admin/AdminNotificationSettingsContent.tsx",
-      "count": 1,
-      "score": 1,
-      "rules": {
-        "uppercase-tracking": 1
-      }
-    },
-    {
-      "file": "components/features/dashboard/LeadDistributionSection.tsx",
       "count": 1,
       "score": 1,
       "rules": {
@@ -684,6 +684,14 @@
       }
     },
     {
+      "file": "components/features/dashboard/LeadDistributionSection.tsx",
+      "count": 2,
+      "score": 2,
+      "rules": {
+        "uppercase-tracking": 2
+      }
+    },
+    {
       "file": "components/features/round-robin/DistributionQueueEditor.tsx",
       "count": 2,
       "score": 2,
@@ -725,14 +733,6 @@
     },
     {
       "file": "components/features/admin/AdminNotificationSettingsContent.tsx",
-      "count": 1,
-      "score": 1,
-      "rules": {
-        "uppercase-tracking": 1
-      }
-    },
-    {
-      "file": "components/features/dashboard/LeadDistributionSection.tsx",
       "count": 1,
       "score": 1,
       "rules": {
@@ -900,7 +900,16 @@
     },
     {
       "file": "components/features/dashboard/LeadDistributionSection.tsx",
-      "line": 215,
+      "line": 256,
+      "match": "uppercase",
+      "priority": "P3",
+      "rule": "uppercase-tracking",
+      "surfaceScope": "protected-only",
+      "weight": 1
+    },
+    {
+      "file": "components/features/dashboard/LeadDistributionSection.tsx",
+      "line": 286,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",

@@ -27,6 +27,7 @@ const teamsHookSource = readRepoFile("hooks/use-teams.ts");
 test("lead distribution is management-only and uses the complete dashboard filter key", () => {
   assert.match(hookSource, /normalizedMemberRole === "owner"/);
   assert.match(hookSource, /normalizedMemberRole === "admin"/);
+  assert.match(hookSource, /normalizedMemberRole === "manager"[\s\S]{0,150}permission === "lead_view_all" \|\| permission === "\*"/);
   assert.match(hookSource, /currentTenantContext\?\.isTeamLeader === true/);
   assert.match(
     hookSource,
@@ -72,13 +73,12 @@ test("visible team preference is separate from shared dashboard filters and surv
   assert.match(distributionSource, /counts\.get\(team\.id\) \?\? \(hasOther \? null : 0\)/);
   assert.match(distributionSource, /Escolher equipes exibidas/);
   assert.match(distributionSource, /<TeamPicker/);
-  assert.match(distributionSource, /teamsError \? \(/);
-  assert.match(distributionSource, /onRetryTeams/);
-  assert.match(distributionSource, /Não foi possível carregar as equipes para editar a seleção/);
+  assert.doesNotMatch(distributionSource, /teamsError|onRetryTeams/);
   assert.doesNotMatch(distributionSource, /onTeamChange|setTeamId/);
-  assert.match(dashboardSource, /availableTeams=\{availableTeams\?\.filter/);
-  assert.match(dashboardSource, /teamsError=\{teamsQuery\.isError\}/);
-  assert.match(dashboardSource, /onRetryTeams=\{\(\) => void teamsQuery\.refetch\(\)\}/);
+  assert.match(dashboardSource, /leadDistribution\?\.teams[\s\S]{0,160}team\.kind === "entity" && team\.id/);
+  assert.match(dashboardSource, /!teamId && !leadDistributionError/);
+  assert.match(dashboardSource, /availableTeams=\{availableDistributionTeams\}/);
+  assert.doesNotMatch(dashboardSource, /useTeams|teamsQuery/);
 });
 
 test("first contact KPI opens a filtered, management-only aggregate on both layouts", () => {
@@ -91,14 +91,18 @@ test("first contact KPI opens a filtered, management-only aggregate on both layo
   assert.match(apiSource, /'\/v1\/dashboard\/first-contact'/);
   assert.match(firstContactSource, /Por corretor/);
   assert.match(firstContactSource, /Por origem/);
-  assert.doesNotMatch(firstContactSource, /deal\.name|lead\.name/);
+  assert.match(firstContactSource, /lead\.name/);
+  assert.match(firstContactSource, /Carregar mais leads/);
+  assert.match(hookSource, /"dashboard-first-contact-leads"/);
 });
 
 test("lead distribution cache is invalidated by lead realtime events", () => {
   assert.match(leadRealtimeSource, /"dashboard-lead-distribution"/);
   assert.match(backendRealtimeSource, /"dashboard-lead-distribution"/);
   assert.match(leadRealtimeSource, /"dashboard-first-contact"/);
+  assert.match(leadRealtimeSource, /"dashboard-first-contact-leads"/);
   assert.match(backendRealtimeSource, /"dashboard-first-contact"/);
+  assert.match(backendRealtimeSource, /"dashboard-first-contact-leads"/);
   assert.match(teamsHookSource, /invalidateTeamScopeDependentQueries/);
   for (const queryKey of [
     "contacts-list",
@@ -109,6 +113,7 @@ test("lead distribution cache is invalidated by lead realtime events", () => {
     "dashboard-extra-counts",
     "dashboard-lead-distribution",
     "dashboard-first-contact",
+    "dashboard-first-contact-leads",
   ]) {
     assert.match(teamsHookSource, new RegExp(`"${queryKey}"`));
   }

@@ -23,10 +23,10 @@ func CanViewTeam(tenantContext tenant.Context) bool {
 	return tenantContext.HasPermission(permissions.LeadViewTeam)
 }
 
-// VisibilitySQL mirrors the resource-level CanViewLead contract. A leader can
-// see a lead from the recorded team or any lead assigned to a broker in a team
-// they lead. Alias and placeholders must be trusted source constants, never
-// request input.
+// VisibilitySQL mirrors the resource-level CanViewLead contract. An assigned
+// lead follows the current assignee's active team. An unassigned lead follows
+// its recorded queue team. Alias and placeholders must be trusted source
+// constants, never request input.
 func VisibilitySQL(alias string, canViewAllPlaceholder string, userIDPlaceholder string, canViewTeamPlaceholder string, canViewOwn bool) string {
 	canViewOwnSQL := "false"
 	if canViewOwn {
@@ -39,6 +39,8 @@ func VisibilitySQL(alias string, canViewAllPlaceholder string, userIDPlaceholder
 			` + canViewTeamPlaceholder + `::boolean
 			and (
 				(
+					` + alias + `.assigned_user_id is null
+					and
 					nullif(to_jsonb(` + alias + `)->>'team_id', '') is not null
 					and exists (
 						select 1 from public.team_members leader

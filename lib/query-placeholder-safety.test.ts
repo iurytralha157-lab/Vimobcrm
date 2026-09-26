@@ -2,6 +2,30 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { reusePreviousDataWhenKeyPartsMatch } from './query-placeholder-safety';
+import { stageWithLeadsQueryKey } from './pipeline-query-key';
+
+test('não reaproveita cartões quando a visibilidade do usuário muda', () => {
+  const data = [{ id: 'lead-before-scope-change' }];
+  const base = { organizationId: 'org-1', pipelineId: 'pipeline-1' };
+  const previous = stageWithLeadsQueryKey({
+    ...base,
+    filters: { visibilityScopeKey: 'leader:team-1' },
+  });
+  const current = stageWithLeadsQueryKey({
+    ...base,
+    filters: { visibilityScopeKey: 'member:user-1' },
+  });
+
+  assert.equal(
+    reusePreviousDataWhenKeyPartsMatch(
+      data,
+      previous,
+      current,
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+    ),
+    undefined,
+  );
+});
 
 test('nao reutiliza cards da pipeline entre tenants, pipelines ou escopos de autorizacao', () => {
   const data = [{ id: 'lead-org-a' }];

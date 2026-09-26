@@ -14,6 +14,7 @@ import {
 } from 'recharts';
 import { DashboardChartTooltip } from './DashboardChartTooltip';
 import { DASHBOARD_DEAL_EVOLUTION_COLORS } from '@/config/dashboard-chart-colors';
+import { DashboardChartError } from './DashboardChartError';
 
 export interface DealsEvolutionPoint {
   date: string;
@@ -25,6 +26,8 @@ export interface DealsEvolutionPoint {
 interface DealsEvolutionChartProps {
   data: DealsEvolutionPoint[];
   isLoading?: boolean;
+  isError: boolean;
+  onRetry: () => void;
 }
 
 const SKELETON_BAR_HEIGHTS = [96, 128, 72, 112, 88, 136, 104];
@@ -114,7 +117,7 @@ function formatHourlyTick(value: string | number) {
   return String(value).replace(':00', 'h');
 }
 
-export function DealsEvolutionChart({ data, isLoading }: DealsEvolutionChartProps) {
+export function DealsEvolutionChart({ data, isLoading, isError, onRetry }: DealsEvolutionChartProps) {
   const isMobile = useIsMobile();
   const [chartSize, setChartSize] = useState({ width: 600, height: 250 });
 
@@ -135,6 +138,24 @@ export function DealsEvolutionChart({ data, isLoading }: DealsEvolutionChartProp
         </CardHeader>
         <CardContent className="flex-1">
           <ChartSkeleton />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (isError) {
+    return (
+      <Card className="flex h-full flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
+        <CardHeader className="px-4 pb-2 pt-4">
+          <CardTitle className="flex items-center gap-2 text-[14px] font-normal text-[var(--app-text-primary)]">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+              <TrendingUp className="h-3.5 w-3.5" />
+            </span>
+            Evolução de Negócios
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="min-h-0 flex-1">
+          <DashboardChartError message="Não foi possível carregar a evolução de negócios." onRetry={onRetry} />
         </CardContent>
       </Card>
     );

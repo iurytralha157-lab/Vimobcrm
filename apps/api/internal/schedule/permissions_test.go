@@ -34,16 +34,22 @@ func TestSchedulePermissionAndScopeAreIndependent(t *testing.T) {
 	}
 }
 
-func TestScheduleLeadVisibilityRespectsOwnPermissionAndExplicitTeam(t *testing.T) {
+func TestScheduleLeadVisibilityFollowsCurrentAssigneeAndUnassignedQueue(t *testing.T) {
 	query := leadVisibilitySQL("$3", "$4", "$5", false)
 	if !strings.Contains(query, "(false and l.assigned_user_id = $4::uuid)") {
 		t.Fatal("own-lead access should be disabled")
 	}
-	if !strings.Contains(query, "to_jsonb(l)->>'team_id'") {
-		t.Fatal("explicit team_id should be preferred")
+	if !strings.Contains(query, "l.assigned_user_id is null") {
+		t.Fatal("queue team must grant access only while the lead is unassigned")
 	}
-	if !strings.Contains(query, "is null") {
-		t.Fatal("legacy null team_id fallback should remain")
+	if !strings.Contains(query, "to_jsonb(l)->>'team_id'") {
+		t.Fatal("unassigned lead should retain queue team visibility")
+	}
+	if !strings.Contains(query, "member.user_id = l.assigned_user_id") {
+		t.Fatal("assigned lead should follow its current assignee's team")
+	}
+	if strings.Contains(query, "nullif(to_jsonb(l)->>'team_id', '') is null") {
+		t.Fatal("assignee team access must not depend on an absent queue team")
 	}
 }
 
