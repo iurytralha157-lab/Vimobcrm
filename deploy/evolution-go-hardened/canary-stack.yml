@@ -106,7 +106,8 @@ services:
           cpus: "1.0"
           memory: 1G
       labels:
-        - traefik.enable=true
+        # Keep the public router disabled until exclusive DNS, TLS and CIDRs are verified.
+        - traefik.enable=${EVOGO_CANARY_TRAEFIK_ENABLED:-false}
         - traefik.docker.network=public
         - traefik.http.routers.evogo-calls-canary.rule=Host(`${EVOGO_CANARY_HOST:?EVOGO_CANARY_HOST_required}`)
         - traefik.http.routers.evogo-calls-canary.entrypoints=websecure
