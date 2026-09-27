@@ -82,8 +82,10 @@ services:
     networks:
       - canary_db
       - public
+    # The first boot may require browser-based license registration. Keep the
+    # process alive for /license/register; check active status separately.
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:4000/license/status | grep -q '\"status\":\"active\"'"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:4000/server/ok"]
       interval: 15s
       timeout: 5s
       retries: 12

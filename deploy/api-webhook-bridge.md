@@ -23,9 +23,11 @@ separada inicialmente com `traefik.enable=false`.
   linha, o helper interrompe antes de criar a ponte.
 - A ponte recebe apenas HTTP; o serviço API antigo continua dono de todos os
   workers. Enquanto ele permanece ativo, a ponte pode persistir webhooks e o
-  worker antigo drena a fila. **Isto não autoriza parar nem atualizar a API
-  antiga em modo stop-first**: nesse intervalo o processamento das filas pode
-  pausar apesar de o webhook continuar recebendo ACK.
+  worker antigo drena a fila. Durante uma atualização `stop-first` da API
+  original, o webhook continua aceitando e persistindo eventos na ponte, mas
+  **os workers pausam por um intervalo** e retomam quando a nova task estiver
+  pronta. Meça esse intervalo e confirme que a fila drenou; não descreva esse
+  período como processamento contínuo.
 
 ## Operação proposta
 
@@ -37,16 +39,16 @@ o build da candidata antes da criação.
 
 ```sh
 IMAGE='ghcr.io/iurytralha157-lab/vimob-crm-api:<40-char-commit>@sha256:<64-char-digest>'
-python3 /root/api-webhook-bridge.py plan --image "$IMAGE"
-python3 /root/api-webhook-bridge.py create --image "$IMAGE" --dry-run
+python3 /root/api-webhook-bridge.py plan --image "$IMAGE" --replicas 2
+python3 /root/api-webhook-bridge.py create --image "$IMAGE" --replicas 2 --dry-run
 ```
 
-O `plan` e o `create --dry-run` fazem somente leituras. O padrão é uma réplica;
-`--replicas 2` é aceito somente após conferir memória e conexões do Postgres.
+O `plan` e o `create --dry-run` fazem somente leituras. O padrão do helper é uma
+réplica; para o corte, use `--replicas 2` após conferir memória e conexões do Postgres.
 A service usa limite de 768 MiB e reserva de 128 MiB por réplica. Na criação:
 
 ```sh
-python3 /root/api-webhook-bridge.py create --image "$IMAGE"
+python3 /root/api-webhook-bridge.py create --image "$IMAGE" --replicas 2
 python3 /root/api-webhook-bridge.py status
 ```
 
@@ -65,18 +67,21 @@ A rota ativada é somente
 `websecure`, com prioridade 1000. O helper compara o `TaskTemplate` e os IDs
 das tasks antes e depois da alteração de labels; se detectar troca de tasks,
 desliga a rota e retorna erro. O serviço `vimob-crm_api` não recebe nenhum
-`docker service update`.
+`docker service update`. **Antes de atualizar a API original**, confira nos
+logs do Traefik ou por uma requisição controlada que o caminho exato já chega
+à ponte. A saúde do container e a presença das labels não provam a seleção
+efetiva do roteador.
 
-Para reverter o encaminhamento imediatamente, mesmo se a ponte estiver sem
-saúde:
+Para iniciar a reversão do encaminhamento, mesmo se a ponte estiver sem saúde:
 
 ```sh
 python3 /root/api-webhook-bridge.py disable
 python3 /root/api-webhook-bridge.py status
 ```
 
-`disable` altera apenas `traefik.enable=false` na ponte. Confirme no Traefik
-que a rota específica saiu e que o roteador original continua servindo o host.
+`disable` altera apenas `traefik.enable=false` na ponte. O Traefik atualiza a
+configuração de forma assíncrona; confirme que a rota específica saiu e que o
+roteador original continua servindo o host antes de considerar o recuo concluído.
 
 ## Acompanhamento no corte
 
@@ -88,5 +93,6 @@ memória. Interrompa o corte e use `disable` se houver aumento de erros, atraso
 de mensagens ou qualquer alteração nas tasks da API original.
 
 O helper não pareia números, não aplica migrações e não ativa rotas de chamadas
-ou gravação. A migração da API principal exige um plano próprio que mantenha um
-worker ativo durante todo o corte.
+ou gravação. Após a atualização da API principal, o ambiente da fonte pode
+diferir do ambiente copiado, e `status` falhará fechado; `disable` continua
+disponível. Retire a ponte só depois de validar o endpoint original atualizado.
