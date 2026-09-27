@@ -1,0 +1,67 @@
+diff --git a/deploy/portainer-stack.yml b/deploy/portainer-stack.yml
+--- a/deploy/portainer-stack.yml
++++ b/deploy/portainer-stack.yml
+@@ -60,7 +60,7 @@ services:
+         - traefik.http.routers.vimob-api.tls=true
+         - traefik.http.routers.vimob-api.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencryptresolver}
+         - traefik.http.services.vimob-api.loadbalancer.server.port=8081
+-    environment:
++    environment: &vimob_api_environment
+       API_ENV: production
+       API_HOST: 0.0.0.0
+       API_PORT: 8081
+@@ -171,13 +171,52 @@ services:
+       META_CONVERSION_FEEDBACK_REQUEST_TIMEOUT: ${META_CONVERSION_FEEDBACK_REQUEST_TIMEOUT:-15s}
+       META_CONVERSION_FEEDBACK_PARTNER_AGENT: ${META_CONVERSION_FEEDBACK_PARTNER_AGENT:-}
+       META_CONVERSION_FEEDBACK_APPSECRET_PROOF_ENABLED: ${META_CONVERSION_FEEDBACK_APPSECRET_PROOF_ENABLED:-false}
+-    secrets:
++    secrets: &vimob_api_secrets
+       - vimob_evogo_canary_api_key
+       - evogo_canary_media_hmac
+     networks:
+       - vimob
+       - traefik-public
+-
++  whatsapp_webhook_bridge:
++    # Pin independently from VIMOB_API_IMAGE so a production API rollout does
++    # not replace both HTTP ingress targets in the same stack update.
++    image: ${VIMOB_WHATSAPP_WEBHOOK_BRIDGE_IMAGE:?VIMOB_WHATSAPP_WEBHOOK_BRIDGE_IMAGE is required}
++    deploy:
++      replicas: 1
++      update_config:
++        parallelism: 1
++        order: start-first
++        failure_action: pause
++        monitor: 8m
++      restart_policy:
++        condition: any
++        delay: 5s
++      labels:
++        # Keep the bridge private until /readyz and ingress probes pass.
++        - traefik.enable=${VIMOB_WHATSAPP_WEBHOOK_BRIDGE_ENABLED:-false}
++        - traefik.docker.network=${TRAEFIK_NETWORK:-public}
++        - traefik.http.routers.vimob-whatsapp-webhook-bridge.rule=Host(`${VIMOB_API_DOMAIN:-api.vimobcrm.com.br}`) && Path(`/v1/whatsapp/webhook/evolution-go`)
++        - traefik.http.routers.vimob-whatsapp-webhook-bridge.priority=1000
++        - traefik.http.routers.vimob-whatsapp-webhook-bridge.entrypoints=${TRAEFIK_HTTPS_ENTRYPOINT:-websecure}
++        - traefik.http.routers.vimob-whatsapp-webhook-bridge.tls=true
++        - traefik.http.routers.vimob-whatsapp-webhook-bridge.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencryptresolver}
++        - traefik.http.routers.vimob-whatsapp-webhook-bridge.service=vimob-whatsapp-webhook-bridge
++        - traefik.http.services.vimob-whatsapp-webhook-bridge.loadbalancer.server.port=8081
++    environment:
++      <<: *vimob_api_environment
++      API_BACKGROUND_WORKERS_ENABLED: "false"
++      API_WHATSAPP_CALL_RECORDING_ONLY_WORKER_ENABLED: "false"
++      DATABASE_MAX_CONNS: ${VIMOB_WHATSAPP_WEBHOOK_BRIDGE_DATABASE_MAX_CONNS:-4}
++    secrets: *vimob_api_secrets
++    healthcheck:
++      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8081/readyz || exit 1"]
++      interval: 15s
++      timeout: 5s
++      retries: 3
++      start_period: 3m
++    networks:
++      - vimob
++      - traefik-public
+ secrets:
+   vimob_evogo_canary_api_key:
+     external: true
