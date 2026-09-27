@@ -192,7 +192,7 @@ func TestExplicitSessionCreationClearsLogoutMarkerBeforeConvergence(t *testing.T
 		setting   string
 	}{
 		{`func (repo Repository) CreateSession`, `settings["auto_reconnect_enabled"] = !canarySession`},
-		{`func (repo Repository) RecreateSession`, `settings["auto_reconnect_enabled"] = true`},
+		{`func (repo Repository) RecreateSession`, `settings["auto_reconnect_enabled"] = !repo.functions.providerRoutes.IsCanarySession(session.ID)`},
 	} {
 		source := readWhatsAppSourceFunction(t, "session_operations.go", item.signature)
 		enableAt := strings.LastIndex(source, item.setting)

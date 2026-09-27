@@ -487,7 +487,7 @@ func (repo Repository) RecreateSession(ctx context.Context, tenantContext tenant
 	settings["token"] = token
 	settings["webhook_token"] = webhookToken
 	settings["evolution_go_resolved_instance_key"] = providerInstanceKey
-	settings["auto_reconnect_enabled"] = true
+	settings["auto_reconnect_enabled"] = !repo.functions.providerRoutes.IsCanarySession(session.ID)
 	clearSessionLifecycleSettings(settings)
 	settings["webhook_url"] = configuredWebhookURL
 	settings["webhook_last_configured_at"] = time.Now().UTC().Format(time.RFC3339)
