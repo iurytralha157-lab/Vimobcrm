@@ -50,9 +50,8 @@ services:
       update_config:
         parallelism: 1
         delay: 10s
-        # Mantem a API disponivel: a tarefa nova precisa ficar saudavel antes
-        # da retirada da anterior. Reserve capacidade para uma replica extra
-        # apenas durante a atualizacao.
+        # Reserve capacidade para uma tarefa extra durante a atualizacao.
+        # start-first nao substitui a verificacao externa de /readyz.
         order: start-first
         failure_action: pause
         monitor: 8m
@@ -69,6 +68,9 @@ services:
         - traefik.http.routers.vimob-calls-candidate-api.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencryptresolver}
         - traefik.http.routers.vimob-calls-candidate-api.service=vimob-calls-candidate-api
         - traefik.http.services.vimob-calls-candidate-api.loadbalancer.server.port=8081
+        - traefik.http.services.vimob-calls-candidate-api.loadbalancer.healthcheck.path=/readyz
+        - traefik.http.services.vimob-calls-candidate-api.loadbalancer.healthcheck.interval=10s
+        - traefik.http.services.vimob-calls-candidate-api.loadbalancer.healthcheck.timeout=3s
     environment:
       API_ENV: production
       API_HOST: 0.0.0.0
