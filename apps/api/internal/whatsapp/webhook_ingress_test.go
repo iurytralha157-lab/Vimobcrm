@@ -187,15 +187,18 @@ func TestExplicitSessionCreationClearsLogoutMarkerBeforeConvergence(t *testing.T
 		t.Fatalf("lifecycle cleanup must remove the terminal logout marker\n%s", clear)
 	}
 
-	for _, signature := range []string{
-		`func (repo Repository) CreateSession`,
-		`func (repo Repository) RecreateSession`,
+	for _, item := range []struct {
+		signature string
+		setting   string
+	}{
+		{`func (repo Repository) CreateSession`, `settings["auto_reconnect_enabled"] = !canarySession`},
+		{`func (repo Repository) RecreateSession`, `settings["auto_reconnect_enabled"] = true`},
 	} {
-		source := readWhatsAppSourceFunction(t, "session_operations.go", signature)
-		enableAt := strings.LastIndex(source, `settings["auto_reconnect_enabled"] = true`)
+		source := readWhatsAppSourceFunction(t, "session_operations.go", item.signature)
+		enableAt := strings.LastIndex(source, item.setting)
 		clearAt := strings.LastIndex(source, "clearSessionLifecycleSettings(settings)")
 		if enableAt < 0 || clearAt < enableAt {
-			t.Fatalf("%s must explicitly enable reconnect and clear the logout marker after provider connect\n%s", signature, source)
+			t.Fatalf("%s must set reconnect state and clear the logout marker after provider connect\n%s", item.signature, source)
 		}
 	}
 }

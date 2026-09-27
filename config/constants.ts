@@ -29,6 +29,7 @@ export const PWA_INSTALL_PROMPT_EXCLUDED_ROUTES = [
 
 const DEFAULT_PUBLIC_APP_ORIGIN = 'https://app.vimobcrm.com.br'
 export const VIMOB_MARKETING_SITE_URL = 'https://vimobcrm.com.br' as const
+export const WHATSAPP_CANARY_WEB_HOST = 'app-canary.vimobcrm.com.br' as const
 
 export const BRAND_HEADER_LAYOUT = {
   maxWidth: 1180,

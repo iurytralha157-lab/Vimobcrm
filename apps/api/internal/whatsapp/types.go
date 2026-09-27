@@ -333,13 +333,15 @@ type GrantAccessRequest struct {
 }
 
 type CreateSessionRequest struct {
-	DisplayName string `json:"displayName"`
-	Provider    string `json:"provider,omitempty"`
+	DisplayName string  `json:"displayName"`
+	Provider    string  `json:"provider,omitempty"`
+	SessionID   *string `json:"sessionId,omitempty"`
 }
 
 type createSessionInput struct {
 	DisplayName string
 	Provider    string
+	SessionID   string
 }
 
 type grantAccessInput struct {
@@ -747,7 +749,16 @@ func (request CreateSessionRequest) Validate() (createSessionInput, error) {
 		return createSessionInput{}, fmt.Errorf("%w: legacy Evolution provider is disabled", ErrInvalidInput)
 	}
 
-	return createSessionInput{DisplayName: displayName, Provider: provider}, nil
+	sessionID := ""
+	if request.SessionID != nil {
+		var ok bool
+		sessionID, ok = normalizeUUID(*request.SessionID)
+		if !ok {
+			return createSessionInput{}, fmt.Errorf("%w: sessionId must be a valid UUID", ErrInvalidInput)
+		}
+	}
+
+	return createSessionInput{DisplayName: displayName, Provider: provider, SessionID: sessionID}, nil
 }
 
 func (request GrantAccessRequest) Validate() (grantAccessInput, error) {

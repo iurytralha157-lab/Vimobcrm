@@ -48,6 +48,7 @@ import { toast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { canManageOrganization } from "@/lib/access/organization";
 import { resolveWhatsAppSessionStatus } from "@/lib/whatsapp-query-cache";
+import { WHATSAPP_CANARY_WEB_HOST } from "@/config/constants";
 
 interface WhatsAppTabProps {
   embedded?: boolean;
@@ -97,11 +98,14 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
   const [qrDialogOpen, setQrDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [instanceName, setInstanceName] = useState("");
+  const [canarySessionId, setCanarySessionId] = useState("");
+  const [isCanaryWebHost, setIsCanaryWebHost] = useState(false);
   const [selectedSession, setSelectedSession] = useState<WhatsAppSession | null>(null);
   const [sessionToDisconnect, setSessionToDisconnect] = useState<WhatsAppSession | null>(null);
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [isRefreshingQr, setIsRefreshingQr] = useState(false);
   const [verifyingSessionId, setVerifyingSessionId] = useState<string | null>(null);
+
   const sessionQuota = sessions?.meta;
   const activeSessionCount = sessions?.length ?? 0;
   const maxSessions = sessionQuota?.maxSessions ?? null;
@@ -205,6 +209,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
     setCreateDialogOpen(open);
     if (!open && !createSession.isPending) {
       setInstanceName("");
+      setCanarySessionId("");
     }
   };
 
@@ -220,19 +225,22 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
       return;
     }
 
+    setIsCanaryWebHost(window.location.hostname === WHATSAPP_CANARY_WEB_HOST);
     setCreateDialogOpen(true);
   };
 
   const handleCreateSession = async () => {
-    if (!instanceName.trim()) return;
+    if (!instanceName.trim() || (isCanaryWebHost && !canarySessionId.trim())) return;
 
     try {
       const result = await createSession.mutateAsync({
         displayName: instanceName.trim(),
         provider: "evolution_go",
+        ...(isCanaryWebHost ? { sessionId: canarySessionId.trim() } : {}),
       });
       setCreateDialogOpen(false);
       setInstanceName("");
+      setCanarySessionId("");
 
       setSelectedSession(result.session);
       setQrDialogOpen(true);
@@ -621,6 +629,20 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
                   onChange={(e) => setInstanceName(e.target.value)}
                   placeholder="Ex: Vendas" />
               </div>
+              {isCanaryWebHost && (
+                <div className="mt-4 space-y-2">
+                  <Label htmlFor="whatsapp-canary-session-id">UUID da sessão de teste</Label>
+                  <Input
+                    id="whatsapp-canary-session-id"
+                    value={canarySessionId}
+                    onChange={(e) => setCanarySessionId(e.target.value)}
+                    placeholder="UUID já autorizado no servidor"
+                    autoComplete="off" />
+                  <p className="text-xs text-muted-foreground">
+                    Use somente o UUID configurado para esta instância de teste. Outros UUIDs serão recusados.
+                  </p>
+                </div>
+              )}
             </div>
             <DialogFooter className="gap-2 sm:space-x-0">
               <Button variant="outline" onClick={() => handleCreateDialogOpenChange(false)}>
@@ -628,7 +650,7 @@ export function WhatsAppTab({ embedded = false }: WhatsAppTabProps = {}) {
               </Button>
               <Button
                 onClick={handleCreateSession}
-                disabled={!instanceName.trim() || createSession.isPending}>
+                disabled={!instanceName.trim() || (isCanaryWebHost && !canarySessionId.trim()) || createSession.isPending}>
                 {createSession.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                 Criar e Conectar
               </Button>

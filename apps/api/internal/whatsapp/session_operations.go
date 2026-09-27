@@ -16,9 +16,9 @@ import (
 var errWhatsAppSessionLifecycleConflict = errors.New("whatsapp session lifecycle fence changed")
 
 func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.Context, input createSessionInput) (SessionOperationResponse, error) {
-	sessionID, err := createWhatsAppSessionID()
+	sessionID, err := repo.sessionIDForCreate(input)
 	if err != nil {
-		return SessionOperationResponse{}, fmt.Errorf("%w: could not allocate WhatsApp session identity: %v", ErrProviderFailed, err)
+		return SessionOperationResponse{}, err
 	}
 	operationID := newSessionLifecycleOperationID(sessionID, "create")
 	unlock, _, err := repo.acquireWhatsAppSessionCreateLock(ctx, tenantContext.OrganizationID, sessionID, true)
@@ -50,6 +50,11 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 		"lifecycle_state":               "creating",
 		"lifecycle_updated_at":          time.Now().UTC().Format(time.RFC3339Nano),
 	}
+	canarySession := repo.functions.providerRoutes.IsCanarySession(sessionID)
+	if canarySession {
+		settings["whatsapp_calls_enabled"] = false
+		settings["whatsapp_contact_save_enabled"] = false
+	}
 
 	session, err := scanSession(repo.db.Pool().QueryRow(ctx, `
 		with inserted as (
@@ -62,6 +67,7 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 				status,
 				provider,
 				advanced_settings,
+				is_notification_session,
 				is_active
 			)
 			values (
@@ -73,6 +79,7 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 				'disconnected',
 				'evolution_go',
 				$6::jsonb,
+				false,
 				true
 			)
 			returning *
@@ -156,7 +163,7 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 	settings["token"] = token
 	settings["webhook_token"] = webhookToken
 	settings["evolution_go_resolved_instance_key"] = firstPresentAny(evoID, instanceName)
-	settings["auto_reconnect_enabled"] = true
+	settings["auto_reconnect_enabled"] = !canarySession
 	clearSessionLifecycleSettings(settings)
 	settings["webhook_url"] = configuredWebhookURL
 	settings["webhook_last_configured_at"] = time.Now().UTC().Format(time.RFC3339)
@@ -180,6 +187,24 @@ func (repo Repository) CreateSession(ctx context.Context, tenantContext tenant.C
 	}
 
 	return SessionOperationResponse{Session: session}, nil
+}
+
+func (repo Repository) sessionIDForCreate(input createSessionInput) (string, error) {
+	if input.SessionID == "" {
+		sessionID, err := createWhatsAppSessionID()
+		if err != nil {
+			return "", fmt.Errorf("%w: could not allocate WhatsApp session identity: %v", ErrProviderFailed, err)
+		}
+		return sessionID, nil
+	}
+	requestedID, ok := normalizeUUID(input.SessionID)
+	if !ok || !repo.functions.providerRoutes.IsCanarySession(requestedID) {
+		return "", fmt.Errorf("%w: sessionId is not reserved for a canary session", ErrInvalidInput)
+	}
+	if _, err := repo.functions.providerForSession(requestedID); err != nil {
+		return "", fmt.Errorf("%w: configured canary route is unavailable", ErrProviderFailed)
+	}
+	return requestedID, nil
 }
 
 func (repo Repository) DeleteSession(ctx context.Context, tenantContext tenant.Context, sessionID string) error {
