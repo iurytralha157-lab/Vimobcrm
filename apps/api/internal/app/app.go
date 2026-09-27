@@ -84,9 +84,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 
 	mux := http.NewServeMux()
 	realtimeHub := realtime.NewDurableHub(realtime.NewPostgresStore(postgres), logger)
-	if _, err := backgroundWorkers.RunWithError(func() error {
-		return realtimeHub.Start(ctx)
-	}); err != nil {
+	// SSE delivery needs the durable tailer even on API replicas that do not
+	// own background jobs. Retention pruning remains with worker-enabled replicas.
+	if err := realtimeHub.StartWithPrune(ctx, cfg.BackgroundWorkersEnabled); err != nil {
 		postgres.Close()
 		authVerifier.Close()
 		return nil, err
