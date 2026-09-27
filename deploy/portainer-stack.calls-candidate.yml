@@ -1,0 +1,208 @@
+# Optional pilot stack. Deploy as a NEW Swarm stack; never update the production
+# vimob stack with this file. Both services use the existing Vimob Supabase and
+# PostgreSQL data, so only dedicated pilot accounts and sessions may exercise it.
+services:
+  calls_web:
+    image: ${VIMOB_CANDIDATE_WEB_IMAGE:?VIMOB_CANDIDATE_WEB_IMAGE is required}
+    deploy:
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+        failure_action: pause
+        monitor: 8m
+      restart_policy:
+        condition: any
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=${TRAEFIK_NETWORK:-public}
+        - traefik.http.routers.vimob-calls-candidate-web.rule=Host(`${VIMOB_CANDIDATE_WEB_HOST:?VIMOB_CANDIDATE_WEB_HOST is required}`)
+        - traefik.http.routers.vimob-calls-candidate-web.entrypoints=${TRAEFIK_HTTPS_ENTRYPOINT:-websecure}
+        - traefik.http.routers.vimob-calls-candidate-web.tls=true
+        - traefik.http.routers.vimob-calls-candidate-web.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencryptresolver}
+        - traefik.http.routers.vimob-calls-candidate-web.service=vimob-calls-candidate-web
+        - traefik.http.services.vimob-calls-candidate-web.loadbalancer.server.port=3000
+    environment:
+      NODE_ENV: production
+      # These NEXT_PUBLIC values must match the candidate image's build args.
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:?shared Vimob Supabase URL is required}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:?shared Vimob anon key is required}
+      NEXT_PUBLIC_VIMOB_API_URL: https://${VIMOB_CANDIDATE_API_HOST:?VIMOB_CANDIDATE_API_HOST is required}
+      NEXT_PUBLIC_SITE_URL: https://${VIMOB_CANDIDATE_WEB_HOST:?VIMOB_CANDIDATE_WEB_HOST is required}
+      NEXT_PUBLIC_EVOLUTION_GO_CALL_MEDIA_HOST: ${EVOGO_CANARY_HOST:?EVOGO_CANARY_HOST is required}
+      VIMOB_API_URL: http://calls_api:8081
+      RESEND_API_KEY: ${RESEND_API_KEY:?RESEND_API_KEY is required for transactional email}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-Vimob CRM <naoresponde@vimobcrm.com.br>}
+      RESEND_REPLY_TO: ${RESEND_REPLY_TO:-contato@vimobcrm.com.br}
+      RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:?RESEND_WEBHOOK_SECRET is required for verified Resend webhooks}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:?SUPABASE_SECRET_KEY is required for server-side Supabase admin operations}
+      EMAIL_ASSET_BASE_URL: ${EMAIL_ASSET_BASE_URL:-https://vimobcrm.com.br}
+      EMAIL_INTERNAL_SECRET: ${EMAIL_INTERNAL_SECRET:-}
+    networks:
+      - calls-candidate
+      - traefik-public
+
+  calls_api:
+    image: ${VIMOB_CANDIDATE_API_IMAGE:?VIMOB_CANDIDATE_API_IMAGE is required}
+    deploy:
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 10s
+        # Mantem a API disponivel: a tarefa nova precisa ficar saudavel antes
+        # da retirada da anterior. Reserve capacidade para uma replica extra
+        # apenas durante a atualizacao.
+        order: start-first
+        failure_action: pause
+        monitor: 8m
+      restart_policy:
+        condition: any
+        delay: 5s
+        window: 120s
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=${TRAEFIK_NETWORK:-public}
+        - traefik.http.routers.vimob-calls-candidate-api.rule=Host(`${VIMOB_CANDIDATE_API_HOST:?VIMOB_CANDIDATE_API_HOST is required}`)
+        - traefik.http.routers.vimob-calls-candidate-api.entrypoints=${TRAEFIK_HTTPS_ENTRYPOINT:-websecure}
+        - traefik.http.routers.vimob-calls-candidate-api.tls=true
+        - traefik.http.routers.vimob-calls-candidate-api.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencryptresolver}
+        - traefik.http.routers.vimob-calls-candidate-api.service=vimob-calls-candidate-api
+        - traefik.http.services.vimob-calls-candidate-api.loadbalancer.server.port=8081
+    environment:
+      API_ENV: production
+      API_HOST: 0.0.0.0
+      API_PORT: 8081
+      API_LOG_LEVEL: ${API_LOG_LEVEL:-info}
+      API_CORS_ALLOWED_ORIGINS: https://${VIMOB_CANDIDATE_WEB_HOST:?VIMOB_CANDIDATE_WEB_HOST is required}
+      API_TRUSTED_PROXY_CIDRS: ${API_TRUSTED_PROXY_CIDRS:?API_TRUSTED_PROXY_CIDRS is required in production}
+      VIMOB_API_URL: https://${VIMOB_CANDIDATE_API_HOST:?VIMOB_CANDIDATE_API_HOST is required}
+      NEXT_PUBLIC_VIMOB_API_URL: https://${VIMOB_CANDIDATE_API_HOST:?VIMOB_CANDIDATE_API_HOST is required}
+      # Shared DB: never start a second set of general queue consumers.
+      API_BACKGROUND_WORKERS_ENABLED: "false"
+      AUTOMATION_RUNTIME_WORKER_ENABLED: "false"
+      PROPERTY_DEVELOPMENT_RESERVATION_WORKER_ENABLED: "false"
+      PROPERTY_PUBLICATION_WORKER_ENABLED: "false"
+      GRUPO_OLX_WEBHOOK_SECRET: ${GRUPO_OLX_WEBHOOK_SECRET}
+      GRUPO_OLX_IMPORT_REPORT_WORKER_ENABLED: "false"
+      GRUPO_OLX_IMPORT_REPORT_WORKER_INTERVAL: ${GRUPO_OLX_IMPORT_REPORT_WORKER_INTERVAL:-2s}
+      GRUPO_OLX_IMPORT_REPORT_WORKER_BATCH: ${GRUPO_OLX_IMPORT_REPORT_WORKER_BATCH:-25}
+      SUPABASE_PROJECT_URL: ${SUPABASE_PROJECT_URL:?shared Vimob Supabase URL is required}
+      SUPABASE_JWKS_URL: ${SUPABASE_JWKS_URL:-}
+      SUPABASE_JWT_ISSUER: ${SUPABASE_JWT_ISSUER:-}
+      SUPABASE_JWT_AUDIENCE: ${SUPABASE_JWT_AUDIENCE:-authenticated}
+      SUPABASE_JWT_SECRET: ${SUPABASE_JWT_SECRET:-}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:-}
+      BILLING_EDGE_CLIENT_IP_SIGNING_SECRET: ${BILLING_EDGE_CLIENT_IP_SIGNING_SECRET:?BILLING_EDGE_CLIENT_IP_SIGNING_SECRET is required for billing checkout}
+      # Use conexao direta ou pooler Supabase em modo sessao (5432), nunca o
+      # pooler transacional (6543): o lifecycle do WhatsApp usa advisory lock de sessao.
+      DATABASE_URL: ${DATABASE_URL:?shared Vimob PostgreSQL URL is required}
+      DATABASE_MAX_CONNS: ${VIMOB_CANDIDATE_DATABASE_MAX_CONNS:-4}
+      DATABASE_MIN_CONNS: ${DATABASE_MIN_CONNS:-0}
+      DATABASE_MAX_CONN_LIFETIME: ${DATABASE_MAX_CONN_LIFETIME:-30m}
+      DATABASE_MAX_CONN_IDLE_TIME: ${DATABASE_MAX_CONN_IDLE_TIME:-2m}
+      DATABASE_HEALTH_TIMEOUT: ${DATABASE_HEALTH_TIMEOUT:-10s}
+      DATABASE_STARTUP_RETRY_TIMEOUT: ${DATABASE_STARTUP_RETRY_TIMEOUT:-180s}
+      DATABASE_STARTUP_RETRY_INTERVAL: ${DATABASE_STARTUP_RETRY_INTERVAL:-5s}
+      NOTIFICATION_DISPATCH_WORKER_ENABLED: "false"
+      RESEND_API_KEY: ${RESEND_API_KEY:?RESEND_API_KEY is required for transactional email}
+      PUBLIC_SIGNUP_RECOVERY_SECRET: ${PUBLIC_SIGNUP_RECOVERY_SECRET:?PUBLIC_SIGNUP_RECOVERY_SECRET is required for secure signup recovery}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-Vimob CRM <naoresponde@vimobcrm.com.br>}
+      RESEND_REPLY_TO: ${RESEND_REPLY_TO:-contato@vimobcrm.com.br}
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-contato@vimobcrm.com.br}
+      APP_PUBLIC_URL: https://${VIMOB_CANDIDATE_WEB_HOST:?VIMOB_CANDIDATE_WEB_HOST is required}
+      WEB_PUSH_VAPID_PUBLIC_KEY: ${WEB_PUSH_VAPID_PUBLIC_KEY:?WEB_PUSH_VAPID_PUBLIC_KEY is required}
+      WEB_PUSH_VAPID_PRIVATE_KEY: ${WEB_PUSH_VAPID_PRIVATE_KEY:?WEB_PUSH_VAPID_PRIVATE_KEY is required}
+      WEB_PUSH_VAPID_SUBJECT: ${WEB_PUSH_VAPID_SUBJECT:-mailto:contato@vimobcrm.com.br}
+      FCM_PROJECT_ID: ${FCM_PROJECT_ID:-}
+      FCM_SERVICE_ACCOUNT_JSON: ${FCM_SERVICE_ACCOUNT_JSON:-}
+      FCM_SERVICE_ACCOUNT_FILE: ${FCM_SERVICE_ACCOUNT_FILE:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      OPENAI_TEXT_MODEL: ${OPENAI_TEXT_MODEL:-gpt-4.1-mini}
+      OPENAI_REALTIME_MODEL: ${OPENAI_REALTIME_MODEL:-gpt-realtime-2}
+      OPENAI_REALTIME_VOICE: ${OPENAI_REALTIME_VOICE:-cedar}
+      AI_AUTOREPLY_TOKEN: ${AI_AUTOREPLY_TOKEN:-}
+      ASAAS_API_KEY: ${ASAAS_API_KEY:-}
+      ASAAS_BASE_URL: ${ASAAS_BASE_URL:-https://api.asaas.com/v3}
+      ASAAS_RECONCILIATION_ENABLED: "false"
+      # Preserve the production Evolution Go as the default route. Only the
+      # exact canary CRM session UUID(s) below route to the isolated provider.
+      EVOLUTION_GO_API_URL: ${EVOLUTION_GO_API_URL:?production Evolution Go URL is required}
+      EVOLUTION_GO_CANARY_SESSION_IDS: ${EVOLUTION_GO_CANARY_SESSION_IDS:?exact pilot session UUID is required}
+      EVOLUTION_GO_CANARY_API_URL: https://${EVOGO_CANARY_HOST:?EVOGO_CANARY_HOST is required}
+      EVOLUTION_GO_CANARY_API_KEY_FILE: /run/secrets/vimob_evogo_canary_api_key
+      EVOGO_CANARY_CALL_MEDIA_HMAC_SECRET_FILE: /run/secrets/evogo_canary_media_hmac
+      EVOLUTION_GO_CANARY_IMAGE_DIGEST: ${EVOLUTION_GO_CANARY_IMAGE_DIGEST:?canary sha256 digest is required}
+      EVOGO_CALL_MEDIA_HMAC_SECRET: ${EVOGO_CALL_MEDIA_HMAC_SECRET:-}
+      API_WHATSAPP_CALL_RECORDING_ONLY_WORKER_ENABLED: "true"
+      EVOLUTION_GO_API_KEY: ${EVOLUTION_GO_API_KEY:?production Evolution Go API key is required}
+      EVOLUTION_GO_IMAGE_DIGEST: ${EVOLUTION_GO_IMAGE_DIGEST:?production Evolution Go sha256 digest is required}
+      EVOLUTION_GO_WEBHOOK_URL: ${EVOLUTION_GO_WEBHOOK_URL:-}
+      EVOLUTION_GO_BACKEND_WEBHOOK_URL: https://${VIMOB_CANDIDATE_API_HOST:?VIMOB_CANDIDATE_API_HOST is required}/v1/whatsapp/webhook/evolution-go
+      WHATSAPP_WEBHOOK_PROCESSOR_MODE: ${WHATSAPP_WEBHOOK_PROCESSOR_MODE:-edge}
+      WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS: ${WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS:-}
+      WHATSAPP_AI_WORKER_ENABLED: "false"
+      WHATSAPP_AI_WORKER_INTERVAL: ${WHATSAPP_AI_WORKER_INTERVAL:-1m}
+      WHATSAPP_AI_FOLLOW_UP_WORKER_ENABLED: "false"
+      WHATSAPP_AI_FOLLOW_UP_WORKER_INTERVAL: ${WHATSAPP_AI_FOLLOW_UP_WORKER_INTERVAL:-10m}
+      WHATSAPP_OUTBOX_WORKER_ENABLED: "false"
+      WHATSAPP_OUTBOX_WORKER_INTERVAL: ${WHATSAPP_OUTBOX_WORKER_INTERVAL:-1s}
+      WHATSAPP_OUTBOX_WORKER_BATCH: ${WHATSAPP_OUTBOX_WORKER_BATCH:-10}
+      WHATSAPP_OUTBOX_WORKER_CONCURRENCY: ${WHATSAPP_OUTBOX_WORKER_CONCURRENCY:-4}
+      WHATSAPP_WEBHOOK_WORKER_ENABLED: "false"
+      WHATSAPP_WEBHOOK_WORKER_INTERVAL: ${WHATSAPP_WEBHOOK_WORKER_INTERVAL:-1s}
+      WHATSAPP_WEBHOOK_WORKER_BATCH: ${WHATSAPP_WEBHOOK_WORKER_BATCH:-10}
+      WHATSAPP_WEBHOOK_WORKER_CONCURRENCY: ${WHATSAPP_WEBHOOK_WORKER_CONCURRENCY:-4}
+      WHATSAPP_MEDIA_WORKER_ENABLED: "false"
+      WHATSAPP_MEDIA_WORKER_INTERVAL: ${WHATSAPP_MEDIA_WORKER_INTERVAL:-2s}
+      WHATSAPP_MEDIA_WORKER_LEASE: ${WHATSAPP_MEDIA_WORKER_LEASE:-5m}
+      WHATSAPP_MEDIA_WORKER_CONCURRENCY: ${WHATSAPP_MEDIA_WORKER_CONCURRENCY:-4}
+      WHATSAPP_SESSION_SUPERVISOR_ENABLED: "false"
+      WHATSAPP_SESSION_SUPERVISOR_INITIAL_DELAY: ${WHATSAPP_SESSION_SUPERVISOR_INITIAL_DELAY:-30s}
+      WHATSAPP_SESSION_SUPERVISOR_INTERVAL: ${WHATSAPP_SESSION_SUPERVISOR_INTERVAL:-1m}
+      WHATSAPP_SESSION_SUPERVISOR_BATCH: ${WHATSAPP_SESSION_SUPERVISOR_BATCH:-10}
+      WHATSAPP_SESSION_SUPERVISOR_RECOVERY_SESSION_IDS: ${WHATSAPP_SESSION_SUPERVISOR_RECOVERY_SESSION_IDS:-}
+      META_APP_ID: ${META_APP_ID:-}
+      META_APP_SECRET: ${META_APP_SECRET:-}
+      META_LOGIN_CONFIG_ID: ${META_LOGIN_CONFIG_ID:-}
+      META_OAUTH_ALLOWED_ORIGINS: https://${VIMOB_CANDIDATE_WEB_HOST:?VIMOB_CANDIDATE_WEB_HOST is required}
+      META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN:-}
+      META_GRAPH_VERSION: ${META_GRAPH_VERSION:-v25.0}
+      META_GRAPH_BASE_URL: ${META_GRAPH_BASE_URL:-https://graph.facebook.com}
+      META_OAUTH_CALLBACK_URL: https://${VIMOB_CANDIDATE_API_HOST:?VIMOB_CANDIDATE_API_HOST is required}/v1/public/integrations/meta/oauth/callback
+      META_WEBHOOK_WORKER_ENABLED: "false"
+      META_CONVERSION_FEEDBACK_WORKER_ENABLED: "false"
+      META_CONVERSION_FEEDBACK_WORKER_INTERVAL: ${META_CONVERSION_FEEDBACK_WORKER_INTERVAL:-5s}
+      META_CONVERSION_FEEDBACK_WORKER_BATCH: ${META_CONVERSION_FEEDBACK_WORKER_BATCH:-25}
+      META_CONVERSION_FEEDBACK_WORKER_LEASE: ${META_CONVERSION_FEEDBACK_WORKER_LEASE:-2m}
+      META_CONVERSION_FEEDBACK_REQUEST_TIMEOUT: ${META_CONVERSION_FEEDBACK_REQUEST_TIMEOUT:-15s}
+      META_CONVERSION_FEEDBACK_PARTNER_AGENT: ${META_CONVERSION_FEEDBACK_PARTNER_AGENT:-}
+      META_CONVERSION_FEEDBACK_APPSECRET_PROOF_ENABLED: ${META_CONVERSION_FEEDBACK_APPSECRET_PROOF_ENABLED:-false}
+    secrets:
+      - vimob_evogo_canary_api_key
+      - evogo_canary_media_hmac
+    networks:
+      - calls-candidate
+      # The existing overlay reaches the self-hosted Supabase/PostgreSQL.
+      # calls_api has a unique service name so it does not shadow prod `api`.
+      - shared-data
+      - traefik-public
+
+secrets:
+  vimob_evogo_canary_api_key:
+    external: true
+  evogo_canary_media_hmac:
+    external: true
+
+networks:
+  calls-candidate:
+    driver: overlay
+  shared-data:
+    external: true
+    name: ${VIMOB_SHARED_DATA_NETWORK:-vimob}
+  traefik-public:
+    external: true
+    name: ${TRAEFIK_NETWORK:-public}
