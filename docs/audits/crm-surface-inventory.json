@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "6815e2e1f9934a18d132cd72615cf1b3fa0a20bbf33716faba67db04567f67d4",
+  "sourceDigestSha256": "8804ce066d09137e211fb8e8f808bdb7cc635b94c65e32e25c9f438b56b8cb50",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -1381,10 +1381,10 @@
           "kind": "dialog"
         },
         {
-          "id": "overlay:1243c027edc5e65ba81c",
+          "id": "overlay:299b98327caf1334ec51",
           "column": 7,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 425,
+          "line": 446,
           "owner": "TeamPicker",
           "routes": [
             "/dashboard"
@@ -11414,10 +11414,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:4330e60dacd0d178979d",
+          "id": "cta:011651fead7d072c9fac",
           "column": 23,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 239,
+          "line": 260,
           "owner": "DistributionBars",
           "routes": [
             "/dashboard"
@@ -11426,10 +11426,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:17f8bf986d68b575fa75",
+          "id": "cta:3be6389549fdeda19287",
           "column": 7,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 414,
+          "line": 435,
           "owner": "TeamPicker",
           "routes": [
             "/dashboard"
@@ -11438,10 +11438,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:07add9db4b85bf98323e",
+          "id": "cta:b27279ecca29d1ef6c42",
           "column": 13,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 438,
+          "line": 459,
           "owner": "TeamPicker",
           "routes": [
             "/dashboard"
@@ -11450,10 +11450,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d57bd4c6a836c7758130",
+          "id": "cta:e6f9dee752a70a037e8e",
           "column": 13,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 458,
+          "line": 479,
           "owner": "TeamPicker",
           "routes": [
             "/dashboard"
@@ -11462,10 +11462,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:45ae33266f78a219b727",
+          "id": "cta:6b158b1d1b4fc5395579",
           "column": 13,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 461,
+          "line": 482,
           "owner": "TeamPicker",
           "routes": [
             "/dashboard"
@@ -11474,10 +11474,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:e4d792727b266bb41e82",
+          "id": "cta:1e01a50bc556454ddfe5",
           "column": 11,
           "file": "components/features/dashboard/LeadDistributionSection.tsx",
-          "line": 535,
+          "line": 556,
           "owner": "LeadDistributionSection",
           "routes": [
             "/dashboard"
@@ -34198,7 +34198,7 @@
         }
       ]
     },
-    "digestSha256": "c2bd04d66b83426c532dea349a8e986647eef30eb4a6e7091e74d1846411528f"
+    "digestSha256": "739e0aee71847dac33673f65bd9be7a98e1700028fdbb2cbb3139f899f7e1644"
   },
   "routes": [
     {

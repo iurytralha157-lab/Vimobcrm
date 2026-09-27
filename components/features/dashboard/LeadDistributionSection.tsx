@@ -168,32 +168,53 @@ function DistributionBars({
   const isBrokerChart = variant === "user";
   const spreadBrokers = isBrokerChart && rows.length <= 8;
   const brokerColumnWidthClass = rows.length <= 2
-    ? "w-[112px] sm:w-[132px]"
+    ? "w-[128px] sm:w-[148px]"
     : rows.length === 3
-      ? "w-[88px] sm:w-[108px]"
+      ? "w-[100px] sm:w-[124px]"
       : rows.length === 4
-        ? "w-[80px] sm:w-[96px]"
+        ? "w-[90px] sm:w-[112px]"
         : rows.length === 5
-          ? "w-[76px] sm:w-[96px]"
+          ? "w-[80px] sm:w-[100px]"
           : rows.length === 6
-            ? "w-[72px] sm:w-[88px]"
+            ? "w-[74px] sm:w-[92px]"
             : spreadBrokers
-              ? "w-[64px] sm:w-[76px]"
+              ? "w-[66px] sm:w-[78px]"
               : "w-[56px] sm:w-[60px]";
   const brokerBarWidthClass = rows.length <= 2
-    ? "w-[84px] sm:w-[100px]"
+    ? "w-[96px] sm:w-[120px]"
     : rows.length === 3
-      ? "w-[64px] sm:w-[82px]"
+      ? "w-[78px] sm:w-[104px]"
       : rows.length === 4
-        ? "w-[60px] sm:w-[74px]"
+        ? "w-[70px] sm:w-[92px]"
         : rows.length === 5
-          ? "w-[56px] sm:w-[72px]"
+          ? "w-[60px] sm:w-[80px]"
           : rows.length === 6
-            ? "w-[52px] sm:w-[64px]"
+            ? "w-[54px] sm:w-[68px]"
             : spreadBrokers
-              ? "w-[46px] sm:w-[56px]"
+              ? "w-[48px] sm:w-[58px]"
               : "w-9";
-  const teamBarWidthClass = "w-11 xl:w-[52px]";
+  const teamColumnWidthClass = rows.length === 1
+    ? "w-[132px]"
+    : rows.length === 2
+      ? "w-[110px]"
+      : rows.length === 3
+        ? "w-[88px]"
+        : rows.length === 4
+          ? "w-[68px]"
+          : rows.length === 5
+            ? "w-[60px]"
+            : "w-[56px]";
+  const teamBarWidthClass = rows.length === 1
+    ? "w-[112px]"
+    : rows.length === 2
+      ? "w-[92px]"
+      : rows.length === 3
+        ? "w-[72px]"
+        : rows.length === 4
+          ? "w-[56px]"
+          : rows.length === 5
+            ? "w-[48px]"
+            : "w-11";
   const maxCount = Math.max(1, ...rows.map((row) => row.leadCount ?? 0));
   const selectedRow = rows.find((row) => row.id === selectedId);
   // Count, avatar, name and spacing occupy a fixed part of each broker column.
@@ -232,7 +253,7 @@ function DistributionBars({
               const brokerBarRatio = leadCount / maxCount;
               const brokerMinimumBarHeight = Math.min(24, leadCount * 4);
               return (
-                <div key={row.id} className={`shrink-0 ${isBrokerChart ? `relative h-full min-h-[290px] ${brokerColumnWidthClass}` : "flex h-[240px] w-[56px] flex-col justify-end xl:w-[64px]"}`}>
+                <div key={row.id} className={`shrink-0 ${isBrokerChart ? `relative h-full min-h-[290px] ${brokerColumnWidthClass}` : `flex h-[240px] flex-col justify-end ${teamColumnWidthClass}`}`}>
                   {!isBrokerChart ? <span className="shrink-0" style={{ height: 145 - teamBarHeight }} aria-hidden="true" /> : null}
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -265,7 +286,7 @@ function DistributionBars({
                       <span
                         className={
                           row.leadCount === null
-                            ? `${teamBarWidthClass} rounded-t-[5px] bg-[var(--app-border)]`
+                            ? `${isBrokerChart ? brokerBarWidthClass : teamBarWidthClass} rounded-t-[5px] bg-[var(--app-border)]`
                             : isBrokerChart
                               ? `${brokerBarWidthClass} rounded-t-[5px] bg-primary transition-colors group-hover:bg-primary/75`
                               : `${teamBarWidthClass} rounded-t-[5px] bg-violet-500 transition-colors group-hover:bg-violet-400`
@@ -318,7 +339,7 @@ function DistributionBars({
 function DistributionCard({
   title,
   rows,
-  contextRows,
+  contextRows = [],
   variant,
   isLoading,
   trailing,
@@ -327,7 +348,7 @@ function DistributionCard({
 }: {
   title: string;
   rows: ChartRow[];
-  contextRows: ContextRow[];
+  contextRows?: ContextRow[];
   variant: "user" | "team";
   isLoading: boolean;
   trailing?: ReactNode;
@@ -541,9 +562,6 @@ export function LeadDistributionSection({
     );
   }
 
-  const userContext: ContextRow[] = (data?.users ?? [])
-    .filter((row) => row.kind !== "entity")
-    .map((row) => ({ kind: row.kind as ContextRow["kind"], name: row.name, leadCount: row.leadCount }));
   const teamContext: ContextRow[] = (data?.teams ?? [])
     .filter((row) => row.kind !== "entity")
     .map((row) => ({ kind: row.kind as ContextRow["kind"], name: row.name, leadCount: row.leadCount }));
@@ -553,7 +571,7 @@ export function LeadDistributionSection({
       <div className={display === "both" ? "grid grid-cols-1 gap-3 lg:grid-cols-12" : "min-h-0 lg:h-full"}>
         {display !== "teams" ? (
           <div className={display === "both" ? "min-w-0 lg:col-span-8" : "min-h-0 min-w-0 lg:h-full"}>
-            <DistributionCard title="Leads por corretor" rows={userRows} contextRows={userContext} variant="user" isLoading={isLoading} fillHeight={display !== "both"} />
+            <DistributionCard title="Leads por corretor" rows={userRows} variant="user" isLoading={isLoading} fillHeight={display !== "both"} />
           </div>
         ) : null}
         {display !== "users" ? (

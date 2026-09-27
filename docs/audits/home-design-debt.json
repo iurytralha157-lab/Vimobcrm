@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "299d552d548deeb1a17cf6ff2a6064f0b610ada7c8bb322ffd81a991e2667864",
-  "surfaceInventoryDigestSha256": "6815e2e1f9934a18d132cd72615cf1b3fa0a20bbf33716faba67db04567f67d4",
+  "sourceDigestSha256": "bd133a1b58bf646febd0fba3e5311b7953de22deabc2b165d6c1dee5b314a597",
+  "surfaceInventoryDigestSha256": "8804ce066d09137e211fb8e8f808bdb7cc635b94c65e32e25c9f438b56b8cb50",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
     "filesScanned": 543,
@@ -900,7 +900,7 @@
     },
     {
       "file": "components/features/dashboard/LeadDistributionSection.tsx",
-      "line": 256,
+      "line": 277,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -909,7 +909,7 @@
     },
     {
       "file": "components/features/dashboard/LeadDistributionSection.tsx",
-      "line": 286,
+      "line": 307,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
