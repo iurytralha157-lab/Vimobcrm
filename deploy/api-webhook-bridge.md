@@ -92,6 +92,12 @@ de teste; status do supervisor de sessões; conexões `pg_stat_activity` e uso d
 memória. Interrompa o corte e use `disable` se houver aumento de erros, atraso
 de mensagens ou qualquer alteração nas tasks da API original.
 
+No manager, `python3 deploy/check-whatsapp-inbox-readonly.py` consulta somente
+contagens por estado e tipo no Postgres do Vimob. Ele lê a URL da API em memória,
+passa a senha ao cliente `psql` por stdin e não imprime credenciais nem payloads.
+Compare os eventos criados nos últimos dez minutos com a fila histórica; não
+reprocesse o backlog inteiro para validar a ponte.
+
 O helper não pareia números, não aplica migrações e não ativa rotas de chamadas
 ou gravação. Após a atualização da API principal, o ambiente da fonte pode
 diferir do ambiente copiado, e `status` falhará fechado; `disable` continua
