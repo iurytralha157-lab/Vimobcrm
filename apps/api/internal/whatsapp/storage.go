@@ -25,14 +25,19 @@ type StorageConfig struct {
 }
 
 type EvolutionGoConfig struct {
-	APIURL                   string
-	APIKey                   string
-	CallMediaHMACSecret      string
-	ImageDigest              string
-	WebhookURL               string
-	BackendWebhookURL        string
-	WebhookProcessorMode     string
-	WebhookRolloutSessionIDs []string
+	APIURL                    string
+	APIKey                    string
+	CallMediaHMACSecret       string
+	ImageDigest               string
+	CanaryAPIURL              string
+	CanaryAPIKey              string
+	CanaryCallMediaHMACSecret string
+	CanaryImageDigest         string
+	CanarySessionIDs          []string
+	WebhookURL                string
+	BackendWebhookURL         string
+	WebhookProcessorMode      string
+	WebhookRolloutSessionIDs  []string
 }
 
 type storageClient struct {

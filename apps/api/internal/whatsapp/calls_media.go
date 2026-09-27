@@ -106,6 +106,10 @@ func (repo Repository) issueCallMediaTicket(
 	if err != nil {
 		return callMediaTicketResponse{}, err
 	}
+	destination, err := repo.functions.providerForSession(call.SessionID)
+	if err != nil {
+		return callMediaTicketResponse{}, fmt.Errorf("%w: %w", ErrFeatureUnavailable, err)
+	}
 	instanceID := repo.functions.evolutionInstanceKey(providerSession, nil, nil)
 	if instanceID == "" {
 		return callMediaTicketResponse{}, fmt.Errorf("%w: Evolution instance identity is missing", ErrFeatureUnavailable)
@@ -119,11 +123,11 @@ func (repo Repository) issueCallMediaTicket(
 		Version: 1, InstanceID: instanceID, CallID: call.ProviderCallID,
 		Subject: tenantContext.UserID, Expires: expiresAt.Unix(),
 		Nonce: base64.RawURLEncoding.EncodeToString(nonce[:]),
-	}, repo.functions.evolutionCallMediaSecret)
+	}, destination.CallMediaHMACSecret)
 	if err != nil {
 		return callMediaTicketResponse{}, err
 	}
-	mediaURL, err := callMediaWebSocketURL(repo.functions.evolutionGoAPIURL, ticket)
+	mediaURL, err := callMediaWebSocketURL(destination.APIURL, ticket)
 	if err != nil {
 		return callMediaTicketResponse{}, err
 	}

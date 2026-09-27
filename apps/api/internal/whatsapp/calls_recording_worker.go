@@ -303,8 +303,14 @@ func (repo Repository) transferCallRecording(
 	if err != nil {
 		return job.IncomingPath, job.OutgoingPath, err
 	}
+	destination, err := repo.functions.providerForSession(job.SessionID)
+	if err != nil {
+		return job.IncomingPath, job.OutgoingPath, fmt.Errorf("%w: %w", ErrFeatureUnavailable, err)
+	}
 	instanceID := repo.functions.evolutionInstanceKey(providerSession, nil, nil)
-	token := repo.functions.evolutionSessionToken(providerSession, nil)
+	providerClient := repo.functions
+	providerClient.evolutionGoAPIKey = destination.APIKey
+	token := providerClient.evolutionSessionToken(providerSession, nil)
 	if instanceID == "" || token == "" {
 		return job.IncomingPath, job.OutgoingPath, ErrProviderFailed
 	}
@@ -346,7 +352,11 @@ func (repo Repository) fetchAndStoreCallRecordingChannel(
 	instanceID string,
 	token string,
 ) (string, error) {
-	endpoint, err := url.Parse(repo.functions.evolutionGoAPIURL)
+	destination, err := repo.functions.providerForSession(job.SessionID)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrFeatureUnavailable, err)
+	}
+	endpoint, err := url.Parse(destination.APIURL)
 	if err != nil || endpoint == nil || !stringIn(endpoint.Scheme, "http", "https") ||
 		endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" {
 		return "", ErrFeatureUnavailable

@@ -50,9 +50,9 @@ services:
         esac
         export POSTGRES_AUTH_DB="postgresql://evogo_canary:$$db_password@postgres:5432/evogo_canary?sslmode=disable"
         export POSTGRES_USERS_DB="$$POSTGRES_AUTH_DB"
-        export GLOBAL_API_KEY="$$(cat /run/secrets/evogo_canary_api_key)"
+        export EVOLUTION_OPERATOR_EMAIL="$$(cat /run/secrets/evogo_canary_operator_email)"
         export EVOGO_CALL_MEDIA_HMAC_SECRET="$$(cat /run/secrets/evogo_canary_media_hmac)"
-        test -n "$$GLOBAL_API_KEY" || { echo 'Empty canary API key' >&2; exit 1; }
+        test -n "$$EVOLUTION_OPERATOR_EMAIL" || { echo 'Empty canary operator email' >&2; exit 1; }
         test "$${#EVOGO_CALL_MEDIA_HMAC_SECRET}" -ge 32 || { echo 'Canary media HMAC secret is shorter than 32 characters' >&2; exit 1; }
         exec /app/server
     environment:
@@ -77,7 +77,7 @@ services:
       EVOGO_CALL_RECORDING_RETENTION_HOURS: ${EVOGO_CANARY_RETENTION_HOURS:-24}
     secrets:
       - evogo_canary_postgres_password
-      - evogo_canary_api_key
+      - evogo_canary_operator_email
       - evogo_canary_media_hmac
     volumes:
       - canary_recordings:/app/canary-recordings
@@ -122,7 +122,7 @@ services:
 secrets:
   evogo_canary_postgres_password:
     external: true
-  evogo_canary_api_key:
+  evogo_canary_operator_email:
     external: true
   evogo_canary_media_hmac:
     external: true

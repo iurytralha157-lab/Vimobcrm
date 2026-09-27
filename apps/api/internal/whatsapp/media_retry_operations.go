@@ -56,7 +56,7 @@ func (repo Repository) retryStoredMediaDownload(ctx context.Context, tenantConte
 		}
 		signedURL, signErr := repo.storage.signedURL(ctx, whatsappMediaBucket, message.MediaStoragePath, whatsappMediaSignedURLTTLSeconds)
 		if signErr == nil && signedURL != "" {
-			storedMedia, downloadErr := repo.downloadWhatsAppMediaURL(ctx, signedURL)
+			storedMedia, downloadErr := repo.downloadWhatsAppMediaURLForSession(ctx, message.SessionID, signedURL)
 			if downloadErr == nil {
 				validationJob := whatsappMediaValidationJob(message)
 				_, _, validationErr := validateRecoveredWhatsAppMedia(validationJob, storedMedia)
@@ -188,7 +188,7 @@ func (repo Repository) recoverWhatsAppMedia(ctx context.Context, message retryMe
 	}
 
 	for _, candidate := range mediaURLCandidates(raw, message) {
-		media, err := repo.downloadWhatsAppMediaURL(ctx, candidate)
+		media, err := repo.downloadWhatsAppMediaURLForSession(ctx, message.SessionID, candidate)
 		if err == nil && len(media.bytes) > 0 {
 			return media, nil
 		}
@@ -201,9 +201,17 @@ func (repo Repository) recoverWhatsAppMedia(ctx context.Context, message retryMe
 }
 
 func (repo Repository) downloadWhatsAppMediaURL(ctx context.Context, sourceURL string) (recoveredWhatsAppMedia, error) {
+	return repo.downloadWhatsAppMediaURLForSession(ctx, "", sourceURL)
+}
+
+func (repo Repository) downloadWhatsAppMediaURLForSession(ctx context.Context, sessionID string, sourceURL string) (recoveredWhatsAppMedia, error) {
+	destination, routeErr := repo.functions.providerForSession(sessionID)
+	if routeErr != nil {
+		return recoveredWhatsAppMedia{}, fmt.Errorf("%w: %w", ErrProviderFailed, routeErr)
+	}
 	sourceURL = strings.TrimSpace(sourceURL)
 	parsed, err := url.Parse(sourceURL)
-	allowed, _ := allowedWhatsAppMediaURL(parsed, repo.functions.evolutionGoAPIURL, repo.storage.projectURL)
+	allowed, _ := allowedWhatsAppMediaURL(parsed, destination.APIURL, repo.storage.projectURL)
 	if err != nil || !allowed {
 		return recoveredWhatsAppMedia{}, fmt.Errorf("%w: URL da midia invalida", ErrProviderFailed)
 	}
@@ -215,7 +223,7 @@ func (repo Repository) downloadWhatsAppMediaURL(ctx context.Context, sourceURL s
 		}
 		redirectAllowed, redirectProviderHost := allowedWhatsAppMediaURL(
 			request.URL,
-			repo.functions.evolutionGoAPIURL,
+			destination.APIURL,
 			repo.storage.projectURL,
 		)
 		if !redirectAllowed {

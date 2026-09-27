@@ -118,6 +118,14 @@ services:
       ASAAS_BASE_URL: ${ASAAS_BASE_URL:-https://api.asaas.com/v3}
       ASAAS_RECONCILIATION_ENABLED: ${ASAAS_RECONCILIATION_ENABLED:-true}
       EVOLUTION_GO_API_URL: ${EVOLUTION_GO_API_URL:-}
+      # A allowlist vazia preserva todas as sessoes na Evo de producao.
+      # Configure UUID(s) de teste somente apos todas as replicas da API
+      # receberem esta versao e os secrets exclusivos do canario.
+      EVOLUTION_GO_CANARY_SESSION_IDS: ${EVOLUTION_GO_CANARY_SESSION_IDS:-}
+      EVOLUTION_GO_CANARY_API_URL: ${EVOLUTION_GO_CANARY_API_URL:-}
+      EVOLUTION_GO_CANARY_API_KEY_FILE: /run/secrets/vimob_evogo_canary_api_key
+      EVOGO_CANARY_CALL_MEDIA_HMAC_SECRET_FILE: /run/secrets/evogo_canary_media_hmac
+      EVOLUTION_GO_CANARY_IMAGE_DIGEST: ${EVOLUTION_GO_CANARY_IMAGE_DIGEST:-}
       EVOGO_CALL_MEDIA_HMAC_SECRET: ${EVOGO_CALL_MEDIA_HMAC_SECRET:-}
       API_WHATSAPP_CALL_RECORDING_ONLY_WORKER_ENABLED: ${API_WHATSAPP_CALL_RECORDING_ONLY_WORKER_ENABLED:-false}
       EVOLUTION_GO_API_KEY: ${EVOLUTION_GO_API_KEY:-}
@@ -163,9 +171,18 @@ services:
       META_CONVERSION_FEEDBACK_REQUEST_TIMEOUT: ${META_CONVERSION_FEEDBACK_REQUEST_TIMEOUT:-15s}
       META_CONVERSION_FEEDBACK_PARTNER_AGENT: ${META_CONVERSION_FEEDBACK_PARTNER_AGENT:-}
       META_CONVERSION_FEEDBACK_APPSECRET_PROOF_ENABLED: ${META_CONVERSION_FEEDBACK_APPSECRET_PROOF_ENABLED:-false}
+    secrets:
+      - vimob_evogo_canary_api_key
+      - evogo_canary_media_hmac
     networks:
       - vimob
       - traefik-public
+
+secrets:
+  vimob_evogo_canary_api_key:
+    external: true
+  evogo_canary_media_hmac:
+    external: true
 
 networks:
   vimob:

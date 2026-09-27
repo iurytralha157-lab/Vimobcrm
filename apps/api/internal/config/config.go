@@ -61,14 +61,19 @@ type StorageConfig struct {
 }
 
 type EvolutionGoConfig struct {
-	APIURL                   string
-	APIKey                   string
-	CallMediaHMACSecret      string
-	ImageDigest              string
-	WebhookURL               string
-	BackendWebhookURL        string
-	WebhookProcessorMode     string
-	WebhookRolloutSessionIDs []string
+	APIURL                    string
+	APIKey                    string
+	CallMediaHMACSecret       string
+	ImageDigest               string
+	CanaryAPIURL              string
+	CanaryAPIKey              string
+	CanaryCallMediaHMACSecret string
+	CanaryImageDigest         string
+	CanarySessionIDs          []string
+	WebhookURL                string
+	BackendWebhookURL         string
+	WebhookProcessorMode      string
+	WebhookRolloutSessionIDs  []string
 }
 
 type AutomationConfig struct {
@@ -194,6 +199,14 @@ func (cfg HTTPConfig) Addr() string {
 
 func Load() (Config, error) {
 	loadDevelopmentEnvFiles()
+	canaryAPIKey, err := readOptionalSecretFile("EVOLUTION_GO_CANARY_API_KEY_FILE")
+	if err != nil {
+		return Config{}, err
+	}
+	canaryMediaSecret, err := readOptionalSecretFile("EVOGO_CANARY_CALL_MEDIA_HMAC_SECRET_FILE")
+	if err != nil {
+		return Config{}, err
+	}
 
 	env := strings.ToLower(strings.TrimSpace(getEnv("API_ENV", "development")))
 
@@ -318,14 +331,19 @@ func Load() (Config, error) {
 			SessionSupervisorRecoveryIDs:  parseCSV(getEnv("WHATSAPP_SESSION_SUPERVISOR_RECOVERY_SESSION_IDS", "")),
 		},
 		EvolutionGo: EvolutionGoConfig{
-			APIURL:                   strings.TrimRight(getEnv("EVOLUTION_GO_API_URL", ""), "/"),
-			APIKey:                   os.Getenv("EVOLUTION_GO_API_KEY"),
-			CallMediaHMACSecret:      os.Getenv("EVOGO_CALL_MEDIA_HMAC_SECRET"),
-			ImageDigest:              strings.ToLower(strings.TrimSpace(getEnv("EVOLUTION_GO_IMAGE_DIGEST", ""))),
-			WebhookURL:               strings.TrimRight(getEnv("EVOLUTION_GO_WEBHOOK_URL", ""), "/"),
-			BackendWebhookURL:        strings.TrimRight(getEnv("EVOLUTION_GO_BACKEND_WEBHOOK_URL", ""), "/"),
-			WebhookProcessorMode:     strings.ToLower(getEnv("WHATSAPP_WEBHOOK_PROCESSOR_MODE", "edge")),
-			WebhookRolloutSessionIDs: parseCSV(getEnv("WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS", "")),
+			APIURL:                    strings.TrimRight(getEnv("EVOLUTION_GO_API_URL", ""), "/"),
+			APIKey:                    os.Getenv("EVOLUTION_GO_API_KEY"),
+			CallMediaHMACSecret:       os.Getenv("EVOGO_CALL_MEDIA_HMAC_SECRET"),
+			ImageDigest:               strings.ToLower(strings.TrimSpace(getEnv("EVOLUTION_GO_IMAGE_DIGEST", ""))),
+			CanaryAPIURL:              strings.TrimRight(getEnv("EVOLUTION_GO_CANARY_API_URL", ""), "/"),
+			CanaryAPIKey:              canaryAPIKey,
+			CanaryCallMediaHMACSecret: canaryMediaSecret,
+			CanaryImageDigest:         strings.ToLower(strings.TrimSpace(getEnv("EVOLUTION_GO_CANARY_IMAGE_DIGEST", ""))),
+			CanarySessionIDs:          parseCSV(getEnv("EVOLUTION_GO_CANARY_SESSION_IDS", "")),
+			WebhookURL:                strings.TrimRight(getEnv("EVOLUTION_GO_WEBHOOK_URL", ""), "/"),
+			BackendWebhookURL:         strings.TrimRight(getEnv("EVOLUTION_GO_BACKEND_WEBHOOK_URL", ""), "/"),
+			WebhookProcessorMode:      strings.ToLower(getEnv("WHATSAPP_WEBHOOK_PROCESSOR_MODE", "edge")),
+			WebhookRolloutSessionIDs:  parseCSV(getEnv("WHATSAPP_WEBHOOK_ROLLOUT_SESSION_IDS", "")),
 		},
 		Asaas: AsaasConfig{
 			APIURL:                 strings.TrimRight(getEnv("ASAAS_BASE_URL", "https://api.asaas.com/v3"), "/"),
@@ -359,6 +377,7 @@ func Load() (Config, error) {
 	// renders uuid::text in lowercase, so retaining an accepted uppercase input
 	// would make a canary silently own zero sessions.
 	cfg.EvolutionGo.WebhookRolloutSessionIDs = canonicalizeSessionIDAllowlist(cfg.EvolutionGo.WebhookRolloutSessionIDs)
+	cfg.EvolutionGo.CanarySessionIDs = canonicalizeSessionIDAllowlist(cfg.EvolutionGo.CanarySessionIDs)
 	cfg.WhatsApp.SessionSupervisorRecoveryIDs = canonicalizeSessionIDAllowlist(cfg.WhatsApp.SessionSupervisorRecoveryIDs)
 
 	if err := cfg.Validate(); err != nil {
@@ -380,6 +399,22 @@ func loadBackgroundWorkersEnabled() bool {
 	// Keep normal deployments backwards-compatible. Local sessions that point
 	// at shared data must opt out explicitly before the API starts.
 	return parseBool("API_BACKGROUND_WORKERS_ENABLED", true)
+}
+
+func readOptionalSecretFile(envName string) (string, error) {
+	secretPath := strings.TrimSpace(os.Getenv(envName))
+	if secretPath == "" {
+		return "", nil
+	}
+	info, err := os.Stat(secretPath)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 4096 {
+		return "", fmt.Errorf("%s must name a readable small secret file", envName)
+	}
+	contents, err := os.ReadFile(secretPath)
+	if err != nil {
+		return "", fmt.Errorf("%s could not be read", envName)
+	}
+	return strings.TrimSpace(string(contents)), nil
 }
 
 func loadDevelopmentEnvFiles() {
@@ -527,6 +562,22 @@ func (cfg Config) Validate() error {
 	}
 	if digest := strings.TrimSpace(cfg.EvolutionGo.ImageDigest); digest != "" && !validSHA256ImageDigest(digest) {
 		validationErrors = append(validationErrors, errors.New("EVOLUTION_GO_IMAGE_DIGEST must use the immutable sha256:<64 lowercase hex> format"))
+	}
+	if cfg.EvolutionGo.CanaryAPIURL != "" {
+		parsed, err := url.Parse(cfg.EvolutionGo.CanaryAPIURL)
+		if err != nil || parsed == nil || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" ||
+			parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") ||
+			(parsed.Scheme != "https" && !(cfg.Environment != "production" && parsed.Scheme == "http")) {
+			validationErrors = append(validationErrors, errors.New("EVOLUTION_GO_CANARY_API_URL must be a clean HTTPS origin in production"))
+		}
+	}
+	if digest := strings.TrimSpace(cfg.EvolutionGo.CanaryImageDigest); digest != "" && !validSHA256ImageDigest(digest) {
+		validationErrors = append(validationErrors, errors.New("EVOLUTION_GO_CANARY_IMAGE_DIGEST must use the immutable sha256:<64 lowercase hex> format"))
+	}
+	if sessionIDAllowlistIsGlobal(cfg.EvolutionGo.CanarySessionIDs) {
+		validationErrors = append(validationErrors, errors.New("EVOLUTION_GO_CANARY_SESSION_IDS must contain exact UUIDs, not *"))
+	} else if err := validateSessionIDAllowlist("EVOLUTION_GO_CANARY_SESSION_IDS", cfg.EvolutionGo.CanarySessionIDs); err != nil {
+		validationErrors = append(validationErrors, err)
 	}
 	if cfg.EvolutionGo.WebhookURL != "" {
 		if err := validateEvolutionWebhookURL("EVOLUTION_GO_WEBHOOK_URL", cfg.EvolutionGo.WebhookURL, cfg.Environment == "production"); err != nil {

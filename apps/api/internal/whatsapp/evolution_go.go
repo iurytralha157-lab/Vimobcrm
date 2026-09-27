@@ -81,14 +81,19 @@ func (client functionsClient) invokeEvolutionDirectWithResponseLimit(
 	payload map[string]any,
 	maxResponseBytes int64,
 ) (map[string]any, error) {
-	if client.evolutionGoAPIURL == "" || client.evolutionGoAPIKey == "" {
-		return nil, fmt.Errorf("%w: Evolution Go API configuration missing", ErrProviderFailed)
-	}
-
 	session, err := client.resolveEvolutionSession(ctx, payload)
 	if err != nil {
 		return nil, err
 	}
+	client, err = client.forSession(session.ID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrProviderFailed, err)
+	}
+	if client.evolutionGoAPIURL == "" || client.evolutionGoAPIKey == "" {
+		return nil, fmt.Errorf("%w: Evolution Go API configuration missing", ErrProviderFailed)
+	}
+	// This receiver is a value copy. Every provider request, including QR
+	// recovery and global-key lifecycle calls, now uses the selected route.
 
 	body := mapFromAny(payload["body"])
 	instanceKey := client.evolutionInstanceKey(session, payload, body)

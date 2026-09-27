@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/evolutionroute"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/supabasehttp"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
@@ -22,6 +23,7 @@ type functionsClient struct {
 	evolutionGoAPIKey          string
 	evolutionCallMediaSecret   string
 	evolutionGoImageDigest     string
+	providerRoutes             evolutionroute.Config
 	evolutionWebhookURL        string
 	evolutionBackendWebhookURL string
 	webhookProcessorMode       string
@@ -33,12 +35,27 @@ type functionsClient struct {
 
 func newFunctionsClient(config StorageConfig, db *dbpkg.Postgres) functionsClient {
 	return functionsClient{
-		projectURL:                 strings.TrimRight(strings.TrimSpace(config.ProjectURL), "/"),
-		apiKey:                     strings.TrimSpace(config.APIKey),
-		evolutionGoAPIURL:          strings.TrimRight(strings.TrimSpace(config.EvolutionGo.APIURL), "/"),
-		evolutionGoAPIKey:          strings.TrimSpace(config.EvolutionGo.APIKey),
-		evolutionCallMediaSecret:   strings.TrimSpace(config.EvolutionGo.CallMediaHMACSecret),
-		evolutionGoImageDigest:     strings.ToLower(strings.TrimSpace(config.EvolutionGo.ImageDigest)),
+		projectURL:               strings.TrimRight(strings.TrimSpace(config.ProjectURL), "/"),
+		apiKey:                   strings.TrimSpace(config.APIKey),
+		evolutionGoAPIURL:        strings.TrimRight(strings.TrimSpace(config.EvolutionGo.APIURL), "/"),
+		evolutionGoAPIKey:        strings.TrimSpace(config.EvolutionGo.APIKey),
+		evolutionCallMediaSecret: strings.TrimSpace(config.EvolutionGo.CallMediaHMACSecret),
+		evolutionGoImageDigest:   strings.ToLower(strings.TrimSpace(config.EvolutionGo.ImageDigest)),
+		providerRoutes: evolutionroute.Config{
+			Production: evolutionroute.Destination{
+				APIURL:              strings.TrimRight(strings.TrimSpace(config.EvolutionGo.APIURL), "/"),
+				APIKey:              strings.TrimSpace(config.EvolutionGo.APIKey),
+				CallMediaHMACSecret: strings.TrimSpace(config.EvolutionGo.CallMediaHMACSecret),
+				ImageDigest:         strings.ToLower(strings.TrimSpace(config.EvolutionGo.ImageDigest)),
+			},
+			Canary: evolutionroute.Destination{
+				APIURL:              strings.TrimRight(strings.TrimSpace(config.EvolutionGo.CanaryAPIURL), "/"),
+				APIKey:              strings.TrimSpace(config.EvolutionGo.CanaryAPIKey),
+				CallMediaHMACSecret: strings.TrimSpace(config.EvolutionGo.CanaryCallMediaHMACSecret),
+				ImageDigest:         strings.ToLower(strings.TrimSpace(config.EvolutionGo.CanaryImageDigest)),
+			},
+			CanarySessionIDs: append([]string(nil), config.EvolutionGo.CanarySessionIDs...),
+		},
 		evolutionWebhookURL:        strings.TrimRight(strings.TrimSpace(config.EvolutionGo.WebhookURL), "/"),
 		evolutionBackendWebhookURL: strings.TrimRight(strings.TrimSpace(config.EvolutionGo.BackendWebhookURL), "/"),
 		webhookProcessorMode:       strings.TrimSpace(config.EvolutionGo.WebhookProcessorMode),
@@ -47,6 +64,43 @@ func newFunctionsClient(config StorageConfig, db *dbpkg.Postgres) functionsClien
 		httpClient:                 newEvolutionHTTPClient(),
 		runtimeStats:               &whatsappRuntimeCounters{},
 	}
+}
+
+func (client functionsClient) providerForSession(sessionID string) (evolutionroute.Destination, error) {
+	routes := client.providerRoutes
+	if routes.Production.APIURL == "" && routes.Production.APIKey == "" {
+		// Older unit callers instantiate functionsClient directly.
+		routes.Production = evolutionroute.Destination{
+			APIURL:              client.evolutionGoAPIURL,
+			APIKey:              client.evolutionGoAPIKey,
+			CallMediaHMACSecret: client.evolutionCallMediaSecret,
+			ImageDigest:         client.evolutionGoImageDigest,
+		}
+	}
+	return routes.ForSession(sessionID)
+}
+
+func (client functionsClient) forSession(sessionID string) (functionsClient, error) {
+	destination, err := client.providerForSession(sessionID)
+	if err != nil {
+		return functionsClient{}, err
+	}
+	if client.providerRoutes.IsCanarySession(sessionID) {
+		base := client.httpClient
+		if base == nil {
+			base = http.DefaultClient
+		}
+		redirectSafeClient := *base
+		redirectSafeClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+		client.httpClient = &redirectSafeClient
+	}
+	client.evolutionGoAPIURL = destination.APIURL
+	client.evolutionGoAPIKey = destination.APIKey
+	client.evolutionCallMediaSecret = destination.CallMediaHMACSecret
+	client.evolutionGoImageDigest = destination.ImageDigest
+	return client, nil
 }
 
 func canonicalWhatsAppSessionScope(values []string) []string {
@@ -200,10 +254,6 @@ func (client functionsClient) invoke(ctx context.Context, functionName string, b
 }
 
 func (client functionsClient) invokeEvolution(ctx context.Context, action string, payload map[string]any) (map[string]any, error) {
-	if client.evolutionGoAPIURL == "" || client.evolutionGoAPIKey == "" {
-		return nil, fmt.Errorf("%w: Evolution Go direta nao configurada", ErrProviderFailed)
-	}
-
 	// Provider operations are backend-owned. Never fall back to the legacy
 	// Edge proxy: doing so would reintroduce a second authorization and history
 	// path whenever the direct provider configuration is missing.

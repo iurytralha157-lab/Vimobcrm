@@ -843,8 +843,8 @@ func (repo Repository) processQueuedWhatsAppMediaJob(ctx context.Context, job qu
 			break
 		}
 		recovered, err = downloadFromProvider()
-	case repo.whatsappMediaURLIsDemonstrablyPlaintext(message.MediaURL):
-		recovered, err = repo.downloadWhatsAppMediaURL(ctx, message.MediaURL)
+	case repo.whatsappMediaURLIsDemonstrablyPlaintextForSession(job.SessionID, message.MediaURL):
+		recovered, err = repo.downloadWhatsAppMediaURLForSession(ctx, job.SessionID, message.MediaURL)
 		if err != nil && providerMessageAvailable {
 			recovered, err = downloadFromProvider()
 		}
@@ -1120,11 +1120,19 @@ func whatsappMediaURLLooksEncrypted(rawURL string) bool {
 }
 
 func (repo Repository) whatsappMediaURLIsDemonstrablyPlaintext(rawURL string) bool {
+	return repo.whatsappMediaURLIsDemonstrablyPlaintextForSession("", rawURL)
+}
+
+func (repo Repository) whatsappMediaURLIsDemonstrablyPlaintextForSession(sessionID string, rawURL string) bool {
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil || !validWhatsAppMediaOriginURL(parsed) || whatsappMediaURLLooksEncrypted(rawURL) {
 		return false
 	}
-	for _, configuredURL := range []string{repo.functions.evolutionGoAPIURL, repo.storage.projectURL} {
+	destination, routeErr := repo.functions.providerForSession(sessionID)
+	if routeErr != nil {
+		return false
+	}
+	for _, configuredURL := range []string{destination.APIURL, repo.storage.projectURL} {
 		configured, parseErr := url.Parse(strings.TrimSpace(configuredURL))
 		if parseErr == nil && sameWhatsAppMediaOrigin(parsed, configured) {
 			return true

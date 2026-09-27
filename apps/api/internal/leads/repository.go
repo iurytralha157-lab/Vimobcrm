@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/authorization"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/distribution"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/evolutionroute"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/leadscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
@@ -35,6 +36,7 @@ type Repository struct {
 	storage              storageClient
 	evolutionGoAPIURL    string
 	evolutionGoAPIKey    string
+	providerRoutes       evolutionroute.Config
 	notificationEmail    notificationEmailClient
 	notificationPush     *notificationPushClient
 	notificationStats    *notificationDispatchCounters
@@ -127,10 +129,36 @@ func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder
 		repository.storage = newStorageClient(storageConfigs[0])
 		repository.evolutionGoAPIURL = strings.TrimRight(strings.TrimSpace(storageConfigs[0].EvolutionGo.APIURL), "/")
 		repository.evolutionGoAPIKey = strings.TrimSpace(storageConfigs[0].EvolutionGo.APIKey)
+		repository.providerRoutes = evolutionroute.Config{
+			Production: evolutionroute.Destination{
+				APIURL:              repository.evolutionGoAPIURL,
+				APIKey:              repository.evolutionGoAPIKey,
+				CallMediaHMACSecret: strings.TrimSpace(storageConfigs[0].EvolutionGo.CallMediaHMACSecret),
+				ImageDigest:         strings.ToLower(strings.TrimSpace(storageConfigs[0].EvolutionGo.ImageDigest)),
+			},
+			Canary: evolutionroute.Destination{
+				APIURL:              strings.TrimRight(strings.TrimSpace(storageConfigs[0].EvolutionGo.CanaryAPIURL), "/"),
+				APIKey:              strings.TrimSpace(storageConfigs[0].EvolutionGo.CanaryAPIKey),
+				CallMediaHMACSecret: strings.TrimSpace(storageConfigs[0].EvolutionGo.CanaryCallMediaHMACSecret),
+				ImageDigest:         strings.ToLower(strings.TrimSpace(storageConfigs[0].EvolutionGo.CanaryImageDigest)),
+			},
+			CanarySessionIDs: append([]string(nil), storageConfigs[0].EvolutionGo.CanarySessionIDs...),
+		}
 		repository.notificationEmail = newNotificationEmailClient(storageConfigs[0].Email)
 		repository.notificationPush = newNotificationPushClient(storageConfigs[0].Push)
 	}
 	return repository
+}
+
+func (repo Repository) providerForSession(sessionID string) (evolutionroute.Destination, error) {
+	routes := repo.providerRoutes
+	if routes.Production.APIURL == "" && routes.Production.APIKey == "" {
+		routes.Production = evolutionroute.Destination{
+			APIURL: repo.evolutionGoAPIURL,
+			APIKey: repo.evolutionGoAPIKey,
+		}
+	}
+	return routes.ForSession(sessionID)
 }
 
 func (repo Repository) List(ctx context.Context, tenantContext tenant.Context, filter ListFilter) (ListResponse, error) {

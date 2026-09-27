@@ -29,8 +29,15 @@ type StorageConfig struct {
 }
 
 type EvolutionGoConfig struct {
-	APIURL string
-	APIKey string
+	APIURL                    string
+	APIKey                    string
+	CallMediaHMACSecret       string
+	ImageDigest               string
+	CanaryAPIURL              string
+	CanaryAPIKey              string
+	CanaryCallMediaHMACSecret string
+	CanaryImageDigest         string
+	CanarySessionIDs          []string
 }
 
 type EmailConfig struct {

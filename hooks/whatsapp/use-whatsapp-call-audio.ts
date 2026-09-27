@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { whatsappCallsAPI } from "@/lib/api/whatsapp-calls";
+import { assertWhatsAppCallMediaDestination } from "@/lib/whatsapp-call-media-destination";
 
 type AudioBridge = {
   callId: string;
@@ -18,19 +19,6 @@ type PendingBridge = {
   socket?: WebSocket;
   cancelOpen?: () => void;
 };
-
-function assertMediaDestination(url: string) {
-  const destination = new URL(url);
-  const configuredHost = process.env.NEXT_PUBLIC_EVOLUTION_GO_CALL_MEDIA_HOST?.trim().toLowerCase();
-  const allowedHost = configuredHost || "evogo.vettercompany.com.br";
-  if (destination.protocol !== "wss:" || destination.hostname.toLowerCase() !== allowedHost
-    || (destination.port && destination.port !== "443") || destination.username || destination.password
-    || !destination.pathname.endsWith("/call/media") || destination.hash
-    || [...destination.searchParams.keys()].join(",") !== "token"
-    || !destination.searchParams.get("token")) {
-    throw new Error("Destino de áudio não autorizado");
-  }
-}
 
 function encodePCM(samples: Float32Array): ArrayBuffer {
   const result = new ArrayBuffer(samples.length * 2);
@@ -130,7 +118,11 @@ export function useWhatsAppCallAudio() {
 
       const ticket = await whatsappCallsAPI.mediaTicket(callId, organizationId);
       assertCurrent();
-      assertMediaDestination(ticket.url);
+      assertWhatsAppCallMediaDestination(
+        ticket.url,
+        process.env.NEXT_PUBLIC_EVOLUTION_GO_CALL_MEDIA_HOST,
+        process.env.NEXT_PUBLIC_EVOLUTION_GO_CALL_MEDIA_HOSTS,
+      );
       socket = new WebSocket(ticket.url);
       pendingRef.current.socket = socket;
       socket.binaryType = "arraybuffer";

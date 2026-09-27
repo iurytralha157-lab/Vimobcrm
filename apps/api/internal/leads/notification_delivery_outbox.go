@@ -700,7 +700,12 @@ func (repo Repository) prepareNormalizedWhatsAppDelivery(
 			provider = "evolution_go_global_instance"
 		}
 	}
-	if strings.TrimSpace(session.InstanceKey) == "" || firstNotificationText(session.Token, repo.evolutionGoAPIKey) == "" {
+	destination, routeErr := repo.providerForSession(session.ID)
+	if routeErr != nil {
+		return normalizedNotificationBlockedPreflight(provider, "whatsapp_configuration_missing", "notification_whatsapp_canary_route_unavailable")
+	}
+	if strings.TrimSpace(session.InstanceKey) == "" || strings.TrimSpace(destination.APIURL) == "" ||
+		firstNotificationText(session.Token, destination.APIKey) == "" {
 		return normalizedNotificationBlockedPreflight(provider, "whatsapp_configuration_missing", "notification_whatsapp_credentials_missing")
 	}
 
