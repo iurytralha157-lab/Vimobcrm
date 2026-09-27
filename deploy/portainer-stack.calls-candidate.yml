@@ -21,7 +21,9 @@ services:
         - traefik.http.routers.vimob-calls-candidate-web.entrypoints=${TRAEFIK_HTTPS_ENTRYPOINT:-websecure}
         - traefik.http.routers.vimob-calls-candidate-web.tls=true
         - traefik.http.routers.vimob-calls-candidate-web.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencryptresolver}
+        - traefik.http.routers.vimob-calls-candidate-web.middlewares=vimob-calls-candidate-web-ipallow
         - traefik.http.routers.vimob-calls-candidate-web.service=vimob-calls-candidate-web
+        - traefik.http.middlewares.vimob-calls-candidate-web-ipallow.ipallowlist.sourcerange=${VIMOB_CANDIDATE_ALLOWED_CIDRS:?VIMOB_CANDIDATE_ALLOWED_CIDRS is required}
         - traefik.http.services.vimob-calls-candidate-web.loadbalancer.server.port=3000
     environment:
       NODE_ENV: production
@@ -66,7 +68,9 @@ services:
         - traefik.http.routers.vimob-calls-candidate-api.entrypoints=${TRAEFIK_HTTPS_ENTRYPOINT:-websecure}
         - traefik.http.routers.vimob-calls-candidate-api.tls=true
         - traefik.http.routers.vimob-calls-candidate-api.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencryptresolver}
+        - traefik.http.routers.vimob-calls-candidate-api.middlewares=vimob-calls-candidate-api-ipallow
         - traefik.http.routers.vimob-calls-candidate-api.service=vimob-calls-candidate-api
+        - traefik.http.middlewares.vimob-calls-candidate-api-ipallow.ipallowlist.sourcerange=${VIMOB_CANDIDATE_ALLOWED_CIDRS:?VIMOB_CANDIDATE_ALLOWED_CIDRS is required}
         - traefik.http.services.vimob-calls-candidate-api.loadbalancer.server.port=8081
         - traefik.http.services.vimob-calls-candidate-api.loadbalancer.healthcheck.path=/readyz
         - traefik.http.services.vimob-calls-candidate-api.loadbalancer.healthcheck.interval=10s
