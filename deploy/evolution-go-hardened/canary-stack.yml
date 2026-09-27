@@ -1,7 +1,5 @@
 # Deploy as its own Portainer Swarm stack, never as an update to the production stack.
 # Required Portainer variables and external secrets are listed in CANARY.md.
-version: "3.8"
-
 services:
   postgres:
     image: ${EVOGO_CANARY_POSTGRES_IMAGE:?EVOGO_CANARY_POSTGRES_IMAGE_required}
