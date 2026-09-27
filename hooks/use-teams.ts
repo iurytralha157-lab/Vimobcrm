@@ -29,6 +29,8 @@ const TEAM_SCOPE_DEPENDENT_QUERY_KEYS = [
   "dashboard-extra-counts",
   "dashboard-lead-distribution",
   "dashboard-first-contact",
+  "dashboard-first-contact-leads",
+  "dashboard-visits",
   "dashboard-recent-activities",
   "recent-activities",
   "top-brokers",

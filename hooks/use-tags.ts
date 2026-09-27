@@ -23,6 +23,8 @@ export function useTags(options?: { enabled?: boolean }) {
     queryKey: ['tags', organizationId],
     enabled: Boolean(organizationId) && (options?.enabled ?? true),
     queryFn: ({ signal }) => tagsAPI.list(organizationId, { signal }),
+    staleTime: 1000 * 60,
+    gcTime: 1000 * 60 * 5,
     retry: shouldRetryPipelineQuery,
   });
 }

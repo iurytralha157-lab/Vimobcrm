@@ -34,8 +34,13 @@ func TestLeaderSeesLedBrokerAcrossTeamAssignments(t *testing.T) {
 		LedUserIDs:   []string{"user-1"},
 		IsTeamLeader: true,
 	}
-	if !CanOperateLead(context, LeadResource{AssignedUserID: "outside", TeamID: "team-1"}) {
-		t.Fatal("leader should operate an explicit team lead")
+	if CanViewLead(context, LeadResource{AssignedUserID: "outside", TeamID: "team-1"}) ||
+		CanOperateLead(context, LeadResource{AssignedUserID: "outside", TeamID: "team-1"}) {
+		t.Fatal("historical queue team must not grant access after assignment outside the team")
+	}
+	if !CanViewLead(context, LeadResource{TeamID: "team-1"}) ||
+		!CanOperateLead(context, LeadResource{TeamID: "team-1"}) {
+		t.Fatal("leader should keep access to an unassigned lead in the led queue")
 	}
 	if !CanViewLead(context, LeadResource{AssignedUserID: "user-1", TeamID: "team-2"}) {
 		t.Fatal("leader should see all leads assigned to a broker in a led team")
@@ -84,7 +89,8 @@ func TestLeadAuthorizationMatrix(t *testing.T) {
 		{"standard operates own lead", tenant.Context{UserID: "user-1", Permissions: []string{permissions.LeadViewOwn, permissions.LeadOperate}}, LeadResource{AssignedUserID: "user-1"}, true, true, false},
 		{"standard operates own lead owned by another team", tenant.Context{UserID: "user-1", Permissions: []string{permissions.LeadViewOwn, permissions.LeadOperate}}, LeadResource{AssignedUserID: "user-1", TeamID: "team-2"}, true, true, false},
 		{"standard cannot see another user lead", tenant.Context{UserID: "user-1", Permissions: []string{permissions.LeadViewOwn, permissions.LeadOperate}}, LeadResource{AssignedUserID: "user-2"}, false, false, false},
-		{"leader operates explicit led team lead", tenant.Context{UserID: "leader", LedTeamIDs: []string{"team-1"}, Permissions: []string{permissions.LeadViewTeam, permissions.LeadOperate}}, LeadResource{AssignedUserID: "user-2", TeamID: "team-1"}, true, true, false},
+		{"leader cannot use historical team for outsider's lead", tenant.Context{UserID: "leader", LedTeamIDs: []string{"team-1"}, Permissions: []string{permissions.LeadViewTeam, permissions.LeadOperate}}, LeadResource{AssignedUserID: "user-2", TeamID: "team-1"}, false, false, false},
+		{"leader operates unassigned queue lead", tenant.Context{UserID: "leader", LedTeamIDs: []string{"team-1"}, Permissions: []string{permissions.LeadViewTeam, permissions.LeadOperate}}, LeadResource{TeamID: "team-1"}, true, true, false},
 		{"leader reads led broker's foreign team lead without operating", tenant.Context{UserID: "leader", LedTeamIDs: []string{"team-1"}, LedUserIDs: []string{"user-2"}, Permissions: []string{permissions.LeadViewTeam, permissions.LeadOperate}}, LeadResource{AssignedUserID: "user-2", TeamID: "team-2"}, true, false, false},
 		{"view all remains read only without operate", tenant.Context{UserID: "auditor", Permissions: []string{permissions.LeadViewAll}}, LeadResource{AssignedUserID: "user-2"}, true, false, false},
 		{"delete requires its own permission", tenant.Context{UserID: "user-1", Permissions: []string{permissions.LeadViewOwn, permissions.LeadOperate, permissions.LeadDelete}}, LeadResource{AssignedUserID: "user-1"}, true, true, true},

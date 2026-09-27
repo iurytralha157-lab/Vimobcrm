@@ -2019,6 +2019,8 @@ test("dashboard valida média de contato e redistribuições por corretor e orig
         name: "Corretor",
         avatarUrl: null,
         leadCount: 3,
+        receivedLeads: 3,
+        handledLeads: 3,
         contactedLeads: 2,
         averageResponseSeconds: 350,
         redistributedAway: 2,

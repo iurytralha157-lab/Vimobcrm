@@ -79,6 +79,22 @@ test('separa cache irrestrito de um escopo explicitamente vazio', () => {
   assert.equal(emptyScope[13], '__none__');
 });
 
+test('separa o cache por visibilidade sem transformar a assinatura em filtro de corretor', () => {
+  const base = { organizationId: 'org-1', pipelineId: 'pipeline-1' };
+  const leader = stageWithLeadsQueryKey({
+    ...base,
+    filters: { visibilityScopeKey: 'leader:team-1' },
+  });
+  const member = stageWithLeadsQueryKey({
+    ...base,
+    filters: { visibilityScopeKey: 'member:user-1' },
+  });
+
+  assert.equal(leader[13], undefined);
+  assert.equal(leader[18], 'leader:team-1');
+  assert.notDeepEqual(leader, member);
+});
+
 test('omite modo sem periodo e preserva compatibilidade operacional quando ha datas', () => {
   const base = {
     organizationId: 'org-1',

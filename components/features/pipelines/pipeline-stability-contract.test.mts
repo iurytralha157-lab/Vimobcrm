@@ -180,16 +180,22 @@ test('pipeline traduz sem responsavel para filtro nulo sem enviar sentinel como 
     screenSource,
     /const selectedFilterUserId = filterUser === 'all' \|\| isUnassignedFilter/,
   );
-  assert.match(screenSource, /if \(isUnassignedFilter\) return undefined/);
+  assert.match(screenSource, /const effectivePipelineFilterUser = selectedFilterUserId/);
   assert.match(screenSource, /unassigned: isUnassignedFilter/);
-  assert.match(screenSource, /teamId: isUnassignedFilter \? sharedFilters\.teamId/);
+  assert.match(screenSource, /teamId: sharedFilters\.teamId \|\| undefined/);
 });
 
-test('lider filtra os leads dos corretores da equipe sem limitar a equipe de origem', () => {
-  assert.match(screenSource, /const effectivePipelineFilterUserIds = useMemo\(/);
-  assert.match(screenSource, /return selectedTeamUserIds\.filter\(\(userId\) => visibleUserIds\.has\(userId\)\)/);
-  assert.match(screenSource, /filterUserIds: effectivePipelineFilterUserIds/);
-  assert.match(screenSource, /teamId: isUnassignedFilter \? sharedFilters\.teamId \|\| undefined : undefined/);
+test('lider recebe a coorte do backend incluindo sem responsavel da equipe selecionada', () => {
+  assert.doesNotMatch(screenSource, /filterUserIds: effectivePipelineFilterUserIds/);
+  assert.doesNotMatch(screenSource, /filterUserIds:/);
+  assert.match(screenSource, /teamId: sharedFilters\.teamId \|\| undefined/);
+  assert.match(screenSource, /if \(hasUserScope && !scopedVisibleUserIds\.includes\(selectedFilterUserId\)\) return false/);
+  assert.match(screenSource, /if \(Array\.isArray\(selectedTeamUserIds\) && !selectedTeamUserIds\.includes\(selectedFilterUserId\)\) return false/);
+  assert.match(screenSource, /selectedFilterUserAllowed \? selectedFilterUserId : NO_VISIBLE_USER_ID/);
+  assert.match(screenSource, /visibleUserIds: \[\.\.\.\(scopedVisibleUserIds \?\? \[\]\)\]\.sort\(\)/);
+  assert.match(screenSource, /ledTeamIds: \[\.\.\.\(tenantContext\?\.ledTeamIds \?\? \[\]\)\]\.sort\(\)/);
+  assert.match(screenSource, /visibilityScopeKey,/);
+  assert.match(stagesHookSource, /\[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18\]/);
   assert.match(screenSource, /loadMoreLeads\.mutate\([\s\S]*?filters: pipelineBoardFilters/);
 });
 
