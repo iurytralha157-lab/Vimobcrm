@@ -4,10 +4,38 @@ on:
   push:
     branches:
       - main
+      - codex/whatsapp-calls-contacts
   pull_request:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      call_media_host:
+        description: "Host público de mídia de chamadas para esta imagem Web"
+        required: false
+        type: string
+      build_evo_candidate:
+        description: "Publicar somente imagem candidata da Evolution Go"
+        required: false
+        default: false
+        type: boolean
+      build_crm_candidate:
+        description: "Publicar imagens candidatas da API e Web para homologação, após release-gates"
+        required: false
+        default: false
+        type: boolean
+      candidate_api_url:
+        description: "URL HTTPS da API de homologação; obrigatória para candidato CRM"
+        required: false
+        type: string
+      candidate_site_url:
+        description: "URL HTTPS do site CRM de homologação; obrigatória para candidato CRM"
+        required: false
+        type: string
+      candidate_media_host:
+        description: "Hostname de mídia Evolution Go do canário, sem esquema/porta/caminho; obrigatório para candidato CRM"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -16,10 +44,12 @@ env:
   REGISTRY: ghcr.io
   WEB_IMAGE: ${{ github.repository_owner }}/vimob-crm-web
   API_IMAGE: ${{ github.repository_owner }}/vimob-crm-api
+  EVO_IMAGE: ${{ github.repository_owner }}/vimob-evolution-go
 
 jobs:
   release-gates:
     name: Static release gates
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && (!inputs.build_evo_candidate || inputs.build_crm_candidate))
     runs-on: ubuntu-latest
 
     steps:
@@ -98,7 +128,7 @@ jobs:
   build-and-push:
     name: Build and push images
     needs: release-gates
-    if: github.event_name != 'pull_request'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && !inputs.build_evo_candidate && !inputs.build_crm_candidate)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -108,6 +138,7 @@ jobs:
       WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY || secrets.VIMOB_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
       WEB_NEXT_PUBLIC_VIMOB_API_URL: ${{ vars.VIMOB_NEXT_PUBLIC_API_URL || secrets.VIMOB_NEXT_PUBLIC_API_URL || 'https://api.vimobcrm.com.br' }}
       WEB_NEXT_PUBLIC_SITE_URL: ${{ vars.VIMOB_NEXT_PUBLIC_SITE_URL || secrets.VIMOB_NEXT_PUBLIC_SITE_URL || 'https://app.vimobcrm.com.br' }}
+      WEB_NEXT_PUBLIC_EVOGO_CALL_MEDIA_HOST: ${{ inputs.call_media_host || vars.VIMOB_NEXT_PUBLIC_EVOGO_CALL_MEDIA_HOST || 'evogo.vettercompany.com.br' }}
 
     steps:
       - name: Checkout
@@ -181,4 +212,120 @@ jobs:
             NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ env.WEB_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
             NEXT_PUBLIC_VIMOB_API_URL=${{ env.WEB_NEXT_PUBLIC_VIMOB_API_URL }}
             NEXT_PUBLIC_SITE_URL=${{ env.WEB_NEXT_PUBLIC_SITE_URL }}
+            NEXT_PUBLIC_EVOLUTION_GO_CALL_MEDIA_HOST=${{ env.WEB_NEXT_PUBLIC_EVOGO_CALL_MEDIA_HOST }}
           tags: ${{ steps.web-meta.outputs.tags }}
+
+  build-evo-candidate:
+    name: Build Evolution Go candidate
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/codex/whatsapp-calls-contacts') || (github.event_name == 'workflow_dispatch' && inputs.build_evo_candidate && !inputs.build_crm_candidate)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push immutable candidate
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/evolution-go-hardened/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.EVO_IMAGE }}:candidate-${{ github.sha }}
+
+  build-crm-candidate:
+    name: Build CRM homologation candidate
+    needs: release-gates
+    if: github.event_name == 'workflow_dispatch' && inputs.build_crm_candidate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      HOMOLOG_SUPABASE_URL: ${{ vars.VIMOB_HOMOLOG_NEXT_PUBLIC_SUPABASE_URL || secrets.VIMOB_HOMOLOG_NEXT_PUBLIC_SUPABASE_URL }}
+      HOMOLOG_SUPABASE_ANON_KEY: ${{ vars.VIMOB_HOMOLOG_NEXT_PUBLIC_SUPABASE_ANON_KEY || secrets.VIMOB_HOMOLOG_NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      CANDIDATE_API_URL: ${{ inputs.candidate_api_url }}
+      CANDIDATE_SITE_URL: ${{ inputs.candidate_site_url }}
+      CANDIDATE_MEDIA_HOST: ${{ inputs.candidate_media_host }}
+
+    steps:
+      - name: Validate isolated homologation inputs
+        shell: bash
+        run: |
+          if [ "${{ inputs.build_evo_candidate }}" = "true" ]; then
+            echo "::error::Choose only one candidate build mode per dispatch."
+            exit 1
+          fi
+          if [ -z "${HOMOLOG_SUPABASE_URL//[[:space:]]/}" ] || [ -z "${HOMOLOG_SUPABASE_ANON_KEY//[[:space:]]/}" ]; then
+            echo "::error::Configure VIMOB_HOMOLOG_NEXT_PUBLIC_SUPABASE_URL and VIMOB_HOMOLOG_NEXT_PUBLIC_SUPABASE_ANON_KEY as homologation variables/secrets."
+            exit 1
+          fi
+          if [[ ! "$HOMOLOG_SUPABASE_URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$ ]]; then
+            echo "::error::The homologation Supabase URL must be an HTTPS origin."
+            exit 1
+          fi
+          if [[ ! "$CANDIDATE_API_URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$ ]] || [[ ! "$CANDIDATE_SITE_URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$ ]]; then
+            echo "::error::Candidate API and site URLs must be explicit HTTPS origins."
+            exit 1
+          fi
+          api_origin="${CANDIDATE_API_URL,,}"
+          site_origin="${CANDIDATE_SITE_URL,,}"
+          api_origin="${api_origin%/}"
+          site_origin="${site_origin%/}"
+          if [[ "$api_origin" == "https://api.vimobcrm.com.br" || "$api_origin" == "https://api.vimobcrm.com.br:443" || "$site_origin" == "https://app.vimobcrm.com.br" || "$site_origin" == "https://app.vimobcrm.com.br:443" ]]; then
+            echo "::error::Candidate URLs may not target production API or site."
+            exit 1
+          fi
+          if [[ ! "$CANDIDATE_MEDIA_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || [[ "$CANDIDATE_MEDIA_HOST" != *.* ]] || [[ "${CANDIDATE_MEDIA_HOST,,}" == "evogo.vettercompany.com.br" ]]; then
+            echo "::error::Candidate media host must be a dedicated canary hostname."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push API candidate
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.api
+          push: true
+          build-args: |
+            VIMOB_RELEASE_SHA=${{ github.sha }}
+          tags: ${{ env.REGISTRY }}/${{ env.API_IMAGE }}:candidate-${{ github.sha }}
+
+      - name: Build and push Web candidate
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.web
+          push: true
+          build-args: |
+            VIMOB_RELEASE_SHA=${{ github.sha }}
+            NEXT_PUBLIC_SUPABASE_URL=${{ env.HOMOLOG_SUPABASE_URL }}
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ env.HOMOLOG_SUPABASE_ANON_KEY }}
+            NEXT_PUBLIC_VIMOB_API_URL=${{ env.CANDIDATE_API_URL }}
+            NEXT_PUBLIC_SITE_URL=${{ env.CANDIDATE_SITE_URL }}
+            NEXT_PUBLIC_EVOLUTION_GO_CALL_MEDIA_HOST=${{ env.CANDIDATE_MEDIA_HOST }}
+          tags: ${{ env.REGISTRY }}/${{ env.WEB_IMAGE }}:candidate-${{ github.sha }}

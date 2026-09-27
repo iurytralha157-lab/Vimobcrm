@@ -6200,6 +6200,13 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (event === "callstate" || event === "callrecording") {
+      // Call history and recording manifests need an atomic Go inbox insert.
+      // Direct Edge callbacks must retry through that ingress, never receive
+      // a successful response after silently dropping the call.
+      return json({ ok: false, error: "whatsapp_call_durable_ingress_required" }, 503);
+    }
+
     const qrUpdated = event.includes("qr") || extractQr(payload) ? await handleQr(resolved.session, payload) : false;
     const connectionStatus = (
       event.includes("connection") ||

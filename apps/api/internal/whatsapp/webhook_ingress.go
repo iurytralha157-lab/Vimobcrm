@@ -488,6 +488,30 @@ func (repo Repository) AcceptEvolutionWebhook(ctx context.Context, envelope evol
 			return evolutionWebhookReceipt{}, errors.New("persist Evolution webhook batch parts: derived event key conflict")
 		}
 	}
+	if evolutionCallEventKind(first.EventType) != "" {
+		handled, err := repo.applyEvolutionCallWebhook(ctx, tx, session, first.EventType, first.Payload)
+		if errors.Is(err, errCallStateNotYetReceived) {
+			// Keep an early recording manifest in the durable inbox. The call
+			// retry lane handles it after its matching CallState callback arrives.
+			err = nil
+			handled = false
+		}
+		if err != nil {
+			return evolutionWebhookReceipt{}, fmt.Errorf("persist Evolution call event: %w", err)
+		}
+		if handled {
+			if _, err := tx.Exec(ctx, `
+				update public.whatsapp_webhook_inbox
+				set status = 'processed', processed_at = now(), updated_at = now(),
+				    expires_at = now() + interval '24 hours'
+				where id = $1::uuid
+			`, receipt.ID); err != nil {
+				return evolutionWebhookReceipt{}, err
+			}
+			receipt.Status = "processed"
+			receipt.Inline = true
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return evolutionWebhookReceipt{}, err
 	}

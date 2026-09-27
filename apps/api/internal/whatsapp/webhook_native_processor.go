@@ -360,7 +360,41 @@ func normalizeEvolutionWebhookProcessorMode(value string) string {
 	}
 }
 
+func callWebhookRetrySession(item pendingEvolutionWebhook, session evolutionWebhookSession) (evolutionWebhookSession, error) {
+	if session.ID != item.SessionID || session.OrganizationID != item.OrganizationID ||
+		(strings.TrimSpace(session.InstanceID) == "" && strings.TrimSpace(session.InstanceName) == "") {
+		return evolutionWebhookSession{}, errWebhookSessionMismatch
+	}
+	return session, nil
+}
+
 func (repo Repository) dispatchEvolutionWebhook(ctx context.Context, item pendingEvolutionWebhook) error {
+	// Canonical calls are handled before the Edge/native message cutover. The
+	// normal path projects them inline at durable ingress; this is the retry
+	// path for rows accepted by an older API replica during a rolling deploy.
+	if evolutionCallEventKind(item.EventType) != "" {
+		session, err := repo.evolutionWebhookSession(ctx, item.SessionID)
+		if err != nil {
+			return err
+		}
+		session, err = callWebhookRetrySession(item, session)
+		if err != nil {
+			return err
+		}
+		tx, err := repo.db.Pool().Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx)
+		handled, err := repo.applyEvolutionCallWebhook(ctx, tx, session, item.EventType, item.Payload)
+		if err != nil {
+			return err
+		}
+		if !handled {
+			return errors.New("canonical Evolution call event was not handled")
+		}
+		return tx.Commit(ctx)
+	}
 	// History-sync control envelopes are not CRM messages. A provider version
 	// can still emit one during reconnect even when the session subscription is
 	// live-only; acknowledge it here so it cannot consume retries or reach Edge.

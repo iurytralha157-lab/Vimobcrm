@@ -423,6 +423,11 @@ func evolutionActionMayCommitMutation(action string) bool {
 		"chat.historySync",
 		"label.addChat",
 		"label.removeChat",
+		"call.start",
+		"call.accept",
+		"call.reject",
+		"call.end",
+		"user.contact.save",
 		"group.setName",
 		"group.setDescription",
 		"group.setPhoto",
@@ -825,6 +830,26 @@ func evolutionEndpointFor(action string, body map[string]any, instanceKey string
 		return evolutionEndpoint{Method: http.MethodPost, Path: "/user/check", Body: body}, nil
 	case "user.contacts":
 		return evolutionEndpoint{Method: http.MethodGet, Path: "/user/contacts"}, nil
+	case "user.contact.save":
+		return evolutionEndpoint{Method: http.MethodPost, Path: "/user/contact", Body: withoutEmptyMap(map[string]any{
+			"number": body["number"], "fullName": body["fullName"],
+		})}, nil
+	case "call.start":
+		return evolutionEndpoint{Method: http.MethodPost, Path: "/call/start", Body: map[string]any{
+			"peerJid": body["peerJid"],
+		}}, nil
+	case "call.accept":
+		return evolutionEndpoint{Method: http.MethodPost, Path: "/call/accept", Body: map[string]any{
+			"callId": body["callId"],
+		}}, nil
+	case "call.reject":
+		return evolutionEndpoint{Method: http.MethodPost, Path: "/call/reject", Body: map[string]any{
+			"callId": body["callId"],
+		}}, nil
+	case "call.end":
+		return evolutionEndpoint{Method: http.MethodPost, Path: "/call/end", Body: map[string]any{
+			"callId": body["callId"],
+		}}, nil
 	default:
 		return evolutionEndpoint{}, fmt.Errorf("%w: unsupported Evolution Go action: %s", ErrProviderFailed, action)
 	}

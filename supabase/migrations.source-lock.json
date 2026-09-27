@@ -606,6 +606,10 @@
     {
       "file": "20260925161307_add_public_site_footer_logo.sql",
       "sha256": "4b75557205af16b7ddb8c1bf36c78d576a004c52fd8d72d0729b7d52d367d35e"
+    },
+    {
+      "file": "20260927115810_whatsapp_calls_contacts.sql",
+      "sha256": "a9f254a8ef6dd6f5e043a7dc54398a0e87e3c15e2f063db522cc692322ec9579"
     }
   ]
 }

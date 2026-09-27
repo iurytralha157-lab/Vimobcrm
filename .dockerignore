@@ -21,4 +21,6 @@ bin
 Dockerfile*
 docker-compose*.yml
 deploy
+!deploy/evolution-go-hardened/
+!deploy/evolution-go-hardened/**
 docs

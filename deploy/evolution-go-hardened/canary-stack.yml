@@ -1,0 +1,144 @@
+# Deploy as its own Portainer Swarm stack, never as an update to the production stack.
+# Required Portainer variables and external secrets are listed in CANARY.md.
+version: "3.8"
+
+services:
+  postgres:
+    image: ${EVOGO_CANARY_POSTGRES_IMAGE:?EVOGO_CANARY_POSTGRES_IMAGE_required}
+    environment:
+      POSTGRES_USER: evogo_canary
+      POSTGRES_DB: evogo_canary
+      POSTGRES_PASSWORD_FILE: /run/secrets/evogo_canary_postgres_password
+    secrets:
+      - evogo_canary_postgres_password
+    volumes:
+      - canary_postgres_data:/var/lib/postgresql/data
+    networks:
+      - canary_db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evogo_canary -d evogo_canary"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname == ${EVOGO_CANARY_NODE_HOSTNAME:?EVOGO_CANARY_NODE_HOSTNAME_required}
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+      update_config:
+        parallelism: 1
+        order: stop-first
+        failure_action: pause
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+
+  evolution_go_canary:
+    image: ${EVOGO_CANARY_IMAGE:?EVOGO_CANARY_IMAGE_required}
+    # Evolution Go has no *_FILE settings. Read only this stack's Swarm secrets
+    # at runtime instead of placing credentials in Portainer stack variables.
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        db_password="$$(cat /run/secrets/evogo_canary_postgres_password)"
+        case "$$db_password" in
+          ''|*[!A-Za-z0-9]*) echo 'Canary PostgreSQL password must be nonempty ASCII alphanumeric' >&2; exit 1 ;;
+        esac
+        export POSTGRES_AUTH_DB="postgresql://evogo_canary:$$db_password@postgres:5432/evogo_canary?sslmode=disable"
+        export POSTGRES_USERS_DB="$$POSTGRES_AUTH_DB"
+        export GLOBAL_API_KEY="$$(cat /run/secrets/evogo_canary_api_key)"
+        export EVOGO_CALL_MEDIA_HMAC_SECRET="$$(cat /run/secrets/evogo_canary_media_hmac)"
+        test -n "$$GLOBAL_API_KEY" || { echo 'Empty canary API key' >&2; exit 1; }
+        test "$${#EVOGO_CALL_MEDIA_HMAC_SECRET}" -ge 32 || { echo 'Canary media HMAC secret is shorter than 32 characters' >&2; exit 1; }
+        exec /app/server
+    environment:
+      SERVER_PORT: "4000"
+      CLIENT_NAME: vimob-calls-canary
+      OS_NAME: Vimob Calls Canary
+      DATABASE_SAVE_MESSAGES: "true"
+      CONNECT_ON_STARTUP: ${EVOGO_CANARY_CONNECT_ON_STARTUP:-false}
+      WA_DEBUG: "false"
+      LOGTYPE: console
+      AMQP_URL: ""
+      AMQP_GLOBAL_ENABLED: "false"
+      NATS_URL: ""
+      NATS_GLOBAL_ENABLED: "false"
+      WEBHOOK_URL: ""
+      WEBHOOK_FILES: "false"
+      MINIO_ENABLED: "false"
+      EVOGO_CALLS_ENABLED: ${EVOGO_CANARY_CALLS_ENABLED:-false}
+      EVOGO_CALLS_INSTANCE_IDS: ${EVOGO_CANARY_CALLS_INSTANCE_IDS:-}
+      EVOGO_CALL_MEDIA_ORIGINS: ${EVOGO_CANARY_MEDIA_ORIGINS:-}
+      EVOGO_CALL_RECORDING_DIR: /app/canary-recordings
+      EVOGO_CALL_RECORDING_RETENTION_HOURS: ${EVOGO_CANARY_RETENTION_HOURS:-24}
+    secrets:
+      - evogo_canary_postgres_password
+      - evogo_canary_api_key
+      - evogo_canary_media_hmac
+    volumes:
+      - canary_recordings:/app/canary-recordings
+    networks:
+      - canary_db
+      - public
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:4000/license/status | grep -q '\"status\":\"active\"'"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname == ${EVOGO_CANARY_NODE_HOSTNAME:?EVOGO_CANARY_NODE_HOSTNAME_required}
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+      # Prevent two clients using one canary WhatsApp session during an update.
+      update_config:
+        parallelism: 1
+        order: stop-first
+        failure_action: pause
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=public
+        - traefik.http.routers.evogo-calls-canary.rule=Host(`${EVOGO_CANARY_HOST:?EVOGO_CANARY_HOST_required}`)
+        - traefik.http.routers.evogo-calls-canary.entrypoints=websecure
+        - traefik.http.routers.evogo-calls-canary.tls=true
+        - traefik.http.routers.evogo-calls-canary.tls.certresolver=letsencryptresolver
+        - traefik.http.routers.evogo-calls-canary.middlewares=evogo-calls-canary-ipallow
+        - traefik.http.routers.evogo-calls-canary.service=evogo-calls-canary
+        - traefik.http.middlewares.evogo-calls-canary-ipallow.ipallowlist.sourcerange=${EVOGO_CANARY_ALLOWED_CIDRS:?EVOGO_CANARY_ALLOWED_CIDRS_required}
+        - traefik.http.services.evogo-calls-canary.loadbalancer.server.port=4000
+
+secrets:
+  evogo_canary_postgres_password:
+    external: true
+  evogo_canary_api_key:
+    external: true
+  evogo_canary_media_hmac:
+    external: true
+
+volumes:
+  canary_postgres_data:
+    name: evogo_calls_canary_postgres_data
+    driver: local
+  canary_recordings:
+    name: evogo_calls_canary_recordings
+    driver: local
+
+networks:
+  canary_db:
+    driver: overlay
+    internal: true
+  public:
+    external: true
+    name: public

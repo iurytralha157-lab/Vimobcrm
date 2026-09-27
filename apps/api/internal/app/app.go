@@ -327,6 +327,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		EvolutionGo: whatsapp.EvolutionGoConfig{
 			APIURL:                   cfg.EvolutionGo.APIURL,
 			APIKey:                   cfg.EvolutionGo.APIKey,
+			CallMediaHMACSecret:      cfg.EvolutionGo.CallMediaHMACSecret,
 			ImageDigest:              cfg.EvolutionGo.ImageDigest,
 			WebhookURL:               cfg.EvolutionGo.WebhookURL,
 			BackendWebhookURL:        cfg.EvolutionGo.BackendWebhookURL,
@@ -368,6 +369,10 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	})
 	backgroundWorkers.Run(func() {
 		whatsappHandler.StartMediaWorker(ctx, logger)
+	})
+	callRecordingWorkers := newBackgroundWorkerStartup(cfg.BackgroundWorkersEnabled || cfg.CallRecordingOnlyWorkerEnabled)
+	callRecordingWorkers.Run(func() {
+		whatsappHandler.StartCallRecordingWorker(ctx, logger)
 	})
 	backgroundWorkers.Run(func() {
 		whatsappHandler.StartAvatarWorker(ctx, logger)

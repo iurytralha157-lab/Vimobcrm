@@ -21,25 +21,26 @@ import (
 )
 
 type Config struct {
-	Environment              string
-	BackgroundWorkersEnabled bool
-	LogLevel                 slog.Level
-	HTTP                     HTTPConfig
-	Auth                     authpkg.Config
-	Database                 dbpkg.Config
-	Automations              AutomationConfig
-	Developments             DevelopmentConfig
-	Publications             PublicationConfig
-	Portals                  PortalConfig
-	Storage                  StorageConfig
-	Email                    EmailConfig
-	Notifications            NotificationConfig
-	Push                     PushConfig
-	AI                       AIConfig
-	WhatsApp                 WhatsAppConfig
-	EvolutionGo              EvolutionGoConfig
-	Meta                     MetaConfig
-	Asaas                    AsaasConfig
+	Environment                    string
+	BackgroundWorkersEnabled       bool
+	CallRecordingOnlyWorkerEnabled bool
+	LogLevel                       slog.Level
+	HTTP                           HTTPConfig
+	Auth                           authpkg.Config
+	Database                       dbpkg.Config
+	Automations                    AutomationConfig
+	Developments                   DevelopmentConfig
+	Publications                   PublicationConfig
+	Portals                        PortalConfig
+	Storage                        StorageConfig
+	Email                          EmailConfig
+	Notifications                  NotificationConfig
+	Push                           PushConfig
+	AI                             AIConfig
+	WhatsApp                       WhatsAppConfig
+	EvolutionGo                    EvolutionGoConfig
+	Meta                           MetaConfig
+	Asaas                          AsaasConfig
 }
 
 type HTTPConfig struct {
@@ -62,6 +63,7 @@ type StorageConfig struct {
 type EvolutionGoConfig struct {
 	APIURL                   string
 	APIKey                   string
+	CallMediaHMACSecret      string
 	ImageDigest              string
 	WebhookURL               string
 	BackendWebhookURL        string
@@ -196,9 +198,10 @@ func Load() (Config, error) {
 	env := strings.ToLower(strings.TrimSpace(getEnv("API_ENV", "development")))
 
 	cfg := Config{
-		Environment:              env,
-		BackgroundWorkersEnabled: loadBackgroundWorkersEnabled(),
-		LogLevel:                 parseLogLevel(getEnv("API_LOG_LEVEL", "info")),
+		Environment:                    env,
+		BackgroundWorkersEnabled:       loadBackgroundWorkersEnabled(),
+		CallRecordingOnlyWorkerEnabled: parseBool("API_WHATSAPP_CALL_RECORDING_ONLY_WORKER_ENABLED", false),
+		LogLevel:                       parseLogLevel(getEnv("API_LOG_LEVEL", "info")),
 		HTTP: HTTPConfig{
 			Host:              getEnv("API_HOST", "0.0.0.0"),
 			Port:              getEnv("API_PORT", "8081"),
@@ -317,6 +320,7 @@ func Load() (Config, error) {
 		EvolutionGo: EvolutionGoConfig{
 			APIURL:                   strings.TrimRight(getEnv("EVOLUTION_GO_API_URL", ""), "/"),
 			APIKey:                   os.Getenv("EVOLUTION_GO_API_KEY"),
+			CallMediaHMACSecret:      os.Getenv("EVOGO_CALL_MEDIA_HMAC_SECRET"),
 			ImageDigest:              strings.ToLower(strings.TrimSpace(getEnv("EVOLUTION_GO_IMAGE_DIGEST", ""))),
 			WebhookURL:               strings.TrimRight(getEnv("EVOLUTION_GO_WEBHOOK_URL", ""), "/"),
 			BackendWebhookURL:        strings.TrimRight(getEnv("EVOLUTION_GO_BACKEND_WEBHOOK_URL", ""), "/"),

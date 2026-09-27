@@ -3,6 +3,7 @@
 import { ReactNode } from "react";
 import { BackendRealtimeBus } from "@/contexts/BackendRealtimeBus";
 import { FloatingChatProvider } from "@/contexts/FloatingChatContext";
+import { WhatsAppCallProvider } from "@/contexts/WhatsAppCallContext";
 import { LanguageProvider } from "@/contexts/LanguageContext";
 import { SidebarProvider } from "@/contexts/SidebarContext";
 import { FilterProviderWrapper } from "./filter-provider";
@@ -23,9 +24,11 @@ export function ProtectedProvider({ children }: { children: ReactNode }) {
       <UserThemeSync />
       <LanguageProvider>
         <SidebarProvider>
-          <FloatingChatProvider>
-            <FilterProviderWrapper>{children}</FilterProviderWrapper>
-          </FloatingChatProvider>
+          <WhatsAppCallProvider>
+            <FloatingChatProvider>
+              <FilterProviderWrapper>{children}</FilterProviderWrapper>
+            </FloatingChatProvider>
+          </WhatsAppCallProvider>
         </SidebarProvider>
       </LanguageProvider>
     </QueryProvider>

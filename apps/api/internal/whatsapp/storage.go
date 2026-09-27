@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ type StorageConfig struct {
 type EvolutionGoConfig struct {
 	APIURL                   string
 	APIKey                   string
+	CallMediaHMACSecret      string
 	ImageDigest              string
 	WebhookURL               string
 	BackendWebhookURL        string
@@ -111,6 +113,13 @@ func (client storageClient) upload(ctx context.Context, bucket string, objectPat
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
 	if err != nil {
 		return err
+	}
+	if file, ok := body.(*os.File); ok {
+		if info, statErr := file.Stat(); statErr == nil {
+			if offset, seekErr := file.Seek(0, io.SeekCurrent); seekErr == nil {
+				request.ContentLength = info.Size() - offset
+			}
+		}
 	}
 	if strings.TrimSpace(contentType) == "" {
 		contentType = "application/octet-stream"

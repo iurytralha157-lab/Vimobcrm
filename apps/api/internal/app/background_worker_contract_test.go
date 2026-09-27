@@ -28,7 +28,7 @@ func TestAppBackgroundWorkerStartsUseGlobalGate(t *testing.T) {
 			return true
 		}
 		key, ok := selectorKey(call.Fun)
-		if !ok || (key != "backgroundWorkers.Run" && key != "backgroundWorkers.RunWithError") {
+		if !ok || (key != "backgroundWorkers.Run" && key != "backgroundWorkers.RunWithError" && key != "callRecordingWorkers.Run") {
 			return true
 		}
 		for _, argument := range call.Args {
@@ -55,6 +55,7 @@ func TestAppBackgroundWorkerStartsUseGlobalGate(t *testing.T) {
 		"whatsappHandler.StartOutboxWorker":                       1,
 		"whatsappHandler.StartWebhookWorker":                      1,
 		"whatsappHandler.StartMediaWorker":                        1,
+		"whatsappHandler.StartCallRecordingWorker":                1,
 		"whatsappHandler.StartSessionSupervisor":                  1,
 		"metaHandler.StartWebhookWorker":                          1,
 		"metaHandler.StartConversionFeedbackWorker":               1,

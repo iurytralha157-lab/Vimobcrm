@@ -20,6 +20,7 @@ type functionsClient struct {
 	apiKey                     string
 	evolutionGoAPIURL          string
 	evolutionGoAPIKey          string
+	evolutionCallMediaSecret   string
 	evolutionGoImageDigest     string
 	evolutionWebhookURL        string
 	evolutionBackendWebhookURL string
@@ -36,6 +37,7 @@ func newFunctionsClient(config StorageConfig, db *dbpkg.Postgres) functionsClien
 		apiKey:                     strings.TrimSpace(config.APIKey),
 		evolutionGoAPIURL:          strings.TrimRight(strings.TrimSpace(config.EvolutionGo.APIURL), "/"),
 		evolutionGoAPIKey:          strings.TrimSpace(config.EvolutionGo.APIKey),
+		evolutionCallMediaSecret:   strings.TrimSpace(config.EvolutionGo.CallMediaHMACSecret),
 		evolutionGoImageDigest:     strings.ToLower(strings.TrimSpace(config.EvolutionGo.ImageDigest)),
 		evolutionWebhookURL:        strings.TrimRight(strings.TrimSpace(config.EvolutionGo.WebhookURL), "/"),
 		evolutionBackendWebhookURL: strings.TrimRight(strings.TrimSpace(config.EvolutionGo.BackendWebhookURL), "/"),
