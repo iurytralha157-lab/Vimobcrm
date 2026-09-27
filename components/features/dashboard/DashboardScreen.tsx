@@ -42,6 +42,7 @@ import { DealsEvolutionChart } from "@/components/features/dashboard/DealsEvolut
 import { LeadSourcesChart } from "@/components/features/dashboard/LeadSourcesChart";
 import { LeadDistributionSection } from "@/components/features/dashboard/LeadDistributionSection";
 import { FirstContactDialog } from "@/components/features/dashboard/FirstContactDialog";
+import { DashboardVisitsDialog } from "@/components/features/dashboard/DashboardVisitsDialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -54,7 +55,6 @@ import {
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -72,7 +72,7 @@ import {
   useDashboardQueryScope,
 } from "@/hooks/use-dashboard-stats";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useTeams } from "@/hooks/use-teams";
+import { usePipelines } from "@/hooks/use-stages";
 import { SharedFilters } from "@/components/shared/SharedFilters";
 import {
   datePresetOptions,
@@ -143,9 +143,21 @@ export default function Dashboard() {
   const [lostDialogOpen, setLostDialogOpen] = useState(false);
   const [wonDialogOpen, setWonDialogOpen] = useState(false);
   const [firstContactDialogOpen, setFirstContactDialogOpen] = useState(false);
+  const [visitsDialogOpen, setVisitsDialogOpen] = useState(false);
   const [shouldLoadFilterOptions, setShouldLoadFilterOptions] = useState(false);
   const dashboardQueryScope = useDashboardQueryScope();
   const activeOrganizationId = dashboardQueryScope.organizationId;
+  const { data: pipelines = [] } = usePipelines();
+  const [pipelineSelection, setPipelineSelection] = useState<{
+    organizationId: string | undefined;
+    pipelineId: string | null;
+  }>({ organizationId: undefined, pipelineId: null });
+  const pipelineId = pipelineSelection.organizationId === activeOrganizationId
+    ? pipelineSelection.pipelineId
+    : null;
+  const setPipelineId = (nextPipelineId: string | null) => {
+    setPipelineSelection({ organizationId: activeOrganizationId, pipelineId: nextPipelineId });
+  };
 
   const {
     filters,
@@ -189,9 +201,17 @@ export default function Dashboard() {
     isLoadingAds,
     isLoadingTags,
     hasTagsError,
+    hasTeamOptionsError,
+    hasLeadMetaFiltersError,
+    hasDynamicOptionsError,
+    isRetryingDynamicOptions,
+    refetchLeadMetaFilters,
+    refetchTags,
+    refetchTeams,
     isFiltersHydrated,
   } = useSharedFilters({
     loadDynamicOptions: shouldLoadFilterOptions,
+    pipelineId,
     dateMode: "origin",
   });
   const dashboardDateRange = filters.dateRange;
@@ -203,6 +223,7 @@ export default function Dashboard() {
   const dashboardFilters = useMemo<DashboardAPIFilters>(
     () => ({
       dateRange: dashboardDateRange,
+      pipelineId,
       teamId: filters.teamId,
       userId: filters.userId,
       source: filters.source,
@@ -214,7 +235,7 @@ export default function Dashboard() {
       dealStatus: filters.dealStatus,
       searchQuery: filters.searchQuery,
     }),
-    [dashboardDateRange, filters],
+    [dashboardDateRange, filters, pipelineId],
   );
 
   // Data hooks - Imobiliário
@@ -237,9 +258,9 @@ export default function Dashboard() {
     enabled: shouldLoadDealDetails,
     includeDetails: true,
   });
-  const { data: evolutionData = [], isLoading: evolutionLoading } =
+  const { data: evolutionData = [], isLoading: evolutionLoading, isError: evolutionError, refetch: refetchEvolution } =
     useDealsEvolutionData(dashboardFilters, { enabled: isFiltersHydrated });
-  const { data: sourcesData = [], isLoading: sourcesLoading } =
+  const { data: sourcesData = [], isLoading: sourcesLoading, isError: sourcesError, refetch: refetchSources } =
     useLeadSourcesData(dashboardFilters, undefined, {
       enabled: isFiltersHydrated,
     });
@@ -251,6 +272,18 @@ export default function Dashboard() {
   } = useDashboardLeadDistribution(dashboardFilters, {
     enabled: isFiltersHydrated,
   });
+  // The distribution already includes every eligible active team, even those
+  // with no leads. Keep the saved chart selection intact while the page-wide
+  // team filter narrows that response to a single team.
+  const availableDistributionTeams = useMemo(
+    () => !teamId && !leadDistributionError
+      ? leadDistribution?.teams
+        .filter((team) => team.kind === "entity" && team.id)
+        .map((team) => ({ id: team.id as string, name: team.name }))
+        .sort((left, right) => left.name.localeCompare(right.name, "pt-BR"))
+      : undefined,
+    [leadDistribution?.teams, leadDistributionError, teamId],
+  );
   const {
     data: firstContactData,
     isLoading: firstContactLoading,
@@ -259,10 +292,6 @@ export default function Dashboard() {
   } = useDashboardFirstContact(dashboardFilters, {
     enabled: isFiltersHydrated && firstContactDialogOpen,
   });
-  const distributionOptionsEnabled =
-    isFiltersHydrated && dashboardQueryScope.canViewLeadDistribution;
-  const teamsQuery = useTeams({ enabled: distributionOptionsEnabled });
-  const availableTeams = teamsQuery.data;
   const hasOrganization = Boolean(activeOrganizationId);
 
   const {
@@ -278,6 +307,7 @@ export default function Dashboard() {
       dashboardQueryScope.accessSignature,
       dateFromStr,
       dateToStr,
+      pipelineId,
       filters.userId,
       filters.teamId,
       filters.source,
@@ -299,12 +329,12 @@ export default function Dashboard() {
     staleTime: DASHBOARD_EXTRA_COUNTS_STALE_TIME_MS,
   });
 
-  const propertyCount = extraCounts?.propertyCount ?? 0;
-  const siteVisits = extraCounts?.siteVisits ?? 0;
-  const scheduledVisitsCount = extraCounts?.scheduledVisits ?? 0;
+  const propertyCount = extraCountsError ? "—" : extraCounts?.propertyCount ?? 0;
+  const siteVisits = extraCountsError ? "—" : extraCounts?.siteVisits ?? 0;
+  const scheduledVisitsCount = extraCountsError ? "—" : extraCounts?.scheduledVisits ?? 0;
   const kpisLoading =
     !hasOrganization || !isFiltersHydrated || statsLoading || extraCountsLoading;
-  const kpisError = statsError || extraCountsError;
+  const kpisError = statsError;
   const evolutionDataLoading =
     !hasOrganization || !isFiltersHydrated || evolutionLoading;
   const sourcesDataLoading =
@@ -329,6 +359,8 @@ export default function Dashboard() {
     <SalesFunnelWithPipeline
       filters={dashboardFilters}
       enabled={isFiltersHydrated}
+      pipelineId={pipelineId}
+      onPipelineChange={setPipelineId}
     />
   );
   const periodLabel =
@@ -370,9 +402,24 @@ export default function Dashboard() {
     overduePayables: 0,
     paidCommissions: 0,
   };
+  const clearDashboardFilters = () => {
+    clearFilters();
+    setPipelineId(null);
+  };
+  const retryDynamicOptions = () => {
+    void refetchLeadMetaFilters();
+    void refetchTags();
+    if (dashboardQueryScope.canViewLeadDistribution) void refetchTeams();
+  };
   const dialogData = detailedStats || kpiData;
   const showDealDetailsLoading =
     shouldLoadDealDetails && !dealDetailsError && !detailedStats;
+  const showSelectedBrokerEvolutionFirst = Boolean(
+    dashboardQueryScope.canViewLeadDistribution &&
+      userId &&
+      userId !== "all" &&
+      userId !== "unassigned",
+  );
 
   return (
     <AppLayout title="Dashboard" disableMainScroll={true} borderless>
@@ -398,6 +445,9 @@ export default function Dashboard() {
             userId={userId}
             onUserChange={setUserId}
             includeUnassignedUserOption
+            pipelineId={pipelineId}
+            onPipelineChange={setPipelineId}
+            pipelines={pipelines}
             source={source}
             onSourceChange={setSource}
             pageId={pageId}
@@ -414,8 +464,8 @@ export default function Dashboard() {
             onDealStatusChange={setDealStatus}
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
-            onClear={clearFilters}
-            hasActiveFilters={hasActiveFilters}
+            onClear={clearDashboardFilters}
+            hasActiveFilters={hasActiveFilters || Boolean(pipelineId)}
             dynamicSources={dynamicSources}
             pages={pages}
             campaigns={campaigns}
@@ -429,9 +479,16 @@ export default function Dashboard() {
             isLoadingAds={isLoadingAds}
             isLoadingTags={isLoadingTags}
             hasTagsError={hasTagsError}
+            hasDynamicOptionsError={hasDynamicOptionsError}
+            isRetryingDynamicOptions={isRetryingDynamicOptions}
+            onRetryDynamicOptions={retryDynamicOptions}
             loadDynamicOptions={shouldLoadFilterOptions}
             onFiltersOpenChange={(open) => {
-              if (open) setShouldLoadFilterOptions(true);
+              if (!open) return;
+              setShouldLoadFilterOptions(true);
+              if (hasLeadMetaFiltersError) void refetchLeadMetaFilters();
+              if (hasTagsError) void refetchTags();
+              if (hasTeamOptionsError) void refetchTeams();
             }}
             tourPrefix="dashboard"
           />
@@ -457,17 +514,32 @@ export default function Dashboard() {
                       layout="top"
                       onLostClick={() => setLostDialogOpen(true)}
                       onWonClick={() => setWonDialogOpen(true)}
+                      onVisitsClick={() => setVisitsDialogOpen(true)}
                       onFirstContactClick={dashboardQueryScope.canViewLeadDistribution ? () => setFirstContactDialogOpen(true) : undefined}
                     />
                   )}
+                  {extraCountsError ? <DashboardExtraCountsError onRetry={() => void refetchExtraCounts()} /> : null}
                 </div>
 
-                <div data-tour="dashboard-evolution" className="min-h-0 flex-1">
-                  <DealsEvolutionChart
-                    data={evolutionData}
-                    isLoading={evolutionDataLoading}
-                  />
-                </div>
+                {dashboardQueryScope.canViewLeadDistribution && !showSelectedBrokerEvolutionFirst ? (
+                  <div className="min-h-0 flex-1">
+                    <LeadDistributionSection
+                      display="users"
+                      selectedTeamId={teamId}
+                      data={leadDistribution}
+                      isLoading={!hasOrganization || !isFiltersHydrated || leadDistributionLoading}
+                      isError={leadDistributionError}
+                      onRetry={() => void refetchLeadDistribution()}
+                      organizationId={activeOrganizationId}
+                      currentUserId={dashboardQueryScope.currentUserId}
+                      availableTeams={availableDistributionTeams}
+                    />
+                  </div>
+                ) : (
+                  <div data-tour="dashboard-evolution" className="min-h-0 flex-1">
+                    <DealsEvolutionChart data={evolutionData} isLoading={evolutionDataLoading} isError={evolutionError} onRetry={() => void refetchEvolution()} />
+                  </div>
+                )}
               </div>
 
               <div className="col-span-4 flex min-h-0 flex-col gap-3">
@@ -478,6 +550,8 @@ export default function Dashboard() {
                   <LeadSourcesChart
                     data={sourcesData}
                     isLoading={sourcesDataLoading}
+                    isError={sourcesError}
+                    onRetry={() => void refetchSources()}
                     selectedSource={source}
                     onSourceChange={setSource}
                   />
@@ -486,21 +560,41 @@ export default function Dashboard() {
             </div>
 
             {dashboardQueryScope.canViewLeadDistribution ? (
-              <LeadDistributionSection
-                data={leadDistribution}
-                isLoading={
-                  !hasOrganization ||
-                  !isFiltersHydrated ||
-                  leadDistributionLoading
-                }
-                isError={leadDistributionError}
-                onRetry={() => void refetchLeadDistribution()}
-                organizationId={activeOrganizationId}
-                currentUserId={dashboardQueryScope.currentUserId}
-                availableTeams={availableTeams?.filter((team) => team.is_active !== false)}
-                teamsError={teamsQuery.isError}
-                onRetryTeams={() => void teamsQuery.refetch()}
-              />
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">
+                <div
+                  data-tour={showSelectedBrokerEvolutionFirst ? undefined : "dashboard-evolution"}
+                  className="h-[360px] min-w-0 lg:col-span-8"
+                >
+                  {showSelectedBrokerEvolutionFirst ? (
+                    <LeadDistributionSection
+                      display="users"
+                      selectedTeamId={teamId}
+                      data={leadDistribution}
+                      isLoading={!hasOrganization || !isFiltersHydrated || leadDistributionLoading}
+                      isError={leadDistributionError}
+                      onRetry={() => void refetchLeadDistribution()}
+                      organizationId={activeOrganizationId}
+                      currentUserId={dashboardQueryScope.currentUserId}
+                      availableTeams={availableDistributionTeams}
+                    />
+                  ) : (
+                    <DealsEvolutionChart data={evolutionData} isLoading={evolutionDataLoading} isError={evolutionError} onRetry={() => void refetchEvolution()} />
+                  )}
+                </div>
+                <div className="h-[360px] min-w-0 lg:col-span-4">
+                  <LeadDistributionSection
+                    display="teams"
+                    selectedTeamId={teamId}
+                    data={leadDistribution}
+                    isLoading={!hasOrganization || !isFiltersHydrated || leadDistributionLoading}
+                    isError={leadDistributionError}
+                    onRetry={() => void refetchLeadDistribution()}
+                    organizationId={activeOrganizationId}
+                    currentUserId={dashboardQueryScope.currentUserId}
+                    availableTeams={availableDistributionTeams}
+                  />
+                </div>
+              </div>
             ) : null}
           </div>
         ) : (
@@ -518,25 +612,41 @@ export default function Dashboard() {
                   siteVisits={siteVisits}
                   onLostClick={() => setLostDialogOpen(true)}
                   onWonClick={() => setWonDialogOpen(true)}
+                  onVisitsClick={() => setVisitsDialogOpen(true)}
                   onFirstContactClick={dashboardQueryScope.canViewLeadDistribution ? () => setFirstContactDialogOpen(true) : undefined}
                 />
               )}
+              {extraCountsError ? <DashboardExtraCountsError onRetry={() => void refetchExtraCounts()} /> : null}
             </section>
 
+            {!dashboardQueryScope.canViewLeadDistribution || showSelectedBrokerEvolutionFirst ? (
+              <div data-tour="dashboard-evolution" className="h-[390px]">
+                <DealsEvolutionChart data={evolutionData} isLoading={evolutionDataLoading} isError={evolutionError} onRetry={() => void refetchEvolution()} />
+              </div>
+            ) : null}
+
+            {dashboardQueryScope.canViewLeadDistribution && !showSelectedBrokerEvolutionFirst ? (
+              <LeadDistributionSection
+                display="users"
+                selectedTeamId={teamId}
+                data={leadDistribution}
+                isLoading={!hasOrganization || !isFiltersHydrated || leadDistributionLoading}
+                isError={leadDistributionError}
+                onRetry={() => void refetchLeadDistribution()}
+                organizationId={activeOrganizationId}
+                currentUserId={dashboardQueryScope.currentUserId}
+                availableTeams={availableDistributionTeams}
+              />
+            ) : null}
+
             <section>
-              <Tabs value={mobileChartTab} onValueChange={setMobileChartTab}>
-                <TabsList className="grid h-10 w-full grid-cols-3 gap-1 rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-1 shadow-none">
+              <Tabs value={mobileChartTab === "sources" ? "sources" : "funnel"} onValueChange={setMobileChartTab}>
+                <TabsList className="grid h-10 w-full grid-cols-2 gap-1 rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-1 shadow-none">
                   <TabsTrigger
                     value="funnel"
                     className="mx-0 h-8 rounded-[6px] text-[11px] font-light text-[var(--app-text-secondary)] shadow-none data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:text-[var(--app-text-primary)] data-[state=active]:shadow-none"
                   >
                     Funil
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value="evolution"
-                    className="mx-0 h-8 rounded-[6px] text-[11px] font-light text-[var(--app-text-secondary)] shadow-none data-[state=active]:bg-[var(--app-surface-hover)] data-[state=active]:text-[var(--app-text-primary)] data-[state=active]:shadow-none"
-                  >
-                    Evolução
                   </TabsTrigger>
                   <TabsTrigger
                     value="sources"
@@ -550,19 +660,13 @@ export default function Dashboard() {
                     {funnelComponent}
                   </div>
                 </TabsContent>
-                <TabsContent value="evolution" className="mt-3">
-                  <div data-tour="dashboard-evolution" className="h-[390px]">
-                    <DealsEvolutionChart
-                      data={evolutionData}
-                      isLoading={evolutionDataLoading}
-                    />
-                  </div>
-                </TabsContent>
                 <TabsContent value="sources" className="mt-3">
                   <div data-tour="dashboard-sources" className="h-[430px]">
                     <LeadSourcesChart
                       data={sourcesData}
                       isLoading={sourcesDataLoading}
+                      isError={sourcesError}
+                      onRetry={() => void refetchSources()}
                       selectedSource={source}
                       onSourceChange={setSource}
                     />
@@ -572,21 +676,38 @@ export default function Dashboard() {
             </section>
 
             {dashboardQueryScope.canViewLeadDistribution ? (
-              <LeadDistributionSection
-                data={leadDistribution}
-                isLoading={
-                  !hasOrganization ||
-                  !isFiltersHydrated ||
-                  leadDistributionLoading
-                }
-                isError={leadDistributionError}
-                onRetry={() => void refetchLeadDistribution()}
-                organizationId={activeOrganizationId}
-                currentUserId={dashboardQueryScope.currentUserId}
-                availableTeams={availableTeams?.filter((team) => team.is_active !== false)}
-                teamsError={teamsQuery.isError}
-                onRetryTeams={() => void teamsQuery.refetch()}
-              />
+              <>
+                {showSelectedBrokerEvolutionFirst ? (
+                  <div className="h-[390px]">
+                    <LeadDistributionSection
+                      display="users"
+                      selectedTeamId={teamId}
+                      data={leadDistribution}
+                      isLoading={!hasOrganization || !isFiltersHydrated || leadDistributionLoading}
+                      isError={leadDistributionError}
+                      onRetry={() => void refetchLeadDistribution()}
+                      organizationId={activeOrganizationId}
+                      currentUserId={dashboardQueryScope.currentUserId}
+                      availableTeams={availableDistributionTeams}
+                    />
+                  </div>
+                ) : (
+                  <div data-tour="dashboard-evolution" className="h-[390px]">
+                    <DealsEvolutionChart data={evolutionData} isLoading={evolutionDataLoading} isError={evolutionError} onRetry={() => void refetchEvolution()} />
+                  </div>
+                )}
+                <LeadDistributionSection
+                  display="teams"
+                  selectedTeamId={teamId}
+                  data={leadDistribution}
+                  isLoading={!hasOrganization || !isFiltersHydrated || leadDistributionLoading}
+                  isError={leadDistributionError}
+                  onRetry={() => void refetchLeadDistribution()}
+                  organizationId={activeOrganizationId}
+                  currentUserId={dashboardQueryScope.currentUserId}
+                  availableTeams={availableDistributionTeams}
+                />
+              </>
             ) : null}
           </div>
         )}
@@ -599,7 +720,6 @@ export default function Dashboard() {
         detailsLoading={showDealDetailsLoading || dealDetailsLoading}
         detailsError={dealDetailsError}
         onRetryDetails={() => void refetchDealDetails()}
-        periodLabel={periodLabel}
         onViewLead={(leadId) => {
           setLostDialogOpen(false);
           router.push(`/crm/pipelines?lead=${leadId}`);
@@ -613,7 +733,6 @@ export default function Dashboard() {
         detailsLoading={showDealDetailsLoading || dealDetailsLoading}
         detailsError={dealDetailsError}
         onRetryDetails={() => void refetchDealDetails()}
-        periodLabel={periodLabel}
         onViewLead={(leadId) => {
           setWonDialogOpen(false);
           router.push(`/crm/pipelines?lead=${leadId}`);
@@ -623,10 +742,16 @@ export default function Dashboard() {
       <FirstContactDialog
         open={firstContactDialogOpen}
         onOpenChange={setFirstContactDialogOpen}
+        filters={dashboardFilters}
         data={firstContactData}
         isLoading={firstContactLoading}
         isError={firstContactError}
         onRetry={() => void refetchFirstContact()}
+      />
+      <DashboardVisitsDialog
+        open={visitsDialogOpen}
+        onOpenChange={setVisitsDialogOpen}
+        filters={dashboardFilters}
         periodLabel={periodLabel}
       />
     </AppLayout>
@@ -686,13 +811,14 @@ interface KPICardsGridProps {
   data: EnhancedDashboardStats;
   isLoading?: boolean;
   periodLabel: string;
-  propertyCount?: number;
-  siteVisits?: number;
-  scheduledVisits?: number;
+  propertyCount?: number | string;
+  siteVisits?: number | string;
+  scheduledVisits?: number | string;
   layout?: "top" | "side";
   onLostClick?: () => void;
   onWonClick?: () => void;
   onFirstContactClick?: () => void;
+  onVisitsClick?: () => void;
 }
 
 function KPICardsGrid({
@@ -706,6 +832,7 @@ function KPICardsGrid({
   onLostClick,
   onWonClick,
   onFirstContactClick,
+  onVisitsClick,
 }: KPICardsGridProps) {
   if (isLoading) {
     const isSide = layout === "side";
@@ -806,15 +933,12 @@ function KPICardsGrid({
     {
       title: "Visitas",
       value: scheduledVisits ?? 0,
-      rate:
-        data.totalLeads > 0
-          ? ((scheduledVisits ?? 0) / data.totalLeads) * 100
-          : 0,
-      rateVariant: "auto",
       icon: CalendarCheck,
-      tooltip: `Visitas e reuniões criadas no período em relação ao total de leads - ${periodLabel}`,
+      tooltip: `Visitas e reuniões marcadas no período - ${periodLabel}. A data usada é a do agendamento, independente da entrada do lead.`,
       format: "number",
       color: "visits",
+      onClick: onVisitsClick,
+      interactive: Boolean(onVisitsClick),
       tourTarget: "dashboard-kpi-visits",
     },
     {
@@ -832,7 +956,7 @@ function KPICardsGrid({
       title: "1º Contato",
       value: data.avgResponseTime,
       icon: Clock,
-      tooltip: "Média da primeira resposta humana registrada; leads sem medida válida ficam fora da média",
+      tooltip: "Média da primeira resposta humana registrada. Ao filtrar por usuário, considera quem respondeu; os demais indicadores usam o responsável atual do lead.",
       format: "time",
       color: "response",
       onClick: onFirstContactClick,
@@ -854,7 +978,7 @@ function KPICardsGrid({
       title: "Visitas no site",
       value: siteVisits ?? 0,
       icon: Eye,
-      tooltip: `Visitas ao site no período - ${periodLabel}`,
+      tooltip: `Sessões únicas no site no período - ${periodLabel}`,
       format: "number",
       color: "site",
       compact: true,
@@ -1163,6 +1287,18 @@ function buildWonSourceBuckets(
     }));
 }
 
+function DashboardExtraCountsError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onRetry}
+      className="mt-2 w-full rounded-[8px] bg-destructive/10 px-3 py-2 text-left text-[11px] text-destructive focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-destructive"
+    >
+      Visitas, imóveis e sessões do site indisponíveis. Tentar novamente.
+    </button>
+  );
+}
+
 function DashboardDealDetailsState({
   hasError,
   onRetry,
@@ -1206,7 +1342,6 @@ function LostDealsDialog({
   detailsLoading,
   detailsError,
   onRetryDetails,
-  periodLabel,
   onViewLead,
 }: {
   open: boolean;
@@ -1215,7 +1350,6 @@ function LostDealsDialog({
   detailsLoading: boolean;
   detailsError: boolean;
   onRetryDetails: () => void;
-  periodLabel: string;
   onViewLead: (leadId: string) => void;
 }) {
   const lostDeals = data.lostDeals || [];
@@ -1234,6 +1368,7 @@ function LostDealsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-tour="dashboard-lost-dialog"
+        aria-describedby={undefined}
         className="dashboard-dialog-shell flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden p-0 sm:h-[min(720px,calc(100dvh-32px))] sm:max-h-[calc(100dvh-32px)] sm:w-[min(960px,calc(100vw-32px))] sm:max-w-[960px] [&>button.absolute]:right-3 [&>button.absolute]:top-3 [&>button.absolute]:grid [&>button.absolute]:h-9 [&>button.absolute]:w-9 [&>button.absolute]:place-items-center sm:[&>button.absolute]:right-4 sm:[&>button.absolute]:top-4"
       >
         <DialogHeader className="shrink-0 px-4 pb-3 pr-14 pt-[calc(0.75rem+env(safe-area-inset-top))] text-left sm:px-5 sm:pt-4">
@@ -1243,10 +1378,6 @@ function LostDealsDialog({
             </span>
             <span>Perdidos - Motivos de Perda</span>
           </DialogTitle>
-          <DialogDescription className="pl-[42px] text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
-            {totalLost} leads captados em {periodLabel.toLowerCase()} que estão perdidos
-            {topReason ? ` | principal motivo: ${topReason.label}` : ""}
-          </DialogDescription>
         </DialogHeader>
 
         <ScrollArea className="dashboard-dialog-scroll min-h-0 flex-1 overflow-x-hidden">
@@ -1295,9 +1426,6 @@ function LostDealsDialog({
                   <h3 className="text-[14px] font-normal">
                     Distribuição dos motivos
                   </h3>
-                  <p className="text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
-                    Maiores causas de perda dos leads captados no período filtrado.
-                  </p>
                 </div>
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
                   <PieChartIcon className="h-3.5 w-3.5" />
@@ -1506,7 +1634,6 @@ function WonDealsDialog({
   detailsLoading,
   detailsError,
   onRetryDetails,
-  periodLabel,
   onViewLead,
 }: {
   open: boolean;
@@ -1515,7 +1642,6 @@ function WonDealsDialog({
   detailsLoading: boolean;
   detailsError: boolean;
   onRetryDetails: () => void;
-  periodLabel: string;
   onViewLead: (leadId: string) => void;
 }) {
   const wonDeals = data.wonDeals || [];
@@ -1524,7 +1650,6 @@ function WonDealsDialog({
     data.wonDealsTruncated || wonDeals.length < totalWon;
   const totalVgv = data.totalSalesValue || 0;
   const averageTicket = totalWon > 0 ? totalVgv / totalWon : 0;
-  const averageDays = data.wonAverageConversionDays;
   const sourceBuckets = buildWonSourceBuckets(
     wonDeals,
     wonDetailsTruncated ? wonDeals.length : totalWon,
@@ -1534,6 +1659,7 @@ function WonDealsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-tour="dashboard-won-dialog"
+        aria-describedby={undefined}
         className="dashboard-dialog-shell flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden p-0 sm:h-[min(720px,calc(100dvh-32px))] sm:max-h-[calc(100dvh-32px)] sm:w-[min(960px,calc(100vw-32px))] sm:max-w-[960px] [&>button.absolute]:right-3 [&>button.absolute]:top-3 [&>button.absolute]:grid [&>button.absolute]:h-9 [&>button.absolute]:w-9 [&>button.absolute]:place-items-center sm:[&>button.absolute]:right-4 sm:[&>button.absolute]:top-4"
       >
         <DialogHeader className="shrink-0 px-4 pb-3 pr-14 pt-[calc(0.75rem+env(safe-area-inset-top))] text-left sm:px-5 sm:pt-4">
@@ -1543,12 +1669,6 @@ function WonDealsDialog({
             </span>
             <span>Ganhos - Tempo de Conversão</span>
           </DialogTitle>
-          <DialogDescription className="pl-[42px] text-[12px] font-light leading-[18px] text-[var(--app-text-tertiary)]">
-            {totalWon} leads captados em {periodLabel.toLowerCase()} que estão ganhos
-            {averageDays !== null && averageDays !== undefined
-              ? ` | média: ${averageDays} dias`
-              : ""}
-          </DialogDescription>
         </DialogHeader>
 
         <ScrollArea className="dashboard-dialog-scroll min-h-0 flex-1 overflow-x-hidden">

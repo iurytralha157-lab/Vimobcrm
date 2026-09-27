@@ -3,8 +3,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { PieChart as PieChartIcon, MousePointer2 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { cn } from '@/lib/utils';
-import { sourceLabels } from '@/hooks/use-dashboard-filters';
 import { DASHBOARD_CHART_COLORS } from '@/config/dashboard-chart-colors';
+import { DashboardChartError } from './DashboardChartError';
 
 interface SourceDataPoint {
   name: string;
@@ -15,6 +15,8 @@ interface SourceDataPoint {
 interface LeadSourcesChartProps {
   data: SourceDataPoint[];
   isLoading?: boolean;
+  isError: boolean;
+  onRetry: () => void;
   selectedSource?: string | null;
   onSourceChange?: (source: string | null) => void;
 }
@@ -97,7 +99,7 @@ function LeadSourcesTooltip({ active, payload }: LeadSourcesTooltipProps) {
   );
 }
 
-export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChange }: LeadSourcesChartProps) {
+export function LeadSourcesChart({ data, isLoading, isError, onRetry, selectedSource, onSourceChange }: LeadSourcesChartProps) {
   if (isLoading) {
     return (
       <Card className="flex h-full flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
@@ -111,6 +113,24 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
         </CardHeader>
         <CardContent className="flex-1 p-4">
           <ChartSkeleton />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (isError) {
+    return (
+      <Card className="flex h-full flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
+        <CardHeader className="px-4 pb-1 pt-4">
+          <CardTitle className="flex items-center gap-2 text-[14px] font-light text-[var(--app-text-primary)]">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground">
+              <PieChartIcon className="h-3.5 w-3.5" />
+            </span>
+            Origem dos leads
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="min-h-0 flex-1 p-4">
+          <DashboardChartError message="Não foi possível carregar as origens dos leads." onRetry={onRetry} />
         </CardContent>
       </Card>
     );
@@ -133,10 +153,7 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
     if (!onSourceChange) return;
 
     const clickedSource = entry.rawSource ?? entry.name;
-    const clickedLabel = entry.name;
-    const currentSelectedLabel = selectedSource ? (sourceLabels[selectedSource] || selectedSource) : null;
-
-    if (clickedLabel === currentSelectedLabel) {
+    if (clickedSource === selectedSource) {
       onSourceChange(null);
     } else {
       onSourceChange(clickedSource);
@@ -215,7 +232,7 @@ export function LeadSourcesChart({ data, isLoading, selectedSource, onSourceChan
                   className="outline-none"
                 >
                   {chartData.map((entry, index) => {
-                    const isSelected = selectedSource ? (sourceLabels[selectedSource] || selectedSource) === entry.name : false;
+                    const isSelected = selectedSource === (entry.rawSource ?? entry.name);
                     const hasSelection = !!selectedSource;
 
                     return (

@@ -21,7 +21,7 @@ func CanViewLead(context tenant.Context, lead LeadResource) bool {
 	if !leadscope.CanViewTeam(context) {
 		return false
 	}
-	return (lead.TeamID != "" && context.LeadsTeam(lead.TeamID)) ||
+	return (lead.AssignedUserID == "" && lead.TeamID != "" && context.LeadsTeam(lead.TeamID)) ||
 		(lead.AssignedUserID != "" && context.LeadsUser(lead.AssignedUserID))
 }
 
@@ -42,6 +42,9 @@ func CanUseLeadForMutation(context tenant.Context, lead LeadResource) bool {
 // A leader's broader broker-based visibility must not expand the existing
 // mutation boundary for leads recorded under another team.
 func canMutateLead(context tenant.Context, lead LeadResource) bool {
+	if !CanViewLead(context, lead) {
+		return false
+	}
 	if leadscope.CanViewAll(context) {
 		return true
 	}

@@ -7,7 +7,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -41,8 +41,8 @@ type LeadDistributionSectionProps = {
   organizationId?: string | null;
   currentUserId?: string | null;
   availableTeams?: AvailableTeam[];
-  teamsError?: boolean;
-  onRetryTeams?: () => void;
+  display?: "both" | "users" | "teams";
+  selectedTeamId?: string | null;
 };
 
 function initials(name: string) {
@@ -165,8 +165,61 @@ function DistributionBars({
   variant: "user" | "team";
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const isBrokerChart = variant === "user";
+  const spreadBrokers = isBrokerChart && rows.length <= 8;
+  const brokerColumnWidthClass = rows.length <= 2
+    ? "w-[128px] sm:w-[148px]"
+    : rows.length === 3
+      ? "w-[100px] sm:w-[124px]"
+      : rows.length === 4
+        ? "w-[90px] sm:w-[112px]"
+        : rows.length === 5
+          ? "w-[80px] sm:w-[100px]"
+          : rows.length === 6
+            ? "w-[74px] sm:w-[92px]"
+            : spreadBrokers
+              ? "w-[66px] sm:w-[78px]"
+              : "w-[56px] sm:w-[60px]";
+  const brokerBarWidthClass = rows.length <= 2
+    ? "w-[96px] sm:w-[120px]"
+    : rows.length === 3
+      ? "w-[78px] sm:w-[104px]"
+      : rows.length === 4
+        ? "w-[70px] sm:w-[92px]"
+        : rows.length === 5
+          ? "w-[60px] sm:w-[80px]"
+          : rows.length === 6
+            ? "w-[54px] sm:w-[68px]"
+            : spreadBrokers
+              ? "w-[48px] sm:w-[58px]"
+              : "w-9";
+  const teamColumnWidthClass = rows.length === 1
+    ? "w-[132px]"
+    : rows.length === 2
+      ? "w-[110px]"
+      : rows.length === 3
+        ? "w-[88px]"
+        : rows.length === 4
+          ? "w-[68px]"
+          : rows.length === 5
+            ? "w-[60px]"
+            : "w-[56px]";
+  const teamBarWidthClass = rows.length === 1
+    ? "w-[112px]"
+    : rows.length === 2
+      ? "w-[92px]"
+      : rows.length === 3
+        ? "w-[72px]"
+        : rows.length === 4
+          ? "w-[56px]"
+          : rows.length === 5
+            ? "w-[48px]"
+            : "w-11";
   const maxCount = Math.max(1, ...rows.map((row) => row.leadCount ?? 0));
   const selectedRow = rows.find((row) => row.id === selectedId);
+  // Count, avatar, name and spacing occupy a fixed part of each broker column.
+  // Only the remaining height represents the lead count.
+  const brokerFixedContentHeight = 84;
 
   if (rows.length === 0) {
     return (
@@ -175,37 +228,46 @@ function DistributionBars({
           <UserRoundX className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
         <p className="text-[12px] font-light text-[var(--app-text-secondary)]">
-          {variant === "team" ? "Nenhuma equipe selecionada" : "Nenhum corretor para os filtros selecionados"}
+          {variant === "team" ? "Nenhuma equipe com leads para os filtros selecionados" : "Nenhum corretor para os filtros selecionados"}
         </p>
       </div>
     );
   }
 
   return (
-    <div className="min-w-0">
+    <div className={`flex min-w-0 flex-1 flex-col justify-end ${isBrokerChart ? "min-h-[300px]" : "min-h-[250px]"}`}>
       <div
-        className="app-scrollbar overflow-x-auto pb-2"
+        className={`app-scrollbar overflow-x-auto rounded-[6px] pb-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary ${isBrokerChart ? "min-h-0 flex-1" : ""}`}
         role="region"
         aria-label={variant === "user" ? "Leads por corretor" : "Leads por equipe"}
         tabIndex={0}
       >
-        <div className="flex min-w-full w-max items-end justify-around gap-2 border-b border-[var(--app-border)] px-2 sm:gap-3">
+        <div className={`flex min-w-full w-max items-end border-b border-[var(--app-border)] px-2 ${isBrokerChart ? `h-full gap-1.5 sm:gap-2 ${spreadBrokers ? "justify-evenly" : "justify-center"}` : "justify-center gap-2"}`}>
           <TooltipProvider delayDuration={120}>
             {rows.map((row) => {
+              const leadCount = Math.max(0, row.leadCount ?? 0);
               const countLabel = row.leadCount === null
                 ? "Contagem indisponível"
                 : `${row.leadCount} ${row.leadCount === 1 ? "lead" : "leads"}`;
-              const height = row.leadCount === null ? 3 : Math.max(3, Math.round((row.leadCount / maxCount) * 145));
+              const teamBarHeight = row.leadCount === null ? 3 : Math.max(3, Math.round((leadCount / maxCount) * 145));
+              const brokerBarRatio = leadCount / maxCount;
+              const brokerMinimumBarHeight = Math.min(24, leadCount * 4);
               return (
-                <Tooltip key={row.id}>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      aria-label={`${row.name}: ${countLabel}`}
-                      aria-pressed={selectedId === row.id}
-                      onClick={() => setSelectedId((current) => current === row.id ? null : row.id)}
-                      className="group flex h-[240px] w-[62px] shrink-0 flex-col items-center justify-end rounded-t-[6px] px-1 pb-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:w-[72px]"
-                    >
+                <div key={row.id} className={`shrink-0 ${isBrokerChart ? `relative h-full min-h-[290px] ${brokerColumnWidthClass}` : `flex h-[240px] flex-col justify-end ${teamColumnWidthClass}`}`}>
+                  {!isBrokerChart ? <span className="shrink-0" style={{ height: 145 - teamBarHeight }} aria-hidden="true" /> : null}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label={`${row.name}: ${countLabel}`}
+                        aria-pressed={selectedId === row.id}
+                        onClick={() => setSelectedId((current) => current === row.id ? null : row.id)}
+                        className={`group flex w-full flex-col items-center justify-end rounded-t-[6px] px-1 pb-1 focus-visible:bg-[var(--app-surface-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${isBrokerChart ? "absolute bottom-0 left-0" : ""}`}
+                        style={isBrokerChart ? {
+                          height: `calc(${brokerBarRatio * 100}% + ${brokerFixedContentHeight * (1 - brokerBarRatio)}px)`,
+                          minHeight: brokerFixedContentHeight + brokerMinimumBarHeight,
+                        } : undefined}
+                      >
                       <span className="mb-1 text-[11px] font-medium tabular-nums text-[var(--app-text-primary)]">
                         {row.leadCount === null ? "—" : row.leadCount.toLocaleString("pt-BR")}
                       </span>
@@ -224,24 +286,41 @@ function DistributionBars({
                       <span
                         className={
                           row.leadCount === null
-                            ? "w-9 rounded-t-[5px] bg-[var(--app-border)]"
-                            : variant === "user"
-                              ? "w-9 rounded-t-[5px] bg-primary transition-colors group-hover:bg-primary/75"
-                              : "w-9 rounded-t-[5px] bg-violet-500 transition-colors group-hover:bg-violet-400"
+                            ? `${isBrokerChart ? brokerBarWidthClass : teamBarWidthClass} rounded-t-[5px] bg-[var(--app-border)]`
+                            : isBrokerChart
+                              ? `${brokerBarWidthClass} rounded-t-[5px] bg-primary transition-colors group-hover:bg-primary/75`
+                              : `${teamBarWidthClass} rounded-t-[5px] bg-violet-500 transition-colors group-hover:bg-violet-400`
                         }
-                        style={{ height }}
+                        style={isBrokerChart ? { flexGrow: 1, flexBasis: 0, minHeight: brokerMinimumBarHeight } : { height: teamBarHeight }}
                         aria-hidden="true"
                       />
-                      <span className="mt-2 block w-full truncate text-center text-[10px] font-light text-[var(--app-text-secondary)]">
+                      <span className="mt-2 block w-full shrink-0 truncate text-center text-[10px] leading-[15px] font-light text-[var(--app-text-secondary)]">
                         {row.name}
                       </span>
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="max-w-[220px] text-center">
-                    <span className="font-medium">{row.name}</span>
-                    <span className="block text-[11px]">{countLabel}</span>
-                  </TooltipContent>
-                </Tooltip>
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" sideOffset={6} collisionPadding={12} className="max-w-[min(240px,calc(100vw-24px))]">
+                    <div className="flex items-center gap-2">
+                      {variant === "user" ? (
+                        <Avatar className="h-8 w-8 border border-[var(--app-border)]">
+                          <AvatarImage src={row.avatarUrl || undefined} alt="" />
+                          <AvatarFallback className="bg-primary/15 text-[10px] font-medium uppercase text-primary">
+                            {initials(row.name)}
+                          </AvatarFallback>
+                        </Avatar>
+                      ) : (
+                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-500/15 text-violet-500">
+                          <Building2 className="h-4 w-4" aria-hidden="true" />
+                        </span>
+                      )}
+                      <span className="min-w-0">
+                        <span className="block truncate text-[12px] font-medium">{row.name}</span>
+                        <span className="block text-[11px]">{countLabel}</span>
+                      </span>
+                    </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
               );
             })}
           </TooltipProvider>
@@ -260,23 +339,25 @@ function DistributionBars({
 function DistributionCard({
   title,
   rows,
-  contextRows,
+  contextRows = [],
   variant,
   isLoading,
   trailing,
   notice,
+  fillHeight = false,
 }: {
   title: string;
   rows: ChartRow[];
-  contextRows: ContextRow[];
+  contextRows?: ContextRow[];
   variant: "user" | "team";
   isLoading: boolean;
   trailing?: ReactNode;
   notice?: ReactNode;
+  fillHeight?: boolean;
 }) {
   const Icon = variant === "user" ? UsersRound : Building2;
   return (
-    <Card className="flex min-h-[360px] min-w-0 flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
+    <Card className={`flex min-w-0 flex-col overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none ${fillHeight ? "min-h-[320px] lg:h-full" : "min-h-[360px]"}`}>
       <CardHeader className="shrink-0 px-4 pb-2 pt-4">
         <div className="flex items-center justify-between gap-3">
           <CardTitle className="flex min-w-0 items-center gap-2 text-[14px] font-light text-[var(--app-text-primary)]">
@@ -287,12 +368,12 @@ function DistributionCard({
           </CardTitle>
           {trailing ?? (!isLoading ? (
             <span className="shrink-0 rounded-[6px] bg-[var(--app-surface-soft)] px-2 py-1 text-[10px] font-light text-[var(--app-text-secondary)]">
-              {rows.length} {rows.length === 1 ? "corretor" : "corretores"}
+              {rows.length} {rows.length === 1 ? (variant === "user" ? "corretor" : "equipe") : (variant === "user" ? "corretores" : "equipes")}
             </span>
           ) : null)}
         </div>
       </CardHeader>
-      <CardContent className="min-h-0 flex-1 px-4 pb-4 pt-2">
+      <CardContent className="flex min-h-0 flex-1 flex-col justify-end px-4 pb-4 pt-2">
         {isLoading ? <DistributionSkeleton /> : <DistributionBars rows={rows} variant={variant} />}
         {!isLoading ? notice : null}
         {!isLoading && contextRows.length > 0 ? (
@@ -363,12 +444,9 @@ function TeamPicker({
         <ChevronDown className="h-3 w-3" aria-hidden="true" />
       </button>
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="flex max-h-[calc(100dvh-24px)] w-[calc(100vw-24px)] max-w-[440px] flex-col gap-3 overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4 sm:p-5">
+        <DialogContent aria-describedby={undefined} className="flex max-h-[calc(100dvh-24px)] w-[calc(100vw-24px)] max-w-[440px] flex-col gap-3 overflow-hidden rounded-[8px] border-0 bg-[var(--app-surface-solid)] p-4 sm:p-5">
           <DialogHeader className="text-left">
             <DialogTitle className="text-[15px] font-normal">Equipes exibidas</DialogTitle>
-            <DialogDescription className="text-[12px] font-light leading-5">
-              Escolha as equipes que ficam no gráfico. Os filtros da página continuam funcionando normalmente.
-            </DialogDescription>
           </DialogHeader>
           <div className="flex items-center gap-2">
             <Input
@@ -378,7 +456,7 @@ function TeamPicker({
               aria-label="Buscar equipe"
               className="h-9 min-w-0 flex-1 rounded-[6px]"
             />
-            <Button type="button" variant="ghost" size="sm" onClick={() => setDraftIds(availableIds)}>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setDraftIds(availableIds)} className="bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-secondary)]">
               Todas
             </Button>
           </div>
@@ -398,7 +476,7 @@ function TeamPicker({
             ))}
           </div>
           <div className="flex items-center justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={() => handleOpenChange(false)}>
+            <Button type="button" variant="ghost" onClick={() => handleOpenChange(false)} className="bg-[var(--app-surface-soft)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-secondary)]">
               Cancelar
             </Button>
             <Button
@@ -426,18 +504,18 @@ export function LeadDistributionSection({
   organizationId,
   currentUserId,
   availableTeams,
-  teamsError = false,
-  onRetryTeams,
+  display = "both",
+  selectedTeamId = null,
 }: LeadDistributionSectionProps) {
   const { activeSelection, saveSelection, isHydrated } = usePinnedTeamIds(
     organizationId,
     currentUserId,
-    availableTeams,
+    display === "users" ? undefined : availableTeams,
   );
 
   const userRows = useMemo(() => {
     const rows = (data?.users ?? [])
-      .filter((row) => row.kind === "entity" && row.id)
+      .filter((row) => row.kind === "entity" && row.id && row.leadCount > 0)
       .map((row) => ({
         id: row.id as string,
         name: row.name,
@@ -456,18 +534,21 @@ export function LeadDistributionSection({
       .filter((row) => row.kind === "entity" && row.id)
       .map((row) => ({ id: row.id as string, name: row.name }));
     return sortChartRows(teams
-      .filter((team) => activeSelection === null || activeSelection.includes(team.id))
+      .filter((team) => selectedTeamId
+        ? team.id === selectedTeamId
+        : activeSelection === null || activeSelection.includes(team.id))
       .map((team) => ({
         id: team.id,
         name: team.name,
         leadCount: counts.get(team.id) ?? (hasOther ? null : 0),
-      })));
-  }, [activeSelection, availableTeams, data?.teams]);
+      }))
+      .filter((team) => team.leadCount !== 0));
+  }, [activeSelection, availableTeams, data?.teams, selectedTeamId]);
 
   if (isError) {
     return (
-      <Card className="rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none">
-        <CardContent className="flex min-h-[112px] flex-col items-start justify-between gap-3 p-4 sm:flex-row sm:items-center">
+      <Card className={`rounded-[8px] border-0 bg-[var(--app-surface-solid)] shadow-none ${display === "both" ? "" : "flex min-h-[320px] flex-col lg:h-full"}`}>
+        <CardContent className="flex min-h-[112px] flex-1 flex-col items-start justify-between gap-3 p-4 sm:flex-row sm:items-center">
           <div>
             <p className="text-[14px] font-normal text-[var(--app-text-primary)]">Não foi possível carregar a distribuição de leads.</p>
             <p className="mt-1 text-[12px] font-light text-[var(--app-text-tertiary)]">Os demais indicadores continuam disponíveis.</p>
@@ -481,38 +562,31 @@ export function LeadDistributionSection({
     );
   }
 
-  const userContext: ContextRow[] = (data?.users ?? [])
-    .filter((row) => row.kind !== "entity")
-    .map((row) => ({ kind: row.kind as ContextRow["kind"], name: row.name, leadCount: row.leadCount }));
   const teamContext: ContextRow[] = (data?.teams ?? [])
     .filter((row) => row.kind !== "entity")
     .map((row) => ({ kind: row.kind as ContextRow["kind"], name: row.name, leadCount: row.leadCount }));
 
   return (
-    <section data-tour="dashboard-lead-distribution">
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">
-        <div className="min-w-0 lg:col-span-8">
-          <DistributionCard title="Leads por corretor" rows={userRows} contextRows={userContext} variant="user" isLoading={isLoading} />
-        </div>
-        <div className="min-w-0 lg:col-span-4">
+    <section data-tour="dashboard-lead-distribution" className={display === "both" ? undefined : "min-h-0 lg:h-full"}>
+      <div className={display === "both" ? "grid grid-cols-1 gap-3 lg:grid-cols-12" : "min-h-0 lg:h-full"}>
+        {display !== "teams" ? (
+          <div className={display === "both" ? "min-w-0 lg:col-span-8" : "min-h-0 min-w-0 lg:h-full"}>
+            <DistributionCard title="Leads por corretor" rows={userRows} variant="user" isLoading={isLoading} fillHeight={display !== "both"} />
+          </div>
+        ) : null}
+        {display !== "users" ? (
+          <div className={display === "both" ? "min-w-0 lg:col-span-4" : "min-h-0 min-w-0 lg:h-full"}>
           <DistributionCard
             title="Leads por equipe"
             rows={teamRows}
             contextRows={teamContext}
             variant="team"
             isLoading={isLoading || !isHydrated}
-            notice={teamsError ? (
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-[6px] bg-[var(--app-surface-soft)] px-3 py-2 text-[11px] font-light text-[var(--app-text-secondary)]">
-                <span>Não foi possível carregar as equipes para editar a seleção.</span>
-                {onRetryTeams ? (
-                  <Button type="button" variant="ghost" size="sm" onClick={onRetryTeams} className="h-7 gap-1 px-2 text-[11px] text-primary">
-                    <RefreshCw className="h-3 w-3" aria-hidden="true" />
-                    Tentar novamente
-                  </Button>
-                ) : null}
-              </div>
-            ) : null}
-            trailing={
+            fillHeight={display !== "both"}
+            notice={<>
+              {!selectedTeamId ? <p className="mt-2 text-[10px] font-light leading-4 text-[var(--app-text-tertiary)]">Um lead pode aparecer em mais de uma equipe quando o corretor pertence a vários grupos.</p> : null}
+            </>}
+            trailing={selectedTeamId ? null :
               <TeamPicker
                 teams={availableTeams}
                 selectedIds={activeSelection}
@@ -521,7 +595,8 @@ export function LeadDistributionSection({
               />
             }
           />
-        </div>
+          </div>
+        ) : null}
       </div>
     </section>
   );

@@ -1009,21 +1009,14 @@ func buildPipelineLeadWhere(tenantContext tenant.Context, filter PipelineBoardFi
 		if !ok {
 			return nil, nil, fmt.Errorf("%w: teamId is invalid", ErrInvalidInput)
 		}
-		args = append(args, teamID)
-		index := len(args)
-		where = append(where, fmt.Sprintf(`(
-			nullif(to_jsonb(l)->>'team_id', '') = $%d::text
-			or (
-				nullif(to_jsonb(l)->>'team_id', '') is null
-				and exists (
-					select 1 from public.team_members tm
-					where tm.organization_id = l.organization_id
-					  and tm.team_id = $%d::uuid
-					  and tm.user_id = l.assigned_user_id
-					  and tm.is_active = true
-				)
-			)
-		)`, index, index))
+		// Pipeline, Contacts and Dashboard must use the same selected-team
+		// cohort. The lead's team_id records queue provenance, which may differ
+		// from the current assignee's team after redistribution.
+		if filter.Unassigned {
+			add("l.team_id = $%d::uuid", teamID)
+		} else {
+			add(currentAssigneeTeamFilterSQL, teamID)
+		}
 	}
 	if filter.Unassigned {
 		where = append(where, "l.assigned_user_id is null")

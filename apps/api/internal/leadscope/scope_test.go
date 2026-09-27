@@ -27,6 +27,7 @@ func TestLeadVisibilitySQLUsesRequestedAliasForOwnAndTeam(t *testing.T) {
 	clause := VisibilitySQL("candidate", "$3", "$4", "$5", true)
 	for _, required := range []string{
 		"candidate.assigned_user_id = $4::uuid",
+		"candidate.assigned_user_id is null",
 		"to_jsonb(candidate)->>'team_id'",
 		"leader.organization_id = candidate.organization_id",
 		"member.user_id = candidate.assigned_user_id",
@@ -43,6 +44,9 @@ func TestLeadVisibilitySQLUsesRequestedAliasForOwnAndTeam(t *testing.T) {
 	}
 	if strings.Contains(clause, "nullif(to_jsonb(candidate)->>'team_id', '') is null") {
 		t.Fatal("an explicit foreign team must not hide a lead assigned to a broker in a led team")
+	}
+	if !strings.Contains(clause, "candidate.assigned_user_id is null\n") {
+		t.Fatal("recorded team provenance may grant leader visibility only while unassigned")
 	}
 	if strings.Contains(clause, "broker.organization_id = member.organization_id") {
 		t.Fatal("a broker's primary profile organization must not replace active membership in the lead organization")

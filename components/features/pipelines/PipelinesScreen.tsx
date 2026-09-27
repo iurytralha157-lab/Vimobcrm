@@ -91,7 +91,7 @@ import { useStageAutomations } from '@/hooks/use-stage-automations';
 export default function Pipelines() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { activeOrganization, profile } = useAuth();
+  const { activeOrganization, profile, tenantContext } = useAuth();
   const [shouldLoadFilterOptions, setShouldLoadFilterOptions] = useState(false);
   const activeOrganizationId = activeOrganization.organizationId;
   const { hasPermission, isLoading: permissionLoading } = useUserPermissions();
@@ -394,19 +394,17 @@ export default function Pipelines() {
     if (leadVisibility.userId) return [leadVisibility.userId];
     return [];
   }, [leadVisibility]);
+  const visibilityScopeKey = useMemo(() => JSON.stringify({
+    userId: profile?.id ?? null,
+    canViewAll: leadVisibility?.canViewAll ?? false,
+    visibleUserIds: [...(scopedVisibleUserIds ?? [])].sort(),
+    ledTeamIds: [...(tenantContext?.ledTeamIds ?? [])].sort(),
+  }), [profile?.id, leadVisibility?.canViewAll, scopedVisibleUserIds, tenantContext?.ledTeamIds]);
   const hasUserScope = Array.isArray(scopedVisibleUserIds);
   const isUnassignedFilter = filterUser === 'unassigned';
   const selectedFilterUserId = filterUser === 'all' || isUnassignedFilter
     ? undefined
     : (filterUser || undefined);
-  const effectivePipelineFilterUserIds = useMemo(() => {
-    if (isUnassignedFilter) return undefined;
-    if (!Array.isArray(selectedTeamUserIds)) return scopedVisibleUserIds;
-    if (!Array.isArray(scopedVisibleUserIds)) return selectedTeamUserIds;
-
-    const visibleUserIds = new Set(scopedVisibleUserIds);
-    return selectedTeamUserIds.filter((userId) => visibleUserIds.has(userId));
-  }, [isUnassignedFilter, scopedVisibleUserIds, selectedTeamUserIds]);
   const selectedFilterUserAllowed = useMemo(() => {
     if (!selectedFilterUserId) return true;
     if (hasUserScope && !scopedVisibleUserIds.includes(selectedFilterUserId)) return false;
@@ -448,9 +446,9 @@ export default function Pipelines() {
     filterAdSet: filterAdSet && filterAdSet !== 'all' ? filterAdSet : undefined,
     filterAd: filterAd && filterAd !== 'all' ? filterAd : undefined,
     filterSource: filterSource && filterSource !== 'all' ? filterSource : undefined,
-    filterUserIds: effectivePipelineFilterUserIds,
     unassigned: isUnassignedFilter,
-    teamId: isUnassignedFilter ? sharedFilters.teamId || undefined : undefined,
+    teamId: sharedFilters.teamId || undefined,
+    visibilityScopeKey,
   }), [
     pipelineDateRange,
     filterTags,
@@ -461,9 +459,9 @@ export default function Pipelines() {
     filterAdSet,
     filterAd,
     filterSource,
-    effectivePipelineFilterUserIds,
     isUnassignedFilter,
     sharedFilters.teamId,
+    visibilityScopeKey,
   ]);
   const pipelineBoardQueryKey = useMemo(
     () => stageWithLeadsQueryKey({
@@ -487,19 +485,17 @@ export default function Pipelines() {
     () =>
       JSON.stringify({
         organizationId: activeOrganizationId,
-        canViewAll: leadVisibility?.canViewAll ?? false,
+        visibilityScopeKey,
         filterUserId: effectivePipelineFilterUser ?? null,
-        filterUserIds: effectivePipelineFilterUserIds ?? null,
         unassigned: isUnassignedFilter,
-        teamId: isUnassignedFilter ? sharedFilters.teamId : null,
+        teamId: sharedFilters.teamId ?? null,
       }),
     [
       activeOrganizationId,
       effectivePipelineFilterUser,
-      effectivePipelineFilterUserIds,
       isUnassignedFilter,
-      leadVisibility?.canViewAll,
       sharedFilters.teamId,
+      visibilityScopeKey,
     ],
   );
   const previousBoardScopeRef = useRef<{

@@ -58,21 +58,22 @@ interface KPIData {
   overdueReceivables?: number;
   overduePayables?: number;
   paidCommissions?: number;
-  scheduledVisits?: number;
-  propertyCount?: number;
-  siteVisits?: number;
+  scheduledVisits?: number | string;
+  propertyCount?: number | string;
+  siteVisits?: number | string;
 }
 
 interface KPICardsProps {
   data: KPIData;
   isLoading?: boolean;
   periodLabel?: string;
-  scheduledVisits?: number;
-  propertyCount?: number;
-  siteVisits?: number;
+  scheduledVisits?: number | string;
+  propertyCount?: number | string;
+  siteVisits?: number | string;
   onLostClick?: () => void;
   onWonClick?: () => void;
   onFirstContactClick?: () => void;
+  onVisitsClick?: () => void;
 }
 
 interface KPICardItemProps {
@@ -278,6 +279,7 @@ export function KPICards({
   onLostClick,
   onWonClick,
   onFirstContactClick,
+  onVisitsClick,
 }: KPICardsProps) {
   if (isLoading) {
     const topSkeletonTours = [
@@ -376,15 +378,12 @@ export function KPICards({
     {
       title: "Visitas",
       value: scheduledVisits ?? 0,
-      rate:
-        data.totalLeads > 0
-          ? ((scheduledVisits ?? 0) / data.totalLeads) * 100
-          : 0,
-      rateVariant: "auto",
       icon: CalendarCheck,
-      tooltip: `Visitas e reuniões criadas no período em relação ao total de leads - ${periodLabel}`,
+      tooltip: `Visitas e reuniões marcadas no período - ${periodLabel}. A data usada é a do agendamento, independente da entrada do lead.`,
       format: "number",
       accentColor: "visits",
+      onClick: onVisitsClick,
+      interactive: Boolean(onVisitsClick),
       tourTarget: "dashboard-kpi-visits",
     },
   ];
@@ -405,7 +404,7 @@ export function KPICards({
       title: "1º Contato",
       value: data.avgResponseTime,
       icon: Clock,
-      tooltip: "Média da primeira resposta humana registrada; leads sem medida válida ficam fora da média",
+      tooltip: "Média da primeira resposta humana registrada. Ao filtrar por usuário, considera quem respondeu; os demais indicadores usam o responsável atual do lead.",
       format: "time",
       accentColor: "response",
       onClick: onFirstContactClick,
@@ -427,7 +426,7 @@ export function KPICards({
       title: "Visitas no site",
       value: siteVisits ?? 0,
       icon: Eye,
-      tooltip: `Visitas ao site no período - ${periodLabel}`,
+      tooltip: `Sessões únicas no site no período - ${periodLabel}`,
       format: "number",
       accentColor: "site",
       tourTarget: "dashboard-kpi-site-visits",

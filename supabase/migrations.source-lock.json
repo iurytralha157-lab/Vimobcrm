@@ -608,6 +608,10 @@
       "sha256": "4b75557205af16b7ddb8c1bf36c78d576a004c52fd8d72d0729b7d52d367d35e"
     },
     {
+      "file": "20260926232717_restrict_assigned_lead_reads_to_active_assignee_team.sql",
+      "sha256": "80642021c4e530bdd4425a12009e071c8073a56fbb31d5e0110a37dd4de8695b"
+    },
+    {
       "file": "20260927115810_whatsapp_calls_contacts.sql",
       "sha256": "a9f254a8ef6dd6f5e043a7dc54398a0e87e3c15e2f063db522cc692322ec9579"
     }

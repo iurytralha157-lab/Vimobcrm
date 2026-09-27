@@ -214,7 +214,14 @@ func (repo Repository) GetDashboardStats(ctx context.Context, tenantContext tena
 }
 
 func (repo Repository) GetDashboardFunnel(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) ([]FunnelDataPoint, error) {
-	pipelineID, err := repo.resolvePipelineBoardPipelineID(ctx, tenantContext, filter.PipelineID)
+	// The dashboard parser accepts "all" for every optional filter. The funnel
+	// still renders one pipeline at a time, so use its default pipeline when no
+	// specific pipeline is selected (the same behavior as the browser client).
+	selectedPipelineID := filter.PipelineID
+	if strings.EqualFold(strings.TrimSpace(selectedPipelineID), "all") {
+		selectedPipelineID = ""
+	}
+	pipelineID, err := repo.resolvePipelineBoardPipelineID(ctx, tenantContext, selectedPipelineID)
 	if err != nil {
 		return nil, err
 	}
@@ -354,10 +361,9 @@ func (repo Repository) GetDashboardLeadDistribution(ctx context.Context, tenantC
 	if err != nil {
 		return DashboardLeadDistribution{}, err
 	}
-	teamFilter := dashboardTeamDistributionFilter(filter)
 	teamWhere, teamArgs, err := repo.buildDashboardLeadWhere(
 		tenantContext,
-		teamFilter,
+		filter,
 		dashboardLeadWhereOptions{DateColumn: "created_at"},
 	)
 	if err != nil {
@@ -370,7 +376,7 @@ func (repo Repository) GetDashboardLeadDistribution(ctx context.Context, tenantC
 	userSQL := dashboardLeadDistributionUserSQL(userWhere, len(userArgs))
 	userArgs = append(userArgs, filter.TeamID, filter.UserID, brokerLeaderScoped, tenantContext.LedUserIDs)
 	teamSQL := dashboardLeadDistributionTeamSQL(teamWhere, len(teamArgs))
-	teamArgs = append(teamArgs, teamLeaderScoped, tenantContext.LedTeamIDs)
+	teamArgs = append(teamArgs, teamLeaderScoped, tenantContext.LedTeamIDs, filter.TeamID)
 
 	tx, err := repo.db.Pool().BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
@@ -432,11 +438,6 @@ func (repo Repository) GetDashboardLeadDistribution(ctx context.Context, tenantC
 	return result, nil
 }
 
-func dashboardTeamDistributionFilter(filter DashboardFilter) DashboardFilter {
-	filter.TeamID = ""
-	return filter
-}
-
 func dashboardTeamListScoped(tenantContext tenant.Context) bool {
 	if tenantContext.IsSuperAdmin || tenantContext.HasRole("owner", "admin") {
 		return false
@@ -449,7 +450,9 @@ func dashboardBrokerListScoped(tenantContext tenant.Context) bool {
 }
 
 func canViewDashboardLeadDistribution(tenantContext tenant.Context) bool {
-	return tenantContext.HasRole("owner", "admin") || tenantContext.IsTeamLeader
+	return tenantContext.IsSuperAdmin || tenantContext.HasRole("owner", "admin") ||
+		(tenantContext.HasRole("manager") && tenantContext.HasPermission(permissions.LeadViewAll)) ||
+		tenantContext.IsTeamLeader
 }
 
 func dashboardLeadDistributionUserSQL(where []string, argCount int) string {
@@ -500,9 +503,10 @@ func dashboardLeadDistributionUserSQL(where []string, argCount int) string {
 func dashboardLeadDistributionTeamSQL(where []string, argCount int) string {
 	leaderScoped := fmt.Sprintf("$%d", argCount+1)
 	ledTeamIDs := fmt.Sprintf("$%d", argCount+2)
+	selectedTeamID := fmt.Sprintf("$%d", argCount+3)
 	return `
 		with filtered as (
-			select l.id, l.assigned_user_id
+			select l.id, l.assigned_user_id, l.team_id
 			from public.leads l
 			where ` + strings.Join(where, " and ") + `
 		), eligible as (
@@ -510,6 +514,7 @@ func dashboardLeadDistributionTeamSQL(where []string, argCount int) string {
 			from public.teams t
 			where t.organization_id = $1::uuid and t.is_active = true
 			  and (not ` + leaderScoped + `::boolean or t.id = any(` + ledTeamIDs + `::uuid[]))
+			  and (` + selectedTeamID + `::text in ('', 'all') or t.id::text = ` + selectedTeamID + `::text)
 		), counts as (
 			select tm.team_id, count(distinct f.id)::bigint as lead_count
 			from filtered f
@@ -520,11 +525,18 @@ func dashboardLeadDistributionTeamSQL(where []string, argCount int) string {
 			join public.organization_members om on om.organization_id = tm.organization_id
 			  and om.user_id = tm.user_id and coalesce(om.is_active, false) = true and om.deleted_at is null
 			group by tm.team_id
+		), unassigned_counts as (
+			select f.team_id, count(distinct f.id)::bigint as lead_count
+			from filtered f
+			join eligible e on e.id = f.team_id
+			where f.assigned_user_id is null
+			group by f.team_id
 		)
-		select e.id::text, e.name, coalesce(c.lead_count, 0)::bigint
+		select e.id::text, e.name, (coalesce(c.lead_count, 0) + coalesce(uc.lead_count, 0))::bigint
 		from eligible e
 		left join counts c on c.team_id = e.id
-		order by lead_count desc, e.name, e.id
+		left join unassigned_counts uc on uc.team_id = e.id
+		order by 3 desc, e.name, e.id
 	`
 }
 
@@ -633,6 +645,11 @@ func (repo Repository) GetDashboardDealsEvolution(ctx context.Context, tenantCon
 	var err error
 
 	from, to, hasRange := dashboardExplicitDateRange(filter)
+	if hasRange {
+		// Dashboard periods are inclusive. The chart uses an exclusive upper
+		// bound internally so the final timestamp remains in the lead cohort.
+		to = to.Add(time.Microsecond)
+	}
 	if !hasRange {
 		tx, err = repo.db.Pool().BeginTx(ctx, pgx.TxOptions{
 			IsoLevel:   pgx.RepeatableRead,
@@ -667,7 +684,7 @@ func (repo Repository) GetDashboardDealsEvolution(ctx context.Context, tenantCon
 }
 
 func (repo Repository) dashboardEvolutionBounds(ctx context.Context, queryer dashboardQueryer, tenantContext tenant.Context, filter DashboardFilter) (time.Time, time.Time, bool, error) {
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{})
+	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{DateColumn: "created_at"})
 	if err != nil {
 		return time.Time{}, time.Time{}, false, err
 	}
@@ -705,7 +722,7 @@ func (repo Repository) dashboardDealsEvolutionAggregate(ctx context.Context, que
 		return []DealsEvolutionPoint{}, nil
 	}
 
-	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{})
+	where, args, err := repo.buildDashboardLeadWhere(tenantContext, filter, dashboardLeadWhereOptions{DateColumn: "created_at"})
 	if err != nil {
 		return nil, err
 	}
@@ -779,11 +796,7 @@ func (repo Repository) dashboardDealsEvolutionAggregate(ctx context.Context, que
 }
 
 func dashboardEvolutionEventSQL(alias string) string {
-	return `case
-		when coalesce(` + alias + `.deal_status, 'open') = 'won' then ` + alias + `.won_at
-		when coalesce(` + alias + `.deal_status, 'open') = 'lost' then coalesce(` + alias + `.lost_at, ` + alias + `.created_at)
-		else ` + alias + `.created_at
-	end`
+	return alias + ".created_at"
 }
 
 func (repo Repository) GetDashboardExtraCounts(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) (DashboardExtraCounts, error) {
@@ -929,7 +942,13 @@ func (repo Repository) countDashboardProperties(ctx context.Context, tenantConte
 func (repo Repository) countDashboardSiteVisits(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter) (int64, error) {
 	args := []any{tenantContext.OrganizationID}
 
-	where := []string{"le.organization_id = $1::uuid", "le.session_id is not null"}
+	// Public site tracking writes to site_analytics_events. Count the same
+	// distinct, non-synthetic sessions used by the site analytics summary.
+	where := []string{
+		"sae.organization_id = $1::uuid",
+		"sae.session_id is not null",
+		"sae.session_id not like 'site-contact:%'",
+	}
 	needsPropertyScope := !propertyscope.CanViewAll(tenantContext) || (filter.UserID != "" && filter.UserID != "all") || (filter.TeamID != "" && filter.TeamID != "all")
 	if needsPropertyScope {
 		propertyWhere, propertyArgs, err := buildDashboardPropertyWhere(tenantContext, filter, false)
@@ -940,23 +959,23 @@ func (repo Repository) countDashboardSiteVisits(ctx context.Context, tenantConte
 		where = append(where, `exists (
 			select 1
 			from public.properties p
-			where p.id = le.property_id
+			where p.id = sae.property_id
 			  and `+strings.Join(propertyWhere, " and ")+`
 		)`)
 	}
 	if filter.DateFrom != nil {
 		args = append(args, *filter.DateFrom)
-		where = append(where, fmt.Sprintf("le.created_at >= $%d", len(args)))
+		where = append(where, fmt.Sprintf("sae.created_at >= $%d", len(args)))
 	}
 	if filter.DateTo != nil {
 		args = append(args, *filter.DateTo)
-		where = append(where, fmt.Sprintf("le.created_at <= $%d", len(args)))
+		where = append(where, fmt.Sprintf("sae.created_at <= $%d", len(args)))
 	}
 
 	var count int64
 	err := repo.db.Pool().QueryRow(ctx, `
-		select count(distinct le.session_id)::bigint
-		from public.lead_events le
+		select count(distinct sae.session_id)::bigint
+		from public.site_analytics_events sae
 		where `+strings.Join(where, " and "),
 		args...,
 	).Scan(&count)
@@ -988,7 +1007,12 @@ func (repo Repository) buildDashboardScheduledVisitsWhere(tenantContext tenant.C
 	where := []string{
 		"se.organization_id = $1::uuid",
 		"se.event_type in ('visit', 'meeting')",
+		// The KPI and its detail must use the same event privacy rules as Agenda.
+		// Lead visibility alone does not authorize a private event belonging to
+		// another user on that lead.
+		fmt.Sprintf(dashboardVisitEventVisibilitySQL, len(args)+1),
 	}
+	args = append(args, tenantContext.IsSuperAdmin || tenantContext.HasRole("owner", "admin"))
 
 	add := func(clause string, value any) {
 		args = append(args, value)
@@ -1027,6 +1051,7 @@ func (repo Repository) dashboardAggregate(ctx context.Context, queryer dashboard
 				where l.first_response_actor_user_id is not null
 				  and coalesce(l.first_response_is_automation, false) = false
 				  and l.first_response_seconds >= 0
+				  and l.first_response_at is not null
 			)::double precision
 		from public.leads l
 		where `+strings.Join(where, " and "),
@@ -1038,6 +1063,37 @@ func (repo Repository) dashboardAggregate(ctx context.Context, queryer dashboard
 	if average.Valid {
 		value := average.Float64
 		aggregate.AverageResponseSecs = &value
+	}
+	// The lead-count cards use the current owner. A selected user's response
+	// time instead belongs to the human actor, including leads since transferred
+	// away. Apply the same response cohort and actor scope as the detail dialog.
+	actorScoped, allowedActorIDs := dashboardFirstContactActorScope(tenantContext)
+	if (filter.UserID != "" && filter.UserID != "all" && filter.UserID != "unassigned") || actorScoped || dashboardFirstContactSelectedTeamID(filter) != "" {
+		responseWhere, responseArgs, selectedUserID, err := repo.buildDashboardFirstContactWhere(tenantContext, filter)
+		if err != nil {
+			return dashboardAggregate{}, err
+		}
+		selectedPlaceholder := fmt.Sprintf("$%d", len(responseArgs)+1)
+		scopedPlaceholder := fmt.Sprintf("$%d", len(responseArgs)+2)
+		allowedPlaceholder := fmt.Sprintf("$%d", len(responseArgs)+3)
+		teamPlaceholder := fmt.Sprintf("$%d", len(responseArgs)+4)
+		responseArgs = append(responseArgs, selectedUserID, actorScoped, allowedActorIDs, dashboardFirstContactSelectedTeamID(filter))
+		actorFilter := dashboardFirstContactActorSQL("l.first_response_actor_user_id", selectedPlaceholder, scopedPlaceholder, allowedPlaceholder, teamPlaceholder)
+		average = pgtype.Float8{}
+		err = queryer.QueryRow(ctx, `
+			select avg(l.first_response_seconds)::double precision
+			from public.leads l
+			where `+strings.Join(responseWhere, " and ")+`
+			  and l.first_response_actor_user_id is not null
+			  and coalesce(l.first_response_is_automation, false) = false
+			  and l.first_response_seconds >= 0
+			  and l.first_response_at is not null
+			  and `+actorFilter+`
+		`, responseArgs...).Scan(&average)
+		if err != nil {
+			return dashboardAggregate{}, err
+		}
+		aggregate.AverageResponseSecs = dashboardNullableAverage(average)
 	}
 
 	return aggregate, nil
@@ -1337,7 +1393,7 @@ func (repo Repository) dashboardLostDeals(ctx context.Context, queryer dashboard
 }
 
 func (repo Repository) dashboardTopBrokers(ctx context.Context, tenantContext tenant.Context, filter DashboardFilter, fallback bool) ([]TopBroker, error) {
-	options := dashboardLeadWhereOptions{DateColumn: "won_at", ForceDealStatus: "won"}
+	options := dashboardDealCohortOptions("won")
 	if fallback {
 		options = dashboardLeadWhereOptions{DateColumn: "created_at"}
 	}
@@ -1354,19 +1410,13 @@ func (repo Repository) dashboardTopBrokers(ctx context.Context, tenantContext te
 	commissionJoin := ""
 	if !fallback {
 		commissionSelect = "coalesce(c.total_commissions, 0)::double precision as total_commissions"
-		commissionJoin = `
-		left join (
-			select user_id, sum(coalesce(amount, 0)) as total_commissions
-			from public.commissions
-			where organization_id = $1::uuid
-			  and status in ('forecast', 'approved', 'paid', 'prevista', 'aprovada', 'paga')
-			group by user_id
-		) c on c.user_id = u.id`
+		commissionJoin = dashboardTopBrokerCommissionJoinSQL()
 	}
 
 	rows, err := repo.db.Pool().Query(ctx, `
 		with filtered_leads as (
 			select
+				l.id,
 				l.assigned_user_id,
 				`+propertyValue+` as value
 			from public.leads l
@@ -1407,6 +1457,21 @@ func (repo Repository) dashboardTopBrokers(ctx context.Context, tenantContext te
 	}
 
 	return brokers, rows.Err()
+}
+
+// Restrict commission amounts to the same visible, filtered lead cohort as the
+// broker ranking. A broker can belong to several teams, so grouping only by
+// user_id would reveal commissions from leads outside a leader's scope.
+func dashboardTopBrokerCommissionJoinSQL() string {
+	return `
+		left join (
+			select cm.user_id, sum(coalesce(cm.amount, 0)) as total_commissions
+			from public.commissions cm
+			join filtered_leads visible_lead on visible_lead.id = cm.lead_id
+			where cm.organization_id = $1::uuid
+			  and cm.status in ('forecast', 'approved', 'paid', 'prevista', 'aprovada', 'paga')
+			group by cm.user_id
+		) c on c.user_id = u.id`
 }
 
 func (repo Repository) buildDashboardLeadWhere(tenantContext tenant.Context, filter DashboardFilter, options dashboardLeadWhereOptions) ([]string, []any, error) {

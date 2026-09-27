@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/leadscope"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/pgvalue"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/realtime"
@@ -1711,47 +1712,7 @@ func leadHistoryMessageLeadMatchSQL() string {
 }
 
 func leadVisibilitySQL(canViewOwn bool) string {
-	canViewOwnSQL := "false"
-	if canViewOwn {
-		canViewOwnSQL = "true"
-	}
-	return `(
-		$3::boolean
-		or (` + canViewOwnSQL + ` and l.assigned_user_id = $2::uuid)
-		or (
-			$4::boolean
-			and (
-				(
-					nullif(to_jsonb(l)->>'team_id', '') is not null
-					and exists (
-						select 1 from public.team_members leader
-						where leader.organization_id = l.organization_id
-						  and leader.user_id = $2::uuid
-						  and leader.team_id::text = to_jsonb(l)->>'team_id'
-						  and coalesce(leader.is_active, true) = true
-						  and coalesce(leader.is_leader, false) = true
-					)
-				)
-				or (
-					nullif(to_jsonb(l)->>'team_id', '') is null
-					and l.assigned_user_id is not null
-					and exists (
-						select 1
-						from public.team_members leader
-						join public.team_members member
-						  on member.organization_id = leader.organization_id
-						 and member.team_id = leader.team_id
-						 and coalesce(member.is_active, true) = true
-						where leader.organization_id = l.organization_id
-						  and leader.user_id = $2::uuid
-						  and coalesce(leader.is_active, true) = true
-						  and coalesce(leader.is_leader, false) = true
-						  and member.user_id = l.assigned_user_id
-					)
-				)
-			)
-		)
-	)`
+	return leadscope.VisibilitySQL("l", "$3", "$2", "$4", canViewOwn)
 }
 
 func canViewAllWhatsAppLeads(tenantContext tenant.Context) bool {

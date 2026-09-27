@@ -17,6 +17,7 @@ export interface PipelineQueryKeyFilters {
   filterUserIds?: string[];
   unassigned?: boolean;
   teamId?: string | null;
+  visibilityScopeKey?: string;
 }
 
 function normalizePipelineQueryFilter(value?: string | null) {
@@ -62,5 +63,6 @@ export function stageWithLeadsQueryKey(params: {
     filters?.unassigned ? true : undefined,
     normalizePipelineQueryFilter(filters?.teamId),
     normalizePipelineQueryFilter(filters?.filterPage),
+    filters?.visibilityScopeKey,
   ] as const;
 }

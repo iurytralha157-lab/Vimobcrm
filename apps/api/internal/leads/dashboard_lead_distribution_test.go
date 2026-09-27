@@ -19,6 +19,8 @@ func TestDashboardLeadDistributionIsRestrictedToManagement(t *testing.T) {
 	}{
 		{name: "owner", context: tenant.Context{MemberRole: "owner"}, want: true},
 		{name: "admin", context: tenant.Context{MemberRole: "admin"}, want: true},
+		{name: "manager with full lead access", context: tenant.Context{MemberRole: "manager", Permissions: []string{permissions.LeadViewAll}}, want: true},
+		{name: "manager without full lead access", context: tenant.Context{MemberRole: "manager"}, want: false},
 		{name: "team leader", context: tenant.Context{MemberRole: "member", IsTeamLeader: true}, want: true},
 		{name: "super admin", context: tenant.Context{IsSuperAdmin: true}, want: true},
 		{name: "regular member", context: tenant.Context{MemberRole: "member"}, want: false},
@@ -33,7 +35,7 @@ func TestDashboardLeadDistributionIsRestrictedToManagement(t *testing.T) {
 	}
 }
 
-func TestDashboardTeamDistributionIgnoresOnlyTeamFilter(t *testing.T) {
+func TestDashboardTeamDistributionKeepsSelectedTeamAndOtherFilters(t *testing.T) {
 	dateFrom := time.Date(2026, time.September, 22, 0, 0, 0, 0, time.UTC)
 	dateTo := dateFrom.Add(24 * time.Hour)
 	filter := DashboardFilter{
@@ -41,14 +43,19 @@ func TestDashboardTeamDistributionIgnoresOnlyTeamFilter(t *testing.T) {
 		UserID: "22222222-2222-4222-8222-222222222222", Source: "meta",
 		PageID: "page-1", PipelineID: "33333333-3333-4333-8333-333333333333",
 	}
-	teamFilter := dashboardTeamDistributionFilter(filter)
-	if teamFilter.TeamID != "" || filter.TeamID != dashboardTestUUID {
-		t.Fatalf("team filter must be removed only from copy: original=%#v team=%#v", filter, teamFilter)
+	where, _, err := (Repository{}).buildDashboardLeadWhere(tenant.Context{
+		OrganizationID: "11111111-1111-4111-8111-111111111111",
+		UserID:         "22222222-2222-4222-8222-222222222222",
+		MemberRole:     "admin",
+	}, filter, dashboardLeadWhereOptions{DateColumn: "created_at"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if teamFilter.DateFrom != filter.DateFrom || teamFilter.DateTo != filter.DateTo ||
-		teamFilter.UserID != filter.UserID || teamFilter.Source != filter.Source ||
-		teamFilter.PageID != filter.PageID || teamFilter.PipelineID != filter.PipelineID {
-		t.Fatalf("team distribution lost shared filters: %#v", teamFilter)
+	query := strings.Join(where, " and ")
+	for _, want := range []string{"dtm.team_id = $", "l.created_at >= $", "l.assigned_user_id = $", "l.source = $", "l.pipeline_id = $", "page_id"} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("team distribution must keep %q: %s", want, query)
+		}
 	}
 }
 
@@ -115,14 +122,16 @@ func TestDashboardLeadDistributionUsesCurrentActiveMembershipAndIncludesZeroTeam
 		"tm.user_id = f.assigned_user_id", "coalesce(tm.is_active, true) = true",
 		"coalesce(u.is_active, false) = true", "om.deleted_at is null",
 		"t.is_active = true", "t.id = any($7::uuid[])",
+		"t.id::text = $8::text",
 		"count(distinct f.id)", "left join counts c", "coalesce(c.lead_count, 0)",
+		"unassigned_counts", "f.assigned_user_id is null", "left join unassigned_counts uc",
 		"l.created_at >= $5",
 	} {
 		if !strings.Contains(teamQuery, fragment) {
 			t.Fatalf("team distribution query is missing %q: %s", fragment, teamQuery)
 		}
 	}
-	if strings.Contains(teamQuery, "l.team_id") || strings.Contains(teamQuery, "limit 50") {
-		t.Fatalf("team distribution must use current membership without truncation: %s", teamQuery)
+	if strings.Contains(teamQuery, "limit 50") {
+		t.Fatalf("team distribution must not truncate teams: %s", teamQuery)
 	}
 }

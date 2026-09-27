@@ -283,14 +283,11 @@ func TestPipelineBoardUnassignedFilterComposesWithTeam(t *testing.T) {
 		t.Fatalf("buildPipelineLeadWhere() args = %#v, want selected team", args)
 	}
 	joined := strings.Join(where, "\n")
-	if !strings.Contains(joined, "nullif(to_jsonb(l)->>'team_id', '') = $5::text") {
-		t.Fatalf("buildPipelineLeadWhere() missing direct team predicate: %s", joined)
+	if !strings.Contains(joined, "l.team_id = $5::uuid") {
+		t.Fatalf("buildPipelineLeadWhere() unassigned team filter must use queue provenance: %s", joined)
 	}
-	if !strings.Contains(joined, "tm.team_id = $5::uuid") {
-		t.Fatalf("buildPipelineLeadWhere() missing legacy team membership fallback: %s", joined)
-	}
-	if !strings.Contains(joined, "tm.organization_id = l.organization_id") || !strings.Contains(joined, "tm.is_active = true") {
-		t.Fatalf("buildPipelineLeadWhere() team fallback is not tenant-safe and active-only: %s", joined)
+	if strings.Contains(joined, "from public.team_members dtm") {
+		t.Fatalf("buildPipelineLeadWhere() unassigned team filter must not use current assignee membership: %s", joined)
 	}
 	if where[len(where)-1] != "l.assigned_user_id is null" {
 		t.Fatalf("buildPipelineLeadWhere() where = %#v, want unassigned predicate", where)
@@ -299,6 +296,33 @@ func TestPipelineBoardUnassignedFilterComposesWithTeam(t *testing.T) {
 	filter.TeamID = "not-a-uuid"
 	if _, _, err := buildPipelineLeadWhere(tenant.Context{}, filter); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("buildPipelineLeadWhere() invalid team error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestPipelineBoardTeamFilterMatchesDashboardAndContacts(t *testing.T) {
+	context := tenant.Context{
+		UserID:         "10000000-0000-4000-8000-000000000001",
+		OrganizationID: "20000000-0000-4000-8000-000000000001",
+		MemberRole:     "admin",
+	}
+	teamID := "30000000-0000-4000-8000-000000000001"
+	where, _, err := buildPipelineLeadWhere(context, PipelineBoardFilter{TeamID: teamID})
+	if err != nil {
+		t.Fatalf("buildPipelineLeadWhere() error = %v", err)
+	}
+	joined := strings.Join(where, "\n")
+	for _, want := range []string{
+		"dtm.user_id = l.assigned_user_id",
+		"dtm.team_id = $5::uuid",
+		"dt.organization_id = dtm.organization_id",
+		"dom.organization_id = dtm.organization_id",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("buildPipelineLeadWhere() missing selected-team scope %q: %s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "l.team_id = $5::uuid") {
+		t.Fatalf("assigned leads must follow the assignee's current team: %s", joined)
 	}
 }
 
