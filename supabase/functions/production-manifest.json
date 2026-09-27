@@ -264,7 +264,7 @@
       "verify_jwt": false,
       "auth_boundary": "HANDLER_MANAGED",
       "captured_deployment_sha256": "6aed1133e54b46c80cd6cc084d459dfce5cf580bab7825674701149586af05fa",
-      "source_sha256": "665d8203601254e551efd19bc7f3e64fd3995e0edd9222f2b6120fbec84de7e0"
+      "source_sha256": "8ab414d3fce2101fafcf420ea344c750118249ee1b2dc8be89fe463cfbb0aba3"
     },
     {
       "slug": "evolution-proxy",

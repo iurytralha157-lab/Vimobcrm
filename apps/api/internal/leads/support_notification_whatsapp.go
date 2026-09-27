@@ -211,14 +211,20 @@ func (repo Repository) dispatchWhatsAppViaEvolutionGoWithClient(
 		result.Error = "notification_whatsapp_idempotency_key_missing"
 		return result, fmt.Errorf("%w: WhatsApp notification idempotency key is required", ErrInvalidInput)
 	}
-	if strings.TrimSpace(repo.evolutionGoAPIURL) == "" {
+	destination, routeErr := repo.providerForSession(session.ID)
+	if routeErr != nil {
+		result.Attempted = false
+		result.Error = "evolution_go_canary_route_unavailable"
+		return result, fmt.Errorf("%w: %w", ErrInvalidInput, routeErr)
+	}
+	if strings.TrimSpace(destination.APIURL) == "" {
 		result.Error = "evolution_go_api_url_missing"
 		return result, fmt.Errorf("%w: Evolution Go API URL is not configured", ErrInvalidInput)
 	}
 
 	token := strings.TrimSpace(session.Token)
 	if token == "" {
-		token = strings.TrimSpace(repo.evolutionGoAPIKey)
+		token = strings.TrimSpace(destination.APIKey)
 	}
 	if token == "" {
 		result.Error = "evolution_go_token_missing"
@@ -235,7 +241,7 @@ func (repo Repository) dispatchWhatsAppViaEvolutionGoWithClient(
 		return result, err
 	}
 
-	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, repo.evolutionGoAPIURL+"/send/text", bytes.NewReader(rawPayload))
+	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, destination.APIURL+"/send/text", bytes.NewReader(rawPayload))
 	if err != nil {
 		return result, err
 	}
@@ -248,6 +254,13 @@ func (repo Repository) dispatchWhatsAppViaEvolutionGoWithClient(
 
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
+	}
+	if repo.providerRoutes.IsCanarySession(session.ID) {
+		redirectSafeClient := *client
+		redirectSafeClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+		client = &redirectSafeClient
 	}
 	var requestWriteObserved atomic.Bool
 	trace := &httptrace.ClientTrace{

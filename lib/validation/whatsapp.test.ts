@@ -96,6 +96,15 @@ test('aceita sessao Evolution GO e rejeita provider legado', () => {
     displayName: 'Atendimento',
     provider: 'evolution',
   }).success, false)
+  assert.equal(createWhatsAppSessionInputSchema.safeParse({
+    displayName: 'Piloto',
+    provider: 'evolution_go',
+    sessionId: ID,
+  }).success, true)
+  assert.equal(createWhatsAppSessionInputSchema.safeParse({
+    displayName: 'Piloto',
+    sessionId: 'not-a-uuid',
+  }).success, false)
 })
 
 test('exige snapshot anterior nos vinculos manuais de conversa', () => {

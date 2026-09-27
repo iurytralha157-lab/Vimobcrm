@@ -3,6 +3,8 @@ package config
 import (
 	"crypto/ecdh"
 	"encoding/base64"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +12,27 @@ import (
 	authpkg "github.com/vimob-crm/vimob-crm/packages/auth"
 	dbpkg "github.com/vimob-crm/vimob-crm/packages/db"
 )
+
+func TestCanarySecretFileRequiresReadableRegularFile(t *testing.T) {
+	const envName = "EVOLUTION_GO_CANARY_API_KEY_FILE"
+	secretPath := filepath.Join(t.TempDir(), "canary-key")
+	if err := os.WriteFile(secretPath, []byte("canary-test-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(envName, secretPath)
+	secret, err := readOptionalSecretFile(envName)
+	if err != nil || secret != "canary-test-key" {
+		t.Fatalf("secret file read = %q, %v", secret, err)
+	}
+	t.Setenv(envName, filepath.Dir(secretPath))
+	if _, err := readOptionalSecretFile(envName); err == nil {
+		t.Fatal("secret file path to directory must fail")
+	}
+	t.Setenv(envName, secretPath+".missing")
+	if _, err := readOptionalSecretFile(envName); err == nil {
+		t.Fatal("missing secret file must fail")
+	}
+}
 
 func TestNormalizeDotEnvValuePreservesEscapedLiteralDollar(t *testing.T) {
 	for _, input := range []string{`\$token`, `'\$token'`, `"\$token"`} {

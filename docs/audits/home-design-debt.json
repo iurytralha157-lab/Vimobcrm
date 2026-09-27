@@ -1,10 +1,10 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "bd133a1b58bf646febd0fba3e5311b7953de22deabc2b165d6c1dee5b314a597",
-  "surfaceInventoryDigestSha256": "8804ce066d09137e211fb8e8f808bdb7cc635b94c65e32e25c9f438b56b8cb50",
+  "sourceDigestSha256": "370e350095a6a7c0a3234e5c29e7b69cfdb9ead83b12fa8765f430df6a4c6eea",
+  "surfaceInventoryDigestSha256": "3ed778d5cebefaca1cf982a8aa95fc71368a354920457c0bdfe8c834fa556f3d",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 543,
+    "filesScanned": 547,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
@@ -1692,7 +1692,7 @@
     },
     {
       "file": "components/features/whatsapp/conversations/ConversationMessages.tsx",
-      "line": 225,
+      "line": 261,
       "match": "shadow-[0_4px_12px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",

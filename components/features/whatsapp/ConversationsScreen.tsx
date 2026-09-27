@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { AppLayout } from "@/components/shared/layout/AppLayout";
 import { ConversationHeader } from "@/components/features/whatsapp/ConversationHeader";
+import { SaveWhatsAppContactDialog } from "@/components/features/whatsapp/calls";
+import { WhatsAppCallHistoryDialog } from "@/components/features/whatsapp/calls/WhatsAppCallHistoryDialog";
 import { ConversationLeadPanel, ConversationUnregisteredPanel } from "@/components/features/whatsapp/ConversationLeadPanel";
 import { EnterAttendanceDialog } from "@/components/features/whatsapp/EnterAttendanceDialog";
 import {
@@ -28,6 +30,8 @@ import { normalizeSearchText } from "@/lib/search-text";
 import { useWhatsAppConversation, useWhatsAppConversationForLead, useWhatsAppConversationSnapshot, useWhatsAppConversations, useSendWhatsAppMessage, useReactToWhatsAppMessage, useMarkConversationAsRead, useWhatsAppLeadRealtime, useArchiveConversation, useDeleteConversation, useLinkConversationToLead, type WhatsAppConversation, type WhatsAppMessage } from "@/hooks/use-whatsapp-conversations";
 import { useWhatsAppMessagesPaginated } from "@/hooks/use-whatsapp-messages-paginated";
 import { useAccessibleSessions } from "@/hooks/use-accessible-sessions";
+import { useSessionWhatsAppCalls, useWhatsAppCallActions } from "@/hooks/whatsapp/use-whatsapp-calls";
+import { useWhatsAppCallContext } from "@/contexts/WhatsAppCallContext";
 import { useWhatsAppAttendanceGate, type WhatsAppAttendanceTarget } from "@/hooks/use-whatsapp-attendance";
 import { getWhatsAppSendFailureStatus, resolveWhatsAppConversationSessionFilter } from "@/lib/whatsapp-query-cache";
 import { useRouter } from "next/navigation";
@@ -40,6 +44,7 @@ import { useMetaConversations, useMetaMessages, useSendMetaMessage } from "@/hoo
 import { createUUID } from "@/lib/client-id";
 import { useMetaIntegrations } from "@/hooks/use-meta-integration";
 import { whatsappAPI } from "@/lib/api/whatsapp";
+import { isWhatsAppSessionFeatureEnabled } from "@/lib/whatsapp-call-capabilities";
 import {
 	getWhatsAppConversationDraftKey,
   getWhatsAppConversationMessageScope,
@@ -148,6 +153,8 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   const [withoutLeadOnly, setWithoutLeadOnly] = useState(false);
   const [pendingReplyOnly, setPendingReplyOnly] = useState(false);
   const [showAutomationDialog, setShowAutomationDialog] = useState(false);
+  const [saveContactOpen, setSaveContactOpen] = useState(false);
+  const [callHistoryOpen, setCallHistoryOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastVisibleMessageIdRef = useRef<string | null>(null);
@@ -167,6 +174,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
       setSelectedPageId("all");
       setActivePlatform("whatsapp");
       setMessageDrafts({});
+      setCallHistoryOpen(false);
       setMobileConversationListReturnPosition(null);
       lastVisibleMessageIdRef.current = null;
       isUserScrollingRef.current = false;
@@ -197,6 +205,11 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     data: sessions,
     isLoading: loadingSessions,
   } = useAccessibleSessions();
+  const canViewCallHistory = hasModule("whatsapp")
+    && (hasPermission("whatsapp_view") || canOperateWhatsApp)
+    && Boolean(sessions?.some((session) => session.provider === "evolution_go" && session.owner_user_id === currentUserId));
+  const callActions = useWhatsAppCallActions();
+  const callContext = useWhatsAppCallContext();
 
   // Extract accessible session IDs for filtering
   const accessibleSessionIds = useMemo(() => sessions?.map(s => s.id) || [], [sessions]);
@@ -408,6 +421,44 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   const selectedMessageScope = getWhatsAppConversationMessageScope(
     activePlatform === "whatsapp" ? selectedConversation as WhatsAppConversation | null : null,
   );
+  const selectedWhatsAppSession = sessions?.find((session) => session.id === selectedConversation?.session_id);
+  const callsEnabled = isWhatsAppSessionFeatureEnabled(selectedWhatsAppSession, "whatsapp_calls_enabled", currentUserId);
+  const contactSaveEnabled = isWhatsAppSessionFeatureEnabled(selectedWhatsAppSession, "whatsapp_contact_save_enabled", currentUserId);
+  const { data: sessionCalls = [] } = useSessionWhatsAppCalls(
+    callsEnabled ? selectedConversation?.session_id || null : null,
+    Boolean(callsEnabled && selectedConversation?.session_id),
+  );
+  const conversationCalls = sessionCalls.filter((call) => call.conversation_id === selectedConversation?.id);
+  const canCallSelectedConversation = Boolean(callsEnabled && selectedConversation && !selectedConversation.is_group
+    && selectedConversation.session_id && selectedConversation.remote_jid && canOperateWhatsApp
+    && selectedMessageScope.canMutate);
+  const canSaveSelectedContact = Boolean(contactSaveEnabled && selectedConversation && !selectedConversation.is_group
+    && selectedConversation.session_id && selectedConversation.contact_phone && canOperateWhatsApp
+    && selectedMessageScope.canManage);
+
+  const handleStartWhatsAppCall = async () => {
+    if (!selectedConversation || !canCallSelectedConversation) return;
+    await callContext.openForConversation(
+      selectedConversation.id,
+      selectedConversation.lead?.name || selectedConversation.contact_name || selectedConversation.contact_phone || "Contato",
+    );
+  };
+
+  const handleSaveWhatsAppContact = async (fullName: string) => {
+    if (!selectedConversation?.session_id || !canSaveSelectedContact) return;
+    try {
+      if (selectedLeadId) {
+        await callActions.saveContact.mutateAsync({ sessionId: selectedConversation.session_id, leadId: selectedLeadId });
+      } else {
+        await callActions.saveContact.mutateAsync({ conversationId: selectedConversation.id, fullName });
+      }
+      setSaveContactOpen(false);
+      toast({ title: "Contato salvo no WhatsApp", description: "Confira a sincronização no celular vinculado." });
+    } catch (error) {
+      toast({ title: "Contato não salvo", description: error instanceof Error ? error.message : "Tente novamente.", variant: "destructive" });
+    }
+  };
+
 	const canMutateSelectedWhatsAppConversation = canOperateWhatsApp
 	  && activePlatform === "whatsapp"
 	  && selectedMessageScope.canMutate;
@@ -1058,6 +1109,17 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
         {...attendanceGate.dialogProps}
         contactName={selectedConversation?.lead?.name || selectedConversation?.contact_name}
       />
+      {saveContactOpen && <SaveWhatsAppContactDialog
+        open={saveContactOpen}
+        onOpenChange={setSaveContactOpen}
+        contactName={selectedConversation?.lead?.name || selectedConversation?.contact_name || ""}
+        contactPhone={selectedConversation?.contact_phone || ""}
+        leadLinked={Boolean(selectedLeadId)}
+        busy={callActions.saveContact.isPending}
+        onSave={handleSaveWhatsAppContact}
+      />}
+      <WhatsAppCallHistoryDialog open={callHistoryOpen} onOpenChange={setCallHistoryOpen}
+        onPlayRecording={callContext.openRecording} />
     </>
   );
 
@@ -1075,6 +1137,8 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 onBack={handleBackToList}
                 onArchive={() => handleArchive(selectedConversation)}
                 onDelete={() => handleDelete(selectedConversation)}
+                onWhatsAppCall={canCallSelectedConversation ? () => void handleStartWhatsAppCall() : undefined}
+                onSaveWhatsAppContact={canSaveSelectedContact ? () => setSaveContactOpen(true) : undefined}
               />
               <ConversationMessages
                 layout="mobile"
@@ -1096,6 +1160,8 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 onRetryMedia={retryMediaDownload}
                 reactionsByMessageId={reactionsByMessageId}
                 attendanceEntries={attendanceGate.entries}
+                calls={conversationCalls}
+                onPlayCallRecording={callContext.openRecording}
                 onReact={handleReactToMessage}
                 reactingMessageId={reactToMessage.isPending
                   ? reactToMessage.variables?.targetMessage.id ?? null
@@ -1131,6 +1197,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 layout="mobile"
                 activePlatform={activePlatform}
                 onSelectWhatsApp={() => setActivePlatform("whatsapp")}
+                onOpenCallHistory={canViewCallHistory ? () => setCallHistoryOpen(true) : undefined}
                 sessions={sessions}
                 metaIntegrations={metaIntegrations}
                 currentChannelValue={currentChannelValue}
@@ -1211,6 +1278,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
             layout="desktop"
             activePlatform={activePlatform}
             onSelectWhatsApp={() => setActivePlatform("whatsapp")}
+            onOpenCallHistory={canViewCallHistory ? () => setCallHistoryOpen(true) : undefined}
             sessions={sessions}
             metaIntegrations={metaIntegrations}
             currentChannelValue={currentChannelValue}
@@ -1293,6 +1361,8 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 onDelete={() => handleDelete(selectedConversation)}
                 canOperate={canManageSelectedWhatsAppConversation}
                 onCreateLead={canCreateLeads ? () => openCreateLeadForConversation(selectedConversation) : undefined}
+                onWhatsAppCall={canCallSelectedConversation ? () => void handleStartWhatsAppCall() : undefined}
+                onSaveWhatsAppContact={canSaveSelectedContact ? () => setSaveContactOpen(true) : undefined}
                 onToggleLeadPanel={() => setShowLeadPanel((previous) => !previous)}
                 showLeadPanel={showLeadPanel}
               />
@@ -1316,6 +1386,8 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 onRetryMedia={retryMediaDownload}
                 reactionsByMessageId={reactionsByMessageId}
                 attendanceEntries={attendanceGate.entries}
+                calls={conversationCalls}
+                onPlayCallRecording={callContext.openRecording}
                 onReact={handleReactToMessage}
                 reactingMessageId={reactToMessage.isPending
                   ? reactToMessage.variables?.targetMessage.id ?? null

@@ -1,4 +1,4 @@
-import { MessageCircle, Search, SlidersHorizontal } from "lucide-react";
+import { MessageCircle, Phone, Search, SlidersHorizontal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -22,6 +22,7 @@ type ConversationFiltersProps = {
   layout: "mobile" | "desktop";
   activePlatform: ConversationPlatform;
   onSelectWhatsApp: () => void;
+  onOpenCallHistory?: () => void;
   sessions?: WhatsAppSession[];
   metaIntegrations?: MetaIntegration[];
   currentChannelValue: string;
@@ -46,6 +47,7 @@ export function ConversationFilters({
   layout,
   activePlatform,
   onSelectWhatsApp,
+  onOpenCallHistory,
   sessions,
   metaIntegrations,
   currentChannelValue,
@@ -87,6 +89,14 @@ export function ConversationFilters({
             <span className="text-[11px] font-medium">WhatsApp</span>
           </Button>
         </div>
+
+        {activePlatform === "whatsapp" && onOpenCallHistory && (
+          <Button type="button" variant="ghost" size="icon" aria-label="Histórico de ligações"
+            className="h-8 w-8 shrink-0 rounded-[6px] bg-[var(--app-surface-soft)]"
+            onClick={onOpenCallHistory}>
+            <Phone className="h-3.5 w-3.5" />
+          </Button>
+        )}
 
         <Popover>
           <PopoverTrigger asChild>

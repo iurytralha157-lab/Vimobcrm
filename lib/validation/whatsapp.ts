@@ -11,6 +11,7 @@ export const whatsAppConversationLeadSnapshotSchema = z.union([
 export const createWhatsAppSessionInputSchema = z.object({
   displayName: z.string().trim().min(2).max(80),
   provider: z.literal('evolution_go').optional(),
+  sessionId: uuidSchema.optional(),
 }).strict()
 
 export const whatsAppSessionAccessInputSchema = z.object({

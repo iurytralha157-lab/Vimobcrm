@@ -376,7 +376,7 @@ export const whatsappAPI = {
     return response
   },
 
-  async createSession(input: { displayName: string; provider?: WhatsAppProvider }, organizationId?: string | null) {
+  async createSession(input: { displayName: string; provider?: WhatsAppProvider; sessionId?: string }, organizationId?: string | null) {
     const body = parseDomainInput(createWhatsAppSessionInputSchema, input, 'whatsapp.sessions.create')
     const response = await vimobAPIRequest<{ session: WhatsAppSession; evolutionData?: unknown }>('/v1/whatsapp/sessions', {
       method: 'POST',

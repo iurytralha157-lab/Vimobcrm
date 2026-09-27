@@ -171,7 +171,7 @@ export function useCreateWhatsAppSession() {
   const scope = useWhatsAppQueryScope();
 
   return useMutation({
-    mutationFn: async (input: string | { displayName: string; provider?: WhatsAppProvider }) => {
+    mutationFn: async (input: string | { displayName: string; provider?: WhatsAppProvider; sessionId?: string }) => {
       if (!scope.organizationId || !scope.userId) {
         throw new Error("Usuário não autenticado.");
       }
@@ -179,13 +179,14 @@ export function useCreateWhatsAppSession() {
       const displayName = typeof input === "string" ? input : input.displayName;
       const requestedProvider: WhatsAppProvider =
         typeof input === "string" ? "evolution_go" : input.provider || "evolution_go";
+      const sessionId = typeof input === "string" ? undefined : input.sessionId;
 
       if (requestedProvider !== "evolution_go") {
         console.warn("Legacy Evolution creation is disabled. Forcing Evolution Go.");
       }
 
       const result = await whatsappAPI.createSession(
-        { displayName, provider: "evolution_go" },
+        { displayName, provider: "evolution_go", ...(sessionId !== undefined ? { sessionId } : {}) },
         scope.organizationId,
       );
 

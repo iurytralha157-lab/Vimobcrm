@@ -1,0 +1,91 @@
+# Evolution Go 0.7.2 - Vimob hardening, calls and contacts
+
+This image is built from the immutable upstream Evolution Go `0.7.2` commit
+`9337afc47e10b86cc896a6f432240e40fee95dd1` plus narrowly scoped patches for
+the Whatsmeow auth store, instance startup, `POST /message/downloadmedia`,
+guarded WhatsApp voice calls, and contact saving.
+
+The fifth patch, `0.7.2-vimob-calls-contacts.patch`, reproduces the tested
+Evolution Go checkout commit `ee9c9ab9113625a4904fdde8627cb13f614d1b2c`.
+It pins MeowCaller at `8e4008f12884` and vendors a narrow local fork retaining
+the upstream license. The fork sends reject/hangup signaling before releasing
+local call state. The Dockerfile applies all five patches in order and runs
+the fork, call, contact, route, and existing hardening tests before building.
+
+Calls require `EVOGO_CALLS_ENABLED=true`, an exact instance ID in
+`EVOGO_CALLS_INSTANCE_IDS`, a shared 32-byte-or-longer
+`EVOGO_CALL_MEDIA_HMAC_SECRET`, a browser Origin allowlist, and a private
+recording directory. Without these values the existing production image's
+message operation remains unchanged. CRM session flags are a second gate.
+Read [CANARY.md](CANARY.md) and use the separate `canary-stack.yml` before any
+live WhatsApp account test. A real device test must confirm media relay,
+two-way audio, recording upload, and phone contact synchronization.
+
+The auth-pool patch is the corrected upstream fix from
+[`f85ea1445373ea142bb12ba0c01dfc85879be212`](https://github.com/evolution-foundation/evolution-go/commit/f85ea1445373ea142bb12ba0c01dfc85879be212)
+(follow-up to
+[`4cc635dd460f70c36ba83285ecbb34589790572f`](https://github.com/evolution-foundation/evolution-go/commit/4cc635dd460f70c36ba83285ecbb34589790572f)).
+It reuses one sqlstore container, caps the Postgres pool at 20 open / 5 idle
+connections, expires connections, closes failed initialization attempts, and
+memoizes only a successful initialization.
+
+The startup patch makes `CONNECT_ON_STARTUP=false` a process-level, fail-closed
+barrier instead of only skipping the bulk-start call in `main.go`:
+
+- a fresh process authorizes zero instances;
+- lazy message, chat, group, label, and similar operations cannot start a
+  WhatsApp client;
+- `StartInstance`, `ReconnectClient`, and the final `StartClient` websocket path
+  all enforce the same gate;
+- each explicit lifecycle request receives a new per-instance authorization
+  epoch; a newer request supersedes the older one, and exact cancellation from
+  an older request cannot revoke the newer attempt;
+- reconnects belonging to the current runtime reuse only that runtime's epoch;
+  they cannot grant authorization to a blocked instance;
+- setup, websocket connect, and readiness waits are bounded and cancelable;
+  readiness is published only after the connected state is persisted;
+- runtime publication/removal is generation-safe, while disconnect, logout,
+  and delete take a terminal lease that excludes concurrent starts;
+- runtime settings are immutable snapshots, so live updates cannot race event
+  handlers;
+- logout and delete remove the Whatsmeow auth device even when no runtime is
+  currently registered;
+- proxy changes may reconnect an already authorized instance but never grant a
+  blocked one; and
+- disconnect, logout, QR timeout, and delete revoke that instance authorization.
+
+Failed starts remove only the client, handler, kill channel, and cache entries
+that still belong to that failed generation. A newer runtime is never deleted,
+and a disconnected stale pointer cannot suppress a later explicit recovery.
+
+The boot log must contain the startup-gate message when the flag is false. No
+session is permitted to start before an explicit lifecycle operation.
+
+The media patches make recovery fail closed:
+
+- it never starts or reconnects an instance while downloading;
+- it accepts only an already connected and logged-in client;
+- it rejects missing, zero, and declared files above 25 MiB;
+- it streams ciphertext through a bounded temporary file, so an incorrect
+  declaration cannot force an unbounded in-memory download;
+- it caps the request JSON body at 2 MiB and accepts exactly one media payload;
+- it normalizes invalid or empty MIME values to `application/octet-stream`;
+- it propagates the caller context and enforces a 90-second deadline;
+- it reports disconnected clients as HTTP 409 and rejected sizes as HTTP 413.
+
+The 90-second context covers Whatsmeow network requests and retries. The pinned
+Whatsmeow dependency uses a non-context-aware mutex while refreshing its media
+connection; with `WEBHOOK_FILES=false` and the Vimob single-worker queue there
+is no expected competing automatic downloader, but this is not a mathematical
+hard deadline if another caller is already holding that mutex.
+
+Keep `WEBHOOK_FILES=false`. Incoming webhooks retain the encrypted media
+metadata, while the Vimob API queue decides which files may be recovered.
+
+Builds must run the message, instance-repository, and Whatsmeow tests plus the
+startup-path vet checks. Production must pin the resulting image by immutable
+SHA/digest, not `latest`.
+
+All build stages are pinned by digest. The runtime uses Alpine 3.22.1 (matching
+the Go builder generation) instead of the upstream 3.19.1 runtime, which is
+end-of-life.

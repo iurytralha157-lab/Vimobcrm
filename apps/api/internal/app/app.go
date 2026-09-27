@@ -84,9 +84,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 
 	mux := http.NewServeMux()
 	realtimeHub := realtime.NewDurableHub(realtime.NewPostgresStore(postgres), logger)
-	if _, err := backgroundWorkers.RunWithError(func() error {
-		return realtimeHub.Start(ctx)
-	}); err != nil {
+	// SSE delivery needs the durable tailer even on API replicas that do not
+	// own background jobs. Retention pruning remains with worker-enabled replicas.
+	if err := realtimeHub.StartWithPrune(ctx, cfg.BackgroundWorkersEnabled); err != nil {
 		postgres.Close()
 		authVerifier.Close()
 		return nil, err
@@ -203,8 +203,15 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
 		EvolutionGo: leads.EvolutionGoConfig{
-			APIURL: cfg.EvolutionGo.APIURL,
-			APIKey: cfg.EvolutionGo.APIKey,
+			APIURL:                    cfg.EvolutionGo.APIURL,
+			APIKey:                    cfg.EvolutionGo.APIKey,
+			CallMediaHMACSecret:       cfg.EvolutionGo.CallMediaHMACSecret,
+			ImageDigest:               cfg.EvolutionGo.ImageDigest,
+			CanaryAPIURL:              cfg.EvolutionGo.CanaryAPIURL,
+			CanaryAPIKey:              cfg.EvolutionGo.CanaryAPIKey,
+			CanaryCallMediaHMACSecret: cfg.EvolutionGo.CanaryCallMediaHMACSecret,
+			CanaryImageDigest:         cfg.EvolutionGo.CanaryImageDigest,
+			CanarySessionIDs:          cfg.EvolutionGo.CanarySessionIDs,
 		},
 		Email: leads.EmailConfig{
 			ResendAPIKey:   cfg.Email.ResendAPIKey,
@@ -325,13 +332,19 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
 		EvolutionGo: whatsapp.EvolutionGoConfig{
-			APIURL:                   cfg.EvolutionGo.APIURL,
-			APIKey:                   cfg.EvolutionGo.APIKey,
-			ImageDigest:              cfg.EvolutionGo.ImageDigest,
-			WebhookURL:               cfg.EvolutionGo.WebhookURL,
-			BackendWebhookURL:        cfg.EvolutionGo.BackendWebhookURL,
-			WebhookProcessorMode:     cfg.EvolutionGo.WebhookProcessorMode,
-			WebhookRolloutSessionIDs: cfg.EvolutionGo.WebhookRolloutSessionIDs,
+			APIURL:                    cfg.EvolutionGo.APIURL,
+			APIKey:                    cfg.EvolutionGo.APIKey,
+			CallMediaHMACSecret:       cfg.EvolutionGo.CallMediaHMACSecret,
+			ImageDigest:               cfg.EvolutionGo.ImageDigest,
+			CanaryAPIURL:              cfg.EvolutionGo.CanaryAPIURL,
+			CanaryAPIKey:              cfg.EvolutionGo.CanaryAPIKey,
+			CanaryCallMediaHMACSecret: cfg.EvolutionGo.CanaryCallMediaHMACSecret,
+			CanaryImageDigest:         cfg.EvolutionGo.CanaryImageDigest,
+			CanarySessionIDs:          cfg.EvolutionGo.CanarySessionIDs,
+			WebhookURL:                cfg.EvolutionGo.WebhookURL,
+			BackendWebhookURL:         cfg.EvolutionGo.BackendWebhookURL,
+			WebhookProcessorMode:      cfg.EvolutionGo.WebhookProcessorMode,
+			WebhookRolloutSessionIDs:  cfg.EvolutionGo.WebhookRolloutSessionIDs,
 		},
 	}, realtimeHub)).WithAutoReply(aiService, cfg.AI.AutoReplyToken).WithWorkerConfig(whatsapp.WorkerConfig{
 		AIWorkerEnabled:               cfg.WhatsApp.AIWorkerEnabled,
@@ -369,6 +382,17 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	backgroundWorkers.Run(func() {
 		whatsappHandler.StartMediaWorker(ctx, logger)
 	})
+	callRecordingWorkers := newBackgroundWorkerStartup(cfg.BackgroundWorkersEnabled || cfg.CallRecordingOnlyWorkerEnabled)
+	if _, err := callRecordingWorkers.RunWithError(func() error {
+		return whatsappHandler.StartCallRecordingWorker(
+			ctx, logger, !cfg.BackgroundWorkersEnabled, cfg.EvolutionGo.CanarySessionIDs,
+		)
+	}); err != nil {
+		realtimeHub.Close()
+		postgres.Close()
+		authVerifier.Close()
+		return nil, err
+	}
 	backgroundWorkers.Run(func() {
 		whatsappHandler.StartAvatarWorker(ctx, logger)
 	})

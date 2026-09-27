@@ -57,6 +57,8 @@ interface ConversationHeaderProps {
   onArchive?: () => void;
   onDelete?: () => void;
   onCreateLead?: () => void;
+  onWhatsAppCall?: () => void;
+  onSaveWhatsAppContact?: () => void;
   onToggleLeadPanel?: () => void;
   showLeadPanel?: boolean;
   canOperate?: boolean;
@@ -78,6 +80,8 @@ export function ConversationHeader({
   onArchive,
   onDelete,
   onCreateLead,
+  onWhatsAppCall,
+  onSaveWhatsAppContact,
   onToggleLeadPanel,
   showLeadPanel = false,
   canOperate = false,
@@ -173,6 +177,18 @@ export function ConversationHeader({
       )}
 
       <div className="flex shrink-0 items-center gap-1">
+        {canOperate && !isGroup && onWhatsAppCall && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={onWhatsAppCall}
+            aria-label={`Ligar pelo WhatsApp para ${displayName || "contato"}`}
+          >
+            <Phone className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        )}
         {leadId ? (
           <Button
             variant="ghost"
@@ -194,7 +210,7 @@ export function ConversationHeader({
               </Button>
             )}
 
-            {canOperate && !isGroup && phoneHref && (
+            {canOperate && !onWhatsAppCall && !isGroup && phoneHref && (
               <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
                 <a href={`tel:${phoneHref}`} aria-label={`Ligar para ${displayName || "contato"}`}>
                   <Phone className="h-4 w-4" aria-hidden="true" />
@@ -202,26 +218,35 @@ export function ConversationHeader({
               </Button>
             )}
 
-            {canOperate && <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Mais ações da conversa">
-                  <MoreVertical className="h-4 w-4" aria-hidden="true" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48 bg-popover">
+          </>
+        )}
+        {canOperate && (onSaveWhatsAppContact || !leadId) && <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Mais ações da conversa">
+              <MoreVertical className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52 bg-popover">
+            {onSaveWhatsAppContact && (
+              <DropdownMenuItem onClick={onSaveWhatsAppContact}>
+                <UserPlus className="mr-2 h-4 w-4" /> Salvar no WhatsApp
+              </DropdownMenuItem>
+            )}
+            {!leadId && (
+              <>
+                {onSaveWhatsAppContact && <DropdownMenuSeparator />}
                 <DropdownMenuItem onClick={onArchive}>
                   <Archive className="mr-2 h-4 w-4" />
                   {isArchived ? "Desarquivar" : "Arquivar"}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={onDelete} className="text-destructive">
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Remover
+                  <Trash2 className="mr-2 h-4 w-4" /> Remover
                 </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>}
-          </>
-        )}
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>}
         {onToggleLeadPanel && (
           <Button
             type="button"

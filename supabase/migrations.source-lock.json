@@ -610,6 +610,10 @@
     {
       "file": "20260926232717_restrict_assigned_lead_reads_to_active_assignee_team.sql",
       "sha256": "80642021c4e530bdd4425a12009e071c8073a56fbb31d5e0110a37dd4de8695b"
+    },
+    {
+      "file": "20260927115810_whatsapp_calls_contacts.sql",
+      "sha256": "580faaff372eb89a9e99be846012f160d70bfffbbb66a70177c21c75ed1ef711"
     }
   ]
 }
