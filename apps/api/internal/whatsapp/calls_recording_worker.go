@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
@@ -21,6 +22,43 @@ const (
 	callRecordingPollPeriod = 10 * time.Second
 	callRecordingJobLimit   = 5 * time.Minute
 )
+
+const callWebhookRetryClaimSQL = `
+	select i.id::text, i.event_type, i.payload::text,
+	       i.attempts, i.max_attempts,
+	       s.id::text, s.organization_id::text,
+	       coalesce(s.instance_id,''), s.instance_name
+	from public.whatsapp_webhook_inbox i
+	join public.whatsapp_sessions s on s.id = i.session_id
+	where i.status in ('pending','retry')
+	  and i.next_attempt_at <= now()
+	  and lower(replace(i.event_type, '_', '')) in ('callstate','callrecording')
+	  and ($1::boolean = false or i.session_id = any($2::uuid[]))
+	order by i.next_attempt_at, i.id
+	for update of i skip locked
+	limit 1
+`
+
+const callRecordingClaimSQL = `
+	with candidate as (
+	  select id from public.whatsapp_calls
+	  where recording_status = 'pending'
+	    and recording_next_attempt_at <= now()
+	    and ($1::boolean = false or session_id = any($2::uuid[]))
+	  order by recording_next_attempt_at, id
+	  for update skip locked
+	  limit 1
+	)
+	update public.whatsapp_calls c
+	set recording_attempts = c.recording_attempts + 1,
+	    recording_next_attempt_at = now() + interval '10 minutes'
+	from candidate
+	where c.id = candidate.id
+	returning c.id::text, c.organization_id::text, c.session_id::text,
+	          c.provider_call_id, coalesce(c.recording_provider_status,''),
+	          c.recording_attempts, c.recording_manifest,
+	          c.recording_incoming_path, c.recording_outgoing_path
+`
 
 type callRecordingChannel struct {
 	Channel     string `json:"channel"`
@@ -40,6 +78,35 @@ type callRecordingJob struct {
 	OutgoingPath   *string
 }
 
+type callRecordingWorkerScope struct {
+	restricted bool
+	sessionIDs []pgtype.UUID
+}
+
+func newCallRecordingWorkerScope(recordingOnly bool, sessionIDs []string) (callRecordingWorkerScope, error) {
+	if !recordingOnly {
+		return callRecordingWorkerScope{}, nil
+	}
+	if len(sessionIDs) == 0 {
+		return callRecordingWorkerScope{}, errors.New("EVOLUTION_GO_CANARY_SESSION_IDS is required for recording-only worker")
+	}
+	scope := callRecordingWorkerScope{restricted: true, sessionIDs: make([]pgtype.UUID, 0, len(sessionIDs))}
+	seen := make(map[string]struct{}, len(sessionIDs))
+	for index, raw := range sessionIDs {
+		var sessionID pgtype.UUID
+		if err := sessionID.Scan(strings.TrimSpace(raw)); err != nil || !sessionID.Valid {
+			return callRecordingWorkerScope{}, fmt.Errorf("EVOLUTION_GO_CANARY_SESSION_IDS contains an invalid UUID at index %d", index)
+		}
+		canonical := sessionID.String()
+		if _, duplicate := seen[canonical]; duplicate {
+			continue
+		}
+		seen[canonical] = struct{}{}
+		scope.sessionIDs = append(scope.sessionIDs, sessionID)
+	}
+	return scope, nil
+}
+
 func callRecordingProviderHTTPClient(base *http.Client) http.Client {
 	if base == nil {
 		base = newEvolutionHTTPClient()
@@ -56,29 +123,34 @@ func callRecordingProviderHTTPClient(base *http.Client) http.Client {
 
 // Recordings have a separate serial lane. Provider file transfer never runs
 // inside webhook intake or borrows a message/media worker slot.
-func (handler Handler) StartCallRecordingWorker(ctx context.Context, logger *slog.Logger) {
+func (handler Handler) StartCallRecordingWorker(ctx context.Context, logger *slog.Logger, recordingOnly bool, canarySessionIDs []string) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	scope, err := newCallRecordingWorkerScope(recordingOnly, canarySessionIDs)
+	if err != nil {
+		return err
+	}
 	if handler.repo.functions.evolutionGoAPIURL == "" ||
 		handler.repo.storage.projectURL == "" || handler.repo.storage.apiKey == "" {
-		return
+		return nil
 	}
 	var installed bool
 	if err := handler.repo.db.Pool().QueryRow(ctx,
 		"select to_regclass('public.whatsapp_calls') is not null").Scan(&installed); err != nil || !installed {
 		logger.Warn("whatsapp call recording worker disabled until schema is available", "error", err)
-		return
+		return nil
 	}
-	go handler.runCallRecordingWorker(ctx, logger)
+	go handler.runCallRecordingWorker(ctx, logger, scope)
+	return nil
 }
 
-func (handler Handler) runCallRecordingWorker(ctx context.Context, logger *slog.Logger) {
+func (handler Handler) runCallRecordingWorker(ctx context.Context, logger *slog.Logger, scope callRecordingWorkerScope) {
 	ticker := time.NewTicker(callRecordingPollPeriod)
 	defer ticker.Stop()
 	for {
 		for {
-			replayed, replayErr := handler.repo.replayOneCallWebhook(ctx)
+			replayed, replayErr := handler.repo.replayOneCallWebhook(ctx, scope)
 			if replayErr != nil {
 				if !errors.Is(replayErr, context.Canceled) {
 					logger.Error("whatsapp call webhook retry failed", "error", replayErr)
@@ -88,7 +160,7 @@ func (handler Handler) runCallRecordingWorker(ctx context.Context, logger *slog.
 			if replayed {
 				continue
 			}
-			processed, err := handler.repo.drainOneCallRecording(ctx)
+			processed, err := handler.repo.drainOneCallRecording(ctx, scope)
 			if err != nil {
 				if !errors.Is(err, context.Canceled) {
 					logger.Error("whatsapp call recording worker failed", "error", err)
@@ -110,7 +182,7 @@ func (handler Handler) runCallRecordingWorker(ctx context.Context, logger *slog.
 // A CallRecording callback can beat its CallState callback. The webhook keeps
 // that manifest in the durable inbox, and this lane retries only call events.
 // Ordinary messages remain owned by the existing webhook worker.
-func (repo Repository) replayOneCallWebhook(ctx context.Context) (bool, error) {
+func (repo Repository) replayOneCallWebhook(ctx context.Context, scope callRecordingWorkerScope) (bool, error) {
 	tx, err := repo.db.Pool().Begin(ctx)
 	if err != nil {
 		return false, err
@@ -119,20 +191,7 @@ func (repo Repository) replayOneCallWebhook(ctx context.Context) (bool, error) {
 	var id, eventType, payload string
 	var attempts, maxAttempts int
 	var session evolutionWebhookSession
-	err = tx.QueryRow(ctx, `
-		select i.id::text, i.event_type, i.payload::text,
-		       i.attempts, i.max_attempts,
-		       s.id::text, s.organization_id::text,
-		       coalesce(s.instance_id,''), s.instance_name
-		from public.whatsapp_webhook_inbox i
-		join public.whatsapp_sessions s on s.id = i.session_id
-		where i.status in ('pending','retry')
-		  and i.next_attempt_at <= now()
-		  and lower(replace(i.event_type, '_', '')) in ('callstate','callrecording')
-		order by i.next_attempt_at, i.id
-		for update of i skip locked
-		limit 1
-	`).Scan(&id, &eventType, &payload, &attempts, &maxAttempts,
+	err = tx.QueryRow(ctx, callWebhookRetryClaimSQL, scope.restricted, scope.sessionIDs).Scan(&id, &eventType, &payload, &attempts, &maxAttempts,
 		&session.ID, &session.OrganizationID, &session.InstanceID, &session.InstanceName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -184,28 +243,10 @@ func (repo Repository) replayOneCallWebhook(ctx context.Context) (bool, error) {
 	return true, tx.Commit(ctx)
 }
 
-func (repo Repository) claimCallRecording(ctx context.Context) (callRecordingJob, error) {
+func (repo Repository) claimCallRecording(ctx context.Context, scope callRecordingWorkerScope) (callRecordingJob, error) {
 	var job callRecordingJob
 	var manifestRaw []byte
-	err := repo.db.Pool().QueryRow(ctx, `
-		with candidate as (
-		  select id from public.whatsapp_calls
-		  where recording_status = 'pending'
-		    and recording_next_attempt_at <= now()
-		  order by recording_next_attempt_at, id
-		  for update skip locked
-		  limit 1
-		)
-		update public.whatsapp_calls c
-		set recording_attempts = c.recording_attempts + 1,
-		    recording_next_attempt_at = now() + interval '10 minutes'
-		from candidate
-		where c.id = candidate.id
-		returning c.id::text, c.organization_id::text, c.session_id::text,
-		          c.provider_call_id, coalesce(c.recording_provider_status,''),
-		          c.recording_attempts, c.recording_manifest,
-		          c.recording_incoming_path, c.recording_outgoing_path
-	`).Scan(&job.ID, &job.OrganizationID, &job.SessionID,
+	err := repo.db.Pool().QueryRow(ctx, callRecordingClaimSQL, scope.restricted, scope.sessionIDs).Scan(&job.ID, &job.OrganizationID, &job.SessionID,
 		&job.ProviderCallID, &job.ProviderStatus, &job.Attempts, &manifestRaw,
 		&job.IncomingPath, &job.OutgoingPath)
 	if err != nil {
@@ -217,8 +258,8 @@ func (repo Repository) claimCallRecording(ctx context.Context) (callRecordingJob
 	return job, nil
 }
 
-func (repo Repository) drainOneCallRecording(ctx context.Context) (bool, error) {
-	job, err := repo.claimCallRecording(ctx)
+func (repo Repository) drainOneCallRecording(ctx context.Context, scope callRecordingWorkerScope) (bool, error) {
+	job, err := repo.claimCallRecording(ctx, scope)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}

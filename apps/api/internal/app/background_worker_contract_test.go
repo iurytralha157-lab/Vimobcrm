@@ -28,7 +28,7 @@ func TestAppBackgroundWorkerStartsUseGlobalGateWhileRealtimeStaysAvailable(t *te
 			return true
 		}
 		key, ok := selectorKey(call.Fun)
-		if !ok || (key != "backgroundWorkers.Run" && key != "backgroundWorkers.RunWithError" && key != "callRecordingWorkers.Run") {
+		if !ok || (key != "backgroundWorkers.Run" && key != "backgroundWorkers.RunWithError" && key != "callRecordingWorkers.RunWithError") {
 			return true
 		}
 		for _, argument := range call.Args {
@@ -88,6 +88,24 @@ func TestAppBackgroundWorkerStartsUseGlobalGateWhileRealtimeStaysAvailable(t *te
 		if key == "realtimeHub.Start" {
 			t.Error("unconditional realtime startup would run retention pruning on a worker-disabled replica")
 			return true
+		}
+		if key == "whatsappHandler.StartCallRecordingWorker" {
+			if len(call.Args) != 4 {
+				t.Errorf("call recording startup has %d arguments, want context, logger, mode and session allowlist", len(call.Args))
+			} else {
+				mode, ok := call.Args[2].(*ast.UnaryExpr)
+				if !ok || mode.Op != token.NOT {
+					t.Error("recording-only mode must be the inverse of the global worker flag")
+				} else if flag, ok := selectorKey(mode.X); !ok || flag != "cfg.BackgroundWorkersEnabled" {
+					t.Error("recording-only mode must be the inverse of cfg.BackgroundWorkersEnabled")
+				}
+				allowlist, ok := call.Args[3].(*ast.SelectorExpr)
+				if !ok || allowlist.Sel.Name != "CanarySessionIDs" {
+					t.Error("recording-only worker must receive EVOLUTION_GO_CANARY_SESSION_IDS")
+				} else if source, ok := selectorKey(allowlist.X); !ok || source != "cfg.EvolutionGo" {
+					t.Error("recording-only worker must receive cfg.EvolutionGo.CanarySessionIDs")
+				}
+			}
 		}
 
 		actual[key]++
