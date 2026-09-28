@@ -166,7 +166,7 @@ func lockAttendanceScope(
 	var lockedSessionID string
 	var sessionConnected, sessionOwned bool
 	err := tx.QueryRow(ctx, `
-		select ws.id::text, ws.status = 'connected', coalesce(ws.owner_user_id = $3::uuid, false)
+		select ws.id::text, coalesce(ws.status = 'connected', false), coalesce(ws.owner_user_id = $3::uuid, false)
 		from public.whatsapp_sessions as ws
 		where ws.organization_id = $1::uuid
 		  and ws.id = $2::uuid
