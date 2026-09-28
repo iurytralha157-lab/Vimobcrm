@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "92eec399f76a6f8e323f1b16d5b2abaacb007fc38c3d23d75c2d348447b2e753",
-  "surfaceInventoryDigestSha256": "0d9bf7e0bcd1c8130d7840ea990e8c54a913479727bacb47ed061daeb6c47c3a",
+  "sourceDigestSha256": "6c6481858427baf19f33bcbb4d8fa4502f206b5c71041b2f3f93fb0ef84f0756",
+  "surfaceInventoryDigestSha256": "74a5761ac0d4b51a917c9089d7d25da5f71934d1fc44e9266075c76c910cefcb",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
     "filesScanned": 547,
@@ -801,7 +801,7 @@
     },
     {
       "file": "components/features/chat/FloatingChat.tsx",
-      "line": 194,
+      "line": 196,
       "match": "shadow-[0_8px_24px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",
@@ -810,7 +810,7 @@
     },
     {
       "file": "components/features/chat/FloatingChat.tsx",
-      "line": 1607,
+      "line": 1620,
       "match": "shadow-[0_4px_12px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",
