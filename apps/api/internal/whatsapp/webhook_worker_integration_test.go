@@ -475,7 +475,8 @@ func TestClaimEvolutionWebhooksSkipsLockedSessionAndRefillsBatch(t *testing.T) {
 
 	// An older backlog message that is the proven predecessor of a live route
 	// must be claimable even while an unrelated live route on that session is
-	// ready. A backlog head without that dependency retains live priority.
+	// ready. An independent single-message route may also use the reserved
+	// backlog worker; same-route work and session controls retain live priority.
 	if _, err := postgres.Pool().Exec(ctx, `
 		update public.whatsapp_webhook_inbox
 		set status = 'processed', locked_at = null, locked_by = null
@@ -523,15 +524,77 @@ func TestClaimEvolutionWebhooksSkipsLockedSessionAndRefillsBatch(t *testing.T) {
 		t.Fatalf("proven backlog predecessor claim = %#v, want root %s", dependentRoot, rootID)
 	}
 
-	insertRouteEvent(sessionB, suffix+"-backlog-unrelated", "jid:unrelated-backlog", evolutionWebhookLaneBacklog,
+	unrelatedBacklogID := insertRouteEvent(sessionB, suffix+"-backlog-unrelated", "jid:unrelated-backlog", evolutionWebhookLaneBacklog,
 		`[{"provider_message_id":"unrelated-backlog-provider","binding_eligible":true}]`, "3 minutes")
 	insertRouteEvent(sessionB, suffix+"-live-ready", "jid:unrelated-live", evolutionWebhookLaneLive,
 		`[]`, "1 minute")
-	blockedBacklog, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneBacklog, 1, sessionC)
+	independentBacklog, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneBacklog, 1, sessionC)
 	if err != nil {
-		t.Fatalf("claim backlog without live dependency: %v", err)
+		t.Fatalf("claim independent backlog route while live is due: %v", err)
 	}
-	if len(blockedBacklog) != 0 {
-		t.Fatalf("backlog without predecessor relation bypassed live priority: %#v", blockedBacklog)
+	if len(independentBacklog) != 1 || independentBacklog[0].ID != unrelatedBacklogID {
+		t.Fatalf("independent backlog route = %#v, want %s", independentBacklog, unrelatedBacklogID)
+	}
+
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_webhook_inbox
+		set status = 'processed', locked_at = null, locked_by = null
+		where organization_id = $1::uuid
+	`, organizationID); err != nil {
+		t.Fatal(err)
+	}
+	sameRouteBacklogID := insertRouteEvent(sessionB, suffix+"-backlog-same-route", "jid:shared", evolutionWebhookLaneBacklog,
+		`[{"provider_message_id":"shared-backlog-provider","binding_eligible":true}]`, "3 minutes")
+	insertRouteEvent(sessionB, suffix+"-live-same-route", "jid:shared", evolutionWebhookLaneLive,
+		`[]`, "1 minute")
+	blockedSameRoute, _, err = repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneBacklog, 1, sessionC)
+	if err != nil {
+		t.Fatalf("claim backlog while same live route is due: %v", err)
+	}
+	if len(blockedSameRoute) != 0 {
+		t.Fatalf("same-route backlog bypassed live priority: %#v", blockedSameRoute)
+	}
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_webhook_inbox
+		set status = 'processed', locked_at = null, locked_by = null
+		where organization_id = $1::uuid and processing_lane = 'live'
+	`, organizationID); err != nil {
+		t.Fatal(err)
+	}
+	claimedAfterLive, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneBacklog, 1, sessionC)
+	if err != nil {
+		t.Fatalf("claim backlog after same live route: %v", err)
+	}
+	if len(claimedAfterLive) != 1 || claimedAfterLive[0].ID != sameRouteBacklogID {
+		t.Fatalf("backlog after live route = %#v, want %s", claimedAfterLive, sameRouteBacklogID)
+	}
+
+	if _, err := postgres.Pool().Exec(ctx, `
+		update public.whatsapp_webhook_inbox
+		set status = 'processed', locked_at = null, locked_by = null
+		where organization_id = $1::uuid
+	`, organizationID); err != nil {
+		t.Fatal(err)
+	}
+	insertRouteEvent(sessionB, suffix+"-backlog-with-control", "jid:control-target", evolutionWebhookLaneBacklog,
+		`[{"provider_message_id":"control-target-provider","binding_eligible":true}]`, "3 minutes")
+	if _, err := postgres.Pool().Exec(ctx, `
+		insert into public.whatsapp_webhook_inbox (
+			organization_id, session_id, event_key, event_type, provider,
+			payload, processing_lane, status, attempts, next_attempt_at, created_at
+		) values (
+			$1::uuid, $2::uuid, $3, 'connected', 'evolution_go',
+			'{"__vimob_ingress":{"routing_key":"__session__","routing_snapshot":{"version":1,"messages":[]}}}'::jsonb,
+			'live', 'pending', 0, now() - interval '1 minute', now() - interval '1 minute'
+		)
+	`, organizationID, sessionB, suffix+"-live-session-control"); err != nil {
+		t.Fatal(err)
+	}
+	blockedByControl, _, err := repo.claimEvolutionWebhooksForLane(ctx, evolutionWebhookLaneBacklog, 1, sessionC)
+	if err != nil {
+		t.Fatalf("claim backlog while live session control is due: %v", err)
+	}
+	if len(blockedByControl) != 0 {
+		t.Fatalf("backlog bypassed live session control: %#v", blockedByControl)
 	}
 }

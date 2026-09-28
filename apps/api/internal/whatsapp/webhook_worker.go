@@ -153,6 +153,24 @@ const claimEvolutionWebhooksQuery = `
 			          ''
 			        ) = '1'
 			        and live_due.next_attempt_at <= now()
+			        -- A single-message backlog route may progress while a different
+			        -- live conversation is due. Same-route live work and session-wide
+			        -- controls still retain priority; mixed/unknown backlog envelopes
+			        -- keep the conservative session-wide barrier.
+			        and (
+			          head.event_type <> 'message'
+			          or head.provider <> 'evolution_go'
+			          or head.routing_key = '__session__'
+			          or case when pg_catalog.jsonb_typeof(
+			            head.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+			          ) = 'array'
+			          then pg_catalog.jsonb_array_length(
+			            head.payload #> '{__vimob_ingress,routing_snapshot,messages}'
+			          ) else 0 end <> 1
+			          or coalesce(nullif(
+			            live_due.payload #>> '{__vimob_ingress,routing_key}', ''
+			          ), '__session__') in ('__session__', head.routing_key)
+			        )
 			        and not exists (
 			          select 1
 			          from pg_catalog.jsonb_array_elements(
