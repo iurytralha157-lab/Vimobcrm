@@ -300,6 +300,7 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 	`, session.OrganizationID, conversation.ID, session.ID, lockedLeadID, tenantContext.UserID, providerRequestID, clientMessageID, actualContent, messageType, storedMediaURL, input.Mimetype, mediaStatus, storedMediaPath, lockedRemoteJID, senderName, jsonb(map[string]any{
 		"delivery":            "outbox",
 		"attendance_entry_id": attendanceEntryID,
+		"internal_automation": input.InternalAutomation,
 		"whatsapp_attendance_capture": map[string]any{
 			"state":               "captured",
 			"attendance_entry_id": attendanceEntryID,

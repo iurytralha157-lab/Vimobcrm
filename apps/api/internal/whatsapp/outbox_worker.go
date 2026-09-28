@@ -907,7 +907,13 @@ func (repo Repository) whatsappOutboxAttendanceCurrent(ctx context.Context, item
 			    )
 			    or (
 			      current_lead.assigned_user_id = attendance.user_id
-			      and message.sender_user_id = attendance.user_id
+			      and (
+			        message.sender_user_id = attendance.user_id
+			        or (
+			          message.metadata->>'internal_automation' = 'true'
+			          and message.sender_user_id = session.owner_user_id
+			        )
+			      )
 			      and message.metadata->>'attendance_entry_id' = attendance.id::text
 			    )
 			  )
