@@ -7,7 +7,7 @@
     "overlayDefinition": "cada raiz Dialog/AlertDialog/Sheet/DropdownMenu/Popover importada da primitiva UI, fora de components/ui",
     "routeDefinition": "cada app/**/page.tsx; grupos (x) e slots @x nao compoem a URL"
   },
-  "sourceDigestSha256": "2331fee2afd6b2eaaf6079bee938575e4f954a5e107d842a39b39897462f49bd",
+  "sourceDigestSha256": "390a177b928602e1f72191be1fd8d9744bf8f72c00ca81b30741dcaaf6414c9d",
   "stableIdIndex": {
     "schemaVersion": 1,
     "algorithm": "sha256/80-bit",
@@ -2780,10 +2780,10 @@
           "kind": "dropdownMenu"
         },
         {
-          "id": "overlay:a319692a4df5cc285c80",
+          "id": "overlay:60fc2e82d4b404f889e3",
           "column": 13,
           "file": "components/features/properties/publication/PropertyPublicationChannelCard.tsx",
-          "line": 356,
+          "line": 357,
           "owner": "PropertyPublicationChannelCard",
           "routes": [
             "/properties/[id]",
@@ -5108,10 +5108,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:a11f13109797a6d732ab",
+          "id": "form:3c62a7518fd76a1b7e9e",
           "column": 9,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1385,
+          "line": 1462,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -5125,10 +5125,10 @@
           "hasSubmitHandler": true
         },
         {
-          "id": "form:5e3a7c166a42529821fd",
+          "id": "form:05a38d50ea8e9a58d10b",
           "column": 7,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1434,
+          "line": 1511,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -16075,34 +16075,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:09c6db9080c2ed73b087",
-          "column": 13,
-          "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 243,
-          "owner": "PipelineBoard",
-          "routes": [
-            "/crm/pipelines"
-          ],
-          "kind": "actionButton",
-          "tag": "button"
-        },
-        {
-          "id": "cta:4f08226342bd19bebc0d",
-          "column": 13,
-          "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 258,
-          "owner": "PipelineBoard",
-          "routes": [
-            "/crm/pipelines"
-          ],
-          "kind": "actionButton",
-          "tag": "button"
-        },
-        {
-          "id": "cta:d5336634941b695b552b",
+          "id": "cta:21a2f4c612d6be9a0073",
           "column": 25,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 332,
+          "line": 297,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -16111,10 +16087,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:4c7174255bd564f70984",
+          "id": "cta:3c65ce295648731ba3a2",
           "column": 23,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 404,
+          "line": 369,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -16123,10 +16099,34 @@
           "tag": "Button"
         },
         {
-          "id": "cta:5692dd660dd2b742f693",
+          "id": "cta:1fa36526437c0f9181bc",
+          "column": 27,
+          "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
+          "line": 386,
+          "owner": "PipelineBoard",
+          "routes": [
+            "/crm/pipelines"
+          ],
+          "kind": "actionButton",
+          "tag": "button"
+        },
+        {
+          "id": "cta:7aa5224657a348e123cf",
+          "column": 27,
+          "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
+          "line": 395,
+          "owner": "PipelineBoard",
+          "routes": [
+            "/crm/pipelines"
+          ],
+          "kind": "actionButton",
+          "tag": "button"
+        },
+        {
+          "id": "cta:e5f8c54f409c6d1b9163",
           "column": 23,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 468,
+          "line": 455,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -16135,10 +16135,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:587d3d1b5ddb1c4ae68b",
+          "id": "cta:879f9ad836f96d0a657e",
           "column": 17,
           "file": "components/features/pipelines/pipeline-screen/PipelineBoard.tsx",
-          "line": 489,
+          "line": 476,
           "owner": "PipelineBoard",
           "routes": [
             "/crm/pipelines"
@@ -16904,10 +16904,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f35f2ad9f335c1701122",
+          "id": "cta:65ded346d1602d94a0fc",
           "column": 15,
           "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
-          "line": 150,
+          "line": 199,
           "owner": "PropertyGallery",
           "routes": [
             "/properties/[id]",
@@ -16922,10 +16922,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:45cae436842a854dbddf",
+          "id": "cta:32e38a871b3d139c210c",
           "column": 15,
           "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
-          "line": 158,
+          "line": 207,
           "owner": "PropertyGallery",
           "routes": [
             "/properties/[id]",
@@ -16940,10 +16940,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:bc79eb982b62decf17d7",
+          "id": "cta:33adffe2c7533c00988a",
           "column": 15,
           "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
-          "line": 176,
+          "line": 225,
           "owner": "PropertyGallery",
           "routes": [
             "/properties/[id]",
@@ -18057,10 +18057,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:fe9f6de2b0bb681e2ac9",
+          "id": "cta:9a04793a19beb2fb2b15",
           "column": 15,
           "file": "components/features/properties/property-form/sections/LocationSection.tsx",
-          "line": 120,
+          "line": 123,
           "owner": "LocationSection",
           "routes": [
             "/properties/[id]/edit",
@@ -18074,10 +18074,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:8374ac7462c20f884b67",
+          "id": "cta:2a92ffce65cfa1b3ee24",
           "column": 17,
           "file": "components/features/properties/property-form/sections/LocationSection.tsx",
-          "line": 174,
+          "line": 177,
           "owner": "LocationSection",
           "routes": [
             "/properties/[id]/edit",
@@ -18091,10 +18091,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:d0b3b24877982acccc35",
+          "id": "cta:b10800ab716bd534864c",
           "column": 17,
           "file": "components/features/properties/property-form/sections/LocationSection.tsx",
-          "line": 256,
+          "line": 259,
           "owner": "LocationSection",
           "routes": [
             "/properties/[id]/edit",
@@ -18108,10 +18108,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:95f7149a3c12b9c377b5",
+          "id": "cta:18b72938016154114ae8",
           "column": 17,
           "file": "components/features/properties/property-form/sections/LocationSection.tsx",
-          "line": 272,
+          "line": 275,
           "owner": "LocationSection",
           "routes": [
             "/properties/[id]/edit",
@@ -18125,10 +18125,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:81519b1d2a54e998b422",
+          "id": "cta:cc535af2cff7cfaea6e9",
           "column": 17,
           "file": "components/features/properties/property-form/sections/LocationSection.tsx",
-          "line": 348,
+          "line": 351,
           "owner": "LocationSection",
           "routes": [
             "/properties/[id]/edit",
@@ -18142,10 +18142,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:fd2a4d007070f9adafa2",
+          "id": "cta:3a58e6155fa4009818c2",
           "column": 17,
           "file": "components/features/properties/property-form/sections/LocationSection.tsx",
-          "line": 364,
+          "line": 367,
           "owner": "LocationSection",
           "routes": [
             "/properties/[id]/edit",
@@ -18159,10 +18159,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:07cd4d3a87cd80d49ef7",
+          "id": "cta:c6d45f774e116351cd41",
           "column": 15,
           "file": "components/features/properties/property-form/sections/LocationSection.tsx",
-          "line": 539,
+          "line": 542,
           "owner": "LocationSection",
           "routes": [
             "/properties/[id]/edit",
@@ -18211,10 +18211,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:82d5a2d4fcd9f0c90e0d",
+          "id": "cta:36f72ddfa4632658c548",
           "column": 15,
           "file": "components/features/properties/property-form/sections/PublicationSection.tsx",
-          "line": 54,
+          "line": 58,
           "owner": "PublicationSection",
           "routes": [
             "/properties/[id]/edit",
@@ -18868,10 +18868,10 @@
           "tag": "button"
         },
         {
-          "id": "cta:9cf424f0511670176277",
+          "id": "cta:2074135673b978e060c1",
           "column": 15,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1204,
+          "line": 1281,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -18885,10 +18885,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:0722db6bbb50d67e7194",
+          "id": "cta:d6a677ee085f4798f50e",
           "column": 13,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1208,
+          "line": 1285,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -18902,10 +18902,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:f245bf9e5b2b4d065411",
+          "id": "cta:1a1c8f5965521fd5a54c",
           "column": 15,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1410,
+          "line": 1487,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -18919,10 +18919,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:1a9dc57ee4f8048bb364",
+          "id": "cta:61dfa20df1fae78dbc81",
           "column": 13,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1478,
+          "line": 1555,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -18936,10 +18936,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:06c7cc5e27c394656dd4",
+          "id": "cta:eb1c514bd8ca0384cb41",
           "column": 15,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1516,
+          "line": 1578,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -18953,10 +18953,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:b81acf630584c153cd83",
+          "id": "cta:df44e780f41f646ddf26",
           "column": 15,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1586,
+          "line": 1613,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -18970,10 +18970,27 @@
           "tag": "Button"
         },
         {
-          "id": "cta:11d5fb8af7dd882e2cdd",
+          "id": "cta:0186b862cb045a666f50",
           "column": 15,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1603,
+          "line": 1683,
+          "owner": "PropertyForm",
+          "routes": [
+            "/properties/[id]/edit",
+            "/properties/developments",
+            "/properties/developments/[id]",
+            "/properties/launches",
+            "/properties/new",
+            "/properties/settings"
+          ],
+          "kind": "actionButton",
+          "tag": "Button"
+        },
+        {
+          "id": "cta:fd95f14a4c90a62c8356",
+          "column": 15,
+          "file": "components/features/properties/PropertyFormScreen.tsx",
+          "line": 1700,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -19709,10 +19726,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:6c354703b53a9c0416e1",
+          "id": "cta:6d2e1e4cb43c410e3486",
           "column": 17,
           "file": "components/features/properties/publication/PropertyPublicationChannelCard.tsx",
-          "line": 177,
+          "line": 176,
           "owner": "PropertyPublicationChannelCard",
           "routes": [
             "/properties/[id]",
@@ -19726,10 +19743,10 @@
           "tag": "Link"
         },
         {
-          "id": "cta:11adb86af1259021e4f4",
+          "id": "cta:aef73807fea2202ca3da",
           "column": 13,
           "file": "components/features/properties/publication/PropertyPublicationChannelCard.tsx",
-          "line": 311,
+          "line": 310,
           "owner": "PropertyPublicationChannelCard",
           "routes": [
             "/properties/[id]",
@@ -19742,10 +19759,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:fe85e19d83a8a95f8336",
+          "id": "cta:7c0d5487c2e12c97a4c3",
           "column": 13,
           "file": "components/features/properties/publication/PropertyPublicationChannelCard.tsx",
-          "line": 340,
+          "line": 341,
           "owner": "PropertyPublicationChannelCard",
           "routes": [
             "/properties/[id]",
@@ -19758,10 +19775,10 @@
           "tag": "Button"
         },
         {
-          "id": "cta:5e52c7c6a7d7fd111018",
+          "id": "cta:4e4bf19ccebafcd77525",
           "column": 17,
           "file": "components/features/properties/publication/PropertyPublicationChannelCard.tsx",
-          "line": 358,
+          "line": 359,
           "owner": "PropertyPublicationChannelCard",
           "routes": [
             "/properties/[id]",
@@ -32549,10 +32566,10 @@
           "tag": "DropdownMenuItem"
         },
         {
-          "id": "control:155eb6592926f6937b0e",
+          "id": "control:0c2e9093655dd6e000c2",
           "column": 27,
           "file": "components/features/properties/PropertyFormScreen.tsx",
-          "line": 1551,
+          "line": 1648,
           "owner": "PropertyForm",
           "routes": [
             "/properties/[id]/edit",
@@ -32806,10 +32823,10 @@
           "tag": "TabsTrigger"
         },
         {
-          "id": "control:3b98e4c0c577dbf124af",
+          "id": "control:e21744891425618bffa8",
           "column": 19,
           "file": "components/features/properties/publication/PropertyPublicationChannelCard.tsx",
-          "line": 377,
+          "line": 378,
           "owner": "PropertyPublicationChannelCard",
           "routes": [
             "/properties/[id]",
@@ -32822,10 +32839,10 @@
           "tag": "AlertDialogCancel"
         },
         {
-          "id": "control:e21744891425618bffa8",
+          "id": "control:d06e6efa88d54bd79573",
           "column": 19,
           "file": "components/features/properties/publication/PropertyPublicationChannelCard.tsx",
-          "line": 378,
+          "line": 379,
           "owner": "PropertyPublicationChannelCard",
           "routes": [
             "/properties/[id]",
@@ -34693,7 +34710,7 @@
         }
       ]
     },
-    "digestSha256": "487b6a9c207b11563b8979ce014f6e2230c65c33dded08fff1c1e577d422cd15"
+    "digestSha256": "f6e1ac40cce98ef12a21c0d0ec0fb162c6cff6387929a6e820de65c5e9501873"
   },
   "routes": [
     {
@@ -44472,9 +44489,9 @@
       "asChildButtonsWithUnrecognizedChild": 0,
       "asChildPrimitiveControlsExcluded": 83,
       "asChildPrimitiveControlsWithUnrecognizedChild": 0,
-      "ctasAll": 1407,
+      "ctasAll": 1408,
       "ctasByKind": {
-        "actionButton": 1247,
+        "actionButton": 1248,
         "external": 6,
         "internal": 31,
         "internalDynamic": 78,
@@ -44483,8 +44500,8 @@
       "forms": 50,
       "formsRouteReachable": 50,
       "formsWithoutLocalSubmitContract": 0,
-      "internalCtas": 1356,
-      "internalCtasRouteReachable": 1320,
+      "internalCtas": 1357,
+      "internalCtasRouteReachable": 1321,
       "overlays": 222,
       "overlaysByKind": {
         "alertDialog": 61,
@@ -44512,7 +44529,7 @@
     "protectedAccessChecksThreePersonas": 204,
     "renderableRouteViewportChecksDesktopAndMobile": 166,
     "routeReachableFormImplementations": 50,
-    "routeReachableInternalCtaImplementations": 1320,
+    "routeReachableInternalCtaImplementations": 1321,
     "routeReachableOverlayImplementations": 215,
     "routeReachableSupplementalOverlayAndTabControls": 275
   },

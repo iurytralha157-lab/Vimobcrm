@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "d005f9e7bb33b3533c6d3dce1676a1786a47886637dd1010b38b84f5047359ab",
-  "surfaceInventoryDigestSha256": "2331fee2afd6b2eaaf6079bee938575e4f954a5e107d842a39b39897462f49bd",
+  "sourceDigestSha256": "7e27516d53264d4aee1721d50898a184de57603b804dc3bc3c004256fe9dad94",
+  "surfaceInventoryDigestSha256": "390a177b928602e1f72191be1fd8d9744bf8f72c00ca81b30741dcaaf6414c9d",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
     "filesScanned": 544,
@@ -9,18 +9,18 @@
   },
   "counts": {
     "filesWithFindings": 43,
-    "findings": 115,
+    "findings": 117,
     "protectedReachableFilesWithFindings": 42,
-    "protectedReachableFindings": 114,
+    "protectedReachableFindings": 116,
     "bySurfaceScope": {
-      "protected-only": 104,
+      "protected-only": 106,
       "protected-and-public": 10,
       "public-only": 1,
       "infrastructure": 0
     },
     "byPriority": {
       "P1": 56,
-      "P2": 13,
+      "P2": 15,
       "P3": 46
     },
     "byRule": {
@@ -31,7 +31,7 @@
         "priority": "P1"
       },
       "medium-shadow": {
-        "count": 6,
+        "count": 7,
         "guidance": "Blocos Home não usam sombra; validar se a elevação é realmente necessária.",
         "label": "Sombra fora do padrão",
         "priority": "P2"
@@ -55,7 +55,7 @@
         "priority": "P1"
       },
       "hardcoded-surface": {
-        "count": 4,
+        "count": 5,
         "guidance": "Usar --app-surface-solid, --app-surface-soft ou --app-surface-hover.",
         "label": "Superfície branca/preta fixa",
         "priority": "P2"
@@ -126,6 +126,16 @@
       }
     },
     {
+      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
+      "count": 6,
+      "score": 8,
+      "rules": {
+        "medium-shadow": 1,
+        "hardcoded-surface": 1,
+        "uppercase-tracking": 4
+      }
+    },
+    {
       "file": "components/features/marketing/MarketingOverviewDashboard.tsx",
       "count": 5,
       "score": 8,
@@ -177,14 +187,6 @@
     },
     {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-      "count": 4,
-      "score": 4,
-      "rules": {
-        "uppercase-tracking": 4
-      }
-    },
-    {
-      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
       "count": 4,
       "score": 4,
       "rules": {
@@ -480,6 +482,16 @@
       }
     },
     {
+      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
+      "count": 6,
+      "score": 8,
+      "rules": {
+        "medium-shadow": 1,
+        "hardcoded-surface": 1,
+        "uppercase-tracking": 4
+      }
+    },
+    {
       "file": "components/features/marketing/MarketingOverviewDashboard.tsx",
       "count": 5,
       "score": 8,
@@ -531,14 +543,6 @@
     },
     {
       "file": "components/features/integrations/MetaIntegrationSettings.tsx",
-      "count": 4,
-      "score": 4,
-      "rules": {
-        "uppercase-tracking": 4
-      }
-    },
-    {
-      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
       "count": 4,
       "score": 4,
       "rules": {
@@ -1233,7 +1237,25 @@
     },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
-      "line": 72,
+      "line": 99,
+      "match": "shadow-sm",
+      "priority": "P2",
+      "rule": "medium-shadow",
+      "surfaceScope": "protected-only",
+      "weight": 2
+    },
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
+      "line": 101,
+      "match": "bg-black/65",
+      "priority": "P2",
+      "rule": "hardcoded-surface",
+      "surfaceScope": "protected-only",
+      "weight": 2
+    },
+    {
+      "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
+      "line": 121,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1242,7 +1264,7 @@
     },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
-      "line": 358,
+      "line": 421,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1251,7 +1273,7 @@
     },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
-      "line": 422,
+      "line": 485,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",
@@ -1260,7 +1282,7 @@
     },
     {
       "file": "components/features/properties/detail/PropertyWorkspaceOverview.tsx",
-      "line": 428,
+      "line": 491,
       "match": "uppercase",
       "priority": "P3",
       "rule": "uppercase-tracking",

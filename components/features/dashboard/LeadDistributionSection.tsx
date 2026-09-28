@@ -228,8 +228,8 @@ function DistributionBars({
         ? "w-full max-w-[112px]"
         : rows.length === 4
           ? "w-full max-w-[88px]"
-          : rows.length === 5
-            ? "w-full max-w-[72px]"
+    : rows.length === 5
+      ? "w-full max-w-[72px]"
             : "w-11";
   const maxCount = Math.max(1, ...rows.map((row) => row.leadCount ?? 0));
   const selectedRow = rows.find((row) => row.id === selectedId);

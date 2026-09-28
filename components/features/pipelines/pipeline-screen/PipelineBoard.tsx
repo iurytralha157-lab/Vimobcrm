@@ -238,41 +238,6 @@ export function PipelineBoard({
           </div>
         )}
 
-        {isMobile && filteredStages.length > 1 && !hasCriticalLoadError && !isPipelineBoardTransitioning && (
-          <div className="pointer-events-none absolute inset-x-0 top-1/2 z-40 flex -translate-y-1/2 items-center justify-between px-1">
-            <button
-              type="button"
-              aria-label="Ver coluna anterior"
-              aria-disabled={!hasPreviousMobileStage}
-              tabIndex={hasPreviousMobileStage ? 0 : -1}
-              className="pointer-events-auto flex h-14 w-14 touch-manipulation items-center justify-center rounded-[8px] bg-primary/80 text-primary-foreground outline-none transition-colors hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary/35 aria-disabled:cursor-not-allowed aria-disabled:opacity-35"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                if (hasPreviousMobileStage) onMobileStageNavigation('previous');
-              }}
-            >
-              <ChevronLeft className="h-5 w-5" aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              aria-label="Ver próxima coluna"
-              aria-disabled={!hasNextMobileStage}
-              tabIndex={hasNextMobileStage ? 0 : -1}
-              className="pointer-events-auto flex h-14 w-14 touch-manipulation items-center justify-center rounded-[8px] bg-primary/80 text-primary-foreground outline-none transition-colors hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary/35 aria-disabled:cursor-not-allowed aria-disabled:opacity-35"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                if (hasNextMobileStage) onMobileStageNavigation('next');
-              }}
-            >
-              <ChevronRight className="h-5 w-5" aria-hidden="true" />
-            </button>
-          </div>
-        )}
-
         <DragDropContext
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
@@ -416,6 +381,28 @@ export function PipelineBoard({
                       >
                         <MoreHorizontal className="h-4 w-4" />
                       </Button>
+                      {isMobile && filteredStages.length > 1 && (
+                        <>
+                          <button
+                            type="button"
+                            aria-label="Ver coluna anterior"
+                            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground outline-none transition-colors hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary/35 disabled:cursor-not-allowed disabled:opacity-35"
+                            onClick={() => onMobileStageNavigation('previous')}
+                            disabled={!hasPreviousMobileStage}
+                          >
+                            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Ver próxima coluna"
+                            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[6px] bg-primary/50 text-primary-foreground outline-none transition-colors hover:bg-primary focus-visible:ring-2 focus-visible:ring-primary/35 disabled:cursor-not-allowed disabled:opacity-35"
+                            onClick={() => onMobileStageNavigation('next')}
+                            disabled={!hasNextMobileStage}
+                          >
+                            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
 
