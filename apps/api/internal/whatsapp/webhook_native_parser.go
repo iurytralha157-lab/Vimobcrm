@@ -225,6 +225,19 @@ func normalizeNativeEvolutionMessageWithEnvelope(raw map[string]any, envelope ma
 		firstString(mediaBlock, "caption", "Caption"),
 		firstString(raw, "text", "body", "content", "caption", "buttonText", "button_text", "buttonId", "button_id"),
 	)
+	if mediaType == "" && content == "" {
+		// Evolution wraps some inbound text in a template. Keep only its
+		// explicit text body; a template identifier alone has no message text.
+		templateText := stripNullBytes(strings.TrimSpace(firstString(messageNode,
+			"templateMessage.Format.InteractiveMessageTemplate.body.text",
+			"templateMessage.hydratedTemplate.hydratedContentText",
+			"TemplateMessage.Format.InteractiveMessageTemplate.body.text",
+			"TemplateMessage.hydratedTemplate.hydratedContentText",
+		)))
+		if templateText != "" && len(templateText) <= 32*1024 {
+			content = templateText
+		}
+	}
 	contactCardDisplayName := ""
 	contactCardVCard := ""
 	if mediaType == "" && content == "" {

@@ -307,6 +307,47 @@ func TestNativeOpaqueMessageShapesRemainUnsupported(t *testing.T) {
 	}
 }
 
+func TestNativeTemplateMessageUsesExplicitBodyText(t *testing.T) {
+	for _, template := range []map[string]any{
+		{
+			"Format": map[string]any{
+				"InteractiveMessageTemplate": map[string]any{
+					"body": map[string]any{"text": "Entrega em quatro minutos"},
+				},
+			},
+		},
+		{
+			"hydratedTemplate": map[string]any{
+				"hydratedContentText": "Entrega em quatro minutos",
+			},
+		},
+	} {
+		message, ok := normalizeNativeEvolutionMessage(map[string]any{
+			"Info": map[string]any{
+				"ID":        "synthetic-template",
+				"Sender":    "15555550101@s.whatsapp.net",
+				"Timestamp": float64(1_725_000_000),
+			},
+			"Message": map[string]any{"templateMessage": template},
+		})
+		if !ok || message.MessageType != "text" || message.Content != "Entrega em quatro minutos" {
+			t.Fatalf("explicit template body not preserved: type=%q content=%q ok=%v", message.MessageType, message.Content, ok)
+		}
+	}
+
+	message, ok := normalizeNativeEvolutionMessage(map[string]any{
+		"Info": map[string]any{
+			"ID":        "synthetic-template-without-body",
+			"Sender":    "15555550101@s.whatsapp.net",
+			"Timestamp": float64(1_725_000_000),
+		},
+		"Message": map[string]any{"templateMessage": map[string]any{"templateID": "only-id"}},
+	})
+	if !ok || message.Content != "" {
+		t.Fatal("template identifier alone must remain unsupported")
+	}
+}
+
 func TestNativeEvolutionFixtures(t *testing.T) {
 	t.Run("text", func(t *testing.T) {
 		payload := decodeNativeFixture(t, "message_text.json")
