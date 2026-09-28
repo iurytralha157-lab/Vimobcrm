@@ -9,7 +9,32 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
+
+func TestAdminSendOverrideRequiresCurrentOrganizationRoleAndOperatePermission(t *testing.T) {
+	tests := []struct {
+		name       string
+		memberRole string
+		context    tenant.Context
+		want       bool
+	}{
+		{"active admin", "admin", tenant.Context{MemberRole: "admin"}, true},
+		{"active owner", "owner", tenant.Context{MemberRole: "owner"}, true},
+		{"manager with operate grant", "manager", tenant.Context{MemberRole: "manager", Permissions: []string{permissions.WhatsAppOperate}}, false},
+		{"stale admin context after demotion", "user", tenant.Context{MemberRole: "admin"}, false},
+		{"global admin without organization operate", "admin", tenant.Context{MemberRole: "user", UserRole: "admin"}, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := canAdminSendExistingConversation(test.memberRole, test.context); got != test.want {
+				t.Fatalf("override = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
 
 func TestAttendanceEventTimesFailClosedOnMissingAndFutureTimestamp(t *testing.T) {
 	accepted := time.Date(2026, 9, 23, 3, 0, 0, 0, time.UTC)
@@ -412,8 +437,10 @@ func TestAttendanceReadReportsExactSendCapabilityWithoutSessionOwnership(t *test
 		t.Fatal("attendance POST must require exact send access and a connected session")
 	}
 	for _, token := range []string{
-		"scope.CanSend = sessionConnected && (sessionOwned || leadAssigned)",
-		"if requireSendAccess && !sessionOwned && !leadAssigned",
+		"scope.CanSend = sessionConnected && (sessionOwned || leadAssigned || adminCanSend)",
+		"if requireSendAccess && !sessionOwned && !leadAssigned && !adminCanSend",
+		"member.role",
+		"coalesce(member.is_active, true) = true",
 		"l.assigned_user_id = $2::uuid",
 	} {
 		if !strings.Contains(source, token) {

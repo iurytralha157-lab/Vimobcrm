@@ -238,6 +238,33 @@ test('persisted conversation never switches to another connected WhatsApp', () =
   })
 })
 
+test('removed connection explains why its historical conversation cannot send', () => {
+  const conversation = {
+    id: '50000000-0000-4000-8000-000000000001',
+    lead_id: '60000000-0000-4000-8000-000000000001',
+    session_id: '40000000-0000-4000-8000-000000000001',
+    remote_jid: '5511999999999@s.whatsapp.net',
+    session: {
+      id: '40000000-0000-4000-8000-000000000001',
+      status: 'deleted',
+      provider: 'evolution_go',
+    },
+  }
+  const otherConnectedSession = [{
+    id: '40000000-0000-4000-8000-000000000002',
+    status: 'connected',
+    provider: 'evolution_go',
+  }]
+
+  assert.deepEqual(getWhatsAppMessageInputState(conversation, null, otherConnectedSession, true, false), {
+    disabled: true,
+    placeholder: 'Conexão removida. Inicie uma nova conversa.',
+  })
+  assert.equal(getWhatsAppSendSessionId(conversation, null, otherConnectedSession), conversation.session_id)
+  // A fresh attendance capability is authoritative over a stale nested status.
+  assert.equal(getWhatsAppMessageInputState(conversation, null, otherConnectedSession, true, true).disabled, false)
+})
+
 test('new conversation draft may use the explicitly selected session', () => {
   const result = getWhatsAppSendSessionId(
     { session_id: null },

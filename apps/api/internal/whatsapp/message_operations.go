@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
 
@@ -204,22 +205,50 @@ func (repo Repository) SendMessage(ctx context.Context, tenantContext tenant.Con
 	if err != nil {
 		return SendMessageResponse{}, err
 	}
-	visibilityArgs := append(baseConversationArgs(tenantContext), lockedLeadID, sessionOwned)
-	var lockedLeadVisible bool
+	visibilityArgs := append(baseConversationArgs(tenantContext), lockedLeadID)
+	var leadAssigned bool
 	err = tx.QueryRow(ctx, `
-		select true
+		select coalesce(l.assigned_user_id = $2::uuid, false)
 		from public.leads as l
 		where l.organization_id = $1::uuid
 		  and l.id = $5::uuid
 		  and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
-		  and ($6::boolean or l.assigned_user_id = $2::uuid)
 		for share of l
-	`, visibilityArgs...).Scan(&lockedLeadVisible)
+	`, visibilityArgs...).Scan(&leadAssigned)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SendMessageResponse{}, ErrConversationNotFound
 	}
 	if err != nil {
 		return SendMessageResponse{}, err
+	}
+	if !sessionOwned && !leadAssigned {
+		if !tenantContext.HasPermission(permissions.WhatsAppOperate) {
+			return SendMessageResponse{}, ErrConversationNotFound
+		}
+		var adminMember bool
+		err = tx.QueryRow(ctx, `
+			select true
+			from public.organization_members as member
+			join public.users as actor
+			  on actor.organization_id = member.organization_id
+			 and actor.id = member.user_id
+			 and coalesce(actor.is_active, false) = true
+			where member.organization_id = $1::uuid
+			  and member.user_id = $2::uuid
+			  and member.role in ('owner', 'admin')
+			  and coalesce(member.is_active, true) = true
+			  and member.deleted_at is null
+			for share of member
+		`, tenantContext.OrganizationID, tenantContext.UserID).Scan(&adminMember)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return SendMessageResponse{}, ErrConversationNotFound
+		}
+		if err != nil {
+			return SendMessageResponse{}, err
+		}
+		if !adminMember {
+			return SendMessageResponse{}, ErrConversationNotFound
+		}
 	}
 	if lockedSessionID != session.ID || lockedRemoteJID != conversation.RemoteJID || lockedIsGroup != conversation.IsGroup {
 		return SendMessageResponse{}, fmt.Errorf("%w: identidade da conversa mudou; recarregue antes de enviar", ErrInvalidReference)
@@ -836,8 +865,8 @@ func (repo Repository) resolveSendSession(ctx context.Context, tenantContext ten
 }
 
 // A delegated send is limited to the existing physical conversation and its
-// currently assigned lead. General session operations continue to require the
-// owner via getCanSendSession.
+// currently assigned lead, or an active organization admin/owner viewing it.
+// General session operations continue to require getCanSendSession ownership.
 func (repo Repository) getConversationSendSession(ctx context.Context, tenantContext tenant.Context, conversation Conversation) (Session, error) {
 	session, err := scanSession(repo.db.Pool().QueryRow(ctx, `
 		select `+sessionSelectFields()+`
@@ -866,10 +895,15 @@ func (repo Repository) getConversationSendSession(ctx context.Context, tenantCon
 		  and ws.is_active is not false
 		  and coalesce(ws.status, '') <> 'deleted'
 		  and ws.provider = 'evolution_go'
-		  and (ws.owner_user_id = $5::uuid or l.assigned_user_id = $5::uuid)
+		  and (
+		    ws.owner_user_id = $5::uuid
+		    or l.assigned_user_id = $5::uuid
+		    or ($6::boolean and member.role in ('owner', 'admin'))
+		  )
 		limit 1
 	`, tenantContext.OrganizationID, conversation.SessionID, conversation.ID,
-		pointerValue(conversation.LeadID), tenantContext.UserID))
+		pointerValue(conversation.LeadID), tenantContext.UserID,
+		tenantContext.HasPermission(permissions.WhatsAppOperate)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Session{}, ErrSessionNotFound
 	}

@@ -916,6 +916,11 @@ func (repo Repository) whatsappOutboxAttendanceCurrent(ctx context.Context, item
 			      )
 			      and message.metadata->>'attendance_entry_id' = attendance.id::text
 			    )
+			    or (
+			      member.role in ('owner', 'admin')
+			      and message.sender_user_id = attendance.user_id
+			      and message.metadata->>'attendance_entry_id' = attendance.id::text
+			    )
 			  )
 		)
 	`, item.MessageRowID, item.OrganizationID, item.SessionID, item.ConversationID).Scan(&attended)

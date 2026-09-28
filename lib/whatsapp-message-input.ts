@@ -244,6 +244,18 @@ export function getWhatsAppMessageInputState(
 		};
 	}
 
+  // A removed physical connection cannot carry this conversation again. A
+  // different account must start a new conversation instead of silently
+  // sending through the old chat's identity.
+  if (conversation.id && conversation.session_id
+    && getConversationSession(conversation, sessions)?.status === "deleted"
+    && canSendFixedSession !== true) {
+    return {
+      disabled: true,
+      placeholder: "Conexão removida. Inicie uma nova conversa.",
+    };
+  }
+
   if (conversation.id && canSendFixedSession === false) {
     return {
       disabled: true,

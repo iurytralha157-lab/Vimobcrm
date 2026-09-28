@@ -45,6 +45,9 @@ func TestOutboxRequiresCapturedCurrentAttendanceBeforeProvider(t *testing.T) {
 		"coalesce(session.status, '') not in ('deleted', 'disabled')",
 		"coalesce(actor.is_active, false) = true",
 		"coalesce(member.is_active, true) = true",
+		"member.role in ('owner', 'admin')",
+		"message.sender_user_id = attendance.user_id",
+		"message.metadata->>'attendance_entry_id' = attendance.id::text",
 	} {
 		if !strings.Contains(attendanceGate, token) {
 			t.Fatalf("outbox attendance gate is missing %q", token)

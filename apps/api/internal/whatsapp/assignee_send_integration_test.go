@@ -83,7 +83,8 @@ func TestAssignedLeadCanSendThroughExactExistingConversation(t *testing.T) {
 		return userID
 	}
 	assigneeID := createActor("assignee", "user")
-	viewerID := createActor("visible-admin", "admin")
+	viewerID := createActor("visible-viewer", "user")
+	adminID := createActor("org-admin", "admin")
 	if _, err := pool.Exec(ctx, `
 		update public.leads set assigned_user_id = $2::uuid
 		where id = $1::uuid and organization_id = $3::uuid
@@ -98,7 +99,13 @@ func TestAssignedLeadCanSendThroughExactExistingConversation(t *testing.T) {
 		MemberRole:     "user",
 		Permissions:    []string{permissions.LeadViewOwn, permissions.WhatsAppOperate},
 	}
-	viewer := tenant.Context{OrganizationID: fixture.organizationID, UserID: viewerID, MemberRole: "admin"}
+	viewer := tenant.Context{
+		OrganizationID: fixture.organizationID,
+		UserID:         viewerID,
+		MemberRole:     "user",
+		Permissions:    []string{permissions.LeadViewAll, permissions.WhatsAppOperate},
+	}
+	admin := tenant.Context{OrganizationID: fixture.organizationID, UserID: adminID, MemberRole: "admin"}
 	request := attendanceInput{ExpectedLeadID: fixture.leadID, SendSessionID: fixture.sessionID}
 
 	before, err := repo.GetConversationAttendance(ctx, assignee, fixture.conversationID, request)
@@ -117,6 +124,62 @@ func TestAssignedLeadCanSendThroughExactExistingConversation(t *testing.T) {
 	}
 	if _, err := repo.JoinConversationAttendance(ctx, viewer, fixture.conversationID, request); !errors.Is(err, ErrSessionNotFound) {
 		t.Fatalf("non-assignee join = %v, want ErrSessionNotFound", err)
+	}
+	adminBefore, err := repo.GetConversationAttendance(ctx, admin, fixture.conversationID, request)
+	if err != nil || !adminBefore.CanSend || adminBefore.Joined {
+		t.Fatalf("admin attendance before confirmation = canSend:%v joined:%v err:%v", adminBefore.CanSend, adminBefore.Joined, err)
+	}
+	if _, err := repo.SendMessage(ctx, admin, fixture.conversationID, sendMessageInput{
+		Text: "admin before confirmation", ExpectedLeadID: fixture.leadID, SendSessionID: fixture.sessionID,
+	}); !errors.Is(err, ErrAttendanceRequired) {
+		t.Fatalf("admin send before confirmation = %v, want ErrAttendanceRequired", err)
+	}
+	adminJoined, err := repo.JoinConversationAttendance(ctx, admin, fixture.conversationID, request)
+	if err != nil || !adminJoined.Created || !adminJoined.Joined || !adminJoined.CanSend || adminJoined.CurrentEntry == nil {
+		t.Fatalf("admin join = created:%v joined:%v canSend:%v err:%v", adminJoined.Created, adminJoined.Joined, adminJoined.CanSend, err)
+	}
+	adminClientID := fixture.suffix + "-admin-send"
+	if _, err := repo.SendMessage(ctx, admin, fixture.conversationID, sendMessageInput{
+		Text: "admin outbound", ClientMessageID: adminClientID,
+		ExpectedLeadID: fixture.leadID, SendSessionID: fixture.sessionID,
+	}); err != nil {
+		t.Fatalf("confirmed admin send: %v", err)
+	}
+	var adminOutboxID, adminMessageID string
+	if err := pool.QueryRow(ctx, `
+		select outbox.id::text, outbox.message_id::text
+		from public.whatsapp_outbox outbox
+		where outbox.organization_id = $1::uuid and outbox.client_message_id = $2
+	`, fixture.organizationID, adminClientID).Scan(&adminOutboxID, &adminMessageID); err != nil {
+		t.Fatalf("admin send did not create durable outbox: %v", err)
+	}
+	adminItem := pendingWhatsAppOutbox{
+		ID: adminOutboxID, OrganizationID: fixture.organizationID, SessionID: fixture.sessionID,
+		ConversationID: fixture.conversationID, MessageRowID: adminMessageID,
+	}
+	if allowed, err := repo.whatsappOutboxAttendanceCurrent(ctx, adminItem); err != nil || !allowed {
+		t.Fatalf("confirmed admin outbox gate = allowed:%v err:%v", allowed, err)
+	}
+	if _, err := pool.Exec(ctx, `
+		update public.organization_members set role = 'user'
+		where organization_id = $1::uuid and user_id = $2::uuid
+	`, fixture.organizationID, adminID); err != nil {
+		t.Fatal(err)
+	}
+	if allowed, err := repo.whatsappOutboxAttendanceCurrent(ctx, adminItem); err != nil || allowed {
+		t.Fatalf("demoted admin outbox gate = allowed:%v err:%v, want false", allowed, err)
+	}
+	demoted, err := repo.GetConversationAttendance(ctx, admin, fixture.conversationID, request)
+	if err != nil || demoted.CanSend {
+		t.Fatalf("demoted admin attendance = canSend:%v err:%v, want false", demoted.CanSend, err)
+	}
+	if _, err := repo.JoinConversationAttendance(ctx, admin, fixture.conversationID, request); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("demoted admin join = %v, want ErrSessionNotFound", err)
+	}
+	if _, err := repo.SendMessage(ctx, admin, fixture.conversationID, sendMessageInput{
+		Text: "after admin demotion", ExpectedLeadID: fixture.leadID, SendSessionID: fixture.sessionID,
+	}); err == nil {
+		t.Fatal("demoted admin sent after losing the organization role")
 	}
 
 	joined, err := repo.JoinConversationAttendance(ctx, assignee, fixture.conversationID, request)

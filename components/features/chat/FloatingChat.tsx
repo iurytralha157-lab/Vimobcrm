@@ -553,6 +553,9 @@ export function FloatingChat() {
   const messageInputDisabled = attendanceGate.isResolving
     || isReadOnlyMode
     || whatsappMessageInputState.disabled;
+  const messageInputPlaceholder = isReadOnlyMode && !whatsappMessageInputState.disabled
+    ? "Você tem acesso somente à leitura desta conversa"
+    : whatsappMessageInputState.placeholder;
   const floatingTimelineItems = useMemo<FloatingTimelineItem[]>(() => [
     ...visibleMessages.map((message): FloatingTimelineItem => ({
       kind: "message",
@@ -1051,7 +1054,7 @@ export function FloatingChat() {
       if (whatsappMessageInputState.disabled || isReadOnlyMode) {
         toast({
           title: "Mensagem nao enviada",
-          description: isReadOnlyMode ? "Você tem acesso somente leitura a esta conversa." : whatsappMessageInputState.placeholder,
+          description: messageInputPlaceholder,
           variant: "destructive",
         });
         return;
@@ -1637,7 +1640,7 @@ export function FloatingChat() {
         onChange={setMessageText}
         onSend={handleSendMessage}
         onKeyDown={handleKeyPress}
-        placeholder={isReadOnlyMode ? "Somente leitura" : whatsappMessageInputState.placeholder}
+        placeholder={messageInputPlaceholder}
         disabled={messageInputDisabled}
         isSending={sendMessage.isPending}
         multiline

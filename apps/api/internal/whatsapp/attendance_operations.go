@@ -156,11 +156,13 @@ func lockAttendanceScope(
 	conversationLock := ""
 	leadLock := ""
 	bindingLock := ""
+	memberLock := ""
 	if lockRows {
 		sessionLock = " for share of ws"
 		conversationLock = " for share of conversation"
 		leadLock = " for share of l"
 		bindingLock = " for share of binding"
+		memberLock = " for share of member"
 	}
 
 	var lockedSessionID string
@@ -217,10 +219,6 @@ func lockAttendanceScope(
 	if err != nil {
 		return attendanceScope{}, err
 	}
-	if requireSendAccess && !sessionOwned && !leadAssigned {
-		return attendanceScope{}, ErrSessionNotFound
-	}
-
 	err = tx.QueryRow(ctx, `
 		select binding.id::text
 		from public.whatsapp_conversation_lead_bindings as binding
@@ -237,27 +235,38 @@ func lockAttendanceScope(
 	if err != nil {
 		return attendanceScope{}, err
 	}
+	var memberRole string
 	if err := tx.QueryRow(ctx, `
-		select left(coalesce(nullif(btrim(user_row.name), ''), nullif(btrim(user_row.email), ''), 'Usuario'), 180)
+		select left(coalesce(nullif(btrim(user_row.name), ''), nullif(btrim(user_row.email), ''), 'Usuario'), 180), coalesce(member.role, '')
 		from public.users as user_row
+		join public.organization_members as member
+		  on member.organization_id = user_row.organization_id
+		 and member.user_id = user_row.id
+		 and coalesce(member.is_active, true) = true
+		 and member.deleted_at is null
 		where user_row.id = $1::uuid
 		  and user_row.organization_id = $2::uuid
 		  and coalesce(user_row.is_active, false) = true
-		  and exists (
-		    select 1 from public.organization_members member
-		    where member.organization_id = user_row.organization_id
-		      and member.user_id = user_row.id
-		      and coalesce(member.is_active, true) = true
-		      and member.deleted_at is null
-		  )
-	`, tenantContext.UserID, tenantContext.OrganizationID).Scan(&scope.ActorName); err != nil {
+	`+memberLock, tenantContext.UserID, tenantContext.OrganizationID).Scan(&scope.ActorName, &memberRole); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return attendanceScope{}, ErrConversationNotFound
 		}
 		return attendanceScope{}, err
 	}
-	scope.CanSend = sessionConnected && (sessionOwned || leadAssigned) && tenantContext.HasPermission(permissions.WhatsAppOperate)
+	adminCanSend := canAdminSendExistingConversation(memberRole, tenantContext)
+	if requireSendAccess && !sessionOwned && !leadAssigned && !adminCanSend {
+		return attendanceScope{}, ErrSessionNotFound
+	}
+	scope.CanSend = sessionConnected && (sessionOwned || leadAssigned || adminCanSend) &&
+		tenantContext.HasPermission(permissions.WhatsAppOperate)
 	return scope, nil
+}
+
+func canAdminSendExistingConversation(memberRole string, tenantContext tenant.Context) bool {
+	// The role is read from the active organization membership in this transaction.
+	// A global user role or a stale role in the request context is insufficient.
+	return (memberRole == "admin" || memberRole == "owner") &&
+		tenantContext.HasPermission(permissions.WhatsAppOperate)
 }
 
 func insertAttendanceEntry(
