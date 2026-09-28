@@ -220,6 +220,7 @@ export function getWhatsAppMessageInputState(
   conversation?: MessageInputConversation | null,
   selectedSessionId?: string | null,
   sessions?: MessageInputSession[] | null,
+  ownedSessionsLoaded = false,
 ): WhatsAppMessageInputState {
   if (!conversation) {
     return {
@@ -241,6 +242,17 @@ export function getWhatsAppMessageInputState(
 			placeholder: "Histórico deste card (somente leitura)",
 		};
 	}
+
+  // GET /sessions returns only accounts owned by this user. Lead visibility
+  // may expose a conversation bound to another person's WhatsApp, but the
+  // attendance and send endpoints intentionally reject that account.
+  if (ownedSessionsLoaded && conversation.id && conversation.session_id
+    && !findSessionById(sessions, conversation.session_id)) {
+    return {
+      disabled: true,
+      placeholder: "Você não tem acesso à conexão desta conversa",
+    };
+  }
 
   if (conversation.id && conversation.session_id && selectedSessionId
     && selectedSessionId !== "all" && selectedSessionId !== conversation.session_id) {

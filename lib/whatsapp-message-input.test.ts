@@ -178,6 +178,31 @@ test('authorized persisted conversation keeps its own session', () => {
   assert.equal(result, '40000000-0000-4000-8000-000000000001')
 })
 
+test('lead history does not offer sending through an account absent from the loaded owned-session list', () => {
+  const conversation = {
+    id: '50000000-0000-4000-8000-000000000001',
+    lead_id: '60000000-0000-4000-8000-000000000001',
+    session_id: '40000000-0000-4000-8000-000000000001',
+    remote_jid: '5511999999999@s.whatsapp.net',
+  }
+  const ownedSessions = [{
+    id: '40000000-0000-4000-8000-000000000002',
+    status: 'connected',
+    provider: 'evolution_go',
+  }]
+
+  assert.deepEqual(getWhatsAppMessageInputState(conversation, null, ownedSessions, true), {
+    disabled: true,
+    placeholder: 'Você não tem acesso à conexão desta conversa',
+  })
+  // A failed or pending session fetch is inconclusive; the API still owns the
+  // authorization decision until an owned-session inventory has loaded.
+  assert.equal(getWhatsAppMessageInputState(conversation, null, ownedSessions).disabled, false)
+  assert.equal(getWhatsAppMessageInputState(conversation, null, [
+    { id: conversation.session_id, status: 'connected', provider: 'evolution_go' },
+  ], true).disabled, false)
+})
+
 test('persisted conversation never switches to another connected WhatsApp', () => {
   const conversation = {
     id: '50000000-0000-4000-8000-000000000001',

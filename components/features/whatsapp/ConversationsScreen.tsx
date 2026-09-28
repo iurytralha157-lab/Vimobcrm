@@ -196,6 +196,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   const {
     data: sessions,
     isLoading: loadingSessions,
+    isSuccess: ownedSessionsLoaded,
   } = useAccessibleSessions();
 
   // Extract accessible session IDs for filtering
@@ -708,8 +709,8 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   }, [conversations, metaConversations, activePlatform, trimmedSearchTerm, onlyLeads, withoutLeadOnly, pendingReplyOnly]);
 
   const whatsappMessageInputState = useMemo(
-    () => getWhatsAppMessageInputState(selectedConversation, selectedSessionId, sessions),
-    [selectedConversation, selectedSessionId, sessions],
+    () => getWhatsAppMessageInputState(selectedConversation, selectedSessionId, sessions, ownedSessionsLoaded),
+    [selectedConversation, selectedSessionId, sessions, ownedSessionsLoaded],
   );
   const selectedAttendanceTarget = useMemo<WhatsAppAttendanceTarget | null>(() => {
     if (
