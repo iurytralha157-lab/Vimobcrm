@@ -4272,6 +4272,12 @@ func nativeEvolutionMessageMetadata(message nativeEvolutionMessage, conversation
 		"whatsapp_attribution": nativeCampaignAttribution(message),
 		"whatsapp_referral":    nativeCampaignReferralSnapshot(message),
 	}
+	if message.MessageType == "contact" && message.ContactCardVCard != "" {
+		metadata["whatsapp_contact_card"] = map[string]any{
+			"display_name": message.ContactCardDisplayName,
+			"vcard":        message.ContactCardVCard,
+		}
+	}
 	if conversation.LeadResolutionQuarantineReason != "" {
 		metadata["lead_resolution_quarantine"] = map[string]any{
 			"reason":      conversation.LeadResolutionQuarantineReason,

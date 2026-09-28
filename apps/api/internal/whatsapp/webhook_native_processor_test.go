@@ -247,6 +247,66 @@ func TestNativeDeletedSnapshotLeadBecomesTerminalNeutralEvidence(t *testing.T) {
 	}
 }
 
+func TestNativeContactCardPreservesProviderVCard(t *testing.T) {
+	vcard := "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Maria Exemplo\r\nTEL:+15555550100\r\nEND:VCARD"
+	raw := map[string]any{
+		"Info": map[string]any{
+			"ID":        "synthetic-contact-card",
+			"Sender":    "15555550101@s.whatsapp.net",
+			"Timestamp": float64(1_725_000_000),
+		},
+		"Message": map[string]any{
+			"contactMessage": map[string]any{
+				"displayName": "Maria Exemplo",
+				"vcard":       vcard,
+			},
+		},
+	}
+	message, ok := normalizeNativeEvolutionMessage(raw)
+	if !ok || message.MessageType != "contact" || message.Content != "Maria Exemplo" ||
+		message.ContactCardDisplayName != "Maria Exemplo" || message.ContactCardVCard != vcard {
+		t.Fatalf("contact card was not preserved: type=%q content=%q ok=%v", message.MessageType, message.Content, ok)
+	}
+	card, ok := nativeEvolutionMessageMetadata(message)["whatsapp_contact_card"].(map[string]any)
+	if !ok || card["display_name"] != "Maria Exemplo" || card["vcard"] != vcard {
+		t.Fatal("canonical metadata lost the provider's vCard")
+	}
+	if nativeIsMediaType(message.MessageType) || nativeEvolutionPreview(message) != "Maria Exemplo" {
+		t.Fatal("contact card must remain a non-media message with provider-supplied preview")
+	}
+
+	for _, invalid := range []map[string]any{
+		{"displayName": "Maria Exemplo", "vcard": ""},
+		{"displayName": "", "vcard": vcard},
+		{"displayName": "Maria Exemplo", "vcard": "not a vCard"},
+	} {
+		raw["Message"] = map[string]any{"contactMessage": invalid}
+		partial, parsed := normalizeNativeEvolutionMessage(raw)
+		if !parsed || partial.Content != "" || partial.ContactCardVCard != "" {
+			t.Fatal("partial or invalid contact card must stay unsupported")
+		}
+	}
+}
+
+func TestNativeOpaqueMessageShapesRemainUnsupported(t *testing.T) {
+	for _, block := range []map[string]any{
+		{"albumMessage": map[string]any{"expectedImageCount": float64(2)}},
+		{"secretEncryptedMessage": map[string]any{"encPayload": "synthetic-ciphertext"}},
+	} {
+		message, ok := normalizeNativeEvolutionMessage(map[string]any{
+			"Info": map[string]any{
+				"ID":        "synthetic-opaque",
+				"Sender":    "15555550101@s.whatsapp.net",
+				"Timestamp": float64(1_725_000_000),
+			},
+			"Message": block,
+		})
+		if !ok || message.Content != "" || message.ContactCardVCard != "" {
+			t.Fatal("opaque provider shape must not be represented as recovered content")
+		}
+	}
+}
+
 func TestNativeEvolutionFixtures(t *testing.T) {
 	t.Run("text", func(t *testing.T) {
 		payload := decodeNativeFixture(t, "message_text.json")
