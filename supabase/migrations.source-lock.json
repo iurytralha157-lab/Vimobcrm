@@ -710,6 +710,10 @@
     {
       "file": "20260928182500_quarantine_stalled_v1_live_receipt_head.sql",
       "sha256": "d63f57586054e234cd45fde40264aa694b5dac23e7003ba9e91202d5eb1301fc"
+    },
+    {
+      "file": "20260928183200_quarantine_two_stale_session_controls.sql",
+      "sha256": "1d14025b7036d36a377d38cd2c028f5aa88ac0af26b063a82af5e62e1af7d736"
     }
   ]
 }
