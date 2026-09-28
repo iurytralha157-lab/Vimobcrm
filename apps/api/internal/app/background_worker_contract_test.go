@@ -52,7 +52,7 @@ func TestAppBackgroundWorkerStartsUseGlobalGateWhileRealtimeStaysAvailable(t *te
 		"automationsRepository.StartRuntimeWorker":                1,
 		"whatsappHandler.StartAIWorker":                           1,
 		"whatsappHandler.StartOutboxWorker":                       1,
-		"whatsappHandler.StartWebhookWorker":                      1,
+		"webhookWorkerHandler.StartWebhookWorker":                 1,
 		"whatsappHandler.StartMediaWorker":                        1,
 		"whatsappHandler.StartCallRecordingWorker":                1,
 		"whatsappHandler.StartSessionSupervisor":                  1,

@@ -132,6 +132,17 @@ func NewRepository(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder
 	}
 }
 
+// WithWorkerDatabase keeps provider clients and runtime counters shared while
+// moving webhook queue claims and processing onto a bounded, independent pool.
+// This prevents an inbound backlog from exhausting the pool used by sends.
+func (repo Repository) WithWorkerDatabase(db *dbpkg.Postgres, gamificationRecorder GamificationRecorder) Repository {
+	repo.db = db
+	repo.functions.db = db
+	repo.gamificationRecorder = gamificationRecorder
+	repo.webhookSchemaGate = &evolutionWebhookSchemaGate{}
+	return repo
+}
+
 func (repo Repository) ListSessions(ctx context.Context, tenantContext tenant.Context) ([]Session, error) {
 	args := []any{tenantContext.OrganizationID, tenantContext.UserID}
 	rows, err := repo.db.Pool().Query(ctx, `

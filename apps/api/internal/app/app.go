@@ -50,10 +50,11 @@ import (
 )
 
 type App struct {
-	handler  http.Handler
-	db       *dbpkg.Postgres
-	auth     *authpkg.Verifier
-	realtime *realtime.Hub
+	handler         http.Handler
+	db              *dbpkg.Postgres
+	webhookWorkerDB *dbpkg.Postgres
+	auth            *authpkg.Verifier
+	realtime        *realtime.Hub
 }
 
 func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, error) {
@@ -328,7 +329,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		})
 	})
 	automationsHandler := automations.NewHandler(automationsRepository)
-	whatsappHandler := whatsapp.NewHandler(whatsapp.NewRepository(postgres, gamificationRepository, whatsapp.StorageConfig{
+	whatsappRepository := whatsapp.NewRepository(postgres, gamificationRepository, whatsapp.StorageConfig{
 		ProjectURL: cfg.Storage.ProjectURL,
 		APIKey:     cfg.Storage.APIKey,
 		EvolutionGo: whatsapp.EvolutionGoConfig{
@@ -346,7 +347,8 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 			WebhookProcessorMode:      cfg.EvolutionGo.WebhookProcessorMode,
 			WebhookRolloutSessionIDs:  cfg.EvolutionGo.WebhookRolloutSessionIDs,
 		},
-	}, realtimeHub)).WithAutoReply(aiService, cfg.AI.AutoReplyToken).WithWorkerConfig(whatsapp.WorkerConfig{
+	}, realtimeHub)
+	whatsappHandler := whatsapp.NewHandler(whatsappRepository).WithAutoReply(aiService, cfg.AI.AutoReplyToken).WithWorkerConfig(whatsapp.WorkerConfig{
 		AIWorkerEnabled:                 cfg.WhatsApp.AIWorkerEnabled,
 		AIWorkerInterval:                cfg.WhatsApp.AIWorkerInterval,
 		AIFollowUpWorkerEnabled:         cfg.WhatsApp.AIFollowUpWorkerEnabled,
@@ -371,6 +373,31 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		SessionSupervisorBatch:          cfg.WhatsApp.SessionSupervisorBatch,
 		SessionSupervisorRecoveryIDs:    cfg.WhatsApp.SessionSupervisorRecoveryIDs,
 	})
+	webhookWorkerHandler := whatsappHandler
+	var webhookWorkerDB *dbpkg.Postgres
+	if cfg.BackgroundWorkersEnabled && cfg.WhatsApp.WebhookWorkerEnabled {
+		workerDBConfig := cfg.Database
+		workerDBConfig.MinConns = 0
+		workerDBConfig.MaxConns = cfg.WhatsApp.WebhookWorkerDBMaxConns
+		if workerDBConfig.MaxConns == 0 {
+			workerDBConfig.MaxConns = 8
+			if int32(cfg.WhatsApp.WebhookWorkerConcurrency) > workerDBConfig.MaxConns {
+				workerDBConfig.MaxConns = int32(cfg.WhatsApp.WebhookWorkerConcurrency)
+			}
+		}
+		webhookWorkerDB, err = dbpkg.NewPostgres(ctx, workerDBConfig)
+		if err != nil {
+			realtimeHub.Close()
+			postgres.Close()
+			authVerifier.Close()
+			return nil, err
+		}
+		webhookWorkerRepository := whatsappRepository.WithWorkerDatabase(
+			webhookWorkerDB,
+			gamification.NewRepository(webhookWorkerDB),
+		)
+		webhookWorkerHandler = whatsappHandler.WithWorkerRepository(webhookWorkerRepository)
+	}
 	whatsappRuntimeStats = whatsappHandler.RuntimeStats
 	backgroundWorkers.Run(func() {
 		whatsappHandler.StartAIWorker(ctx, logger)
@@ -379,7 +406,7 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		whatsappHandler.StartOutboxWorker(ctx, logger)
 	})
 	backgroundWorkers.Run(func() {
-		whatsappHandler.StartWebhookWorker(ctx, logger)
+		webhookWorkerHandler.StartWebhookWorker(ctx, logger)
 	})
 	backgroundWorkers.Run(func() {
 		whatsappHandler.StartMediaWorker(ctx, logger)
@@ -391,6 +418,9 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		)
 	}); err != nil {
 		realtimeHub.Close()
+		if webhookWorkerDB != nil {
+			webhookWorkerDB.Close()
+		}
 		postgres.Close()
 		authVerifier.Close()
 		return nil, err
@@ -513,10 +543,11 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 	)
 
 	return &App{
-		handler:  handler,
-		db:       postgres,
-		auth:     authVerifier,
-		realtime: realtimeHub,
+		handler:         handler,
+		db:              postgres,
+		webhookWorkerDB: webhookWorkerDB,
+		auth:            authVerifier,
+		realtime:        realtimeHub,
 	}, nil
 }
 
@@ -537,6 +568,10 @@ func (app *App) Handler() http.Handler {
 func (app *App) Close() {
 	if app.realtime != nil {
 		app.realtime.Close()
+	}
+
+	if app.webhookWorkerDB != nil {
+		app.webhookWorkerDB.Close()
 	}
 
 	if app.db != nil {

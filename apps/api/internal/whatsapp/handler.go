@@ -26,6 +26,13 @@ func NewHandler(repo Repository) Handler {
 	}
 }
 
+// WithWorkerRepository returns a handler copy for a dedicated background lane.
+// HTTP requests and the outbound outbox keep their original repository.
+func (handler Handler) WithWorkerRepository(repo Repository) Handler {
+	handler.repo = repo
+	return handler
+}
+
 func (handler Handler) WithWorkerConfig(config WorkerConfig) Handler {
 	handler.workerConfig = config.normalized()
 	return handler

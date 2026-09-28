@@ -204,6 +204,27 @@ func TestConfigValidateRejectsUnsafeOutboxWorkerConcurrency(t *testing.T) {
 	}
 }
 
+func TestConfigValidateWebhookWorkerDatabaseCapacity(t *testing.T) {
+	for _, maxConns := range []int32{3, 33} {
+		cfg := validConfigForWebhookRolloutTest()
+		cfg.WhatsApp.WebhookWorkerEnabled = true
+		cfg.WhatsApp.WebhookWorkerConcurrency = 4
+		cfg.WhatsApp.WebhookWorkerDBMaxConns = maxConns
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "WHATSAPP_WEBHOOK_WORKER_DB_MAX_CONNS") {
+			t.Fatalf("pool size %d validation error = %v", maxConns, err)
+		}
+	}
+
+	cfg := validConfigForWebhookRolloutTest()
+	cfg.WhatsApp.WebhookWorkerEnabled = true
+	cfg.WhatsApp.WebhookWorkerConcurrency = 4
+	cfg.WhatsApp.WebhookWorkerDBMaxConns = 8
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("safe webhook database pool rejected: %v", err)
+	}
+}
+
 func TestConfigValidateRejectsUnsafeMediaWorkerTiming(t *testing.T) {
 	for _, test := range []struct {
 		name     string

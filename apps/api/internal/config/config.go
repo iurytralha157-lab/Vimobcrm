@@ -182,6 +182,7 @@ type WhatsAppConfig struct {
 	WebhookWorkerInterval           time.Duration
 	WebhookWorkerBatch              int
 	WebhookWorkerConcurrency        int
+	WebhookWorkerDBMaxConns         int32
 	DeferredReceiptSweepEnabled     bool
 	DeferredReceiptReconcileEnabled bool
 	MediaWorkerEnabled              bool
@@ -322,6 +323,7 @@ func Load() (Config, error) {
 			WebhookWorkerInterval:           parseDuration("WHATSAPP_WEBHOOK_WORKER_INTERVAL", time.Second),
 			WebhookWorkerBatch:              int(parseInt("WHATSAPP_WEBHOOK_WORKER_BATCH", 10)),
 			WebhookWorkerConcurrency:        int(parseInt("WHATSAPP_WEBHOOK_WORKER_CONCURRENCY", 4)),
+			WebhookWorkerDBMaxConns:         parseInt("WHATSAPP_WEBHOOK_WORKER_DB_MAX_CONNS", 8),
 			DeferredReceiptSweepEnabled:     parseBool("WHATSAPP_DEFERRED_RECEIPT_SWEEP_ENABLED", false),
 			DeferredReceiptReconcileEnabled: parseBool("WHATSAPP_DEFERRED_RECEIPT_RECONCILE_ENABLED", false),
 			MediaWorkerEnabled:              parseBool("WHATSAPP_MEDIA_WORKER_ENABLED", false),
@@ -603,6 +605,10 @@ func (cfg Config) Validate() error {
 	}
 	if cfg.WhatsApp.WebhookWorkerEnabled && (cfg.WhatsApp.WebhookWorkerConcurrency < 1 || cfg.WhatsApp.WebhookWorkerConcurrency > 16) {
 		validationErrors = append(validationErrors, errors.New("WHATSAPP_WEBHOOK_WORKER_CONCURRENCY must be between 1 and 16"))
+	}
+	if cfg.WhatsApp.WebhookWorkerEnabled && cfg.WhatsApp.WebhookWorkerDBMaxConns != 0 &&
+		(cfg.WhatsApp.WebhookWorkerDBMaxConns < int32(cfg.WhatsApp.WebhookWorkerConcurrency) || cfg.WhatsApp.WebhookWorkerDBMaxConns > 32) {
+		validationErrors = append(validationErrors, errors.New("WHATSAPP_WEBHOOK_WORKER_DB_MAX_CONNS must be between worker concurrency and 32"))
 	}
 	if cfg.WhatsApp.OutboxWorkerEnabled && (cfg.WhatsApp.OutboxWorkerConcurrency < 1 || cfg.WhatsApp.OutboxWorkerConcurrency > 16) {
 		validationErrors = append(validationErrors, errors.New("WHATSAPP_OUTBOX_WORKER_CONCURRENCY must be between 1 and 16"))
