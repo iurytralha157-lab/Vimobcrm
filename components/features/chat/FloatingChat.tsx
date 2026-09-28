@@ -65,11 +65,13 @@ import {
   getWhatsAppConversationDraftKey,
   getWhatsAppConversationMessageScope,
   getWhatsAppMessageInputState,
+  getWhatsAppSendSessionId,
   preserveWhatsAppConversationCardSnapshot,
   updateWhatsAppConversationDraft,
   WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
 } from "@/lib/whatsapp-message-input";
 import { getWhatsAppSendFailureStatus, resolveWhatsAppConversationSessionFilter } from "@/lib/whatsapp-query-cache";
+import { runWhatsAppSendAttempt } from "@/lib/whatsapp-send-attempt";
 import { canReactToWhatsAppMessage, groupLatestWhatsAppReactions } from "@/lib/whatsapp-reactions";
 import { normalizeSearchText } from "@/lib/search-text";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
@@ -306,6 +308,7 @@ export function FloatingChat() {
   const lastMessagesConversationIdRef = useRef<string | null>(null);
   const isUserScrollingRef = useRef<boolean>(false);
   const navigationNonceRef = useRef(0);
+  const sendTextAttemptLock = useRef(false);
   const pendingStartKeyRef = useRef<string | null>(null);
   const pendingConversationLinkRef = useRef<{ conversationId: string; leadId: string } | null>(null);
   const chatSurfaceRef = useRef<HTMLDivElement>(null);
@@ -511,36 +514,42 @@ export function FloatingChat() {
   const hasWhatsAppAccess = Boolean(sessions?.length);
   const router = useRouter();
   const isReadOnlyMode = !canMutateActiveConversation;
-  const whatsappMessageInputState = getWhatsAppMessageInputState(
+  const activeAttendanceSessionId = getWhatsAppSendSessionId(
     activeConversation,
     selectedSessionId,
     sessions,
-    ownedSessionsLoaded,
   );
   const activeAttendanceTarget = useMemo<WhatsAppAttendanceTarget | null>(() => {
     if (
       !activeConversationId
       || !activeConversationLeadId
       || activeConversation?.historical_lead_view
-      || !whatsappMessageInputState.sendSessionId
+      || !activeAttendanceSessionId
     ) {
       return null;
     }
     return {
       conversationId: activeConversationId,
       expectedLeadId: activeConversationLeadId,
-      sendSessionId: whatsappMessageInputState.sendSessionId,
+      sendSessionId: activeAttendanceSessionId,
     };
   }, [
     activeConversation?.historical_lead_view,
     activeConversationId,
     activeConversationLeadId,
-    whatsappMessageInputState.sendSessionId,
+    activeAttendanceSessionId,
   ]);
   const attendanceGate = useWhatsAppAttendanceGate(activeAttendanceTarget, {
     enabled: chatVisible && Boolean(activeAttendanceTarget),
-    identityKey: `${activeTenantKey}:${activeConversationId || "none"}:${activeConversationLeadId || "none"}:${whatsappMessageInputState.sendSessionId || "none"}`,
+    identityKey: `${activeTenantKey}:${activeConversationId || "none"}:${activeConversationLeadId || "none"}:${activeAttendanceSessionId || "none"}`,
   });
+  const whatsappMessageInputState = getWhatsAppMessageInputState(
+    activeConversation,
+    selectedSessionId,
+    sessions,
+    ownedSessionsLoaded,
+    attendanceGate.attendance?.canSend,
+  );
   const messageInputDisabled = attendanceGate.isResolving
     || isReadOnlyMode
     || whatsappMessageInputState.disabled;
@@ -1035,35 +1044,37 @@ export function FloatingChat() {
   };
 
   const handleSendMessage = async () => {
-    const textToSend = messageText.trim();
-    if (!canMutateActiveConversation || !textToSend || !activeConversation) return;
-    if (sendMessage.isPending) return;
-    if (whatsappMessageInputState.disabled || isReadOnlyMode) {
-      toast({
-        title: "Mensagem nao enviada",
-        description: isReadOnlyMode ? "Você tem acesso somente leitura a esta conversa." : whatsappMessageInputState.placeholder,
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const joined = await attendanceGate.ensureJoined();
-    if (!joined) return;
-
-    // O rascunho só é limpo depois que a entrada no atendimento foi confirmada.
-    setMessageText("");
-
-    try {
-      await sendMessage.mutateAsync({
-        conversation: activeConversation,
-        text: textToSend,
-        sendSessionId: whatsappMessageInputState.sendSessionId,
-      });
-    } catch (error) {
-      if (getWhatsAppSendFailureStatus(error) !== "confirming") {
-        setMessageText((current) => current || textToSend);
+    await runWhatsAppSendAttempt(sendTextAttemptLock, async () => {
+      const textToSend = messageText.trim();
+      if (!canMutateActiveConversation || !textToSend || !activeConversation) return;
+      if (sendMessage.isPending) return;
+      if (whatsappMessageInputState.disabled || isReadOnlyMode) {
+        toast({
+          title: "Mensagem nao enviada",
+          description: isReadOnlyMode ? "Você tem acesso somente leitura a esta conversa." : whatsappMessageInputState.placeholder,
+          variant: "destructive",
+        });
+        return;
       }
-    }
+
+      const joined = await attendanceGate.ensureJoined();
+      if (!joined) return;
+
+      // O rascunho só é limpo depois que a entrada no atendimento foi confirmada.
+      setMessageText("");
+
+      try {
+        await sendMessage.mutateAsync({
+          conversation: activeConversation,
+          text: textToSend,
+          sendSessionId: whatsappMessageInputState.sendSessionId,
+        });
+      } catch (error) {
+        if (getWhatsAppSendFailureStatus(error) !== "confirming") {
+          setMessageText((current) => current || textToSend);
+        }
+      }
+    });
   };
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;

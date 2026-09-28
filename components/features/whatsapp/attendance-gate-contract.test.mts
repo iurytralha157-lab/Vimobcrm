@@ -33,6 +33,8 @@ test("contrato de attendance usa card e WhatsApp selecionado em GET e POST", () 
   assert.match(ensureJoined, /whatsappAPI\.getConversationAttendance/);
   assert.doesNotMatch(ensureJoined, /fetchQuery/);
   assert.match(hookSource, /pending\.identityKey !== requestIdentityRef\.current/);
+  assert.match(hookSource, /settlePendingRequest\(true, pending\)/);
+  assert.match(hookSource, /catch \(error\) \{\s*settlePendingRequest\(false, pending\)/);
 });
 
 test("dialogo explica inicio temporal, visibilidade e ausencia de importacao", () => {

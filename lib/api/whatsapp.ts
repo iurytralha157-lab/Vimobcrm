@@ -281,6 +281,7 @@ export type WhatsAppAttendanceEntry = {
 
 export type WhatsAppAttendanceState = {
   joined: boolean
+  canSend?: boolean
   currentEntry: WhatsAppAttendanceEntry | null
   entries: WhatsAppAttendanceEntry[]
   created?: boolean

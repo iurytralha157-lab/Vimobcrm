@@ -201,6 +201,19 @@ test('lead history does not offer sending through an account absent from the loa
   assert.equal(getWhatsAppMessageInputState(conversation, null, [
     { id: conversation.session_id, status: 'connected', provider: 'evolution_go' },
   ], true).disabled, false)
+
+  // Exact server capability allows the current lead assignee to operate the
+  // persisted session, while an explicit denial also blocks an owned account.
+  assert.deepEqual(getWhatsAppMessageInputState(conversation, null, ownedSessions, true, true), {
+    disabled: false,
+    placeholder: 'Digite sua mensagem...',
+    sendSessionId: conversation.session_id,
+  })
+  assert.equal(getWhatsAppMessageInputState(conversation, null, [
+    { id: conversation.session_id, status: 'connected', provider: 'evolution_go' },
+  ], true, false).disabled, true)
+  assert.equal(getWhatsAppMessageInputState(conversation, ownedSessions[0].id, ownedSessions, true, true).disabled, true)
+  assert.equal(getWhatsAppMessageInputState({ ...conversation, historical_lead_view: true }, null, ownedSessions, true, true).disabled, true)
 })
 
 test('persisted conversation never switches to another connected WhatsApp', () => {

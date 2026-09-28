@@ -149,6 +149,7 @@ test('valida consulta e entrada no atendimento por card e sessao', () => {
 	assert.equal(whatsAppAttendanceResponseSchema.safeParse({
 		data: {
 			joined: true,
+			canSend: true,
 			currentEntry: {
 				id: ID,
 				userId: USER_ID,
@@ -166,6 +167,9 @@ test('valida consulta e entrada no atendimento por card e sessao', () => {
 			created: true,
 		},
 	}).success, true)
+	assert.equal(whatsAppAttendanceResponseSchema.safeParse({
+		data: { joined: false, canSend: 'yes', currentEntry: null, entries: [] },
+	}).success, false)
 })
 
 test('valida lista de sessoes e cota', () => {

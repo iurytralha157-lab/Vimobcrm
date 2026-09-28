@@ -71,6 +71,7 @@ export const whatsAppAttendanceEntrySchema = z.object({
 
 export const whatsAppAttendanceStateSchema = z.object({
 	joined: z.boolean(),
+	canSend: z.boolean().optional(),
 	currentEntry: whatsAppAttendanceEntrySchema.nullable(),
 	entries: z.array(whatsAppAttendanceEntrySchema),
 	created: z.boolean().optional(),

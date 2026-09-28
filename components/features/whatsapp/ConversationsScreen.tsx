@@ -49,10 +49,12 @@ import {
 	getWhatsAppConversationDraftKey,
   getWhatsAppConversationMessageScope,
   getWhatsAppMessageInputState,
+  getWhatsAppSendSessionId,
   preserveWhatsAppConversationCardSnapshot,
 	updateWhatsAppConversationDraft,
 } from "@/lib/whatsapp-message-input";
 import { groupLatestWhatsAppReactions } from "@/lib/whatsapp-reactions";
+import { runWhatsAppSendAttempt } from "@/lib/whatsapp-send-attempt";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
@@ -156,6 +158,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
   const [saveContactOpen, setSaveContactOpen] = useState(false);
   const [callHistoryOpen, setCallHistoryOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const sendTextAttemptLock = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastVisibleMessageIdRef = useRef<string | null>(null);
   const isUserScrollingRef = useRef<boolean>(false);
@@ -759,9 +762,10 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     ));
   }, [conversations, metaConversations, activePlatform, trimmedSearchTerm, onlyLeads, withoutLeadOnly, pendingReplyOnly]);
 
-  const whatsappMessageInputState = useMemo(
-    () => getWhatsAppMessageInputState(selectedConversation, selectedSessionId, sessions, ownedSessionsLoaded),
-    [selectedConversation, selectedSessionId, sessions, ownedSessionsLoaded],
+  const selectedAttendanceSessionId = getWhatsAppSendSessionId(
+    selectedConversation,
+    selectedSessionId,
+    sessions,
   );
   const selectedAttendanceTarget = useMemo<WhatsAppAttendanceTarget | null>(() => {
     if (
@@ -769,25 +773,32 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
       || !selectedConversation?.id
       || !selectedLeadId
       || selectedConversation.historical_lead_view
-      || !whatsappMessageInputState.sendSessionId
+      || !selectedAttendanceSessionId
     ) {
       return null;
     }
     return {
       conversationId: selectedConversation.id,
       expectedLeadId: selectedLeadId,
-      sendSessionId: whatsappMessageInputState.sendSessionId,
+      sendSessionId: selectedAttendanceSessionId,
     };
   }, [
     activePlatform,
     selectedConversation,
     selectedLeadId,
-    whatsappMessageInputState.sendSessionId,
+    selectedAttendanceSessionId,
   ]);
   const attendanceGate = useWhatsAppAttendanceGate(selectedAttendanceTarget, {
     enabled: activePlatform === "whatsapp" && Boolean(selectedAttendanceTarget),
-    identityKey: `${activeTenantKey}:${selectedConversationId || "none"}:${selectedLeadId || "none"}:${whatsappMessageInputState.sendSessionId || "none"}`,
+    identityKey: `${activeTenantKey}:${selectedConversationId || "none"}:${selectedLeadId || "none"}:${selectedAttendanceSessionId || "none"}`,
   });
+  const whatsappMessageInputState = getWhatsAppMessageInputState(
+    selectedConversation,
+    selectedSessionId,
+    sessions,
+    ownedSessionsLoaded,
+    attendanceGate.attendance?.canSend,
+  );
   const messageInputDisabled = attendanceGate.isResolving || !canOperateWhatsApp || (activePlatform === "whatsapp"
     ? whatsappMessageInputState.disabled
     : sendMetaMessage.isPending);
@@ -796,46 +807,48 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     : "Digite sua mensagem...";
 
   const handleSendMessage = async () => {
-    if (!canOperateWhatsApp || !messageText.trim() || !selectedConversation) return;
-    if (activePlatform === "whatsapp" && sendTextMessage.isPending) return;
-    if (activePlatform === "whatsapp" && whatsappMessageInputState.disabled) {
-      toast({
-        title: "Mensagem nao enviada",
-        description: whatsappMessageInputState.placeholder,
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const textToSend = messageText.trim();
-    const metaIdempotencyKey = activePlatform === 'whatsapp' ? null : createUUID();
-
-    try {
-      if (activePlatform === 'whatsapp') {
-        const joined = await attendanceGate.ensureJoined();
-        if (!joined) return;
-        setMessageText("");
-        await sendTextMessage.mutateAsync({
-          conversation: selectedConversation,
-          text: textToSend,
-          sendSessionId: whatsappMessageInputState.sendSessionId,
+    await runWhatsAppSendAttempt(sendTextAttemptLock, async () => {
+      if (!canOperateWhatsApp || !messageText.trim() || !selectedConversation) return;
+      if (activePlatform === "whatsapp" && sendTextMessage.isPending) return;
+      if (activePlatform === "whatsapp" && whatsappMessageInputState.disabled) {
+        toast({
+          title: "Mensagem nao enviada",
+          description: whatsappMessageInputState.placeholder,
+          variant: "destructive",
         });
-      } else {
-        setMessageText("");
-        await sendMetaMessage.mutateAsync({
-          conversationId: selectedConversation.id,
-          text: textToSend,
-          platform: selectedConversation.platform || 'instagram',
-          recipientExternalId: selectedConversation.external_id || selectedConversation.remote_jid,
-          idempotencyKey: metaIdempotencyKey!,
-        });
+        return;
       }
-    } catch (error) {
-      const failureStatus = getWhatsAppSendFailureStatus(error);
-      if (activePlatform !== "whatsapp" || failureStatus !== "confirming") {
-        setMessageText((current) => current || textToSend);
+
+      const textToSend = messageText.trim();
+      const metaIdempotencyKey = activePlatform === 'whatsapp' ? null : createUUID();
+
+      try {
+        if (activePlatform === 'whatsapp') {
+          const joined = await attendanceGate.ensureJoined();
+          if (!joined) return;
+          setMessageText("");
+          await sendTextMessage.mutateAsync({
+            conversation: selectedConversation,
+            text: textToSend,
+            sendSessionId: whatsappMessageInputState.sendSessionId,
+          });
+        } else {
+          setMessageText("");
+          await sendMetaMessage.mutateAsync({
+            conversationId: selectedConversation.id,
+            text: textToSend,
+            platform: selectedConversation.platform || 'instagram',
+            recipientExternalId: selectedConversation.external_id || selectedConversation.remote_jid,
+            idempotencyKey: metaIdempotencyKey!,
+          });
+        }
+      } catch (error) {
+        const failureStatus = getWhatsAppSendFailureStatus(error);
+        if (activePlatform !== "whatsapp" || failureStatus !== "confirming") {
+          setMessageText((current) => current || textToSend);
+        }
       }
-    }
+    });
   };
   const handleKeyPress = (e: React.KeyboardEvent<Element>) => {
     if (e.key === "Enter" && !e.shiftKey) {

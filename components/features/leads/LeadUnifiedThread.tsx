@@ -35,8 +35,10 @@ import { whatsappCallsAPI } from '@/lib/api/whatsapp-calls';
 import { isWhatsAppSessionFeatureEnabled } from '@/lib/whatsapp-call-capabilities';
 import {
   getWhatsAppMessageInputState,
+  getWhatsAppSendSessionId,
   WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
 } from '@/lib/whatsapp-message-input';
+import { runWhatsAppSendAttempt } from '@/lib/whatsapp-send-attempt';
 import { groupLatestWhatsAppReactions } from '@/lib/whatsapp-reactions';
 import {
   blobToBase64,
@@ -777,6 +779,7 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   const [savingContact, setSavingContact] = useState(false);
   const [composerHighlighted, setComposerHighlighted] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const sendTextAttemptLock = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastHandledComposerRequestRef = useRef<number | null>(null);
   const threadScrollRef = useRef<HTMLDivElement | null>(null);
@@ -852,9 +855,28 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
         : null),
     [conversation, hasLeadPhone, leadId, leadPhone],
   );
+  const attendanceSessionId = getWhatsAppSendSessionId(conversation, null, sessions);
+  const attendanceTarget = useMemo<WhatsAppAttendanceTarget | null>(() => {
+    if (!conversation?.id || !attendanceSessionId) return null;
+    return {
+      conversationId: conversation.id,
+      expectedLeadId: leadId,
+      sendSessionId: attendanceSessionId,
+    };
+  }, [conversation, leadId, attendanceSessionId]);
+  const attendanceGate = useWhatsAppAttendanceGate(attendanceTarget, {
+    enabled: canViewWhatsApp && Boolean(attendanceTarget),
+    identityKey: `${activeOrganization.organizationId || "none"}:${leadId}:${attendanceSessionId || "none"}`,
+  });
   const whatsappMessageInputState = useMemo(
-    () => getWhatsAppMessageInputState(messageInputConversation, null, sessions, ownedSessionsLoaded),
-    [messageInputConversation, sessions, ownedSessionsLoaded],
+    () => getWhatsAppMessageInputState(
+      messageInputConversation,
+      null,
+      sessions,
+      ownedSessionsLoaded,
+      attendanceGate.attendance?.canSend,
+    ),
+    [messageInputConversation, sessions, ownedSessionsLoaded, attendanceGate.attendance?.canSend],
   );
   const contactSession = sessions.find((session) => session.id === whatsappMessageInputState.sendSessionId);
   const canSaveLeadContact = Boolean(!readOnly && canOperateWhatsApp && hasLeadPhone
@@ -869,18 +891,6 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
       !leadHasNoWhatsApp &&
       !whatsappMessageInputState.disabled,
   );
-  const attendanceTarget = useMemo<WhatsAppAttendanceTarget | null>(() => {
-    if (!conversation?.id || !whatsappMessageInputState.sendSessionId) return null;
-    return {
-      conversationId: conversation.id,
-      expectedLeadId: leadId,
-      sendSessionId: whatsappMessageInputState.sendSessionId,
-    };
-  }, [conversation, leadId, whatsappMessageInputState.sendSessionId]);
-  const attendanceGate = useWhatsAppAttendanceGate(attendanceTarget, {
-    enabled: canViewWhatsApp && Boolean(attendanceTarget),
-    identityKey: `${activeOrganization.organizationId || "none"}:${leadId}:${whatsappMessageInputState.sendSessionId || "none"}`,
-  });
   const isSendingMessage = sendMessage.isPending
     || startConversation.isPending
     || attendanceGate.isResolving;
@@ -1052,22 +1062,24 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   };
 
   const handleSend = async () => {
-    const content = text.trim();
-    if (!content || !canSendMessage || isSendingMessage) return;
+    await runWhatsAppSendAttempt(sendTextAttemptLock, async () => {
+      const content = text.trim();
+      if (!content || !canSendMessage || isSendingMessage) return;
 
-    try {
-      const targetConversation = await ensureConversationAndAttendanceForSend();
-      if (!targetConversation) return;
+      try {
+        const targetConversation = await ensureConversationAndAttendanceForSend();
+        if (!targetConversation) return;
 
-      setText('');
-      await sendMessage.mutateAsync({
-        conversation: targetConversation,
-        text: content,
-        sendSessionId: whatsappMessageInputState.sendSessionId,
-      });
-    } catch {
-      setText(content);
-    }
+        setText('');
+        await sendMessage.mutateAsync({
+          conversation: targetConversation,
+          text: content,
+          sendSessionId: whatsappMessageInputState.sendSessionId,
+        });
+      } catch {
+        setText(content);
+      }
+    });
   };
 
   const handleSaveLeadContact = async () => {
