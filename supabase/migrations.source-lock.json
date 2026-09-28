@@ -620,8 +620,8 @@
       "sha256": "eac30261bbbe0769bb7ed692579efcbba958014ca55360bf881c7829e0ca0fd3"
     },
     {
-      "file": "20260928054500_quarantine_orphan_whatsapp_receipts.sql",
-      "sha256": "0b94f3691fe7804b217b5e3efbffdfd49982768556c33f144b8bfad42e3e117f"
+      "file": "20260928054500_defer_unmatched_whatsapp_receipts.sql",
+      "sha256": "06435e8b49580c42b14495d588dd5f90adefc5d37ecb033b1c6fc3d191e6725f"
     }
   ]
 }

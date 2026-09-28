@@ -485,26 +485,28 @@ func (handler Handler) StartWebhookWorker(ctx context.Context, logger *slog.Logg
 				if _, err := handler.repo.CleanupExpiredWebhookInbox(ctx, 10000); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("whatsapp webhook inbox cleanup failed", "error", err)
 				}
-				if config.OrphanReceiptSweepEnabled {
-					quarantined, err := handler.repo.sweepOrphanReceiptHeads(ctx, maxOrphanReceiptSweepPerMinute)
+				if config.DeferredReceiptSweepEnabled {
+					deferred, err := handler.repo.deferUnmatchedReceiptHeads(ctx, maxDeferredReceiptSweepPerMinute)
 					if err != nil && !errors.Is(err, context.Canceled) {
-						logger.Error("whatsapp orphan receipt classification failed", "error", err)
-					} else if quarantined > 0 {
-						logger.Info("whatsapp orphan receipts quarantined", "count", quarantined)
+						logger.Error("whatsapp deferred receipt classification failed", "error", err)
+					} else if deferred > 0 {
+						logger.Info("whatsapp receipts deferred awaiting targets", "count", deferred)
 					}
-					resolved, err := handler.repo.reconcileDeferredOrphanReceipts(ctx, maxOrphanReceiptSweepPerMinute)
+				}
+				if config.DeferredReceiptReconcileEnabled {
+					resolved, err := handler.repo.reconcileDeferredReceipts(ctx, maxDeferredReceiptSweepPerMinute)
 					if err != nil && !errors.Is(err, context.Canceled) {
-						logger.Error("whatsapp orphan receipt reconciliation failed", "error", err)
+						logger.Error("whatsapp deferred receipt reconciliation failed", "error", err)
 					} else if resolved > 0 {
-						logger.Info("whatsapp orphan receipts reconciled", "count", resolved)
+						logger.Info("whatsapp deferred receipts reconciled", "count", resolved)
 					}
-					deferredExpired, resolvedExpired, err := handler.repo.cleanupExpiredOrphanReceipts(ctx)
+					deferredOverdue, resolvedExpired, err := handler.repo.cleanupDeferredReceiptLedger(ctx)
 					if err != nil && !errors.Is(err, context.Canceled) {
-						logger.Error("whatsapp orphan receipt ledger cleanup failed", "error", err)
-					} else if deferredExpired > 0 {
-						logger.Error("unresolved WhatsApp orphan receipts expired", "count", deferredExpired)
+						logger.Error("whatsapp deferred receipt ledger cleanup failed", "error", err)
+					} else if deferredOverdue > 0 {
+						logger.Error("unresolved WhatsApp deferred receipts overdue", "count_at_least", deferredOverdue)
 					} else if resolvedExpired > 0 {
-						logger.Info("resolved WhatsApp orphan receipt ledger expired", "count", resolvedExpired)
+						logger.Info("resolved WhatsApp deferred receipt ledger expired", "count", resolvedExpired)
 					}
 				}
 			}

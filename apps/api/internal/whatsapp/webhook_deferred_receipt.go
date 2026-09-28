@@ -8,14 +8,14 @@ import (
 	"time"
 )
 
-const maxOrphanReceiptSweepPerMinute = 4
+const maxDeferredReceiptSweepPerMinute = 4
 
-type orphanReceiptHead struct {
+type unmatchedReceiptHead struct {
 	id      string
 	payload []byte
 }
 
-type deferredOrphanReceipt struct {
+type deferredReceipt struct {
 	inboxID           string
 	organizationID    string
 	sessionID         string
@@ -26,12 +26,13 @@ type deferredOrphanReceipt struct {
 	attempts          int
 }
 
-// The slow, bounded absence classifier never occupies a live/backlog claim
-// slot. The private RPC rechecks exact target absence and lead ingress under a
-// row lock. A dead receipt is an explicit gap, never delivery/read proof.
-func (repo Repository) sweepOrphanReceiptHeads(ctx context.Context, limit int) (int, error) {
-	if limit < 1 || limit > maxOrphanReceiptSweepPerMinute {
-		limit = maxOrphanReceiptSweepPerMinute
+// This classifier runs outside the live/backlog claim slots. A native
+// not_found receipt can be deferred without claiming that its target is absent
+// from raw ingress. The private RPC rechecks the exact status-only shape and
+// FIFO head under a row lock. A dead receipt is a gap, never delivery proof.
+func (repo Repository) deferUnmatchedReceiptHeads(ctx context.Context, limit int) (int, error) {
+	if limit < 1 || limit > maxDeferredReceiptSweepPerMinute {
+		limit = maxDeferredReceiptSweepPerMinute
 	}
 	rows, err := repo.db.Pool().Query(ctx, `
 		select head.id::text,head.payload::text
@@ -62,9 +63,9 @@ func (repo Repository) sweepOrphanReceiptHeads(ctx context.Context, limit int) (
 	if err != nil {
 		return 0, err
 	}
-	heads := make([]orphanReceiptHead, 0, limit)
+	heads := make([]unmatchedReceiptHead, 0, limit)
 	for rows.Next() {
-		var head orphanReceiptHead
+		var head unmatchedReceiptHead
 		var payloadText string
 		if err := rows.Scan(&head.id, &payloadText); err != nil {
 			rows.Close()
@@ -79,9 +80,9 @@ func (repo Repository) sweepOrphanReceiptHeads(ctx context.Context, limit int) (
 		return 0, err
 	}
 
-	quarantined := 0
+	deferred := 0
 	for _, head := range heads {
-		status, ok := singleOrphanReadStatus(head.payload)
+		status, ok := singleDeferredReadStatus(head.payload)
 		if !ok {
 			// Mixed IDs stay in the original retry/DLQ path. No valid ID in
 			// the same provider batch can be dropped by this classifier.
@@ -89,30 +90,36 @@ func (repo Repository) sweepOrphanReceiptHeads(ctx context.Context, limit int) (
 		}
 		var outcome string
 		if err := repo.db.Pool().QueryRow(ctx, `
-			select private.quarantine_orphan_whatsapp_receipt($1::uuid,$2,$3::timestamptz)
+			select private.defer_unmatched_whatsapp_receipt($1::uuid,$2,$3::timestamptz)
 		`, head.id, status.MessageIDs[0], status.OccurredAt).Scan(&outcome); err != nil {
-			return quarantined, err
+			return deferred, err
 		}
-		if outcome == "quarantined" {
-			quarantined++
+		if outcome == "deferred" {
+			deferred++
 		}
 	}
-	if quarantined > 0 {
+	if deferred > 0 {
 		wakeWhatsAppWebhookWorker()
 	}
-	return quarantined, nil
+	return deferred, nil
 }
 
-func singleOrphanReadStatus(raw []byte) (nativeEvolutionStatus, bool) {
+func singleDeferredReadStatus(raw []byte) (nativeEvolutionStatus, bool) {
 	payload, err := decodeNativeEvolutionPayload(raw)
 	if err != nil || !strings.EqualFold(strings.TrimSpace(firstString(payload, "event")), "receipt") {
+		return nativeEvolutionStatus{}, false
+	}
+	data := mapFromAny(nativeFirstValue(payload, "data"))
+	fromMe, fromMeOK := nativeFirstValue(data, "IsFromMe").(bool)
+	providerTime, providerTimeOK := nativeEvolutionStatusProviderOccurredAt(payload)
+	if !fromMeOK || !fromMe || !providerTimeOK {
 		return nativeEvolutionStatus{}, false
 	}
 	statuses := extractNativeEvolutionStatuses(payload)
 	if len(statuses) != 1 || len(statuses[0].MessageIDs) != 1 ||
 		strings.ToLower(strings.TrimSpace(statuses[0].Status)) != "read" ||
 		strings.TrimSpace(statuses[0].MessageIDs[0]) == "" ||
-		statuses[0].OccurredAt.IsZero() {
+		!statuses[0].OccurredAt.Equal(providerTime) {
 		return nativeEvolutionStatus{}, false
 	}
 	return statuses[0], true
@@ -120,23 +127,23 @@ func singleOrphanReadStatus(raw []byte) (nativeEvolutionStatus, bool) {
 
 // A late target is handled by the same native monotonic status processor. The
 // inbox row can be retained or deleted independently because the private
-// ledger stores the minimal status identity and provider time for 30+ days.
-func (repo Repository) reconcileDeferredOrphanReceipts(ctx context.Context, limit int) (int, error) {
-	if limit < 1 || limit > maxOrphanReceiptSweepPerMinute {
-		limit = maxOrphanReceiptSweepPerMinute
+// ledger stores the minimal status identity and provider time until resolved.
+func (repo Repository) reconcileDeferredReceipts(ctx context.Context, limit int) (int, error) {
+	if limit < 1 || limit > maxDeferredReceiptSweepPerMinute {
+		limit = maxDeferredReceiptSweepPerMinute
 	}
 	rows, err := repo.db.Pool().Query(ctx, `
 		select inbox_id::text,organization_id::text,session_id::text,
 		       provider_message_id,receipt_status,provider_occurred_at,
 		       claim_token::text,reconcile_attempts
-		from private.claim_orphan_whatsapp_receipt_reconciliation($1)
+		from private.claim_deferred_whatsapp_receipt_reconciliation($1)
 	`, limit)
 	if err != nil {
 		return 0, err
 	}
-	items := make([]deferredOrphanReceipt, 0, limit)
+	items := make([]deferredReceipt, 0, limit)
 	for rows.Next() {
-		var item deferredOrphanReceipt
+		var item deferredReceipt
 		if err := rows.Scan(&item.inboxID, &item.organizationID, &item.sessionID,
 			&item.providerMessageID, &item.status, &item.occurredAt,
 			&item.claimToken, &item.attempts); err != nil {
@@ -174,7 +181,7 @@ func (repo Repository) reconcileDeferredOrphanReceipts(ctx context.Context, limi
 		}
 		var completed bool
 		if err := repo.db.Pool().QueryRow(ctx, `
-			select private.complete_orphan_whatsapp_receipt_reconciliation(
+			select private.complete_deferred_whatsapp_receipt_reconciliation(
 			  $1::uuid,$2::uuid,$3::uuid,$4,$5::uuid,$6,'native_reconciled'
 			)
 		`, item.inboxID, item.organizationID, item.sessionID,
@@ -185,16 +192,16 @@ func (repo Repository) reconcileDeferredOrphanReceipts(ctx context.Context, limi
 		resolved++
 	}
 	if unexpected > 0 {
-		return resolved, fmt.Errorf("orphan receipt reconciliation had %d unclassified failures", unexpected)
+		return resolved, fmt.Errorf("deferred receipt reconciliation had %d unclassified failures", unexpected)
 	}
 	return resolved, nil
 }
 
-func (repo Repository) cleanupExpiredOrphanReceipts(ctx context.Context) (int, int, error) {
-	var deferredExpired, resolvedExpired int
+func (repo Repository) cleanupDeferredReceiptLedger(ctx context.Context) (int, int, error) {
+	var deferredOverdue, resolvedExpired int
 	err := repo.db.Pool().QueryRow(ctx, `
-		select deferred_expired,resolved_expired
-		from private.cleanup_expired_orphan_whatsapp_receipts(1000)
-	`).Scan(&deferredExpired, &resolvedExpired)
-	return deferredExpired, resolvedExpired, err
+		select deferred_overdue,resolved_expired
+		from private.cleanup_deferred_whatsapp_receipts(1000)
+	`).Scan(&deferredOverdue, &resolvedExpired)
+	return deferredOverdue, resolvedExpired, err
 }
