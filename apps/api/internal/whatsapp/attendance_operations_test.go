@@ -9,32 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/vimob-crm/vimob-crm/apps/api/internal/permissions"
-	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
-
-func TestAdminSendOverrideRequiresCurrentOrganizationRoleAndOperatePermission(t *testing.T) {
-	tests := []struct {
-		name       string
-		memberRole string
-		context    tenant.Context
-		want       bool
-	}{
-		{"active admin", "admin", tenant.Context{MemberRole: "admin"}, true},
-		{"active owner", "owner", tenant.Context{MemberRole: "owner"}, true},
-		{"manager with operate grant", "manager", tenant.Context{MemberRole: "manager", Permissions: []string{permissions.WhatsAppOperate}}, false},
-		{"stale admin context after demotion", "user", tenant.Context{MemberRole: "admin"}, false},
-		{"global admin without organization operate", "admin", tenant.Context{MemberRole: "user", UserRole: "admin"}, false},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := canAdminSendExistingConversation(test.memberRole, test.context); got != test.want {
-				t.Fatalf("override = %v, want %v", got, test.want)
-			}
-		})
-	}
-}
 
 func TestAttendanceEventTimesFailClosedOnMissingAndFutureTimestamp(t *testing.T) {
 	accepted := time.Date(2026, 9, 23, 3, 0, 0, 0, time.UTC)
@@ -59,7 +34,6 @@ func TestAttendanceCaptureStopsWhenSessionOwnerOrMembershipChanges(t *testing.T)
 	source := string(raw)
 	for _, functionName := range []string{
 		"func currentAttendanceEntry(",
-		"func eventAttendanceEntry(",
 		"func anyCurrentAttendanceEntry(",
 	} {
 		start := strings.Index(source, functionName)
@@ -84,6 +58,13 @@ func TestAttendanceCaptureStopsWhenSessionOwnerOrMembershipChanges(t *testing.T)
 				t.Fatalf("%s must reject a transferred or deactivated owner: missing %q", functionName, required)
 			}
 		}
+		if strings.Contains(section, "assigned_lead.assigned_user_id") || strings.Contains(section, "member.role in ('owner', 'admin')") {
+			t.Fatalf("%s must not grant outbound attendance by assignment or organization role", functionName)
+		}
+	}
+	// Inbound capture retains the existing attendance history semantics.
+	if !strings.Contains(source, "func eventAttendanceEntry(") {
+		t.Fatal("inbound attendance capture must remain available")
 	}
 }
 
@@ -421,7 +402,7 @@ func TestAttendanceRepositoryKeepsLockOrderCutoffAndIdempotency(t *testing.T) {
 	}
 }
 
-func TestAttendanceReadReportsExactSendCapabilityWithoutSessionOwnership(t *testing.T) {
+func TestAttendanceReadKeepsHistoryButOnlyOwnerCanSend(t *testing.T) {
 	raw, err := os.ReadFile("attendance_operations.go")
 	if err != nil {
 		t.Fatalf("read attendance repository: %v", err)
@@ -437,11 +418,10 @@ func TestAttendanceReadReportsExactSendCapabilityWithoutSessionOwnership(t *test
 		t.Fatal("attendance POST must require exact send access and a connected session")
 	}
 	for _, token := range []string{
-		"scope.CanSend = sessionConnected && (sessionOwned || leadAssigned || adminCanSend)",
-		"if requireSendAccess && !sessionOwned && !leadAssigned && !adminCanSend",
-		"member.role",
+		"scope.CanSend = sessionConnected && sessionOwned &&",
+		"if requireSendAccess && (!sessionOwned || !tenantContext.HasPermission(permissions.WhatsAppOperate))",
 		"coalesce(member.is_active, true) = true",
-		"l.assigned_user_id = $2::uuid",
+		"ws.owner_user_id = $3::uuid",
 	} {
 		if !strings.Contains(source, token) {
 			t.Fatalf("attendance capability is missing %q", token)

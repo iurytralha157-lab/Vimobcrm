@@ -19,7 +19,7 @@ type OwnedSession = {
 };
 
 export type WhatsAppReplacementPlan = {
-  reason: 'historical' | 'unavailable-session';
+  reason: 'historical' | 'unavailable-session' | 'other-owner';
   leadId: string;
   phone: string | null;
   sourceConversationId: string;
@@ -48,6 +48,7 @@ function conversationPhone(conversation: ReplacementConversation): string | null
 export function getWhatsAppReplacementPlan(
   conversation?: ReplacementConversation | null,
   ownedSessions?: OwnedSession[] | null,
+  options: { ownedSessionsLoaded?: boolean; canSendFixedSession?: boolean } = {},
 ): WhatsAppReplacementPlan | null {
   const leadId = conversation?.lead_id || conversation?.lead?.id;
   if (!conversation?.id || !leadId || conversation.is_group) return null;
@@ -57,11 +58,19 @@ export function getWhatsAppReplacementPlan(
   const sourceStatus = listedSource?.status
     ?? (conversation.session?.id === sourceSessionId ? conversation.session.status : null);
   const unavailableSession = Boolean(sourceSessionId && sourceStatus && sourceStatus !== 'connected');
+  // GET /sessions is owner-scoped. Once both it and the exact attendance gate
+  // have resolved, a connected source absent from that list belongs to another
+  // user. Keep the physical conversation read-only and offer a separate one.
+  const otherOwner = Boolean(sourceSessionId && sourceStatus === 'connected'
+    && options.ownedSessionsLoaded && options.canSendFixedSession === false
+    && !listedSource);
   const reason = conversation.historical_lead_view
     ? 'historical'
     : unavailableSession
       ? 'unavailable-session'
-      : null;
+      : otherOwner
+        ? 'other-owner'
+        : null;
   if (!reason) return null;
 
   return {

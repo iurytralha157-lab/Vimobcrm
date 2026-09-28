@@ -4,11 +4,40 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/vimob-crm/vimob-crm/apps/api/internal/tenant"
 )
+
+func TestConversationSendUsesOnlyCurrentSessionOwner(t *testing.T) {
+	sourceBytes, err := os.ReadFile("message_operations.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(sourceBytes)
+	start := strings.Index(source, "func (repo Repository) getConversationSendSession(")
+	end := strings.Index(source, "func (repo Repository) resolveAnyConnectedSendSession(")
+	if start < 0 || end <= start {
+		t.Fatal("conversation send session authorization not found")
+	}
+	query := source[start:end]
+	if !strings.Contains(query, "ws.owner_user_id = $5::uuid") ||
+		strings.Contains(query, "l.assigned_user_id = $5::uuid") ||
+		strings.Contains(query, "member.role in ('owner', 'admin')") {
+		t.Fatal("conversation send session must require ownership, regardless of lead assignment or admin role")
+	}
+	lockBytes, err := os.ReadFile("session_conversation_lock.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock := string(lockBytes)
+	start = strings.Index(lock, "func lockConversationSendSession(")
+	if start < 0 || !strings.Contains(lock[start:], "and ws.owner_user_id = $3::uuid") {
+		t.Fatal("transactional send fence must recheck the current owner")
+	}
+}
 
 func TestConversationJSONUsesNullForUnavailableHistoricalSession(t *testing.T) {
 	payload, err := json.Marshal(Conversation{

@@ -475,9 +475,7 @@ func (repo Repository) systemTenantForSession(ctx context.Context, organizationI
 		role = repo.memberRole(ctx, organizationID, userID)
 	}
 	if userID == "" || role == "" {
-		userID, role = repo.firstActiveOrganizationMember(ctx, organizationID)
-	}
-	if userID == "" {
+		// No fallback actor may use a session after its owner is unavailable.
 		return tenant.Context{}, ErrInvalidReference
 	}
 

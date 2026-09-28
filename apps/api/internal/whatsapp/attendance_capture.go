@@ -127,16 +127,7 @@ func currentAttendanceEntry(ctx context.Context, tx pgx.Tx, organizationID, conv
 		  and entry.lead_id = $4::uuid
 		  and entry.binding_id = $5::uuid
 		  and entry.user_id = $6::uuid
-		  and (
-		    session.owner_user_id = entry.user_id
-		    or exists (
-		      select 1 from public.leads assigned_lead
-		      where assigned_lead.organization_id = entry.organization_id
-		        and assigned_lead.id = entry.lead_id
-		        and assigned_lead.assigned_user_id = entry.user_id
-		    )
-		    or member.role in ('owner', 'admin')
-		  )
+		  and session.owner_user_id = entry.user_id
 		limit 1
 	`, organizationID, conversationID, sessionID, leadID, bindingID, userID).Scan(&entryID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -260,16 +251,7 @@ func anyCurrentAttendanceEntry(ctx context.Context, tx pgx.Tx, organizationID, c
 		  and entry.session_id = $3::uuid
 		  and entry.lead_id = $4::uuid
 		  and entry.binding_id = $5::uuid
-		  and (
-		    session.owner_user_id = entry.user_id
-		    or exists (
-		      select 1 from public.leads assigned_lead
-		      where assigned_lead.organization_id = entry.organization_id
-		        and assigned_lead.id = entry.lead_id
-		        and assigned_lead.assigned_user_id = entry.user_id
-		    )
-		    or member.role in ('owner', 'admin')
-		  )
+		  and session.owner_user_id = entry.user_id
 		order by entry.joined_at, entry.id
 		limit 1
 	`, organizationID, conversationID, sessionID, leadID, bindingID).Scan(&entryID)

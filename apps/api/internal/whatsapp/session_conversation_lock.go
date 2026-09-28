@@ -58,9 +58,8 @@ func lockOwnedConnectedEvolutionSession(
 	return err
 }
 
-// lockConversationSendSession is used only by the lead-bound send path. The
-// caller locks the conversation and lead next, then rechecks the assignee under
-// that lead lock before writing the message and outbox.
+// lockConversationSendSession fences the exact owned session before the
+// conversation and lead are locked. Assignment never grants use of a line.
 func lockConversationSendSession(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -69,10 +68,11 @@ func lockConversationSendSession(
 ) (bool, error) {
 	var sessionOwned bool
 	err := tx.QueryRow(ctx, `
-		select coalesce(ws.owner_user_id = $3::uuid, false)
+		select true
 		from public.whatsapp_sessions as ws
 		where ws.organization_id = $1::uuid
 		  and ws.id = $2::uuid
+		  and ws.owner_user_id = $3::uuid
 		  and ws.provider = 'evolution_go'
 		  and coalesce(ws.is_active, true) = true
 		  and ws.status = 'connected'

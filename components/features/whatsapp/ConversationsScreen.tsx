@@ -7,6 +7,7 @@ import { SaveWhatsAppContactDialog } from "@/components/features/whatsapp/calls"
 import { WhatsAppCallHistoryDialog } from "@/components/features/whatsapp/calls/WhatsAppCallHistoryDialog";
 import { ConversationLeadPanel, ConversationUnregisteredPanel } from "@/components/features/whatsapp/ConversationLeadPanel";
 import { EnterAttendanceDialog } from "@/components/features/whatsapp/EnterAttendanceDialog";
+import { WhatsAppOwnLineAction } from "@/components/features/whatsapp/WhatsAppOwnLineAction";
 import {
   ConversationComposer,
   ConversationEmptyState,
@@ -55,6 +56,7 @@ import {
 } from "@/lib/whatsapp-message-input";
 import { groupLatestWhatsAppReactions } from "@/lib/whatsapp-reactions";
 import { runWhatsAppSendAttempt } from "@/lib/whatsapp-send-attempt";
+import { getWhatsAppReplacementPlan } from "@/lib/whatsapp-replacement-flow";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUserPermissions } from "@/hooks/use-user-permissions";
 import { useOrganizationModules } from "@/hooks/use-organization-modules";
@@ -764,7 +766,7 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
 
   const selectedAttendanceSessionId = getWhatsAppSendSessionId(
     selectedConversation,
-    selectedSessionId,
+    null,
     sessions,
   );
   const selectedAttendanceTarget = useMemo<WhatsAppAttendanceTarget | null>(() => {
@@ -792,6 +794,12 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
     enabled: activePlatform === "whatsapp" && Boolean(selectedAttendanceTarget),
     identityKey: `${activeTenantKey}:${selectedConversationId || "none"}:${selectedLeadId || "none"}:${selectedAttendanceSessionId || "none"}`,
   });
+  const ownLinePlan = activePlatform === "whatsapp"
+    ? getWhatsAppReplacementPlan(selectedConversation, sessions, {
+      ownedSessionsLoaded,
+      canSendFixedSession: attendanceGate.attendance?.canSend,
+    })
+    : null;
   const whatsappMessageInputState = getWhatsAppMessageInputState(
     selectedConversation,
     selectedSessionId,
@@ -1204,6 +1212,17 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 isCancellingAutomation={cancelLeadExecutions.isPending}
                 onSendAudio={handleSendAudio}
               />
+              <WhatsAppOwnLineAction
+                key={ownLinePlan?.sourceConversationId || "none"}
+                plan={ownLinePlan}
+                sessions={sessions || []}
+                canOperate={canOperateWhatsApp}
+                organizationId={activeOrganization.organizationId}
+                onOpen={(openedConversation) => {
+                  setSelectedSessionId("all");
+                  setSelectedConversation(openedConversation);
+                }}
+              />
             </div>
           ) : (
             <div className="flex flex-col h-full">
@@ -1429,6 +1448,17 @@ export default function Conversations({ initialConversationId, initialLeadId }: 
                 }}
                 isCancellingAutomation={cancelLeadExecutions.isPending}
                 onSendAudio={handleSendAudio}
+              />
+              <WhatsAppOwnLineAction
+                key={ownLinePlan?.sourceConversationId || "none"}
+                plan={ownLinePlan}
+                sessions={sessions || []}
+                canOperate={canOperateWhatsApp}
+                organizationId={activeOrganization.organizationId}
+                onOpen={(openedConversation) => {
+                  setSelectedSessionId("all");
+                  setSelectedConversation(openedConversation);
+                }}
               />
             </>
           ) : (

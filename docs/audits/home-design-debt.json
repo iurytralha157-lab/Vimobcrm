@@ -1,10 +1,10 @@
 {
   "schemaVersion": 2,
-  "sourceDigestSha256": "c6830b5e834b0ca8f7459250cd2e45d649913fcebfdecaf75e84f3100b7f63dd",
-  "surfaceInventoryDigestSha256": "b8ca9e28b1545f0845d52a242dc7eb4ff2cf5098140e1784915961739ec3edf0",
+  "sourceDigestSha256": "1c84f3126bae5161f2636c7a57a6b1aeb5615b08daa78674855a6eb8873f9b68",
+  "surfaceInventoryDigestSha256": "3a5b054dac5492093e5e25a7f94c830782caf4002af998b71273e05c4490107a",
   "scope": {
     "excluded": "components/ui, testes, stories e arquivos fora do grafo conservador do inventário de superfícies",
-    "filesScanned": 547,
+    "filesScanned": 548,
     "note": "Achados são candidatos estáticos. Cores de dados e estados semânticos exigem revisão humana antes da troca."
   },
   "counts": {
@@ -810,7 +810,7 @@
     },
     {
       "file": "components/features/chat/FloatingChat.tsx",
-      "line": 1772,
+      "line": 1778,
       "match": "shadow-[0_4px_12px_rgba",
       "priority": "P1",
       "rule": "heavy-shadow",

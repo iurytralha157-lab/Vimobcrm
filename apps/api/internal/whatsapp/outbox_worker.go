@@ -756,6 +756,10 @@ func (repo Repository) processClaimedWhatsAppOutbox(ctx context.Context, item pe
 
 	item.Attempts, err = repo.startWhatsAppOutboxProviderAttempt(ctx, item)
 	if err != nil {
+		if errors.Is(err, ErrAttendanceRequired) {
+			recordWhatsAppOutboxDeliveryFailure(lane)
+			return repo.failWhatsAppOutbox(ctx, item, err, true, false)
+		}
 		return err
 	}
 
@@ -890,38 +894,15 @@ func (repo Repository) whatsappOutboxAttendanceCurrent(ctx context.Context, item
 			 and member.user_id = attendance.user_id
 			 and coalesce(member.is_active, true) = true
 			 and member.deleted_at is null
-			join public.leads as current_lead
-			  on current_lead.organization_id = message.organization_id
-			 and current_lead.id = message.lead_id
 			where message.id = $1::uuid
 			  and message.organization_id = $2::uuid
 			  and message.session_id = $3::uuid
 			  and message.conversation_id = $4::uuid
 			  and message.capture_state = 'captured'
-			  and (
-			    (
-			      session.owner_user_id = attendance.user_id
-			      and (message.sender_user_id is null or message.sender_user_id = attendance.user_id)
-			      and (message.metadata->>'attendance_entry_id' is null
-			           or message.metadata->>'attendance_entry_id' = attendance.id::text)
-			    )
-			    or (
-			      current_lead.assigned_user_id = attendance.user_id
-			      and (
-			        message.sender_user_id = attendance.user_id
-			        or (
-			          message.metadata->>'internal_automation' = 'true'
-			          and message.sender_user_id = session.owner_user_id
-			        )
-			      )
-			      and message.metadata->>'attendance_entry_id' = attendance.id::text
-			    )
-			    or (
-			      member.role in ('owner', 'admin')
-			      and message.sender_user_id = attendance.user_id
-			      and message.metadata->>'attendance_entry_id' = attendance.id::text
-			    )
-			  )
+			  and session.owner_user_id = attendance.user_id
+			  and (message.sender_user_id is null or message.sender_user_id = attendance.user_id)
+			  and (message.metadata->>'attendance_entry_id' is null
+			       or message.metadata->>'attendance_entry_id' = attendance.id::text)
 		)
 	`, item.MessageRowID, item.OrganizationID, item.SessionID, item.ConversationID).Scan(&attended)
 	return attended, err
@@ -1050,18 +1031,76 @@ func (repo Repository) renewWhatsAppOutboxLease(ctx context.Context, item pendin
 func (repo Repository) startWhatsAppOutboxProviderAttempt(ctx context.Context, item pendingWhatsAppOutbox) (int, error) {
 	var attempts int
 	err := repo.db.Pool().QueryRow(ctx, `
-		update public.whatsapp_outbox
+		update public.whatsapp_outbox as outbox
 		set attempts = attempts + 1,
 		    locked_at = now(),
 		    last_error = $3,
 		    updated_at = now()
-		where id = $1::uuid
-		  and status = 'processing'
-		  and locked_by = $2
-		  and attempts < max_attempts
+		where outbox.id = $1::uuid
+		  and outbox.status = 'processing'
+		  and outbox.locked_by = $2
+		  and outbox.attempts < outbox.max_attempts
+		  and outbox.organization_id = $4::uuid
+		  and outbox.session_id = $5::uuid
+		  and outbox.conversation_id = $6::uuid
+		  and exists (
+		    select 1
+		    from public.whatsapp_messages as message
+		    join public.whatsapp_conversations as conversation
+		      on conversation.id = message.conversation_id
+		     and conversation.organization_id = message.organization_id
+		     and conversation.session_id = message.session_id
+		     and conversation.lead_id = message.lead_id
+		     and conversation.deleted_at is null
+		    join public.whatsapp_conversation_lead_bindings as binding
+		      on binding.organization_id = message.organization_id
+		     and binding.conversation_id = message.conversation_id
+		     and binding.session_id = message.session_id
+		     and binding.lead_id = message.lead_id
+		     and binding.active_to is null
+		     and binding.stale = false
+		    join public.whatsapp_attendance_entries as attendance
+		      on attendance.organization_id = binding.organization_id
+		     and attendance.conversation_id = binding.conversation_id
+		     and attendance.session_id = binding.session_id
+		     and attendance.lead_id = binding.lead_id
+		     and attendance.binding_id = binding.id
+		    join public.whatsapp_sessions as session
+		      on session.organization_id = attendance.organization_id
+		     and session.id = attendance.session_id
+		     and session.provider = 'evolution_go'
+		     and coalesce(session.is_active, true) = true
+		     and coalesce(session.status, '') not in ('deleted', 'disabled')
+		    join public.users as actor
+		      on actor.id = attendance.user_id
+		     and actor.organization_id = attendance.organization_id
+		     and coalesce(actor.is_active, false) = true
+		    join public.organization_members as member
+		      on member.organization_id = attendance.organization_id
+		     and member.user_id = attendance.user_id
+		     and coalesce(member.is_active, true) = true
+		     and member.deleted_at is null
+		    where message.id = outbox.message_id
+		      and message.organization_id = outbox.organization_id
+		      and message.conversation_id = outbox.conversation_id
+		      and message.session_id = outbox.session_id
+		      and message.capture_state = 'captured'
+		      and session.owner_user_id = attendance.user_id
+		      and (message.sender_user_id is null or message.sender_user_id = attendance.user_id)
+		      and (message.metadata->>'attendance_entry_id' is null
+		           or message.metadata->>'attendance_entry_id' = attendance.id::text)
+		  )
 		returning attempts
-	`, item.ID, item.LeaseToken, whatsappOutboxProviderStartedMarker).Scan(&attempts)
+	`, item.ID, item.LeaseToken, whatsappOutboxProviderStartedMarker,
+		item.OrganizationID, item.SessionID, item.ConversationID).Scan(&attempts)
 	if errors.Is(err, pgx.ErrNoRows) {
+		allowed, gateErr := repo.whatsappOutboxAttendanceCurrent(ctx, item)
+		if gateErr != nil {
+			return 0, gateErr
+		}
+		if !allowed {
+			return 0, ErrAttendanceRequired
+		}
 		return 0, errWhatsAppOutboxLeaseLost
 	}
 	return attempts, err

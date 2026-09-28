@@ -45,16 +45,46 @@ func TestOutboxRequiresCapturedCurrentAttendanceBeforeProvider(t *testing.T) {
 		"coalesce(session.status, '') not in ('deleted', 'disabled')",
 		"coalesce(actor.is_active, false) = true",
 		"coalesce(member.is_active, true) = true",
-		"member.role in ('owner', 'admin')",
-		"message.sender_user_id = attendance.user_id",
+		"message.sender_user_id is null or message.sender_user_id = attendance.user_id",
+		"message.metadata->>'attendance_entry_id' is null",
 		"message.metadata->>'attendance_entry_id' = attendance.id::text",
 	} {
 		if !strings.Contains(attendanceGate, token) {
 			t.Fatalf("outbox attendance gate is missing %q", token)
 		}
 	}
+	if strings.Contains(attendanceGate, "current_lead.assigned_user_id = attendance.user_id") ||
+		strings.Contains(attendanceGate, "member.role in ('owner', 'admin')") {
+		t.Fatal("outbox must not deliver queued sends on an assignee or admin override")
+	}
 	if !strings.Contains(source[guard:providerStart], "return repo.failWhatsAppOutbox(ctx, item, ErrAttendanceRequired, true, false)") {
 		t.Fatal("failed attendance must stop before provider delivery")
+	}
+	start := strings.Index(source, "func (repo Repository) startWhatsAppOutboxProviderAttempt(")
+	if start < providerStart {
+		t.Fatal("provider-start attendance fence is missing")
+	}
+	end := strings.Index(source[start:], "func (repo Repository) markWhatsAppOutboxProviderAccepted(")
+	if end <= 0 {
+		t.Fatal("provider-start attendance fence is missing")
+	}
+	providerFence := source[start : start+end]
+	for _, token := range []string{
+		"where message.id = outbox.message_id",
+		"conversation.deleted_at is null",
+		"binding.active_to is null",
+		"binding.stale = false",
+		"attendance.binding_id = binding.id",
+		"session.owner_user_id = attendance.user_id",
+		"coalesce(actor.is_active, false) = true",
+		"coalesce(member.is_active, true) = true",
+		"member.deleted_at is null",
+		"message.sender_user_id is null or message.sender_user_id = attendance.user_id",
+		"message.metadata->>'attendance_entry_id' = attendance.id::text",
+	} {
+		if !strings.Contains(providerFence, token) {
+			t.Fatalf("provider-start attempt must recheck current attendance: missing %q", token)
+		}
 	}
 }
 

@@ -266,9 +266,8 @@ func (repo Repository) loadAutoReplyContext(ctx context.Context, input autoReply
 		memberRole = repo.memberRole(ctx, session.OrganizationID, userID)
 	}
 	if userID == "" || memberRole == "" {
-		userID, memberRole = repo.firstActiveOrganizationMember(ctx, session.OrganizationID)
-	}
-	if userID == "" {
+		// An automation must never impersonate an unrelated organization member
+		// to send from a session whose owner is unavailable.
 		return autoReplyContext{}, ErrInvalidReference
 	}
 
@@ -494,19 +493,6 @@ func (repo Repository) memberRole(ctx context.Context, organizationID string, us
 		limit 1
 	`, organizationID, userID).Scan(&role)
 	return strings.TrimSpace(role)
-}
-
-func (repo Repository) firstActiveOrganizationMember(ctx context.Context, organizationID string) (string, string) {
-	var userID, role string
-	_ = repo.db.Pool().QueryRow(ctx, `
-		select user_id::text, role
-		from public.organization_members
-		where organization_id = $1::uuid
-		  and coalesce(is_active, true) = true
-		order by case role when 'owner' then 0 when 'admin' then 1 when 'manager' then 2 else 3 end, created_at asc
-		limit 1
-	`, organizationID).Scan(&userID, &role)
-	return strings.TrimSpace(userID), strings.TrimSpace(role)
 }
 
 func boolFromObject(object map[string]any, key string) bool {

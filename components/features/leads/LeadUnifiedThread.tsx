@@ -8,6 +8,7 @@ import { MessageBubble as WhatsAppMessageBubble } from '@/components/features/wh
 import { MessageErrorBoundary } from '@/components/features/whatsapp/MessageErrorBoundary';
 import { AudioRecorderButton } from '@/components/features/whatsapp/AudioRecorderButton';
 import { EnterAttendanceDialog } from '@/components/features/whatsapp/EnterAttendanceDialog';
+import { WhatsAppOwnLineAction } from '@/components/features/whatsapp/WhatsAppOwnLineAction';
 import { SaveWhatsAppContactDialog, WhatsAppRecordingDialog } from '@/components/features/whatsapp/calls';
 import { cn } from '@/lib/utils';
 import { getSafeHttpUrl } from '@/lib/safe-http-url';
@@ -18,6 +19,7 @@ import {
   useSendWhatsAppMessage,
   useReactToWhatsAppMessage,
   useWhatsAppConversations,
+  useWhatsAppConversationForLead,
   useWhatsAppLeadRealtime,
   type WhatsAppConversation,
   type WhatsAppMessage,
@@ -39,6 +41,7 @@ import {
   WHATSAPP_UNLINKED_LEAD_SNAPSHOT,
 } from '@/lib/whatsapp-message-input';
 import { runWhatsAppSendAttempt } from '@/lib/whatsapp-send-attempt';
+import { getWhatsAppReplacementPlan } from '@/lib/whatsapp-replacement-flow';
 import { groupLatestWhatsAppReactions } from '@/lib/whatsapp-reactions';
 import {
   blobToBase64,
@@ -778,6 +781,11 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   const [saveContactOpen, setSaveContactOpen] = useState(false);
   const [savingContact, setSavingContact] = useState(false);
   const [composerHighlighted, setComposerHighlighted] = useState(false);
+  const [preferredConversation, setPreferredConversation] = useState<{
+    organizationId: string | null;
+    leadId: string;
+    conversation: WhatsAppConversation;
+  } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sendTextAttemptLock = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -805,13 +813,35 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
     80,
     { enabled: shouldLoadComposerData },
   );
+  const { data: leadConversation } = useWhatsAppConversationForLead(
+    shouldLoadComposerData ? leadId : null,
+  );
   useWhatsAppLeadRealtime(canViewWhatsApp, [leadId], {
     reconcileOnSubscribe: !readOnly,
   });
 
   const conversation = useMemo<WhatsAppConversation | null>(() => {
-    return conversations.find((item) => item.lead_id === leadId || item.lead?.id === leadId) || null;
-  }, [conversations, leadId]);
+    const preferred = preferredConversation?.leadId === leadId
+      && preferredConversation.organizationId === (activeOrganization.organizationId || null)
+      ? preferredConversation.conversation
+      : null;
+    if (preferred) return conversations.find((item) => item.id === preferred.id) || preferred;
+    const ownedConversation = conversations.find((item) => item.lead_id === leadId || item.lead?.id === leadId);
+    if (ownedConversation) return ownedConversation;
+    // The lead lookup can return a physical conversation omitted from the
+    // owner-scoped inbox. Use it here only for a connected foreign line;
+    // historical or offline lookups must not replace the existing new-chat flow.
+    const connectedForeignConversation = ownedSessionsLoaded
+      && leadConversation?.id
+      && leadConversation.session_id
+      && leadConversation.session?.id === leadConversation.session_id
+      && leadConversation.session.status === 'connected'
+      && !leadConversation.historical_lead_view
+      && !sessions.some((session) => session.id === leadConversation.session_id)
+      ? leadConversation
+      : null;
+    return connectedForeignConversation;
+  }, [activeOrganization.organizationId, conversations, leadConversation, leadId, ownedSessionsLoaded, preferredConversation, sessions]);
 
   const {
     data: messages = [],
@@ -867,6 +897,10 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
   const attendanceGate = useWhatsAppAttendanceGate(attendanceTarget, {
     enabled: canViewWhatsApp && Boolean(attendanceTarget),
     identityKey: `${activeOrganization.organizationId || "none"}:${leadId}:${attendanceSessionId || "none"}`,
+  });
+  const ownLinePlan = getWhatsAppReplacementPlan(conversation, sessions, {
+    ownedSessionsLoaded,
+    canSendFixedSession: attendanceGate.attendance?.canSend,
   });
   const whatsappMessageInputState = useMemo(
     () => getWhatsAppMessageInputState(
@@ -1396,6 +1430,18 @@ export function LeadUnifiedThread({ leadId, leadName, leadAvatarUrl, leadPhone, 
               }
             />
           </div>
+          <WhatsAppOwnLineAction
+            key={ownLinePlan?.sourceConversationId || 'none'}
+            plan={ownLinePlan}
+            sessions={sessions}
+            canOperate={canOperateWhatsApp && !readOnly && !leadHasNoWhatsApp}
+            organizationId={activeOrganization.organizationId}
+            onOpen={(openedConversation) => setPreferredConversation({
+              organizationId: activeOrganization.organizationId || null,
+              leadId,
+              conversation: openedConversation,
+            })}
+          />
         </div>}
       </div>
       </section>

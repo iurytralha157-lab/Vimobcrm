@@ -205,14 +205,13 @@ func lockAttendanceScope(
 
 	visibilityArgs := append(baseConversationArgs(tenantContext), scope.LeadID)
 	var lockedLeadID string
-	var leadAssigned bool
 	err = tx.QueryRow(ctx, `
-		select l.id::text, coalesce(l.assigned_user_id = $2::uuid, false)
+		select l.id::text
 		from public.leads as l
 		where l.organization_id = $1::uuid
 		  and l.id = $5::uuid
 		  and `+leadVisibilitySQL(canViewOwnWhatsAppLeads(tenantContext))+`
-	`+leadLock, visibilityArgs...).Scan(&lockedLeadID, &leadAssigned)
+	`+leadLock, visibilityArgs...).Scan(&lockedLeadID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return attendanceScope{}, ErrConversationNotFound
 	}
@@ -235,9 +234,8 @@ func lockAttendanceScope(
 	if err != nil {
 		return attendanceScope{}, err
 	}
-	var memberRole string
 	if err := tx.QueryRow(ctx, `
-		select left(coalesce(nullif(btrim(user_row.name), ''), nullif(btrim(user_row.email), ''), 'Usuario'), 180), coalesce(member.role, '')
+		select left(coalesce(nullif(btrim(user_row.name), ''), nullif(btrim(user_row.email), ''), 'Usuario'), 180)
 		from public.users as user_row
 		join public.organization_members as member
 		  on member.organization_id = user_row.organization_id
@@ -247,26 +245,18 @@ func lockAttendanceScope(
 		where user_row.id = $1::uuid
 		  and user_row.organization_id = $2::uuid
 		  and coalesce(user_row.is_active, false) = true
-	`+memberLock, tenantContext.UserID, tenantContext.OrganizationID).Scan(&scope.ActorName, &memberRole); err != nil {
+	`+memberLock, tenantContext.UserID, tenantContext.OrganizationID).Scan(&scope.ActorName); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return attendanceScope{}, ErrConversationNotFound
 		}
 		return attendanceScope{}, err
 	}
-	adminCanSend := canAdminSendExistingConversation(memberRole, tenantContext)
-	if requireSendAccess && !sessionOwned && !leadAssigned && !adminCanSend {
+	if requireSendAccess && (!sessionOwned || !tenantContext.HasPermission(permissions.WhatsAppOperate)) {
 		return attendanceScope{}, ErrSessionNotFound
 	}
-	scope.CanSend = sessionConnected && (sessionOwned || leadAssigned || adminCanSend) &&
+	scope.CanSend = sessionConnected && sessionOwned &&
 		tenantContext.HasPermission(permissions.WhatsAppOperate)
 	return scope, nil
-}
-
-func canAdminSendExistingConversation(memberRole string, tenantContext tenant.Context) bool {
-	// The role is read from the active organization membership in this transaction.
-	// A global user role or a stale role in the request context is insufficient.
-	return (memberRole == "admin" || memberRole == "owner") &&
-		tenantContext.HasPermission(permissions.WhatsAppOperate)
 }
 
 func insertAttendanceEntry(

@@ -270,9 +270,8 @@ export function getWhatsAppMessageInputState(
     };
   }
 
-  // GET /sessions lists owned accounts. A fixed conversation can also be
-  // operated by its current assignee, but only when the exact attendance GET
-  // has confirmed that capability for this user, lead and session.
+  // GET /sessions lists owned accounts. The exact attendance GET confirms
+  // whether this user can send through a fixed conversation's line.
   if (ownedSessionsLoaded && conversation.id && conversation.session_id
     && !findSessionById(sessions, conversation.session_id)
     && canSendFixedSession !== true) {

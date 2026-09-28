@@ -52,6 +52,40 @@ test('no replacement for current connected chat, group, or unlinked conversation
   assert.equal(getWhatsAppReplacementPlan({ ...source, lead_id: null, historical_lead_view: true }, ownedSessions), null);
 });
 
+test('foreign owned connected chat offers only another owned line after attendance denies sending', () => {
+  const foreignConversation = {
+    ...source,
+    session: { id: source.session_id, status: 'connected' },
+  };
+  const ownLines = ownedSessions.slice(1);
+  assert.deepEqual(getWhatsAppReplacementPlan(foreignConversation, ownLines, {
+    ownedSessionsLoaded: true,
+    canSendFixedSession: false,
+  }), {
+    reason: 'other-owner',
+    leadId: source.lead_id,
+    phone: '+5522974063727',
+    sourceConversationId: source.id,
+    sourceSessionId: source.session_id,
+    connectedSessionIds: [ownLines[0].id],
+  });
+  assert.equal(getWhatsAppReplacementPlan(foreignConversation, ownLines, {
+    ownedSessionsLoaded: false,
+    canSendFixedSession: false,
+  }), null);
+  assert.equal(getWhatsAppReplacementPlan(foreignConversation, ownLines, {
+    ownedSessionsLoaded: true,
+  }), null);
+  assert.equal(getWhatsAppReplacementPlan(foreignConversation, ownLines, {
+    ownedSessionsLoaded: true,
+    canSendFixedSession: true,
+  }), null);
+  assert.equal(getWhatsAppReplacementPlan(foreignConversation, ownedSessions, {
+    ownedSessionsLoaded: true,
+    canSendFixedSession: false,
+  }), null);
+});
+
 test('phone JID is exact fallback; a LID cannot become a recipient', () => {
   const historical = { ...source, historical_lead_view: true, contact_phone: null };
   assert.equal(getWhatsAppReplacementPlan(historical, ownedSessions)?.phone, '+5522974063727');

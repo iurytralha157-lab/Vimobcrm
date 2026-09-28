@@ -434,10 +434,6 @@ export function FloatingChat() {
     isError: sessionsFailed,
     refetch: refetchSessions,
   } = useAccessibleSessions({ enabled: shouldLoadFloatingChatData });
-  const replacementPlan = getWhatsAppReplacementPlan(activeConversation, sessions);
-  const replacementSessions = (sessions || []).filter((session) =>
-    replacementPlan?.connectedSessionIds.includes(session.id),
-  );
   const accessibleSessionIds = useMemo(
     () => sessions?.map((session) => session.id) || [],
     [sessions],
@@ -547,7 +543,7 @@ export function FloatingChat() {
   const isReadOnlyMode = !canMutateActiveConversation;
   const activeAttendanceSessionId = getWhatsAppSendSessionId(
     activeConversation,
-    selectedSessionId,
+    null,
     sessions,
   );
   const activeAttendanceTarget = useMemo<WhatsAppAttendanceTarget | null>(() => {
@@ -574,6 +570,13 @@ export function FloatingChat() {
     enabled: chatVisible && Boolean(activeAttendanceTarget),
     identityKey: `${activeTenantKey}:${activeConversationId || "none"}:${activeConversationLeadId || "none"}:${activeAttendanceSessionId || "none"}`,
   });
+  const replacementPlan = getWhatsAppReplacementPlan(activeConversation, sessions, {
+    ownedSessionsLoaded,
+    canSendFixedSession: attendanceGate.attendance?.canSend,
+  });
+  const replacementSessions = (sessions || []).filter((session) =>
+    replacementPlan?.connectedSessionIds.includes(session.id),
+  );
   const whatsappMessageInputState = getWhatsAppMessageInputState(
     activeConversation,
     selectedSessionId,
@@ -866,7 +869,10 @@ export function FloatingChat() {
 
   async function handleStartReplacementConversation(request: ReplacementStart, sessionId: string) {
     if (replacementAttemptLock.current || !isCurrentReplacementSource(request)) return;
-    const currentPlan = getWhatsAppReplacementPlan(activeConversationRef.current, sessions);
+    const currentPlan = getWhatsAppReplacementPlan(activeConversationRef.current, sessions, {
+      ownedSessionsLoaded,
+      canSendFixedSession: attendanceGate.attendance?.canSend,
+    });
     if (!currentPlan?.connectedSessionIds.includes(sessionId) || currentPlan.phone !== request.phone) {
       toast({
         title: "Conexão indisponível",
@@ -1819,7 +1825,9 @@ export function FloatingChat() {
           <p>
             {replacementPlan.reason === "historical"
               ? "Este é o histórico de outro atendimento deste lead. Para conversar novamente, escolha outro WhatsApp conectado."
-              : "A conexão deste atendimento está indisponível. Para continuar, inicie uma conversa por outro WhatsApp conectado."}
+              : replacementPlan.reason === "other-owner"
+                ? "Esta conversa usa o WhatsApp de outra pessoa. Para responder por sua linha, inicie uma nova conversa. O histórico continua aqui."
+                : "A conexão deste atendimento está indisponível. Para continuar, inicie uma conversa por outro WhatsApp conectado."}
           </p>
           {!replacementPlan.phone ? (
             <p>Confira o telefone do lead antes de iniciar uma nova conversa.</p>
