@@ -4941,7 +4941,7 @@ func (repo Repository) processNativeEvolutionStatuses(ctx context.Context, item 
 			}
 		}
 		if len(missing) > 0 {
-			return fmt.Errorf("message status target not found yet: %s", strings.Join(missing, ","))
+			return fmt.Errorf("message status target not found yet: count=%d", len(missing))
 		}
 	}
 	for _, outboxID := range failedOutboxIDs {
